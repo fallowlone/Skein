@@ -3,7 +3,12 @@ export function checkDepthCheckpoints(html: string, file: string): string[] {
   if (!m) return []; // not a piece page
   let depth: Record<string, string>;
   try {
-    depth = JSON.parse(m[1].replace(/&quot;/g, '"'));
+    // Astro encodes embedded quotes as HTML numeric entities (&#34;) — handle both that and the named &quot; plus &amp;.
+    const decoded = m[1]
+      .replace(/&#34;/g, '"')
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, "&");
+    depth = JSON.parse(decoded);
   } catch {
     return [`${file}: data-depth JSON parse failed`];
   }
