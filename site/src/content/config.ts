@@ -33,7 +33,11 @@ const chapters = defineCollection({
 });
 
 const book = defineCollection({
-  loader: glob({ pattern: "**/*.{md,mdx}", base: "./src/content/book" }),
+  loader: glob({
+    pattern: "**/*.{md,mdx}",
+    base: "./src/content/book",
+    generateId: ({ entry }) => entry.replace(/\/index\.(md|mdx)$/, "").replace(/\.(md|mdx)$/, ""),
+  }),
   schema: z.object({
     slug: z.string().regex(/^\d{2}-[a-z0-9-]+$/),
     lang: Lang,
