@@ -52,7 +52,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
                   <div class="mt-3 prose prose-sm max-w-none">{q.answer}</div>
                 )}
               </div>
-            </li>
+            </div>
           </li>
         ))}
       </ol>
