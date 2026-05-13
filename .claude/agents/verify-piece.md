@@ -51,7 +51,7 @@ Emit:
 - Contains `<NumbersCard` OR `data-text-class="annot"`
 - Contains `<Misconception`
 - Contains ≥1 `<FadedExample`
-- Contains ≥2 retrieval Q entries (look for `id: "q[0-9]` in RetrievalDrawer)
+- Contains ≥2 retrieval Q entries (look for `id: "q[0-9]+` in RetrievalDrawer)
 - Word count 2500-3500
 
 **Senior tier checks:**
@@ -81,13 +81,13 @@ Emit ✗ per mismatch.
 ### 5. Cross-link validity
 
 - `prereqs:` slugs in frontmatter — verify each exists in `site/src/content/book/en/<pillar>/<slug>/index.mdx`.
-- Source URLs (subset of 3 sampled): verify reachable via WebFetch (200 OK).
+- Source URLs (first 3 from the `sources:` array): verify reachable via WebFetch (200 OK).
 
 ### 6. Hydration cap
 
 Count `astro-island` tags in compiled `site/dist/<lang>/<pillar>/<piece>/index.html`. Fail if > 5.
 
-(If `dist/` not present, skip this check and emit `? dist not built — run \`bun run build\` first`.)
+(If `dist/` not present, skip this check and emit `? dist not built — run bun run build first`.)
 
 ### 7. Exercise mix (warnings)
 
