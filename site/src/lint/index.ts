@@ -44,8 +44,8 @@ export function lintCurriculum(): AstroIntegration {
           warnings.push(...checkSpiralCues(html, f));
           errors.push(...checkSources(html, f));
           errors.push(...checkPersonas(html, f));
-          warnings.push(...checkTierWordBudgets(html, f));
-          warnings.push(...checkExerciseCounts(html, f));
+          errors.push(...checkTierWordBudgets(html, f));
+          errors.push(...checkExerciseCounts(html, f));
         }
 
         // Source-level + global checks
