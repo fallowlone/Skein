@@ -4,124 +4,137 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-ByteByteGo-style **educational/explainer infographics** for **fullstack development** built via Claude Code + Figma. Output channels: live Figma files, SVG/PNG exports, HTML/React pages, and video/animation. Data is pulled from APIs or scraped from public sources.
+**Curriculum site** — `site/` (Astro 5 + Preact + Tailwind + i18n). 16 pillars × ~8 pieces × 2 langs = 256 piece slots. Chapter 01 (Networking) is fully authored EN+RU. Subsequent chapters land via `/infographic` invocations. Pedagogy widgets shipped: Pretest, TierAccordion, FadedExample, RetrievalDrawer, ReactiveDiagram, Sequencer, PersonaTag, SpiralCue, PrereqBadge, SpacedRevisitBanner, SettingsDrawer, Sandbox. Build-time linter enforces 9 rules (text budgets, depth checkpoints, hydration cap on piece pages, i18n parity + glossary, sources required, etc.).
 
-**Domain lock**: every infographic in this repo is about fullstack engineering (frontend, backend, databases, infra, distributed systems, security, performance, observability, AI integration, engineering practice). Off-domain topics are out of scope and the `/infographic` command will refuse them.
+**Domain lock**: every piece in this repo is about fullstack engineering (frontend, backend, databases, infra, distributed systems, security, performance, observability, AI integration, engineering practice). Off-domain topics are out of scope and the `/infographic` command will refuse them.
 
-**Depth bar**: middle+ / senior fullstack engineer. See `curriculum.md` for the competency map and forbidden simplifications. Every infographic must meet this bar — diagrams that read like documentation are too shallow.
+**Depth bar**: middle+ / senior fullstack engineer. See `curriculum.md` for the competency map and forbidden simplifications. Every piece must meet this bar — if a draft reads like documentation, it's too shallow. If it reads like a war-story postmortem, it's right.
 
-**Three-tier hierarchy**: `/infographic` auto-classifies input into one of three tiers (see `curriculum.md`):
-
-- **Piece** — narrow ("HTTP/2 multiplexing") → 1 SVG.
-- **Chapter** — one pillar / multi-mechanism feature ("How HTTPS works") → 3–12 pieces with an `INDEX.md`. Hard cap 12 per chapter.
-- **Topic** — multi-pillar / role-shaped ("Become senior fullstack") → unbounded `MAP.md` of chapters; auto-runs only chapter 01; emits continuation commands for the rest.
-
-The hierarchy is how we go beyond 12 — never raise the per-chapter cap.
-
-This is **not a code project** — there is no package.json, no build step, no test runner. The repo holds *artifacts and orchestration*: Figma file IDs, scraped data, exported assets, style rules, and one-off scripts.
+**Three-tier hierarchy** (see `curriculum.md`):
+- **Piece** — narrow topic ("TCP handshake", "JWT pitfalls") → 1 MDX file under `site/src/content/book/{en,ru}/<pillar>/<NN>-<piece>/`.
+- **Chapter** — one pillar, ~8 pieces, learning path → folder under `site/src/content/book/`.
+- **Topic** — 16 pillars, role-shaped ("Become senior fullstack") → full site with chapters 01–16, chapter 01 authored, rest via `/infographic` commands.
 
 ## Directory layout
 
 ```
-infographics/
-  <piece-slug>/                                       Tier A — narrow topic, 1 piece
-    spec.md, data.json, infographic.svg
-  <chapter-slug>/                                     Tier B — chapter
-    INDEX.md                                          Outline of 3–12 pieces
-    <NN>-<piece-slug>/                                Each piece, standalone
-      spec.md, data.json, infographic.svg
-  <topic-slug>/                                       Tier C — mega-topic
-    MAP.md                                            Unbounded list of chapters
-    <NN>-<chapter-slug>/                              One subfolder per chapter
-      INDEX.md
-      <NN>-<piece-slug>/                              Pieces within chapter
-        spec.md, data.json, infographic.svg
+site/                                        Astro 5 curriculum site (canonical output)
+  astro.config.mjs
+  package.json
+  src/
+    content/
+      config.ts                              Collections: pillars, chapters, pieces
+      pillars/01-networking.json … 16-engineering-practice.json
+      chapters/01-networking.json … 16-engineering-practice.json
+      book/
+        en/<pillar>/<NN-piece>/index.mdx     EN pieces
+        ru/<pillar>/<NN-piece>/index.mdx     RU pieces
+    pages/
+      index.astro                            Redirect to /en/
+      [lang]/index.astro                     PillarGrid (16-card home)
+      [lang]/[pillar]/index.astro            ChapterOverview + Sidebar
+      [lang]/[pillar]/[piece].astro          Article reader
+      [lang]/about.astro, settings.astro
+    layouts/
+      Topic.astro                            Outer chrome (head, title, lang switch, sources footer)
+      Chapter.astro                          Sidebar + main article
+    components/
+      brand/           TitleBar.astro, LangSwitch.astro, SourcesFooter.astro
+      prose/           Crux.astro, KeyTakeaway.astro, Callout.astro, Term.astro, SpiralCue.astro
+      layout/          Card.astro, Misconception.astro, NumbersCard.astro, Pill.astro, StepBadge.astro
+      diagram/         Connector.astro, Node.astro, Pulse.astro, Reveal.astro, PacketDot.astro, CountUp.astro, TypingText.astro
+      pedagogy/        Pretest.tsx, TierAccordion.tsx, FadedExample.tsx, RetrievalDrawer.tsx, ReactiveDiagram.tsx, Sequencer.tsx, Sandbox.tsx, ProgressMeter.tsx, SpacedRevisitBanner.tsx, SettingsDrawer.tsx, PersonaTag.astro
+      nav/             PillarGrid.astro, ChapterSidebar.astro, ChapterSidebarTOC.tsx
+    i18n/
+      ui.json                                UI labels (EN, RU)
+      glossary.json                          Technical terms locked per locale
+    scripts/
+      user-state.ts, tier-router.ts, gsap-setup.ts, motion-flag.ts
+  dist/                                      Built static output (generated, never edit)
+  scripts/svg-to-png.sh                      SVG → PNG exporter (legacy, for reference assets)
 
-assets/exports/<...mirrored path...>/infographic.png  PNG exports mirror the infographics/ tree
-figma/                                                Figma file registry (files.json + schema)
-templates/svg-skeleton.svg                            Pre-styled SVG canvas (palette as CSS vars)
-scripts/svg-to-png.sh                                 SVG → PNG (rsvg → inkscape → Chrome → qlmanage)
-data/                                                 Raw data dumps + sessions.db
-style-guide.md                                        ByteByteGo visual rules
-curriculum.md                                         Fullstack depth bar + pillar map + 3-tier scoping
+docs/superpowers/                            Plans + specs (P0–P3 phases)
+curriculum.md                                Fullstack depth bar + 16 pillars + 3-tier scoping (source of truth)
+style-guide.md                               ByteByteGo visual rules + component vocabulary
+CLAUDE.md                                    This file
+.claude/commands/infographic.md              `/infographic` command definition (site pipeline)
+
+[LEGACY — reference only, not maintained]
+infographics/, assets/exports/, drafts/, figma/   Old SVG+PNG infographics workflow (kept for historical reference)
 ```
 
-Each piece dir contains at minimum:
-- `spec.md` — title, tier, audience, composition pattern, **depth checkpoints** (mechanism / tradeoff / failure mode / numbers — all 4 required), key points, sources, misconception
-- `data.json` — structured facts/numbers driving the visual
-- `infographic.svg` — the rendered piece
-- (optional) a pointer in `figma/files.json` if also pushed to Figma
+## Primary command: `/infographic <pillar>/<NN-chapter>/<NN-piece>`
 
-## Primary command: `/infographic <topic>`
+Author a single piece (stub → draft → ready) for the curriculum site's bilingual pipeline. Every piece is en English + Russian or the command refuses.
 
-The whole point of this repo is to go from a fullstack topic to finished infographic(s) in one shot. The command is defined in `.claude/commands/infographic.md` and runs an unattended pipeline.
-
+Input form:
 ```
-/infographic Как устроен интернет
-/infographic JWT vs session auth
-/infographic PostgreSQL MVCC
+/infographic networking/01-networking/03-tcp-handshake
+/infographic databases/04-databases/07-postgres-mvcc
+/infographic security/10-security/05-csrf-modern
 ```
 
-Behaviour:
+Pipeline (per piece, codified in `.claude/commands/infographic.md`):
 
-1. **Refuses non-fullstack topics** with a 2-line message.
-2. **Parses the input**:
-   - `topic/chapter/piece` (3 path segments) → piece tier directly.
-   - `topic/chapter` (2 segments) → chapter tier directly.
-   - Free-form text → classifies into piece / chapter / topic.
-3. Branches by tier:
-   - **Piece**: research → spec → data → SVG → PNG.
-   - **Chapter**: `INDEX.md` + ≤12 pieces, each standalone, varied composition patterns, final = "putting it together".
-   - **Topic**: `MAP.md` listing chapters (unbounded), auto-runs chapter 01, emits a list of `/infographic <topic>/02-...` continuation commands.
-4. Reports outline + paths.
+1. **Verify piece stub exists** — check `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx`.
+2. **Research** — WebSearch + Context7 (≥3 queries, middle+/senior depth: mechanism, tradeoff, failure mode, numbers).
+3. **Author EN MDX** — frontmatter + body following the template structure: Crux → mechanism → tradeoff → failure mode → numbers → KeyTakeaway → RetrievalDrawer → SpiralCue.
+4. **Translate to RU** — using `site/src/i18n/glossary.json`, add new terms alphabetically.
+5. **Verify linter passes** — `bun run build` in `site/`, check `dist/lint-report.json`.
+6. **Visual check** — open both EN and RU in a browser, verify rendering and interactivity.
+7. **Commit** — `git commit -m "content(<pillar>): <NN-piece> EN+RU ready"`.
 
-The cap of 12 stays per chapter — never raise it. The way to cover more is to declare the request a topic and let the hierarchy work.
-
-## When NOT to use `/infographic`
-
-Use the manual workflow below when:
-- The user provides their own spec/data and only wants the visual rendered.
-- The output needs to be a Figma design file (not local SVG/PNG). Then call Figma MCP write tools directly.
-- The output is a video — kick off `video-editing` skill instead.
-
-## Manual workflow
-
-1. **Brainstorm topic + spec** → write `infographics/<slug>/spec.md`. Use the `superpowers:brainstorming` skill for non-trivial concepts.
-2. **Collect data** → scrape/fetch via a script in `scripts/`, store as `infographics/<slug>/data.json`. Use the `data-scraper-agent` skill when the source is recurring.
-3. **Design in Figma** → register the file in `figma/files.json`, then drive layout with the Figma MCP (`get_design_context`, `get_screenshot`, Code Connect mappings, FigJam `generate_diagram` for flow-style pieces).
-4. **Export** → SVG/PNG into `assets/exports/<slug>/`.
-5. **Republish (optional)** → render an HTML/React page for the web, or hand off to Remotion/CapCut/ffmpeg for video.
-
-Always check `style-guide.md` before producing anything visual. ByteByteGo style is opinionated (numbered steps, isometric-ish shapes, blue/orange accent palette, generous whitespace) — deviating without reason produces off-brand work.
+The command enforces:
+- Bilingual or refuse.
+- Text budgets (Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240).
+- Hydration cap = 5 islands per page (TierAccordion + FadedExample + RetrievalDrawer + 2 baseline).
+- Status flow: stub → draft (optional) → ready.
+- Exactly 5 `..` segments in component import paths.
 
 ## MCP servers (when to use)
 
-- **`claude.ai Figma`** — primary tool. Use for any Figma URL the user shares, design-to-code, screenshots, FigJam diagrams, Code Connect. Parse URLs to extract `fileKey` and `nodeId` (convert `-` → `:` in nodeId from query strings).
-- **`Excalidraw`** — quick low-fi diagrams or `export_to_excalidraw` when a sketch is faster than Figma.
-- **`context7`** — fetch live docs for any library/SDK before writing code (Remotion, Figma plugin API, scraping libs, etc.). Always resolve → query before coding.
+- **`claude.ai Figma`** — design-to-code, screenshots, FigJam diagrams, Code Connect. Use for Figma URLs (parse `fileKey` and `nodeId`; convert `-` → `:`).
+- **`Excalidraw`** — quick low-fi diagrams or `export_to_excalidraw` for sketches.
+- **`context7`** — fetch live docs for any library/SDK before writing code. Always resolve → query before coding.
 
 ## Skills (when to invoke)
 
-- `design-system` — auditing visual consistency, generating tokens, reviewing styling changes.
-- `frontend-patterns` — when output is HTML/React.
-- `data-scraper-agent` — building a recurring scraper for an infographic data source.
-- `video-editing` / `ui-demo` — when the output is animated/video.
-- `documentation-lookup` — wrapper around Context7; use for any unfamiliar API.
-- `superpowers:brainstorming` — required before designing a new infographic concept.
-- `seo` — when publishing an infographic as a public web page.
+- `superpowers:brainstorming` — required before designing a new piece concept (depth, pedagogy, composition).
+- `superpowers:writing-plans` — when the piece needs a structured implementation plan.
+- `superpowers:executing-plans` — when executing a written plan with review checkpoints.
+- `superpowers:subagent-driven-development` — when a piece has independent sub-tasks (research, auth EN, RU translation, etc.).
+- `design-system` — auditing visual consistency, reviewing styling changes.
+- `frontend-patterns` — when a piece focuses on frontend architecture.
+- `data-scraper-agent` — building a recurring scraper for piece data.
+- `documentation-lookup` — wrapper around Context7.
+- `seo` — when publishing a piece or chapter as a public web page.
+- `video-editing` / `ui-demo` — when animating or demoing a piece.
 
-## Scripts in `scripts/`
+## Build and deploy
 
-- `svg-to-png.sh <input.svg> [output.png]` — renders SVG → PNG using the best available tool (rsvg-convert → inkscape → headless Chrome → qlmanage). Output defaults to `assets/exports/<slug>/infographic.png`. No npm/brew install required — `qlmanage` is always present on macOS as the last-resort fallback.
+**Local build:**
+```bash
+cd /Users/artemmac/dev/awesome-everything/site
+bun install
+bun run build   # Runs Astro build + linter
+```
 
-Other scripts here are intentionally ad-hoc — no shared framework. Keep them small and self-contained. If a scraper is needed long-term, promote it to the `data-scraper-agent` skill (scheduled on GitHub Actions, results into Notion/Sheets/Supabase).
+Expected: 301 pages, lint clean.
 
-For one-off scrapes, output JSON next to its consumer: `infographics/<slug>/data.json`.
+**Deploy:** Cloudflare Pages (or Hetzner CAX21 alt). Static output from `site/dist/`.
 
-## Figma file registry
+## Fenix rules
 
-`figma/files.json` is the single source of truth mapping infographic slugs → Figma `fileKey` and the relevant `nodeId`s (canvas, frames, components). When a user shares a Figma URL, parse it and register it here before doing real work — that way the slug becomes the durable handle and the URL is just one of many ways to reach it.
+- No speculative edits — change only what is asked.
+- Always check for existing patterns before introducing new ones.
+- Prefer `bun` for Node projects (yarn as fallback).
+- Before finishing any task: check types, lint, no console.log left in production code.
+- Run the site build (`bun run build` in `site/`) if you touch any piece content.
 
-## What this repo does *not* have
+## References
 
-No tests, no lint, no build, no CI yet. Don't invent them. If a script grows large enough to need TypeScript + a test runner, ask first before scaffolding a full Node project — the explicit choice was to keep the repo as an assets-and-Figma workspace, not a code project.
+- `curriculum.md` — source of truth for depth bar, 16 pillars, forbidden simplifications.
+- `style-guide.md` — ByteByteGo visual rules + component vocabulary.
+- `docs/superpowers/specs/2026-05-12-fullstack-curriculum-site-design.md` — architecture spec.
+- `docs/superpowers/plans/2026-05-12-fullstack-curriculum-site.md` — implementation plan (P2 pattern).
+- `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` — template piece (import paths, frontmatter, component usage).
