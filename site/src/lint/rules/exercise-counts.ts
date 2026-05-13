@@ -17,6 +17,7 @@ const EXERCISE_COMPONENTS = new Set([
   "MetaphorComplete",
   "RFCQuiz",
   "DesignPrompt",
+  "AnimationStep",
   "NumberDrill",
   "Sandbox",
   "RequestBudgetSandbox",
