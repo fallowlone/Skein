@@ -4,24 +4,442 @@ lang: en
 pillar: caching
 chapter: 07-caching
 order: 3
-title: "Stampede"
-summary: "Coming soon — Caches all the way down"
-readingMin: 12
-status: stub
+title: "Cache stampede: when one TTL expires and 10000 requests hit the DB"
+summary: "Why a single TTL expiry turns a hot cache key into a flash DDoS against the origin, and the four mechanisms — locks, single-flight, probabilistic early expiration, and stale-while-revalidate — that keep the database alive."
+readingMin: 24
+status: ready
 prereqs: []
-spiral: []
-personas: []
+spiral: ["statefulness", "encapsulation"]
+personas: ["bea", "cara", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-stampede
+  tradeoff: card-stampede-cost
+  failure_mode: mc-naive-ttl
+  numbers: card-stampede-numbers
 sources:
-  - https://example.com/placeholder
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+  - https://github.com/internetarchive/xfetch
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+  - https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt
+  - https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://blog.cloudflare.com/coalescing-requests/
+  - https://www.fastly.com/blog/request-collapsing
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Every layer caches. Every cache lies. How do you keep both useful?</Crux>
+A cache layer is supposed to absorb load. Invalidation (this chapter, 02) is supposed to keep it honest. But the moment a hot key expires under traffic, the cache stops absorbing — every concurrent request misses simultaneously and rushes the database. The database, which the cache was hiding, sees its full real load for the first time. This is the cache stampede: the failure mode where the cache itself is the weapon.
 
-_This piece is on the roadmap. Outline is in the chapter index._
+<Crux>One TTL expires. 10000 requests miss at once. The DB sees flash-DDoS from its own cache. Four fixes: lock, single-flight, XFetch, SWR.</Crux>
+
+The shape is universal: any cache with a TTL plus enough concurrent traffic produces a stampede when that TTL fires. A blog homepage cached for 60s, 5000 RPS sustained — at second 60, all 5000 requests in that next second miss the cache and hit the renderer. The renderer was sized for 50 RPS (it relied on the cache). Database CPU goes vertical, p99 climbs, a few requests timeout, the timed-out requests retry, the retries multiply the herd, and the system enters a metastable failure where every TTL boundary is another outage. The cure is not "longer TTL" — that just shifts when. It is one of four mechanisms that ensures the rebuild work is done by a bounded number of callers, regardless of how many missed at the same moment.
+
+<TierAccordion id="tier-stampede" lang="en">
+  <Fragment slot="junior">
+    <p><strong>What stampede is in one sentence.</strong> A popular cached value expires; thousands of requests simultaneously miss and all try to rebuild it at the same instant, overloading whatever is behind the cache.</p>
+    <p><strong>Why care.</strong> The whole point of the cache is to shield the slow thing behind it. If every expiry releases a herd, the cache makes the slow thing worse than no cache at all — because traffic is bursty instead of steady.</p>
+    <p><strong>The metaphor.</strong> A bakery sells a fresh hot pie every five minutes. Without coordination, every customer in line places an independent order the instant the pie sells out — the lone baker is now juggling fifty orders for the next pie. The fix is not more pies; one customer takes the order and the rest wait, or the next pie starts baking before the current one sells out.</p>
+    <p><strong>Bea, Cara, Sven.</strong> <PersonaTag id="bea" lang="en" /> the browser asks for the homepage. <PersonaTag id="cara" lang="en" /> the cache says "miss" — the 60s TTL just fired. Bea's request becomes <PersonaTag id="sven" lang="en" /> the renderer running an expensive query. Except Bea is one of 5000 browsers in that same second, all of which now hit Sven. Sven was sized for one or two concurrent renders, not 5000. DB CPU saturates, half the renders fail, the half that succeed each store the same value — duplicate writes. At second 120 it happens again.</p>
+    <p><strong>One scenario.</strong> Flash sale launches at 12:00:00. Homepage cache TTL 30s. At 12:00:30 the TTL fires. 10000 requests hit Cara within one second. 10000 misses. 10000 concurrent renders. DB falls over. Customers see 503. The flash sale becomes flash outage — a stampede destroyed the very campaign the cache was meant to enable.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="What triggers a cache stampede?"
+      choices={[
+        { label: "A cache server crashes and loses data", misconception: "Cache server crash is a different failure; stampede happens with a healthy cache where a TTL fires under load." },
+        { label: "A hot cache key expires while many concurrent requests for it are in flight", correct: true },
+        { label: "The cache fills up and evicts data", misconception: "Eviction can contribute, but the canonical stampede is TTL expiry on a hot key — not cache pressure." },
+        { label: "The database becomes faster than the cache", misconception: "The DB is the slow path the cache is hiding; speeds do not cross in normal operation." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="Why does increasing the TTL not fix cache stampede?"
+      choices={[
+        { label: "Longer TTL means more memory used", misconception: "Memory pressure is a different concern; the question is whether the stampede goes away." },
+        { label: "It only changes when the stampede happens, not whether it happens — the same herd hits the DB whenever the longer TTL eventually fires", correct: true },
+        { label: "Longer TTL serves stale data", misconception: "Staleness is a tradeoff but not why the fix fails; the fix fails because expiry still produces a herd." },
+        { label: "TTL has nothing to do with stampedes", misconception: "TTL expiry is the canonical trigger; the fix has to address what happens at expiry." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      prompt="Put the events of a textbook cache stampede in order:"
+      items={[
+        "A hot cache key has TTL 60 seconds and 5000 RPS of read traffic",
+        "Second 60 arrives: the cache key expires",
+        "5000 concurrent requests in the next second all see 'miss'",
+        "All 5000 requests run the same expensive backend rebuild",
+        "Database CPU saturates at 100%; renders queue, then time out",
+        "Half the requests succeed in writing the new value; the other half error to the user",
+        "For the next 60s the cache absorbs traffic normally — until the next expiry",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      setup="Fill in the blank: a cache stampede happens because many requests miss the cache _______, all at the same instant."
+      accepted={["concurrently", "simultaneously", "at once", "together", "in parallel"]}
+      canonical="concurrently (also: simultaneously / at once)"
+      explanation="The defining shape is concurrency: one request missing is fine, ten thousand missing in the same instant overwhelms the rebuild path. Every stampede mitigation reduces concurrent rebuild work to one (or a small bounded number) regardless of how many missed."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-stampede"
+      lang="en"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "In one sentence: why does a cache make a failure mode worse than no cache at all?",
+          answer: <p>Because the cache reshapes traffic from steady to bursty. Without a cache the database sees 5000 RPS evenly. With a cache, it sees 0 RPS for 60 seconds, then 5000 RPS in one second, then 0 for 60s, then 5000 in one. The total request count is far lower with the cache, but the peak concurrency at every TTL boundary is the same as full unfiltered traffic. The database was sized for steady-state behind a cache, not for one-second bursts of the full traffic load. So the stampede creates a failure mode that would not exist if the cache had never been there: bursty arrivals at the slow backend.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>The mechanics of the herd.</strong> Caches in front of databases (Redis, memcache), of computed results (image transforms, ML inferences), or of upstream APIs (third-party data) all share the same shape: a key, a TTL, a backend rebuild path. When a request arrives, the cache layer runs <code>GET key</code>; if the result is non-null and not expired, return it (cache hit). If null or expired, run the rebuild, store the result with TTL, return it. Under low concurrency this works: at TTL boundary, the first request to arrive triggers one rebuild and stores the new value; all subsequent requests in that TTL window are hits. Under high concurrency, the boundary is destroyed: requests 1 through N (where N is the number of concurrent in-flight requests) all run the rebuild in parallel because they all hit between the moment the old key expired and the moment any of them wrote the new value. The DB sees N times the load it expected.</p>
+    <p><strong>Mitigation 1: distributed locking.</strong> Before running the rebuild, acquire a lock. In Redis the canonical primitive is <code>SET lock:key 1 EX 5 NX</code> — set if not exists, expire in 5 seconds. The first request to arrive acquires the lock and runs the rebuild; subsequent requests get <code>nil</code> from the SET (because NX failed), see the lock is held, and either wait-and-retry or serve a fallback (stale value, default page, empty 204). After the rebuild completes, the lock is deleted explicitly. The 5-second EX is the safety net: if the rebuilder crashes mid-work, the lock auto-releases. Tradeoff: locks serialise rebuilds across the whole fleet, so any node can rebuild but only one at a time. Waiters add latency. The lock TTL must be longer than the slowest expected rebuild but short enough that crashes do not stall traffic for too long.</p>
+    <p><strong>Mitigation 2: single-flight / request coalescing.</strong> Distributed locks coordinate across the fleet; single-flight coordinates within a single process. The pattern: maintain an in-process map of <code>key → in-flight Promise</code>. When a request needs the value, check the map. If a Promise is already in flight, return it (the request now subscribes to the same computation). If not, create a new Promise that runs the rebuild, put it in the map, and return it. When the Promise resolves, remove it from the map. The Go standard library has this as <code>singleflight.Group.Do</code>; Node has <code>p-memoize</code> with the same shape. Single-flight is much cheaper than a distributed lock because there is no network round-trip — the coordination happens in-memory. It only deduplicates within one process, so a 10-node fleet still has 10 concurrent rebuilds at expiry, but each node coalesces its own thousand-request herd into one. Combine with the per-key lock for full coverage.</p>
+    <p><strong>Mitigation 3: probabilistic early expiration (XFetch).</strong> Vattani et al. (VLDB 2015) proposed a coordination-free approach: every read decides probabilistically whether to refresh the cache early, based on how close it is to expiry. The formula: refresh if <code>-beta * delta * ln(random()) &gt; time_to_expire</code>, where <code>delta</code> is the typical rebuild duration in seconds, <code>random()</code> is a uniform random in (0, 1), and <code>beta</code> is a tuning constant (default 1.0). As the TTL approaches, the probability climbs, so some lucky reader refreshes the cache before expiry while everyone else is still served from the still-valid cache. On average, exactly one early refresh happens per TTL window, smeared randomly. No lock, no coordination, no fleet awareness needed — every reader independently decides. The catch: XFetch only works if reads are frequent enough that "some reader" hits the probabilistic threshold before TTL. For cold-ish keys with sporadic reads, XFetch can miss the window and stampede the way naive TTL does.</p>
+    <p><strong>Mitigation 4: stale-while-revalidate.</strong> RFC 5861 defines a cache directive that says "serve the stale value for up to N seconds while refreshing in the background". The server side stores not just the value and its TTL, but a longer stale-grace window. On a read after TTL but before stale-grace expires, the cache returns the stale value immediately and enqueues a background refresh. The user sees one fast response with slightly stale data; the cache gets repopulated for the next reader. CDNs (Cloudflare, Fastly, Akamai) have shipped SWR for years; Next.js's ISR is SWR for full pages. Trade: readers tolerate some staleness. The pattern explicitly accepts that the cached representation is allowed to lag the source of truth by the stale-grace window — usually fine for product listings, content pages, anything not requiring strong consistency.</p>
+    <p><strong>Facebook memcache leases: the production reference.</strong> Nishtala et al. (NSDI 2013) describe Facebook's approach as "memcache leases": when a client misses, the cache returns a 64-bit lease token along with the miss. Only the client holding the token may write the new value back. Concurrent miss-clients in the same key get the miss but no lease — they are told to wait. Additionally, leases throttle: a key gets at most one lease per 10 seconds. The reported impact: peak DB query rate fell from 17K QPS to 1.3K QPS — roughly 13× reduction. The lease is the lock plus the throttle in one mechanism. Memcache implements this server-side; Redis lacks a native equivalent but can be modelled with <code>SET lease:key uuid EX 10 NX</code> plus client logic to check the returned uuid before writing.</p>
+    <p><strong>Composition: defence in depth.</strong> Production stampede protection rarely uses one mitigation alone. The canonical stack: SWR at the edge (Cloudflare or your CDN) absorbs the bulk of expiry traffic by serving stale; XFetch in the origin's cache layer prevents the next layer's stampede by refreshing before expiry; single-flight in each application instance coalesces any remaining herd; a per-key distributed lock serialises rebuilds across the fleet for ultra-hot keys. Each layer drops the herd size by an order of magnitude. The fully-stacked configuration takes 10000 concurrent misses and turns them into one rebuild somewhere in the stack — every other request returned a stale-but-acceptable value or waited on an in-flight rebuild.</p>
+    <p><strong>Detecting stampede in production.</strong> The fingerprint is sharp: at-TTL-boundary spikes in DB CPU, query count, and request latency, with regular periodicity matching the TTL value. A 60-second TTL produces 60-second-spaced spikes; a 300s TTL produces them every five minutes. Metrics to watch: <code>cache_miss_total</code> rate (a normal-shape cache shows low and smooth, a stamped cache shows sharp periodic spikes), <code>db_query_rate</code> p99 (sharp spikes at TTL boundaries indicate downstream stampede), <code>rebuild_duration_seconds</code> (long tails during boundary indicate contention). The mitigations leave traces: SWR shows <code>cache_stale_serve_total</code> (non-zero during refreshes); single-flight shows <code>singleflight_subscriber_count_p99</code> (a number above 1 means coalescing was active); lock-based shows <code>lock_wait_total</code> and <code>lock_acquire_duration</code>. If none of these are instrumented, stampedes are invisible until they cause an outage.</p>
+    <p><strong>Negative caching and miss-storms.</strong> The same stampede shape applies when the answer is "not found". If the application caches DB null-results as a cache entry with the same TTL as positive results, a flood of requests for non-existent keys produces the inverse stampede: every cache miss results in a DB miss-lookup, which (under high concurrency) overloads the DB just as completely as positive misses. Mitigation has two parts: cache the "no such row" sentinel with a much shorter TTL (5-30s vs the positive 60-300s) so memory churn is bounded; and use a Bloom filter in front of the cache to reject lookups for keys that definitely do not exist (false-positive rate ~1% is fine; the filter is reset whenever the table is rebuilt). Without negative caching, an attacker can mint random non-existent keys (e.g. random UUIDs in a URL) to amplify DB load by orders of magnitude — a documented attack pattern that hit multiple CDN-backed sites in 2024.</p>
+    <p><strong>Pre-warming and cache-priming.</strong> When a cache layer restarts (deploy, eviction, machine restart), it starts empty. Every incoming request misses and hits the DB. The recovery period is its own mini-stampede: if you restart at peak traffic, you produce a full-traffic origin spike. Production caches avoid this by pre-warming on startup: replay yesterday's top-N URLs against the new cache before accepting public traffic. Cloudflare's edges pre-warm from neighbouring POPs; Redis-as-a-cache deployments use a startup script that reads "top 1000 keys" from an audit log and primes the cache. Pre-warming is also the only safe deploy strategy for cache-tier upgrades: blue-green the cache instances, warm the green, then cut traffic. Cold-start stampede is the most common cause of post-deploy outages for high-traffic sites.</p>
+    <NumbersCard
+      id="card-stampede-cost"
+      title="Cache stampede: the numbers that matter"
+      stats={[
+        { label: "Facebook leases DB QPS reduction", value: "17K → 1.3K (~13×)" },
+        { label: "Reddit reported DB peak drop", value: "~3× with coalescing" },
+        { label: "XFetch avg early refreshes/TTL", value: "≈1 (regardless of fleet size)" },
+        { label: "XFetch tuning beta default", value: "1.0" },
+        { label: "Memcache lease throttle", value: "1 lease per key / 10 s" },
+        { label: "Typical lock EX value", value: "5–30 s (> rebuild p99)" },
+        { label: "SWR stale-grace (RFC 5861)", value: "tens of s to minutes" },
+        { label: "Per-key herd reduction (full stack)", value: "10000× missed → 1 rebuild" },
+      ]}
+    />
+    <Misconception id="mc-naive-ttl">
+      <p><strong>"I'll set a longer TTL and stampedes go away."</strong> Longer TTL only shifts when. The 10000 misses still all hit at the next expiry — once an hour instead of once a minute. Stampedes per day drop, but each one is still catastrophic. The right fix changes the rebuild shape, not the TTL.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-stampede-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      title="Trace one stampede with and without single-flight"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Setup:</strong> Node service, Redis cache, key <code>homepage:v1</code> with TTL 60s. Backend rebuild takes 400ms. Traffic: 5000 RPS steady.</p>
+            <p><strong>Without single-flight:</strong></p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>T=60.000s: cache key expires.</li>
+              <li>T=60.000 to T=60.400: ~2000 requests arrive, each runs <code>GET homepage:v1</code>, each gets nil, each runs the 400ms rebuild in parallel.</li>
+              <li>T=60.400: all 2000 rebuilds complete; each writes the new value to Redis (duplicate writes); each returns to its client.</li>
+              <li>DB peak during the window: 2000 concurrent queries against the renderer's backend.</li>
+            </ul>
+            <p><strong>With single-flight (in-process map):</strong></p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>T=60.000s: cache key expires.</li>
+              <li>T=60.000: first miss-request enters the rebuild path. It puts a Promise into the in-process map keyed by "homepage:v1" and starts the 400ms rebuild.</li>
+              <li>T=60.001 to T=60.400: 1999 more misses arrive. Each checks the map, finds the existing Promise, subscribes to it. No new rebuilds start.</li>
+              <li>T=60.400: the Promise resolves with the rebuilt value. All 2000 subscribers (the original + 1999 waiters) get the same value. One write to Redis.</li>
+              <li>DB peak during the window: 1 query, not 2000.</li>
+            </ul>
+            <p><strong>Across a 10-node fleet:</strong> single-flight alone reduces the herd from 2000 per node × 10 = 20000 to 1 per node × 10 = 10 concurrent queries. Add a distributed lock or memcache lease to go from 10 to 1.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "Same setup but with XFetch (beta=1.0, delta=0.4s, TTL=60s). Around what time T does the FIRST early refresh fire, on average?",
+          blanks: [
+            { id: "approx_time", expected: "59.6s", placeholder: "approximate T" },
+          ],
+        },
+        blank: {
+          prompt: "Same setup with stale-while-revalidate at the edge (Cloudflare, stale-grace 60s, TTL 60s). At T=60.001s when 2000 requests arrive concurrently, how many of them wait on a fresh rebuild?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p><strong>Zero.</strong> All 2000 get the stale value immediately (the edge returns the still-cached but now-expired representation), and exactly one of them triggers a background refresh. Users see one fast response with slightly-stale content; the origin gets one query, not 2000.</p>
+              <p>SWR's trade: every user during the refresh window sees stale content. For homepage content, product listings, news feeds, this is usually fine — staleness is bounded by the stale-grace value (60s here), users probably do not notice, and the alternative is either lock-induced waiters or a stampede-induced outage.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "approx_time:60s": "XFetch's randomness means the first refresh fires before expiry, not at it. With beta=1.0 and delta=0.4s, the probabilistic threshold typically fires when time_to_expire is roughly delta, i.e. ~0.4s before TTL.",
+        "approx_time:30s": "30s is way too early — that is half the TTL. XFetch concentrates refreshes near expiry, not in the middle of the window.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="A team's cache has 50 nodes. Each node uses in-process single-flight. At a TTL boundary 100000 concurrent misses arrive. How many rebuilds happen?"
+      choices={[
+        { label: "1 — single-flight collapses everything to one rebuild", misconception: "Single-flight only coalesces within one process. 50 nodes mean 50 independent in-process maps, so up to 50 rebuilds." },
+        { label: "100000 — single-flight only works on caches, not rebuilds", misconception: "Single-flight is exactly the rebuild coalescer; it does fire here, just per-node." },
+        { label: "50 — one rebuild per node because each node has its own in-process map", correct: true },
+        { label: "It depends on the database", misconception: "The DB does not affect the count; the count is set by the coordination layer (single-flight is per-process)." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="What is the role of the lock TTL (EX value) in a SETNX-based stampede mitigation?"
+      choices={[
+        { label: "It throttles how often the cache is refreshed", misconception: "Throttling is a separate mechanism (e.g. memcache leases); EX prevents stuck locks." },
+        { label: "It bounds how long a crashed rebuilder can block the system; must be longer than rebuild p99 but short enough that crashes do not stall traffic for long", correct: true },
+        { label: "It is the same as the cache TTL", misconception: "Cache TTL is value-lifetime; lock TTL is rebuild-safety. They are independent." },
+        { label: "It rotates the lock key", misconception: "Locks do not rotate keys; EX is purely a stuck-lock safety net." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="A read-heavy cache has 'cold' keys with sporadic reads (one read per 30s, TTL 60s). Why does XFetch perform poorly here?"
+      choices={[
+        { label: "XFetch is broken on low-traffic keys", misconception: "XFetch is correct; it is the traffic shape that defeats it." },
+        { label: "The probabilistic refresh needs frequent reads to fire the early-refresh threshold; sporadic reads may miss the window, leaving the key to expire normally and stampede", correct: true },
+        { label: "XFetch requires multi-node coordination", misconception: "XFetch is intentionally coordination-free; the issue is per-key read rate." },
+        { label: "XFetch only works on Redis", misconception: "XFetch is algorithm-agnostic; backend doesn't matter." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      scenario="A homepage's p99 latency is normally 50ms but jumps to 800ms every 60 seconds. Trace the diagnosis."
+      steps={[
+        { prompt: "Step 1: 60-second-periodic latency spikes — what is the suspect mechanism?", reveal: "Periodicity matching a TTL is the textbook stampede fingerprint. Confirm by finding any cache key with TTL 60s on the homepage path." },
+        { prompt: "Step 2: cache config shows homepage:v1 has TTL 60s. How to confirm stampede is the cause?", reveal: "Look at DB query rate over time. A stamped cache shows a sawtooth: near-zero between TTLs, spike to thousands at each TTL boundary. The spike width is the rebuild duration." },
+        { prompt: "Step 3: DB rate is 10 QPS steady with 4000 QPS bursts every 60s. Mitigation choice?", reveal: "Single-flight is the smallest, lowest-coordination fix. Add an in-process map keyed by homepage key. First request through starts the rebuild; subsequent requests in the same process subscribe. For multi-node, add a per-key Redis lock or memcache-style lease." },
+        { prompt: "Step 4: deploy single-flight; the spikes drop to 50 QPS at each boundary (one rebuild per node × 50 nodes). Acceptable?", reveal: "50 QPS spikes are tolerable but still wasteful. Add SWR at the edge or a Redis lease for the next reduction. Goal: bring boundary-spike to <5× steady-state." },
+        { prompt: "Step 5: how to prevent regression?", reveal: "Add a synthetic test: inject 5000 simulated misses against a hot key, assert DB query count stays under N. Run it in CI as a stampede-protection regression test. Add a dashboard panel showing 'queries-per-TTL-boundary' as a first-class metric." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="03-stampede"
+      lang="en"
+      scenario="A flash sale launches at noon; the system melts down at 12:00:30. Trace the failure."
+      steps={[
+        { prompt: "Step 1: launch at 12:00:00, melt at 12:00:30. What does the 30-second offset suggest?", reveal: "The cached homepage at the time of launch had a fresh 30s TTL. At 12:00:30 it expired and the herd hit — but the herd was sized for the launch traffic, not steady-state." },
+        { prompt: "Step 2: launch traffic was 50k RPS; steady-state pre-launch was 500 RPS. What changed at expiry?", reveal: "100x more requests in the missing window than the cache layer had ever experienced. The rebuild path, designed for 500 RPS, saw 50000 concurrent rebuild attempts. DB CPU 100%, p99 above 30s, connection pools exhausted." },
+        { prompt: "Step 3: lock-based mitigation deployed under fire. Why does it under-perform?", reveal: "Lock works but waiters now queue. 50000 requests all waiting on one rebuild creates a different failure: the waiters time out in their client because the rebuild took longer than their request budget. Need to combine lock + fallback (serve last-known-good while rebuild is in flight)." },
+        { prompt: "Step 4: switch to SWR with stale-grace 5 min. What happens?", reveal: "At 12:00:30 the stale homepage serves immediately to all 50k concurrent requests. One request (randomly elected) triggers a background refresh. Users see slightly-stale content for ~5min during the rebuild but no outage. DB sees 1 query instead of 50000." },
+        { prompt: "Step 5: long-term design lessons?", reveal: "Pre-warm the cache before launches: write the new homepage value at 11:59:30 so the launch starts with a fresh 60s TTL. Combine with SWR so any post-launch TTL boundary is absorbed. Run synthetic load-test of launch + 60s to surface the boundary spike before production sees it." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      prompt="Order the steps a request takes in a single-flight + Redis-lock stack:"
+      items={[
+        "Request arrives; cache GET returns nil (miss)",
+        "Check in-process singleflight map for the key — if a Promise exists, subscribe to it and stop",
+        "No Promise: try to acquire a Redis lock with SET lock:key uuid EX 10 NX",
+        "Lock acquired: register a new Promise in the in-process map and start the rebuild",
+        "Rebuild completes: write the new value to cache with TTL, delete the Redis lock, resolve the Promise",
+        "All in-process subscribers receive the resolved value via the Promise",
+        "If lock was NOT acquired by step 3: wait briefly and re-check the cache, then return the now-fresh value or a fallback if still missing",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-stampede"
+      lang="en"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Why does XFetch work without any coordination across the fleet, while distributed locks require explicit cross-node communication?",
+          answer: <p>Because XFetch's design constraint is that the expected number of early refreshes per TTL window is 1 globally, regardless of fleet size. The probability per-reader is calibrated against the typical rebuild duration delta, not the number of readers — so as the fleet grows from 1 node to 100 nodes the probability does not need to change. Mathematically, the exponential distribution Exp(lambda) has the property that the minimum of N independent draws is also exponentially distributed (with rate N×lambda). Practically: with more readers, the chance that "some reader" hits the early-refresh probability earlier grows, but the expected total is still ~1. Distributed locks have no equivalent property; they require an explicit primitive (Redis SETNX, ZooKeeper ephemeral nodes, etc.) and pay a round-trip per attempt. XFetch's trade is that it relies on traffic frequency: low-rate keys can fail to fire any early refresh and then stampede normally.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "What is the practical difference between in-process single-flight and a Redis-backed distributed lock, and when should you use each?",
+          answer: <p>Single-flight is a Map kept in the application's process memory; lookup and insertion are O(1) with no network. Use it as the first line of defence — it handles the herd within one process essentially for free. A distributed lock uses a shared store (Redis, etcd, ZK) so all processes see the same lock state; every acquire costs a network round-trip (typically 0.5–2ms within a datacenter). Use it as the second line: after single-flight collapses N requests-per-node to 1, the distributed lock collapses N nodes to 1. In practice, application code rarely manipulates the Redis lock directly — it sits in a small library function called by the rebuild path. The composition is: single-flight first (fast, free), distributed lock second (slow, shared), and SWR or fallback third (always returns something even if both above fail). Each layer reduces the herd by an order of magnitude.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>XFetch derivation: why exponential is optimal.</strong> Vattani et al. (VLDB 2015) frame the problem as: given a cache key with TTL <code>t</code> and rebuild cost <code>delta</code>, schedule refreshes so that (a) the cache rarely expires under load, (b) exactly one refresh happens per TTL window on average, and (c) no coordination between readers. The probability distribution that satisfies all three is the exponential. The decision rule is <code>refresh ← random_exp(beta * delta) ≥ time_to_expire</code>, which simplifies to <code>refresh ← -beta * delta * ln(random()) ≥ time_to_expire</code>. The expected fraction of reads that trigger an early refresh, integrated over the TTL window, is one. The variance is exactly the variance of an exponential distribution. The parameter <code>beta</code> controls aggression: lower beta means earlier refreshes (more staleness avoidance, more wasted work), higher beta means later refreshes (closer to TTL, smaller refresh window). The original paper proves no coordination-free algorithm with these guarantees can beat exponential's expected work; any tighter rule requires either coordination or accepting more variance.</p>
+    <p><strong>Facebook memcache leases: the algorithm in detail.</strong> A memcache lease is a 64-bit token returned alongside a cache miss. The protocol: client reads key, gets a null value plus a lease token. Only a client holding a valid token for that key may run SET. The server tracks the most recent lease issued per key; SET requests with a non-matching token are silently dropped. The throttle: a memcache server issues at most one lease per key per 10 seconds. If a second miss arrives within 10s, the server returns a null value with no lease and the client backs off (waits 100ms-1s, retries the GET — by which time some other client probably wrote the value). Concurrent miss-handlers spread across the fleet self-coordinate via lease ownership; only one writes the value, the rest serve the previous (stale) value if available or back off. Nishtala et al. (NSDI 2013) report 17K → 1.3K QPS reduction at peak. The mechanism doubles as a thundering-herd defence and a stale-set-invalidation race fix (a SET from the old read is silently dropped because the lease became invalid the moment the value was invalidated by a write).</p>
+    <p><strong>Cloudflare and Fastly request collapsing at the edge.</strong> Production CDNs implement single-flight at the cache layer: when the edge sees N simultaneous misses for the same path, it forwards exactly one origin request and pipes the response to all N waiting client connections. Cloudflare calls this "request coalescing"; Fastly calls it "request collapsing". The mechanism is part of the cache's lifecycle: a miss enters the "stitching" state, originating one upstream fetch; new misses for the same key while in stitching attach to the in-flight fetch. The response splays to all attached connections simultaneously. The edge effect is that a viral content event (10 million viewers hitting one URL) produces one origin fetch, not 10 million. Both CDNs publish that request collapsing turns sudden-traffic incidents into low-impact events at the origin; without it, every CDN miss = upstream load.</p>
+    <p><strong>Stale-while-revalidate semantics: RFC 5861.</strong> The HTTP Cache-Control extensions in RFC 5861 add two values: <code>stale-while-revalidate=N</code> (serve the stale response for up to N seconds while revalidating in the background) and <code>stale-if-error=N</code> (serve the stale response for up to N seconds if revalidation fails). Together they shape the cache's behaviour at expiry: when the cached response is past its <code>max-age</code> but within the stale-while-revalidate window, the cache returns it immediately and asynchronously initiates a fetch to the origin. Cloudflare implements this at edge; Vercel's ISR is the same shape at framework level; Apollo's GraphQL caching uses it for normalised cache entries. The design tradeoff: the user always sees a fast response, the source-of-truth is asynchronously reconciled. Critical for content/feed APIs; unsuitable for endpoints requiring strong consistency (account balance, vote count, anything that affects business logic).</p>
+    <p><strong>Cache-Aside, Read-Through, Write-Through and their stampede profiles.</strong> Cache-aside (application owns both reads and writes to the cache) is the most stampede-prone shape: every reader checks cache, on miss reads DB and writes cache, with no built-in coordination. Read-through (cache library transparently fetches from DB on miss) can build in single-flight if the library implements it (Caffeine, Redis with redisson_client_side_caching, Apollo's RestDataSource). Write-through (every write hits both DB and cache) eliminates a class of stampedes by keeping the cache always-fresh — at the cost of doubled write latency. Write-back (write to cache, async to DB) has its own stampede shape: bursts of cache writes can flood the DB asynchronously. Choose by access pattern: cache-aside for reads with read-heavy traffic and tolerable staleness, write-through for transactional state, write-back for high-write throughput.</p>
+    <p><strong>Negative caching and miss-amplification attacks.</strong> A subtle production trap: if the DB returns "no such row" and the application caches that as null, two failure modes appear. First, a malicious client can request random non-existent keys to fill the cache with nulls (cache-poison-by-flood). Second, after a real INSERT the cache still has null and the new row is invisible until TTL fires. Mitigation: explicit "missing" sentinel with short TTL (5–30s, much shorter than the positive TTL) and per-key write-through invalidation that deletes the negative entry on INSERT. Some caches (Redis with bloom filters, DynamoDB with item-not-found cache) support this natively. The other shape — DDoS by requesting many cold keys to amplify DB misses — is the actual "cache miss attack" pattern that affected CDNs in 2024 and caused at least two large public incidents.</p>
+    <p><strong>Real production failures.</strong> Reddit 2017: a feed-cache change shipped without single-flight produced 3× DB peaks at every TTL; rolled back within an hour after on-call paged on DB CPU. Shopify 2020: a Black Friday flash-sale page had 30s TTL and no SWR; the entire storefront edge had a multi-second outage at every TTL boundary in the first 10 minutes — fixed by deploying stale-grace 5min on the next push. Twitter 2022: timeline cache stampede caused by an unrelated invalidation bug; the invalidation triggered 30M concurrent rebuilds and the DB pool saturated for 4 hours. Cloudflare 2024 disclosed a coalescing bug in KV cache that briefly allowed N requests for the same key to bypass coalescing during a deploy window. The pattern across all four: stampede protection was either missing, mis-configured, or had a bug that defeated it under load — and the cost was an outage proportional to the protection's gap.</p>
+    <p><strong>Observability instrumentation.</strong> Minimum-viable instrumentation for stampede protection: <code>cache_request_total</code> by outcome (hit/miss/stale) by key prefix, <code>cache_rebuild_duration_seconds</code> histogram with p50/p99/p99.9, <code>cache_lock_acquired_total</code> and <code>cache_lock_wait_seconds</code>, <code>cache_singleflight_subscriber_count</code> histogram (a long tail means coalescing is doing real work), <code>cache_swr_stale_serve_total</code> (non-zero during refresh windows), <code>cache_swr_background_refresh_total</code> and the per-key version, <code>cache_lease_throttled_total</code> if using memcache leases. Alert on three signals: (1) cache_miss rate above N × steady_state (stampede in progress or imminent), (2) DB QPS p99 above K × p50 (sawtooth from boundary spikes), (3) cache_lock_wait_seconds_p99 above the rebuild duration (locks queueing). Without these, the first sign of a stampede is the database paging on-call.</p>
+    <p><strong>TTL design beyond static values.</strong> Per-key TTL jitter: instead of TTL=60 for every key, use TTL=uniform(45, 75) so different keys expire at different times. A fleet of 1000 keys with jittered TTLs produces a smooth load curve at the DB instead of synchronized spikes. Production caches (Caffeine, Memcached, Redis with manual jitter) support this either natively or via a wrapper. Dynamic TTL: shorten TTL when the cache item is reaccessed within its lifetime, lengthen when reads are sparse — adaptive caches like Caffeine's W-TinyLFU implement this. Per-tier TTL: short at the edge (CDN, ~seconds), longer at the application cache (Redis, ~minutes), longest at a warm-cache backing store (S3, ~days). Each tier absorbs traffic at its own boundary, so even if all expire near each other, the lower tier serves the upper tier's miss without round-tripping to the DB.</p>
+    <p><strong>Cross-protocol composition: cache + CDN + DB.</strong> A modern stack has at least three caching layers. Browser cache (per-user, microseconds) absorbs reload bursts. CDN (per-edge, multiple ms) absorbs viral traffic with SWR + request coalescing. Application cache (Redis, ~ms) absorbs API-shape traffic with single-flight + lock. Database (~tens of ms, the slow truth) sees only what the upper layers fail to absorb. A stampede at any tier propagates to the next; SWR at the CDN absorbs CDN-tier expiry; single-flight at the application absorbs application-tier expiry; lock at the application absorbs cross-application-instance expiry. The full-stack rule: every tier's stampede must be locally bounded, so the tier below sees one rebuild per N misses, regardless of N. If any tier breaks this, the failure cascades to the bottom.</p>
+    <p><strong>The metastable failure shape.</strong> A cache stampede can push a system into a metastable state where it cannot recover even after the original cause is gone. Sequence: TTL expires, herd hits DB, DB CPU 100%, queries queue, queue depth grows past timeout, queries time out, clients retry (often with exponential backoff that does not apply because they think the timeout was their fault), retries multiply the herd, queue grows further, latency goes up, more timeouts, more retries. The system is now in a self-sustaining storm where the cache cannot rebuild fast enough to escape because the DB is too busy serving retries. Recovery requires either (a) load shedding at the front door (return 503 immediately on overload to break the retry loop), (b) circuit-breaking the rebuild path (serve stale forever until DB recovers), or (c) restarting the application servers to drop in-flight retries. Bouman et al. (2024) formalised this as a metastability pattern; the mitigation is the same as any metastable failure: have an explicit "kill the herd" signal that overrides normal cache behaviour during the storm.</p>
+    <NumbersCard
+      id="card-stampede-numbers"
+      title="Senior-tier stampede numbers"
+      stats={[
+        { label: "XFetch beta default (Vattani 2015)", value: "1.0" },
+        { label: "Facebook lease throttle interval", value: "10 s" },
+        { label: "Facebook lease QPS reduction (peak)", value: "13× (17K → 1.3K)" },
+        { label: "Cloudflare request coalescing scope", value: "per edge POP, per key" },
+        { label: "RFC 5861 stale-while-revalidate", value: "tens of s to minutes" },
+        { label: "Typical TTL jitter range", value: "±15–25% of nominal" },
+        { label: "Lock-wait p99 target", value: "< rebuild p99" },
+        { label: "Synthetic-stampede CI test", value: "5–10k simulated misses" },
+      ]}
+    />
+    <Misconception id="mc-lock-only">
+      <p><strong>"A Redis lock alone is enough."</strong> A lock only serialises rebuilds; it does not bound waiter latency. 10000 requests waiting on one 400ms rebuild produce a 10000-deep queue, and each waiter accumulates extra wait time. Pair the lock with a fallback (stale value, default page) so waiters never starve.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      scenario="A service hit metastable failure mode: DB CPU 100% for 4 hours after a brief stampede. Trace recovery."
+      steps={[
+        { prompt: "Step 1: stampede happened at T=0 lasting ~10s. Why is DB still pegged at T=4h?", reveal: "Metastable: retries from timed-out clients are now the dominant traffic. Each retry adds load; the load prevents the cache from rebuilding; the missing cache forces more clients to retry. Self-sustaining storm." },
+        { prompt: "Step 2: how to confirm retries are the issue, not new traffic?", reveal: "Look at request-id continuation: the same logical request ID appears multiple times in logs (retry-count > 0). Look at client SDK metrics: retry rate is the storm-detector. If retries are 10x the normal level, the system is in a retry storm." },
+        { prompt: "Step 3: simple-to-deploy fix?", reveal: "Load-shed at the gateway: return 503 on overload (DB CPU > 90%) so clients stop retrying. The retry storm requires successful requests to continue; 503 kills the loop. Most client SDKs do not retry 503 (they back off). After 30-60s the queue drains, cache rebuilds, system recovers." },
+        { prompt: "Step 4: longer-term fix?", reveal: "Circuit-breaker on the cache rebuild path: when rebuild fails or takes too long, serve stale forever until DB CPU comes back to normal. This breaks the dependency between cache rebuild and DB health. Combined with retry-cap (max 3 retries with exponential backoff) at the client SDK." },
+        { prompt: "Step 5: how to detect metastable mode before it happens?", reveal: "Alert on retry rate above 2x baseline. Alert on cache miss + rebuild duration p99 above the rebuild SLO. Alert on DB CPU above 90% for >30s. Each one is a metastability precondition; any two together indicate the storm is forming." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      title="Diagnose the cache layer log — what is the failure mode?"
+      output={`2026-05-13T18:00:00Z INFO  cache homepage:v1: TTL fired
+2026-05-13T18:00:00Z INFO  cache homepage:v1: 2847 concurrent misses
+2026-05-13T18:00:00Z INFO  lock try: SET lock:homepage:v1 uuid-A EX 10 NX
+2026-05-13T18:00:00Z INFO  lock acquired by request-1
+2026-05-13T18:00:00Z WARN  lock contention: 2846 requests waiting
+2026-05-13T18:00:00Z INFO  request-1 starting rebuild
+2026-05-13T18:00:05Z WARN  request-1 rebuild taking longer than usual
+2026-05-13T18:00:10Z ERROR lock:homepage:v1 expired before rebuild completed
+2026-05-13T18:00:10Z INFO  request-2 acquired lock (stale rebuild)
+2026-05-13T18:00:10Z INFO  request-3 acquired lock (race with request-2)
+2026-05-13T18:00:15Z WARN  duplicate writes to homepage:v1 detected`}
+      outputLang="log"
+      question="The log shows the lock-based mitigation, but a duplicate-write warning appears at 18:00:15. What went wrong and how do you fix it?"
+      hint="The lock EX is 10 seconds. The rebuild took longer than 10 seconds. What happens to the lock?"
+      answer="The lock TTL (EX 10) was shorter than the actual rebuild duration (>10s). When the lock auto-expired, request-1 was still running its rebuild — but request-2 saw an empty lock slot, acquired the lock, and started its own rebuild. Then request-3 raced with request-2. Now two (or three) rebuilds are in flight, each will write to homepage:v1 — duplicate writes. The fix has three parts: (1) increase the lock EX to longer than rebuild p99.9 (here, probably 30s instead of 10s); (2) have the rebuilder use the lock uuid to verify it still holds the lock before writing — SET lock:homepage:v1 uuid-A on initial acquire; before write, GET lock:homepage:v1 and check it matches uuid-A — if not, abort the write; (3) use a fencing token (monotonic version) on writes so even with overlapping rebuilds the older one's write is rejected. RedLock and similar primitives bake all three in."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      prompt="A team is designing the cache for a high-traffic product-listing API. Pick the stampede-prevention stack."
+      options={[
+        { name: "SWR at CDN + single-flight at app + Redis lock for ultra-hot keys + jittered TTL", summary: "Full stack defence in depth.", correct: true, justification: "SWR absorbs the bulk of expiry traffic at the edge with no origin contact (most users see fast stale content). Single-flight collapses any remaining per-process herd. Redis lock collapses cross-node rebuilds for the hottest 1% of keys. Jittered TTL prevents synchronized expiry across keys. Each layer reduces by an order of magnitude; the composition handles flash traffic without DB load spikes." },
+        { name: "Redis SETNX lock only", summary: "Necessary but insufficient.", justification: "Lock serialises rebuilds but waiters queue. 10000 requests waiting on a 400ms rebuild starve client request budgets. Add SWR or fallback to give waiters something to return immediately while the rebuild is in flight." },
+        { name: "Longer TTL (1 hour)", summary: "Wrong solution.", justification: "Stampedes still happen, just once an hour instead of every minute. The hourly stampede is more severe because more cache writes accumulate behind one expiry. TTL value is independent of stampede mitigation." },
+        { name: "No cache (skip the problem)", summary: "Wrong tradeoff.", justification: "Removes the stampede but exposes the DB to full traffic at all times. The whole reason for the cache was that the DB cannot serve raw traffic. Removing the cache moves the failure from boundary-spike to all-day saturation." },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="Why is per-key TTL jitter important even when single-flight and locks are in place?"
+      choices={[
+        { label: "Jitter reduces total cache memory used", misconception: "Memory is unaffected; jitter changes timing, not size." },
+        { label: "Without jitter, hundreds of keys with the same TTL boundary fire simultaneously — single-flight handles per-key herds but cannot coordinate across keys, so the DB sees the sum of all per-key rebuild loads at once", correct: true },
+        { label: "Jitter improves cache hit rate", misconception: "Hit rate is determined by TTL relative to access pattern, not jitter; jitter just spreads the boundary." },
+        { label: "Jitter is a security feature", misconception: "Not a security feature; it is a load-shape feature." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      question="Which RFC defines the stale-while-revalidate and stale-if-error HTTP Cache-Control extensions?"
+      choices={[
+        { rfc: "RFC 5861", title: "HTTP Cache-Control Extensions for Stale Content", correct: true },
+        { rfc: "RFC 9111", title: "HTTP Caching (general; refers to 5861 for these extensions)" },
+        { rfc: "RFC 7234", title: "Obsolete HTTP Caching (no stale-while-revalidate)" },
+        { rfc: "RFC 8941", title: "Structured Field Values (unrelated)" },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="03-stampede"
+      lang="en"
+      prompt="Design the cache layer for a global news site: 50M unique pages, 500k RPS peak, viral spikes 10x normal on breaking news, content updated frequently (~1 update per page per hour)."
+      constraints={[
+        "p99 latency must stay under 200ms during 10x viral spikes.",
+        "Updates must propagate to readers within 5 minutes of publish.",
+        "DB must never see more than 5x its steady-state QPS at any single instant.",
+        "No single-point-of-failure for the cache layer.",
+        "Must survive a full cache-tier restart without origin overload.",
+      ]}
+      canonical="Three-tier stack with stampede protection at each tier: (1) CDN with stale-while-revalidate=60s and stale-if-error=300s — most traffic served from edge, viral spikes absorbed without origin contact. CDN-level request coalescing per POP for cache misses. (2) Origin application cache (Redis cluster) with TTL 5min (matching update propagation requirement) plus ±20% jitter to desynchronize boundaries. Single-flight in each application process. Redis lock per key (SET lock:key uuid EX 30 NX) for cross-instance coordination on the hottest 1% of keys (identified by RPS > 100 sustained). (3) Database write-through invalidation: on content update, DELETE both the Redis key and issue CDN purge so freshness propagates within 5min. Observability: dashboard showing cache miss rate, rebuild duration p99, lock-wait time, SWR stale-serve count; alert on miss rate > 3x baseline. Pre-warm cache after restarts by replaying yesterday's top-1000 URLs before accepting public traffic."
+      keyPoints={[
+        "SWR at CDN is the primary stampede absorber for viral traffic.",
+        "TTL jitter prevents synchronized boundaries across the 50M keys.",
+        "Single-flight + Redis lock provides defence-in-depth for the hottest keys.",
+        "Write-through invalidation maintains the 5-minute freshness SLO.",
+        "Pre-warm after restarts breaks the cold-start failure mode.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-stampede"
+      lang="en"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Explain the metastable failure shape that follows an unmitigated cache stampede and why the system cannot self-recover.",
+          answer: <p>The sequence is: stampede hits the DB, DB CPU saturates, queries queue, queue depth grows past client timeout, queries time out at clients. Clients retry (most client libraries have automatic retry with exponential backoff but the backoff is short — often 100ms to 1s — because the original timeout looked like a transient network failure). Retries multiply the original herd; the original 10000 misses become 20000 in-flight requests as retries pile on. The DB is now serving retries instead of fresh requests; the cache cannot rebuild because no request gets through fast enough; without rebuild, every new request is also a miss that adds to the storm. The system is now in a self-sustaining loop where increased load prevents the cache from rebuilding, which keeps the load high. Recovery requires breaking the loop, which the system cannot do on its own — it needs an external signal (load-shedding at the gateway, application restart, manual cache warmup) to kill the retry storm. Bouman et al. (2024 SOSP) formalised this as a metastable failure pattern: the failure mode is stable in both the healthy state (low load, full cache) and the storm state (high load, empty cache), and a perturbation pushes the system between them. Mitigations require explicit anti-retry mechanisms (circuit breakers, 503-on-overload at the gateway) rather than just better caching.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "A team's cache uses Redis lock with SET lock:key uuid EX 10 NX, but they observe duplicate writes during long rebuilds. Explain the root cause and the correct fix.",
+          answer: <p>The lock EX value is shorter than the rebuild duration. When the rebuild takes longer than EX, the lock auto-expires while the rebuild is still running. A second request, seeing no lock, acquires its own lock and starts a parallel rebuild. Both rebuilds eventually complete and write to the key — duplicate writes, and worse, the later write may overwrite a newer-but-correct value from an unrelated update. The fix has three components. First, set EX to be greater than rebuild p99.9 (not just p99); a typical multiplier is 3x the average rebuild duration. Second, before writing, the rebuilder must verify it still holds the lock: GET lock:key, compare to the uuid it stored. If different, abort the write. This is the "fencing token check" in disguise. Third, for true safety against any clock skew between the rebuilder and the Redis server, use a monotonically increasing version per key, included in the write. The DB or cache rejects writes with version less than or equal to the current version. Together these prevent stale writes even when the lock-based coordination fails. Martin Kleppmann's 2016 critique of Redis-as-a-lock (the "redlock" debate) is essentially: locks alone are insufficient; you also need fencing for correctness.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>Cache stampede = TTL boundary + concurrency. Fix with lock, single-flight, XFetch, SWR — composed in layers. Each tier collapses the herd by an order of magnitude.</KeyTakeaway>
+
+<SpiralCue thread="statefulness">
+The cache's TTL is statefulness with a deadline. The next pieces (04-etag and 05-cache-control) drill into HTTP-level cache semantics; 06-swr is the dedicated SWR piece; 07-dogpile generalises stampede to non-cache resources.
+</SpiralCue>
+
+**Prereqs:** Cache layers (this chapter, 01) and invalidation (this chapter, 02).
+
+**Next:** 04-etag — conditional caching at the HTTP layer, the upstream version of "what to do at TTL boundary".
