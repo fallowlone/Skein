@@ -196,7 +196,29 @@ Verify:
 - Images load (if any).
 - RU text is readable (no mojibake, correct line breaks).
 
-### Step 8 — Commit
+### Step 8 — Tier sizing + exercise mix
+
+The piece MUST contain (within the TierAccordion block):
+
+| Tier | Slot | Word budget | Required components |
+|---|---|---|---|
+| Junior | `<Fragment slot="junior">` | 200-500 | ≥1 PersonaTag dialog, ≥1 metaphor sentence |
+| Middle | `<Fragment slot="middle">` | 2500-3500 | Mechanism + tradeoff + numbers + failure mode |
+| Senior | `<Fragment slot="senior">` | 2500-4000 | ≥3 RFC refs, kernel/tunable references, edge cases |
+
+Per-tier exercise count target (linter emits warnings):
+
+- Junior: 5 exercises (Quiz × 2, DragOrder × 1, MetaphorComplete × 1, retrieval Q × 1)
+- Middle: 8 (Quiz × 2, TraceScenario × 2, DragOrder × 1, FadedExample × 1, retrieval Q × 2)
+- Senior: 7 (TraceScenario × 1, DebugLog × 1, TradeoffMatrix × 1, RFCQuiz × 1, DesignPrompt × 1, retrieval Q × 2)
+
+If a needed exercise component does not yet exist in `site/src/components/pedagogy/`, mark with TODO comment in MDX and proceed; do not block.
+
+### Step 9 — Verify
+
+Run `/verify-piece <pillar>/<NN-piece>`. Address all `✗` findings. `⚠` findings: judge fix-or-accept case by case.
+
+### Step 10 — Commit
 
 ```bash
 cd /Users/artemmac/dev/awesome-everything
