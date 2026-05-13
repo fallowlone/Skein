@@ -1,8 +1,8 @@
 # CS Foundations — Topic 2 design
 
 Date: 2026-05-13
-Status: Spec — awaiting review
-Scope: Second curriculum topic alongside the existing fullstack topic. Adds 16 pillars × 8 pieces × 2 langs = 256 piece slots. Schema additions + route migration, pipeline unchanged.
+Status: Spec — awaiting review (revised post-baseline-clarification)
+Scope: Second curriculum topic alongside the existing fullstack topic. Adds 17 pillars × 8 pieces × 2 langs = 272 piece slots. Schema additions + route migration, pipeline unchanged.
 
 ## Goal
 
@@ -15,6 +15,8 @@ Topic 2 is motivated by three engineering goals — all confirmed during brainst
 
 ML/AI math is explicitly out of scope as a primary motivation, but linear algebra and probability pillars stay in the list because they appear in algorithm analysis (probabilistic structures) and naturally bridge to the existing `ai-llm` pillar in Topic 1.
 
+**Reader baseline (assumed before Topic 2):** elementary arithmetic + percentages. Fractions, decimals, algebra, exponents, logarithms, sigma notation, and function notation are **not** prerequisites — they are taught explicitly by the first pillar of Topic 2 (`cs-math-primer`). This raises the on-ramp from "engineer with CS gap" to "engineer with both CS gap and math gap from school", which is the actual target audience for this site's author.
+
 ## Non-goals
 
 - Replicate full university CS curriculum (compiler construction at semester depth, formal verification, programming-language theory at PhD depth).
@@ -22,30 +24,50 @@ ML/AI math is explicitly out of scope as a primary motivation, but linear algebr
 - Math depth beyond what supports algorithm analysis (no functional analysis, measure theory, advanced statistics).
 - Standalone repository / separate deploy. Pipeline and components stay shared.
 
-## Topic 2 pillars (16)
+## Topic 2 pillars (17)
 
-Ordered by teaching dependency. Each pillar slug is prefixed `cs-` so the union remains flat (32 unique slugs once Topic 2 ships). Prereqs reference other Topic 2 pillars only.
+Ordered by teaching dependency. Each pillar slug is prefixed `cs-` so the union remains flat (33 unique slugs once Topic 2 ships: 16 fullstack + 17 Topic 2). Prereqs reference other Topic 2 pillars only. **`cs-math-primer` is the entry gate for all math-heavy pillars** and is the only pillar that assumes nothing beyond elementary arithmetic + percentages.
 
 | # | Slug | Focus | Prereqs |
 |---|---|---|---|
-| 1 | `cs-discrete-math` | sets, logic, induction, combinatorics, recurrences | none |
-| 2 | `cs-probability` | Bayes, distributions, sampling, expectation, randomized analysis | `cs-discrete-math` |
-| 3 | `cs-linear-algebra` | vectors, matrices, eigen, SVD (bridges to AI/ML) | `cs-discrete-math` |
-| 4 | `cs-computer-org` | CPU, ISA, caches, memory hierarchy, branch prediction | none |
-| 5 | `cs-operating-systems` | processes, threads, scheduling, MMU, syscalls, FS | `cs-computer-org` |
-| 6 | `cs-data-structures` | arrays, lists, trees (B/AVL/red-black), heaps, hash, tries | `cs-discrete-math` |
-| 7 | `cs-algorithms-classic` | sort, search, divide-conquer, recursion, big-O | `cs-data-structures` |
-| 8 | `cs-graph-algos` | BFS/DFS, shortest path, MST, max-flow, topological | `cs-algorithms-classic` |
-| 9 | `cs-dp-greedy` | optimal substructure, memoization, greedy proofs, exchange argument | `cs-algorithms-classic` |
-| 10 | `cs-string-algos` | KMP, Z-algo, suffix array, Aho-Corasick, regex engines | `cs-data-structures` |
-| 11 | `cs-complexity` | P/NP, reductions, approximation, parameterized complexity | `cs-discrete-math`, `cs-algorithms-classic` |
-| 12 | `cs-theory-computation` | DFA/NFA/PDA, Turing, halting, decidability | `cs-discrete-math` |
-| 13 | `cs-compilers` | lex/parse, AST/IR, JIT, GC, type inference | `cs-data-structures` |
-| 14 | `cs-concurrency-theory` | memory models, locks, lock-free, CSP, actor | `cs-operating-systems` |
-| 15 | `cs-info-theory-crypto` | entropy, compression, primes, ECC math | `cs-probability` |
-| 16 | `cs-numerical-geometry` | float stability, linear solvers, computational geometry | `cs-linear-algebra` |
+| 1 | `cs-math-primer` | fractions, decimals, percentages (deep), negatives, exponents, logarithms, sigma/product notation, functions + graphs | none (arithmetic + percentages only) |
+| 2 | `cs-discrete-math` | sets, logic, induction, combinatorics, recurrences | `cs-math-primer` |
+| 3 | `cs-probability` | Bayes, distributions, sampling, expectation, randomized analysis | `cs-discrete-math` |
+| 4 | `cs-linear-algebra` | vectors, matrices, eigen, SVD (bridges to AI/ML) | `cs-discrete-math` |
+| 5 | `cs-computer-org` | CPU, ISA, caches, memory hierarchy, branch prediction | none |
+| 6 | `cs-operating-systems` | processes, threads, scheduling, MMU, syscalls, FS | `cs-computer-org` |
+| 7 | `cs-data-structures` | arrays, lists, trees (B/AVL/red-black), heaps, hash, tries | `cs-discrete-math` |
+| 8 | `cs-algorithms-classic` | sort, search, divide-conquer, recursion, big-O | `cs-data-structures` |
+| 9 | `cs-graph-algos` | BFS/DFS, shortest path, MST, max-flow, topological | `cs-algorithms-classic` |
+| 10 | `cs-dp-greedy` | optimal substructure, memoization, greedy proofs, exchange argument | `cs-algorithms-classic` |
+| 11 | `cs-string-algos` | KMP, Z-algo, suffix array, Aho-Corasick, regex engines | `cs-data-structures` |
+| 12 | `cs-complexity` | P/NP, reductions, approximation, parameterized complexity | `cs-discrete-math`, `cs-algorithms-classic` |
+| 13 | `cs-theory-computation` | DFA/NFA/PDA, Turing, halting, decidability | `cs-discrete-math` |
+| 14 | `cs-compilers` | lex/parse, AST/IR, JIT, GC, type inference | `cs-data-structures` |
+| 15 | `cs-concurrency-theory` | memory models, locks, lock-free, CSP, actor | `cs-operating-systems` |
+| 16 | `cs-info-theory-crypto` | entropy, compression, primes, ECC math | `cs-probability` |
+| 17 | `cs-numerical-geometry` | float stability, linear solvers, computational geometry | `cs-linear-algebra` |
 
-Chapter slugs follow the established `NN-pillar-slug` convention (e.g. `06-cs-data-structures`). Per-chapter piece counts default to 8, matching Topic 1.
+Chapter slugs follow the established `NN-pillar-slug` convention (e.g. `01-cs-math-primer`, `07-cs-data-structures`). Per-chapter piece counts default to 8, matching Topic 1.
+
+### `cs-math-primer` — 8 pieces draft
+
+The primer carries the heaviest pedagogical weight in Topic 2: it is the only pillar where the reader is assumed to know **only** elementary arithmetic + percentages. Each piece teaches a discrete competence that downstream pillars depend on.
+
+| # | Piece slug | Teaches | Why this pillar needs it |
+|---|---|---|---|
+| 1 | `01-fractions-decimals` | equivalent fractions, addition/subtraction with unlike denominators, decimal ↔ fraction conversion, repeating decimals | every probability + every Big-O ratio + every percent change reasoning |
+| 2 | `02-percentages-deep` | percent change, compound percent, ratio reasoning, percentage-of-percentage | growth analysis, cache hit rates, error rates, conversion funnels |
+| 3 | `03-negatives-exponents` | negative numbers, exponents as repeated multiplication, fractional exponents, scientific notation | every memory size (2^30 = GB), every time scale (10^-9 s = ns), every Big-O class |
+| 4 | `04-variables-equations` | what a variable is, balanced equations, solving for x, two-equation systems | algebra precondition for every formal mechanism description |
+| 5 | `05-exponents-logs` | log base 2 / e / 10, log identities, log as inverse of exponent, intuition for "log time" | Big-O log-time analysis (binary search, balanced trees, heap ops) |
+| 6 | `06-sets-tuples` | set notation, ∪ ∩ ∈ ∉, ordered pairs / tuples, Cartesian product | discrete math + databases + relational model preconditions |
+| 7 | `07-sigma-pi` | summation notation Σ, product notation Π, telescoping sums, basic series (1 + 2 + … + n) | every algorithm analysis + amortized complexity |
+| 8 | `08-functions-graphs` | f(x) notation, composition, inverse, plotting on Cartesian plane, intuition for shape (linear / log / exponential / polynomial) | discrete math + complexity classes + ML / AI bridge |
+
+Authoring constraint: the math-primer junior tier (200-700w) **cannot** rely on the same metaphor-heavy shape used for networking. The metaphor is the math itself. Junior tier here = worked-example walkthrough with the smallest possible step size. Middle tier = formal definition + connection to where this math reappears in other pillars. Senior tier = pitfalls (rounding, overflow, log base ambiguity) + the rare advanced edge cases (e.g. how IEEE-754 violates math intuition).
+
+This pillar will likely require its own per-piece exercise mix tuning during pilot. Default 5/8/7 may shift toward more worked-example exercises (NumberDrill, FadedExample) and fewer recall/quiz items.
 
 ## Architecture additions
 
@@ -70,7 +92,7 @@ export const TOPICS: Topic[] = ["fullstack", "cs-foundations"];
 
 export type Pillar =
   | "networking" | "browser" | /* ...existing 16 fullstack pillars... */
-  | "cs-discrete-math" | "cs-probability" | /* ...new 16 cs pillars... */;
+  | "cs-math-primer" | "cs-discrete-math" | "cs-probability" | /* ...new 17 cs pillars... */;
 ```
 
 Existing 16 pillar entries gain `topic: "fullstack"`. Existing chapters and book entries gain the same. One-off migration script writes the field into JSON + frontmatter.
@@ -127,16 +149,22 @@ No fork. Every authoring artifact from Topic 1 carries forward:
 
 | Phase | Scope | Trigger |
 |---|---|---|
-| Phase B (in flight) | Chapter 01 networking 3-tier migration. 8 pieces × 2 langs done. Task 9 + 10 infrastructure complete. | Active. |
-| Phase C | 15 remaining fullstack chapters (~120 pieces × 2 langs = 240). Same `/infographic` pipeline. | Starts after Phase B closes. Schema unchanged. |
+| Phase B (closed) | Chapter 01 networking 3-tier migration. 8 pieces × 2 langs done. Task 9 + 10 infrastructure complete. | Closed 2026-05-13. |
+| Phase C | 15 remaining fullstack chapters (~120 pieces × 2 langs = 240). Same `/infographic` pipeline. | Active after Phase B close. Schema unchanged. |
 | Phase D-1 (Topic 2 infra) | Topic field migration, route migration, topic switcher UI, `/infographic` argument widening. | Starts when Topic 1 hits 16/16 chapters at `status: ready`. |
-| Phase D-2 (Topic 2 pilot) | Pilot piece in `cs-data-structures` (analogue of 05-tls-handshake). Validates depth bar, junior tier feasibility for abstract topics, exercise inventory. | Starts when Phase D-1 ships. |
-| Phase D-3 (Topic 2 fanout) | Remaining 15 Topic 2 pillars piece-by-piece via `/infographic`. | Starts when D-2 pilot passes `/verify-piece`. |
+| Phase D-2 (Topic 2 primer pilot) | `cs-math-primer` pilot piece — first cs pillar authored. Validates the no-prior-knowledge entry tier (worked-example shape, NumberDrill-heavy exercise mix, primer-specific junior tier without metaphor). | Starts when Phase D-1 ships. |
+| Phase D-3 (Topic 2 primer fanout) | Remaining 7 pieces of `cs-math-primer` so the entire entry pillar is shippable before any other Topic 2 pillar starts. | Starts when D-2 pilot passes `/verify-piece`. |
+| Phase D-4 (Topic 2 main pilot) | `cs-data-structures` pilot piece (analogue of 05-tls-handshake). Validates 3-tier shape on a non-math pillar. | Starts when `cs-math-primer` ships. |
+| Phase D-5 (Topic 2 fanout) | Remaining 15 Topic 2 pillars piece-by-piece via `/infographic`. | Starts when D-4 pilot passes `/verify-piece`. |
 
 ## Risks + mitigations
 
 1. **Route migration breaks SEO / external links.** Mitigation: 301-equivalent meta-refresh redirects + `<link rel="canonical">` on every legacy path. Sitemap regenerates with new URLs only.
-2. **Junior tier for abstract CS topics (complexity, formal proofs) resists metaphor.** Mitigation: validate via pilot piece before committing all 16 cs pillars. If a pillar fundamentally cannot support junior tier at 200-700w, raise a per-pillar override of the junior word floor (e.g. `cs-complexity` floor 100) rather than force-write thin metaphors.
+2. **Junior tier for abstract CS topics (complexity, formal proofs) resists metaphor.** Mitigation: validate via pilot piece before committing all 17 cs pillars. If a pillar fundamentally cannot support junior tier at 200-700w, raise a per-pillar override of the junior word floor (e.g. `cs-complexity` floor 100) rather than force-write thin metaphors.
+
+7. **`cs-math-primer` junior tier breaks the metaphor-driven shape used in Topic 1.** Math is the metaphor; no envelope-style analogy translates "what is a logarithm". Mitigation: D-2 pilot explicitly validates a worked-example junior tier (small step size, no metaphor, NumberDrill + FadedExample heavy). If pilot succeeds, the shape becomes the per-primer-piece template; if it fails, escalate to user before continuing the primer fanout.
+
+8. **Cross-topic prereq link rot.** Reader path references both Topic 1 and Topic 2 pieces. If a Topic 1 piece is renamed during Phase C, primer cross-links break. Mitigation: piece slugs are frozen at the chapter level (already in `chapters.json`), and `/verify-piece` checks prereq link targets exist; route migration adds redirect for any legacy slug.
 3. **Topic switcher adds discoverability friction.** Mitigation: defer measurement to first real traffic against Topic 2. Acceptable to A/B switcher placement after initial Topic 2 pieces ship.
 4. **32-pillar total dilutes "pick the right pillar" signal.** Mitigation: in-topic the grid is still 16; users only see their selected topic's pillars after the switcher.
 5. **Schema migration during active Phase C breaks builds.** Mitigation: defer schema additions until Phase D-1. During Phase C the schema stays frozen, Topic 2 content stays unwritten, the `cs-*` slugs do not yet appear in `PILLARS`.
@@ -151,13 +179,29 @@ No fork. Every authoring artifact from Topic 1 carries forward:
 
 ## Deliverables (at Topic 2 close)
 
-- 16 cs-* pillars in `pillars.json` with `topic: "cs-foundations"`.
-- 16 cs-* chapter entries in `chapters.json`.
-- 128 EN + 128 RU pieces under `site/src/content/book/{en,ru}/cs-*/`.
-- Glossary updated with CS / math / algorithms terms (estimated 200-400 new entries).
+- 17 cs-* pillars in `pillars.json` with `topic: "cs-foundations"` (including `cs-math-primer`).
+- 17 cs-* chapter entries in `chapters.json`.
+- 136 EN + 136 RU pieces under `site/src/content/book/{en,ru}/cs-*/` (272 total).
+- Glossary updated with CS / math / algorithms terms (estimated 250-450 new entries — the primer pillar alone adds the largest single math-term batch).
 - Route migration + redirects shipped; legacy URLs continue to resolve.
 - `/infographic` accepts topic-prefixed arguments; old form defaults to `fullstack` topic.
 - Topic switcher landing page.
+
+## Reader path (junior → senior)
+
+This site's author is the first reader. Baseline = elementary arithmetic + percentages; goal = senior fullstack + CS fluency. The Topic 2 reading path that gets there:
+
+1. **Start: `cs-math-primer`** (8 pieces, junior tier worked-example heavy). Closes the school-math gap. Output: comfort with variables, log, sigma, function notation.
+2. **Then in parallel (after primer):**
+   - **Topic 1 fullstack reading** — junior tier of every networking/browser/backend/etc piece is metaphor + persona dialog, no math required beyond what the primer covers. Read in Phase C chapter order. Output: production engineering vocabulary.
+   - **Topic 2 math pillars** — `cs-discrete-math` → `cs-probability` / `cs-linear-algebra` (parallel branch). Output: formal math fluency.
+3. **Then systems pillars** — `cs-computer-org` → `cs-operating-systems`. No math heavy lift, no programming heavy lift. Output: how a machine actually runs.
+4. **Then algorithms pillars** — `cs-data-structures` → `cs-algorithms-classic` → `cs-graph-algos` / `cs-dp-greedy` / `cs-string-algos`. Output: interview-grade algorithm fluency with engineering context.
+5. **Then theory pillars** — `cs-complexity` → `cs-theory-computation`. Output: P/NP intuition, formal language theory.
+6. **Then advanced applied pillars** — `cs-compilers`, `cs-concurrency-theory`, `cs-info-theory-crypto`, `cs-numerical-geometry`. Output: senior-only depth in specialised areas.
+7. **Finish: middle + senior tiers of Topic 1 pieces** — re-read every piece in Topic 1 at middle then senior tier with the math + CS background now in place. Output: senior fullstack + CS engineer.
+
+Per-piece prereqs (`prereqs:` frontmatter array) encode this dependency at the piece level — `/verify-piece` checks that every link target exists, and the site's piece-page header surfaces "prerequisites" cards so a reader who lands on `cs-complexity` knows to start at `cs-discrete-math` first.
 
 ## References
 
