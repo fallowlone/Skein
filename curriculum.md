@@ -1,6 +1,8 @@
+> **Site mirror**: this file is the source of truth for chapter outlines and the depth bar. `site/src/content/chapters.json` mirrors the chapter listing; update both together. The full bilingual site lives at `site/`. To author a piece, run `/infographic <pillar>/<NN-chapter>/<NN-piece>` (see `.claude/commands/infographic.md`).
+
 # Fullstack Curriculum — Middle+ / Senior Bar
 
-Reference for *depth calibration*. Every infographic in this repo must hit this bar: a reader who works through the series should have enough conceptual grounding to operate as a middle+ → senior fullstack engineer.
+Reference for *depth calibration*. Every piece in this repo must hit this bar: a reader who works through the series should have enough conceptual grounding to operate as a middle+ → senior fullstack engineer.
 
 Use this file when planning a series:
 - Pick the relevant pillar(s) below.

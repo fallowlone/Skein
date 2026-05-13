@@ -1,159 +1,248 @@
 ---
-description: Full-auto ByteByteGo infographic pipeline. Topic/Chapter/Piece tier auto-classified. Fullstack middle+/senior depth.
-argument-hint: <fullstack topic> | <topic-slug>/<chapter-slug> | <topic-slug>/<chapter-slug>/<piece-slug>
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, WebSearch, WebFetch, Task, mcp__claude_ai_Figma__*
+description: Fullstack curriculum site piece authoring. Queries/researches/authors bilingual EN+RU pieces. Strict to site/ pipeline.
+argument-hint: <pillar>/<NN-chapter>/<NN-piece> | <pillar>/<NN-chapter> (chapter mode not yet implemented)
+allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, mcp__plugin_context7_context7__resolve-library-id, mcp__plugin_context7_context7__query-docs
 ---
 
-# /infographic — fullstack infographic pipeline (full auto, 3 tiers)
+# /infographic — fullstack curriculum site piece authoring
 
-Input: **$ARGUMENTS**
+**Input:** `$ARGUMENTS`
 
-## Hard rules
+**Purpose:** Author a single piece (stub → draft → ready) for the site's bilingual curriculum. Pieces live under `site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx`. Every piece is bilingual or the command refuses.
 
-1. **Domain locked to fullstack development.** Off-domain → refuse with 2-line message and stop.
-2. **Strictly follow `style-guide.md`** for visuals.
-3. **Strictly meet `curriculum.md` depth bar** — re-read Depth bar + Forbidden simplifications before drafting.
-4. **Output local SVG + PNG only.** No Figma write tools.
-5. **Stack assets-only.** No package.json / node_modules.
-6. **Series cap: 12 pieces per chapter.** Hard limit. Hierarchy is how you go beyond.
+**Hard rules:**
 
-## Step 1 — Parse input
+1. **Domain locked to fullstack development.** Off-domain input → refuse with 2-line message, stop immediately.
+2. **Read `curriculum.md` depth bar + forbidden simplifications before drafting.** Middle+/senior engineer only.
+3. **Bilingual EN+RU or refuse.** No partial-language pieces.
+4. **Site-only output.** Write to `site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx`. Never edit `site/dist/` or legacy `infographics/` tree.
+5. **Per-piece import path depth: exactly 5 `..` segments** (verified against `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` template).
+6. **Text budgets enforced** (linter + manual): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
+7. **Hydration cap = 5 islands per page** (linter-enforced). Typical budget: TierAccordion + FadedExample + RetrievalDrawer + 2 baseline.
+8. **Status flow:** stub → draft (optional) → ready. Only `ready` renders real content to users.
+9. **Commit only when status = ready.** Format: `git commit -m "content(<pillar>): <NN-piece> EN+RU ready"`.
+
+---
+
+## Input parsing
 
 If `$ARGUMENTS` matches:
 
-- `<a>/<b>/<c>` (3 segments) → **piece** tier, slug-of-piece = `<c>`, parent chapter = `<a>/<b>`. Skip classification.
-- `<a>/<b>` (2 segments) → **chapter** tier, chapter-slug = `<b>`, parent topic = `<a>`. Skip classification.
-- single segment / free-form text → **classify** (Step 2).
+- `<pillar>/<NN>-<chapter>/<NN>-<piece>` (3 path segments) → **piece mode**, extract pillar/chapter/piece slugs, skip classification.
+- `<pillar>/<NN>-<chapter>` (2 path segments) → **chapter mode** (NOT YET IMPLEMENTED; ask user to split into per-piece invocations).
+- Anything else → **refuse** with message: "Piece form: `/infographic <pillar>/<NN-chapter>/<NN-piece>`. Pillar must exist in `site/src/content/pillars/*.json`."
 
-Slugify any free-form text → kebab-case ASCII ≤40 chars.
+Validate:
+- Pillar exists in `site/src/content/pillars/*.json`.
+- Chapter exists in `site/src/content/chapters/<pillar>/<NN>-*.json` (if multiple chapters per pillar, verify).
+- Piece stub exists at `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` (EN must exist; RU is created if absent).
 
-## Step 2 — Classify (only for single-segment input)
-
-Map the input onto `curriculum.md` pillars using its **Classification heuristic**:
-
-- 1 sub-area of 1 pillar, single mechanism → **piece**
-- 1 pillar whole, OR feature with 3+ mechanisms → **chapter**
-- 2+ pillars OR role-shaped ("become X", "production X") → **topic**
-
-Then dispatch to the matching tier branch below.
+If validation fails, report the missing path and stop.
 
 ---
 
-## Tier A — Piece (1 infographic)
+## Pipeline (per piece)
 
-Folder: `infographics/<slug>/` (no parent unless inferred from path-shaped input).
+### Step 1 — Verify piece stub exists
 
-1. **Research** — WebSearch 3–5 queries, calibrated for middle+/senior: mechanism, concrete numbers, one tradeoff, one failure mode, one non-obvious detail. Authoritative sources only.
-2. **Spec** — `<dir>/spec.md`:
+```bash
+# Check EN stub
+test -f "site/src/content/book/en/<pillar>/<NN-piece>/index.mdx" || {
+  echo "ERROR: EN stub not found at site/src/content/book/en/<pillar>/<NN-piece>/index.mdx"
+  exit 1
+}
+```
 
-   ```markdown
-   # <Title>
-   - **Tier**: piece
-   - **Audience**: middle+/senior fullstack engineer
-   - **One-liner**: <single sentence>
-   - **Composition pattern**: step-by-step | system-diagram | before-after | trade-off-matrix
-   - **Canvas**: 1600x900 (or 1920x1080 if >7 steps)
-   - **Depth checkpoints**:
-     - [ ] Mechanism: ...
-     - [ ] Tradeoff: ...
-     - [ ] Failure mode: ...
-     - [ ] Concrete numbers: ...
-   - **Key points**: 1. ... 2. ...
-   - **Sources**: https://...
-   - **Misconception addressed**: ...
-   ```
+The stub file must have:
+- Frontmatter: `slug`, `lang: en`, `pillar`, `chapter`, `order`, `title`, `summary`, `readingMin`, `status: stub` (or `draft` or `ready`).
+- No body yet (or stub prose like "Coming soon").
 
-3. **Data** — `<dir>/data.json` with `title`, `steps[]|components[]`, `numbers[]`, `tradeoffs[]`, `failure_modes[]`, `sources[]`.
-4. **Layout plan** inline: pattern, 8-pt grid coords, ≤4 hues, 3–8 inline Lucide-style icons. Sanity-check against style-guide.md + curriculum.md.
-5. **SVG** — `<dir>/infographic.svg` starting from `templates/svg-skeleton.svg`. Pure SVG, inline icons, group with `<g class id>`. If part of a chapter, embed `Part NN / total` in upper-right.
-6. **PNG** — `bash scripts/svg-to-png.sh <dir>/infographic.svg`.
+### Step 2 — Research (WebSearch + Context7)
 
-**Final report** (5 lines): topic, slug, files written, export path, pattern.
+Execute **≥3 queries** targeting middle+/senior depth:
+
+- Query 1 → mechanism details (e.g., "TCP three-way handshake RFC packet flow").
+- Query 2 → one tradeoff or failure mode (e.g., "TCP SYN flood attack mitigation").
+- Query 3 → concrete numbers / benchmarks (e.g., "TCP RTT latency typical values").
+
+Log sources into a scratch note. Use `context7:resolve-library-id` + `context7:query-docs` for APIs/frameworks (e.g., fetching React reconciler details from React docs).
+
+**Depth checkpoint:** Can you explain mechanism + one tradeoff + one failure mode + one number without guessing? If not, research more.
+
+### Step 3 — Author EN MDX body
+
+Update the stub's frontmatter:
+- `status: draft` (not yet ready, still authoring).
+- `depth.mechanism`, `depth.tradeoff`, `depth.failure_mode`, `depth.numbers` → set to element IDs you will create in the body (e.g., `section-three-way`, `card-rtt`, `mc-syn-flood`, `card-tcp-numbers`).
+- Verify all four depth fields are populated (linter will catch missing ones).
+
+Write the body following the P2 template structure:
+
+```mdx
+<Crux>
+Opening question (≤140 chars) that hooks the reader.
+</Crux>
+
+## Context / Setup
+Prose explaining why this piece matters.
+
+## The Mechanism
+<span id="section-three-way">
+Details of what actually happens (packets, data structures, syscalls).
+Include diagrams if needed (embedded SVG or reference asset).
+</span>
+
+## Deeper View: [Optional subsection]
+(If needed for senior depth)
+
+## The Tradeoff
+<span id="card-rtt">
+Every choice has a cost. State the tradeoff clearly.
+</span>
+
+## What Can Break
+<span id="mc-syn-flood">
+Failure mode: what goes wrong first, what the symptom looks like, how to detect.
+(Max 320 chars if it's a Misconception component; otherwise prose is fine.)
+</span>
+
+## Numbers
+<NumbersCard id="card-tcp-numbers">
+  - Label: Value
+  - RTT (typical): 50ms–200ms
+  - Max connections (per socket): 65k
+</NumbersCard>
+
+## Key Takeaway
+<KeyTakeaway>
+(≤220 chars) Wrap up the learning in one sentence.
+</KeyTakeaway>
+
+## Retrieval Practice
+<RetrievalDrawer>
+2–3 open-ended questions. Learner types their answer, then clicks "Reveal" to see the model answer.
+</RetrievalDrawer>
+
+## Spiral & Threads
+<SpiralCue thread="statefulness">
+How does this connect to [thread name]? Link to the thread page or another piece in the spiral.
+</SpiralCue>
+
+## Cross-links
+- **Prereqs:** List any pieces that should be read first (link format: `[slug](../<slug>)`).
+- **Next:** Link to the next piece in the chapter.
+```
+
+**Import rules:**
+- All components live under `../../../../../components/` (5 `..` segments from the piece's `index.mdx`).
+- Example: `import TierAccordion from "../../../../../components/pedagogy/TierAccordion.tsx";`
+- Verify every import path has exactly 5 `..`.
+
+**Hydration budget:**
+- TierAccordion (1 island) — tier selector if the piece has per-tier content.
+- FadedExample (1 island) — optional worked example.
+- RetrievalDrawer (1 island) — required for retrieval practice.
+- Baseline islands: SpacedRevisitBanner (sticky) + ChapterSidebarTOC (sticky) = 2 islands.
+- **Total ≤ 5.** If your piece needs more, split it or defer some widgets.
+
+**Text budgets (enforced):**
+- `<Crux>` ≤ 140 chars.
+- `<KeyTakeaway>` ≤ 220 chars.
+- `<Misconception>` body ≤ 320 chars.
+- Card annotations ≤ 240 chars each.
+
+### Step 4 — Translate to RU
+
+Create `site/src/content/book/ru/<pillar>/<NN-piece>/index.mdx` with identical frontmatter but `lang: ru`.
+
+Translate the body using `site/src/i18n/glossary.json` as the canonical translation source. For new technical terms not yet in the glossary:
+1. Add them in **alphabetical order** (by English term).
+2. Include both EN and RU versions.
+3. Example: `"TCP handshake": { "en": "TCP handshake", "ru": "трёхсторонний хендшейк TCP" }`.
+
+**RU rules:**
+- Latin acronyms (TCP, RTT, RFC, SYN) stay Latin.
+- Prose flow must match EN, but RU idioms ≥ EN idioms (don't force word-for-word).
+- No auto-translate tools (Google Translate, etc.); manual + glossary only.
+- If you cannot translate with confidence, report DONE_WITH_CONCERNS and leave the RU file unmerged.
+
+### Step 5 — Update frontmatter status
+
+Set both EN and RU frontmatter to `status: ready`.
+
+### Step 6 — Verify build passes
+
+```bash
+cd /Users/artemmac/dev/awesome-everything/site && bun run build
+```
+
+Check:
+- Build completes without error.
+- `site/dist/lint-report.json` has no errors for this piece (new depth ids should be present, import paths valid, text budgets met).
+- No `WARN` for missing translations.
+
+If linter errors, fix and re-run.
+
+### Step 7 — Visual verification
+
+Open both locales in a browser (or `dist/` output):
+- `site/dist/en/<pillar>/<NN-piece>/index.html`
+- `site/dist/ru/<pillar>/<NN-piece>/index.html`
+
+Verify:
+- Layout renders without layout shift.
+- Hydration islands load (TierAccordion, RetrievalDrawer, etc. are interactive).
+- Depth IDs are linkable (right-click → copy link → paste and it points to `#section-three-way` etc.).
+- Images load (if any).
+- RU text is readable (no mojibake, correct line breaks).
+
+### Step 8 — Commit
+
+```bash
+cd /Users/artemmac/dev/awesome-everything
+git add site/src/content/book/en/<pillar>/<NN-piece>/ site/src/content/book/ru/<pillar>/<NN-piece>/ site/src/i18n/glossary.json
+git commit -m "content(<pillar>): <NN-piece> EN+RU ready"
+git log -1 --oneline  # Report the commit SHA
+```
 
 ---
 
-## Tier B — Chapter (series, 3–12 pieces)
+## Final report (mandatory format)
 
-Folder: `infographics/<chapter-slug>/` (or `infographics/<topic-slug>/<NN-chapter-slug>/` if from topic).
+```
+Status:         DONE / DONE_WITH_CONCERNS / BLOCKED
+Piece:          <pillar>/<NN-piece>
+Slug:           <NN-piece-slug>
+Files:          site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx
+Glossary:       + N new terms
+Build:          [last 3 lines of build output]
+Lint report:    [link to dist/lint-report.json or "clean"]
+Commit:         <SHA> [one-line message]
+Concerns:       [none / list]
+```
 
-1. **Decompose** — plan 3–12 sub-topics. Order = learning path. Final = "putting it together" system-diagram. If decomposition > 12, merge until ≤12.
-2. **INDEX.md**:
-
-   ```markdown
-   # <Chapter Title>
-   **Tier**: chapter
-   **Audience**: middle+/senior fullstack engineer
-   **Pillars touched**: <pillars>
-
-   ## Sequence
-   | # | Slug | Title | Pattern | Why it's here |
-   |---|------|-------|---------|---------------|
-   | 01 | <slug> | ... | step-by-step | ... |
-   | ... | | | | |
-   | NN | putting-it-together | ... | system-diagram | Ties pieces. |
-
-   ## Sources
-   - https://...
-   ```
-
-3. **Per-piece loop** — for each row in INDEX.md, execute Tier A steps 1–6 in `<chapter-dir>/<NN-piece-slug>/`. Vary composition patterns across pieces (no two consecutive pieces with the same pattern). Each piece must stand alone — a reader can open piece 07 without seeing 01–06.
-4. **Final report**: chapter title, root path, INDEX path, parts count, exports dir, pillars.
-
----
-
-## Tier C — Topic (mega, hierarchical)
-
-Folder: `infographics/<topic-slug>/`.
-
-1. **Decompose into chapters** — unbounded count (the hierarchy is the cap, not the chapter list length). Order = learning path. Final chapter = master synthesis ("putting it together" tying every prior chapter). Each chapter must be runnable independently as a Tier B run later.
-
-2. **MAP.md**:
-
-   ```markdown
-   # <Topic Title>
-   **Tier**: topic
-   **Audience**: middle+/senior fullstack engineer
-   **Pillars covered**: <pillars>
-
-   ## Chapters
-   | # | Slug | Title | Pillar | Why it's here |
-   |---|------|-------|--------|---------------|
-   | 01 | <chapter-slug> | ... | <pillar> | ... |
-   | 02 | ... | | | |
-   | ... | | | | |
-   | NN | putting-it-together | ... | synthesis | Ties topic. |
-
-   ## How to continue
-   The first chapter has been rendered. To render the rest, run each on its own:
-   ```
-   /infographic <topic-slug>/02-<chapter-slug>
-   ...
-   /infographic <topic-slug>/NN-<chapter-slug>
-   ```
-
-3. **Auto-run chapter 01** — execute Tier B on the first chapter so the user gets immediate value (full series under `<topic-slug>/01-<chapter-slug>/`).
-
-4. **Final report**:
-   ```
-   Topic:       <title>
-   Root:        infographics/<topic-slug>/
-   Map:         infographics/<topic-slug>/MAP.md
-   Rendered:    01-<chapter-slug> (NN pieces)
-   To continue: /infographic <topic-slug>/02-...  ... (NN-1 commands)
-   Pillars:     <list>
-   ```
-
-   Do NOT continue rendering further chapters automatically. The user runs each chapter explicitly.
+Example:
+```
+Status:         DONE
+Piece:          networking/03-tcp-handshake
+Slug:           03-tcp-handshake
+Files:          site/src/content/book/{en,ru}/networking/03-tcp-handshake/index.mdx
+Glossary:       + 2 new terms (TCP window, congestion window)
+Build:          [successful, 301 pages]
+Lint report:    clean
+Commit:         abc1234 content(networking): 03-tcp-handshake EN+RU ready
+Concerns:       none
+```
 
 ---
 
-## Universal failure modes
+## Failure modes
 
-- Promoting a piece to a chapter for show (or compressing a topic into a chapter).
-- Skipping `style-guide.md` / `curriculum.md` re-reads.
-- Same composition pattern for every piece in a chapter.
-- Sub-topics that restate junior-level material — push deeper or merge.
-- Pieces that only make sense after reading the previous one.
-- Fabricated numbers — every stat in `data.json` traces to a `sources[]` URL.
-- Auto-running Tier C chapters 02+ without explicit command (only chapter 01 auto-runs).
-- More than 12 pieces in any single chapter.
+- **Validating the wrong stub.** Always check `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` exists before starting.
+- **Import path depth mismatch.** Count your `..` segments. Should be exactly 5.
+- **Incomplete depth checkpoints.** If any of `mechanism`, `tradeoff`, `failure_mode`, `numbers` is missing from frontmatter, the piece fails linting and cannot merge.
+- **Text budget overruns.** Crux > 140, KeyTakeaway > 220, Misconception > 320 → linter fails.
+- **Partial translation.** If RU is absent or incomplete, status cannot be `ready`. Report DONE_WITH_CONCERNS.
+- **Building stale site/dist.** Always run `bun run build` after edits. The linter runs at build time.
+- **Forgetting glossary.json.** New RU terms must be added and committed together with the piece.
+- **Off-domain topic.** If the topic is not fullstack engineering, refuse immediately.
