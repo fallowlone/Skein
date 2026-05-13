@@ -4,24 +4,457 @@ lang: en
 pillar: observability
 chapter: 11-observability
 order: 7
-title: "Profiling"
-summary: "Coming soon — Observability that pays for itself"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "Profiling: where the CPU and the bytes actually went"
+summary: "How sampling profilers turn an unfair share of CPU into a flame graph you can read in 60 seconds, how eBPF and continuous profiling watch production at 2-5% overhead, and how on-CPU vs off-CPU profiles answer different questions about the same slow request."
+readingMin: 26
+status: ready
+prereqs: ["observability/04-red-use", "observability/05-slo-budgets", "observability/06-trace-propagation"]
+spiral: ["latency", "statefulness"]
+personas: ["bea", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-profiling
+  tradeoff: card-profile-cost
+  failure_mode: mc-mean-hides
+  numbers: card-profile-numbers
 sources:
-  - https://example.com/placeholder
+  - https://www.brendangregg.com/flamegraphs.html
+  - https://queue.acm.org/detail.cfm?id=2927301
+  - https://pkg.go.dev/runtime/pprof
+  - https://github.com/grafana/pyroscope
+  - https://github.com/parca-dev/parca
+  - https://opentelemetry.io/docs/specs/otel/profiles/
+  - https://www.brendangregg.com/offcpuanalysis.html
+  - https://docs.kernel.org/admin-guide/perf-security.html
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Logs, metrics, traces — when each is the cheapest answer.</Crux>
+The prior pieces stitched the request across services (traces) and named the symptom (RED) against a target (SLO). When a span says "1.2 seconds in inventory" but the inventory service is supposed to be fast, the next question is where exactly inside that span the time went. Profiling answers it: a flame graph of one span, one process, or an entire fleet, that points at the function eating the CPU or the allocation eating the heap.
 
-_This piece is on the roadmap. Outline is in the chapter index._
+<Crux>Profiling = sampled stacks. Wide frame = hot function. eBPF + continuous profiling = always-on flame graph at 2-5% overhead.</Crux>
+
+The mental model is statistical sampling. A profiler interrupts the program 100 times a second, captures the current stack (the chain of functions calling each other from `main` down to whatever is running), and stores it. After a minute it has 6,000 stacks. The function that appears most often across those stacks is the one consuming the most CPU. Flame graphs visualise this: stacks sorted alphabetically along the x-axis with width proportional to sample count, depth on the y-axis. The widest frame at any level is the busiest path. Memory profilers do the same trick on allocations; lock profilers on contention; off-CPU profilers on time spent waiting. The unifying mechanism is sampling, and the unifying readout is a flame graph.
+
+<TierAccordion id="tier-profiling" lang="en">
+  <Fragment slot="junior">
+    <p><strong>What this is in one sentence.</strong> Profiling captures snapshots of what your program is doing — which function is on the CPU right now — many times per second, then shows you which functions ate the most time.</p>
+    <p><strong>Why care.</strong> Logs say a span took 1.2s; profiling tells you 800ms of it was inside one function nobody suspected. Without it you guess; with it you point.</p>
+    <p><strong>The metaphor.</strong> Imagine a stadium with 100,000 people doing different things. A polling helicopter flies overhead 100 times per second and takes a photo of who is doing what. After a minute you have 6,000 photos. Count which activity appears most often across the photos — that's where the crowd's "CPU time" goes. The flame graph is the bar chart of those counts, with parents and children stacked vertically. Wide bars = popular activities. The helicopter is the profiler; the photos are stack samples; the chart is the flame graph.</p>
+    <p><strong>Bea and Sven.</strong> <PersonaTag id="bea" lang="en" /> the on-call engineer sees a span: inventory.lookup() taking 1.5s p99. <PersonaTag id="sven" lang="en" /> the inventory service opens its continuous-profile dashboard, filters by trace-id from the span, sees a flame graph with one massive 1.1-second-wide block: `json.Marshal` inside `serializeResponse`. The fix is obvious: cache the marshaled response, swap to a smaller schema, or pre-encode at write-time. Without profiling, the team would have guessed: DB? Cache? Network? With the flame graph there is no guessing — the time is right there on the wall.</p>
+    <p><strong>One scenario.</strong> Node API has p99 jump. Tracing finds slow span. Continuous-profile filtered by trace-id shows a flame graph dominated by a regex compile in a handler. A library upgrade introduced an O(n²) regex; fix is to precompile outside the handler. Detection: 60 seconds.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="What does the WIDTH of a frame on a flame graph represent?"
+      choices={[
+        { label: "How often that function appeared on the call stack in the sampled snapshots — wider means more CPU time", correct: true },
+        { label: "How long the function took to compile", misconception: "Compile time is unrelated to flame graph width." },
+        { label: "Number of lines in the function", misconception: "Code size is irrelevant; width is sample frequency." },
+        { label: "Wall-clock time on the x-axis", misconception: "The x-axis is alphabetical sort of stacks, not time. Width is sample count." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="A continuous profiler runs in production at 2-5% CPU overhead. Why doesn't it ruin performance?"
+      choices={[
+        { label: "It samples — not every call is recorded; only every Nth (typically 100 stack snapshots per second). The cost is bounded by the sample rate.", correct: true },
+        { label: "It pauses the program while running", misconception: "It does not pause; it samples without stopping execution." },
+        { label: "It only runs at night", misconception: "Continuous profiling runs continuously by definition." },
+        { label: "It only profiles errors", misconception: "Profilers capture all CPU activity, not error paths only." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      prompt="Order the steps of CPU profiling a slow function with pprof:"
+      items={[
+        "Identify the suspicious workload (slow span, high CPU usage, slow endpoint)",
+        "Start profiling (pprof.StartCPUProfile or attach perf record, or hit /debug/pprof/profile endpoint)",
+        "Run the suspicious workload for 30 seconds",
+        "Stop profiling and save the profile file",
+        "Open the profile in a flame graph viewer (go tool pprof, speedscope, Pyroscope)",
+        "Find the widest frame at the leaf level — that is the hot function",
+        "Walk up the parents to see who is calling the hot path, then apply the fix",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      setup="Fill in the blank: a flame graph's vertical axis shows the call _______ — main is at the bottom, the function on the CPU is at the top."
+      accepted={["stack", "depth", "stack depth"]}
+      canonical="stack (also called call depth)"
+      explanation="The y-axis is the call stack: the function at the bottom called the one above it, which called the one above that, all the way up. The top of any column is what was on CPU at sample time."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="07-profiling"
+      lang="en"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "In one paragraph: why is a flame graph almost always faster than a debugger or print statements for finding the slow part of a program?",
+          answer: <p>A debugger or print statements require you to guess where to look — set a breakpoint, watch a line, measure timing manually. With a 1000-line function and three nested call chains, the guess is wrong most of the time. A flame graph shows you the answer: the widest frame is the hottest path, no guessing. The profiler has already inspected every call across thousands of samples; you read the result in one glance. The only requirement is that the slow function actually runs on CPU often enough to be sampled — for very short or rare slow paths, profiling needs longer runs to gather data. For everything else (and that's almost everything in production), the flame graph is the fastest path from "something is slow" to "this function is slow." It is the single most leveraged debugging tool in production performance engineering.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Sampling vs instrumenting.</strong> Two ways to profile. Instrumentation: the runtime wraps every function entry / exit with timing code, producing exact call counts and exact durations. Cost: high — every function in every call costs CPU. Sampling: an external clock interrupts the program N times per second, captures the current stack, stores it. Cost: bounded — exactly N stacks per second, regardless of how many function calls happen between them. Instrumentation is great for small benchmarks; sampling is the only viable approach in production. Modern profilers (Go pprof, Linux perf, Java async-profiler, py-spy, eBPF profilers) are all sampling-based. The unifying property: at sample rate R Hz, a function that uses X% of CPU appears in X% of samples, regardless of how many times it was called — the statistic is "fraction of CPU time" not "function call count."</p>
+    <p><strong>Sample rate and overhead.</strong> Linux perf samples by default at 99 Hz to avoid lockstep with periodic timers; Go pprof at 100 Hz; eBPF profilers typically at 19 or 49 Hz to minimise impact. At 100 Hz the profiler captures one stack every 10 ms; the cost is the stack walk itself (~5-20 microseconds depending on stack depth and platform), giving an overhead of ~0.5%-2% on a busy CPU. Production tools like Pyroscope, Parca, Datadog Continuous Profiler claim 2-5% steady-state — slightly higher than raw perf because they also include the cost of compressing, batching, and shipping the profiles to a backend. The tradeoff: lower rate = less overhead but worse statistical resolution on short hot paths; higher rate = better resolution but more noise. The 99-100 Hz default is empirically the sweet spot.</p>
+    <p><strong>Memory and allocation profiles.</strong> Heap profilers sample allocations, not CPU. Go's heap profile samples one allocation per ~512 KB (Poisson distributed) and records the stack. The result: a flame graph where width is allocated bytes, not CPU time. This finds memory hotspots: one function allocating 100 MB/s shows up huge. Memory leak detection: take a profile, wait an hour, take another, diff them — functions whose allocation grew are leaking. Allocation profiles capture short-lived allocations that GC reclaims; heap profiles snapshot live memory. JVM equivalents: async-profiler with -e alloc, JFR allocation events. Python: tracemalloc, memray. Each has slightly different semantics but the flame-graph readout is the same.</p>
+    <p><strong>Block, mutex, and off-CPU profiles.</strong> CPU profiling only sees functions that are running. Functions waiting on locks, I/O, or channels are invisible — the program is off-CPU. Three orthogonal profile types fill the gap. Block profile (Go's <code>runtime.SetBlockProfileRate</code>): time spent waiting on synchronisation primitives. Mutex profile (<code>runtime.SetMutexProfileFraction</code>): contention on locks. Off-CPU profile (Brendan Gregg's concept, eBPF implementations): time spent in any waiting state — disk I/O, network I/O, scheduling. A request that takes 500 ms but uses 20 ms of CPU is 96% off-CPU; CPU profiling won't reveal where. The off-CPU flame graph will: maybe 400 ms waiting on Postgres, 80 ms on Redis. Off-CPU is the dual of CPU profiling; both are required for full-spectrum debugging.</p>
+    <p><strong>How a flame graph is built from samples.</strong> Each sample is a list of function names from leaf (currently executing) to root (program entry). Many samples are aggregated by exact stack equivalence; identical stacks collapse into one "thicker" column. The flame-graph rendering algorithm: sort all unique stacks alphabetically by root function (so the same parent groups its children together), then for each level, count occurrences and emit a rectangle whose width is proportional to the count. The result reads top-to-bottom: pick a leaf frame (top), look at its width, walk down to see who calls it. The x-axis order is alphabetical — not time, not call order. This is the most common misreading: people see horizontal flow and think "time" — it's frequency.</p>
+    <p><strong>Continuous profiling.</strong> Traditional profiling is on-demand: SSH in, run perf, gather, leave. Continuous profiling runs always: an agent samples 100 times per second on every host, every container, and ships compressed profiles every 10-15 seconds to a backend. The backend (Pyroscope, Parca, Polar Signals, Datadog) stores them by service + time range, supports flame-graph queries, diffs between time windows, and joins with trace-id (so a slow trace links directly to the matching profile). Storage: 10 GB / week per medium service, $1-10/month. Overhead: 2-5% CPU. The win: when an SLO burns, the profile of the burning minutes is already saved — no need to reproduce the issue. Pyroscope 2.0 (released April 2026) cut storage 3x by deduplicating symbols and eliminating write-path replication, making continuous profiling cheap enough for every team.</p>
+    <p><strong>eBPF and language-agnostic profiling.</strong> Traditional language profilers (pprof, JFR, async-profiler) need language-specific support: the runtime must expose stack walking. For C++/Rust/Go this is fine; for Python/Ruby/JS it requires hooks the runtime team must provide. eBPF profilers (Parca, Pyroscope eBPF mode) read stacks from the kernel side: the kernel's perf_event_open + bpf-attached probe captures user-space stacks at sample time. The advantage: works for any language, any binary, with no application change. The catch: symbol resolution — the kernel sees addresses, and the profiler needs to map them back to function names using debug info (DWARF, BTF, JIT-emitted symbol files for V8 / JVM). Most production eBPF profilers handle this; the cost is occasional missing symbols when DWARF is stripped or JIT is too volatile.</p>
+    <p><strong>Joining profiles to traces.</strong> Each profile sample can carry the trace-id of the request being processed at the moment of sampling (via thread-local context). When a slow trace shows in the trace view, the matching profile samples — only those carrying that trace-id — can be filtered out and rendered as a flame graph for that specific request. This is the bridge between "where did time go in the request" (trace) and "what code ate the time" (profile). OpenTelemetry's profile signal (stabilising in 2025-2026) standardises this linkage. The pattern: when investigating a slow trace, click the span, jump to the trace-filtered flame graph, see the hot function, fix the code. End-to-end debug in 60 seconds.</p>
+    <p><strong>Cross-language profiler matrix.</strong> Go: built-in pprof (runtime/pprof, net/http/pprof). Java: JFR (Java Flight Recorder, on by default in JDK 11+), async-profiler (industry standard for production). Python: py-spy (sampling, no app changes needed), cProfile (instrumentation, dev-only). Node: built-in --prof, clinic.js, 0x for flame graphs. Rust: pprof-rs, perf + addr2line. C/C++: perf, gprof (instrumentation), Intel VTune (commercial). Ruby: stackprof, rbspy. PHP: tideways, Excimer. The pattern: every modern language has a sampling profiler that emits stacks compatible with flame-graph rendering. Continuous-profiling backends (Pyroscope, Parca) ingest any of these.</p>
+    <p><strong>Profile storage and retention.</strong> A single 30-second profile is ~50-500 KB compressed (raw pprof: 100 KB - 2 MB; gzip compression typically 4-8x). A service emitting one profile every 15 seconds produces 240 profiles/hour, ~50-200 MB/day, ~1.5-6 GB/month. For a fleet of 200 services that scales to 300 GB - 1.2 TB/month — manageable on object storage at $0.02/GB ≈ $25/mo. The cost driver is symbol storage: function names and source paths dominate the byte budget. Pyroscope 2.0's symbol deduplication (April 2026) trims this 3x by sharing the symbol table across profiles for the same binary. Retention strategy: 7 days full-fidelity for active debugging, 30 days downsampled (one profile per 5 minutes), 90 days for long-term trend analysis. Production retention is a knob; budget-conscious teams cap at 14 days fine + 60 days coarse.</p>
+    <p><strong>Profile-as-data: queries beyond flame graphs.</strong> Profiles are time-series of stack samples; backends increasingly let engineers query them like a database. Examples: "show the top 10 functions by self-CPU across all services for the past hour" (capacity planning), "diff this service's profile between deploy A and deploy B" (regression detection, already covered), "find all profiles where function X appears in the top 5" (impact assessment for a known-slow function fixed in a library), "group flame graphs by Kubernetes node to spot hot nodes". Pyroscope's query language (PhlareQL-like), Datadog's continuous profiler, and Parca all support these queries. The shift in mindset: profiles are not just visualisations to look at, they are data to aggregate and alert on, the same way metrics and logs are.</p>
+    <p><strong>Profiling and SLO burn.</strong> The previous SLO piece showed multi-window burn-rate alerts. The natural drilldown for any SLO burn: "what code is consuming the budget?" Continuous profiling answers it. The integrated workflow: SLO burn alert → click → time-range pre-filtered to burn window → CPU + off-CPU flame graphs side by side → identify which function changed → blame the deploy / change. Production-grade observability platforms (Datadog, Grafana with Pyroscope, Honeycomb) ship this drilldown out of the box; rolling it ourselves requires linking the SLO alert payload to the profile-backend URL with the right time range. The on-call's mental model becomes: pager rings → SLO dashboard names the burn → trace lists candidate slow spans → profile names the function → blame the git commit. Under 90 seconds from pager to git blame, for any incident where the bug ran on CPU.</p>
+    <NumbersCard
+      id="card-profile-cost"
+      title="Profiling: rates, overhead, storage"
+      stats={[
+        { label: "Default sample rate (Go pprof)", value: "100 Hz" },
+        { label: "Linux perf default", value: "99 Hz" },
+        { label: "Stack walk cost per sample", value: "~5-20 μs" },
+        { label: "Continuous profiler overhead", value: "2-5% CPU" },
+        { label: "Continuous profiler RAM/pod", value: "< 50 MB" },
+        { label: "Go heap profile sample rate", value: "1 per ~512 KiB allocated" },
+        { label: "Profile size, 30s capture", value: "~50-500 KB compressed" },
+        { label: "Pyroscope 2.0 storage cost reduction", value: "~3x vs v1" },
+      ]}
+    />
+    <Misconception id="mc-mean-hides">
+      <p><strong>"CPU profiling shows everything that makes my request slow."</strong> No. CPU profiling only sees functions actually running. A request waiting 400 ms on Postgres uses zero CPU during the wait — invisible to CPU profile. Use off-CPU profile, block profile, or trace spans for the off-CPU portion.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-pprof-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      title="Profile a Go HTTP service and read the flame graph"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Setup:</strong> A Go service has p99 latency 800 ms on /search. We expose pprof and capture a 30-second CPU profile under load.</p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`// 1. Expose pprof in the service (net/http/pprof auto-registers handlers)
+package main
+
+import (
+  "net/http"
+  _ "net/http/pprof" // registers /debug/pprof/* handlers
+)
+
+func main() {
+  go func() {
+    http.ListenAndServe("localhost:6060", nil)
+  }()
+  // ... your main HTTP server on :8080 ...
+}
+
+// 2. Capture a 30-second CPU profile under live load:
+//    go tool pprof -http=:9090 \
+//      http://localhost:6060/debug/pprof/profile?seconds=30
+//
+// 3. The pprof web UI opens in your browser at :9090 with the
+//    flame graph view. The widest top-level frame is your hot path.`}</code></pre>
+            <p><strong>Reading the flame graph:</strong> the y-axis goes from main at the bottom up through your HTTP handler, through whatever search code path, to the leaf function that was on-CPU when sampled. Widest leaf = hottest function. If you see `runtime.mallocgc` wide, you have too many allocations — switch to sync.Pool or reuse buffers. If you see your business logic wide, optimise the algorithm.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "If you want to profile memory allocations instead of CPU, which endpoint do you hit?",
+          blanks: [
+            { id: "ep", expected: "/debug/pprof/heap", placeholder: "endpoint path" },
+          ],
+        },
+        blank: {
+          prompt: "Why must you run the profile under representative load, not on a quiet system?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>A sampling profiler only sees what is running. On an idle system, almost everything in the samples is the runtime's idle loop or the GC — useless for finding hot paths. Under representative load, the application's real hot paths dominate the samples and the flame graph points at the actual bottleneck. Production-grade profiling captures during real traffic; staging profiling captures under synthetic load that mimics production. Profiling without load is profiling the wrong thing.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "ep:/debug/pprof/profile": "That is the CPU endpoint. Heap profile is /debug/pprof/heap.",
+        "ep:/heap": "Almost — full path is /debug/pprof/heap when using net/http/pprof.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="A request spends 50 ms on CPU and 450 ms waiting on a DB query. Which profile type would show you the DB wait?"
+      choices={[
+        { label: "Off-CPU profile (or block profile, or a trace span — anything that captures waiting time)", correct: true },
+        { label: "CPU profile", misconception: "CPU profile shows only running code; waiting is invisible to it." },
+        { label: "Heap profile", misconception: "Heap shows allocations, not waiting time." },
+        { label: "Mutex profile", misconception: "Mutex shows lock contention, not DB query wait." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="An engineer reads a flame graph as if the x-axis were time and concludes function A runs before function B. What's the misunderstanding?"
+      choices={[
+        { label: "Flame graph x-axis is alphabetical (or grouped by parent), not time. A frame to the left of another tells you nothing about call order — only about lexicographic order of their full stacks", correct: true },
+        { label: "The flame graph is rotated", misconception: "It is not rotated; it is fundamentally not a timeline." },
+        { label: "They should use a different profiler", misconception: "Different profilers all produce flame graphs with the same axes." },
+        { label: "Flame graphs are time-sorted in some implementations", misconception: "Not by spec; the Brendan Gregg flame graph is alphabetical." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="A continuous profiler claims 2% overhead. The team measures 12% impact on the production service. What is the most common explanation?"
+      choices={[
+        { label: "The sample rate was set higher than default, the stack walk on this language requires expensive symbol resolution at sample time, or the agent is also doing heavy compression / shipping work on the application thread", correct: true },
+        { label: "The profiler is fundamentally lying", misconception: "Reputable profilers test their overhead; the gap usually comes from misconfiguration." },
+        { label: "Profilers always have variable overhead", misconception: "Overhead is reasonably bounded with default settings; 6x gap indicates a config issue." },
+        { label: "The application is too slow without profiling", misconception: "Slow app would lower CPU available, not increase profiler overhead." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      scenario="A Node.js API service's p99 jumps from 200 ms to 1500 ms after a deploy. Trace the profiling path to root cause."
+      steps={[
+        { prompt: "Step 1: SLO burned. Trace tells you which service and which span. What's next?", reveal: "Open the continuous-profile dashboard for the service, filtered to the time window of the burn. Compare to the equivalent window before the deploy. A regression should appear as a new wide frame in the post-deploy flame graph." },
+        { prompt: "Step 2: post-deploy flame graph has a giant new frame: `RegExp.exec` inside requestValidation. Pre-deploy frame is narrow. What does this mean?", reveal: "A regex is consuming far more CPU than before. Likely cause: a new regex was added or an existing regex's input got bigger. RegExp.exec on a new pattern can hit catastrophic backtracking with certain input shapes." },
+        { prompt: "Step 3: look at the parent frame above RegExp.exec. What do you find?", reveal: "validateRequestBody, which calls a new schema validator added in the deploy. The validator uses a regex pattern that backtrack-explodes on inputs with certain whitespace patterns. Confirm by capturing a profile narrowed by trace-id of a slow request." },
+        { prompt: "Step 4: confirmed. What is the fix?", reveal: "Three options: (a) rewrite the regex without nested quantifiers (eliminate the backtracking), (b) switch to a regex engine immune to catastrophic backtracking (RE2-based libraries in JS/Go/Java), (c) cap input length so worst-case time is bounded. Production: pick the regex rewrite as primary, add input-length cap as defense-in-depth." },
+        { prompt: "Step 5: governance — prevent recurrence?", reveal: "(a) Pre-deploy load test that captures CPU profile and diffs against baseline; fail PR if a new function appears in top-5 by self-time. (b) Lint rule rejecting nested quantifiers in regexes touched by user input. (c) Always-on continuous profiling with alerts on profile-shape change post-deploy." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="07-profiling"
+      lang="en"
+      scenario="A Java service is GC-thrashing. Trace the path from symptom to root cause using profiling."
+      steps={[
+        { prompt: "Step 1: GC-thrashing — high heap allocation rate + frequent old-gen GC. Where do you look first?", reveal: "Allocation profile (heap profile in Go terms, async-profiler -e alloc in JVM). Capture for 30-60 seconds under load. Look for the widest allocation frame: which function allocates the most bytes per second?" },
+        { prompt: "Step 2: widest allocation frame is StringBuilder.toString() called from formatLogLine. What does this say?", reveal: "Every log line is allocating new strings. At high request rates this generates massive garbage. Hot allocation path through the logger." },
+        { prompt: "Step 3: drill in — why is logging allocating?", reveal: "Possible causes: (a) log lines are being constructed even when the log level filters them out (no lazy evaluation), (b) the log format uses string concatenation instead of structured fields with placeholders, (c) message formatting calls toString() on heavy objects. Each adds allocations per log call." },
+        { prompt: "Step 4: confirmed: log calls are constructing strings unconditionally with concatenation. Fix?", reveal: "Use parameterized logging: log.debug(\"order placed: {}\", orderId) instead of log.debug(\"order placed: \" + orderId). The string is only built if debug-level is enabled. Or use structured logging where the framework lazily defers serialisation. Allocation rate often drops 5-10x just from this." },
+        { prompt: "Step 5: validate the fix?", reveal: "Capture another allocation profile post-fix. Verify the formatLogLine frame is narrower. Confirm GC pause frequency dropped via GC metrics (jvm_gc_collection_seconds_count rate). Set up alert on allocation-rate regression: if a new deploy's allocation profile differs significantly, page." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      prompt="Order the steps of full-spectrum production performance debugging with profiles:"
+      items={[
+        "Identify the slow path via traces or SLO alert",
+        "Open the continuous-profile dashboard for the right service + time window",
+        "View the CPU flame graph — find widest leaf frame on the slow path",
+        "If CPU profile doesn't explain the wait (slow request but low CPU), view off-CPU or block profile",
+        "If memory pressure suspected, view allocation / heap profile",
+        "If contention suspected, view mutex / block profile",
+        "Apply fix; capture profile again; verify the regression frame is gone",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="07-profiling"
+      lang="en"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Explain why a flame graph's x-axis is alphabetical, not temporal, and what visualisation you would use if you needed time order.",
+          answer: <p>Alphabetical (specifically: grouped by parent function, then sorted alphabetically among siblings) makes the same parent's children appear next to each other, which preserves the visual call hierarchy when you scan vertically. Time order would scatter siblings across the graph and make the call structure illegible. The width of a frame is proportional to its occurrence in the sample set, regardless of when those samples were taken. If you need time order, the right visualisation is a timeline / Gantt chart of spans (what tracing tools give you) — that is what the previous piece's trace view is for. The flame graph answers "what" eats CPU; the trace answers "when" in the request did each step happen. Both are needed; they're not interchangeable. Misreading the flame graph as time order is the single most common rookie mistake — every senior engineer has done it once and the correction is permanent.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Why does Go's heap profiler sample one allocation per ~512 KB instead of recording every allocation?",
+          answer: <p>Recording every allocation would cost CPU proportional to the allocation rate — for a service allocating 100 GB/s, that is 200 million stack walks per second, completely infeasible. Sampling at 1-per-512-KB drops the cost by ~5 orders of magnitude while still gathering enough samples to identify the allocation hotspots: a function allocating 100 MB/s will hit ~200 samples/s, plenty for statistical estimation. The Poisson distribution means each KB has an independent probability of triggering a sample, so over time the sample-weighted aggregate is unbiased — multiplied back by the sample rate, the reported "bytes allocated" reflects the true distribution. Trade-off: short-lived hot allocation paths might be missed if they don't run long enough to hit a sample; profiling for longer (60s+ rather than 5s) helps. The same logic applies to mutex and block profiles: sampling makes them affordable at production cost. Always-on at low rates, occasional spike-rate captures when needed.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>The flame graph history.</strong> Brendan Gregg introduced flame graphs in 2011 at Joyent, generalising the trick of visualising sampled stacks. The original implementation was a Perl script generating SVG; the visualisation went viral because it solved a real problem nobody had solved well: making thousands of stack samples human-readable in one view. The ACM Queue paper (Gregg 2016) formalised the technique. Variants since: differential flame graphs (red/green diff between two profiles), inverted flame graphs (icicle graphs — leaf at bottom), flame charts (time-ordered, used in browser devtools, technically different from flame graphs despite the name), and aggregate flame graphs across many hosts. The original spec — alphabetical x-axis, depth y-axis, width = sample count — remains the canonical form because it scales: 10k samples, 1M samples, doesn't matter, the visual stays readable. Every major profiling backend renders flame graphs; the technique outlasted multiple tool generations.</p>
+    <p><strong>Linux perf and the kernel mechanism.</strong> Linux's perf subsystem is the foundation under most profilers. The kernel exposes perf_event_open(2) which lets userspace request sampling on CPU cycles (or hardware events, cache misses, etc.). When the configured number of events fires, the kernel captures the current PID + user-space stack pointer and writes them to a ring buffer. Userspace reads the buffer and reconstructs stacks. Kernel-side cost: ~1-5 microseconds per sample including the stack walk. Modern Linux (5.x+) supports BPF programs attached to perf events, letting userspace customise what is captured: filter by PID, attach metadata, do statistical processing in-kernel. This is the engine under Pyroscope eBPF, Parca, BCC's profile.bt, and any "magic" continuous profiler — they all sit on perf_event_open + BPF. The security implication: perf requires capabilities (CAP_PERFMON in newer kernels, or root historically); production deployments use kernel-side cgroup permissions to restrict what each container can see.</p>
+    <p><strong>eBPF and stack-walking nuances.</strong> The kernel can capture user-space stacks easily for compiled binaries (Go, Rust, C++ — frame pointers or DWARF unwind info on stack). For JIT runtimes (V8, JVM, .NET CLR, PyPy), the stack contains JIT-compiled code addresses that don't correspond to stable symbols. Profilers handle this with "perf maps": JITs emit /tmp/perf-PID.map files mapping address ranges to function names, which the profiler ingests. JVM async-profiler bypasses by hooking into the JVM's AsyncGetCallTrace API to capture Java stacks directly. V8 supports --perf-prof / --perf-basic-prof flags. The challenges: maps can lag, hot functions can be recompiled and re-mapped, stack unwinding can fail through certain JIT frames. Production profilers handle 90-95% of stacks accurately; the rest show as "[unknown]" frames. Worth knowing because mysterious "[unknown]" gaps in a flame graph usually mean a JIT-frame unwinding issue, not a bug in the application.</p>
+    <p><strong>Off-CPU profiling in depth.</strong> Brendan Gregg's 2013 work on off-CPU analysis identified the gap: CPU profiles miss everything a process waits for. eBPF made off-CPU profiling cheap by hooking into the kernel scheduler's switch events. When the scheduler removes a thread from CPU (it blocks on I/O, sleeps, waits on a lock), the kernel captures the thread's stack — that's the "off-CPU stack" representing where the wait started. When the thread comes back, time elapsed is attributed. The off-CPU flame graph shows wait time the same way CPU flame graph shows running time. Production usage: off-CPU is essential for I/O-bound services (databases, network gateways) where CPU profile shows ~5% time and the real work happens off-CPU. Cost is comparable to CPU profile (~2-5%) when sampling, but unsampled (every switch) it can be expensive on highly-switching workloads; production deployments cap to ~99 Hz.</p>
+    <p><strong>Differential profiling and regression detection.</strong> A single flame graph tells you what code is hot now. Two flame graphs over different time windows tell you what changed. Differential flame graphs (Brendan Gregg's red/blue version) color frames by their relative change between two profiles: red = grew, blue = shrank, white = unchanged. This is the deploy-regression detection workflow: capture a profile before deploy and after deploy, diff them, see exactly which functions got slower. Production-grade continuous-profile backends (Pyroscope, Datadog) bake this in: select "compare versions" and pick two commits or two time windows. The CI integration: a pre-merge perf job runs the standard load test under continuous profiling on both the PR branch and main, diffs the profiles, fails the PR if a new function appears with significant CPU share. This catches regressions before they hit production.</p>
+    <p><strong>Profile-guided optimisation (PGO).</strong> Profilers don't just diagnose; they feed back into compilation. PGO: compile a binary, run it under representative load to collect a profile, recompile with the profile as input. The compiler now knows which branches are hot vs cold, which functions to inline aggressively, which to keep small, how to lay out basic blocks for cache locality. Real-world PGO improvements: Go 1.21+ PGO gives 2-7% speedup on typical workloads; Chrome saw 10%+ from PGO + LTO; PostgreSQL benchmarks 5-15%. The bottleneck is workflow: gathering representative profiles, automating the recompile, validating the result. Production-grade build pipelines (Google, Meta, larger startups) automate the loop; smaller teams use one-shot PGO once per release. Continuous profiling backends increasingly support exporting profiles in PGO-compatible formats (Go's pprof CPU profile is directly consumable by the Go compiler's PGO).</p>
+    <p><strong>Security: profiles can leak code, secrets, and behaviour.</strong> A profile contains function names (often including private code, internal APIs, undocumented entry points). Some profilers also capture arguments or line numbers; some attach symbols including paths revealing the build environment. In hostile contexts, a profile from a competitor's binary can reveal proprietary algorithms — function names alone often telegraph what a service does. eBPF profilers running on shared kernels can in principle observe other tenants' execution; this is why eBPF requires explicit capabilities and is namespace-scoped on modern kernels. Memory profilers can capture allocation sites that include argument values (e.g., string contents); poorly-configured allocation profilers have leaked credentials. Production discipline: profiles are treated as security-sensitive artefacts, scoped to authorised on-call, retention-limited (30-90 days), and never shipped outside the org. The Linux kernel docs on perf-security spell out the threat model: profilers need to be treated like debuggers, not like logs.</p>
+    <p><strong>Production failures and their profiles.</strong> Discord 2020: a chat service was at 80% CPU with mysterious tail latency. CPU profile pointed at JSON serialisation; switching to a faster JSON library dropped CPU to 30% and tail to baseline. GitHub 2021: Ruby workers were OOMing on certain endpoints; allocation profile showed a single template-rendering function allocating 200 MB per request because of an unbounded loop concatenating strings. Stripe 2022: continuous profiling caught a regression two days after deploy — a new feature flag was reading from disk on every request instead of from in-memory cache; off-CPU profile showed the disk wait. Cloudflare 2023: a Worker runtime regression showed in eBPF profiles as time spent in V8's GC; the team rolled back a V8 update that introduced more aggressive collection. Slack 2024: PHP service was spending 30% of CPU on autoloader; profiler-guided opcache tuning cut it to 5%. Pattern: every major engineering org has a war story about profiling catching what dashboards missed.</p>
+    <p><strong>OpenTelemetry profile signal.</strong> OTel is standardising profiles as a fourth signal (after logs, metrics, traces). The spec defines a profile data model (samples with stacks, labels, time ranges), a transport (OTLP profile signal added in 2024), and integration with the existing context propagation (trace-id tagging). Adoption: Datadog, Grafana, Honeycomb, Splunk are implementing OTel profile ingestion; agents (OTel Collector + profiler-side) emit OTel-formatted profiles. The promise is the same as for logs/metrics/traces: cross-vendor portability and a unified collector pipeline. The catch is timing — the spec is in beta as of 2026 and many production deployments still use vendor-specific formats (pprof, JFR, Pyroscope-native). Senior engineers track this transition because choosing a tool today commits to a format for 2-3 years.</p>
+    <p><strong>Sampling biases and pitfalls.</strong> Sampling has limits. Functions whose entire runtime is shorter than the sample interval (10 ms at 100 Hz) can be missed entirely — they finish before the timer fires. This is the rare hot path with many short calls: the function runs 1 million times for 5 microseconds each (5 seconds total CPU), but each call ends before any sample. Mitigation: longer profiling windows (more chances to catch it), higher sample rates (more chances per second), or instrumentation-based profiling for that specific path. Another pitfall: NUMA / multi-CPU asymmetry — profilers usually sample uniformly across CPUs, but if work is unevenly distributed, the hottest CPU's hotspot dominates. Use per-CPU profile views to see imbalance. Final pitfall: signal-handler safety — profilers using SIGPROF can interact with signal handlers; rare crashes in old profilers came from this. Modern eBPF-based profilers avoid signal handlers entirely, using kernel-side capture.</p>
+    <p><strong>The bigger picture.</strong> Profiling is the closest tool to "where is the time and bytes" because it samples reality directly. Logs say "this happened"; metrics say "this much"; traces say "this took X long"; profiles say "this function in this thread used the CPU." The fourth pillar of observability. Continuous profiling at 2-5% overhead makes it cheap enough to keep on, which means SLO burns now come with a flame graph attached — no reproduction needed. The cultural shift: 2015-era teams reached for perf or pprof only when something was on fire; 2026-era teams have profile dashboards next to RED + USE + SLO, and a senior on-call's reflex is "open the profile" the same way "open the trace" was their reflex two years ago. Like trace propagation, profiling is plumbing; like trace propagation, the value compounds when every service has it on.</p>
+    <NumbersCard
+      id="card-profile-numbers"
+      title="Senior-tier profiling numbers"
+      stats={[
+        { label: "Flame graph paper", value: "Brendan Gregg, ACM Queue 2016" },
+        { label: "Linux perf_event_open kernel cost", value: "~1-5 μs / sample" },
+        { label: "Go PGO speedup typical", value: "2-7% on real workloads" },
+        { label: "Pyroscope 2.0 release", value: "April 2026" },
+        { label: "OTel profile signal status", value: "Beta as of 2026" },
+        { label: "JIT stack-unwind success rate", value: "~90-95% typical" },
+        { label: "Off-CPU profile typical use", value: "I/O-bound services" },
+        { label: "Differential profile use", value: "Pre/post deploy regression" },
+      ]}
+    />
+    <Misconception id="mc-symbols-private">
+      <p><strong>"Profiles are operational artefacts; safe to share widely."</strong> No. A profile contains function names (often private), call patterns, and sometimes allocation arguments — enough to reverse-engineer business logic. Treat profiles as security-sensitive; restrict access, retention, and external sharing.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      scenario="Continuous profiling shows a steady 8% of total fleet CPU spent in a third-party library's stack-walking code itself. Trace the diagnosis."
+      steps={[
+        { prompt: "Step 1: the profiler is consuming 8% across the fleet on profile-collection code. What does this look like?", reveal: "Self-reference: the profiler itself is showing up as the hot path. Some frame related to libunwind, addr2line, or the profiler's own stack capture is wide. This is the profiler's overhead manifesting as a flame-graph reading itself." },
+        { prompt: "Step 2: 8% is way over the claimed 2-5%. What configuration to check?", reveal: "Sample rate (default 100 Hz; if cranked to 1000 Hz, overhead grows 10x). Stack depth limit (deep stacks cost more to walk; default usually 127 frames). Symbol resolution mode (some profilers do online symbol lookup which is much slower than offline). Language-specific JIT bridging (JVM async-profiler with native frames enabled costs more)." },
+        { prompt: "Step 3: sample rate is at 99 Hz default. Symbol resolution is offline. Stack depth is 127 frames. What's left?", reveal: "Language runtime quirk: if Go uses cgo-heavy code paths, the profiler must walk C and Go frames separately, doubling cost. Or the application's typical stack is unusually deep (recursive code, deep middleware chains) so each sample costs 2-3x. Check average stack depth in the profile — if > 80 frames, that's the overhead source." },
+        { prompt: "Step 4: stacks averaging 120 frames deep — middleware chain has 80+ layers. What's the fix?", reveal: "Either reduce middleware nesting (architectural fix, longer-term) or cap stack-walking depth in the profiler (faster fix, slightly less profile info). Most profilers expose a max-depth knob; setting it to 64 cuts cost roughly in half. Trade-off: very deep code paths get truncated at the top." },
+        { prompt: "Step 5: long-term?", reveal: "Architectural: middleware-chain audit; consolidate layers. Tooling: use a profiler with lazy symbol resolution (resolve at query-time, not sample-time). Continuous monitoring: alert when profiler overhead self-reports above threshold. The pattern: even the observability tooling has a cost budget." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      title="Diagnose a memory pressure incident from heap-profile diff output"
+      output={`# go tool pprof -base baseline.heap incident.heap
+
+Type: inuse_space
+Showing nodes accounting for 245MB, 92.45% of 265MB total
+Dropped 142 nodes (cum <= 1.32MB)
+      flat  flat%   sum%        cum   cum%
+   180.5MB 68.11% 68.11%   180.5MB 68.11%  bytes.Repeat
+    30.2MB 11.40% 79.51%    30.2MB 11.40%  encoding/json.(*Decoder).refill
+    18.0MB  6.79% 86.30%    18.0MB  6.79%  sync.(*Map).LoadOrStore.func1
+     8.4MB  3.17% 89.47%   180.5MB 68.11%  github.com/myorg/api.(*Handler).processBatch
+     5.2MB  1.96% 91.43%     5.2MB  1.96%  runtime/pprof.allFrames
+     2.8MB  1.06% 92.49%   180.5MB 68.11%  github.com/myorg/api.preallocateBuffers
+
+# Listing of preallocateBuffers (line numbers + bytes attributed):
+     42:    for i := 0; i < cfg.PoolSize; i++ {
+     43:        pool[i] = bytes.Repeat([]byte{0}, cfg.BufferSize)
+     44:    }
+     45:    cfg.BufferSize *= 1024  # added in PR #4521`}
+      outputLang="log"
+      question="Heap usage went from baseline to 245 MB extra. The flame graph leaf is bytes.Repeat, called from preallocateBuffers (line 43). Line 45 multiplies BufferSize by 1024 after the loop. What is the bug and how do you fix it?"
+      hint="The flame graph + the listing point at the same lines."
+      answer="Diagnosis: preallocateBuffers allocates `pool[i] = bytes.Repeat(...)` with `cfg.BufferSize` for each pool slot. The bug is on line 45, AFTER the loop: BufferSize is multiplied by 1024 — but the multiplication is in the wrong place. The author likely intended BufferSize to already be in KB (1024 bytes per unit) but wrote the multiplication after the buffers are already allocated, so the loop allocates buffers at the wrong scale. Result: the allocation is happening at the wrong scale relative to what the rest of the code expects. Fix: move the multiplication BEFORE the loop, so BufferSize is corrected first, then buffers are allocated at the proper scale: `cfg.BufferSize *= 1024` on line 41 (before the for), then `bytes.Repeat([]byte{0}, cfg.BufferSize)` in the loop. Validation: capture a fresh heap profile post-fix; flame graph should show bytes.Repeat at a much narrower frame, ideally <10 MB. Lesson: heap profiles point to lines, but only diff + listing reveals the off-by-one in execution order. The 'flat' column shows where bytes are physically allocated; the 'cum' column shows the cumulative attribution up the call chain — read both to localise the bug. CI gate: a fleet of CI tests captures heap profiles on every PR; an automated diff against main triggers a review-required label if total inuse_space grows > 10%."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      prompt="Pick the production profiling strategy for a polyglot platform with Node, Go, JVM, and Python services."
+      options={[
+        { name: "Continuous eBPF profiling across all services (Pyroscope eBPF or Parca)", summary: "Best polyglot coverage.", correct: true, justification: "Language-agnostic via kernel-side stack capture: works on Node, Go, JVM, Python without per-language SDK changes. 2-5% overhead. eBPF requires privileged container or CAP_PERFMON; service-mesh / DaemonSet model is standard. Caveat: symbol resolution for JIT runtimes (V8, JVM) requires JIT-emitted perf maps or vendor support. Best total coverage with one tool." },
+        { name: "Per-language SDK profiling (pprof, JFR, py-spy, --prof)", summary: "Mature, language-specific.", justification: "Each runtime ships with first-class profiling that resolves symbols natively. Production-ready for years. But: ops cost scales with language count; configurations diverge; cross-language flame-graph comparison is awkward. Acceptable when team prefers per-stack tooling over unified pipeline." },
+        { name: "On-demand only (SSH + perf/pprof when triaging)", summary: "Cheapest, slowest response.", justification: "Zero steady-state overhead. Requires SSH access during incident, reproducing the issue, and capturing a profile under live load. Adds 10-30 min to MTTR. Acceptable for very low-volume services or where 2-5% steady overhead is prohibitive (extreme cost-sensitivity, latency-critical hot path)." },
+        { name: "Aggressive instrumentation-based profiling (per-function timing)", summary: "Too expensive.", justification: "Recording every function call's duration gives exact data but with 20-100% overhead at high call rates. Suitable for dev or for very specific paths under flags. Not for steady-state production at scale. Use only as targeted dev tool." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="Who and where introduced the canonical 'flame graph' visualisation with alphabetical x-axis and depth y-axis?"
+      choices={[
+        { rfc: "Brendan Gregg, ACM Queue 2016 (technique published 2011 at Joyent)", title: "The Flame Graph — formalised the alphabetical-x, depth-y, width-by-sample-count visualisation that became the industry standard", correct: true },
+        { rfc: "Linux perf manual", title: "Documents perf record output but flame graphs are a separate visualisation invented earlier" },
+        { rfc: "RFC 8259", title: "JSON spec — unrelated to profiling" },
+        { rfc: "OTel profile signal spec", title: "Standardises profile data model in OpenTelemetry, but the flame graph itself predates by 13 years" },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      question="A trace span shows 1.5s. CPU profile filtered to that trace-id shows 80 ms of total CPU work. Where did the other 1.42s go?"
+      choices={[
+        { label: "Off-CPU: the request was waiting (on I/O, DB, lock, network, scheduling). CPU profile only sees running code; the wait is invisible there. Need off-CPU profile, block profile, or trace child spans to see it.", correct: true },
+        { label: "The CPU profile is wrong", misconception: "CPU profile is correct; it just doesn't capture waiting time by design." },
+        { label: "The trace span is wrong", misconception: "Trace span measures wall-clock duration, which includes waiting. Both readings are correct and complementary." },
+        { label: "The profiler dropped samples", misconception: "Even with dropped samples you'd see most CPU time, not lose 95%. Off-CPU is the explanation." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="07-profiling"
+      lang="en"
+      prompt="Design the continuous-profiling infrastructure for a 200-service polyglot platform (Go, Java, Node, Python), 50 nodes per service tier on average, that must surface deploy regressions within 1 hour and let on-call open a profile filtered by trace-id in under 30 seconds."
+      constraints={[
+        "Polyglot mix: 80 Go services, 50 Java, 40 Node, 30 Python.",
+        "Kubernetes with eBPF-capable nodes available.",
+        "Existing observability stack: Prometheus + Grafana + Tempo (traces) + Loki (logs).",
+        "Cost ceiling for profiling: $5k/month across the fleet.",
+        "Must integrate with existing trace-id propagation (W3C from previous piece).",
+      ]}
+      canonical="Layer 1 — collection agents. Two complementary paths. For Go and Node services: pprof / --prof native profiling on a 30-second cycle, scraped via a Pyroscope-compatible agent (Grafana Alloy or Pyroscope agent). For Java: async-profiler in JFR or pprof export mode, attached as javaagent. For Python: py-spy attached as sidecar. Cross-cutting: Parca-style eBPF agent as DaemonSet on every node providing universal CPU + off-CPU profiles as a baseline, with native agents for the higher-fidelity per-language profiles (allocation, mutex, block). The eBPF DaemonSet is the catchall; per-language profiles are the depth. Layer 2 — backend. Self-hosted Pyroscope 2.0 cluster (3 replicas in primary region, async-replicated to DR). Storage: object store (S3 / GCS) for profiles, retention 30 days for fine-grained, 90 days for downsampled. Pyroscope 2.0's symbol deduplication keeps storage ~10 GB per service-month at the design's traffic; total ~$3k/month for storage. Layer 3 — trace-profile correlation. Each profile sample carries trace-id and span-id via context propagation (every service's profiler is configured to read OTel context). When a slow trace shows in Tempo, the Grafana 'profile' panel auto-filters Pyroscope to that trace-id and renders a flame graph for just that request. Sub-30-second drill from slow trace to flame graph. Layer 4 — regression detection. On every deploy, a CI job captures a 5-minute profile of the new version under canary traffic; differential against the previous version's profile is rendered in PR-comment as a flame graph diff. New wide frames flagged. Production: hourly differential job compares latest hour to same-hour-yesterday baseline, fires Slack alert if a previously-non-existent function appears in top 10 by CPU share. Layer 5 — security. Profiles are RBAC-gated by team (Pyroscope tenancy). Audit log of who pulled which profile. Retention exports require manager approval. eBPF agent runs with CAP_PERFMON only, no full privileged. Layer 6 — cost controls. Sample rate per service is configurable in service.yaml (default 99 Hz, can be dropped to 19 Hz for cheap baseline services). Profile shipping batched every 15 seconds. Storage budget alerts at 80% of $5k/month. Layer 7 — runbook integration. On-call documentation: every SLO alert links to (a) RED dashboard for the service, (b) trace view for slow examples, (c) profile view filtered to the time window. On-call drill: 60 seconds from page to flame graph. Result: regressions in deploys surfaced within an hour via differential profile diff; SLO incidents drilled from RED → trace → flame graph in under 60 seconds; cost is bounded; polyglot is no obstacle. This is the architecture that lets profile-first debugging become the default reflex across 200 services."
+      keyPoints={[
+        "Two-tier collection: eBPF DaemonSet for universal coverage, native agents for per-language depth.",
+        "Profiles carry trace-id; sub-30-second drill from trace span to flame graph.",
+        "Pyroscope 2.0 self-hosted in object storage; 30 / 90 day retention tiers.",
+        "Differential profile on every deploy (CI) + hourly baseline check (production).",
+        "RBAC + audit for profile access; eBPF runs with minimal capability.",
+        "Sample rate per service tunable; total budget capped at $5k/month.",
+        "On-call runbook: SLO alert → RED → trace → profile in <60s.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="07-profiling"
+      lang="en"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Explain why a CPU flame graph is not enough to diagnose an I/O-bound service, and walk through the orthogonal profile types that fill the gap.",
+          answer: <p>CPU profiling captures only what is running on the CPU. An I/O-bound service spends most of its wall-clock time waiting — for disk reads, database responses, network packets, lock acquisitions. During those waits the thread is descheduled; it consumes zero CPU; the CPU profiler never sees it. The flame graph for such a service shows ~5% CPU work and 95% of the request time invisible. Three orthogonal profile types fill the gap. Off-CPU profile (Brendan Gregg, eBPF-based, hooks the scheduler's switch events): captures the stack at the moment a thread leaves CPU and attributes wait time to it. The resulting off-CPU flame graph shows waits the same way the CPU flame graph shows running time. Block profile (Go specifically, via runtime.SetBlockProfileRate): captures time spent waiting on synchronisation primitives (channels, mutexes, condition variables, WaitGroups). It is a subset of off-CPU but cheaper and language-aware. Mutex profile (runtime.SetMutexProfileFraction): captures contention on locks, attributed at unlock-time to the stack that held the lock. The pattern: when triaging a slow request, start with the trace to see where time went, then CPU profile to see what burnt CPU, then off-CPU / block profile to see what waited. Each answers a different question; together they cover the full request lifecycle. Senior debuggers know which profile to reach for by reading the CPU-vs-wall-time ratio: if CPU is under 30% of wall-time, the bottleneck is off-CPU and CPU profile won't find it.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "A team enables continuous profiling with eBPF and notices that some functions in a Python service show as '[unknown]' in the flame graph. Explain why and outline the fix.",
+          answer: <p>Python's CPython interpreter compiles bytecode at runtime; the kernel-side eBPF profiler captures user-space stack pointers, but those pointers point into CPython's interpreter loop, not into Python source. The kernel cannot directly resolve "this address is in `process_batch` at line 47 of orders.py" because there is no static symbol for Python function names — they live in CPython's interpreter state. Result: the eBPF profiler shows the interpreter's C-level frames (PyEval_EvalFrameDefault and friends) but not the Python-level call stack the engineer cares about. Three fixes. (1) Use py-spy or scalene as the profiler instead — they understand CPython's frame structure and walk the Python-level stack directly, then emit pprof-compatible profiles for the same flame-graph rendering. py-spy specifically uses ptrace + memory reads to introspect CPython's PyFrameObject linked list and reconstruct the Python stack. (2) Use the newer eBPF profilers with Python-specific support: Pyroscope's eBPF mode (since 1.x), Parca, and Polar Signals all ship CPython BPF programs that walk the interpreter's frame chain in-kernel. Requires recent kernel and DWARF debug info matching the Python build. (3) Hybrid: run eBPF for universal CPU + off-CPU profiling at the runtime level, and run py-spy as sidecar for the Python-specific application-level flame graph. The fix you choose depends on your tooling investment: hybrid is the most robust but operationally heavier. The general lesson: eBPF profilers excel for compiled binaries (Go, Rust, C++) and modern JIT runtimes with stack-walking hooks (JVM via AsyncGetCallTrace, V8 with --perf-prof), but interpreted runtimes (Python, Ruby, older PHP) need explicit support either in the profiler or via a language-specific sidecar.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>Profile = sampled stacks. Flame graph = visualisation. CPU + off-CPU + heap profiles cover the request lifecycle. Continuous profiling at 2-5% overhead makes it always-on.</KeyTakeaway>
+
+<SpiralCue thread="latency">
+Profiling closes the loop opened in the RED piece: a histogram bucket counts a slow request, the trace shows which span ate the time, the profile shows which function inside the span ate the CPU. The same shape recurs in every observability layer — each one drills the previous by one level of detail.
+</SpiralCue>
+
+**Prereqs:** observability/04-red-use, 05-slo-budgets, 06-trace-propagation — RED says symptom, SLO sets the budget, traces locate the span, profile names the function.
+
+**Next:** 08-putting-it-together — the chapter capstone, weaving RED + USE + SLO + traces + profiles into one production observability story.
