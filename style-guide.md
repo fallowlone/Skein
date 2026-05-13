@@ -150,3 +150,59 @@ When the user provides the real asset, drop it into `assets/icons/bytebytego-log
 - Icons feel chunky, not monoline.
 - Headline + ByteByteGo wordmark present in the title bar.
 - 8-pt grid honored.
+
+---
+
+## Curriculum site component vocabulary
+
+Components live under `site/src/components/`. Each has one responsibility.
+
+### Layout
+- `Topic.astro` — outer page chrome (head, title, font, body chrome, lang switch slot, sources footer, spaced-revisit banner).
+- `Chapter.astro` — wraps `Topic`; adds sidebar (sticky chapter TOC) + main article slot.
+
+### Brand
+- `TitleBar.astro` — sticky header with logo wedge, headline, named `aside` slot.
+- `LangSwitch.astro` — small toggle between EN and RU; resolves twin URL via `swapLocale()`.
+- `SourcesFooter.astro` — footer that lists external sources for ready pieces.
+
+### Prose primitives
+- `Crux.astro` — ≤140-char opening question, lilac panel.
+- `Callout.astro`, `KeyTakeaway.astro`, `Sidenote.astro`, `Term.astro` — inline emphasis primitives.
+- `SpiralCue.astro` — chip linking to a thread page; threads: encapsulation, multiplexing, statefulness, latency.
+
+### Layout primitives (panels and cards)
+- `Stage.astro`, `Pill.astro`, `StepBadge.astro` — ByteByteGo-style stage panel and numbered steps.
+- `Card.astro` — generic bordered card; variants default/yellow/highlight.
+- `Misconception.astro` — red-bordered alert card; body ≤320 chars.
+- `NumbersCard.astro` — table of label/value pairs.
+- `PrereqBadge.tsx` — green/amber pill showing N/M prerequisites complete.
+
+### Diagram primitives (vanilla TS islands)
+- `Connector.astro`, `Node.astro`, `Pulse.astro`, `Reveal.astro`, `PacketDot.astro`, `CountUp.astro`, `TypingText.astro` — small visual components, no Preact dependency.
+
+### Pedagogy widgets (Preact islands)
+- `Pretest.tsx` — 3-question diagnostic, sets default `tier`.
+- `TierAccordion.tsx` — three pills (junior/middle/senior), default-open per `userState.tier`.
+- `FadedExample.tsx` — 3-step worked-example stepper (Renkl/Shin fading).
+- `RetrievalDrawer.tsx` — open-recall textareas with reveal-answer buttons.
+- `ReactiveDiagram.tsx` — slider→compute→render shell (Distill-style).
+- `Sequencer.tsx` — play/pause/step timeline with `data-active-step` for sibling SVG actors.
+- `Sandbox.tsx` — chapter-final widget chrome; chapter-specific sandboxes under `pedagogy/sandboxes/`.
+  - `sandboxes/RequestBudgetSandbox.tsx` — Chapter 01 capstone interactive.
+- `PersonaTag.astro` — Bea/Rex/Rita/Sven/Cara/Otto/Patty cast tag.
+- `ProgressMeter.tsx` — ring + bar variants; reads `userState.history`.
+- `SpacedRevisitBanner.tsx` — sticky strip; surfaces pieces due for retrieval.
+- `SettingsDrawer.tsx` — tier/motion/reset/retake controls.
+
+### Navigation
+- `PillarGrid.astro` — 16-card grid on home pages.
+- `ChapterSidebar.astro` + `ChapterSidebarTOC.tsx` — chapter index with visited checkmarks.
+
+### Authoring rules
+1. Every piece declares `depth: { mechanism, tradeoff, failure_mode, numbers }` in frontmatter — each id must resolve to a DOM element on the page.
+2. Hydration cap = 5 islands per piece page (linter-enforced). 3 in-content + 2 baseline (`SpacedRevisitBanner` + `ChapterSidebarTOC`) is the typical budget.
+3. EN and RU pieces share the same `slug`; bilingual or refuse.
+4. RU bodies use canonical translations from `site/src/i18n/glossary.json`. Extend the glossary alphabetically when new terms appear.
+5. Text budgets: Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
+6. Cross-link prereqs at the top, "next piece" at the bottom.
