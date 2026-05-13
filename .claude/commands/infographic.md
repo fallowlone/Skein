@@ -21,6 +21,8 @@ allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, mcp__plugin_context
 7. **Hydration cap = 5 islands per page** (linter-enforced). Typical budget: TierAccordion + FadedExample + RetrievalDrawer + 2 baseline.
 8. **Status flow:** stub → draft (optional) → ready. Only `ready` renders real content to users.
 9. **Commit only when status = ready.** Format: `git commit -m "content(<pillar>): <NN-piece> EN+RU ready"`.
+10. **Three-tier mandatory.** Every piece must ship junior + middle + senior panels inside a single `<TierAccordion>`. Refuse to mark `ready` if any tier is missing, below its word floor, above its ceiling, or short on the exercise mix in Step 8. Linter promotes `tier-word-budgets` and `exercise-counts` to errors — build will fail.
+11. **Scaffold first.** New pieces start from `site/scaffolds/3-tier-piece.mdx` (copy → fill placeholders). Do not write a fresh MDX from scratch.
 
 ---
 
@@ -76,61 +78,48 @@ Update the stub's frontmatter:
 - `depth.mechanism`, `depth.tradeoff`, `depth.failure_mode`, `depth.numbers` → set to element IDs you will create in the body (e.g., `section-three-way`, `card-rtt`, `mc-syn-flood`, `card-tcp-numbers`).
 - Verify all four depth fields are populated (linter will catch missing ones).
 
-Write the body following the P2 template structure:
+Start from the scaffold: `cp site/scaffolds/3-tier-piece.mdx site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` (only if the stub does not already exist; otherwise edit the stub and add the missing panels).
+
+Body structure is fixed — three-tier disclosure via `<TierAccordion>` with one `<Fragment slot>` per tier. Reference: `site/src/content/book/en/networking/05-tls-handshake/index.mdx`.
 
 ```mdx
-<Crux>
-Opening question (≤140 chars) that hooks the reader.
-</Crux>
+<!-- Topic reactivation: 1-2 sentences linking the prior piece(s). -->
 
-## Context / Setup
-Prose explaining why this piece matters.
+<Crux>One-sentence hook (≤140 chars).</Crux>
 
-## The Mechanism
-<span id="section-three-way">
-Details of what actually happens (packets, data structures, syscalls).
-Include diagrams if needed (embedded SVG or reference asset).
-</span>
+<!-- Context frame: 3-6 sentences stating goal + tradeoff. -->
 
-## Deeper View: [Optional subsection]
-(If needed for senior depth)
+<TierAccordion id="tier-mechanism" lang="en">
+  <Fragment slot="junior">
+    {/* 200-700w. Metaphor + persona dialog + 1 scenario.
+        Forbidden: RFC numbers, raw measurements, jargon without expansion.
+        Required: "What it does" (1 sentence), "Why care" (1 sentence),
+        metaphor paragraph, persona dialog (2 personas, 120-180w),
+        one scenario linking to prior/next pieces. */}
+  </Fragment>
 
-## The Tradeoff
-<span id="card-rtt">
-Every choice has a cost. State the tradeoff clearly.
-</span>
+  <Fragment slot="middle">
+    {/* 2500-3700w. Mechanism + tradeoff + numbers + failure mode.
+        Required: mechanism details (packets/data structures/syscalls),
+        optional deeper-view subsection, explicit tradeoff with NumbersCard,
+        failure mode (Misconception or prose), ≥1 FadedExample. */}
+  </Fragment>
 
-## What Can Break
-<span id="mc-syn-flood">
-Failure mode: what goes wrong first, what the symptom looks like, how to detect.
-(Max 320 chars if it's a Misconception component; otherwise prose is fine.)
-</span>
+  <Fragment slot="senior">
+    {/* 2500-4000w. Edge cases + kernel/library internals + security +
+        observability + history + RFC quotes. Hit ≥7 of these 10 dimensions:
+        edge cases, kernel internals + tunables, security pitfalls + CVE refs,
+        production tradeoffs, observability (USE/RED metrics), history (RFC
+        progression), cross-protocol interactions, deployment patterns,
+        real-world failure telemetry, RFC quotes with section refs. */}
+  </Fragment>
+</TierAccordion>
 
-## Numbers
-<NumbersCard id="card-tcp-numbers">
-  - Label: Value
-  - RTT (typical): 50ms–200ms
-  - Max connections (per socket): 65k
-</NumbersCard>
+<KeyTakeaway>One-paragraph synthesis (≤220 chars).</KeyTakeaway>
 
-## Key Takeaway
-<KeyTakeaway>
-(≤220 chars) Wrap up the learning in one sentence.
-</KeyTakeaway>
+<SpiralCue thread="<thread>">Connection to thread or sibling piece.</SpiralCue>
 
-## Retrieval Practice
-<RetrievalDrawer>
-2–3 open-ended questions. Learner types their answer, then clicks "Reveal" to see the model answer.
-</RetrievalDrawer>
-
-## Spiral & Threads
-<SpiralCue thread="statefulness">
-How does this connect to [thread name]? Link to the thread page or another piece in the spiral.
-</SpiralCue>
-
-## Cross-links
-- **Prereqs:** List any pieces that should be read first (link format: `[slug](../<slug>)`).
-- **Next:** Link to the next piece in the chapter.
+<!-- Cross-links: prereqs + next piece. -->
 ```
 
 **Import rules:**
@@ -200,19 +189,23 @@ Verify:
 
 The piece MUST contain (within the TierAccordion block):
 
-| Tier | Slot | Word budget | Required components |
+| Tier | Slot | Word budget (hard) | Required components |
 |---|---|---|---|
-| Junior | `<Fragment slot="junior">` | 200-500 | ≥1 PersonaTag dialog, ≥1 metaphor sentence |
-| Middle | `<Fragment slot="middle">` | 2500-3500 | Mechanism + tradeoff + numbers + failure mode |
-| Senior | `<Fragment slot="senior">` | 2500-4000 | ≥3 RFC refs, kernel/tunable references, edge cases |
+| Junior | `<Fragment slot="junior">` | 200-700 | ≥1 PersonaTag dialog, ≥1 metaphor sentence |
+| Middle | `<Fragment slot="middle">` | 2500-3700 | Mechanism + tradeoff + numbers + failure mode + ≥1 FadedExample |
+| Senior | `<Fragment slot="senior">` | 2500-4000 | ≥3 RFC refs, kernel/tunable references, edge cases, ≥7 of 10 senior dimensions |
 
-Per-tier exercise count target (linter emits warnings):
+Per-tier exercise count (linter enforces, build fails if below):
 
 - Junior: 5 exercises (Quiz × 2, DragOrder × 1, MetaphorComplete × 1, retrieval Q × 1)
 - Middle: 8 (Quiz × 2, TraceScenario × 2, DragOrder × 1, FadedExample × 1, retrieval Q × 2)
 - Senior: 7 (TraceScenario × 1, DebugLog × 1, TradeoffMatrix × 1, RFCQuiz × 1, DesignPrompt × 1, retrieval Q × 2)
 
-If a needed exercise component does not yet exist in `site/src/components/pedagogy/`, mark with TODO comment in MDX and proceed; do not block.
+**Refusal rules** — refuse to mark a piece `ready` and refuse to commit if any of the following hold:
+- Any tier `<Fragment slot>` missing or empty.
+- Tier word count below floor or above ceiling (see table above).
+- Per-tier exercise mix below the targets above.
+- Any required exercise component missing from `site/src/components/pedagogy/` — surface the missing component, do not silently skip.
 
 ### Step 9 — Verify
 
@@ -268,3 +261,5 @@ Concerns:       none
 - **Building stale site/dist.** Always run `bun run build` after edits. The linter runs at build time.
 - **Forgetting glossary.json.** New RU terms must be added and committed together with the piece.
 - **Off-domain topic.** If the topic is not fullstack engineering, refuse immediately.
+- **Missing tier panel.** Junior/middle/senior all required. A piece with only middle (legacy shape) is not `ready`. Linter blocks build.
+- **Skipping scaffold.** Always copy `site/scaffolds/3-tier-piece.mdx` instead of writing fresh MDX — keeps imports + Fragment slot wiring consistent across all 256 piece slots.
