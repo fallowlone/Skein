@@ -6,12 +6,17 @@ const BUDGETS: Record<Tier, { min: number; max: number }> = {
   senior: { min: 2500, max: 4000 },
 };
 
-const PANEL_RE = /<div data-tier-panel="(junior|middle|senior)"[^>]*>([\s\S]*?)<\/div>/g;
+const PANEL_RE = /<div data-tier-panel="(junior|middle|senior)"[^>]*>([\s\S]*?)<\/div><!--\/tier-panel-->/g;
 
 function countWords(html: string): number {
-  const text = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
-  if (!text) return 0;
-  return text.split(" ").length;
+  const stripped = html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!stripped) return 0;
+  return stripped.split(" ").length;
 }
 
 export function checkTierWordBudgets(html: string, file: string): string[] {

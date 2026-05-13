@@ -23,8 +23,20 @@ const EXERCISE_COMPONENTS = new Set([
   "RequestBudgetSandbox",
 ]);
 
-const PANEL_RE = /<div data-tier-panel="(junior|middle|senior)"[^>]*>([\s\S]*?)<\/div>/g;
-const ISLAND_RE = /<astro-island[^>]*component-export="([^"]+)"/g;
+const PANEL_RE = /<div data-tier-panel="(junior|middle|senior)"[^>]*>([\s\S]*?)<\/div><!--\/tier-panel-->/g;
+const ISLAND_RE = /<astro-island[^>]*component-url="[^"]*\/([A-Za-z]+)\.[^"]+\.js"/g;
+const INLINE_DATA_ATTRS = [
+  "data-quiz",
+  "data-drag-order",
+  "data-trace-scenario",
+  "data-metaphor-complete",
+  "data-debug-log",
+  "data-tradeoff",
+  "data-rfc-quiz",
+  "data-design-prompt",
+  "data-animation-step",
+  "data-number-drill",
+];
 
 function countExercises(panelHtml: string): number {
   let n = 0;
@@ -33,6 +45,11 @@ function countExercises(panelHtml: string): number {
     if (EXERCISE_COMPONENTS.has(m[1])) n++;
   }
   ISLAND_RE.lastIndex = 0;
+  for (const attr of INLINE_DATA_ATTRS) {
+    const re = new RegExp(`<section[^>]*\\s${attr}(\\s|=|>)`, "g");
+    let mm: RegExpExecArray | null;
+    while ((mm = re.exec(panelHtml))) n++;
+  }
   return n;
 }
 
