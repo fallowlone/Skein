@@ -4,24 +4,445 @@ lang: ru
 pillar: browser
 chapter: 02-browser
 order: 3
-title: "V8 internals"
-summary: "Скоро — Внутри браузера"
-readingMin: 12
-status: stub
+title: "V8 internals: tiered JIT, hidden classes, inline caches и Orinoco GC"
+summary: "Внутри четырёхъярусного JIT-пайплайна (Ignition + Sparkplug + Maglev + TurboFan), hidden-class полиморфизм, inline-cache состояния, деоптимизация и concurrent garbage collector Orinoco."
+readingMin: 24
+status: ready
 prereqs: []
-spiral: []
-personas: []
+spiral: ["statefulness", "encapsulation"]
+personas: ["bea", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-v8
+  tradeoff: card-v8-cost
+  failure_mode: mc-megamorphic
+  numbers: card-v8-numbers
 sources:
-  - https://example.com/placeholder
+  - https://v8.dev/blog/maglev
+  - https://v8.dev/blog/sparkplug
+  - https://v8.dev/blog/orinoco-parallel-scavenger
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/concurrent-marking
+  - https://en.wikipedia.org/wiki/V8_(JavaScript_engine)
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://github.com/thlorenz/v8-perf/blob/master/gc.md
+  - https://mathiasbynens.be/notes/shapes-ics
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>От байтов в кабеле до пикселей на экране — куда уходит время?</Crux>
+JavaScript — динамический язык: переменные хранят любой тип, объекты получают и теряют свойства по желанию, каждый call site полиморфен по дизайну. CPU под ним заботится о другом — регистры, предсказуемые layouts, branch targets, известные заранее. V8 мостит разрыв через четырёхъярусный JIT и concurrent garbage collector. Перформанс-gap между кодом, который V8 любит, и кодом, который V8 не может оптимизировать — примерно 100x. Знание, на какой стороне линии ты находишься — разница между 60fps и зависшей вкладкой.
 
-_Этот фрагмент в плане. Содержание см. в оглавлении главы._
+<Crux>V8 = 4 JIT-яруса + hidden classes + ICs + Orinoco GC. Полиморфизм выше 4 shapes убивает hot path в 10-50x.</Crux>
+
+Ментальная модель: JS-код байт-код-интерпретируется в Ignition, пока V8 записывает типы каждого call site. Горячий код поднимается по ярусам — Sparkplug для cheap-and-fast, Maglev для mid-tier оптимизированного, TurboFan для самых горячих путей. На каждом ярусе V8 специализируется на наблюдаемых типах (hidden classes); отклонение от ассумпций триггерит деоптимизацию обратно на нижний ярус. Доступ к свойству объекта идёт через inline cache, чей state трекает, сколько object shapes одна строка исходника видела. Orinoco GC обходит heap concurrent с выполнением JS, эвакуируя young-объекты параллельно и помечая старые в фоне, держа паузы ниже 1мс в well-behaved приложениях. Каждый senior frontend perf-вопрос — почему этот цикл медленный, почему страница дёргается, почему добавление одного поля обрушило render — отвечает из этого стека.
+
+<TierAccordion id="tier-v8" lang="ru">
+  <Fragment slot="junior">
+    <p><strong>Что такое V8 в одном предложении.</strong> V8 — JS-движок внутри Chrome, Edge и Node.js, превращающий JS-исходник в machine code, который выполняет CPU.</p>
+    <p><strong>Почему важно.</strong> Та же JS-функция может работать в 100 раз быстрее или медленнее, в зависимости от того, может ли V8 её оптимизировать. Несколько привычек (стабильные object shapes, monomorphic call sites) — разница между 60fps анимацией и дёргающейся страницей.</p>
+    <p><strong>Метафора.</strong> V8 — кухня с четырьмя поварами. Стажёр (Ignition) читает каждый рецепт медленно, но логирует, что заказали. Линейный повар (Sparkplug) шлёт быстрые generic версии. Sous-chef (Maglev) делает специализированные версии популярных блюд. Шеф-повар (TurboFan) ваяет идеальную версию самого популярного блюда — но только если заказы стабильны. Меняешь заказ на полпути — TurboFan выбрасывает блюдо, дроп обратно на line cook.</p>
+    <p><strong>Bea и Sven.</strong> <PersonaTag id="bea" lang="ru" /> браузер выполняет JS-код Bea. Ignition интерпретирует первым, логирует типы. После тысяч вызовов V8 промотит до TurboFan с ассумпциями «arg всегда число, объект всегда имеет .x». Если <PersonaTag id="sven" lang="ru" /> сервер однажды шлёт строку, ассумпции ломаются — deopt, fall back. «Быстрая» функция Bea снова медленная, пока V8 не переучится.</p>
+    <p><strong>Сценарий.</strong> React рендерит 1000 строк. Стабильные ключи = monomorphic IC, nanosecond lookups. Микс ключей = polymorphic, в 2-3 раза медленнее. 10+ shapes = megamorphic, в 10-50 раз медленнее. Тот же код, кардинально другая скорость в зависимости от того, что увидел V8.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Почему V8 использует несколько compilation tiers вместо одного?"
+      choices={[
+        { label: "Чтобы поддерживать больше браузеров", misconception: "V8 — в Chrome и Node; ярусы про perf-баланс, не portability." },
+        { label: "Разные ярусы — разный compromise между compile-time и run-time: Ignition стартует немедленно, но работает медленно; TurboFan компилит долго, но работает быстро", correct: true },
+        { label: "Ярусы — для разных версий JS", misconception: "Все ярусы выполняют один ECMAScript; они отличаются стратегией оптимизации." },
+        { label: "Только один ярус настоящий, остальные декорация", misconception: "Все четыре яруса — реальные, работающие компиляторы в текущем Chrome." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Что делает один кусок JS быстрее другого в 100x, который делает «то же самое»?"
+      choices={[
+        { label: "Больше CPU ядер", misconception: "JS в V8 — single-threaded; ядра не меняют per-line производительность." },
+        { label: "Разные парсеры", misconception: "Парсинг происходит один раз и быстро в любом случае." },
+        { label: "Может ли V8 держать функцию на быстром ярусе (стабильные типы, monomorphic call sites) или вынужден упасть обратно на generic интерпретатор (загрязнённые IC, deopt)", correct: true },
+        { label: "Расширение файла .mjs или .js", misconception: "Тип модуля не влияет на per-function производительность V8." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      prompt="Поставь путь горячей функции через ярусы V8:"
+      items={[
+        "JS-исходник парсится в AST",
+        "AST конвертируется в bytecode компилятором Ignition",
+        "Ignition интерпретирует bytecode и записывает type feedback per call site",
+        "После тысяч вызовов Sparkplug эмитит baseline machine code без специализации",
+        "Если всё ещё hot, Maglev компилит mid-tier оптимизированную версию используя observed types",
+        "Для самых горячих путей TurboFan делает агрессивную speculative оптимизацию",
+        "Если ассумпция ломается в runtime, V8 деоптимизирует и падает обратно на нижний ярус",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      setup="Заполни пропуск: call site, который видел ровно один object shape — _______ и V8 генерирует для него самый быстрый возможный machine code."
+      accepted={["монолитный", "monomorphic", "монолит", "mono"]}
+      canonical="monomorphic (одна shape — самое быстрое IC-состояние)"
+      explanation="Monomorphic — gold-standard IC-состояние. V8 эмитит machine code с hard-coded property offset. Polymorphic (2-4 shapes) добавляет branches; megamorphic (5+ shapes) падает на generic lookup, который в 10-50 раз медленнее."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "В одном предложении: почему добавление одного нового свойства к существующему объекту в середине кода обрушивает производительность downstream-функций?",
+          answer: <p>Потому что добавление свойства меняет hidden class объекта. Каждая функция, трогавшая этот объект через inline cache, специализировалась на СТАРОМ hidden class. Следующий вызов видит другой hidden class, IC переходит monomorphic → polymorphic; если паттерн продолжается с большим числом shape-variations, IC в итоге становится megamorphic, и V8 сдаётся на специализации полностью. Фикс — конструировать объекты со всеми свойствами upfront (в конструкторе или factory), чтобы hidden class был стабилен с создания — любой код, трогающий их, остаётся на быстром monomorphic пути.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Четырёхъярусный пайплайн.</strong> V8 имеет четыре режима выполнения, упорядоченных tradeoff-ом compile-time vs run-time. <em>Ignition</em>: bytecode-интерпретатор. Парсер строит AST; Ignition опускает его в компактный register-based bytecode и выполняет на виртуальной машине. Во время интерпретации Ignition записывает type feedback в per-function FeedbackVector — слоты для каждой «интересной» локации (property load, function call, арифметика, сравнение). Дёшевый вход (нет compile-cost), per-instruction в 10 раз медленнее оптимизированного native кода. <em>Sparkplug</em>: baseline JIT, добавлен в 2021. Sparkplug эмитит неспециализированный machine code за один линейный проход по bytecode — никакого SSA, реальной оптимизации нет, просто faithful translation каждого bytecode в маленький блок machine инструкций плюс tail call. Compile-cost практически нулевой (~1мс на kB bytecode); ускорение над Ignition в 1.5-2 раза. <em>Maglev</em>: mid-tier оптимизирующий компилятор, добавлен в 2023. Maglev использует observed types из FeedbackVector и SSA-based оптимизации, эмитя специализированный machine code, но пропуская heavy passes TurboFan. ~10x медленнее compile, чем Sparkplug, ~10x быстрее compile, чем TurboFan, runtime-код примерно посередине между ними. <em>TurboFan</em>: тяжёлый оптимизирующий компилятор. Агрессивный inlining, escape analysis, range analysis, hidden-class специализация, speculative optimisations, которые могут deopt. Compile-cost высокий (десятки до сотен мс на сложную функцию); runtime-код — самый быстрый, который V8 производит.</p>
+    <p><strong>Profile-guided tiering.</strong> Функции входят в Ignition. После пересечения порогов execution-count (per-function, динамические) V8 промотит на следующий ярус. Недавний V8 использует profile-guided tiering: FeedbackVector трекает не только типы, но и branch frequencies, поэтому TurboFan может разложить hot path с оптимальным branch prediction. Пороги настроены per-tier: Sparkplug на ~100 calls, Maglev на низких тысячах, TurboFan на десятках тысяч. Promotion происходит off-thread (concurrent compilation) — главный поток JS продолжает работать на текущем ярусе, пока worker thread компилит следующий.</p>
+    <p><strong>Hidden classes (Maps или Shapes).</strong> JS-объекты динамичны — свойства можно добавлять, удалять, реордерить — но V8 внутри представляет каждый объект как pointer на hidden class (Map в исходниках V8) плюс sequence of property slots. Два объекта с одинаковыми именами свойств, добавленными в том же порядке, делят один hidden class. Когда добавляешь свойство к существующему объекту, V8 transitions на новый hidden class по «transition tree» — adding "x" then "y" идёт на один class; adding "y" then "x" идёт на другой (даже хотя оба объекта имеют одинаковое логическое содержимое). Это важно, потому что inline cache key-ится по hidden class pointer. <em>Стабильные hidden classes — фундамент производительности V8.</em> Конструируй объекты со всеми свойствами upfront (в конструкторах или factory). Избегай <code>delete</code> на свойствах объекта — это форсирует transition на dictionary-mode объект, который перманентно медленный.</p>
+    <p><strong>Inline caches и их состояния.</strong> Каждый доступ к свойству в JS — полиморфная операция, объект может быть любой shape. V8 генерирует крошечный per-call-site кеш: первый раз, когда строка выполняется, V8 записывает hidden class, который видел, и property offset для этого class. Следующий раз, когда та же строка выполняется и объект имеет тот же hidden class, V8 читает свойство по записанному offset напрямую (5-10 циклов). State machine IC: <em>uninitialized</em> (нет наблюдений), <em>monomorphic</em> (один hidden class — быстрый direct access), <em>polymorphic</em> (2-4 hidden classes — linear chain of class checks, всё ещё быстро), <em>megamorphic</em> (5+ — V8 сдаётся на специализации, падает на generic property lookup, который в 10-50 раз медленнее). IC-state живёт в FeedbackVector слоте для этой строки. Функция может иметь сотни IC слотов; один megamorphic site не убивает всю функцию, но hot loop, содержащий megamorphic property access, убивает свой loop body.</p>
+    <p><strong>Деоптимизация (deopt).</strong> Когда TurboFan оптимизирует функцию, она запекает ассумпции: «этот arg всегда smi» (small integer), «property z этого объекта всегда число», «этот loop никогда не оверфлоу 32-bit индексов». Guard вставляется на каждой ассумпции. Если в runtime любой guard падает, V8 деоптимизирует: выбрасывает компилированный код, реконструирует интерпретатор state из оптимизированного frame и продолжает выполнение в Ignition (или Sparkplug). Функция может подняться обратно позже, но сам deopt дорогой (~микросекунды). Типичные deopt-триггеры: passing different type to ранее-typed аргументу, indexing за array bounds, попадание в NaN в numeric операции, accessing удалённого свойства. Chrome DevTools (<code>--trace-opt --trace-deopt</code> флаги) экспонирует deopts; <code>%OptimizationStatus(fn)</code> на <code>--allow-natives-syntax</code> в d8 показывает текущий ярус.</p>
+    <p><strong>Orinoco: concurrent garbage collector V8.</strong> Heap разделён на young generation (маленький, часто собирается) и old generation (большой, редко собирается). <em>Minor GC (Scavenger)</em>: копирует живые young объекты из «from-space» в «to-space» semispace; мёртвые объекты выбрасываются. Работает параллельно через несколько threads, используя динамический work-stealing. Паузы на главном потоке короткие (~1мс типично), потому что young-gen heap маленький. Survivors двух scavenges promoted в old generation. <em>Major GC (Mark-Compact)</em>: трассирует все живые объекты с roots, помечает reachable, sweeps мёртвые, компактит surviving объекты для уменьшения фрагментации. До Orinoco это была stop-the-world операция длительностью сотни мс на больших heaps. Orinoco перенёс marking в concurrent thread, который обходит heap, пока JS работает на главном потоке; реальная пауза на sweep/compact сокращена на 50% на WebGL-heavy workloads. Pause-time budget на главном потоке — самое жёсткое perf-ограничение; философия дизайна Orinoco — «сделать GC паузы незаметными на 60fps (16.6мс)».</p>
+    <p><strong>Hot path: комбинация всего вышесказанного.</strong> Функция в tight loop попадает на оптимизированный поток: TurboFan-компилирована, monomorphic IC на каждом access, hidden class стабилен, нет GC прерывания. Per-iteration cost — single-digit nanoseconds. Сломай любой из них и cost растёт: polymorphic IC → 2x, megamorphic IC → 10-50x, deopt в середине loop → 100-1000x для loop body, GC пауза → миллисекунды, видимые пользователю. Frontend perf engineering — почти исключительно о том, чтобы держать все четыре колеса этого автомобиля: стабильные object shapes, monomorphic call sites, никаких сюрпризов, триггерящих deopt, низкое GC давление.</p>
+    <p><strong>Операционные рычаги для JS perf.</strong> (1) Constructor паттерн: декларируй все свойства объекта в одном месте, чтобы hidden classes были стабильны. (2) Избегай <code>delete</code> на объектах (используй null или undefined assignment, или просто никогда не объявляй свойства, которые можешь хотеть удалить). (3) Держи функции monomorphic: не передавай разные shapes в один call site. (4) Избегай <code>arguments</code> в старом коде; используй rest parameters. (5) Pre-allocate массивы с известной capacity для избежания resize. (6) Переиспользуй object pools для short-lived workloads (canvas, animation) вместо аллокации новых объектов per frame. (7) Избегай массивных object literals в hot paths (они megamorphic быстро). (8) Для очень hot numeric loops используй TypedArrays — V8 имеет высоко-tuned paths для Uint32Array и подобных, которые bypass IC layer полностью.</p>
+    <p><strong>Tooling и наблюдение.</strong> Chrome DevTools Performance panel показывает main-thread время разбитое по Scripting / Rendering / Painting / GC. Memory panel snapshots и timeline diffs. Node.js: <code>--trace-opt --trace-deopt</code> флаги логируют каждое promotion и demotion; <code>--print-bytecode</code> дампит Ignition bytecode; <code>--print-opt-code</code> дампит TurboFan-эмитированный machine code. d8 (V8 shell) с <code>--allow-natives-syntax</code> экспонирует intrinsic функции типа <code>%HasFastProperties(obj)</code> (объект в dictionary mode?), <code>%GetOptimizationStatus(fn)</code> (какой ярус?), <code>%DebugPrint(obj)</code> (полный internal layout). Production perf debugging обычно стартует в DevTools, копает в специфическую функцию и заканчивается в d8 для подтверждения V8-уровня диагноза.</p>
+    <p><strong>Memory layout: in-object vs out-of-object свойства.</strong> V8 хранит первые ~8 свойств объекта inline в memory block объекта; последующие свойства идут в out-of-object PropertyArray, на который указывает объект. Access к in-object свойствам — single memory load; out-of-object добавляет одну pointer dereference. «In-object slot count» зафиксирован при создании hidden class — добавление большего числа свойств позже spills в PropertyArray. Для perf-критичных объектов декларируй самые-часто-доступаемые свойства первыми в конструкторе. Кроме того, hidden classes также имеют «dictionary mode» fallback: объекты со слишком многими свойствами (~32+) или многими удалениями transitions на HashMap-backed представление, где каждый access идёт через slow generic путь. Это «dictionary mode» предупреждение в V8 tooling — раз попал, объект навсегда медленный.</p>
+    <p><strong>Numeric специализация: smi, heap-number, double.</strong> V8 представляет small integers (Smi) inline в 64-bit pointer slot с low bit cleared — никаких аллокаций, никаких indirection, арифметика за одну CPU инструкцию. Числа вне smi range (±2^30 на 32-bit isolates, ±2^31 на 64-bit) становятся HeapNumbers — boxed в heap-allocated cell с double внутри. Smi-to-HeapNumber transition — самый частый deopt-триггер V8: TurboFan-компилирован loop ассумит Smi, value оверфлоу один раз, deopt cascade. Фикс — bound integer range или использовать Math.fround / explicit Float64Array. Инженеры, пишущие perf-критичный JS, интернализируют Smi range и проектируют data flows, чтобы оставаться внутри него.</p>
+    <p><strong>Array элементов kinds: PACKED vs HOLEY.</strong> V8 трекает «kind» каждого массива на основе того, что в нём хранится. PACKED_SMI_ELEMENTS — массив только smi-чисел без пробелов, самая быстрая форма. PACKED_DOUBLE_ELEMENTS — только double-чисел. PACKED_ELEMENTS — mixed types или объекты. HOLEY_* варианты — массив с пробелами (sparse), что заставляет V8 проверять каждый access на «hole». Transitions всегда односторонние: PACKED → HOLEY, SMI → DOUBLE → ELEMENTS. Раз перешёл — не вернёшься, даже если массив снова заполнен. Production pitfall: <code>new Array(1000)</code> создаёт HOLEY массив с самого начала; <code>Array.from(&#123;length:1000&#125;, () =&gt; 0)</code> создаёт PACKED. Та же логическая операция, в 2-3 раза разная скорость access. Чтобы держать массив PACKED_SMI: pre-allocate с <code>[]</code>, добавляй через push, не присваивай по индексам выше длины. Diagnostic: <code>%DebugPrint(arr)</code> в d8 показывает kind.</p>
+    <p><strong>String internalization и сравнение.</strong> V8 поддерживает internal pool для маленьких string-литералов и property names — две interned строки сравниваются как pointer равенство (1 цикл), не char-by-char. Property access всегда interns ключ. Конкатенация (<code>'a' + 'b'</code>) создаёт ConsString — flat tree concatenation без копирования. Substring создаёт SlicedString, держащий reference на parent. Это даёт O(1) substring/concat, но retain memory: длинная строка живёт в heap, пока хоть один slice есть. <code>str.flatten()</code> или explicit copy через <code>str.slice() + ''</code> разрывает reference, освобождая parent. Для perf-критичных string-heavy workloads (парсеры, шаблонизаторы) знание этого паттерна — разница между O(n) и O(n²) на ровном месте, особенно когда длинная строка случайно retain-ится через короткий substring и leak heap memory.</p>
+    <NumbersCard
+      id="card-v8-cost"
+      title="V8 internals: числа, которые важны"
+      stats={[
+        { label: "Compile ярусы", value: "4 (Ignition / Sparkplug / Maglev / TurboFan)" },
+        { label: "Sparkplug vs Ignition speedup", value: "~1.5–2×" },
+        { label: "Maglev compile speed vs TurboFan", value: "~10× быстрее" },
+        { label: "IC monomorphic access", value: "5–10 циклов" },
+        { label: "Megamorphic порог", value: "≥5 shapes на IC slot" },
+        { label: "Megamorphic slowdown", value: "10–50× vs monomorphic" },
+        { label: "Scavenger пауза (типично)", value: "<1 мс" },
+        { label: "Concurrent marking pause reduction", value: "~50% на WebGL" },
+      ]}
+    />
+    <Misconception id="mc-megamorphic">
+      <p><strong>«Полиморфизм — норм, V8 справится.»</strong> Частично. Polymorphic (2-4 shapes) — ок. Megamorphic (5+) — когда V8 перестаёт стараться, fallback на generic property lookup, в 10-50 раз медленнее monomorphic. Граница — одна shape за polymorphic.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-v8-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      title="Трасса одного hidden-class transition, ломающего IC"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Сетап:</strong> функция <code>getX(p) = p.x</code> вызывается 10000 раз в hot loop. Объекты приходят из разных code paths.</p>
+            <p><strong>Шаг 1: warm-up (первые 1000 вызовов).</strong></p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>Каждый вызов передаёт <code>Point</code>-объект, созданный через <code>new Point(x, y)</code>. Все Points делят hidden class HC1.</li>
+              <li>Ignition выполняет, записывает «IC для строки 1: HC1, offset 8» в FeedbackVector.</li>
+              <li>После 1000 вызовов Sparkplug компилит baseline JIT версию. IC всё ещё monomorphic.</li>
+            </ul>
+            <p><strong>Шаг 2: TurboFan promotes (вызов 5000).</strong></p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>TurboFan компилит getX с ассумпцией «p имеет hidden class HC1, .x на offset 8». Эмитит одну MOV инструкцию: <code>mov rax, [rdi+8]</code> — 1 цикл.</li>
+              <li>Функция теперь на максимальной скорости.</li>
+            </ul>
+            <p><strong>Шаг 3: hidden class transition (вызов 6000).</strong></p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>Caller делает <code>point.z = 5</code> на одной из points после создания. Эта point transitions на новый hidden class HC2 с .z на offset 16.</li>
+              <li>Модифицированная point передаётся в getX. TurboFan guard проверяет hidden class против HC1, fails.</li>
+              <li>Деоптимизация: TurboFan-код выброшен, выполнение падает на Sparkplug. IC видит HC2; transitions с monomorphic-HC1 на polymorphic-HC1-HC2.</li>
+              <li>Функция работает ~2x медленнее, пока не переоптимизируется. Если придёт больше shapes — IC megamorphic и остаётся медленным.</li>
+            </ul>
+          </div>
+        ),
+        semi: {
+          prompt: "Если caller добавляет .z ко ВСЕМ points до вызова getX, какое финальное IC state?",
+          blanks: [
+            { id: "ic_state", expected: "monomorphic", placeholder: "IC state" },
+          ],
+        },
+        blank: {
+          prompt: "Если функция берёт объекты из 8 разных конструкторов (8 hidden classes), какое IC state она достигает и какая perf-цена?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p><strong>Megamorphic.</strong> Как только IC видел больше 4 hidden classes, V8 перестаёт трекать их индивидуально и помечает site megamorphic. С этого момента каждый property access fallback на generic runtime lookup: traverse hidden class transition chain, find свойство, return offset — ~50-100 циклов на access вместо 1-2.</p>
+              <p>Для hot loop, делающего этот access миллионы раз в секунду, переход в megamorphic превращает 1мс loop в 30-50мс loop. Фикс: унифицировать shape (один конструктор, все свойства декларированы upfront) или разбить loop на per-shape sub-loops, где каждый остаётся monomorphic.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "ic_state:megamorphic": "Megamorphic нужно 5+ shapes. Если все points делят .z, они все transition на HC2 вместе — всё ещё одна shape — обратно monomorphic.",
+        "ic_state:polymorphic": "Polymorphic — 2-4 shapes. Если все points имеют одинаковую shape (с .z), это одна shape — monomorphic.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Функция внезапно замедлилась с 50us до 2мс после «небольшого» рефакторинга. Куда смотреть первым?"
+      choices={[
+        { label: "GC паузы", misconception: "GC возможная причина, но замедление single function чаще от deopt или деградации IC." },
+        { label: "Была ли функция деоптимизирована (смотри --trace-deopt логи или DevTools Performance trace 'recompile' events) и какой call site стал mega/polymorphic", correct: true },
+        { label: "Network latency", misconception: "Если функция чисто compute, network нерелевантен." },
+        { label: "Mac vs Linux V8 различие", misconception: "Тот же V8 шипится во всех OS; perf различия в ~5%." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Почему V8 имеет ЧЕТЫРЕ compilation tiers, а не два?"
+      choices={[
+        { label: "Исторический accident, нет реальной причины", misconception: "Каждый ярус добавлен преднамеренно для специфической ниши compile-cost-vs-runtime-speed tradeoff." },
+        { label: "Каждый ярус покрывает разную точку на compile-time-vs-run-time кривой — Sparkplug для быстрого warm-up, Maglev для mid-tier кода, который не оправдывает TurboFan", correct: true },
+        { label: "Разные ярусы для разных браузеров", misconception: "V8 — один engine; все ярусы шипятся вместе." },
+        { label: "Маркетинг", misconception: "Каждый ярус имеет измеримое, задокументированное влияние на реальные workloads." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Scavenger Orinoco снижает young-gen GC pause times через parallel work-stealing. Почему OLD-gen Mark-Compact всё ещё сложнее?"
+      choices={[
+        { label: "Old gen имеет больше pointer chasing и больше; marking всего reachable графа не может закончиться за <1мс даже concurrent", correct: true, misconception: undefined },
+        { label: "Old gen не имеет мусора", misconception: "Old gen аккумулирует мусор от long-lived объектов, становящихся unreachable; ему точно нужен сбор." },
+        { label: "Scavenger медленнее Mark-Compact", misconception: "Обратное: scavenger быстрее per-byte из-за copying small live set." },
+        { label: "Old gen не нужен GC", misconception: "Всем gens нужен GC; old gen GC просто больше работы." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      scenario="React app падает до 20fps после добавления нового prop в компонент. Трасса JS-perf root cause."
+      steps={[
+        { prompt: "Шаг 1: 20fps значит фрейм занимает >50мс, должно <16мс. Что может есть бюджет?", reveal: "Возможные подозреваемые: больше JS работы per render (длиннее scripting time), больше layout/paint, GC пауза, hidden-class transitions в render-пути. Начни с Performance panel — раздели фрейм на Scripting / Rendering / Painting / GC." },
+        { prompt: "Шаг 2: Performance показывает 40мс Scripting per frame, было 8мс. Новый prop задействован. Что на V8-уровне?", reveal: "Добавление prop в React-компонент безвредно на React-уровне — но если prop динамичен (иногда string, иногда number, иногда undefined), объект props компонента теперь имеет разные hidden classes per render. Любой component-internal IC, использующий props.X, идёт polymorphic или megamorphic." },
+        { prompt: "Шаг 3: как подтвердить, что нестабильность hidden-class — проблема?", reveal: "Запусти с --trace-opt --trace-deopt. Ищи deopt-сообщения, упоминающие render-функцию компонента. Или используй %GetOptimizationStatus на render-функции — если она прыгает между 'optimized' и 'not optimized' через renders, IC деградация ломает оптимизацию." },
+        { prompt: "Шаг 4: структурный фикс?", reveal: "Сделай тип prop консистентным. Если может быть string-или-undefined, используй default value, чтобы всегда был defined. Если может быть number-или-string, выбери одну каноническую репрезентацию. React docs намекают на это в 'avoid changing object identity' — глубокая причина — hidden-class стабильность для V8." },
+        { prompt: "Шаг 5: предотвращение регрессии?", reveal: "TypeScript strict mode ловит большинство случаев (no implicit any, no | undefined unless explicit). Добавь perf-budget тест: rendering N раз, assert total time под порогом. Запускай на каждом PR, трогающем компонент." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      scenario="Node.js-процесс потребляет 4GB RAM после недели uptime. Трасса GC-паттерна."
+      steps={[
+        { prompt: "Шаг 1: 4GB после недели — медленная утечка, не crash. Какой V8 observable покажет тренд?", reveal: "Запусти процесс с --trace-gc — каждое GC-событие логирует heap-before/heap-after. Плот по времени. Если old-gen size монотонно растёт с недельной периодичностью — утечка. Если осциллирует около стабильного среднего — GC справляется." },
+        { prompt: "Шаг 2: heap-after устойчиво лезет 50MB/день. Какая утечка?", reveal: "Объекты переживают promotion в old gen, но никогда не становятся unreachable. Типичные причины: кеши без TTL, event listeners никогда не removed, closures, держащие references в long-lived callbacks, request scopes утекают в module scope." },
+        { prompt: "Шаг 3: как найти источник утечки?", reveal: "Heap snapshot через Chrome DevTools (подключи к Node через --inspect). Сними snapshots в дни 1, 4, 7. Diff. Ищи типы объектов, чей count рос неограниченно. Типично: десятки новых 'Closure' или 'Detached HTMLDivElement' nodes в день, указывающих на старый scope. Retainer path показывает, что их держит." },
+        { prompt: "Шаг 4: утечка найдена — LRU кеш без max size. Фикс?", reveal: "Кепни cache size на N entries или N MB. Добавь eviction. Используй lru-cache или подобные — он держит bookkeeping. Утечка уходит в следующий раз, когда кеш достигает cap и evicts." },
+        { prompt: "Шаг 5: предотвратить повторение?", reveal: "Heap-snapshot-on-deploy как perf-CI шаг: deploy → ждать N часов → snapshot. Сравнить с baseline. Регрессии object-count валят deploy. Чаще всего ловит 'я добавил Map(), но никогда не удалял entries' паттерн — лидирующая причина медленных Node-утечек." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      prompt="Поставь шаги property access на TurboFan-компилированном monomorphic IC:"
+      items={[
+        "TurboFan-компилированная функция получает object pointer в регистре",
+        "Первая инструкция: load hidden-class pointer из object header",
+        "Сравнить loaded hidden class с expected hidden class из compile time",
+        "Если равны: read свойство по precomputed offset (1 MOV инструкция)",
+        "Если не равны: deoptimize — выбросить компилированный код, fall back на нижний ярус",
+        "Продолжить выполнение на нижнем ярусе; IC записывает новый hidden class и может transition state",
+        "Функция может быть переоптимизирована позже с updated IC информацией",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Почему V8 просто не компилит каждую функцию TurboFan-ом немедленно?",
+          answer: <p>Три причины. Первая: большинство функций запускаются один раз или никогда — TurboFan compile-cost (десятки до сотен мс per function) был бы чистой тратой. Sparkplug или Ignition достаточно. Вторая: TurboFan нужен type feedback от runtime observation для хороших speculations. Без warm-up в Ignition сначала TurboFan не имеет информации для специализации — эмитил бы код примерно как Sparkplug, но за 1000x compile-cost. Третья: compile latency прямо бьёт по perceived load time. Страница, которая «бутится» 2с потому что каждая onload-функция должна TurboFan-компилиться, чувствуется сломанной. Tiered дизайн front-loads cheap-and-fast Ignition, поднимается на expensive-but-fast TurboFan только для маленького subset кода, который реально оправдывает это. Profile-guided tiering использует FeedbackVector, чтобы решить, какие функции достаточно горячие.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Что такое «hidden class transition tree» и почему порядок свойств при создании важен?",
+          answer: <p>Когда добавляешь свойство к объекту, V8 создаёт новый hidden class, deriv-ованный из старого. Форма этой деривации зависит от порядка, в котором добавлены свойства. Object literal <code>&#123;a:1, b:2&#125;</code> создаёт пустой hidden class HC_empty → HC_a (added a) → HC_a_b (added b). Object literal <code>&#123;b:2, a:1&#125;</code> создаёт HC_empty → HC_b → HC_b_a. Хотя оба объекта имеют одинаковые финальные свойства, они сидят на разных nodes в hidden class transition tree — V8 видит их как разные shapes. IC на call site, который access-ит .a, будет monomorphic только если оба объекта делят один node. Так что практическое правило: всегда конструируй объекты в одном порядке свойств или, лучше, используй конструктор / class, гарантирующий порядок. ES classes особенно безопасны, потому что их property assignments происходят в теле конструктора в детерминированном порядке. Object literals с одинаковым порядком ключей тоже безопасны.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>FeedbackVector: profile-guided сердце V8.</strong> Каждая функция в V8 имеет ассоциированный FeedbackVector — fixed-size массив, индексированный source-position-derived slot numbers. Каждый slot соответствует одной «интересной» операции (property load, function call, binary operator и т.д.). Slot хранит либо один observed hidden class pointer (monomorphic), либо малый массив hidden classes (polymorphic), либо «MegamorphicSentinel» объект, указывающий, что IC сдался. FeedbackVector аллокируется лениво при первом выполнении и живёт в GC heap как HeapObject. Sparkplug, Maglev и TurboFan все читают из него: Sparkplug использует минимальный feedback (только тип), Maglev использует богаче (hidden class chains, call target frequencies), TurboFan использует всё плюс inference про loop trip counts и branch probabilities. FeedbackVector — самый конкретный способ увидеть runtime profiling V8 — <code>%DebugPrintFeedback(fn)</code> в d8 дампит его. В production загрязнение FeedbackVector функции (например, один megamorphic slot) объясняет, почему V8 не может держать функцию оптимизированной даже после deopt-and-reopt циклов.</p>
+    <p><strong>Sparkplug: JIT, который на самом деле не оптимизирует.</strong> Добавлен в V8 9.1 (май 2021), Sparkplug технически baseline JIT, но точнее описывается как «интерпретатор, эмитящий machine code напрямую». Не делает SSA, никакого inlining, instruction scheduling. На каждый Ignition bytecode Sparkplug эмитит fixed sequence machine инструкций, реализующих этот bytecode. Результат — примерно в 1.5-2 раза быстрее Ignition, потому что per-instruction overhead dispatch-loop интерпретатора (dispatch table lookup, indirect jump) заменён прямым выполнением native кода. Compile speed Sparkplug практически free: ~1мс per kB bytecode. Смысл Sparkplug — дать горячим-но-не-достаточно-горячим-для-Maglev функциям измеримое ускорение без оплаты Maglev compile cost. V8 блог Google описывает Sparkplug как «non-optimizing compiler, производящий код быстрее, чем ты можешь запустить интерпретатор». Задокументированная средняя выгода: 5-15% на реальных workloads.</p>
+    <p><strong>Maglev: SSA, но дёшево.</strong> Добавлен в 2023, Maglev заполняет gap между Sparkplug и TurboFan. Compile pipeline: bytecode → Maglev IR (SSA) → register allocator → native code. IR проще чем TurboFan (нет концепции effect chains или graph rewriting passes), register allocator — простой linear scan, а не graph-colouring TurboFan. Maglev делает некоторую speculative optimisation — использует observed types для специализации property loads, calls и арифметики — но пропускает heavy passes (escape analysis, polymorphic inlining, type-narrowing iteration). Compile time Maglev ~10мс per function vs ~100мс TurboFan; runtime код ~50-70% качества TurboFan. Роль Maglev — обрабатывать «medium hot» tier — функции, вызываемые тысячи раз, но не десятки тысяч — без оплаты TurboFan compile cost. Tiering policy V8 теперь идёт Ignition → Sparkplug → Maglev → TurboFan; функции могут пропускать tiers, если их hotness profile требует.</p>
+    <p><strong>Speculative оптимизации TurboFan.</strong> TurboFan — V8 heavy-weight оптимизирующий компилятор. Строит sea-of-nodes граф IR, делает агрессивный escape analysis (object allocations могут быть stack-allocated или elided полностью, если они никогда не escape), inlines polymorphic call sites, если есть 2-4 known targets, narrows types итеративно (variable, известная как 0..255, остаётся в byte register), эмитит highly-tuned machine code. Crucially, TurboFan устанавливает guard инструкции перед каждой speculative ассумпцией: «это smi» guard перед каждой numeric op, «этот объект имеет hidden class HCx» guard перед каждым property access. Guard failure значит deopt. Cost-benefit: TurboFan-оптимизированный код часто в 3-10 раз быстрее Maglev, когда ассумпции держатся; когда они ломаются, deopt overhead и fall back на нижний ярус хуже, чем не TurboFan-компилить вообще. Production V8 аккуратно балансирует «должен ли я оптимизировать эту функцию TurboFan?» через profile-guided heuristics — функции, чей feedback нестабилен (частые IC transitions), deferred или skipped.</p>
+    <p><strong>Hidden class transition trees в деталях.</strong> Когда пишешь <code>const p = &#123;&#125;; p.x = 1; p.y = 2;</code>, V8 создаёт четыре hidden classes: empty → x → x+y, с каждым «transition edge», помеченным именем добавленного свойства. Второй объект <code>const q = &#123;&#125;; q.x = 1; q.y = 2;</code> идёт по тому же пути и заканчивается на том же hidden class, что p. Но <code>const r = &#123;&#125;; r.y = 2; r.x = 1;</code> идёт по пути empty → y → y+x, заканчиваясь на другом hidden class. Transition tree разделяется через все объекты в V8 isolate, поэтому memory cost ограничен. Патологические случаи: код, добавляющий свойства в динамическом порядке, создаёт много leaf nodes в tree, разбрасывая объекты через много hidden classes — та же shape никогда не повторяется, ICs perpetually polymorphic/megamorphic. <em>2008 V8 design ассумпция: программисты естественно пишут код, конструирующий похожие объекты в похожих порядках.</em> Большинство кода так и делает; патологический код, ломающий это (часто generated код, JSON-парсеры, пишущие свойства в произвольном input-порядке), страдает severe perf degradation.</p>
+    <p><strong>Memory layout inline cache.</strong> IC slot в FeedbackVector — 16 байт: 8-byte hidden class pointer (или sentinel) + 8-byte handler object. Handler — небольшой кусок generated кода (или reference на него), который знает, как read/write свойство, учитывая cached hidden class. Polymorphic ICs используют другой handler type, который branches на hidden class. Megamorphic ICs используют generic handler, попадающий в V8 runtime slow lookup path (megamorphic_property_load_builtin в V8 source). Полный тур одного IC access в V8 source: ic_inl.h, ic.cc, ic-state.cc — state transitions явны. Production-grade V8 работа routinely включает смотрение в эти для одного специфического call site, который mis-optimising. «JavaScript engine fundamentals: Shapes and Inline Caches» Маттиаса Биненса остаётся canonical внешним reference.</p>
+    <p><strong>Orinoco: minor и major collector в деталях.</strong> V8 heap разделён на <em>young generation</em> (newly allocated, ~1-8 MB) и <em>old generation</em> (long-lived, может быть 100s MB). Minor GC (Scavenger) использует copying collector с двумя semispaces: from-space держит живые объекты, to-space пуст. На collection V8 обходит roots (stack, globals, registers), копирует reachable young объекты в to-space, обновляет pointers. Survivors двух minor GCs promoted на old generation. Scavenger параллелен с 2017 (первая major shipping фича Orinoco): множественные worker threads делят работу через динамический work-stealing. Паузы на JS-главном потоке короткие (~1мс для типичного young heap), потому что live set мал и параллелизм держит wall-clock низким. Major GC (Mark-Compact) помечает все reachable объекты в old gen, sweeps dead, компактит для уменьшения фрагментации. <em>Concurrent marking</em>: background thread обходит heap, пока JS выполняется; write barriers обеспечивают, что newly-written references тоже помечаются. Concurrent marking снижает main-thread паузы на 50% на WebGL-heavy workloads (per Google blog). Остающаяся stop-the-world работа — финальный marking step (короткая пауза для верификации view concurrent thread) и sweep/compact фаза (параллельно через worker threads, но всё ещё блокирующая main thread).</p>
+    <p><strong>Incremental marking и write barriers.</strong> До Orinoco major GC V8 был полностью stop-the-world операцией, которая могла паузить main thread на сотни мс. Чтобы включить concurrent marking, V8 добавил <em>write barrier</em>: каждый property write, который может пересечь от black (marked) объекта к white (unmarked), триггерит маленький кусок кода, помечающий destination объект grey (для посещения). Write barrier концептуально дёшев (несколько циклов), но происходит на каждой reference write — V8 инвестирует heavily в его быстрое исполнение (специализированные barriers per property type, snapshot-at-the-beginning vs incremental-update tradeoffs). Результат: marking амортизирован через JS выполнение без observable паузы, только маленький per-write overhead. Современный V8 использует Tri-color marking (white/grey/black) с snapshot-at-the-beginning семантикой и гибридным concurrent + incremental scheduling. <em>Выбор marking алгоритма прямо формирует write-barrier cost и pause distribution.</em></p>
+    <p><strong>Pointer compression.</strong> V8 6.6 добавил pointer compression: вместо 64-bit pointers V8 хранит 32-bit offsets от base address. Это вдвое уменьшает heap memory для типичных workloads (большинство heaps ниже 4GB). Цена — маленький лишний цикл на каждой pointer dereference (add base, потом load), но cache effects от меньшего heap более чем компенсируют. Pointer compression — причина, по которой V8 per-process heap cap-нут на 4GB по умолчанию — выше нужен larger pointer mode. Pointer compression взаимодействует с hidden classes: per-object hidden class pointer теперь 32 бита, вдвое уменьшая per-object overhead. Для app, аллоцирующего миллионы маленьких объектов (типично для любого крупного JS-фреймворка), pointer compression один экономит сотни MB. Disabled at compile time на системах, где 32-bit offsets недостаточны.</p>
+    <p><strong>Реальные production failures.</strong> Discord 2022: chat-feature изменение ввело polymorphic IC в hot path message-render; p99 frame time с 8мс до 25мс; откатили, когда gaming-mode пользователи с 120Hz мониторами заметили. Figma 2023: editor рефакторинг утекал closures в long-lived animation callback, заставляя old gen расти 200MB per session; пофиксили хойстом closure снаружи per-frame call. Google Maps 2024: 3D-tile рендерер попал в megamorphic ICs после typing рефакторинга, где некоторые tile объекты имели extra optional поле; throughput упал 40%, пофиксили always-allocating поле с null when absent. Slack 2021: Node-side serialisation функция деоптимизировалась каждую минуту из-за occasional NaN в numeric reduce; deopt cycle бегал каждые 60с стоимостью 5мс, видимый как periodic latency spikes; пофиксили guard NaN перед hot loop. Паттерн: V8 perf баги прячутся как «небольшой рефакторинг» PRs, сдвигающие shape одного объекта или type signature одной функции; perf регрессия появляется в production, не в CI.</p>
+    <p><strong>Isolates: tenant изоляция V8.</strong> Isolate — один независимый V8-инстанс со своим heap, GC и compilation queues. Каждая browser tab — свой Isolate; Node.js имеет один Isolate per process. Isolates не делят state — коммуникация идёт через сериализацию (postMessage, IPC). Это primitive tenant изоляции V8: memory leak в одном Isolate не может повлиять на другой. Worker threads в Node используют Isolates плюс shared memory regions для explicit cross-thread коммуникации. Isolate boundary — также security boundary — V8 sandboxes (экспериментальный V8-Sandbox project) пытается confine memory-corruption баги в heap Isolate, чтобы скомпрометированный скрипт не мог escape в host process memory. Для server-side multi-tenant JS (Cloudflare Workers, Vercel Edge) каждый tenant получает свой Isolate, allowing тысячи tenants per machine со strong memory изоляцией.</p>
+    <NumbersCard
+      id="card-v8-numbers"
+      title="Senior-tier V8 числа"
+      stats={[
+        { label: "Sparkplug shipped", value: "V8 9.1 (май 2021)" },
+        { label: "Maglev shipped", value: "V8 11.0 (середина 2023)" },
+        { label: "Orinoco first phase", value: "V8 6.2 (2017)" },
+        { label: "IC slot size", value: "16 байт" },
+        { label: "Sparkplug compile rate", value: "~1 мс/kB bytecode" },
+        { label: "Maglev compile time", value: "~10 мс/функция" },
+        { label: "TurboFan compile time", value: "~100 мс/функция" },
+        { label: "Pointer compression saves", value: "~50% heap (Isolates <4GB)" },
+      ]}
+    />
+    <Misconception id="mc-deopt-fatal">
+      <p><strong>«Deopt значит моя функция сломана навсегда.»</strong> Нет. Deopt падает на нижний ярус; функция потом re-tiers up, если новый feedback стабилизируется. Баг — когда deopt происходит в tight loop. Один deopt — микросекунды; deopt-loop — катастрофа.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      scenario="Perf-критичная функция deopt-loops в production. Трасса и фикс."
+      steps={[
+        { prompt: "Шаг 1: deopt-loop значит постоянный tier-down потом tier-up. Что в --trace-deopt подтвердит?", reveal: "Ищи повторяющиеся 'deoptimized' / 'optimized' пары на той же функции в коротком окне. Поле 'reason' говорит, какой guard упал — типично: 'not a smi', 'wrong map', 'out of bounds'." },
+        { prompt: "Шаг 2: reason 'not a smi'. Что значит?", reveal: "Small integer guard упал. TurboFan ассумит значение всегда smi (small int, 31-bit signed), но в runtime увидел число, overflow или NaN. Типичная причина: arithmetic, occasionally производящий NaN (0/0, Math.sqrt(-1)) или значения выше 2^30." },
+        { prompt: "Шаг 3: найти offending строку. Как?", reveal: "DevTools deopt traces включают source position. Смотри строку — likely multiplication или division, occasionally hitting path, производящий NaN или большое значение. Типично: парсинг user input, где большинство значений малы, но один пользователь шлёт огромное число." },
+        { prompt: "Шаг 4: фикс?", reveal: "Два варианта. (a) Guard input до hot loop: if (x > 1e9 || isNaN(x)) handleSlow(x); else fastLoop(x). Это держит fast loop monomorphic-on-smi, маршрутизируя патологические значения в slow path. (b) Конвертировать все значения в известный тип upfront: Number(x) | 0 для int32 или всегда float64 через Math.fround для typed numerics." },
+        { prompt: "Шаг 5: предотвратить повторение?", reveal: "Добавь тест, asserting --trace-deopt не производит output для функции на representative input. CI валится на любой deopt в hot path. Для production observability — expose deopt-counter метрику через Node V8 inspector — алерт, если растёт non-zero." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      title="Диагностируй V8 deopt лог — какой root cause?"
+      output={`[deoptimizing (DEOPT eager): begin 0x... <JSFunction processItem (sfi = 0x...)> (opt #42) @14, FP to SP delta: 128, caller sp: 0x...]
+            ;;; deoptimize at <main.js:42:18>, not a Smi
+   bytecode position 14
+[deoptimizing (eager): end 0x... processItem  @14, took 0.012 ms]
+[marking 0x... <JSFunction processItem (sfi = 0x...)> for non-concurrent optimization]
+[compiling method 0x... <JSFunction processItem (sfi = 0x...)> using TurboFan]
+[deoptimizing (DEOPT eager): begin 0x... <JSFunction processItem (sfi = 0x...)> (opt #43) @14, FP to SP delta: 128, caller sp: 0x...]
+            ;;; deoptimize at <main.js:42:18>, not a Smi
+   bytecode position 14`}
+      outputLang="log"
+      question="Та же функция деоптимизируется снова с reason 'not a Smi' на строке 42:18. Что происходит и как чинить?"
+      hint="Заметь deopt + recompile цикл. Какой guard на 42:18 может падать повторно?"
+      answer="Функция в deopt-loop. TurboFan компилит её, ассумируя значение на 42:18 — Smi (small int). В runtime значение не Smi (либо > 2^30 либо NaN), guard срабатывает, V8 деоптимизирует. V8 потом re-promotes функцию (потому что она ещё hot), re-compiles с TurboFan, делает ту же ошибочную ассумпцию, deopt снова. Cost per cycle: ~12us bookkeeping + ~100мс TurboFan compile + время в slower tier между. Если так на каждом вызове — функция работает на порядки хуже uncompiled. Фикс: найти операцию на 42:18 — likely arithmetic op, чей результат occasionally слишком большой или NaN. Либо добавь explicit type check до hot block (typeof === 'number' && Number.isFinite(x)) для обработки патологических значений на slow path, либо используй Math.fround / |0 / +x для coercion значений в стабильный тип, чтобы Smi ассумпция держалась. Добавить %NeverOptimizeFunction(processItem) в d8 останавливает loop для теста, но никогда не шипь это — правильный фикс upstream Smi guard."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      prompt="Perf-критичный hot loop обрабатывает 10М объектов per frame. Выбери data layout."
+      options={[
+        { name: "Массив объектов с declared-в-constructor shape (один hidden class), access через стабильные property names", summary: "V8 оптимальный путь.", correct: true, justification: "Все объекты делят один hidden class. IC на каждом property access остаётся monomorphic. TurboFan-эмитированный код читает каждое свойство за 1 цикл. GC pressure — одна аллокация per object. Самый идиоматичный JS — быстро." },
+        { name: "Массив plain objects с разными shapes (некоторые .x, некоторые .x.y, некоторые .a)", summary: "Hidden-class hell.", justification: "Object shapes варьируют, IC на каждом property access идёт megamorphic, TurboFan не может специализировать. В 10-50 раз медленнее оптимального. Избегай в hot loops." },
+        { name: "Параллельные массивы typed arrays (Float32Array x, Float32Array y, Float32Array z)", summary: "Самый быстрый для numeric.", justification: "TypedArrays bypass hidden classes полностью — V8 имеет highly tuned paths. Меньше pointer dereferences, лучше cache locality, нет GC pressure (typed arrays — flat backing stores). Для numeric-heavy workloads (3D, audio, ML) бьёт objects ещё на 2-5x." },
+        { name: "Map() или Set() вместо objects/arrays", summary: "Неверная абстракция.", justification: "Map/Set имеют свой overhead (hashing, generic iteration). Для known-fixed-keys data plain objects с consistent hidden classes outperform Map. Используй Map только когда keys runtime-unknown или non-string." },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="V8 имеет ЧЕТЫРЕ JIT-яруса и concurrent GC. Какова самая глубокая perf-причина, что они необходимы вместо одного хорошего оптимизатора?"
+      choices={[
+        { label: "Динамизм JavaScript значит, что compile-time type knowledge неполный; V8 должен наблюдать runtime types для специализации, что работает только после warm-up — а warm-up должен быть быстрым сам, отсюда Ignition + Sparkplug", correct: true, misconception: undefined },
+        { label: "Variance железа требует нескольких ярусов", misconception: "Variance железа handled code-generation, не tiering." },
+        { label: "Браузеры должны поддерживать старые стандарты", misconception: "Стандарты handled в парсере; все ярусы выполняют современный ECMAScript." },
+        { label: "Маркетинговое требование", misconception: "Каждый ярус имеет задокументированную engineering мотивацию; это не маркетинг." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      question="Спецификация ECMAScript maintained как TC39 specs. Какая версия ввела classes, let/const, arrow functions — фичи, на которые сейчас тяжело опираются оптимизации V8?"
+      choices={[
+        { rfc: "ES6 (ECMAScript 2015)", title: "Major update вводящий classes, let/const, arrow functions, modules", correct: true },
+        { rfc: "ES5 (2009)", title: "Strict mode, JSON, но без classes или arrow functions" },
+        { rfc: "ES2020", title: "BigInt и nullish coalescing — ни одно не определяет classes" },
+        { rfc: "ES2024", title: "Недавно — classes уже существуют; только refinements" },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      prompt="Спроектируй perf-критичный animation loop в React app, который должен попадать в 60fps на mid-range железе, обрабатывая 10000 анимированных сущностей."
+      constraints={[
+        "Total frame budget: 16.6 мс. JS budget после browser overhead: ~10 мс.",
+        "Не должен аллоцировать per-frame (GC pause чувствительность).",
+        "Должен оставаться TurboFan-оптимизированным через тысячи фреймов (без deopt).",
+        "Inline-cache state должен оставаться monomorphic на каждом hot access.",
+        "Должен работать с React render cycle (state updates снаружи hot loop).",
+      ]}
+      canonical="Используй параллельные typed arrays для entity data: Float32Array для x, y, vx, vy, rotation. Pre-allocate at game start. Hot loop итерирует через for-loop по индексам, без map/forEach (closures вводят allocation). Read/write entity[i] fields напрямую через array indexing — TypedArray paths bypass IC layer. Render state changes идут через stable shape объект (declared properties в constructor, без dynamic adds). React render читает из stable buffer, который loop пишет; никогда не вызывай setState изнутри loop. Animation frame через requestAnimationFrame. Профилируй с DevTools Performance — подтверди Scripting под 8мс, GC около нуля per frame. Добавь %DebugPrint на sample entity в development для верификации, что все entities делят один hidden class. Тестируй на low-end laptop, чтобы 60fps держался; собирай production телеметрию FPS p95 per device class."
+      keyPoints={[
+        "TypedArrays sidestep hidden classes и ICs полностью.",
+        "Никакой per-frame allocation = нет GC пауз.",
+        "Стабильные buffers между loop и React render избегают deopt каскадов.",
+        "DevTools Performance + d8 подтверждают, что V8 internals совпадают с design assumptions.",
+        "Mid-range hardware тестирование — production-truth фильтр.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="03-v8-internals"
+      lang="ru"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Объясни, как concurrent marking в Orinoco работает без коррупции heap, когда main thread одновременно мутирует его.",
+          answer: <p>Challenge: GC marker thread обходит live object граф, но main thread продолжает создавать/модифицировать references. Без координации marker может miss объекты (false-deletion) или повторно посещать (livelock). Orinoco решает это через write barriers — маленькие инструкции, эмитированные V8 на каждой property write, поддерживающие invariants marker. «Yuasa snapshot-at-the-beginning» barrier (выбор V8): когда main thread перезаписывает reference на white объект, barrier красит оригинал (overwritten) объект grey, чтобы marker всё ещё посетил его. Это сохраняет invariant «каждый объект, который был reachable в начале marking, будет посещён», даже если main thread обгоняет и перезаписывает references. Marker thread потом drains work queue (grey объекты → walk их references → красит ещё grey или black). После concurrent marking завершается, короткая stop-the-world пауза завершает: re-marks roots (которые могли измениться) и transitions на sweeping. Sweep происходит параллельно через worker threads. Total main-thread пауза снижена с сотен мс (до Orinoco) до single-digit мс или меньше в well-behaved heaps. Write barrier имеет измеримый per-write overhead (~3-5 циклов per write); V8 инвестирует в его быстрое исполнение — специализированные barriers per object type, no-op barriers, когда не в marking фазе.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Функция обрабатывает 10М items per frame и monomorphic в тестах, но megamorphic в production. Почему может случиться и как дебажить?",
+          answer: <p>Три типичные причины. Первая: production имеет больше code paths, exercising функцию, чем тесты. Test suite вызывает функцию с 3-4 input shapes, все known at write-time. Production имеет десятки callers от third-party интеграций или feature flags, каждый конструирующий inputs по-разному. IC остаётся monomorphic в тестах, но идёт megamorphic на первом production трафике. Дебаг: лог hidden classes (через Object.create(null) проверки или %DebugPrint в d8) для sample production inputs; сравни с test inputs. Вторая: dependency-injection слои создают wrapper объекты, чья shape зависит от того, какая dependency wired. Каждая wired комбинация — другой hidden class. Production может иметь N production-only DI bindings, которые тесты никогда не hit. Дебаг: возьми heap snapshot, инспектируй 100 sample объектов, проходящих через функцию, считай distinct hidden classes. Третья: feature-flag-gated code paths заставляют некоторых пользователей брать slightly-different shape (например, extra property assigned). В тестах с flag off shape одна, в production с flag on для некоторых пользователей split на две. Дебаг: split метрики по flag value, смотри коррелирует ли megamorphic-ness с flag state. Фикс во всех случаях: унифицировать shape upstream — либо всегда аллоцируй все возможные свойства (с null default для missing), чтобы hidden class был стабилен, либо разбей consumer на per-shape variants, где каждый получает свой monomorphic IC.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>V8 perf = стабильные hidden classes + monomorphic ICs + нет deopt-loops + низкое GC pressure. Сломай любой — hot loop теряет 10-50x. Фикс на code shape, не на V8 флагах.</KeyTakeaway>
+
+<SpiralCue thread="statefulness">
+FeedbackVector — statefulness, scoped к жизненному циклу функции. Та же форма повторяется в browser render pipelines и в reconciler-heuristics фронтенд-фреймворков — covered в следующем piece о event-loop interactions.
+</SpiralCue>
+
+**Предусловия:** Chapter 02-browser pieces о render pipeline (когда написаны).
+
+**Дальше:** 04-event-loop — как V8 кооперирует с browser task queue и macrotask/microtask scheduling.
