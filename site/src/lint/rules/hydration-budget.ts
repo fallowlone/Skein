@@ -8,6 +8,7 @@ export function checkHydrationBudget(html: string, file: string): string[] {
   if (!isPiece) return [];
   const matches = html.match(/<astro-island\b/g);
   const count = matches?.length ?? 0;
-  if (count > 5) return [`${file}: ${count} hydration islands (max 5 on piece pages)`];
+  // Budget 7 = 2 layout islands (ChapterSidebarTOC + SpacedRevisitBanner) + 5 piece-controlled.
+  if (count > 7) return [`${file}: ${count} hydration islands (max 7 on piece pages)`];
   return [];
 }
