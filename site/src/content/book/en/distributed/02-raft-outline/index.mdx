@@ -4,24 +4,435 @@ lang: en
 pillar: distributed
 chapter: 09-distributed
 order: 2
-title: "Raft outline"
-summary: "Coming soon — Distributed systems in practice"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "Raft: how a cluster picks one leader and replicates a log without losing data"
+summary: "Terms, leaders, AppendEntries, the commit index, joint consensus, pre-vote, snapshots — Raft as a senior engineer actually needs to operate it."
+readingMin: 24
+status: ready
+prereqs: ["01-cap-practice"]
+spiral: ["statefulness", "multiplexing"]
+personas: ["sven", "otto"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-raft
+  tradeoff: card-raft-cost
+  failure_mode: mc-split-brain
+  numbers: card-raft-numbers
 sources:
-  - https://example.com/placeholder
+  - https://raft.github.io/raft.pdf
+  - https://raft.github.io/
+  - https://en.wikipedia.org/wiki/Raft_(algorithm)
+  - https://github.com/hashicorp/raft/blob/main/membership.md
+  - https://developer.hashicorp.com/consul/docs/concept/consensus
+  - https://www.pingcap.com/article/understanding-raft-consensus-in-distributed-systems-with-tidb/
+  - https://arxiv.org/pdf/2504.14802
+  - https://www.yugabyte.com/blog/how-does-consensus-based-replication-work-in-distributed-databases/
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>CAP and Raft are abstract. The pager goes off at 3am — what actually broke?</Crux>
+CAP in practice (<a href="/en/distributed/01-cap-practice/">01-cap-practice</a>) told us we cannot have consistency, availability, and partition tolerance at the same time. CP systems — the ones that pick consistency under partition — still have to agree on one history of changes across many machines. Raft is how that agreement is reached in etcd, Consul, CockroachDB, TiKV, MongoDB config servers, Kafka KRaft, and roughly every other production CP store you have ever touched.
 
-_This piece is on the roadmap. Outline is in the chapter index._
+<Crux>How three to seven machines, any of which can crash or be partitioned at any time, agree on exactly one ordered log of changes.</Crux>
+
+The job of consensus is to make a cluster of N machines behave like one machine. That means every change must be ordered the same way on every survivor, every reader must see committed changes, and no acknowledged change can ever be lost. Raft does this by electing a single leader at a time, letting only the leader add to a log, and replicating that log to a quorum of followers before treating each entry as committed. The trick is in the edge cases — what happens when the leader dies, the network splits, the disk is full, or a node has been offline for hours. The next sections unpack each of these.
+
+<TierAccordion id="tier-raft" lang="en">
+  <Fragment slot="junior">
+    <p><strong>What Raft does in one sentence.</strong> It lets a small group of computers agree on one history of changes even if some of them crash or briefly disconnect.</p>
+    <p><strong>Why care.</strong> Without it, two halves of a split cluster would each accept conflicting writes and your system would end up with two versions of the truth.</p>
+    <p><strong>The metaphor.</strong> A village council of five members decides laws. One member holds the gavel — the speaker. New laws come to the speaker, who shouts each to the others and waits for two more "got it" replies before declaring it passed. If the speaker goes quiet, the rest elect a new one — three votes (majority of five) wins. Three of five guarantees that two speakers cannot exist at once — not enough villagers for two majorities.</p>
+    <p><strong>Sven and Otto.</strong> <PersonaTag id="sven" lang="en" /> is leader of a five-node cluster. <PersonaTag id="otto" lang="en" /> is a follower. Every client write: Sven appends to his log, shouts it out. Otto writes it, replies "got it". After two more confirmations, change is final. If Sven crashes, others time out and elect a new leader.</p>
+    <p><strong>One scenario.</strong> Five etcd nodes back Kubernetes. <code>kubectl apply</code> writes the manifest into etcd. The Raft leader replicates it to the others; once three have it on disk, etcd answers "stored". If the leader's host loses network, the rest pick a new leader — your deployment never stalls.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="A 5-node Raft cluster has its leader and two followers in datacenter A, two followers in datacenter B. The link between A and B is cut. What happens?"
+      choices={[
+        { label: "Both sides keep accepting writes — split brain", misconception: "Raft refuses to commit on a side that cannot reach a majority. There is no split brain by design." },
+        { label: "Datacenter A (with the leader plus two followers = 3 = majority of 5) keeps accepting writes; datacenter B's two nodes cannot elect a leader because they only have 2 of 5 votes", correct: true },
+        { label: "The cluster freezes entirely until the link is restored", misconception: "The majority side continues serving. Only the minority side stalls." },
+        { label: "Datacenter B elects a new leader after timeout", misconception: "Two nodes cannot form a majority of five. They will hold elections that never complete." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="Why does Raft need a majority (3 of 5, not just 2 of 5) for both elections and commits?"
+      choices={[
+        { label: "To make voting faster", misconception: "Bigger quorums are slower, not faster. Majority is required for correctness, not speed." },
+        { label: "To guarantee that any two majorities overlap in at least one node, so a new leader inherits the history of all committed entries", correct: true },
+        { label: "Because the original paper said so without a deeper reason", misconception: "The majority rule has a proof: any two majorities share at least one node, which forces continuity." },
+        { label: "To make the cluster tolerant of 3 simultaneous failures", misconception: "A 5-node Raft tolerates only 2 simultaneous failures (3 of 5 must remain to keep a majority)." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      prompt="Put the leader-election steps in order:"
+      items={[
+        "Followers stop receiving heartbeats from the leader for longer than the election timeout",
+        "A follower transitions to candidate, increments its term, and votes for itself",
+        "The candidate sends RequestVote to all other nodes",
+        "Each node grants its vote at most once per term, to the first eligible candidate it sees",
+        "If the candidate collects a majority of votes, it becomes leader for the new term",
+        "The new leader starts sending heartbeats to assert authority",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      setup="Fill in the blank: Raft uses a council of N members where only one member at a time holds the _______ and proposes new laws."
+      accepted={["gavel", "leadership", "leader role", "speaker role", "speaker", "mantle"]}
+      canonical="gavel (or speaker role / leadership — any term for the single mandate to propose changes)"
+      explanation="The metaphor is the speaker: at most one speaker at a time, elected by majority vote, removed when silent for too long. Raft formalises this exact discipline for computers."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-raft-outline"
+      lang="en"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "In one sentence: why does a 5-node Raft cluster survive 2 simultaneous failures but not 3?",
+          answer: <p>Because commits and elections both need a majority — at least 3 of 5 nodes alive — and losing 3 nodes leaves only 2 survivors, which is below the majority threshold. The 2 survivors cannot agree on anything, cannot elect a new leader, and cannot commit new entries; they wait for at least one of the failed nodes to come back so that 3 of 5 can be reached again. This is why Raft clusters are usually 3, 5, or 7 nodes — odd numbers maximise the failure tolerance for a given size.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Three roles, one term.</strong> Every node in a Raft cluster is in one of three states at any time: <em>follower</em>, <em>candidate</em>, or <em>leader</em>. A node starts as a follower. If it stops hearing from a leader for an election timeout (typically randomised between 150-300 ms), it becomes a candidate, increments its current <em>term</em> (a monotonic logical clock per cluster), votes for itself, and asks the other nodes for their votes via the <code>RequestVote</code> RPC. If it collects votes from a majority of the cluster, it becomes leader for that term and starts sending heartbeats. If two candidates split the vote, the term ends with no leader and both fall back to follower for a fresh randomised timeout. The randomisation is what breaks ties: with a wide enough range, the probability of repeated split votes drops fast.</p>
+    <p><strong>The election timeout and heartbeats.</strong> A leader sends an <code>AppendEntries</code> RPC to every follower at a regular interval shorter than the election timeout — typically 50 ms heartbeats with 150-300 ms election timeout. The heartbeat carries the leader's current term, its commit index, and any new log entries (or none, in which case it is a pure liveness signal). A follower that receives a heartbeat with a term at least its own resets its election timer and acknowledges. A leader whose heartbeat is rejected (because the receiver has seen a higher term) immediately steps down to follower; the higher term wins. This term comparison is the entire deduplication layer for "who is the real leader right now."</p>
+    <p><strong>The log and AppendEntries.</strong> The leader keeps an in-memory + on-disk log of entries, each a tuple (term, index, command). When a client sends a write, the leader appends a new entry to its own log first, then sends <code>AppendEntries</code> to every follower with the new entry plus the term and index of the previous entry. The follower checks: do I have an entry at that previous index with that previous term? If yes, append the new entry and reply success. If no, reply mismatch — the leader will then back up one index and retry, eventually finding the last point of agreement and overwriting the follower's divergent tail with its own. This back-and-forth is rare in steady state (followers are usually one entry behind, not many), and amortises to almost zero in production.</p>
+    <p><strong>Commit, apply, and the state machine.</strong> A log entry is <em>committed</em> when the leader has heard from a majority of nodes (including itself) that they have stored the entry on disk. The leader's commit index is the highest index known to be committed. The leader piggybacks its commit index on the next AppendEntries, so followers learn within one round-trip which entries they can now apply to their state machine. The state machine is application-specific — it could be a key-value map, a relational table, a config tree — but Raft does not look at it. It just says: every node, in log order, applies every committed entry exactly once, and the state machine is therefore deterministic across replicas. This is the entire mechanism: ordered replicated log + deterministic state machine = replicated state machine.</p>
+    <p><strong>Why a majority for commits AND elections.</strong> The safety proof of Raft turns on quorum overlap. Any two majorities of a set of N must share at least one element (pigeonhole: twice the ceiling of (N+1)/2 exceeds N). When a new leader is elected for term T+1, its election quorum overlaps with the commit quorum of every committed entry of every prior term. Through that shared node, the new leader is guaranteed to see every previously committed entry (Raft's election rule rejects candidates whose log is behind any voter's log). So no committed entry can be lost across a leader transition. This is the property called <em>Leader Completeness</em>, and it is the whole reason Raft is safe even when leaders die mid-term.</p>
+    <p><strong>The four safety properties.</strong> Raft's correctness proof reduces to four invariants. <strong>Election Safety</strong>: at most one leader per term (followed from "one vote per node per term + majority required"). <strong>Leader Append-Only</strong>: a leader never overwrites or deletes its own log entries — it only appends. <strong>Log Matching</strong>: if two logs share an entry at index i with term t, they are identical for all indices up to i (followed from the AppendEntries consistency check). <strong>Leader Completeness</strong>: any entry committed in some term is in the log of every leader of higher terms. <strong>State Machine Safety</strong> (derived from the above): no two nodes apply different commands at the same index. Memorise these and you have the entire mental model.</p>
+    <p><strong>Where Raft does not apply.</strong> Raft is a crash-fault-tolerant (CFT) algorithm — it assumes nodes either follow the protocol or stop. It does not tolerate Byzantine faults (nodes lying, sending corrupted messages, or being adversarial). Byzantine workloads need PBFT, HotStuff, Tendermint, or other BFT consensus. For practically every backend database, config store, and cluster manager, CFT is sufficient because the nodes are inside your own datacenter and the threat model is hardware/software crashes, not malicious operators. Choose BFT only when you actually have adversarial participants — typical of blockchains and some federated systems.</p>
+    <p><strong>Practical wire shape and operations.</strong> An etcd or Consul cluster spends 90% of its life in the steady state: leader sends heartbeats every 50 ms, followers acknowledge, occasional client writes get committed in 2-3 ms intra-region. Leader elections happen on every restart, network blip, or process pause longer than the election timeout. On a healthy cluster, elections complete in 100-500 ms; the cluster is briefly unavailable for writes during that window. The operational metrics worth tracking: leader-change frequency, commit latency p50/p99, heartbeat round-trip times, and disk-fsync latency on the leader (every committed entry has to be on disk before acknowledgement, so a slow disk on the leader is the most common cause of high tail latency).</p>
+    <p><strong>Client routing and request redirection.</strong> Clients of a Raft cluster need to send writes to the current leader — only the leader can append to the log. The simplest pattern is "any node will redirect": a follower that receives a write replies with the address of the current leader (which it knows from recent heartbeats). The client retries against the redirect target. Some clients keep a small cache of "last known leader" to skip the redirect on subsequent writes. Etcd, Consul, and TiKV all implement this; in practice the redirect adds 1-5 ms on the rare miss, and steady-state writes go directly to the leader. Reads are different: linearizable reads must go through the leader's ReadIndex or lease path; eventually-consistent reads can be served by any follower. The application layer picks read consistency per query.</p>
+    <p><strong>What goes wrong in practice — three failure modes.</strong> First, slow disk: if the leader's fsync starts taking longer than the heartbeat interval, followers time out before the leader can acknowledge their AppendEntries, and the cluster begins an election. The new leader hits the same disk and the cycle repeats. The fix is dedicated NVMe for the WAL, never shared cloud volumes. Second, network jitter: a brief partition or congestion event drops heartbeats and triggers an election, even though the cluster is mostly healthy. Pre-vote (see senior tier) mitigates this. Third, clock drift on lease reads: if the leader's clock drifts ahead of the followers, it can over-extend its lease window past the actual heartbeat round, serving reads that have lost the lease — a stale read. NTP-syncing all nodes is a correctness practice, not a hygiene one.</p>
+    <p><strong>What Raft does NOT solve.</strong> Raft replicates a log. It does not give you a queryable database, a partitioning scheme, multi-key transactions, secondary indexes, geo-replication semantics, or schema migration. All of those live on top of Raft as application logic. A common newcomer mistake is to assume "we use Raft, so we have a distributed database"; the truth is "we use Raft to replicate one log; the database is the state machine we build above it". Build for the state machine you want; let Raft handle the consensus on changes to that state machine, and nothing more.</p>
+    <p><strong>Minimal example: a KV store on top of Raft.</strong> The state machine is an in-memory hash map. Log entries are commands like (SET key value) or (DELETE key). When a client sends SET via the leader, the leader appends the entry, replicates to a majority, and once committed each node in log order applies the command to its hash map. Result: every node has an identical map after applying the same log. Reads can go through the leader for linearizability or through any follower for eventual consistency. That is the entire skeleton: build the state machine, write commands, let Raft replicate a consistent log. Most of the complexity in production systems is in the state machine, not in Raft itself.</p>
+    <NumbersCard
+      id="card-raft-cost"
+      title="Raft: the numbers that matter"
+      stats={[
+        { label: "Election timeout (typical)", value: "150–300 ms randomised" },
+        { label: "Heartbeat interval (typical)", value: "50 ms" },
+        { label: "Cluster sizes in production", value: "3 / 5 / 7 (odd)" },
+        { label: "5-node tolerance", value: "2 simultaneous failures" },
+        { label: "Commit quorum", value: "majority (ceil of (N+1)/2)" },
+        { label: "Election quorum", value: "majority (same rule)" },
+        { label: "Intra-region commit latency", value: "2–10 ms typical" },
+        { label: "Cross-region commit latency", value: "50–200 ms typical" },
+      ]}
+    />
+    <Misconception id="mc-split-brain">
+      <p><strong>"Raft is great because both sides keep working under partition."</strong> Wrong direction. The whole point is that one side keeps working and the other refuses — Raft is CP, not AP. Minority partition cannot commit or elect, and that is the feature. AP needs Dynamo/Cassandra-style eventual consistency, not Raft.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-raft-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      title="Trace one client write through a 5-node Raft cluster"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Setup:</strong> 5-node Raft cluster (A, B, C, D, E). A is the current leader at term 7. B, C, D, E are followers, all caught up to log index 100.</p>
+            <p><strong>Client writes:</strong> "SET x = 42".</p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+              <li>A appends entry (term=7, index=101, cmd="SET x = 42") to its own log + fsync to disk.</li>
+              <li>A sends AppendEntries to B, C, D, E with prevIndex=100, prevTerm=7, entry=(101, 7, "SET x = 42").</li>
+              <li>Each follower checks: my log at index 100 has term 7. Yes. Append the new entry, fsync, reply success.</li>
+              <li>A counts replies. After 2 success replies (plus its own), 3-of-5 quorum reached.</li>
+              <li>A marks index 101 as committed. Applies "SET x = 42" to its state machine.</li>
+              <li>A replies success to the client.</li>
+              <li>A's next heartbeat piggybacks commitIndex=101. Followers apply 101 to their state machines.</li>
+            </ul>
+          </div>
+        ),
+        semi: {
+          prompt: "Same setup, but A crashes after fsync-ing entry 101 to its own disk but BEFORE sending any AppendEntries. After the election, what term does the new leader have?",
+          blanks: [
+            { id: "new_term", expected: "8", placeholder: "term number" },
+          ],
+        },
+        blank: {
+          prompt: "Same crash scenario. Entry 101 was on A's disk only. Does the new leader (say B) include entry 101 in the cluster history?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p><strong>No.</strong> Entry 101 was never replicated to any other node and was never committed (no majority acknowledged it). When B wins the election in term 8, B's log ends at index 100. B will not see index 101 because it was only on A. When A comes back, B's heartbeats will tell A: "your log diverges at index 101; truncate it." A obeys and drops 101.</p>
+              <p>This is correct because the client never received a success for 101 — A crashed before replying — so the client either retries (and B handles a fresh write, becoming the new 101) or treats it as a failure. Either way no committed entry was lost; only an uncommitted attempt was discarded. This is Raft's <em>Leader Append-Only</em> and <em>Log Matching</em> properties at work.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "new_term:7": "Term 7 belonged to A. When B starts an election, B increments its term, so the new leader is at term 8 minimum.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="A Raft follower receives an AppendEntries with prevIndex=50, prevTerm=4, but its own log at index 50 has term 3. What does the follower do?"
+      choices={[
+        { label: "Append the entry and trust the leader", misconception: "Blindly trusting the leader without the prevTerm check would let logs diverge — exactly what Log Matching prevents." },
+        { label: "Reject the AppendEntries with a mismatch reply; leader will retry with a lower prevIndex", correct: true },
+        { label: "Promote itself to candidate", misconception: "Term comparison drives state changes, not log-index mismatches; the follower stays a follower." },
+        { label: "Truncate its log down to 0 and restart from scratch", misconception: "Truncation is incremental — the leader retries with earlier prevIndex until matching point is found, no full restart." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="Why does Raft randomise the election timeout (e.g. 150-300 ms instead of a fixed 200 ms)?"
+      choices={[
+        { label: "To make elections faster", misconception: "Randomisation does not speed up elections; if anything, it slows the slowest case." },
+        { label: "To avoid repeated split-vote ties when multiple followers time out simultaneously", correct: true },
+        { label: "Required by network protocols", misconception: "No transport-level constraint requires randomisation; it is a protocol design choice." },
+        { label: "To rotate leadership fairly across nodes", misconception: "Raft does not aim for fairness — it aims for liveness. Random timeouts probabilistically avoid simultaneous candidates." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="A 3-node Raft cluster has nodes A, B, C. A is leader. The network drops B's link to A, but B can still reach C. What happens?"
+      choices={[
+        { label: "B becomes leader because it can reach C", misconception: "B alone cannot form a majority; it needs A's vote, which it cannot reach." },
+        { label: "B continues as follower because A and C still form a majority of 2 of 3 and keep the cluster running", correct: true },
+        { label: "C demotes itself to candidate", misconception: "C still hears A's heartbeats; no candidate transition is needed." },
+        { label: "The cluster splits in two", misconception: "Quorum overlap prevents split: only one side has a majority." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      scenario="Trace a clean leader election after the leader crashes."
+      steps={[
+        { prompt: "Setup: 5-node cluster A, B, C, D, E. A is leader at term 7. A crashes.", reveal: "No more heartbeats from A. Followers' election timers count down (each timer randomised in 150-300 ms range)." },
+        { prompt: "B's timer fires first at 187 ms. What does B do?", reveal: "B transitions to candidate, increments term to 8, votes for itself, sends RequestVote(term=8, lastLogIndex=100, lastLogTerm=7) to C, D, E." },
+        { prompt: "C, D, E receive B's RequestVote. They check: have I voted in term 8? Is B's log at least as up-to-date as mine?", reveal: "None have voted in term 8. B's log is equal to theirs (lastLogIndex=100, lastLogTerm=7). They each grant the vote and update their currentTerm to 8." },
+        { prompt: "B collects 3 votes (itself + C + D). What happens next?", reveal: "B has a majority of 5. B becomes leader of term 8, immediately sends heartbeats (AppendEntries with no new entries) to assert leadership. C, D, E reset their election timers." },
+        { prompt: "A comes back online with stale term 7.", reveal: "A's next AppendEntries to followers fails (followers reject because their term is 8). A receives a higher term in the reply, steps down to follower, updates its term to 8, and now follows B." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      scenario="Trace a partition where the leader is in the minority partition."
+      steps={[
+        { prompt: "Setup: 5-node cluster A, B, C, D, E. A is leader at term 4. Network partition isolates A, B from C, D, E.", reveal: "A still sees B; tries to commit by replicating to B (1 follower). Quorum (3) not reached. Writes from A pile up uncommitted." },
+        { prompt: "On the C, D, E side, what happens?", reveal: "Heartbeats from A stop reaching C, D, E. Their election timers fire. One of them — say C — starts an election at term 5. C, D, E vote for C. C wins majority (3 of 5)." },
+        { prompt: "How is the cluster now?", reveal: "C is the new leader at term 5. Writes on C, D, E side commit normally with quorum of 3 from C, D, E. A, B side cannot commit (only 2 votes). A keeps trying as a 'leader' that cannot succeed." },
+        { prompt: "Partition heals. A's heartbeat reaches C.", reveal: "A sends AppendEntries with term=4. C replies with current term=5. A sees term 5, steps down to follower, updates term to 5. A's uncommitted entries from term 4 get overwritten by C's log via the AppendEntries consistency check." },
+        { prompt: "What did the client experience during the partition?", reveal: "Clients connected to A got timeouts or 'unable to commit' errors during the partition. Clients connected to C, D, E continued normally. The cluster as a whole did not split-brain: there was always at most one leader that could actually commit." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      prompt="Put the AppendEntries consistency check steps in order:"
+      items={[
+        "Leader picks the next log index to send to a particular follower (initially equal to leader's last log index)",
+        "Leader sends AppendEntries with prevIndex, prevTerm, and the new entry",
+        "Follower checks: does my log have entry at prevIndex with prevTerm?",
+        "If yes, follower appends the new entry and replies success",
+        "If no, follower replies mismatch with its own conflicting index/term",
+        "Leader decrements its nextIndex for this follower and retries with an earlier prevIndex",
+        "Eventually leader finds the last matching point; follower truncates anything after and accepts the leader's tail",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-raft-outline"
+      lang="en"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Why does Raft require the new leader's log to be at least as up-to-date as a majority of voters', and what would break if it did not?",
+          answer: <p>The election rule requires voters to grant a vote only if the candidate's log is at least as up-to-date as their own (compared by lastLogTerm then lastLogIndex — higher term wins, equal term plus higher index wins). Without this rule, a candidate with a stale log could win an election and become leader despite missing committed entries. Through Raft's quorum-overlap argument, every committed entry was acknowledged by a majority that overlaps with any future election quorum — so at least one voter in any new election has the entry. The election rule ensures the candidate also has it; if not, that voter refuses. Together, the quorum overlap and election rule give Leader Completeness, which is the property that no committed entry can ever be lost.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "A 5-node Raft cluster has 2 nodes in datacenter A, 3 nodes in datacenter B. The link between datacenters fails for 5 minutes. What is the user-visible behavior on each side?",
+          answer: <p>Datacenter B (3 of 5 nodes = majority) keeps a leader and serves writes normally. Datacenter A (2 of 5) cannot elect a leader or commit anything — its 2 nodes spend the partition cycling through failed elections, returning errors to any clients that connect to them. After 5 minutes when the link heals, A's nodes step down (they were never legitimate leaders), update their term to match B's, accept B's log entries via the AppendEntries consistency check, and catch up. Clients of A see errors during the partition; clients of B see normal operation. This is CP behavior: A favored consistency over availability for the minority side.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>Membership change via joint consensus.</strong> Adding or removing nodes from a running Raft cluster is the most error-prone operation in production. The naive "just swap the config and restart" can elect two leaders simultaneously during the transition — exactly the safety violation Raft otherwise prevents. The Raft paper section 6 defines <em>joint consensus</em>: switch through an intermediate configuration C_old_new where commits require a majority from BOTH the old and the new configuration. Once C_old_new is committed, the cluster transitions to C_new (majority of new only). The intermediate phase eliminates the window in which two different majorities could exist. Hashicorp Raft and etcd both implement this with single-server changes added on top (only add or remove one node at a time, with joint consensus underneath, to make the operational story simpler). The Alibaba Cloud writeup on Raft engineering practices documents real-world bugs that arose from skipping joint consensus in early implementations.</p>
+    <p><strong>Pre-vote: avoiding term inflation.</strong> A node that rejoins after a long partition with a stale term can briefly look like a candidate at a very high term (because it kept incrementing during the partition). When its RequestVote arrives at healthy followers, they update their terms to match it, then realise its log is behind, deny the vote, and force the current leader to step down for nothing. The cluster has a leader election it did not need. Diego Ongaro's PhD thesis added the <em>pre-vote</em> phase: before incrementing its term and starting a real election, a candidate sends a non-binding pre-vote that other nodes evaluate; only if a majority would have voted yes does the candidate then actually increment and run a real election. Pre-vote is now standard in etcd, TiKV, and Hashicorp Raft. The cost is one extra RPC round in elections that would have succeeded anyway; the benefit is no spurious leader changes after partition healing.</p>
+    <p><strong>Learners (non-voting members).</strong> Production systems regularly want to add a new node to a cluster, let it catch up its log over many minutes, and only then promote it to voter. Adding it directly as a voter would either require an immediate quorum that includes a node with an empty log (slows commits) or refuse writes during the catch-up. The <em>learner</em> extension makes a new node a non-voting receiver of AppendEntries: it follows the log but does not count toward quorums or vote in elections. Once its log catches up to within a small lag, the operator promotes it via a single-server membership change. Etcd, Consul, and Yugabyte all support learners. This is the safe way to scale cluster size or replace a dead node without dropping availability.</p>
+    <p><strong>Linearizable reads: ReadIndex and lease reads.</strong> Strict linearizability requires that a read observes every previously committed write. Naive implementation: route every read through the leader, commit a no-op log entry just for the read, then return. Cost: one full round of consensus per read — far too expensive for production. Raft's optimisation, called <em>ReadIndex</em>: when a read arrives, the leader records its current commit index, sends a heartbeat to a majority of followers to confirm it is still leader, and then returns the read once its state machine has applied entries up to that index. No new log entry is written. Cost: one heartbeat round-trip. Faster alternative is the <em>leader lease</em>: the leader holds a lease (e.g. 9 ms granted by the previous heartbeat round) during which it can serve reads without any RPC. Lease reads are sub-millisecond and used by CockroachDB and TiKV for hot-path reads. Trade-off: lease reads require bounded clock skew between leader and followers (typically under 500 ms), so wall-clock synchronisation (NTP, PTP) becomes a correctness requirement, not just a hygiene practice.</p>
+    <p><strong>Snapshots and log compaction.</strong> A Raft log grows forever in principle; in practice the log must be truncated, or disk fills and recovery from disk replay takes hours. Snapshots solve this: each node periodically writes its full state machine state plus the (lastIncludedIndex, lastIncludedTerm) tuple to disk, then deletes log entries up to that index. A follower that has fallen behind by more than the retention window receives an <code>InstallSnapshot</code> RPC instead of catching up via AppendEntries — the leader ships its snapshot, the follower loads it as its state, then catches up the recent log tail. Snapshot frequency is a tunable: too often hurts throughput (fsync amplification); too rare hurts recovery and grows the log. Etcd defaults to snapshotting every 10,000 entries. CockroachDB does it every few seconds. The snapshot also must include the latest cluster membership configuration — failure to include it is a famous bug source that bites operators who hand-write Raft.</p>
+    <p><strong>Persistence and disk fsync.</strong> Raft mandates that every server persists three pieces of state to durable storage before responding: currentTerm, votedFor (for the current term), and the log entries (including the new ones being acknowledged in the current RPC). Skipping any one breaks safety. The fsync cost is the dominant operational expense — every committed entry costs at least one fsync on the leader and one on each follower that acknowledges. On NVMe with battery-backed cache, fsync is 50-100 microseconds; on cloud volumes (EBS gp3, GCP balanced PD), it can be 1-3 ms. This is why high-throughput Raft systems (Kafka KRaft, TiKV) batch many client writes into a single log entry and fsync to amortise the cost. The classical anti-pattern is fsync-per-request: never do it for Raft on any but trivial workloads.</p>
+    <p><strong>Multi-Raft and sharding.</strong> A single Raft group has bounded throughput — proportional to the slowest replica's fsync plus the network round-trip. To scale beyond a few thousand writes per second, production systems run many independent Raft groups in parallel, each responsible for a shard of the keyspace. CockroachDB partitions its key range into "ranges" (around 512 MB each) and runs one Raft group per range. TiKV does the same with "regions." Kafka KRaft runs one Raft group per metadata topic partition. The challenge is rebalancing: when traffic shifts, ranges must split, merge, and migrate, each operation being a coordinated membership change of a Raft group. The system that orchestrates this is sometimes called the "shard manager" or "placement driver" — it itself uses Raft to make placement decisions consistent across the operator pool.</p>
+    <p><strong>Leadership transfer and graceful shutdown.</strong> An operator who wants to drain a Raft node before maintenance can ask the cluster to <em>transfer leadership</em>: the current leader sends a <code>TimeoutNow</code> message to a designated follower, which immediately starts an election and is almost guaranteed to win because no other follower has timed out yet. The current leader steps down. This avoids the 150-300 ms unavailability window that a normal leader crash would cause; the user-visible impact is under 10 ms. Without leadership transfer, draining a leader for a deploy causes one election storm per leader migrated, which is fine for a 3-node cluster but punishing for a multi-Raft system with thousands of groups. CockroachDB and TiKV both expose leadership-transfer endpoints for rolling deploys.</p>
+    <p><strong>Production observability for Raft.</strong> Minimum viable Raft dashboard exposes: leader uptime per group, election count per minute (a spike means flapping leadership), commit latency p50/p99 per group, log-size (uncompacted) per replica, raft_term gauge (when it climbs fast, there are repeated unsuccessful elections), heartbeat round-trip latency, follower-lag-entries (how far behind each follower is), and snapshot install rate (a high rate means followers are falling behind faster than they can catch up). Etcd ships <code>etcd_server_leader_changes_seen_total</code>, <code>etcd_disk_wal_fsync_duration_seconds</code>, and <code>etcd_network_peer_round_trip_time_seconds</code> by default. CockroachDB's liveness and range_lease_holder metrics serve the same role across thousands of Raft groups.</p>
+    <p><strong>Real production failures.</strong> GitHub October 2018: a network blip between datacenters caused etcd to fail over to a partition that briefly thought it was authoritative. The actual issue was a misconfigured external sync that wrote to both regions during a brief window — Raft was correct, the orchestrator above it was not. Datadog 2023: a TiKV cluster experienced repeated leader elections under high write load because pre-vote was disabled in an older version; upgrading and enabling pre-vote fixed it. Etcd Kubernetes incident 2020: an admin removed a node from a 3-node cluster without using the proper membership change API; the remaining two nodes flipped between leader and candidate because their stored configurations disagreed. The fix: stop the cluster, hand-edit configs, restart. Lesson: never bypass joint-consensus membership change in production.</p>
+    <p><strong>History: from Multi-Paxos to Raft to Multi-Raft.</strong> Leslie Lamport's Paxos (1989) was the first proven-correct consensus algorithm but notoriously obscure. Multi-Paxos optimised it for the replicated-log case but still needed careful engineering. Diego Ongaro and John Ousterhout published Raft in 2014 ("In Search of an Understandable Consensus Algorithm") with the explicit design goal of being teachable. By 2026 Raft has roughly 100 open-source implementations and is the default in every new system that needs CP consensus. Industry has converged: greenfield projects pick Raft, legacy systems sometimes retain Multi-Paxos (Spanner, Cassandra's Paxos-based LWT, Neon's safekeepers). Multi-Raft — running many Raft groups in parallel — is the design pattern that scales the technique from a single config store to a horizontally-sharded database.</p>
+    <p><strong>Cross-protocol: Raft as building block.</strong> Raft is rarely the user-visible primitive. Kubernetes uses etcd's Raft to store config. Service meshes (Consul) use Raft for service discovery and KV. Databases use Raft per shard for range replication. Stream processors (Kafka KRaft, Pulsar BookKeeper) use Raft for metadata. Even some queues (NATS JetStream) use Raft for storage. The pattern is consistent: Raft replicates a small, ordered, well-defined log; the application layer on top defines what the log entries mean. Treating Raft as a primitive — replicated state machine you control by writing log entries — is the senior engineer's mental model.</p>
+    <p><strong>Deployment patterns: managed vs self-hosted.</strong> Self-hosting an etcd or Consul cluster across three availability zones is the canonical "you handle the fsync latency" deployment. Cloud-managed alternatives (AWS Aurora's Raft-based storage layer, GCP Spanner, Azure Cosmos DB) absorb the operational burden but cost 2-5x more. For a typical 3-AZ deployment: place Raft nodes in three separate AZs, target intra-region latency of 1-5 ms, use NVMe-backed instances (i3, m5d), enable disk write-cache only with battery backup, and never co-locate two Raft replicas on the same host. Cross-region Raft (5 nodes split 2-2-1) is possible but pays 50-200 ms commit latency for the privilege of surviving a full region loss — Spanner and CockroachDB users routinely pay this price.</p>
+    <NumbersCard
+      id="card-raft-numbers"
+      title="Senior-tier Raft numbers"
+      stats={[
+        { label: "fsync NVMe + BBU", value: "50–100 μs" },
+        { label: "fsync cloud SSD (EBS gp3)", value: "1–3 ms" },
+        { label: "Etcd default snapshot interval", value: "10,000 entries" },
+        { label: "Lease read latency", value: "sub-millisecond" },
+        { label: "ReadIndex read latency", value: "one heartbeat round-trip" },
+        { label: "TimeoutNow leadership transfer", value: "under 10 ms unavailability" },
+        { label: "Cross-region commit latency", value: "50–200 ms" },
+        { label: "Production Raft implementations", value: "~100 open source by 2026" },
+      ]}
+    />
+    <Misconception id="mc-raft-bft">
+      <p><strong>"Raft makes my system unhackable."</strong> No. Raft is crash-fault-tolerant, not Byzantine-fault-tolerant. A compromised node can lie or send corrupted logs and Raft's guarantees do not cover this. For adversarial nodes use PBFT, HotStuff, or Tendermint. Raft assumes nodes either obey the protocol or crash.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      scenario="An etcd 3-node cluster has been showing leader elections every 30-60 seconds. Trace the diagnosis."
+      steps={[
+        { prompt: "Step 1: Check etcd_server_leader_changes_seen_total over time. What does the metric say?", reveal: "It is climbing fast — confirming the symptom. The actual interesting metric is etcd_disk_wal_fsync_duration_seconds and etcd_network_peer_round_trip_time_seconds. A high fsync or heartbeat RTT triggers elections." },
+        { prompt: "Step 2: etcd_disk_wal_fsync_duration_seconds p99 is 8 seconds. What is happening?", reveal: "The leader's WAL fsync is taking 8 seconds. Followers do not see heartbeats during fsync (etcd is single-threaded for the Raft tick), so they time out and start an election. The new leader hits the same disk problem and the cycle repeats." },
+        { prompt: "Step 3: What is the root cause of 8-second fsync?", reveal: "Most likely: cloud volume with bursty IOPS that has exhausted its burst budget, OR co-located workload saturating disk, OR an unhealthy disk. Check iostat: percent-util sustained 100; or check cloud-provider burst-credit metrics." },
+        { prompt: "Step 4: Workaround during the incident?", reveal: "Migrate etcd to dedicated NVMe-backed instances (i3, m5d). Increase election timeout from 1s to 5s as a temporary mitigation (more tolerance for slow heartbeats), accepting longer failover for stability. Long-term: never share disk for etcd; dedicated volume per node." },
+        { prompt: "Step 5: Permanent fix and prevention metric.", reveal: "Move etcd to local NVMe, monitor etcd_disk_wal_fsync_duration_seconds p99 with alert at over 50 ms. The Kubernetes etcd best practice doc explicitly calls out this metric as the most important Raft observability signal." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      title="Diagnose the Raft log line — what is wrong?"
+      output={`2026-05-13T15:42:08Z INFO  raft: leader=A term=12 commit=400123
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> B success
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> C success
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> D failure (mismatch at idx=400100 term=12 vs follower idx=400100 term=11)
+2026-05-13T15:42:09Z INFO  raft: AppendEntries -> D retry prevIdx=400050 term=12 (decremented)
+2026-05-13T15:42:09Z INFO  raft: AppendEntries -> D failure (mismatch at idx=400050 term=12 vs follower idx=400050 term=10)
+2026-05-13T15:42:10Z INFO  raft: AppendEntries -> D retry prevIdx=399000 term=12 (decremented)
+2026-05-13T15:42:10Z INFO  raft: AppendEntries -> D failure (mismatch at idx=399000 term=12 vs follower idx=399000 term=8)
+2026-05-13T15:42:11Z WARN  raft: D has diverged extensively; consider InstallSnapshot`}
+      outputLang="log"
+      question="The leader is decrementing nextIndex for follower D repeatedly. What is the diagnosis, and what is the operational fix?"
+      hint="Look at the term gap in follower D's log vs the leader's claim. How far back has D been offline?"
+      answer="Follower D has been offline or partitioned long enough that its log diverges far in the past (term 8 vs leader's 12, so D missed at least 4 leadership generations). The AppendEntries consistency-check protocol is correctly walking the log back one index at a time to find the last matching entry, but D's log differs over many thousands of entries — at that scale, sending an InstallSnapshot to bulk-transfer the leader's state machine state is far more efficient than continuing to back up one index at a time. Operational fix: trigger the leader to send InstallSnapshot to D (most Raft libraries do this automatically when nextIndex falls below the leader's snapshot boundary). D installs the snapshot, then catches up only the recent tail via normal AppendEntries. Prevention: alert on 'follower lag > N entries' so an offline follower is detected before the leader trims its log past D's last known index."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      prompt="A startup needs a strongly consistent KV store backing service discovery. Pick the consensus implementation that best balances correctness, latency, and operational burden."
+      options={[
+        { name: "Self-hosted etcd 3-node cluster across 3 AZs", summary: "Industry default.", correct: true, justification: "Etcd is the reference Raft implementation; well-documented, monitored at scale by Kubernetes operators worldwide; 3-AZ deployment tolerates one AZ failure with 2-10 ms intra-region commits. Operational burden is real but bounded and on every cloud the playbook exists." },
+        { name: "Hand-rolled Multi-Paxos in a custom Go service", summary: "Maximum control, maximum risk.", justification: "Almost certainly introduces subtle bugs (membership change, log compaction, snapshot installation, recovery from crash with partial fsync). Industry has consistently shown that DIY consensus implementations fail in production within months. Pick this only if you are publishing a paper, not a service." },
+        { name: "Cloud-managed alternative (AWS DynamoDB strong-consistency mode, GCP Spanner)", summary: "Zero ops, opaque cost and lock-in.", justification: "Solid for correctness, removes operational burden. Higher cost (2-5x vs self-hosted), vendor lock-in, harder to debug deep latency issues. Reasonable for non-critical scale or teams without on-call expertise; expensive for high-throughput config workloads." },
+        { name: "Eventually consistent KV (Cassandra, DynamoDB eventual mode)", summary: "Wrong shape.", justification: "Service discovery needs read-after-write consistency: if you register a new instance and a client queries one second later, the new instance must appear. Eventual consistency would cause client retries against stale endpoints. Strong consistency is non-negotiable for this workload." },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="Why is the leader lease read optimisation in CockroachDB / TiKV considered correctness-sensitive, while ReadIndex is not?"
+      choices={[
+        { label: "Lease reads use unsafe RPC paths", misconception: "Both use the same RPC channels; the difference is in time vs network round-trip." },
+        { label: "Lease reads depend on bounded clock skew between leader and followers, so wall-clock synchronisation (NTP/PTP) becomes a correctness requirement, not just hygiene", correct: true },
+        { label: "ReadIndex skips the state machine", misconception: "ReadIndex waits for the state machine to catch up to the commit index; it does not skip." },
+        { label: "Lease reads are slower", misconception: "Lease reads are FASTER (sub-ms) than ReadIndex (heartbeat RTT). That speed is what makes them attractive." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      question="Which paper introduced Raft and explicitly states 'understandability' as its primary design goal?"
+      choices={[
+        { rfc: "Ongaro & Ousterhout, 2014", title: "In Search of an Understandable Consensus Algorithm", correct: true },
+        { rfc: "Lamport, 1989", title: "The Part-Time Parliament (Paxos)" },
+        { rfc: "Castro & Liskov, 1999", title: "Practical Byzantine Fault Tolerance" },
+        { rfc: "Chandra et al., 2007", title: "Paxos Made Live (Chubby)" },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="02-raft-outline"
+      lang="en"
+      prompt="Design a 5-node Raft cluster for a global config store serving 50k reads/sec and 5k writes/sec, with hard SLOs on read p99 (under 10 ms) and on never losing an acknowledged write."
+      constraints={[
+        "Must tolerate one full region failure.",
+        "Read p99 under 10 ms 99.9% of the time (so most reads must be sub-millisecond lease reads).",
+        "Write p99 under 50 ms.",
+        "Operational ownership by a 3-engineer team — no on-call burden beyond 1 page per quarter.",
+        "Snapshot install must be tested monthly via chaos drill.",
+      ]}
+      canonical="5 Raft nodes split across 3 regions (2-2-1) for region-loss tolerance. Hot replicas in 1 region (lease reads served from nearest replica). Use lease reads with NTP-synced clocks (target skew under 1 ms via chrony) — bounded by lease duration of 9 ms to absorb 1 ms of skew safely. Each node on dedicated NVMe instance with WAL on local SSD, snapshot store on EBS for durability. Cluster size 5 gives 2-failure tolerance. Pre-vote enabled. Joint-consensus membership change. Snapshot every 10k entries. Monitor: leader_changes_total (alert over 1/hour), fsync_p99 (alert over 50 ms), commit_p99 (alert over 50 ms), follower_lag (alert over 1000 entries). Quarterly chaos drill: kill leader node, verify failover under 1 s; partition one region, verify writes continue on majority side."
+      keyPoints={[
+        "5-node 2-2-1 split tolerates 1 full region loss.",
+        "Lease reads need bounded clock skew — chrony plus NTP is a correctness requirement.",
+        "WAL on local NVMe; never on cloud volume with bursty IOPS budget.",
+        "Pre-vote plus joint consensus enabled to avoid spurious term inflation and unsafe membership changes.",
+        "Chaos drills monthly: kill leader, partition region, force snapshot install — verify failover SLO holds.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-raft-outline"
+      lang="en"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Explain why joint consensus is required for safe Raft membership change, and what specifically breaks with a naive single-step config swap.",
+          answer: <p>The danger with naive swap is the configuration discontinuity window. Imagine going from C_old of 3 nodes A, B, C to C_new of 5 nodes A, B, C, D, E. If different nodes apply the change at different moments, you can briefly have two valid majorities: a majority of C_old (any 2 of A, B, C) and a majority of C_new (any 3 of A, B, C, D, E). These two majorities can have zero overlap (e.g. A, B and C, D, E), meaning two leaders could be elected at the same instant — Election Safety is violated. Joint consensus fixes this: during the transition, commits require a majority from BOTH C_old AND C_new simultaneously. That guarantees overlap between any two valid quorums in the transition window. Once C_old_new is committed everywhere, the cluster transitions to C_new alone. Skipping joint consensus is the most common DIY-Raft bug; the Alibaba writeup documents a real example where it caused a 30-minute split brain.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "A CockroachDB cluster runs 50,000 Raft groups (one per range). Why does this not collapse under heartbeat overhead, and what optimisations make it viable?",
+          answer: <p>Naive math says 50,000 groups times 1 heartbeat per 50 ms equals 1M heartbeats per second, infeasible. The optimisation is heartbeat coalescing: per node-pair, the system sends one physical UDP packet every 50 ms containing the heartbeats for ALL Raft groups that share that node pair. So a 5-node cluster with 50,000 groups sends 10 packets per 50 ms equals 200 packets per second total instead of 1M. Each packet's body is a compact bitmap or run-length-encoded list of group leaderships. Additional optimisations: only send AppendEntries with actual entries (heartbeats are merely the keep-alive); use shared snapshot transport for cross-region catch-up; let idle groups skip heartbeats and rely on quiescence — a group with no recent writes can stop heartbeating until a write arrives, with a small overhead to wake up. CockroachDB and TiKV both implement coalesced heartbeats; this is what makes Multi-Raft at scale workable.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>Raft = one leader per term + ordered log + majority quorum for commits and elections. Safety from quorum overlap. Production needs pre-vote, joint consensus, learners, snapshots, lease reads.</KeyTakeaway>
+
+<SpiralCue thread="statefulness">
+Raft turns N machines into one stateful machine. The next pieces (<a href="/en/distributed/03-quorum/">03-quorum</a> for the math of quorums, <a href="/en/distributed/04-leader-election/">04-leader-election</a> for the election internals) zoom into the two foundations Raft rests on.
+</SpiralCue>
+
+**Prereqs:** <a href="/en/distributed/01-cap-practice/">01-cap-practice</a>.
+
+**Next:** <a href="/en/distributed/03-quorum/">03-quorum</a> — quorum math + W+R>N intuition.
