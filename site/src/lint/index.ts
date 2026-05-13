@@ -11,6 +11,8 @@ import { checkI18nParity } from "./rules/i18n-parity";
 import { checkSources } from "./rules/sources";
 import { checkReducedMotion } from "./rules/reduced-motion";
 import { checkPersonas } from "./rules/personas";
+import { checkTierWordBudgets } from "./rules/tier-word-budgets";
+import { checkExerciseCounts } from "./rules/exercise-counts";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -42,6 +44,8 @@ export function lintCurriculum(): AstroIntegration {
           warnings.push(...checkSpiralCues(html, f));
           errors.push(...checkSources(html, f));
           errors.push(...checkPersonas(html, f));
+          warnings.push(...checkTierWordBudgets(html, f));
+          warnings.push(...checkExerciseCounts(html, f));
         }
 
         // Source-level + global checks
