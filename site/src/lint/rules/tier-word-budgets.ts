@@ -1,8 +1,8 @@
 type Tier = "junior" | "middle" | "senior";
 
 const BUDGETS: Record<Tier, { min: number; max: number }> = {
-  junior: { min: 200, max: 500 },
-  middle: { min: 2500, max: 3500 },
+  junior: { min: 200, max: 700 },
+  middle: { min: 2500, max: 3700 },
   senior: { min: 2500, max: 4000 },
 };
 
