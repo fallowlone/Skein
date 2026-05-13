@@ -4,24 +4,459 @@ lang: ru
 pillar: observability
 chapter: 11-observability
 order: 6
-title: "Trace propagation"
-summary: "Скоро — Наблюдаемость, которая окупается"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "Trace propagation: заголовки, сшивающие сервисы воедино"
+summary: "Почему W3C-заголовок traceparent — это 55-байтная несущая строка, превращающая 50 разрозненных сервисов в один навигируемый трейс, как baggage переносит контекст через async-границы, и как head vs tail sampling решают, какие трейсы выживут."
+readingMin: 26
+status: ready
+prereqs: ["observability/04-red-use", "observability/05-slo-budgets"]
+spiral: ["statefulness", "encapsulation"]
+personas: ["bea", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-trace-prop
+  tradeoff: card-sampling-cost
+  failure_mode: mc-broken-async
+  numbers: card-trace-numbers
 sources:
-  - https://example.com/placeholder
+  - https://www.w3.org/TR/trace-context/
+  - https://www.w3.org/TR/trace-context-2/
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+  - https://opentelemetry.io/docs/specs/otel/baggage/api/
+  - https://opentelemetry.io/docs/concepts/sampling/
+  - https://opentelemetry.io/blog/2022/tail-sampling/
+  - https://github.com/openzipkin/b3-propagation
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Логи, метрики, трейсы — когда что дешевле всего отвечает.</Crux>
+Прошлые фрагменты научили, что записывать (RED, USE) и в какую цель целиться (SLO + error budget). Когда SLO горит, ты кликаешь exemplar и попадаешь в трейс — но только если трейс реально сшит через все сервисы, которые запрос задел. Это сшивание — работа одного 55-байтного HTTP-заголовка `traceparent` и его компаньона `tracestate`. Сделай их неправильно — у каждого сервиса свой маленький трейс; правильно — следишь за одним запросом от браузера до БД до кеша и обратно, все span'ы корректно слинкованы общим trace-id.
 
-_Этот фрагмент в плане. Содержание см. в оглавлении главы._
+<Crux>Один 55-байтный traceparent превращает N сервисов в один трейс. Без него — N сирот. Observability держится на этой строке.</Crux>
+
+Ментальная модель — эстафета. Первый бегун (браузер или edge-proxy) генерирует trace-id (случайная 128-битная hex-строка) и span-id и пишет их в заголовок, прикреплённый к исходящему HTTP-запросу. Каждый принимающий сервис читает trace-id из заголовка, использует его как parent для своей работы, генерирует новый span-id и пишет новый traceparent перед любым своим исходящим вызовом. Через любой протокольный hop (HTTP, gRPC, очереди, async fetch в браузере, batch jobs читающие из Kafka) trace-id остаётся постоянным, а span-id формируют parent-child-дерево. Потеряй заголовок на любом hop — трейс расщепляется на два не связанных дерева — «сломанный трейс», который почти хуже отсутствия трейса, потому что дашборд утверждает, что что-то наблюдает, но тихо прячет половину работы.
+
+<TierAccordion id="tier-trace-prop" lang="ru">
+  <Fragment slot="junior">
+    <p><strong>Что это в одном предложении.</strong> Trace propagation — практика передачи маленького идентификатора между сервисами на каждом запросе, чтобы вся работа, сделанная через много сервисов для одного user-действия, сшилась в одну картинку.</p>
+    <p><strong>Зачем это нужно.</strong> Без propagation медленный checkout выглядит как 50 разных историй. С ним — один трейс, проходимый сверху вниз за 30 секунд.</p>
+    <p><strong>Метафора.</strong> Представь доставку Amazon с одним tracking number. Посылка покидает склад, прыгает между сортировочными центрами, едет на трёх грузовиках, наконец приезжает к двери. Каждый hop сканирует тот же tracking number, записывая, где она была, когда и куда следующая. Если какая-то одна остановка забывает просканировать — страница отслеживания замолкает, и непонятно, где посылка — даже если она в итоге доедет. Trace propagation — это сканирование: каждый сервис обязан scan-in входящий trace-id и scan-out новый span-id, иначе цепочка рвётся.</p>
+    <p><strong>Bea и Sven.</strong> <PersonaTag id="bea" lang="ru" /> on-call-инженер получает тикет поддержки: «checkout занял 30 секунд». Открывает tracing-tool, вводит request-id из тикета, поднимает один трейс. Видит: 50мс на API gateway, 80мс на auth, 28 секунд в <PersonaTag id="sven" lang="ru" /> inventory-сервисе на DB-запросе, 200мс в payment, 100мс назад пользователю. 28-секундное бутылочное горлышко точно названо. Без propagation ей пришлось бы вручную сопоставлять 50 log-записей через 7 сервисов и угадывать, какие от этого пользователя; с одним трейсом она знает за 30 секунд.</p>
+    <p><strong>Один сценарий.</strong> Команда добавляет tracing в один сервис, но забывает включить auto-instrumentation для HTTP-клиента OTel. Каждый span стартует свежий трейс, потому что входящий traceparent не читается. Дашборд показывает трейсы, но каждый — глубиной в один span. Клиенты жалуются на медленный journey, команда не может найти, где время — трейс, который нужен, тихо расщеплён на 50 одиночных кусков.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Трейс пропагируется между сервисами каким HTTP-заголовком (по W3C-стандарту)?"
+      choices={[
+        { label: "traceparent (плюс опциональный tracestate для vendor-данных)", correct: true },
+        { label: "x-request-id", misconception: "Многие системы ставят x-request-id, но это не W3C-стандарт. Стандарт — traceparent." },
+        { label: "x-trace-id", misconception: "Vendor-specific header старых систем; W3C-стандарт — traceparent." },
+        { label: "Cookie", misconception: "Cookie — это session state, не trace-context." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Какой самый частый production-сбой trace propagation?"
+      choices={[
+        { label: "traceparent отсутствует или не читается на каком-то hop, и трейс расщепляется на разрозненные single-span деревья", correct: true },
+        { label: "trace-id слишком длинный", misconception: "trace-id фиксированный 32 hex; длина не runtime-проблема." },
+        { label: "HTTPS-шифрование блокирует заголовок", misconception: "Заголовки едут внутри TLS-сессии, всё нормально." },
+        { label: "Браузеры отказываются ставить traceparent", misconception: "Браузеры легко ставят произвольные fetch-headers; пропажа обычно — баг кодпути backend." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      prompt="Расставь, что происходит, когда запрос идёт через три сервиса с правильной propagation:"
+      items={[
+        "Клиент A генерирует новый trace-id и span-id, строит заголовок traceparent",
+        "Клиент A отправляет HTTP-запрос в сервис B с заголовком traceparent",
+        "Сервис B извлекает trace-id, создаёт свой span (новый span-id, parent = span-id клиента)",
+        "Сервис B зовёт сервис C: строит свежий traceparent с тем же trace-id, но со своим span-id как новый parent-id",
+        "Сервис C извлекает trace-id, создаёт свой span (parent = span-id B), делает работу",
+        "Каждый сервис эмитирует свой span в tracing-backend; backend сшивает по trace-id",
+        "Дашборд показывает полное дерево: A → B → C, span'ы делят один trace-id",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      setup="Заполни пропуск: стандартный HTTP-заголовок, несущий идентификатор трейса между сервисами, называется _______."
+      accepted={["traceparent"]}
+      canonical="traceparent (заголовок W3C Trace Context)"
+      explanation="Спецификация W3C Trace Context называет заголовок traceparent. Он несёт version, trace-id, parent-id и trace-flags в фиксированном 55-байтном формате. Некоторые legacy-системы используют B3 single или multi headers, но traceparent — текущий стандарт."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "В одном абзаце: почему сломанная trace propagation хуже отсутствия tracing вообще?",
+          answer: <p>Без tracing ты знаешь, что трейсов нет, и идёшь в логи. Со сломанной propagation каждый сервис эмитит span'ы, но они не линкуются — дашборд утверждает, что наблюдает систему, а каждый трейс покрывает только один сервис. Ты думаешь, что отлаживаешь end-to-end, а реально отлаживаешь фрагментами. Хуже: пропавшая propagation делает медленный сервис невидимым — запрос, быстрый в A и медленный в B, выглядит как быстрый трейс в A и отдельный медленный трейс в B без причинной связи. Operators тратят часы, подозревая не тот сервис. Утверждение «у нас есть tracing» истинно, только если trace-id выживает на каждом hop; иначе это театр.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Заголовок traceparent по байтам.</strong> Спецификация W3C Trace Context (W3C Recommendation с февраля 2020, Level 2 с 2024) определяет один HTTP-заголовок фиксированной ширины. Значение — ровно 55 байт: <code>00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01</code>. Четыре поля через дефис. Version: 2 hex-цифры, сейчас <code>00</code>, <code>ff</code> зарезервирован и запрещён. Trace-id: 32 lowercase hex-символа = 16 байт = 128-битный идентификатор, генерируемый равномерно случайно; all zeros недопустим. Parent-id (часто span-id вызывающего): 16 lowercase hex = 8 байт = 64 бита; all zeros недопустим. Trace-flags: 2 hex-цифры = 8 бит, сейчас определён только младший бит (<code>01</code>) — «sampled». Ширина намеренно фиксирована, чтобы router или sidecar парсил заголовок без regex-движка. Компактная форма даёт ~0.04 KB на HTTP-запрос — измеримо, но ничтожно относительно типичного payload.</p>
+    <p><strong>Компаньон tracestate.</strong> Где traceparent — универсальный идентификатор, tracestate несёт vendor-специфичный контекст: какой sampler решил, какая canary-версия эмитнула, какие лишние ID-шники backend хочет. Формат — comma-separated key=value, до 32 членов, до 256 chars с каждой стороны. Спека обязывает vendor'ов пропагировать не менее 512 chars кумулятивного tracestate, даже если они не понимают ключи — это сохраняет end-to-end tracing между разнородными vendor'ами. Мутации: vendor может добавить новый ключ (в начало), обновить существующий (двинуть в начало), но не должен удалять чужие. Заголовок — escape hatch для того, что не лезет в жёсткий traceparent.</p>
+    <p><strong>Интерфейс propagator.</strong> OpenTelemetry обобщает логику заголовков двумя операциями над объектом <em>Context</em>: <code>inject(context, carrier)</code> пишет нужные заголовки в исходящий запрос, <code>extract(carrier) -&gt; context</code> читает их из входящего. Carrier'ы pluggable (HTTP headers, gRPC metadata, AMQP properties, обычный dict), propagator'ы pluggable (W3C TraceContext, W3C Baggage, B3 single, B3 multi, Jaeger). Дефолтный composite — TraceContext + Baggage; B3 поддерживается для interop с Zipkin-эрой. Библиотека делает bit-кодирование, валидацию и логику «если входящего нет — сгенерируй», поэтому прикладной код не трогает сырой hex.</p>
+    <p><strong>Baggage: произвольный key-value через journey.</strong> Baggage — второй заголовок (<code>baggage</code>) от W3C, пропагируется идентично traceparent. Несёт свободные пары: tenant-id, region, выбор feature-flag, cohort A/B-теста. Baggage читается downstream-сервисами и может прикрепляться как атрибуты span'а или использоваться кодом (например, для per-tenant квот). Подвох: baggage по спеке не ограничен, лимитирован только carrier-протоколом. HTTP-лимиты заголовка (обычно 8-64 KB на поле, серверная настройка) — практический cap. Два реальных риска: раздутый baggage добавляет latency (больше байт на запрос) и утечки PII (user email, личные данные в baggage текут на каждый downstream и в любую third-party-интеграцию, читающую заголовки, в часто менее аудитируемых контекстах, чем исходная БД). Дисциплина: baggage хранит operational-теги, никогда identity-данные.</p>
+    <p><strong>Генерация trace-id: должна быть равномерно случайной.</strong> Спека категорична: trace-id должен генерироваться криптостойким случайным 128-битным значением. Он не должен кодировать timestamp, IP или user-id потому, что (а) downstream-инструменты полагаются на равномерное распределение для решений sampling, (б) встроенная инфа утекает операционные данные. OTel-SDK используют secure random платформы (crypto.getRandomValues в браузерах, /dev/urandom на Linux, java.security.SecureRandom на JVM). Скорость: генерация одного 128-битного id — sub-microsecond; никогда не измеримая стоимость. Коллизии: при 128-битной случайности шанс коллизии в триллионе трейсов — порядка 10⁻¹⁵, практически ноль. Уникальность trace-id — фундамент: tracing-backend ключит все span'ы по trace-id, склеивает их на query-time, и если два независимых запроса делят id — backend тихо смешает их в один бессмысленный трейс.</p>
+    <p><strong>Валидация и fallback «нет заголовка».</strong> Когда сервис получает запрос без traceparent или с невалидным (неверная version, all-zero trace-id, malformed hex), receiver обязан сгенерировать совершенно новый trace-id и стартовать свежий трейс. Спека явно описывает этот fallback, чтобы один сбойный caller не каскадно ломал трейсы. Сбои валидации должны логироваться как атрибут span'а (<code>invalid_traceparent_received=true</code>), чтобы трейс появлялся в backend с маркером, позволяя operators найти плохого upstream-caller. Production-команды трактуют ненулевую частоту <code>invalid_traceparent</code> span'ов как propagation-регресс и гоняются за плохим upstream.</p>
+    <p><strong>Async-границы: убийцы.</strong> HTTP propagation — лёгкий случай. Тяжёлые — очереди, таймеры, callback'и. Push сообщения в Kafka, RabbitMQ, SQS или Cloud Pub/Sub требует записать traceparent в заголовки сообщения (Kafka headers, AMQP properties, SQS message-attribute) и прочитать на consumer'е. OTel-SDK делают это автоматически через auto-instrumentation hooks, но только для поддерживаемых клиентов в рекомендованных режимах. Background-таймеры в Node.js (<code>setTimeout</code>, <code>setImmediate</code>), worker-threads, fire-and-forget promises, browser Web Workers — каждый ломает in-process контекст, если developer не оборачивает callback в OTel-helper <code>context.with()</code>. Самый частый production-баг: разработчик пишет <code>setTimeout(() =&gt; doWork(), 100)</code>, работа выполняется, но не наследует trace-id запроса; трейс кончается на границе setTimeout, свежий трейс стартует для работы. Фикс механический (<code>context.bind</code> или <code>context.with</code>), но легко забыть.</p>
+    <p><strong>Head vs tail sampling.</strong> Трейсить каждый запрос дорого при высоком трафике. Решение о sampling может приниматься в начале (на старте трейса — кодируется в trace-flags бите <code>01</code>) или в конце (после завершения всех span'ов collector видит весь трейс целиком). Head-based: дёшево, предсказуемо, применяется в SDK на старте трейса. Типовое: вероятностное (1-5% трейсов). Минус: медленный или ошибочный запрос, попавший в несэмплированные 99%, невидим. Tail-based: OTel Collector буферит все span'ы для trace-id 30с-5мин, потом решает сохранять ли трейс по policy (есть ли error? duration &gt; порог? конкретный атрибут? probabilistic top-up). Tail sampling ловит интересный хвост медленных/ошибочных трейсов, который head sampling роняет. Минус: collector обязан держать span'ы каждого трейса в памяти до decision-time, требует load-balanced exporters, чтобы span'ы одного трейса попадали на один collector instance. Память — главный constraint: collector с 50,000 in-flight трейсов и 100 span'ов на трейс по 1 KB/span = 5 GB.</p>
+    <p><strong>Cross-protocol propagation таблица.</strong> HTTP: traceparent/tracestate/baggage как HTTP-заголовки. gRPC: те же имена, но в gRPC metadata. Kafka: traceparent и tracestate как record headers (бинарные или строковые). RabbitMQ / AMQP: заголовки в message properties. SQS / SNS: message-attribute «traceparent». Cloud Pub/Sub: атрибут сообщения. GraphQL: внутри HTTP-транспорта, идентично HTTP. WebSocket: внутри HTTP upgrade handshake; per-message context propagation custom (у WS нет header-семантики). gRPC-Web: HTTP-заголовки. Service mesh: sidecar (Envoy, Linkerd) делает propagation прозрачно для HTTP и gRPC, но приложение всё равно нужно инструментировать для очередей / async-границ.</p>
+    <p><strong>Observability-бэкенды и хранение трейсов.</strong> Когда span'ы эмитированы, они попадают в tracing-backend — Jaeger, Tempo, Honeycomb, Datadog APM, AWS X-Ray, Google Cloud Trace, Lightstep — индексирующий по trace-id и поддерживающий запросы по сервису, latency, тегу, ошибке. Форма хранения: span'ы append-only, ключатся по trace-id, ретеншн 7-30 дней. Индексы на service name, resource, status, custom-атрибуты. Latency запроса: sub-second для lookup'а по известному trace-id; секунды-минуты для free-text / aggregation. Стоимость: сэмпл-1% при 10k req/s с 10 span/трейс по 1 KB/span = 100k span/s × 1% = 1k retained span/s = 86M span/день × 1 KB = 86 GB/день сырого, до сжатия. Сжатый ~10 GB/день, ретеншн 14 дней = 140 GB. По hosted-цене ~$1/GB/мес — ~$140/мес на такой сервис, тривиально; в petabyte-масштабе или при 100% sampling — операционная статья. Выбор backend — компромисс мощности запросов, цены ретеншна и операционного обслуживания.</p>
+    <p><strong>Trace ID как join-ключ.</strong> Помимо визуализации одного трейса, trace ID — это универсальный join между логами, метриками и трейсами. Log-строка с trace-id может быть joined к трейсу на query-time, позволяя operator'у переключиться с «вижу эту log-запись, какой был полный flow?» на полный trace-вью за один клик. Метрики эмитируют exemplars (trace-id, ассоциированные с наблюдениями bucket'а histogram); медленное p99-значение несёт trace-id, в который можно кликнуть. Profile'ы аналогично: continuous-profile прикрепляют trace-id к CPU-сэмплам. Полный стек observability (логи + метрики + трейсы + профили) джойнится по trace-id; потеряй propagation — джойны ломаются. Поэтому «делать tracing правильно» важно, даже если ты редко смотришь трейсы напрямую: каждый другой observability-инструмент тайно зависит от экосистемы trace-id.</p>
+    <p><strong>HTTP/2 и HTTP/3: пропагация в HPACK / QPACK.</strong> Под капотом HTTP/2 использует HPACK для сжатия заголовков, HTTP/3 — QPACK. Оба основаны на dynamic table, где часто повторяющиеся пары имя:значение сжимаются до 1-байтного индекса. traceparent отлично подходит: имя стабильное (всегда «traceparent»), значение меняется каждый запрос. Имя обычно сжимается до 1-2 байт, значение остаётся ~50 байт raw. Сетевой overhead на пропагацию trace-context на HTTP/2 — порядка 60 байт, на HTTP/1.1 — все ~80 байт. Различие микроскопическое, но в high-traffic-сервисах помогает: на 100k req/s — 2 MB/s экономии. На HTTP/3 (QUIC) такая же история, плюс заголовки идут в первом UDP-пакете, без дополнительных RTT. Влияет это редко, но senior'у полезно понимать: пропагация trace-context — first-class задача дизайна HTTP, и протокольные оптимизации специально учитывают её.</p>
+    <p><strong>OTel collector pipeline.</strong> Между приложением и tracing-backend сидит OpenTelemetry Collector. Минимальный pipeline: receiver (OTLP gRPC или HTTP) → processor (batch, memory_limiter, optionally tail_sampling, attributes) → exporter (Tempo, Jaeger, Datadog OTLP-endpoint). Collector делает batching (отправляет partial-spans пачками 200-512 чтобы амортизировать RPC-cost), memory-limiter (отбрасывает при достижении порога чтобы не OOM-нуть), attributes-processor (добавляет / маскирует / удаляет атрибуты — типично для compliance-фильтрации PII), tail_sampling (как описано выше). Развёртывание — DaemonSet-агент (1 на ноду) или Deployment-gateway (несколько реплик). Каноничный паттерн — двухтировый: агент собирает локально и батчит, gateway делает tail_sampling и роутинг. Outage этого слоя приводит к потере span'ов; production-команды держат buffer (file storage extension) для переживания краткосрочных потерь backend'а.</p>
+    <p><strong>Distributed lock через trace-id.</strong> Один полезный паттерн: использовать trace-id как идемпотентный ключ в downstream-сервисах. Платёжный сервис, получающий request с известным trace-id, может проверить — а не обрабатывали ли мы уже этот trace-id? Если да — вернуть прошлый результат, не повторять. Это превращает distributed-tracing-infra в идемпотентность-инфру бесплатно. Catch: trace-id уникален per request, но при retry с того же caller'а у тебя обычно тот же trace-id (если retry — head sampling не меняется). Production-сервисы payment, write-once-storage, ticket-issuance это используют. Это вторая жизнь trace-id за рамками observability.</p>
+    <p><strong>Trace-context в serverless и edge.</strong> AWS Lambda, Cloudflare Workers, Vercel Edge Functions, Fastly Compute — runtime'ы с короткой жизнью и холодными стартами. Пропагация traceparent тут особенно хрупкая: SDK инициализируется на каждом invocation, и если init медленный — первая часть выполнения проходит без context'а. Решение: lazy-init SDK на первый вызов, кэширование context-объекта в global scope, использование platform-specific OTel-layer (AWS Lambda OTel Layer, Cloudflare Workers OTel adapter) — они инициализируются раньше handler'а. На edge ещё одна тонкость: один Worker может обработать сотни запросов в одном изоляте, и пропагация должна изолировать context per-request, иначе trace-id одного запроса утечёт в другой. AsyncLocalStorage снова основа.</p>
+    <NumbersCard
+      id="card-sampling-cost"
+      title="Trace propagation: стоимости и лимиты"
+      stats={[
+        { label: "Размер заголовка traceparent", value: "55 байт (фиксировано)" },
+        { label: "Ширина trace-id", value: "128 бит / 32 hex" },
+        { label: "Ширина span-id", value: "64 бита / 16 hex" },
+        { label: "tracestate макс. список", value: "32 члена" },
+        { label: "tracestate min пропагируется chars", value: "512" },
+        { label: "Типичная частота head sampling", value: "0.5-5% трейсов" },
+        { label: "Типичное окно tail decision", value: "30с-5мин" },
+        { label: "Tail-sampler RAM на 50k трейсов × 100 span × 1KB", value: "~5 GB" },
+      ]}
+    />
+    <Misconception id="mc-broken-async">
+      <p><strong>«Auto-instrumentation решает всё».</strong> Нет. Async-callback'и (setTimeout, очереди, worker threads, fire-and-forget promises) теряют контекст без явного <code>context.with()</code> или эквивалента. Главная причина расщеплённых трейсов — необёрнутые async-границы.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-propagate-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      title="Почини сломанную setTimeout-propagation в Node.js"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Setup:</strong> Endpoint Express стартует отложенную задачу. Трейс кончается на границе setTimeout; отложенная работа имеет свой orphan-трейс.</p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`// BROKEN: traceparent lost across the setTimeout
+const { context, trace } = require('@opentelemetry/api');
+
+app.post('/checkout', async (req, res) => {
+  const span = trace.getSpan(context.active());
+  // do sync work...
+  setTimeout(() => {
+    doDeferredWork(); // <-- new trace; not linked to request
+  }, 100);
+  res.status(202).end();
+});
+
+// FIXED: bind context across the boundary
+app.post('/checkout', async (req, res) => {
+  const ctx = context.active();
+  setTimeout(context.bind(ctx, () => {
+    doDeferredWork(); // <-- now sees the request's trace-id
+  }), 100);
+  res.status(202).end();
+});`}</code></pre>
+            <p><strong>Почему работает:</strong> <code>context.bind(ctx, fn)</code> возвращает обёрнутую функцию, восстанавливающую захваченный контекст при вызове. Отложенная работа теперь идёт с trace-id запроса, span'ы линкуются. Тот же паттерн для <code>setImmediate</code>, <code>queueMicrotask</code>, callback'ов в third-party-библиотеках и любых custom thread / worker абстракций.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "Если отложенная работа пушит сообщение в Kafka, какой дополнительный шаг propagation нужен на месте публикации?",
+          blanks: [
+            { id: "step", expected: "inject", placeholder: "глагол (inject/extract/bind/start)" },
+          ],
+        },
+        blank: {
+          prompt: "Почему context.bind не починит Kafka-propagation сам по себе?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>context.bind держит in-process контекст живым через async-границу в producer'е, но само сообщение пересекает process-границу — в Kafka-кластер и далее в consumer-процесс. У consumer'а нет общей памяти с producer'ом; единственный способ нести trace-id — <em>inject</em> traceparent в заголовки сообщения перед публикацией, а consumer должен <em>extract</em> при получении. OTel Kafka-instrumentation делает оба автоматически, но только если библиотека инструментации загружена и сконфигурирована.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "step:extract": "extract — сторона consumer. Producer должен inject traceparent перед отправкой.",
+        "step:bind": "bind держит in-process контекст, но не пишет в wire-формат сообщения.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Значение traceparent `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`. Что значит финальный `01`?"
+      choices={[
+        { label: "Sampled-флаг включён — caller сообщает, что трейс записывается; downstream-сервисы тоже должны писать свои span'ы", correct: true },
+        { label: "Версия трейса 01", misconception: "Версия — первое поле (здесь 00)." },
+        { label: "Индекс span'а", misconception: "Span'ы идентифицируются по parent-id (8-байтный hex), не по последовательному индексу." },
+        { label: "Число hop'ов", misconception: "Число hop'ов не кодируется в traceparent." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="HTTP-запрос пришёл в твой сервис с `traceparent: 99-aaaaaaaa-bbbbbbbb-01`. Что сервис делает по W3C-спеке?"
+      choices={[
+        { label: "Трактует заголовок как невалидный (версия 99 неизвестна, trace-id и span-id неправильной длины) и стартует свежий трейс", correct: true },
+        { label: "Падает с ошибкой", misconception: "Серверы обязаны мягко игнорировать неизвестный traceparent и продолжать." },
+        { label: "Отвергает запрос", misconception: "Спека обязывает игнорировать невалидный traceparent, а не отвергать запрос." },
+        { label: "Использует заголовок как есть", misconception: "Использование невалидных заголовков ломает backend trace store." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Команда выбирает tail-based sampling, чтобы сохранять все error-трейсы. Какой операционный подвох нужно учесть?"
+      choices={[
+        { label: "Все span'ы одного трейса должны попасть на один collector instance во время decision-окна; нужен load-balancing exporter с хэшем по trace-id, и collector нуждается в RAM пропорционально in-flight-трейсам × span/трейс × размер span", correct: true },
+        { label: "Tail sampling не поддерживается в OpenTelemetry", misconception: "Поддерживается в OTel Collector через tail_sampling-процессор." },
+        { label: "Это стоит дороже head sampling на трейс", misconception: "Стоимость на трейс сопоставима; разница — в RAM collector'а и роутинге." },
+        { label: "Несовместимо с W3C traceparent", misconception: "Sampling и propagation ортогональны; W3C работает и с head, и с tail." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      scenario="Команда раскатала OTel auto-instrumentation везде, но трейсы всё равно приходят как single-span-сироты. Проследи диагностику."
+      steps={[
+        { prompt: "Шаг 1: трейсы идут, но разрозненные — какая форма сбоя?", reveal: "Каждый сервис генерирует свежий trace-id вместо чтения входящего. Значит: (а) upstream не инжектит traceparent, (б) downstream не извлекает / не читает, (в) middleware вырезает заголовок." },
+        { prompt: "Шаг 2: посмотреть реальные HTTP-заголовки — что ищем?", reveal: "Curl -v изнутри кластера, смотреть traceparent в запросе. Если нет: upstream сломан. Если есть, но trace-id меняется: downstream сломан или middleware вырезает. tcpdump или debug service mesh для подтверждения." },
+        { prompt: "Шаг 3: traceparent есть в upstream-curls, но downstream всё равно генерирует новые id. Почему?", reveal: "Часто: instrumentation HTTP-server-фреймворка загружена поздно, или propagator не зарегистрирован. В Node OTel auto-instrumentation требует -r @opentelemetry/auto-instrumentations-node/register на старте (или NODE_OPTIONS). Если SDK инициализируется после старта HTTP-сервера — первая пачка запросов теряет propagation hooks." },
+        { prompt: "Шаг 4: зарегистрировали на старте, трейсы всё равно расщепляются у одного конкретного сервиса. Что теперь?", reveal: "Скорее всего сервис использует HTTP-клиентскую библиотеку, не покрытую auto-instrumentation, или custom HTTP-wrapper, обходящий instrumented-клиент. Проверь: добавь временный trace.setSpan / context.with вокруг исходящего вызова. Если фиксит — wrapper и есть проблема; замени instrumented-клиентом или вручную inject traceparent." },
+        { prompt: "Шаг 5: governance — как избежать повтора?", reveal: "Integration-test в CI: подними мини-цепочку сервисов, отправь запрос, проверь, что в результате > 1 span и один trace-id. Гоняй на каждый PR, трогающий HTTP-код. Production: alert, когда % single-span трейсов выше baseline." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      scenario="Tail-sampling collector OOM'ит каждые несколько часов. Проследи root cause."
+      steps={[
+        { prompt: "Шаг 1: tail-sampler OOM — какая модель памяти?", reveal: "Tail-sampler обязан держать все span'ы каждого активного трейса в RAM, пока не закроется decision-окно (обычно 30с). Память = active-traces × spans-per-trace × bytes-per-span. Любой фактор раздулся — RAM ушёл." },
+        { prompt: "Шаг 2: смотрим метрики — какой фактор растёт?", reveal: "Смотри otelcol_processor_tail_sampling_count_traces_on_memory и otelcol_processor_tail_sampling_count_spans_on_memory. Если число трейсов стабильно, а spans-per-trace растёт: один трейс собирает слишком много span'ов (long-running, рекурсивный, batch). Если число трейсов растёт: traffic-всплеск или decision-окно слишком длинное." },
+        { prompt: "Шаг 3: spans-per-trace раздулось — типичная причина?", reveal: "Long-running трейс (batch-job, воркер, обрабатывающий 10,000 записей под одним trace-id) накапливает тысячи span'ов, каждый держится до decision. Decision-окно 30с × 1000 span/с = 30,000 span'ов на один трейс. Фикс: не делай 10k-span трейсов; ломай работу на под-трейсы с span-link'ами, или отдельный trace-id на элемент." },
+        { prompt: "Шаг 4: число трейсов раздулось — типичная причина?", reveal: "Либо traffic-всплеск (инцидент), либо upstream генерирует уникальный trace-id на запрос без parent (нет propagation, каждый запрос выглядит новым). Фикс: масштабируй реплики collector'а за load-balancing exporter с хэшем по trace-id, либо короти decision-окно, если 30с — overkill." },
+        { prompt: "Шаг 5: устойчивый фикс?", reveal: "Поставь hard num_traces-cap на tail-sampling процессор; настрой load-balancing exporter (хэш по trace-id), чтобы трейсы не fan-in на один collector; alert на rate otelcol_processor_dropped_spans. Долгосрочно: бюджет collector-ёмкости per service / per region; рассматривай collector'ы как самостоятельную production-инфру со своим SLO." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      prompt="Расставь жизненный цикл трейса, пропагируемого от браузера до БД:"
+      items={[
+        "Браузерный fetch-interceptor (OTel JS SDK) генерирует новый trace-id + span-id; ставит traceparent",
+        "API gateway принимает запрос, извлекает traceparent, создаёт свой span (parent = браузерный span-id)",
+        "API gateway зовёт backend-сервис по HTTP, inject свежего traceparent (тот же trace-id, span-id gateway как новый parent-id)",
+        "Backend принимает запрос, извлекает traceparent, создаёт свой span",
+        "Backend зовёт Postgres; если pg-драйвер инструментирован OTel, инжектит trace-id через SET application_name или комментарием в SQL",
+        "Postgres эмитит slow-query log-строку с trace-id; OTel SDK подбирает её как database-span",
+        "Все span'ы flush'атся в tracing-backend, индексируются по общему trace-id",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Объясни, почему дисциплина по размеру baggage важна в production и что никогда не должно попадать в baggage.",
+          answer: <p>Baggage пропагируется на каждый hop запроса, каждое сообщение в очереди, каждую async-границу. Каждый hop платит дважды: serialise на исходящем, parse на входящем. 16-KB baggage на 10k req/s внутреннего трафика — это примерно 160 MB/s чистого baggage-транспорта плюс parsing на каждом hop. Помимо стоимости, baggage high-trust: течёт на каждый downstream, включая third-party-интеграции и SaaS API, которые могут логировать или сохранять заголовки. Всё, что в baggage, фактически semi-public внутри твоей инженерии. Никогда не клади: user email, полные user ID (если нужно идентифицировать tenant — opaque-токен), card- или payment-токены, API-ключи, auth-токены, customer PII, внутренние секреты. Всегда можно: tenant-id (opaque), region, состояние feature-flag, имя A/B-cohort, request-source label — operational-теги, реально нужные downstream для routing- или feature-решений. Дисциплина та же, что для логов: предполагай, что baggage прочитает инженер, который не должен его видеть, и проектируй соответственно.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Когда traceparent приходит с sampled-флагом 0, что должен сделать принимающий сервис?",
+          answer: <p>Sampled-флаг — это рекомендация caller'а, не команда. W3C-спека: receiver может всё равно писать свои span'ы, если его sampler так решит. На практике OTel-SDK по дефолту уважают входящий флаг: если caller пометил трейс как not-sampled, SDK создаёт span'ы, но не экспортирует их. Это «consistent sampling»: либо весь трейс сэмплирован, либо ни один, и backend имеет либо полный трейс, либо никакого, никогда фрагмент. Override-паттерны: downstream может всегда сэмплировать свои ошибки независимо от входящего флага (чтобы error-трейсы выживали даже когда head sampling роняет их в upstream); downstream может применять более высокую частоту sampling к своей работе (с consistency-правилами для согласованности). Большинство production-деплоев держат consistent sampling, потому что частичные трейсы почти бесполезны для отладки — видишь span сервиса B, но не A, и не можешь восстановить flow. Бит trace-flags маленький (1 бит), но его семантика несущая.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>Два бита флага и будущее.</strong> Поле trace-flags в traceparent — 8 бит, но в Level 1 (2020) специфицирован только младший (sampled, <code>01</code>). Level 2 (W3C Recommendation 2024) добавил второй бит (random-trace-id, <code>02</code>), утверждающий, что trace-id равномерно случайный — полезно, потому что некоторые sampler'ы используют consistent hashing по trace-id. Остальные шесть бит зарезервированы. Поле version в начале существует именно для эволюции формата: traceparent версии 01 может быть длиннее, нести богаче флаги или вообще менять layout; receiver'ы игнорируют неизвестные версии по спеке. Намеренно медленная эволюция — это фича: каждый router, sidecar и SDK в мире парсит byte-by-byte, и breaking change стоит лет. Практики читают спеку внимательно, потому что, в отличие от многих протоколов, у traceparent нулевая forward-compat терпимость к malformed-вводу.</p>
+    <p><strong>B3 vs W3C: история миграции.</strong> До W3C Zipkin/Brave (изначально из Twitter) использовали B3 с двумя вариантами: B3 single-header (<code>X-B3-TraceId</code>, <code>X-B3-SpanId</code>, <code>X-B3-Sampled</code> вместе или раздельно) и B3 multi-header. trace-id в B3 был 64-битный (16 hex), позже расширен до 128 для совместимости с W3C. OTel propagator API поддерживает оба варианта B3 для interop, но production-деплои сходятся на W3C. Паттерн миграции: зарегистрируй composite propagator (W3C + B3) на каждом сервисе, пиши outbound только W3C, читай inbound обоих. Через квартал чтения B3 уйдут в ноль, и composite можно заменить на W3C-only. Сам Zipkin-сервер теперь принимает оба формата. Сюжет тот же, что у большинства миграций спек: читай мягко, пиши строго, постепенно deprecate.</p>
+    <p><strong>Async context propagation: язык за языком.</strong> У каждого runtime свои больные точки. Node.js: AsyncLocalStorage (встроена в Node 12+) — субстрат; OTel хукает её для in-process propagation. Подводные камни: setTimeout, setImmediate, queueMicrotask и любые сторонние оборачивания promise могут терять контекст; OTel auto-instrumentation патчит частое, но custom-библиотеки ломают. Python: contextvars из PEP 567 — субстрат; работает автоматически для asyncio, но не для threading без ContextVar.copy(). Java: классический thread-local плюс Span.makeCurrent() в try-with-resources; Project Loom virtual threads почти прозрачны, но требуют дисциплины nesting Scope. Go: явный context.Context plumbing — Go рано сделал правильный архитектурный выбор; каждая функция принимает ctx, каждый span живёт в ctx. Браузеры: zone.js (решение Angular), или новый TC39 AsyncContext-proposal; OTel-JS поддерживает оба через плагины. Ментальная модель: в любом runtime «current context» — хрупкая штука, живущая, пока её несут примитивы runtime; пересекаешь примитив, который не несёт (сырой setTimeout, native worker, сырой fetch в некоторых конфигах), — обязан явно bind.</p>
+    <p><strong>Согласованность sampling между сервисами.</strong> «Consistent sampling» — все span'ы одного трейса либо все сэмплированы, либо все дропнуты. Трюк — принимать решение в начале трейса (где генерируется trace-id) и пропагировать результат в sampled-флаге. Вероятностные head-sampler'ы используют детерминированный хэш trace-id mod 100; downstream-сервисы проверяют бит и подчиняются. Это гарантирует когерентные трейсы, но теряет контроль: если head ставит 1%, tail не может увеличить. Tail-sampling возвращает контроль ценой памяти: все span'ы буферятся, решение постфактум. Гибридный паттерн: head-sample 100% (дешёвый путь), tail-sample по policy (error → 100%, latency &gt; SLO → 100%, иначе 1% probabilistic). Гибрид — доминирующий production-паттерн; даёт объём head sampling и селективность tail sampling за счёт одной дополнительной инфры (tail-sampling Collector).</p>
+    <p><strong>Требование load-balancing exporter.</strong> Tail sampling требует, чтобы все span'ы одного трейса попадали на один collector instance — чтобы он мог видеть их вместе, когда закроется decision-окно. С несколькими репликами collector'а (production обычно 5-20 реплик) random-распределение раскидало бы фрагменты. OpenTelemetry Collector поставляется с <code>loadbalancing</code>-exporter, хэширующим по trace-id и направляющим на фиксированную реплику. У exporter'а есть механизм discovery (DNS, статический список, Kubernetes service) для выбора реплик. Операционный подвох: ребалансировка во время scale-событий может коротко осиротить span'ы, чья старая реплика ушла; смягчение — короткие decision-окна, graceful drain на scale-down, явные API членства в replica-set. Без load-balancing-exporter tail sampling тихо производит фрагментированные решения и хуже, чем не sampling вообще.</p>
+    <p><strong>Trace context через service mesh.</strong> Envoy, Linkerd, Istio, Cilium data plane'ы участвуют в tracing двумя способами: пропускают traceparent (всегда) и эмитят свои span'ы для сетевого hop'а (опционально, но рекомендовано). Когда mesh эмитит свой span, видно где именно тратилось время в mesh vs приложении — sidecar latency, connection pooling, TLS handshake. Конфигурация: proxy mesh'а нужен адрес tracing-collector'а и решение по sampling (обычно — наследовать входящий флаг, иногда always-sample для mesh-span'ов ради полной сетевой видимости при низкой цене). Решение mesh'а по sampling может override приложение, поэтому production-деплои сводят оба к одному (обычно mesh сэмплит с той же частотой, что и head). У tracing-инфры таким образом три источника span'ов на один HTTP-запрос: client app, mesh sidecar, server app — три span'а, один trace-id, одна согласованная картина.</p>
+    <p><strong>Безопасность: trace-id как tracking-идентификатор.</strong> Trace-id уникальные на запрос, 128 бит энтропии, пропагируются в HTTP-заголовках и видны всем, кто может инспектировать трафик между клиентом и edge. Это и мощный debug-инструмент, и потенциальный tracker. Риск: если third party (CDN, marketing pixel, CSP-allowed analytics) может прочитать traceparent из исходящих запросов пользователя, она может коррелировать user-активность через сайты, делящие ту же tracing-инфру. Смягчения: W3C-спека рекомендует, чтобы user-facing-сервисы не пропагировали traceparent в response'ы (response — пользователю, не часть upstream-вызова), а browser-side OTel-SDK ограничивали propagation same-origin и явно разрешёнными CORS-origin. Production-команды держат allow-list downstream-host'ов, получающих traceparent, и аудитят квартально. То же для baggage — всё, что в нём, наблюдаемо каждому downstream, включая third-party.</p>
+    <p><strong>Observability для самой propagation.</strong> Как прошлые фрагменты аргументировали мониторинг мониторинга, propagation нуждается в своих метриках. Существенный набор: количество span'ов без parent (orphan'ы — должны быть только top-level entry-point'ы, никогда внутренние сервисы), счётчик invalid_traceparent_received (логируется атрибутом span'а), число уникальных trace-id в секунду (sanity-check скорости генерации трейсов), счётчик broken-trace-маркеров (span'ы, чей parent-id не присутствует ни в одном другом span'е того же trace-id в разумном окне). Здоровая production-инфра видит orphan-span rate &lt;1% (только легитимные entry-point'ы), invalid-traceparent &lt;0.01%, broken-parent &lt;0.5%. Всплески — propagation-регрессы и заслуживают alert. Паттерн параллелен RED + USE: propagation-здоровье наблюдается так же, как service-здоровье.</p>
+    <p><strong>Реальные production-сбои.</strong> Uber 2019: частичный rollout OTel сломал 30% трейсов на границе инструментированных и неинструментированных сервисов; postmortem ввёл «ни один сервис не релизится без W3C-propagation». GitHub 2022: custom HTTP client wrapper обошёл OTel-hooks и тихо ронял traceparent через половину внутренних сервисов квартал, пока кто-то не заметил рост orphan-span rate с 1% до 50%; фикс — одна строка обернуть клиент в OTel-aware версию. Slack 2023: OOM'ы tail-sampling Collector'а уронили tracing-pipeline во время большого инцидента; postmortem вынудил добавить num_traces-cap и отдельный tier для high-priority always-keep трейсов. Datadog 2024 кастомер-репорт: большая Java-нагрузка имела thread-pool, не несущий контекст через submitted tasks, и 80% background-task трейсов были orphan'ами; фикс — переключиться на CurrentTraceContext-aware executor. Паттерн: propagation-баги тихие — дашборды продолжают показывать трейсы, просто не те — и нуждаются в своём слое мониторинга.</p>
+    <p><strong>Span-links: когда parent-child-дерево ломается.</strong> Некоторые workflow'ы не вписываются в parent-child. Batch-процессор берёт 1000 сообщений из Kafka и обрабатывает их одним batch'ом; естественная модель — один batch-span с 1000 входящими trace-контекстами как links. OTel решает span-link'ами: span может объявить дополнительные span-context'ы, с которыми он каузально связан, но не происходит от них. Span-link'и применяются для fan-in (несколько входов соединены в один выход), distributed lock'ов (трейс, взявший lock, линкуется ко всем поздним трейсам, использовавшим его), асинхронных workflow'ов, где parent заканчивается до старта child'а. W3C-спека не диктует links — это паттерн span-атрибута, — но все крупные backend'ы поддерживают. Senior-паттерн: любой трейс длиннее 30 секунд или шире 100 span'ов вероятно имеет span-link-возможность, где workflow рестартует свой parent, а не тащит исходный request-span бесконечно.</p>
+    <p><strong>Long-running трейсы и проблема 30 минут.</strong> Decision-окно tail-sampler'ов обычно 30с-5мин. Batch-job, идущий 30 минут, flush'ит span'ы много позже закрытия окна; с точки зрения sampler'а трейс мёртв к моменту прихода следующих span'ов, и поздние span'ы сиротеют. Production-команды обрабатывают длинные трейсы двумя способами: (а) ломают long-workflow на под-трейсы, связанные span-link'ами, каждый под-трейс влезает в decision-окно; (б) используют tracing-backend'ы, поддерживающие late-arriving span'ы (Tempo, Honeycomb, Datadog), и пропускают tail sampling для long-трейсов. Первый — чище архитектурно; второй — практичный retrofit для legacy. Тюнинг decision-окна — рычаг, к которому возвращаются, когда batch-нагрузки ломают tail sampling.</p>
+    <p><strong>Крупнее: propagation как фундамент.</strong> Trace propagation — скучная сантехника, поверх которой сидят все интересные observability-фичи. RED-дашборды, SLO-burn-rate-алерты, drilldown exemplars-to-traces, distributed debug, profiling-корреляция — каждый зависит от trace-id, сшивающего все сервисы. Пропусти дисциплину propagation — остальной стек observability становится обоями над разорванными фрагментами. Сделай правильно — получишь end-to-end-видимость даром в каждом новом сервисе, каждом новом протоколе, каждой новой async-границе, потому что W3C-спека достаточно маленькая, чтобы выучить наизусть (55 байт, четыре поля), и каждый OTel-SDK делает тяжёлую работу. Senior-инженеры одержимы propagation так же, как junior — визуализацией: они знают, что визуализация — downstream от propagation, а propagation — downstream ни от чего.</p>
+    <NumbersCard
+      id="card-trace-numbers"
+      title="Production-числа trace propagation для senior"
+      stats={[
+        { label: "W3C Trace Context Level 1", value: "Recommendation 2020-02" },
+        { label: "W3C Trace Context Level 2", value: "Recommendation 2024" },
+        { label: "Дефолтный OTel propagator", value: "TraceContext + Baggage composite" },
+        { label: "B3 single-header trace-id", value: "64 или 128 бит" },
+        { label: "Здоровый orphan-span rate", value: "≤ 1% span'ов" },
+        { label: "Tail-sampling collector RAM на 10k трейсов", value: "~1 GB типично" },
+        { label: "Tracing-overhead service mesh sidecar", value: "~1-2% extra CPU" },
+        { label: "Байт заголовков на запрос (traceparent + tracestate малый)", value: "~80-200 байт" },
+      ]}
+    />
+    <Misconception id="mc-baggage-pii">
+      <p><strong>«Baggage — приватный канал между моими сервисами».</strong> Нет. Baggage течёт на каждый исходящий hop, включая third-party API, SaaS-интеграции, CDN, читающие заголовки. Всё в baggage semi-public внутри и за пределами твоей инженерии. Никогда не клади PII или секреты.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      scenario="0.5% сэмплированных трейсов показывают orphan'ами (нет parent_id-ссылки), остальные трейсы в порядке. Проследи root cause."
+      steps={[
+        { prompt: "Шаг 1: 0.5% orphan-rate — это норма-фон или сигнал?", reveal: "Если здоровый production ≤1%, 0.5% в пределах — но только если эти orphan'ы соответствуют легитимным entry-point-сервисам (API gateway, public-facing handlers). Если соответствуют внутренним (auth, inventory, payment) — orphan'ы значат propagation-провал." },
+        { prompt: "Шаг 2: фильтруй orphan'ы по атрибуту service.name. Какой паттерн?", reveal: "Кластеризуй по сервису. Если orphan'ы на 80% один сервис — у него propagation-баг. Если разбросаны по всем сервисам по 0.5% — проблема upstream, какой-то upstream caller дропает traceparent." },
+        { prompt: "Шаг 3: один сервис — источник. Инспектируй inbound-трафик — что искать?", reveal: "Захвати HTTP-заголовки на входящих (логи sidecar mesh или debug-endpoint). Смотри: traceparent есть? Формат валидный? Если нет — смотри upstream-caller. Если есть, но невалидный — смотри upstream-конфиг (не тот propagator? B3 используется upstream, а ты extract только W3C?)." },
+        { prompt: "Шаг 4: traceparent отсутствует на запросах от одного upstream-клиента. Почему?", reveal: "Скорее всего upstream использует custom HTTP-клиент (curl-обёртка, библиотека не покрыта OTel auto-instrument, либо instrumentation инициализирована после первого запроса). Подтверди: проверь порядок регистрации OTel и версии библиотек у того upstream." },
+        { prompt: "Шаг 5: устойчивый фикс?", reveal: "Добавь OTel-instrumented client-обёртку как единственный санкционированный outbound-клиент (lint-правило блокирует прямой http.get / fetch в app-коде). CI integration-test: запрос через 3 сервиса, ожидать 3 span'а с одним trace-id. Production-alert: если orphan-span-rate для конкретного сервиса > 5x baseline." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      title="Диагностируй сломанный трейс по выводу tracing-backend"
+      output={`# Query: trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+# Result: 7 spans total
+
+#  service           span_id           parent_id           duration   status
+1  api-gateway       1a2b3c4d5e6f7890  -                   18ms       OK
+2  auth              7890abcdef123456  1a2b3c4d5e6f7890    14ms       OK
+3  inventory         abcdef1234567890  1a2b3c4d5e6f7890    1200ms     OK
+4  payment           fedcba0987654321  -                   80ms       OK    # ORPHAN
+5  postgres-client   1111222233334444  fedcba0987654321    55ms       OK
+6  email-job         5555666677778888  -                   240ms      OK    # ORPHAN
+7  audit-log         9999aaaabbbbcccc  -                   12ms       OK    # ORPHAN
+
+# Also separate orphan traces with single spans:
+# trace_id 9981a... payment service, 78ms
+# trace_id ab32c... email-job service, 280ms
+# trace_id ff8e1... audit-log service, 14ms`}
+      outputLang="log"
+      question="Трейс содержит 7 span'ов, но 3 — orphan'ы (нет parent_id), и существуют 3 отдельных single-span-orphan-трейса с теми же service'ами. Что происходит?"
+      hint="Сервисы-orphan'ы скорее всего те же процессы, которые также производят отдельные single-span-трейсы."
+      answer="Диагноз: trace propagation сломана у трёх конкретных сервисов — payment, email-job, audit-log. Строки 4, 6, 7 как orphan span внутри трейса говорят: эти сервисы получили корректный входящий traceparent (раз появились под тем же trace_id), но их собственная auto-instrumentation не регистрирует извлечённый контекст правильно — у них должен быть parent_id, указывающий на api-gateway или inventory, а его нет. Параллельно отдельные single-span-trace от тех же сервисов говорят: для других запросов traceparent теряется полностью на inbound, и стартует свежий trace-id. Два режима сбоя у одних и тех же сервисов. Root cause скорее всего: OTel HTTP-server instrumentation загружается после части обслуженных запросов, либо custom middleware-ordering. Конкретно: payment скорее всего имеет custom HTTP-wrapper, обходящий OTel. email-job — background-job consumer (Kafka, очередь), где consumer-side propagation extract не реализован — и email-job в самом трейсе без parent_id значит, что consumer читает trace-id, но не линкует его как parent. audit-log аналогично — возможно async-writer в fire-and-forget-контексте, не привязанном к запросу. Путь фикса: (а) для payment заменить custom HTTP-клиент OTel-instrumented'ом или обернуть; (б) для email-job добавить Kafka consumer instrumentation (kafkajs имеет OTel-bindings), чтобы consumer извлекал traceparent из заголовков сообщения; (в) для audit-log использовать context.bind вокруг audit-вызова, чтобы контекст запроса пережил fire-and-forget. CI-тесты: end-to-end запрос gateway → inventory → payment → email-job → audit, ожидание 5 span'ов с одним trace-id и связной цепочкой parent_id. Production-мониторинг: alert на rate(span_without_parent_id_for_internal_service[5m]) > 1% — это propagation-regression-детектор, а не service-health. Урок: вывод tracing-backend — диагностический слой; orphan-паттерны точечно выявляют конкретные propagation-баги."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      prompt="Выбери sampling-стратегию для нового high-traffic API (10k req/s), где обязательно ловить все error-трейсы и полезны трейсы 99-перцентиля по latency."
+      options={[
+        { name: "Head 100% + tail-sample (errors 100%, slow 100%, иначе 1%)", summary: "Лучший вариант для high-traffic с error-фокусом.", correct: true, justification: "Head 100% — каждый запрос входит в tracing-pipeline; tail-sampler решает, что хранить. Error-трейсы всегда сохраняются (операционное требование). Latency > 99-перцентиля сохраняется (debug). Background 1% probabilistic — для baseline-видимости. Стоимость: RAM tail-collector'а пропорциональна (10k req/s × decision_window × avg_spans × span_size). При 30с-окне, 10 span/трейс, 1 KB/span — ~3 GB RAM collector'а. Реализуемо 4-8 репликами за load-balancing-exporter." },
+        { name: "Head-sample 1%", summary: "Самое дешёвое, теряет ошибки.", justification: "Дёшево: 99% трафика не генерируют span'ов. Но и 99% ошибок дропаются — sample-rate одинаков на ошибках и успехах. Для сервиса, где ошибки важны (большинство production API), теряет слишком много. Подходит для некритичных background-сервисов или экспериментов." },
+        { name: "Tail-sample всё, без head-решения", summary: "Самое тяжёлое.", justification: "Все трейсы буферятся в collector'е; решение чисто tail. RAM взрывается при высоком трафике; load-balancing-exporter обязателен. Подходит для low-traffic-сервисов или временного debug-режима. При 10k req/s неустойчиво без большого парка collector'ов." },
+        { name: "Head-sample 100% (без tail)", summary: "Запретительно дорогой ретеншн.", justification: "Все span'ы текут в tracing-backend на полной частоте. Стоимость хранения линейно растёт с трафиком; query-perf деградирует. Подходит для low-traffic-систем или коротких debug-окон, но не как steady-state production при 10k req/s." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Какой документ определяет HTTP-заголовки traceparent и tracestate, используемые OpenTelemetry как propagator по умолчанию?"
+      choices={[
+        { rfc: "W3C Trace Context (Recommendation 2020-02, Level 2 2024)", title: "Специфицирует формат traceparent и tracestate, валидацию, мутации и sampled-флаг", correct: true },
+        { rfc: "RFC 7234", title: "HTTP Caching — не связан с tracing" },
+        { rfc: "RFC 9110", title: "HTTP Semantics — определяет коды и методы, но не trace-context" },
+        { rfc: "B3 (OpenZipkin)", title: "Предшественник из Zipkin/Brave; OTel ещё поддерживает для interop, но текущий стандарт — W3C" },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      question="Сервис эмитит 5% orphan-span'ов для внутренних (non-entry-point) сервисов. Команда добавляет tail sampling. Orphan-rate остаётся. Что не так понято?"
+      choices={[
+        { label: "Tail sampling решает, какие трейсы СОХРАНИТЬ — он не чинит сломанную propagation. Orphan'ы появляются из-за отсутствующего parent_id на момент эмиссии; sampling только фильтрует, не реконструирует.", correct: true },
+        { label: "Tail sampling отвергает orphan'ы", misconception: "Можно настроить отвергать, но это не чинит propagation; просто прячет симптом." },
+        { label: "5% — норма для внутренних сервисов", misconception: "Здоровые внутренние сервисы должны иметь orphan-rate близко к 0%; 5% указывает на реальный propagation-баг." },
+        { label: "OTel не поддерживает repair orphan'ов", misconception: "Никакая tracing-система не чинит orphan'ы; их можно только предотвратить на propagation-этапе." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      prompt="Спроектируй end-to-end trace propagation для платформы с 30 микросервисами, браузерным фронтом, Kafka-бэкбоном, service mesh и tail-sampling collector tier."
+      constraints={[
+        "Polyglot: 12 сервисов Node.js, 10 Java, 5 Go, 3 Python.",
+        "Браузер (React) делает fetch к API gateway.",
+        "Kafka — async-сообщения между 8 сервисами.",
+        "Service mesh: Linkerd (Linux), east-west для HTTP и gRPC.",
+        "Sampling: 100% errors, 100% slow (>2с), 1% baseline.",
+        "On-call должен видеть любой user-request как один трейс в течение 30с после завершения.",
+      ]}
+      canonical="Слой 1 — стандартизация propagator'а. OTel-SDK везде; default — W3C TraceContext + Baggage composite. B3 убрать с outbound, принимать B3 на inbound в течение 90-дневной deprecation. Per-language SDK: opentelemetry-js (Node и браузер), opentelemetry-java (Java), opentelemetry-go (Go), opentelemetry-python (Python). Браузер: opentelemetry-js-browser SDK с fetch-instrumentation; ограничить propagation same-origin и explicit-allowlist CORS-origin, чтобы traceparent не утекал на third party. Слой 2 — HTTP propagation. Auto-instrumentation на каждом сервисе: регистрация OTel до старта app-кода (Node: -r flag; Java: javaagent; Go: explicit init; Python: opentelemetry-instrument). Service mesh (Linkerd) прозрачно пропагирует заголовки и эмитит свои mesh-hop span'ы для полной сетевой видимости. Слой 3 — Kafka propagation. Сторона producer: OTel Kafka-instrumentation инжектит traceparent в record headers. Сторона consumer: extract'ит traceparent на poll, стартует новый span с parent = span-id producer'а. Используй span-link'и вместо прямого parent-child, когда один consumer batch'ит 100 сообщений — links на все входящие контексты, один batch-span. Слой 4 — дисциплина async-границ. Code-review-чеклист: любой callback, setTimeout, setImmediate, queueMicrotask, worker-dispatch или Promise-цепочка через логическую границу обёрнута context.bind или эквивалентом. Custom thread pools используют OTel context-aware executors. Lint-правило (eslint-плагин для Node, аналоги в других стеках) флагает сырой setTimeout в HTTP-handler-scope. Слой 5 — collector tier. OpenTelemetry Collector как stateless-agent (1 на node, DaemonSet) плюс stateful tail-sampling tier (5 реплик) за load-balancing-exporter'ом (хэш по trace-id). Decision-окно 30с. RAM-бюджет на tail-sampler: 4 GB при ожидаемых 10k req/s суммарно. Policy: сохраняем все ошибки, все трейсы end-to-end > 2с, 1% probabilistic для остального. Слой 6 — backend. Tracing-backend (Tempo, Honeycomb, Datadog, Jaeger) ингестит сэмплированные span'ы; ретеншн 7 дней для fine-grained, 30 дней для сэмпл-summary; долгий архив в object storage. Слой 7 — observability propagation. Метрики: orphan_span_rate per service, invalid_traceparent_count, broken_parent_count, trace_id_per_second. Alert когда orphan-rate для конкретного internal-сервиса > 5% за 10 минут. Панель дашборда показывает propagation-health рядом с RED + USE. Слой 8 — CI-тесты. End-to-end propagation-тест: цепочка из 5 сервисов, отправить запрос, ожидать > 4 span'а, связанных одним trace-id. Запуск на каждом PR, трогающем HTTP, Kafka или worker-код. Результат: on-call, видящий жалобу клиента, вставляет trace-id из тикета в UI tracing и видит полный flow за < 30 секунд, независимо от того, сколько из 30 сервисов он прошёл."
+      keyPoints={[
+        "W3C TraceContext + Baggage везде по умолчанию; B3 — только для legacy-interop, deprecated.",
+        "OTel SDK регистрируется до старта app'а в каждом сервисе; CI-гейт проверяет.",
+        "Kafka, gRPC, mesh несут traceparent автоматически через auto-instrumentation.",
+        "Async-границы (setTimeout, workers, callbacks) требуют явной context.bind-дисциплины.",
+        "Tail-sampling collector с load-balancing exporter для trace-id consistency.",
+        "Правила sampling: 100% errors + 100% slow + 1% baseline.",
+        "У propagation свой слой observability (orphan-span rate, invalid-traceparent count).",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-trace-propagation"
+      lang="ru"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Объясни, зачем существуют span-link'и и когда senior-инженер берёт их вместо parent-child.",
+          answer: <p>Parent-child — дерево: у каждого span'а ровно один parent (или нет, если он root). Это работает для синхронных request-flow: A зовёт B, B зовёт C — лёгкое дерево. Ломается, когда causality many-to-one или one-to-many через асинхронные границы. Примеры: batch-процессор берёт 100 сообщений из Kafka и обрабатывает их одной транзакцией (100 входящих контекстов кормят один batch-span — единого parent'а нет); fan-out-workflow рассылает 50 sub-job'ов и ждёт всех (parent-child работает вниз, но join-point имеет 50 контрибьюторов); long-running workflow, чей первичный запрос завершился возвратом пользователю, но породил async-follow-up через часы (контекст исходного запроса мёртв; follow-up'у нужно линковаться к нему, не будучи его child'ом). Span-link'и решают всё это: span объявляет ноль или больше дополнительных «я каузально связан со span'ом» указателей с trace-id и span-id связанного span'а. Backend'ы визуализируют link'и иначе, чем parent'ов — обычно пунктирной линией вместо сплошного дерева. Senior берётся за span-link'и когда: (а) batch-обработка тянет много контекстов сообщений в одну операцию, (б) async-работа переживает исходный запрос, (в) workflow джойнит много параллельных веток, (г) любой случай, где parent-child-дерево заставило бы выбрать произвольный «main parent», искажающий реальную causality. W3C Trace Context спека не определяет links — это OTel/backend-feature поверх trace-id-propagation, — но все крупные backend'ы поддерживают. Использованные с умом, span-link'и держат трейсы маленькими (не нужно тащить 10k span'ов в один мега-трейс), сохраняя каузальную линию.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Платформа мигрирует с B3 на W3C TraceContext. Опиши безопасную последовательность миграции и что пойдёт не так при пропуске шагов.",
+          answer: <p>Безопасная миграция: (1) аудит текущей propagator-использовки — найди каждый сервис, эмитящий только B3. (2) задеплой composite propagator (W3C TraceContext + B3 multi + B3 single) на каждом сервисе: пиши только W3C на outbound; extract'и оба на inbound. (3) убедись, что orphan-span rate не регрессировал. (4) постепенно отключи B3 outbound в сервисах после того, как их downstream-callers начали читать W3C. (5) после квартала с нулевым B3 inbound сними B3-extractor из composite и гоняй только W3C. Ключевые ловушки: пропуск шага 2 (deploy read-both до write-W3C) — upstream вдруг шлёт W3C, а downstream ещё читает только B3, трейсы рвутся. Пропуск шага 3 (верификация перед прогрессом) — регресс propagation тихо живёт неделями. Пропуск шага 4 целиком (всегда писать обоих) — удвоенные байты заголовков на запрос, рост latency, рост стоимости baggage. Пропуск шага 5 (финальная чистка) — долгий legacy-кодпуть без exercise. Cross-cutting: third-party-библиотеки, припинованные на старые версии OTel, могут всё ещё дефолтить B3 — проверь, делая curl на endpoint'ы и смотря какие заголовки эмитятся, а не доверяя SDK-конфигу. Load-balancer'ы, CDN или reverse-proxy иногда вырезают неизвестные заголовки; убедись, что traceparent сохраняется через каждый сетевой hop с помощью packet capture или sidecar-логов, а не через application-метрики. Миграция многомесячная; цель — не скорость, а сохранение propagation-корректности на каждом шаге.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>traceparent — 55 байт, держащих флот воедино. W3C TraceContext + Baggage composite + дисциплина async-границ + tail sampling = один трейс на запрос, end-to-end.</KeyTakeaway>
+
+<SpiralCue thread="encapsulation">
+traceparent — это encapsulation на уровне протокола: строка фиксированного формата, которую любой сервис читает, не понимая, что она значит, ровно как IP-заголовки, TCP-опции и HTTP request line. Та же форма повторяется каждый раз, когда системе нужно нести routing-metadata через границы; дисциплина fixed-width parseable-without-context форматов — то, что позволяет interop переживать смену vendor'ов.
+</SpiralCue>
+
+**Prereqs:** observability/04-red-use и 05-slo-budgets — RED говорит, что мерить, SLO говорит, на что алертить, а propagation — как эти сигналы сшиваются в один навигируемый запрос.
+
+**Next:** 07-profiling — когда трейс показывает куда ушло время, profiling показывает куда ушёл CPU и память внутри каждого span'а.
