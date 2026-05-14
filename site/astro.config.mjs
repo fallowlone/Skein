@@ -13,7 +13,11 @@ export default defineConfig({
     lintCurriculum(),
   ],
   markdown: {
-    shikiConfig: { theme: "github-light", wrap: true },
+    shikiConfig: {
+      themes: { light: "github-light", dark: "github-dark" },
+      wrap: true,
+      defaultColor: false,
+    },
   },
   vite: {
     ssr: { noExternal: ["gsap"] },
