@@ -16,6 +16,12 @@ type Props = {
   currentPiece?: string;
 };
 
+const statusBadgeClass: Record<string, string> = {
+  ready: "ok",
+  draft: "warn",
+  stub:  "muted",
+};
+
 export default function ChapterSidebarTOC({
   pieces,
   pillarSlug,
@@ -25,25 +31,50 @@ export default function ChapterSidebarTOC({
   const history = userState.value.history;
 
   return (
-    <ol class="space-y-1.5 list-none">
-      {pieces.map((p) => {
-        const visited = !!history[p.slug];
+    <ol class="list-none m-0 p-0 border-t border-rule">
+      {pieces.map((p, idx) => {
+        const h = history[p.slug];
+        const tiersOpened = new Set(h?.tiersOpened ?? []);
         const current = p.slug === currentPiece;
         return (
-          <li key={p.slug}>
+          <li
+            key={p.slug}
+            class={`border-b border-rule ${current ? "bg-card-2" : ""}`}
+          >
             <a
               href={`/${lang}/${pillarSlug}/${p.slug}/`}
-              class={`flex items-center gap-2 px-2 py-1 rounded ${
-                current ? "bg-bbg-teal/15 font-semibold" : ""
-              }`}
+              class="flex items-start gap-2.5 px-2 py-2.5 hover:bg-card-2 transition-colors"
             >
-              <span
-                class={`inline-block w-3 ${visited ? "text-bbg-success" : "text-gray-300"}`}
-              >
-                {visited ? "✓" : "•"}
+              <span class="font-mono text-[10.5px] text-muted tabular-nums shrink-0 mt-[2px]">
+                {String(idx + 1).padStart(2, "0")}
               </span>
-              <span class="flex-1">{p.title}</span>
-              <span class="text-[10px] text-bbg-muted">{p.readingMin}m</span>
+              <div class="flex-1 min-w-0">
+                <div
+                  class={`text-[13px] leading-snug truncate ${current ? "font-semibold text-ink" : "text-ink-2"}`}
+                >
+                  {p.title}
+                </div>
+                <div class="flex items-center gap-2 mt-1.5">
+                  <div class="flex items-center gap-[3px]" aria-label="tier progress">
+                    {(["junior", "middle", "senior"] as const).map((t) => (
+                      <span
+                        key={t}
+                        class="w-1.5 h-1.5 rounded-[1px]"
+                        style={{
+                          background: tiersOpened.has(t) ? "var(--ok)" : "var(--rule)",
+                        }}
+                        title={t}
+                      />
+                    ))}
+                  </div>
+                  <span class={`badge ${statusBadgeClass[p.status] ?? "muted"}`}>
+                    {p.status}
+                  </span>
+                  <span class="font-mono text-[10px] text-muted-2 ml-auto">
+                    {p.readingMin}m
+                  </span>
+                </div>
+              </div>
             </a>
           </li>
         );
