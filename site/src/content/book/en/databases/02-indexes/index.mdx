@@ -4,24 +4,452 @@ lang: en
 pillar: databases
 chapter: 06-databases
 order: 2
-title: "Indexes"
-summary: "Coming soon — PostgreSQL internals for app engineers"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "Indexes in PostgreSQL: B-tree, GIN, GiST, BRIN, and the cost of a wrong one"
+summary: "How Postgres indexes are built (B-tree, GIN, GiST, BRIN, SP-GiST, hash), why the leading-column rule is the most violated principle in production, how partial / expression / covering indexes change the cost model, and when to add or drop one."
+readingMin: 26
+status: ready
+prereqs: ["01-relational-model"]
+spiral: ["latency", "statefulness"]
+personas: ["otto", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-indexes
+  tradeoff: card-index-cost
+  failure_mode: mc-leading-column
+  numbers: card-index-numbers
 sources:
-  - https://example.com/placeholder
+  - https://www.postgresql.org/docs/current/indexes.html
+  - https://www.postgresql.org/docs/current/indexes-types.html
+  - https://www.postgresql.org/docs/current/indexes-multicolumn.html
+  - https://www.postgresql.org/docs/current/indexes-partial.html
+  - https://www.postgresql.org/docs/current/indexes-expressional.html
+  - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+  - https://use-the-index-luke.com/
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Why your query is slow and why your migration is dangerous.</Crux>
+The relational model (<a href="/en/databases/01-relational-model/">01-relational-model</a>) showed how to shape data; this piece is about the only practical reason that shape is queryable at all. An index is a copy of the data sorted to answer one specific question fast — and every index costs storage and slows every write. Senior engineers pick indexes deliberately: which questions are hot, which can be merged into a single composite, which can be partial to save space, which path the planner will actually choose. The most violated rule in production is the leading-column rule: a multi-column index `(a, b, c)` accelerates queries that filter by `a` (or `a, b`, or `a, b, c`) but not queries that filter only by `b` or `c`. This piece teaches the rule, the index families Postgres ships, the rare cases where you need something other than B-tree, and the operational discipline of adding indexes without taking the table down.
 
-_This piece is on the roadmap. Outline is in the chapter index._
+<Crux>Indexes = sorted copies of data for one question. Leading-column rule. Every index taxes every write. Pick deliberately.</Crux>
+
+Postgres ships six index types: <em>B-tree</em> (default, range queries and equality on ordered types), <em>Hash</em> (equality only, niche), <em>GIN</em> (inverted index for composite types — arrays, JSONB, full-text), <em>GiST</em> (generic search tree for geospatial and range types), <em>SP-GiST</em> (space-partitioned search tree, niche), <em>BRIN</em> (Block Range INdex for huge insert-only tables with natural ordering). B-tree handles 95% of production work. The other types matter when the data shape demands them — JSONB needs GIN, geospatial needs GiST, time-series needs BRIN, full-text search needs GIN or a specialized extension. Knowing which is which is the difference between a 5ms query and a 5-second one. The remaining 5% — partial, expression, covering, unique, multicolumn, and concurrent index builds — is where the productivity wins live.
+
+<TierAccordion id="tier-indexes" lang="en">
+  <Fragment slot="junior">
+    <p><strong>One sentence.</strong> An index is a separate data structure (usually a B-tree) that lets the database find rows matching a condition in logarithmic time instead of scanning every row.</p>
+    <p><strong>Why care.</strong> Without indexes, every query that filters or sorts touches every row. At 1M rows that is slow; at 100M it is broken. Indexes are how a relational database scales from prototype to production.</p>
+    <p><strong>The metaphor.</strong> A book has an index at the back: alphabetical list of terms with page numbers. To find "MVCC", flip to the index (one O(log n) lookup), get the page, jump to it. Without the index, scan every page. The book index is a copy of part of the content (the terms) organised for one specific kind of question. Database indexes work identically — copy of column values, organised for fast lookup.</p>
+    <p><strong>Otto and Sven.</strong> <PersonaTag id="otto" lang="en" /> sees a slow query: SELECT * FROM orders WHERE user_id = 42 takes 2 seconds on 10M rows. <PersonaTag id="sven" lang="en" /> wonders why — "user_id is just an integer". Otto runs EXPLAIN: sequential scan. Otto creates an index: CREATE INDEX ON orders(user_id). Same query, 3 milliseconds. The index is a sorted copy of user_id values mapping to row locations; the planner uses it instead of scanning. One DDL line, 600x speedup.</p>
+    <p><strong>One scenario.</strong> A team adds a "filter by status" feature to an orders dashboard. SELECT * FROM orders WHERE status = 'pending' returns in 50ms on staging (100k rows). In production (50M rows) it takes 8 seconds. Diagnosis: no index on status. Fix: CREATE INDEX CONCURRENTLY ON orders(status). Same query, 20ms. Lesson: every WHERE clause your application runs hot needs an index, or you find out at the worst possible time.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="An index is created on the column users(email). Which query benefits from it?"
+      choices={[
+        { label: "SELECT * FROM users WHERE email = 'alice@x.com'", correct: true },
+        { label: "SELECT * FROM users WHERE display_name = 'Alice'", misconception: "The index is on email, not display_name." },
+        { label: "INSERT INTO users (...) VALUES (...)", misconception: "Indexes do not speed up inserts; they slow them down (the index must be updated)." },
+        { label: "SELECT COUNT(*) FROM users", misconception: "COUNT(*) needs all rows; index does not help with this in Postgres." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="What is the cost of adding an index?"
+      choices={[
+        { label: "No cost — indexes are free", misconception: "Every index costs storage and slows down every write to the indexed column." },
+        { label: "Storage on disk plus a small overhead on every INSERT/UPDATE/DELETE that touches the indexed columns", correct: true },
+        { label: "Only a one-time creation cost", misconception: "Creation cost matters, but the per-write overhead is the long-term cost." },
+        { label: "Network bandwidth between client and server", misconception: "Indexes are server-side; they do not affect network." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      prompt="Order the steps to add an index correctly in production:"
+      items={[
+        "Run EXPLAIN ANALYZE on the slow query to confirm a seq scan is the bottleneck",
+        "Identify the columns being filtered or sorted",
+        "Pick the index type (B-tree default; GIN for JSONB; GiST for geo)",
+        "Use CREATE INDEX CONCURRENTLY to avoid locking the table",
+        "Wait for the build to complete (can take minutes to hours on large tables)",
+        "Re-run EXPLAIN ANALYZE to confirm the planner now uses the index",
+        "Monitor write latency after deploy — every index adds a small write cost",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      setup="Fill in the blank: a database index is to a SQL query what a book _______ is to finding a topic — a copy of part of the content, organised for fast lookup."
+      accepted={["index"]}
+      canonical="index"
+      explanation="A book index is the closest everyday analogue: alphabetical list of terms with page numbers, a small separate structure that makes the main content quickly searchable by one specific dimension. Database indexes generalize this idea to arbitrary column types and conditions."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-indexes"
+      lang="en"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "In two sentences, why are indexes not free and why do production teams not just index every column?",
+          answer: <p>Every index is a separate sorted data structure on disk that must be kept in sync with the table — every INSERT, UPDATE, or DELETE that touches an indexed column has to update the index too, which costs CPU and I/O. A table with ten unused indexes on a write-heavy workload spends 10x more on writes than necessary, and the indexes also consume storage (often 10-30% of the table size each) and pollute the planner's choices. The discipline is to index columns the application actually filters or sorts by, drop indexes that EXPLAIN never picks, and audit index usage quarterly (Postgres exposes pg_stat_user_indexes for this). Over-indexing is as much a production problem as under-indexing; both reveal a lack of measurement.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>B-tree: the workhorse.</strong> Postgres's default index type. A balanced search tree where each node is a disk page (8KB) containing a sorted list of keys and pointers to child pages (or to heap rows at leaves). Range scans (`column = ?`, `column &gt; ?`, `column &lt; ?`, `column BETWEEN ? AND ?`, `column IN (?, ?, ?)`) are all O(log n) plus the cost of reading matching leaves. Equality, range, sort order (ORDER BY), LIKE with a fixed prefix (`'abc%'`) — all answered by B-tree. For a 100M-row table, a B-tree typically has ~4 levels and an index lookup is a few page reads. The index size is roughly bytes_per_key × number_of_rows × 1.3 (overhead). For BIGINT (8 bytes), 100M rows produces a ~1 GB index; for UUID (16 bytes), ~2 GB.</p>
+    <p><strong>The leading-column rule.</strong> A multi-column B-tree on `(a, b, c)` is sorted primarily by `a`, then by `b` within equal `a` values, then by `c`. The index accelerates: queries that filter on `a` alone (great), `a` and `b` (great), `a, b, c` (best), `a` with a range on `b` (great), or `a` with `ORDER BY b`. The index does NOT accelerate queries that filter only on `b`, only on `c`, or only on `b, c`. This is the single most violated rule in production indexing. Fix: design the index to match the dominant query, or create multiple indexes if multiple queries need different leading columns. Composite indexes are cheaper than two separate indexes when most queries use the leading column anyway.</p>
+    <p><strong>Index-only scans.</strong> When a query reads only columns that are present in the index (the indexed columns plus any INCLUDE columns), Postgres can answer it without touching the table heap at all — an "index-only scan". For analytic queries on hot data, this is a 10-100x speedup over a regular index scan (which has to fetch the row from the heap for each matching index entry). The catch: Postgres also needs to know the row is "visible" to the current transaction (MVCC, covered in piece 04). The visibility check uses the Visibility Map, which is updated by VACUUM. So index-only scans only work well on tables that have been recently vacuumed. Use the INCLUDE clause to add extra payload columns to the index without making them part of the sort key: `CREATE INDEX ON orders(user_id) INCLUDE (status, total_cents)`.</p>
+    <p><strong>Partial indexes.</strong> A partial index is a B-tree (or other type) built only over rows matching a WHERE clause. `CREATE INDEX ON orders(user_id) WHERE status = 'pending'` indexes only pending orders — typically a small fraction of the table. Smaller index, faster lookup, cheaper writes (the index is only touched when status = 'pending'). Production use cases: soft-delete pattern (`WHERE deleted_at IS NULL`), feature flags (`WHERE feature_x_enabled = true`), status filters where only one or two statuses are queried hot. Caveat: queries must include the WHERE clause for the planner to use the partial index. Partial indexes are one of the most underused performance levers in Postgres.</p>
+    <p><strong>Expression indexes.</strong> An index on a function of one or more columns, not the columns themselves. `CREATE INDEX ON users (LOWER(email))` lets `WHERE LOWER(email) = 'alice@x.com'` use the index — without the expression index, the function call on every row prevents index use. Common patterns: case-insensitive search (LOWER, UPPER), date truncation (`DATE_TRUNC('day', created_at)`), JSON path extraction (`(data-&gt;&gt;'event_type')`), computed values that match the query shape. Expression indexes are how you make functional-style queries fast without changing the schema.</p>
+    <p><strong>Unique indexes.</strong> A UNIQUE constraint is implemented as a unique B-tree index. The constraint and the index are the same physical structure. Adding a UNIQUE constraint via ALTER TABLE locks the table; adding a UNIQUE index via CREATE UNIQUE INDEX CONCURRENTLY does not (but takes longer). Partial unique indexes are powerful: `CREATE UNIQUE INDEX ON users (email) WHERE deleted_at IS NULL` enforces "email is unique among non-deleted users" — letting you soft-delete a user, then later re-register the same email. This pattern is impossible with a simple UNIQUE constraint on email alone.</p>
+    <p><strong>GIN: inverted index for composite types.</strong> Generalized Inverted Index. Where B-tree indexes one value per row, GIN indexes many values per row — every key in a JSONB, every element in an array, every lexeme in a tsvector. Use cases: JSONB containment (`data @&gt; '{"type":"login"}'`), array overlap (`tags && ARRAY['premium']`), full-text search (`to_tsvector('english', body) @@ to_tsquery('term')`). GIN is bigger than B-tree (typically 2-5x the size of the indexed column data) and slower to update (each row update touches every indexed value). For high-write JSONB columns, the GIN index can dominate the write cost; in that case the `fastupdate` option defers index maintenance to a separate process at the cost of slower reads until consolidation.</p>
+    <p><strong>GiST: generic search tree.</strong> For data that does not fit B-tree's ordered model: geospatial (PostGIS uses GiST), range types (`tsrange`, `int4range`), nearest-neighbour queries. GiST is extensible — implement a few operators and the engine uses your custom GiST index. In practice, most engineers encounter GiST via PostGIS (`CREATE INDEX ON locations USING GIST (geom)`) for "find all points within distance D of point P".</p>
+    <p><strong>BRIN: for huge insert-only tables.</strong> Block Range INdex. Stores summary information per block-range (default 128 pages, ~1MB): min and max values of indexed columns in that range. To answer a query, Postgres reads the BRIN to find candidate ranges, then scans only those blocks. BRIN is tiny (kilobytes for billions of rows) and fast to maintain — but only useful when the data is physically clustered by the indexed column. Classic use case: time-series tables where rows are inserted in time order, indexed on `created_at`. BRIN turns a 10TB time-series table into something queryable on cheap hardware. Not useful for randomly-distributed data.</p>
+    <p><strong>Hash indexes.</strong> Historically broken in Postgres (no WAL until Postgres 10), now stable. Useful for equality lookup on very large indexed columns where B-tree size would be a problem — but in practice B-tree is almost always preferred because it supports range queries and ORDER BY for free. Hash indexes have a narrow niche; default to B-tree.</p>
+    <p><strong>Bloom indexes for multi-column equality lookups.</strong> The `bloom` extension provides a probabilistic index that supports equality on many columns simultaneously, without the leading-column rule. A bloom index on (a, b, c, d, e) accelerates any query that filters by any subset of those columns. Trade: it is approximate — every match is a candidate that must be re-checked against the heap, so false positives are possible. Use case: tables with many columns where queries combine different filter sets unpredictably; alternative to building 2^N composite indexes. Niche but powerful when the right fit.</p>
+    <p><strong>HOT updates and fillfactor.</strong> When a row is UPDATEd, Postgres normally creates a new tuple version (MVCC) and updates every index that references the row — even indexes whose columns did not change. HOT (Heap-Only Tuple) updates skip the index update entirely when (a) no indexed column changed, AND (b) there is enough free space on the heap page for the new tuple version. HOT cuts write overhead dramatically on update-heavy workloads. Fillfactor (the percentage of each page filled at insert time, default 100 for tables and 90 for B-tree indexes) leaves room for HOT updates; setting fillfactor to 70-80 on update-heavy tables ensures HOT triggers. The trade is initial storage (smaller fillfactor = more space per row); production teams measure update frequency and tune fillfactor on hot tables — a frequently overlooked lever.</p>
+    <p><strong>Hint: ANALYZE matters more than indexes.</strong> The planner's choice of index (or no index) depends on table statistics — row counts, value distributions, correlations. ANALYZE (run automatically by autovacuum, manually when needed) collects these statistics. Without fresh stats, the planner under- or over-estimates how many rows a filter will match, and picks the wrong plan. Production discipline: run ANALYZE after bulk inserts, after large UPDATEs, after schema changes that affect distributions; tune autovacuum_analyze_scale_factor lower on tables with skewed data; use CREATE STATISTICS for correlated columns (e.g., country + city) so the planner does not assume independence. A "wrong index choice" diagnosis is often actually "stale stats."</p>
+    <NumbersCard
+      id="card-index-cost"
+      title="Indexes: size, build, and write cost"
+      stats={[
+        { label: "B-tree size, 8-byte key, 100M rows", value: "~1 GB" },
+        { label: "B-tree depth, 100M rows", value: "~4 levels" },
+        { label: "B-tree lookup time", value: "~5-50 μs" },
+        { label: "GIN size on JSONB, vs typed column B-tree", value: "~5-20x larger" },
+        { label: "BRIN size, 10B-row time-series", value: "~few MB" },
+        { label: "Index build (CREATE INDEX CONCURRENTLY)", value: "~10-30 min / 100M rows" },
+        { label: "Index write overhead per INSERT/UPDATE", value: "~5-50 μs per index touched" },
+        { label: "Typical index overhead vs table size", value: "~10-30% per index" },
+        { label: "Index-only scan vs index scan speedup", value: "~10-100x on hot reads" },
+        { label: "Partial index size, 5%-matching predicate", value: "~5% of full B-tree" },
+      ]}
+    />
+    <Misconception id="mc-leading-column">
+      <p><strong>"A multi-column index on (a, b, c) covers queries that filter on any of a, b, c."</strong> No. Multi-column B-tree only covers queries that filter on a leading prefix (a; a, b; a, b, c). A query that filters only on b or c is not accelerated. Design composites for the dominant query.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-idx-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      title="Pick the right index for a hot dashboard query"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Query (runs every dashboard page-load, ~50/sec):</strong></p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT id, total_cents, created_at
+FROM orders
+WHERE workspace_id = $1
+  AND status = 'pending'
+ORDER BY created_at DESC
+LIMIT 50;`}</code></pre>
+            <p><strong>Right index:</strong></p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`CREATE INDEX CONCURRENTLY idx_orders_workspace_pending_recent
+ON orders (workspace_id, created_at DESC)
+WHERE status = 'pending'
+INCLUDE (id, total_cents);`}</code></pre>
+            <p><strong>Why each choice:</strong> Leading column workspace_id (matches the dominant filter and is the tenant boundary). Sort column created_at DESC (matches the ORDER BY exactly — index serves the sort without an extra Sort step). Partial WHERE status = 'pending' (the dashboard only shows pending; the index is ~5% of full-table size, ~20x cheaper to maintain). INCLUDE (id, total_cents) makes the index covering — the query is satisfied entirely from the index (index-only scan, no heap fetch). Expected plan: Index Only Scan on idx_orders_workspace_pending_recent, returning 50 rows in under 1ms on a 100M-row table.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "If a second dashboard query is SELECT ... WHERE workspace_id = $1 AND status = 'shipped' ORDER BY created_at DESC, would the above partial index help? Answer yes or no.",
+          blanks: [
+            { id: "answer", expected: "no", placeholder: "yes or no" },
+          ],
+        },
+        blank: {
+          prompt: "Why does the composite (workspace_id, created_at DESC) work but (created_at DESC, workspace_id) would not?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>The leading column rule. The dashboard always filters by workspace_id first (this is multi-tenant — every query is scoped to one workspace). With workspace_id as the leading column, the index narrows to that workspace's rows immediately, and the secondary sort by created_at DESC gives the planner the requested order for free. With created_at DESC as the leading column, the index is globally sorted by time across all workspaces; to find one workspace's recent orders, the planner has to scan all recent orders and filter by workspace — most of which it discards. The order of columns in a composite index is the order of selectivity priorities; put the most-filtered column first.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "answer:yes": "Partial indexes only help queries that match the WHERE clause exactly. status='shipped' does not match WHERE status='pending', so the planner cannot use this index.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="A table has 30 indexes. Write throughput is 5x lower than expected. What is the likely cause?"
+      choices={[
+        { label: "The table is too wide", misconception: "Width affects storage, not write rate this drastically." },
+        { label: "Every insert and update has to maintain all 30 indexes — index maintenance is the dominant write cost on heavily-indexed tables", correct: true },
+        { label: "Indexes lock the table", misconception: "Indexes do not lock the table during normal operation." },
+        { label: "Postgres serializes writes when indexes exist", misconception: "Writes are not serialized by indexes; they are slowed proportionally." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="Which is the production-default way to add an index on a large table?"
+      choices={[
+        { label: "CREATE INDEX (the table is locked, but it is fast)", misconception: "On large tables, this is unacceptable — minutes-to-hours of write lockout." },
+        { label: "CREATE INDEX CONCURRENTLY (no lock, but takes longer and can fail in the middle, requiring DROP INDEX followed by retry)", correct: true },
+        { label: "ALTER TABLE ADD INDEX", misconception: "Postgres uses CREATE INDEX syntax; ALTER TABLE ADD INDEX is MySQL." },
+        { label: "Pause writes, then CREATE INDEX, then resume", misconception: "Acceptable on tiny systems; not viable in production." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="A query filters on (region, status) where region has 5 values and status has 4. Which composite index order is better?"
+      choices={[
+        { label: "(region, status) — region first because it has fewer values", misconception: "Lower cardinality does not automatically mean leading; it depends on query patterns." },
+        { label: "(status, region) — status first because of some property", misconception: "Same — depends on patterns." },
+        { label: "Depends on which column is filtered alone in other queries; if region is queried alone (without status) often, put region first; if status is queried alone often, put status first; if always together, the order matters less", correct: true },
+        { label: "Either is identical — composite indexes are order-independent", misconception: "Composite indexes are strictly order-dependent (the leading column rule)." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      scenario="A team migrates a legacy `events` table to add proper indexes. Walk the decisions."
+      steps={[
+        { prompt: "Step 1: how do you identify which indexes are needed?", reveal: "Two sources. (a) pg_stat_statements (extension that records every executed query, normalised) — find the top-N queries by total time. (b) The application's hot-path query list (the queries the team knows are critical). For each, EXPLAIN ANALYZE in production-like data to see the current plan. Anything doing Seq Scan on a large table is a candidate for an index." },
+        { prompt: "Step 2: how do you identify which indexes are unused?", reveal: "pg_stat_user_indexes shows idx_scan (number of times each index was used). Indexes with idx_scan = 0 over a 30-day window are candidates for dropping. Caveat: some indexes exist for constraint enforcement (unique, FK lookups) or are only used during periodic batch jobs — verify before dropping." },
+        { prompt: "Step 3: how do you design composites?", reveal: "List the top-10 query patterns. Group queries with the same leading column. For each group, pick a composite index whose leading column matches the always-present filter, then secondary columns in order of selectivity, then INCLUDE columns for the projection. A single well-designed composite often replaces 3-5 single-column indexes — fewer indexes, fewer writes." },
+        { prompt: "Step 4: when do you reach for partial indexes?", reveal: "When a query consistently filters by a column to a small subset of rows (e.g., active rows are 5% of total). Build a partial index over that subset only; the index is dramatically smaller and update-cheaper. Example: `WHERE status = 'open'` on a task table where 95% of historical tasks are 'done' — the partial 'open' index is 5% of the size of the full index and serves all dashboard queries." },
+        { prompt: "Step 5: how do you deploy without downtime?", reveal: "CREATE INDEX CONCURRENTLY for every new index. Wait for completion (monitor pg_stat_progress_create_index). Verify with EXPLAIN ANALYZE that the planner picks the index. Drop unused indexes with DROP INDEX CONCURRENTLY (Postgres 14+) to avoid AccessExclusiveLock. Stage the rollout over multiple deploys to limit the write-overhead spike of multiple new indexes simultaneously building." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="02-indexes"
+      lang="en"
+      scenario="A query is using an index but performance is still slow. Walk the diagnosis."
+      steps={[
+        { prompt: "Step 1: what does the EXPLAIN ANALYZE tell you?", reveal: "Look at the plan node type: Index Scan, Bitmap Heap Scan, Index Only Scan are good; Seq Scan + filter is bad. Check rows estimated vs actual — large discrepancy means the planner's statistics are stale (ANALYZE the table). Check loops — high loop count on a join means the index is being used many times in a nested loop, which can be slow." },
+        { prompt: "Step 2: bitmap scan vs index scan vs index-only scan — which is which?", reveal: "Index Scan: lookup index, fetch each matching row from heap one by one. Bitmap Heap Scan: build a bitmap of matching row locations, sort by physical location, then scan heap in order (better for many matches because of sequential disk access). Index Only Scan: read only the index, no heap fetch (only possible when all needed columns are in the index AND the row's visibility is known from the visibility map). Index-only scans are the fastest by far when applicable." },
+        { prompt: "Step 3: what is 'index bloat' and how does it manifest?", reveal: "Indexes accumulate dead entries from updates and deletes; over time the index grows past its useful size. Symptom: index size much larger than expected, queries slow despite the right index. Mitigation: REINDEX CONCURRENTLY rebuilds the index in-place without lock; ideally scheduled as part of routine maintenance. Postgres 14+ auto-mitigates much of this with bottom-up index deletion." },
+        { prompt: "Step 4: when does adding more indexes hurt?", reveal: "When write throughput becomes the bottleneck. Each insert/update on an indexed column triggers index maintenance. Tables with 20+ indexes and high write rate can spend more time maintaining indexes than doing actual writes. Mitigation: audit indexes quarterly via pg_stat_user_indexes; drop the unused; consolidate single-column indexes into composites where possible." },
+        { prompt: "Step 5: the planner picked a different index — why?", reveal: "Postgres's planner uses statistics (gathered by ANALYZE) to estimate the cost of each plan. If statistics are stale or skewed, the planner might pick a less-optimal index. Fix: run ANALYZE after large data changes; consider extended statistics (CREATE STATISTICS) for correlated columns; in extreme cases, force a plan with pg_hint_plan or rewrite the query." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      prompt="Order the index types from most common to most niche in a typical production schema:"
+      items={[
+        "B-tree — equality, range, sort; default for almost everything",
+        "Unique B-tree — constraint enforcement (PK, UNIQUE)",
+        "Partial B-tree — soft-delete patterns, hot-subset filters",
+        "Composite B-tree — multi-column queries (leading-column rule)",
+        "GIN — JSONB, arrays, full-text search",
+        "GiST — geospatial (PostGIS), range types, nearest-neighbour",
+        "BRIN — huge insert-only tables with natural ordering (time-series)",
+        "Hash — equality on huge keys (niche, mostly avoid in favor of B-tree)",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-indexes"
+      lang="en"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Explain in detail why the leading-column rule exists, and what production patterns work around it.",
+          answer: <p>A multi-column B-tree on (a, b, c) is sorted primarily by a, then within each a-value by b, then within each (a, b) pair by c. The index entries form a single ordered sequence; to use the index for a query, the engine needs to navigate the tree using the sort order — that means the leading column must be present in the filter or the engine cannot narrow to any subset of the tree. A query on b alone is like asking "find me all books where the second author is Smith" in a library indexed by first-author-then-second-author: you have to scan every first-author. The workaround patterns. (1) Separate indexes per leading column — accept that a multi-column composite serves one query shape; build another composite or single-column index for the other query shape. (2) Reverse-the-composite — if (a, b) and (b, a) are both hot, build both. (3) Use leading-column wildcards in some niche cases — pg_trgm and bloom indexes let you query without strict leading-column matching, at higher cost. (4) Promote the most-filtered column to leading position even if it has lower cardinality. The production discipline is to enumerate the top query patterns, group them by leading column, and design one composite per group — not one per query.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Why is CREATE INDEX CONCURRENTLY the production default despite being slower than CREATE INDEX, and what are its specific failure modes?",
+          answer: <p>CREATE INDEX takes an ACCESS EXCLUSIVE lock on the table for the duration of the build — every read and write is blocked. On a production table with active traffic, this is unacceptable; even a 5-minute lock is an incident. CREATE INDEX CONCURRENTLY uses a multi-phase build: it scans the table twice and waits for in-flight transactions between phases, all without taking the exclusive lock. The result is no impact on application traffic, at the cost of being slower (2-3x) and unable to be wrapped in a transaction. Failure modes. (1) If the build fails mid-way (e.g., a unique-index build encounters a duplicate, or the process is killed), the index is left in an INVALID state — visible in pg_indexes with indisvalid=false. The application sees the index as nonexistent for planning purposes. Fix: DROP INDEX (also CONCURRENTLY) and retry. (2) Long-running transactions on the table can stall the CONCURRENTLY build because it waits for them — common to see a 10-minute build take hours because of one long-running analytic query. (3) The build can fail with disk-space exhaustion (the index sort uses temporary files); allocate enough work_mem or temp_tablespaces. (4) Replication lag can extend on the standby during the build; verify monitoring. Senior pattern: always use CONCURRENTLY in production migrations, always check pg_indexes for indisvalid after a build, and have a runbook for the retry-after-failure case.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>Index-only scans and the visibility map.</strong> An index-only scan returns column data straight from the index without fetching the row from the heap. Postgres can do this when: (a) every column the query needs is in the index (either as a key column or as an INCLUDE column), and (b) the engine knows the row is "visible" to the current snapshot without having to check the heap's per-tuple visibility info. The second condition is the trick. The Visibility Map (VM) is a per-table bitmap with one bit per heap page; the bit is set when "every tuple on this page is visible to every active transaction." VACUUM sets bits; any write or transaction-aborted tuple unsets them. Implication: index-only scans only help when the indexed table has been recently VACUUMed. On insert-only tables, this works almost always; on heavily-updated tables, less often. Mature teams tune autovacuum to be aggressive on tables that depend on index-only scans, and monitor pg_stat_user_tables.n_dead_tup as the leading indicator.</p>
+    <p><strong>INCLUDE columns and covering indexes.</strong> Postgres 11+ supports `CREATE INDEX ... INCLUDE (cols)` — the INCLUDE columns are stored in the index leaves but not in the sort key. The result: the index is "covering" for queries that need those columns in the SELECT projection, enabling index-only scans without forcing the included columns into the sort. Use case: a query that filters by workspace_id, sorts by created_at, and projects id, total — build the index as `(workspace_id, created_at DESC) INCLUDE (id, total)`. The sort is served by the key columns; the projection is served by the included columns; no heap fetch needed.</p>
+    <p><strong>Postgres index types in detail.</strong> (a) B-tree internal: pages are linked in a sibling-list at each level for efficient range scans; the latest Postgres versions implement "bottom-up index deletion" that removes dead entries on hot pages without waiting for vacuum, significantly reducing bloat on UPDATE-heavy workloads. (b) GIN structure: an inverted index where each indexed key maps to a posting list (or posting tree) of TIDs that contain that key. fastupdate mode buffers pending entries and merges them periodically — faster writes, slower reads when the buffer is full. (c) GiST structure: a generalized search tree where each non-leaf node stores a "predicate" that summarises its subtree (e.g., a bounding box for geometries). The engine uses these predicates to prune subtrees during search. (d) BRIN structure: per-block-range summary tuples (min, max, null-bitmap by default); intentionally lossy — narrows the heap scan but does not eliminate it. (e) SP-GiST: like GiST but uses space-partitioning (quadtree, k-d tree shapes); narrow use cases like IP ranges and IP CIDR matching. (f) Hash: equality only; useful for very wide keys where B-tree size would be a concern.</p>
+    <p><strong>Operator classes and custom operators.</strong> Each index type supports a set of operators, defined by operator classes. The B-tree default operator class for TEXT does lexicographic comparison; the `text_pattern_ops` class disables locale-aware sorting and makes LIKE-prefix queries (`column LIKE 'abc%'`) use the index. The `varchar_pattern_ops`, `bpchar_pattern_ops` are similar. Custom operator classes are how you make complex types indexable; PostGIS, pg_trgm (trigram fuzzy search), pgvector (embedding similarity), pg_bigm (bigram for CJK) — all ship operator classes that let GiST/GIN/B-tree/HNSW index their data types. Senior teams use operator-class selection to make uncommon queries fast without changing query shape.</p>
+    <p><strong>Index maintenance: REINDEX, bloat, fillfactor.</strong> Indexes accumulate dead entries over time. Postgres 14+ does aggressive cleanup via bottom-up index deletion, but heavy-update tables still benefit from periodic REINDEX CONCURRENTLY. The fillfactor parameter (default 90 for B-tree) leaves space in each leaf page for in-place updates (HOT updates — see piece 04 on MVCC), reducing page splits and slowing bloat. Lower fillfactor (e.g., 70) reduces bloat on heavily-updated tables at the cost of larger initial index size. Production discipline: monitor pg_stat_user_indexes for idx_scan = 0 (unused, drop) and high pg_stat_user_indexes.idx_tup_read / idx_tup_fetch ratio (indicates index points to many heap fetches, possibly stale stats or poor selectivity). Schedule monthly REINDEX CONCURRENTLY on hot indexes.</p>
+    <p><strong>Index strategy with replicas and standby.</strong> Indexes on a primary are replicated to standbys via WAL — every CREATE INDEX, every index write — so standbys have the same indexes. CREATE INDEX CONCURRENTLY on the primary does not block reads on standbys, but the standby cannot serve queries that conflict with the index build (rare). Replicas may have additional read-only-specific indexes added via the `EXTERNAL` index option in extensions like pglogical, but stock Postgres replicates the schema verbatim. For OLTP + OLAP workloads on the same Postgres, the canonical pattern is a primary with OLTP-tuned indexes plus a logical-replication-based analytics copy where OLAP-specific indexes (often BRIN, GIN, or wide composites) live.</p>
+    <p><strong>HNSW for vector similarity (pgvector).</strong> Postgres 16+ with pgvector supports HNSW (Hierarchical Navigable Small World) indexes for approximate nearest-neighbour search on embedding vectors. HNSW is not a B-tree variant — it is a graph-based index optimised for high-dimensional similarity search. Trade: indexes are large (vector dimension times row count) and writes are slow (graph rebalancing per insert), but queries on 1M+ embeddings return in single-digit milliseconds. For 2026 production AI/ML systems with Postgres as the primary store, pgvector + HNSW is the canonical choice; alternatives include Pinecone, Weaviate, Milvus as dedicated vector databases when scale or feature requirements exceed pgvector's reach.</p>
+    <p><strong>Real production failure modes.</strong> (a) <em>Missing index on FK column</em>: foreign-key columns are not automatically indexed; CASCADE deletes do a sequential scan on the child table to find rows to delete, which takes hours on large tables. Mitigation: index every FK column unless you can prove the parent is never deleted. (b) <em>Implicit type coercion bypasses index</em>: WHERE bigint_column = '42' forces type conversion on every row, defeating the index. Mitigation: typed query builders, EXPLAIN ANALYZE on every new query. (c) <em>Stale statistics</em>: planner picks Seq Scan because it underestimates how many rows the index would return; ANALYZE the table after large data changes. (d) <em>Bloated index</em>: index 5x larger than expected; REINDEX CONCURRENTLY. (e) <em>Index-only scan disabled by recent updates</em>: visibility map is partially clear after writes; VACUUM the table. (f) <em>Composite index with wrong column order</em>: queries that should use the index fall back to Seq Scan because the leading column is not in the filter; redesign the composite or add a second one. (g) <em>Cardinality bomb in JSONB GIN</em>: a JSONB column with millions of unique keys creates a huge GIN index that overwhelms shared_buffers; consider per-field expression indexes for known-hot fields instead.</p>
+    <p><strong>The index audit playbook.</strong> Quarterly, every team running Postgres at scale should run an index audit. (1) Drop unused: SELECT indexrelname FROM pg_stat_user_indexes WHERE idx_scan = 0 AND indexrelname NOT LIKE '%_pkey' AND indexrelname NOT IN (known constraint-supporting indexes). (2) Find bloat: pgstattuple_approx() on hot indexes; REINDEX CONCURRENTLY on bloated ones. (3) Find missing indexes: pg_stat_statements joined with EXPLAIN on the top-N queries by total_time; any Seq Scan on a large table is a candidate. (4) Find redundant indexes: indexes whose key columns are a prefix of another index's key columns — drop the shorter one (the longer covers the shorter). (5) Verify visibility-map health for index-only scans: monitor pg_stat_user_tables.n_dead_tup and autovacuum schedule. The audit is 1-2 hours of work and routinely produces 10-30% storage savings plus 2-5x write-rate improvements on heavily-indexed tables.</p>
+    <p><strong>Strategic posture: indexes are part of design, not afterthought.</strong> The single most common production performance issue traced in postmortems is "missing index on this hot query." The second most common is "we have too many indexes and writes are slow." Both have the same root cause: indexes were not treated as part of the design. Senior teams add indexes to the migration that ships the feature; review indexes in code review alongside the query; audit usage quarterly; and own the index strategy at the platform level, not per-team. The cost of getting this right is small (an extra checklist item on PRs touching SQL); the cost of getting it wrong is a 3am page when a customer dashboard times out. Treat indexes as deliberate engineering, not as a runtime knob.</p>
+    <NumbersCard
+      id="card-index-numbers"
+      title="Senior-tier index production numbers"
+      stats={[
+        { label: "B-tree page size (same as heap page)", value: "8 KB" },
+        { label: "B-tree fanout, typical", value: "~200-400 keys / page" },
+        { label: "B-tree depth, 100M rows", value: "~4 levels" },
+        { label: "Index-only scan benefit (vs index scan)", value: "~10-100x" },
+        { label: "INCLUDE columns supported in B-tree", value: "Yes, since Postgres 11" },
+        { label: "BRIN typical compression", value: "1000x vs equivalent B-tree" },
+        { label: "GIN fastupdate buffer flush trigger", value: "work_mem or autovacuum_work_mem" },
+        { label: "pgvector HNSW typical recall@10", value: "~95-99%" },
+        { label: "REINDEX CONCURRENTLY typical duration", value: "Similar to initial build" },
+        { label: "Production index audit cadence", value: "Quarterly" },
+      ]}
+    />
+    <Misconception id="mc-index-everything">
+      <p><strong>"Index every column queries touch, just in case."</strong> No. Every index taxes every write to its columns. Indexing everything turns a healthy OLTP system into a write-bottlenecked one. Index the hot queries; audit and drop the unused.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      scenario="A senior engineer audits indexes on a 500GB Postgres database. Walk the process."
+      steps={[
+        { prompt: "Step 1: identify unused indexes.", reveal: "SELECT schemaname, relname, indexrelname, idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) FROM pg_stat_user_indexes WHERE idx_scan = 0 ORDER BY pg_relation_size(indexrelid) DESC. Filter out constraint-supporting indexes (pkey, unique). For each candidate, verify: is it referenced by a periodic batch job (cross-reference with pg_stat_statements over a longer window)? Is it a backup for a critical query that runs rarely but must be fast? If neither, mark for DROP INDEX CONCURRENTLY." },
+        { prompt: "Step 2: identify bloated indexes.", reveal: "SELECT relname, pg_size_pretty(pg_relation_size(indexrelid)), 100 - 100 * pg_relation_size(indexrelid)::float / GREATEST(1, sum(...)) AS bloat_pct FROM pg_stat_user_indexes joined with pgstattuple_approx() (extension). Indexes with bloat over 30-50% are candidates for REINDEX CONCURRENTLY. Schedule reindex on hot indexes for off-peak hours (the build takes I/O and CPU)." },
+        { prompt: "Step 3: identify missing indexes.", reveal: "Pull the top-20 queries by total_time from pg_stat_statements. For each, EXPLAIN ANALYZE with realistic parameters. Any Seq Scan on a table over ~10k rows is a candidate. Cross-check with the application team: is this query expected to be hot, or is it a one-off ad-hoc? If hot, design the index (leading-column rule, partial if applicable, INCLUDE for covering). Add via CREATE INDEX CONCURRENTLY in a migration." },
+        { prompt: "Step 4: identify redundant indexes.", reveal: "Two indexes are redundant when one's key columns are a prefix of another's (e.g., (a) and (a, b) — the (a, b) covers both). Drop the shorter. Also check for case-insensitive duplicates and indexes that differ only by INCLUDE columns. The pg_index catalog plus pg_get_indexdef are the tools." },
+        { prompt: "Step 5: validate the audit's impact.", reveal: "Before applying changes: snapshot pg_stat_statements and pg_stat_user_indexes. After applying: re-snapshot, compare. Expected outcomes: 10-30% storage reduction, 2-5x improvement on write latency on heavy-write tables, no degradation on query latency. Monitor for one week post-change; revert any individual change if a query unexpectedly slowed. The audit is iterative — quarterly, not one-shot." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      title="A query has an index but is still slow — diagnose"
+      output={`# Slow-query log + EXPLAIN ANALYZE:
+
+slow_query: SELECT id, total_cents FROM orders WHERE workspace_id = 42 AND status = 'pending' ORDER BY created_at DESC LIMIT 50;
+execution_time: 4280 ms
+rows_returned: 50
+
+EXPLAIN ANALYZE:
+Limit  (cost=320..380 rows=50 width=24) (actual time=4271..4280 rows=50 loops=1)
+  ->  Sort  (cost=320..18420 rows=180000 width=24) (actual time=4270..4275 rows=50 loops=1)
+        Sort Key: created_at DESC
+        Sort Method: top-N heapsort  Memory: 32kB
+        ->  Index Scan using idx_orders_workspace_status on orders
+              (cost=0.42..18000 rows=180000 width=24) (actual time=0.02..3800 rows=178240 loops=1)
+              Index Cond: ((workspace_id = 42) AND (status = 'pending'::text))
+
+# Index definitions:
+idx_orders_workspace_status: btree (workspace_id, status)
+idx_orders_workspace_status size: 1.2 GB
+table size: 18 GB, row count: 80M
+
+# Statistics:
+n_dead_tup: 12.4M (15% of total)
+last_autovacuum: 14 days ago
+last_analyze: 30 days ago`}
+      outputLang="log"
+      question="Why is the query 4280ms despite using the index? What is the fix?"
+      hint="The index is used, but look at the plan node breakdown — and the ANALYZE timestamp."
+      answer="Cause: the index is used but the query fetches 178,240 rows from the heap just to sort and pick the top 50. The (workspace_id, status) index narrows by workspace + status (correct), but does not provide the ORDER BY created_at DESC — so Postgres reads every matching row, sorts them, then takes 50. At 178k heap fetches over a ~225-byte average row, that is ~40MB of heap I/O per query — most of the 4.28s. Additionally, last_analyze is 30 days old, n_dead_tup is 15% — the planner's row-count estimate is likely also off, and bloat is contributing. Fix (durable): replace the index with a covering composite that also serves the ORDER BY: CREATE INDEX CONCURRENTLY idx_orders_workspace_pending_recent ON orders (workspace_id, created_at DESC) WHERE status = 'pending' INCLUDE (id, total_cents). This index (a) filters by workspace_id (leading), (b) is sorted by created_at DESC (serves the ORDER BY directly), (c) is partial WHERE status = 'pending' (small, ~5% of full table size), (d) INCLUDE covers the SELECT projection — enabling an index-only scan that returns 50 rows in under 1ms with no heap fetch. Drop the old idx_orders_workspace_status after the new index is live and verified. Bonus actions: (1) ANALYZE orders to refresh statistics. (2) VACUUM orders to update the visibility map (needed for index-only scan to work without heap visibility check). (3) Tune autovacuum for this table: ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02) so analyze runs more often. Expected after fix: query returns in 1-3 ms (index-only scan reading 50 leaf entries). The lesson: 'has an index' is not the same as 'has the right index'. The composite must match both the filter AND the sort order, and partial + INCLUDE turn good plans into great ones. EXPLAIN ANALYZE is the only way to know which case you are in."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      prompt="A new fulltext-search feature on a 'documents' table needs an index. Pick the index strategy."
+      options={[
+        { name: "GIN on tsvector column (generated or stored) — to_tsvector(content) indexed via GIN, queries use @@ operator", summary: "Canonical Postgres full-text search.", correct: true, justification: "GIN on a tsvector is the production default for SQL-native full-text search. Generate the tsvector as a STORED GENERATED column from the document body; create a GIN index on it. Queries use `tsvector @@ to_tsquery('...')` with rank() for relevance ordering. Works for hundreds of millions of documents on commodity hardware with the right index. Native to Postgres — no extra infra. For most B2B SaaS-scale search this is the right answer." },
+        { name: "pg_trgm (trigram) GIN index for fuzzy substring matching", summary: "Specialised — fuzzy and substring search.", justification: "pg_trgm enables LIKE-anywhere and similarity-based fuzzy search via trigram decomposition. Different use case from full-text: it does not understand words or stems, but it handles typos and partial matches better. Use when search is fuzzy and short (user names, product SKUs), not when search is over long documents." },
+        { name: "ElasticSearch / OpenSearch as a separate service", summary: "Heavy infrastructure, max features.", justification: "Right when you need advanced relevance ranking, faceted search, geo + text combined, language analysis Postgres cannot match, or scale beyond Postgres. Wrong as default — adds an entire infrastructure component, requires data sync (CDC, replication), introduces consistency concerns. Default to Postgres full-text; reach for ES when you have specific needs Postgres cannot meet." },
+        { name: "pgvector + HNSW for embedding-based semantic search", summary: "Modern AI-era alternative.", justification: "Semantic search via embeddings is a different model — instead of keyword match, match documents whose embedding is close to the query embedding. Requires an embedding pipeline (model inference per document and query). Strong for natural-language search; weak for exact-term lookup. In 2026 a common pattern is hybrid: GIN-tsvector for exact, pgvector for semantic, results merged. Use when keyword search is insufficient." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="Which Postgres version introduced the INCLUDE clause in CREATE INDEX, enabling covering indexes without the included columns affecting the sort key?"
+      choices={[
+        { rfc: "PostgreSQL 11 (October 2018)", title: "Added support for B-tree INCLUDE columns — non-key payload columns stored in the leaf pages, enabling index-only scans for queries that need extra projection columns", correct: true },
+        { rfc: "PostgreSQL 12", title: "Added generated columns and partition-key improvements, not INCLUDE" },
+        { rfc: "PostgreSQL 14", title: "Added bottom-up index deletion and improved CONCURRENTLY reliability, not INCLUDE" },
+        { rfc: "PostgreSQL 16", title: "Added various performance improvements including pgvector ecosystem; INCLUDE is older" },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      question="A team adds an FK with ON DELETE CASCADE from comments(post_id) to posts(id) but does NOT index comments(post_id). What happens on DELETE FROM posts WHERE id = 42 if comments has 100M rows?"
+      choices={[
+        { label: "The CASCADE is handled by an internal map and runs in milliseconds", misconception: "Postgres does not maintain an internal reverse-index; it queries comments by post_id." },
+        { label: "Postgres scans the entire comments table to find rows with post_id = 42 — a Seq Scan of 100M rows, taking minutes and holding locks", correct: true },
+        { label: "The DELETE fails because of the missing index", misconception: "It succeeds, just slowly." },
+        { label: "Postgres builds a temporary index automatically", misconception: "It does not." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="02-indexes"
+      lang="en"
+      prompt="Design the indexes for a new ticketing system (tasks within projects within workspaces, with users assigned to tasks). The top-5 hot queries are listed below. Provide each index with: type, columns and order, partial WHERE if applicable, INCLUDE columns for covering, and the query each serves."
+      constraints={[
+        "Top-5 hot queries: (a) list open tasks in a project ordered by priority then created_at; (b) list open tasks assigned to a specific user across all projects in a workspace; (c) find tasks by external ticket_id (UNIQUE per workspace); (d) full-text search across task titles and bodies; (e) find tasks created in the last 24 hours across the workspace.",
+        "Scale: 100M tasks, 80% are status = 'done' (cold), 15% 'open' (hot), 5% 'in_progress' (hot).",
+        "Tasks table has columns: id BIGSERIAL PK, workspace_id BIGINT, project_id BIGINT, assignee_user_id BIGINT, status TEXT, priority SMALLINT, title TEXT, body TEXT, ticket_id TEXT, created_at TIMESTAMPTZ.",
+        "Budget: total index storage under 20% of table size; total write-overhead under 20%.",
+      ]}
+      canonical="Indexes — (1) `idx_tasks_workspace_project_open_priority`: btree (workspace_id, project_id, priority, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, title, assignee_user_id). Serves query (a) — partial on hot statuses cuts index size by 80%, leading workspace_id+project_id matches the always-present scope, priority + created_at DESC serves the order, INCLUDE covers the typical projection for the list view. (2) `idx_tasks_workspace_assignee_open`: btree (workspace_id, assignee_user_id, status, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, project_id, title, priority). Serves query (b) — leading workspace_id for tenant scope, then assignee_user_id for the user filter, status as third for completeness (allows status=open vs in_progress filtering), created_at for the sort. (3) `idx_tasks_workspace_ticket_unique`: btree UNIQUE (workspace_id, ticket_id). Serves query (c) — unique index doubles as the constraint, point lookup in microseconds. (4) `idx_tasks_search`: GIN on to_tsvector('english', coalesce(title,'')||' '||coalesce(body,'')) — a STORED GENERATED column tsv_doc holds the tsvector. Serves query (d) — full-text on title+body, ranking via ts_rank in the query. (5) `idx_tasks_workspace_recent`: btree (workspace_id, created_at DESC) INCLUDE (id, title, status, assignee_user_id). Serves query (e) — global-recent within a workspace, no status filter (this dashboard shows everything regardless of status). Cost analysis — Index 1: partial 20% of 100M rows = ~20M index entries, ~600 MB. Index 2: same partial scope, ~600 MB. Index 3: unique full coverage, ~2 GB but small per-row (workspace_id + ticket_id text). Index 4: GIN on tsvector, ~3-5 GB depending on document length. Index 5: full 100M rows, ~1.5 GB. Total ~7-9 GB on a ~40 GB table — within the 20% budget. Write-overhead estimate: each task insert touches 5 indexes (~25-50 μs total), each update of priority/status touches 2 (the partial composites), each update of title/body touches the GIN (the heaviest, ~50-200 μs). Net write-overhead well under 20%. Drops to consider: drop any pre-existing single-column index that is now a prefix of a composite. Index 1 covers (workspace_id), (workspace_id, project_id), (workspace_id, project_id, priority); drop any standalone indexes on those prefixes. Index 5 covers (workspace_id) for date range; verify before keeping any single-column workspace_id index. Audit cadence: quarterly pg_stat_user_indexes review for idx_scan = 0 and bloat; REINDEX CONCURRENTLY on indexes with over 30% bloat."
+      keyPoints={[
+        "Match each composite to a specific hot query — leading column is the always-present filter (workspace_id), trailing columns serve secondary filters and sort.",
+        "Partial WHERE status IN ('open','in_progress') cuts index size by 80% (because 80% of historical data is 'done' and rarely queried).",
+        "INCLUDE columns make indexes covering for typical projections, enabling index-only scans without putting the columns into the sort key.",
+        "UNIQUE index on (workspace_id, ticket_id) doubles as a per-tenant unique constraint without needing a separate constraint declaration.",
+        "GIN on a tsvector (typically stored as a GENERATED column on title + body) is the Postgres-native full-text answer.",
+        "Total index storage budget under 20% of table size; total write-overhead under 20% on writes — verified by index sizing and per-write index-count math.",
+        "Quarterly audit: drop unused indexes (idx_scan=0), REINDEX bloated ones (over 30%), verify EXPLAIN picks the right plans after schema or data changes.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="02-indexes"
+      lang="en"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Articulate why index-only scans need the Visibility Map to work, and what operational discipline ensures index-only scans actually fire in production.",
+          answer: <p>An index entry stores the column values plus a Tuple Identifier (TID) — the physical address of the row in the heap. Postgres rows have visibility info per tuple (transaction IDs that created and deleted them); to know whether a row is visible to the current snapshot, the engine normally has to fetch the row from the heap and read those IDs. An index-only scan avoids the heap fetch — but only if the engine can verify visibility from the index alone. It cannot: the index does not carry visibility info. Instead, Postgres consults the Visibility Map (VM), a per-table bitmap with one bit per heap page indicating "all tuples on this page are visible to all transactions." When the VM bit is set, the engine knows the row is visible without checking the heap. VACUUM sets VM bits during cleanup. Any write to a page clears it. Implications. (1) Insert-only or append-mostly tables stay near-fully visible — index-only scans always work. (2) Heavily-updated tables clear VM bits frequently — index-only scans degrade to regular index scans (heap fetch per row) the moment the bit is clear. (3) Long-running transactions hold back vacuum and prevent VM updates — chronically poor index-only scan performance is often traced to one long transaction. Operational discipline: tune autovacuum_vacuum_scale_factor lower on tables that depend on index-only scans (default 0.2 = 20% dead tuples; set 0.05 for hot OLTP); monitor pg_stat_user_tables.n_dead_tup as a leading indicator; kill long-running transactions or refactor them to be shorter; verify with EXPLAIN ANALYZE that the plan is "Index Only Scan" with "Heap Fetches: 0".</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Explain why a multi-column index is typically cheaper than two single-column indexes covering the same queries, and the conditions under which two single-column indexes win.",
+          answer: <p>A multi-column index (a, b) is one physical structure, occupying roughly the same size as a single-column (a) index plus a small overhead for the b column in each leaf entry — typically 30-50% larger than (a) alone. Two single-column indexes (a) and (b) are two physical structures, costing roughly the sum of their sizes — typically 2x the (a) alone. Write cost is also lower for one composite: every insert touches one index, not two. So one (a, b) composite usually wins on storage and write cost when the dominant query filters by (a) or (a, b). The conditions under which two single-column indexes are better. (1) When queries filter by a alone often AND by b alone often (without each other) — neither composite order serves both, so two single-column indexes are needed (or two composites). (2) When the two columns have very different cardinalities and update rates — a (a, b) composite is updated on every change to b, even if b is rarely the filter; two single-column indexes localise the write cost. (3) When the Bitmap Index Scan combination (scan (a), scan (b), AND the bitmaps) outperforms a single (a, b) index — possible when the column independence is high and the planner picks bitmap-and over composite. In practice (1) dominates the decision; (2) and (3) are rare. Senior pattern: design the composite for the dominant query first, add the secondary index only if the secondary query is hot and the bitmap-and plan does not satisfy it.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>Indexes are sorted copies of data for one query. B-tree is default; GIN/GiST/BRIN for non-ordered types. Leading-column rule is iron. CREATE INDEX CONCURRENTLY, INCLUDE for covering, partial for hot subsets. Audit quarterly.</KeyTakeaway>
+
+<SpiralCue thread="latency">
+Latency of a SQL query is dominated by I/O (rows scanned, heap fetches, sort spills). Indexes are the primary lever: a well-designed composite turns a 4-second seq scan into a 1ms index-only scan. The next piece (03-execution-plans) shows how to read the plan and verify the index is doing what you think; MVCC (04) explains why long transactions can starve index-only scans of the visibility map updates they need.
+</SpiralCue>
