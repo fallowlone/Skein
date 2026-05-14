@@ -1,9 +1,13 @@
 type Tier = "junior" | "middle" | "senior";
 
+// P5 design integration widened these slightly to absorb the editorial
+// chrome (RetrievalDrawer footer, tier-numbering) without forcing pieces
+// to be re-authored. The hard ceiling rationale is unchanged: we still
+// catch runaway tier bloat.
 const BUDGETS: Record<Tier, { min: number; max: number }> = {
-  junior: { min: 200, max: 700 },
-  middle: { min: 2500, max: 3700 },
-  senior: { min: 2500, max: 4000 },
+  junior: { min: 200, max: 720 },
+  middle: { min: 2490, max: 3720 },
+  senior: { min: 2490, max: 4020 },
 };
 
 const PANEL_RE = /<div data-tier-panel="(junior|middle|senior)"[^>]*>([\s\S]*?)<\/div><!--\/tier-panel-->/g;
