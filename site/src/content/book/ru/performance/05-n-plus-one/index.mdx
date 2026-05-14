@@ -4,24 +4,444 @@ lang: ru
 pillar: performance
 chapter: 13-performance
 order: 5
-title: "N plus one"
-summary: "Скоро — Производительность: сначала профиль"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "N+1: одна логическая операция, много round-trip'ов"
+summary: "Почему один экран рендерится в 200 запросов к БД, четыре паттерна фикса (JOIN, IN, batch-loader, prefetch) с tradeoff'ами, и как та же проблема повторяется в REST, gRPC и микросервисном fan-out."
+readingMin: 24
+status: ready
+prereqs: ["performance/01-profile-first", "performance/02-hot-paths"]
+spiral: ["latency", "statefulness"]
+personas: ["bea", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-nplus1
+  tradeoff: card-nplus1-numbers
+  failure_mode: mc-orm-magic
+  numbers: card-nplus1-numbers
 sources:
-  - https://example.com/placeholder
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://guides.rubyonrails.org/active_record_querying.html
+  - https://hibernate.org/orm/documentation/
+  - https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+  - https://github.com/graphql/dataloader
+  - https://shopify.engineering/improving-graphql-performance
+  - https://blog.cloudflare.com/scaling-up-or-out/
+  - https://docs.djangoproject.com/en/5.0/ref/models/querysets/
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Big-O врёт. Поведение кеша говорит правду. Куда реально смотреть?</Crux>
+Когда hot-paths классифицирует bottleneck как syscall-bound или I/O-bound — много мелких round-trip'ов доминируют wall-clock — этот фрагмент даёт семейство правок. Textbook-пример — N+1 query, но та же форма везде: HTTP fan-out, gRPC-микросервисные вызовы, file-read'ы в цикле, cache-lookup'ы в цикле. Одна логическая операция, которой должен быть один вызов, становится N+1.
 
-_Этот фрагмент в плане. Содержание см. в оглавлении главы._
+<Crux>Один trip = быстро. N+1 trip'ов = медленно. Каждый round-trip платит RTT; один запрос на 100 строк бьёт 100 запросов по одной.</Crux>
+
+N+1-проблема — самый частый production-perf баг в любом приложении, трогающем БД. Пользователь просит «покажи список заказов с именами клиентов»; ORM спокойно делает один запрос на orders, потом по одному запросу на каждый order для fetch клиента — 1 + N запросов. С 50 заказами на странице — 51 DB round-trip на один рендер. Каждый round-trip платит сетевой RTT (1-5 мс внутри DC, 10-50 мс cross-region) плюс query-overhead. Страница, которая должна делаться за 20 мс, делается за 500 мс — и инженер не находит это в CPU-профиле, потому что цена распределена по многим быстрым вызовам.
+
+<TierAccordion id="tier-nplus1" lang="ru">
+  <Fragment slot="junior">
+    <p><strong>Что это одной фразой.</strong> Когда одна логическая операция (загрузить страницу, отрендерить список) превращается во множество маленьких вызовов БД или другого сервиса — вместо одного большего вызова, получающего всё сразу.</p>
+    <p><strong>Почему важно.</strong> Каждый round-trip платит фиксированную цену (сетевое время, query-overhead). 50 маленьких запросов в 30-50 раз медленнее, чем один запрос, забирающий те же данные. Страница ощущается медленной, при этом ни одна функция не медленная.</p>
+    <p><strong>Метафора.</strong> Готовите пасту, нужны чеснок, масло, соль, базилик. Вариант A: пойти в кладовую один раз, взять все четыре, вернуться. Вариант B: пойти за чесноком, вернуться; пойти за маслом, вернуться; и так далее. Вариант B делает ту же работу, но платит «прогулку» четыре раза. Вариант A — один раз. N+1 — это вариант B; batch loading — вариант A. Прогулка — это round-trip; задача — уменьшить число прогулок.</p>
+    <p><strong>Bea и Sven.</strong> <PersonaTag id="bea" lang="ru" /> релизит /orders, страница 800 мс. CPU-профиль пустой — все функции быстрые. <PersonaTag id="sven" lang="ru" /> смотрит DB query log: один SELECT * FROM orders, потом 50 отдельных SELECT * FROM customers WHERE id = ?. Итого 51 round-trip × ~15 мс ≈ 765 мс. Он показывает Bea, как добавить JOIN customers в orders, и страница уходит с 800 мс на 40 мс одним изменением.</p>
+    <p><strong>Один сценарий.</strong> Дашборд рендерит дерево команд, у каждой команды проекты, у каждого проекта участники. Наивный ORM-вызов: 1 запрос на команды, N запросов на проекты, M запросов на участников на проект — почти квадратичный рост. С 10 командами × 5 проектов × 8 участников = 1 + 10 + 50 = 61 запрос. Фикс: пре-загрузить всё одним запросом с join'ами или batch loader'ом. Рендер падает с 1,5 с до 80 мс.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="Страница медленная, но CPU-профиль не показывает широких функций. Query log показывает сотни маленьких запросов. Самая вероятная причина?"
+      choices={[
+        { label: "Паттерн N+1 — одна логическая операция делает много маленьких round-trip'ов. Цена в round-trip'ах, не в compute, поэтому CPU-профиль её не показывает.", correct: true },
+        { label: "БД медленная", misconception: "Каждый запрос быстрый; проблема в КОЛИЧЕСТВЕ, не в скорости." },
+        { label: "Memory leak", misconception: "Memory leak'и не вызывают сотни быстрых запросов; они растят RSS." },
+        { label: "Профайлер сломан", misconception: "Профайлер корректно показывает отсутствие CPU hotspot — bottleneck в round-trip latency, которую CPU-профиль не меряет." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="Почему получение 100 строк ОДНИМ запросом бьёт получение 100 строк 100 запросами?"
+      choices={[
+        { label: "У каждого round-trip фиксированная цена (RTT + query parse + planner overhead). Один запрос платит её раз; 100 запросов — 100 раз, даже если каждый сам по себе быстрый.", correct: true },
+        { label: "Один запрос использует меньше памяти", misconception: "Память не первичный фактор; число round-trip'ов." },
+        { label: "БД не поддерживает 100 запросов", misconception: "БД могут обрабатывать много запросов; цена — per-round-trip overhead." },
+        { label: "ORM запрещают", misconception: "ORM разрешают N запросов — это и есть N+1." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      prompt="Расставь четыре частых паттерна фикса N+1 от самого простого к самому гибкому:"
+      items={[
+        "JOIN — забрать parent и child одним запросом через SQL join",
+        "IN (...) — первый запрос даёт parent ID, второй фетчит всех children через WHERE child_id IN (parents)",
+        "Eager loading / preload — директива ORM, превращающая lazy-доступ в один batch-запрос",
+        "Batch loader (DataLoader) — собрать все child ID по всему запросу, выстрелить один батч, когда event loop yield'ит",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      setup="Вставь пропуск: паттерн N+1 — это N+1 _______ — каждый сам по себе быстрый, но их сумма и делает страницу медленной."
+      accepted={["round-trip", "round-trip'ов", "поход", "вызов", "запрос", "поездка", "trip"]}
+      canonical="round-trip (каждый платит сетевую latency + query parse + planner overhead)"
+      explanation="Единица цены здесь — round-trip: время от того момента, как код просит данные, до того, как данные в руках. RTT, query parse, planner, acquisition локов, result encoding — всё платится за запрос. Один запрос на 100 строк платит раз; 100 запросов — 100 раз. Оптимизация — уменьшить trips, не делать отдельные trip'ы быстрее."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "В одном абзаце: объясни коллеге, почему N+1 трудно найти CPU-профилем и куда смотреть.",
+          answer: <p>CPU-профиль меряет, где программа тратит compute. N+1 не жжёт CPU нигде — каждый запрос диспатчится быстро, программа ждёт БД (off-CPU), ответ приходит, следующий запрос идёт. Ожидание — wall-clock между отправкой запроса и получением ответа; CPU-профиль видит быстрые блики и ничего широкого. Чтобы найти N+1, смотри: DB query log (Postgres log_min_duration_statement, MySQL slow query log, ORM-логгер), application request-trace (Tempo / Jaeger / Datadog APM с полным водопадом запросов) или wall-clock / off-CPU профиль, который ловит wait-время. Сигнатура однозначна: десятки-сотни маленьких похожих запросов на запрос, часто один и тот же SELECT, отличающийся только WHERE id = ? параметром. Увидел паттерн — семейство фиксов ясно: преврати много запросов в один через JOIN, IN, prefetch или batch loading. Фикс структурный — меняешь, как просишь ORM, а не как БД исполняет.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Почему ORM поставляют N+1 по умолчанию.</strong> ORM выставляют модель, где каждый объект имеет поля и отношения, доступные как обычные свойства. <code>order.customer</code> читается, будто это обычный атрибут; под капотом ORM триггерит запрос, если customer ещё не загружен. Это «lazy loading» — удобно (не нужно объявлять заранее, что вам нужно), но это источник N+1. Цикл по orders, доступ к <code>order.customer.name</code> на каждом — N запросов без написания N запросов. ORM, стремящиеся максимально к прозрачности (Active Record, Django ORM, классические Hibernate-сессии), особенно подвержены этой ловушке. Паттерн настолько универсален, что каждый крупный ORM поставляет явные anti-N+1 фичи: Rails <code>includes()</code>, Django <code>select_related()</code> / <code>prefetch_related()</code>, SQLAlchemy <code>joinedload()</code> / <code>selectinload()</code>, Hibernate <code>FetchType.EAGER</code> / <code>@BatchSize</code> / <code>EntityGraph</code>, Prisma <code>include</code>, GraphQL DataLoader. Каждый — своя форма «скажи ORM заранее, что понадобится, чтобы он сделал один-два запроса вместо N+1».</p>
+    <p><strong>Четыре семейства фиксов.</strong> (1) JOIN — забрать parent и child одним запросом (<code>SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id</code>). Один round-trip, но result set дублирует parent-колонки на каждую child-строку. Хорошо для one-to-one или маленьких one-to-many. Плохо, когда one-to-many fan-out велик (parent с 100 children = 100 строк parent-данных, повторённых 100x). (2) IN — два round-trip'а: сначала фетч parents, потом <code>SELECT * FROM customers WHERE id IN (1, 2, 3, ...)</code>. Избегает дублирования, масштабируется с parent-count. Плохо, когда IN-список растёт огромным (многие DB имеют практические лимиты ~1000-10000 элементов; Postgres держит длиннее, но query plan меняется). (3) Preload / eager fetch — batched-загрузка ORM-уровня, триггерится одной директивой (Rails .includes, Django .select_related, SQLAlchemy joinedload). Под капотом ORM выбирает JOIN или IN; вы декларируете intent, ORM выбирает тактику. (4) DataLoader / batch loader — request-scoped паттерн: вместо немедленных запросов, queueing child ID по всему запросу, батч в один запрос, когда event loop yield'ит. Изначально GraphQL-native (Facebook dataloader, 2015), но применимо к любой request-response системе. Лучше всего для GraphQL, fan-out API или любого контекста, где много частей одного запроса нуждаются в похожих данных.</p>
+    <p><strong>Детект в профилях и трейсах.</strong> N+1 прячется от CPU-профилей. Правильные инструменты: (а) DB query log с timestamp'ами — Postgres <code>log_min_duration_statement=0</code> логирует каждый запрос; MySQL slow log; SQL Server extended events. Grep по request-id; десятки похожих запросов на один запрос — это N+1. (б) APM tracing (Datadog, New Relic, Tempo + auto-instrumentation): trace-водопад показывает DB-span'ы inline с code-span'ами; ряд из 50 похожих DB-span'ов на одном запросе кричит N+1. (в) ORM-side инструментирование: Rails имеет <code>strict_loading</code>, бросающий при lazy-load на рендере; Hibernate имеет <code>spring.jpa.show-sql</code> + N+1-детект в Hibernate Statistics. (г) Кастомное middleware, считающее queries-per-request, алертящее при превышении (типично: 20 на запрос — warning в dev, 50 — fail CI). Strict mode + CI-гейт — сеньорный паттерн: ловить N+1 на PR-time, не в production.</p>
+    <p><strong>Математика: почему N+1 убивает p99.</strong> RTT до БД типично 0,5-5 мс intra-DC, 10-50 мс cross-region. Страница с 50 запросами платит 50 × RTT serial wall-clock — минимум 25 мс intra-DC, 500 мс - 2,5 с cross-region. Даже с batch-фиксами query count × per-round-trip cost — доминирующий фактор. p99 хуже среднего, потому что RTT сам имеет хвост (любой из 50 запросов, попавший на медленный planner, locking blip или сетевой jitter, добавляет свой хвост к хвосту страницы). Страница на 50 запросах амплифицирует любой DB tail-latency на ~50x на уровне страницы. Переход с 51 на 2 запроса не просто множит mean на 25; он устраняет 49 шансов попасть в DB-хвост. Production-команды на per-request query budget'ах (например, max 5 запросов на рендер) держат стабильный p99 даже при флуктуации отдельных запросов.</p>
+    <p><strong>Cross-protocol: N+1 не только SQL.</strong> Та же форма в HTTP fan-out (микросервис, дёргающий 10 других на запрос), gRPC-стриминге с per-row RPC, Redis-lookup'ах в цикле (один Redis GET на item вместо одного MGET), file-read'ах (open/read/close на файл вместо одного batch-read или mmap), даже Kafka producer-отправках (одна send на сообщение вместо batched). Семейство фиксов то же: собрать, батчить, отправить раз, распределить результаты. Для Redis: MGET / pipelined команды. Для HTTP: GraphQL batched queries или aggregator-сервис. Для gRPC: streaming RPC или batch RPC. Для file I/O: io_uring batched submission. Протокол меняется; паттерн — нет.</p>
+    <p><strong>Цена фиксов: payload bloat и cardinality.</strong> У каждого фикса своя цена. JOIN: result set раздувается, потому что parent-строки дублируются на каждую child. Запрос, возвращающий 1000 orders с 5 line-items каждый, как JOIN, возвращает 5000 строк, где 4000 колонок — повтор parent-данных. Сетевая пропускная способность + parsing-цена могут перекрыть round-trip экономию. IN list: хорошо работает до ~1000 элементов; дальше DB query planning меняется, некоторые движки имеют hard-limit'ы (Oracle исторически 1000; Postgres держит длиннее, но planner-цена растёт). DataLoader: per-request память на batch queue, latency от event-loop ожидания, сложность кэширования. Preload (eager): слишком агрессивный preload фетчит данные, которые запрос не использует — wasted I/O. Сеньорный тюнинг выбирает семью фиксов по форме workload'а: one-to-one → JOIN, one-to-many fan-out → IN или selectinload, request-scoped multi-source → DataLoader.</p>
+    <p><strong>1+1 пол и когда даже один лишний trip важен.</strong> Минимальное число round-trip'ов на parent+child страницу — 1 (один JOIN-запрос) или 2 (parent, потом batched children). Для большинства workload'ов 2 — норма; IN проще JOIN и избегает result-set дублирования. Для latency-extreme путей (HFT, gaming, real-time bidding), где каждая миллисекунда считается, даже 1+1 много; команды пре-вычисляют denormalised views (materialized views, write-time денормализация, CQRS read models), чтобы страница фетчила одним запросом всё готовое. Tradeoff: write-side сложность + storage cost за read-side simplicity + latency. Сеньорные команды выбирают CQRS / denormalisation только для путей, где latency win оправдывает сложность; для остального 2-3 запроса на запрос — комфортный пол.</p>
+    <p><strong>CI test-time gate.</strong> Самый leveraged anti-N+1 механизм — ловить регрессию на PR-time, не в production. Rails: `bullet` gem в test-mode raises на lazy-loaded relation в рендере — controller-тест с N+1 fail'ит. Django: `silk` middleware в test-settings или кастомный query-counter (`assertNumQueries(N)`). SQLAlchemy: `strict_loading_for_polymorphic` + ассерт на query count. Hibernate: `org.hibernate.Statistics` для assert query count per test. Паттерн один: PR триггерит тесты, тесты делают запросы, query counter превышает per-endpoint threshold, тест fail'ит, PR не мерджится. Production-команды с таким гейтом репортуют 70-90% сокращение N+1 инцидентов, доходящих до production. Стартовая цена: 1-2 недели (инструментирование + чистка исторических N+1). Ongoing maintenance: тривиально — гейт бежит в CI.</p>
+    <p><strong>Параллелизация: fan-out вариант.</strong> Форма N+1 расширяется на non-database fan-out: 8 downstream-сервисов serial = 8x latency vs 1x для slowest. Фикс — concurrency: Promise.all (JS), errgroup.Wait (Go), CompletableFuture.allOf (Java), asyncio.gather (Python). То же структурное изменение: вместо `result1 = service1.call(); result2 = service2.call(); ...` — `[r1, r2, ...] = await Promise.all([service1.call(), service2.call(), ...])`. Wall-clock = max(latencies) вместо sum(latencies). Ограничения: сервисы со strict-зависимостями остаются serial; failure-handling должен учитывать partial-failure (часть успешна, часть нет — какой response?); coordination-overhead малый, но ненулевой. Сеньорное код-ревью для любого service-fan-out: флагать любой await/wait в loop'е по service-вызовам. Фикс — один diff, одна декларативная parallel-collect.</p>
+    <p><strong>Анатомия observability: что именно мониторить.</strong> Production-grade observability для N+1 строится на трёх метриках. (1) Queries-per-request histogram by endpoint — публикуется middleware на каждом успешном запросе. Группировка по controller#action; визуализация p50/p99/max. Алерт при p99 endpoint'а &gt; 20 или росте &gt; 50% неделя-над-неделей. (2) Database span count per request — captured APM (Datadog auto-instrumentation, Tempo, Honeycomb). Trace-водопад показывает сразу, что один запрос делает 100 DB-вызовов. Алерт при росте per-endpoint p95 на &gt; 30%. (3) Connection pool wait time — pgbouncer cl_waiting metric или Rails ActiveRecord pool stats. Pool wait &gt; 10мс — leading indicator, что N+1 endpoint держит соединения дольше, чем pool успевает rotating. Три метрики вместе диагностируют 95% случаев за минуты вместо часов. Дашборд layout: per-endpoint table с p99 query count + p99 latency + pool-wait, сортируемая по любому столбцу. On-call открывает таблицу при page-out, видит top-3 нарушителя, выбирает один для немедленной правки.</p>
+    <p><strong>Структурные альтернативы: когда даже batch недостаточен.</strong> Для путей с latency-extreme требованиями (high-frequency trading, real-time bidding, live-видео) даже 2-3 запроса дороги. Денормализация — выход. Counter cache (Rails counter_cache, Django annotate + cache, Mongo precomputed counters): хранит derived-данные в parent-записи; вместо count() на каждый запрос — одно SELECT поля. Materialized view (Postgres MATERIALIZED VIEW, Snowflake, ClickHouse): пре-вычисляет complex join + aggregation; страница фетчит одним запросом полностью готовый view. CQRS read model: write-side обновляет normalised схему, event-handler пишет в read-optimised таблицу с предварительно joined-данными. Tradeoff: write-side сложность и storage cost. Когда применять: read p99 SLO &lt; 50 мс на тяжёлых join'ах И read-load в 1000+ раз больше write-load. Для balanced workload'ов ORM eager-loading проще и достаточно. Дополнительный сигнал: если команда обсуждает CQRS на путях с read-load &lt; 100x write-load, обычно это преждевременная оптимизация — eager-load на 2-3 запроса покрывает 99% workload'ов с куда меньшей операционной ценой. Денормализация должна следовать за измеримой невозможностью попасть в SLO, а не за подозрением, что «может быть быстрее». Архитектурный выбор обратим только формально: read-model раз введённый редко удаляется, и его поддержка стоит engineering-времени каждый квартал. Сеньорный фильтр: показать измерение, показать SLO-bound, показать невозможность eager-load решить — тогда денормализация оправдана. Без этого тройного критерия архитектура просто растёт без выигрыша, и через год команда платит сложностью за фикс, которого можно было избежать одной .includes-директивой.</p>
+    <NumbersCard
+      id="card-nplus1-numbers"
+      title="Цифры цены N+1"
+      stats={[
+        { label: "Типовой DB RTT (intra-DC)", value: "0,5-5 мс" },
+        { label: "Типовой DB RTT (cross-region)", value: "10-50 мс" },
+        { label: "ORM-страница на 50 запросов (intra-DC)", value: "100-300 мс" },
+        { label: "Те же 50 строк через JOIN", value: "5-20 мс" },
+        { label: "IN-list практический лимит (Postgres)", value: "10k+ (planner cost растёт)" },
+        { label: "IN-list практический лимит (MySQL)", value: "65 535 (max_allowed_packet)" },
+        { label: "Postgres prepared-statement parse savings", value: "~30-50% на повтор" },
+        { label: "DataLoader batch window", value: "1 event-loop tick (типично <1 мс)" },
+      ]}
+    />
+    <Misconception id="mc-orm-magic">
+      <p><strong>«ORM обрабатывает это автоматически».</strong> Ни один не обрабатывает. Все современные ORM поставляют lazy loading по умолчанию — это и есть ловушка N+1. Anti-N+1 фичи (.includes, .preload, joinedload, FetchType.EAGER) есть, но их нужно использовать — декларируй заранее или получай N+1.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-nplus1-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      title="Детект и фикс N+1 в Rails/Django/SQLAlchemy приложении"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Постановка.</strong> /orders занимает 1200 мс p99. CPU-профиль не показывает широкого leaf'а. Rails ORM-логгер на один запрос:</p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT * FROM orders WHERE user_id = 42 LIMIT 50
+SELECT * FROM customers WHERE id = 1
+SELECT * FROM customers WHERE id = 2
+SELECT * FROM customers WHERE id = 3
+...
+SELECT * FROM customers WHERE id = 50
+
+# 51 запрос × ~20 мс RTT = ~1020 мс — совпадает с p99 страницы.
+
+# Код приложения:
+@orders = Order.where(user_id: current_user.id).limit(50)
+@orders.each do |order|
+  render :partial, locals: { order: order, customer: order.customer }
+end
+
+# Каждый order.customer триггерит свежий запрос customer.
+
+# Фикс: eager-load с .includes
+@orders = Order.where(user_id: current_user.id).includes(:customer).limit(50)
+# Теперь Rails выпускает:
+#   SELECT * FROM orders WHERE user_id = 42 LIMIT 50;
+#   SELECT * FROM customers WHERE id IN (1, 2, ..., 50);
+# 2 запроса вместо 51.
+
+# Эквиваленты в других ORM:
+# Django: .select_related('customer').filter(user=request.user)[:50]
+# SQLAlchemy: .options(selectinload(Order.customer)).filter_by(...).limit(50)
+# Prisma: prisma.order.findMany({ where: { ... }, include: { customer: true } })
+
+# Пере-измерение: p99 страницы падает с 1200мс до ~80мс.`}</code></pre>
+            <p><strong>Паттерн.</strong> Детект через query log или APM trace. Фикс — eager-load примитив ORM. Верификация — query count падает до 2 (или сколько предсказали). p99 падает по Амдалу на доле round-trip'ов — типично 5-20x для N+1 фикса на list-странице.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "Если страница рендерит дерево team → projects → members и наивный код триггерит 1 + N + N*M запросов, какая ORM-директива (любая экосистема) уменьшает до ~3?",
+          blanks: [
+            { id: "directive", expected: "nested eager", placeholder: "стиль директивы" },
+          ],
+        },
+        blank: {
+          prompt: "Почему IN-based eager-load (2 запроса) часто бьёт JOIN-based eager-load (1 запрос) для one-to-many?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>JOIN дублирует parent-колонки на каждую child-строку. 50 заказов с 5 line items каждый как JOIN — 250 строк, где 200 колонок повторяют parent. Сетевой payload + ORM-парсинг могут перевесить RTT-экономию второго запроса, особенно если parent-колонки большие. IN-подход — 2 запроса, без дублирования: 50 order-строк + 250 line-items суммарно. Для большинства one-to-many workload'ов IN бьёт JOIN; для one-to-one JOIN выигрывает — нет дублирования.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "directive:include": "Близко — Rails .includes, Prisma include. Другие ORM: Django select_related/prefetch_related, SQLAlchemy joinedload/selectinload. Категория — 'eager loading' или 'preload'.",
+        "directive:join": "JOIN — SQL-примитив; ORM-директива, оборачивающая eager-loading, использует JOIN или IN под капотом в зависимости от cardinality. Имена директив: includes (Rails), select_related (Django), joinedload/selectinload (SQLAlchemy).",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="REST-эндпоинт зовёт 8 downstream-микросервисов для сборки ответа, каждый ~30 мс. Общая latency 240 мс. Самое общее семейство фикса?"
+      choices={[
+        { label: "Распараллелить downstream-вызовы (Promise.all / Future.join / errgroup), чтобы они шли concurrent. Total ≈ max latency ≈ 30 мс.", correct: true },
+        { label: "Сменить RPC-протокол на более быстрый", misconception: "Смена протокола даёт инкрементальные выигрыши; распараллеливание — структурный фикс с 8x serial на 1x parallel." },
+        { label: "Закэшировать ответы", misconception: "Кэширование помогает, если данные reusable между запросами; немедленный фикс serial fan-out — параллельный dispatch." },
+        { label: "Уменьшить кол-во сервисов", misconception: "Архитектурно — да, но тяжёлый ход; распараллеливание — per-request фикс." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="GraphQL-запрос имеет 'me { posts { author { name } } }' на 50 постах и триггерит 1 + 50 author-lookup'ов. Каноничный фикс?"
+      choices={[
+        { label: "DataLoader — батчит все author-ID по resolver-дереву и стреляет один запрос на тип на event-loop tick", correct: true },
+        { label: "Отключить GraphQL и использовать REST", misconception: "N+1 GraphQL — известная проблема с известным фиксом (DataLoader); уход — overkill." },
+        { label: "Лимитировать страницу до 10 постов", misconception: "Workaround, не фикс — underlying N+1 на меньшем масштабе." },
+        { label: "Добавить JOIN в resolver", misconception: "Не обобщается на multi-source данные; DataLoader обрабатывает кэш + батч автоматически." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="Страница, делающая .each { |x| redis.get(x.key) } по 100 items, бьёт Redis 100 раз. Redis-native one-trip фикс?"
+      choices={[
+        { label: "MGET — одна команда, фетчащая много ключей одним round-trip'ом. Или pipelining, если нужна условная логика per-item.", correct: true },
+        { label: "Перевести Redis в disk-mode", misconception: "Storage tier не помогает; платите за число round-trip'ов." },
+        { label: "Использовать Lua-скриптинг", misconception: "Lua хороши для atomic multi-op; MGET проще для batched reads." },
+        { label: "Добавить индекс", misconception: "У Redis нет SQL-индексов; фикс — меньше round-trip'ов." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      scenario="Команда владеет /dashboard, рендер 1,8 с p99. APM trace показывает 142 DB-span'а на запрос. Проследи диагноз и фикс."
+      steps={[
+        { prompt: "Шаг 1: 142 DB-span'а на один запрос. Первое чтение?", reveal: "Категоризируй запросы: один и тот же запрос, повторённый (классический N+1), или много разных, собирающих сложный view? Группируй по query template (parameterised SQL) и считай occurrence'ы." },
+        { prompt: "Шаг 2: query log: 1 × 'SELECT * FROM users', 30 × 'SELECT * FROM teams WHERE owner_id = ?', 80 × 'SELECT * FROM projects WHERE team_id = ?', 30 × 'SELECT count(*) FROM members WHERE project_id = ?'. Структура?", reveal: "Три уровня N+1. User-запрос — 30 owners (вероятно org). Потом per-owner teams-запрос (N=30). Потом per-team projects (N=80). И per-project members count (ещё 30). Nested N+1." },
+        { prompt: "Шаг 3: какая семья фикса на уровне?", reveal: "Уровень 1 (teams): preload .includes(:teams) или selectinload(User.teams). Уровень 2 (projects): nested .includes(teams: :projects) или chained selectinload. Уровень 3 (member counts): per-project count — особый случай; лучше counter cache (cached count column на project) или один aggregate-запрос SELECT project_id, count(*) FROM members WHERE project_id IN (...) GROUP BY project_id. Большинство ORM предлагают через .group + count или custom join." },
+        { prompt: "Шаг 4: предсказанное воздействие?", reveal: "С 142 запросов до ~4-5 (1 user, 1 teams preload, 1 projects preload, 1 aggregated members count). Доля round-trip'ов падает ~30x. p99 страницы падает с 1,8 с до ~80-150 мс (Амдал на ~80% latency, которая была round-trip-bound)." },
+        { prompt: "Шаг 5: верификация и предотвращение?", reveal: "Пере-измерь: query count в одних цифрах, p99 проходит SLO. Предотвращение: per-request query-count alerting (warn при 20, fail CI при 50). Rails strict_loading или Django silk middleware, выводящие lazy-load на PR-time. Runbook: 'страница медленная → query count первым'." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      scenario="Микросервис 'profile-aggregator' зовёт 12 downstream-сервисов на запрос, все serial. p99 — 480 мс. Проследи варианты фикса."
+      steps={[
+        { prompt: "Шаг 1: 12 serial-вызовов. Failure mode?", reveal: "Serial fan-out — каждый вызов ждёт предыдущий. С ~35-40 мс на вызов 12 serial = 420-480 мс, совпадает с p99. Bottleneck — wall-clock sequencing, не отдельный вызов." },
+        { prompt: "Шаг 2: первый фикс?", reveal: "Parallel fan-out — стреляй все 12 concurrent (Promise.all в Node, errgroup в Go, CompletableFuture.allOf в Java, asyncio.gather в Python). Total latency = max(latencies) + малый coordination overhead. С slowest ~50 мс total падает с 480 мс до ~60 мс." },
+        { prompt: "Шаг 3: edge case — некоторые вызовы зависят от других?", reveal: "DAG вызовов: сервисы без зависимостей стартуют сразу; dependent ждут только parents. Реализация — topological sort + parallel dispatch per level. У большинства fan-out API shallow DAGs (1-2 уровня зависимости); fully serial редко, обычно случайно." },
+        { prompt: "Шаг 4: вторая оптимизация — уменьшить число вызовов?", reveal: "Агрегировать downstream-сервисы, где имеет смысл: BFF (backend-for-frontend), GraphQL gateway с batched resolvers, или dedicated aggregator-сервис, в который downstream'ы push'ат. Уменьшает fan-out с 12 до 1-3. Tradeoff: больше архитектурной сложности за меньшую per-request latency." },
+        { prompt: "Шаг 5: какое governance предотвращает будущий serial fan-out?", reveal: "Lint-правило, отклоняющее `await` внутри for-loop'а по service-вызовам (Node/JS). Чек-лист код-ревью: 'этот цикл зовёт удалённый сервис N раз — батчится ли?'. Observability: dashboard-панель per service, показывающая 'fan-out factor' (downstream-вызовы на inbound-запрос); алерт при росте. PR-time: trace-assertion'ы в нагрузочных тестах могут fail'ить PR, увеличивающие fan-out за порог." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      prompt="Расставь шаги сеньорной атаки N+1:"
+      items={[
+        "Диагноз: включить DB query log или APM trace, считать queries per request, искать повторные похожие",
+        "Идентифицировать call site (часто loop по parents с lazy-доступом к child relation)",
+        "Выбрать семью фикса по cardinality: one-to-one → JOIN, one-to-many → IN/selectinload, multi-source → DataLoader",
+        "Применить ORM-директиву (includes / select_related / joinedload / etc.) или batch loader",
+        "Верификация — пере-чтение query log: count падает до 2-5 с N+1",
+        "Пере-измерить p99 — типовой N+1 фикс даёт 5-20x",
+        "CI-гейт: per-request query count budget, fail PR'ов, регрессирующих",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Пройди четыре семьи фиксов N+1 с одним примером, когда каждая — правильный выбор.",
+          answer: <p><strong>JOIN</strong> — забрать parent и child одним запросом через SQL JOIN. Правильно, когда relation one-to-one или малый one-to-many (1-5 children на parent), и parent-колонки маленькие. Пример: order → shipping_address (1:1) → один запрос JOIN. <strong>IN (...)</strong> — первый запрос даёт parent ID, второй фетчит children WHERE id IN (...). Правильно для one-to-many, где children сильно fan-out'ятся. Пример: 50 orders → все их line items → один orders + один line_items WHERE order_id IN (...). 2 round-trip'а, без дублирования. <strong>Eager loading / preload</strong> — ORM-директива (Rails .includes, Django .select_related, SQLAlchemy joinedload/selectinload, Hibernate FetchType.EAGER, Prisma include). Декларирует intent; ORM выбирает JOIN или IN под капотом. Правильно, когда хотите декларировать relations и дать framework'у оптимизировать. Пример: User.includes(:posts, :comments).first(100) — одна декларативная строка, ORM выбирает стратегию. <strong>DataLoader / batch loader</strong> — request-scoped батчинг: queueing child ID по всему запросу, один батч-запрос на тип на event-loop tick. Правильно для GraphQL (resolvers могут просить данные из многих точек), HTTP fan-out API, любого контекста, где один тип данных просится из многих несвязанных code-path'ов. Пример: GraphQL-запрос с deeply-nested полями, всем нужен User lookup; DataLoader батчит все user-ID в один запрос. У каждой семьи tradeoff'ы: JOIN раздувает payload, IN имеет лимиты, preload over-fetches при небрежности, DataLoader добавляет request-scope сложность. Сеньорный выбор зависит от cardinality, payload, потребления.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Почему N+1 невидим CPU-профилю и какие инструменты показывают его корректно?",
+          answer: <p>CPU-профиль сэмплирует стек running-потоков. N+1 не жжёт CPU нигде — каждый запрос диспатчится за микросекунды, программа ждёт БД (off-CPU), ответ возвращается, следующий идёт. Wait — bottleneck, но wait off-CPU; профиль видит быстрые блики, ничего широкого. Cumulative-цена распределена по многим быстрым операциям, не сконцентрирована в одной медленной функции, которую CPU-профайлеры находят. Инструменты, корректно показывающие N+1: (а) DB query log — Postgres log_min_duration_statement=0, MySQL slow query log, SQL Server extended events или ORM-side логирование (Rails ActiveRecord::Base.logger, Django LOGGING с django.db.backends DEBUG, SQLAlchemy echo=True). Сигнатура: десятки похожих запросов на запрос, часто отличающиеся только параметром. (б) APM tracing — Datadog APM, New Relic, Grafana Tempo, Honeycomb с auto-instrumentation. Trace-водопад показывает DB-span'ы inline с code-исполнением; N+1 проявляется как ряд из 30-100 коротких DB-span'ов на одном trace'е. (в) Off-CPU профилирование — eBPF off-CPU, Java async-profiler в wall-clock mode, JFR socket-wait events. Показывает, что приложение тратит большую часть wall-time, ждя DB-сокет, не работая. (г) Request-level счётчики — middleware, считающий queries-per-request, логирующий (&gt;20) или алертящий (&gt;50). Production-grade команды выставляют это метрикой (queries_per_request histogram by endpoint) и алертят при росте per-endpoint p99 query count. Правильный диагностический инструмент — тот, что считает запросы на запрос и сортирует по endpoint'у; CPU-профиль — неправильный для этого класса.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>Внутренности DataLoader.</strong> Facebook dataloader (2015) стал каноничным паттерном. Механизм: в request-scope код зовёт <code>loader.load(id)</code>, возвращающий Promise. Loader не исполняет немедленно — queue'ит ID в batch. Когда event loop доходит до next-tick (после текущей синхронной работы), loader выстреливает один batched-запрос (<code>SELECT * FROM users WHERE id IN (queued_ids)</code>), получает все результаты, резолвит каждый Promise соответствующей строкой. Паттерн даёт три свойства: (1) автоматический батчинг — много load() вызовов = один запрос, (2) автоматический кэш — повторный load(id) внутри запроса возвращает кэш, без второго запроса, (3) request-scope — кэш scoped на запрос, stale-данные не утекают. Реализации: graphql/dataloader (Node), graphql-java/dataloader (Java), aiodataloader (Python), Promise.from в C#. Паттерн фундаментально привязан к async/promise рантаймам, потому что опирается на event-loop ticks; синхронные кодбазы нуждаются в explicit batch-coordination.</p>
+    <p><strong>Prepared statements и parse-once кэш.</strong> Даже когда N+1 неизбежен (legacy-код, exploratory queries), prepared statements режут overhead. Каждый unparameterised запрос проходит parse + plan + bind + execute; prepared statements делают parse + plan один раз, потом bind + execute много раз. PostgreSQL: <code>PREPARE myquery AS SELECT ...</code> потом <code>EXECUTE myquery(?)</code>. MySQL имеет эквивалент. ORM используют prepared statements по умолчанию для parameterised-запросов — ORM-side binding параметров (?, $1, :name) — это и есть prepared-statement-протокол. Экономия: типично 30-50% на повторный запрос на Postgres в зависимости от сложности. Для сервиса с тысячами повторных запросов в секунду prepared statements могут уронить DB CPU на 10-30%. Tradeoff: connection-pool affinity (prepared statements connection-scoped в некоторых setup'ах; pgbouncer transaction mode отключает). Сеньоры знают, в каком mode pool гоняется и prepared ли их горячие запросы.</p>
+    <p><strong>Connection pool exhaustion как downstream failure mode.</strong> N+1-bound сервис с 50 запросами на запрос и connection pool size 25 — каждый запрос держит соединение через 50 serial-запросов. Throughput pool'а ограничен (медленный запрос × pool size). Под нагрузкой запросы queue'ятся, ожидая соединений; latency tail-spiral'ит; eventual 503. Проксимальный фикс: убрать N+1, чтобы каждый запрос держал соединение 2-5 запросов вместо 50, освобождая pool. Диагностическая сигнатура: метрика saturation pool'а высокая, query latency стабильна, request queue растёт. Production-grade observability отслеживает per-pool active-connection ratio + queue depth; алерт при ratio > 80% sustained или queue > 0 более секунд. Тот же паттерн в HTTP-client pools, gRPC connection pools, Redis pools — любом pooled-ресурсе, где hold-time — bottleneck.</p>
+    <p><strong>Cardinality, selectivity и изменения query plan.</strong> Фиксы N+1 могут изменить query plan БД неожиданно. <code>WHERE id IN (1, 2, ..., 1000)</code> может быть planned иначе, чем <code>WHERE id = 1</code> — Postgres может переключиться с index lookup на bitmap scan на seq scan в зависимости от selectivity-оценок. Hibernate "subselect" loading: <code>SELECT * FROM child WHERE parent_id IN (SELECT id FROM parent WHERE ...)</code> может дать совсем другой plan, чем основной parent-запрос. Сеньорная production-дисциплина: после фикса N+1 запусти EXPLAIN ANALYZE на новом запросе с production-data-sizes; убедись, что plan не регрессирует на edge case'ах (очень маленькие parent-сеты, очень большие, специальные параметры). Фикс, работающий на 50 строк, может деградировать на 5000 из-за plan-flip. Инструменты: Postgres pg_stat_statements + auto_explain.log_min_duration; MySQL performance_schema; SQL Server query store. Алерт на нестабильность плана на горячих запросах.</p>
+    <p><strong>Микросервисный вариант: синхронный fan-out.</strong> Когда приложение разделено на микросервисы, N+1 поднимается по стеку. «Profile aggregator» зовёт user-service, preferences-service, posts-service, notifications-service... серийно, через HTTP/gRPC. Та же проблема; round-trip теперь сетевой вместо TCP-to-localhost-Postgres, и стоит 1-10 мс вместо 0,5 мс. Фиксы: (1) параллелизация — все вызовы concurrent, max(latencies). Просто, немедленно, не уменьшает работу. (2) BFF / aggregator — отдельный сервис, зовущий downstream и возвращающий один composed-ответ; клиент делает один вызов. (3) Push-side denormalisation — downstream-сервисы публикуют события; aggregator держит read-optimised view локально. (4) GraphQL federation — одна схема через сервисы, GraphQL gateway батчит downstream. У каждого tradeoff'ы в consistency, latency, operational complexity. Сеньорный выбор: параллелизация внутри сервисов (дёшево), BFF для product-shaped ответов (среднее), federation для org-wide consistency (дорого, но reusable).</p>
+    <p><strong>Безопасность: query amplification как DoS.</strong> N+1-путь может быть attack-вектором. Если публичный эндпоинт даёт юзеру просить N items, и handler делает N+1 запросов на item, атакующий может уронить БД одним большим запросом. Реальные CVE: Strapi 2021 (CVE-2021-32820: deeply-nested filter мог амплифицировать запросы 1000x), различные GraphQL-провайдеры (циклические запросы дают экспоненциальный resolver-expansion), ранние Hasura (permission-фильтры неправильно ограничены). Митигации: query depth limits в GraphQL (apollo-validation-rules имеет graphql-depth-limit, graphql-query-complexity); per-request query budget на framework-уровне (Rails strict_loading + max queries middleware); cost analysis на GraphQL (apollo @cost директивы, Hasura automatic complexity analysis). Security framing: любой user-controlled параметр, мультиплицирующий query count, — DoS-вектор. Сеньорное код-ревью ORM-кода включает «может ли это амплифицировать запросы под hostile input».</p>
+    <p><strong>Альтернатива denormalisation.</strong> Когда даже 2-3 запроса дороги, денормализуй. Counter caches (Rails counter_cache, Django annotations, Mongo aggregations) хранят derived-данные в parent (posts_count на user) вместо вычисления per-request. CQRS read models дублируют write-side данные в purpose-built read-структуры. Materialized views (Postgres, BigQuery, ClickHouse, Snowflake) пре-вычисляют joins и aggregations. Каждый убирает round-trip'ы платой за сложность на write-time. Tradeoff: staleness (read-view отстаёт от write на мс-секунды), storage (держите несколько копий derived), maintenance (derivation logic должен оставаться корректным при schema-evolution). Сеньорные команды используют denormalisation для путей, где latency SLO bound враждебен (read p99 < 50 мс на тяжёлых join'ах) или load read-dominant (10000x reads vs writes). Для balanced workload'ов ORM eager-loading достаточно.</p>
+    <p><strong>История имени N+1.</strong> Термин вошёл в мейнстрим программирования около 2003-2005 с подъёмом ORM — особенно Active Record (Rails 2004) и Hibernate (Java, 2001+). Сам паттерн существовал в любой системе с lazy-loading: ORM 1990-х (TopLink, EOF), старые O-R bridges, даже hand-written JDBC-код, случайно итерирующий lazy-fetched relations. Имя «N+1» отражает worst case: 1 запрос на parent-collection, потом 1 на parent = 1 + N. К 2005-2008 паттерн в каждом Rails/Hibernate-учебнике; к 2010 — каноничный interview-вопрос. Подъём GraphQL (2015+) принёс вторую волну (resolver-per-field) и каноничный фикс (DataLoader). Форма теперь повторяется в каждом новом data-access framework'е — Prisma добавил include в 2020, каждый современный ORM поставляет. Паттерн старый; имя держится, потому что паттерн держится. Сеньоры знают, что «no N+1» — shorthand для «я валидировал query count».</p>
+    <p><strong>Production-провалы.</strong> Shopify 2016 — checkout-страница случайно регрессировала к N+1 на shipping-расчётах; outage. Slack 2018 — message-search попал в deeply-nested join, взорвавший query plan под search-result fan-out. Discord 2020 — GraphQL N+1 заставил per-channel resolvers fan-out'ить на permissions-сервис; DataLoader retrofit уронил DB-нагрузку на 40%. GitHub 2021 — repo-settings грузила 200+ запросов на рендер после refactor'а, введшего lazy-loading; reverted, потом отрефакторили с proper preload. LinkedIn 2023 — feed-aggregator делал 8-way serial RPC fan-out; распараллелили, p99 упал 6x. У каждой крупной engineering-org есть N+1 retro; паттерн повторяется при введении нового слоя или ORM. Runbook-запись в каждой зрелой команде: «страница медленная → query count первым; ищи N+1 до всего остального».</p>
+    <p><strong>Картина целиком.</strong> N+1 — семья фиксов для I/O-bound hot path'ов, где цена распределена по многим маленьким round-trip'ам. Диагноз — «много trip'ов, каждый быстрый»; фикс — «меньше trip'ов, батчем». Следующий фрагмент (batching) обобщает это на не-I/O контексты: когда много мелких операций доминируют, батч их. Капстоун плетёт N+1 детект + GC pressure + bundle budgets + profile-first в service-wide практику. Framework главы — profile, classify, apply right family, verify — применим и здесь: идентифицируй round-trip-цену, выбери JOIN/IN/preload/DataLoader, верифицируй падение query count, релизь diff.</p>
+    <Misconception id="mc-orm-magic-2">
+      <p><strong>«Добавлю индекс — починю N+1».</strong> Нет. Индексы делают отдельные запросы быстрее; N+1 — про КОЛИЧЕСТВО, не про скорость. Даже с идеальными индексами 100 запросов × 2 мс RTT = 200 мс — не меняется индексом. Фикс — меньше запросов, не быстрые запросы.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      scenario="GraphQL-сервис показывает p99 1,4 с на одном запросе 'me { teams { projects { members { name } } } }'. Проследи диагноз через resolver-level N+1."
+      steps={[
+        { prompt: "Шаг 1: натуральная форма N+1 в этом GraphQL?", reveal: "Четыре уровня вложенности; каждый resolver бежит раз на parent. teams: 1 запрос. projects (per team): N запросов. members (per project): M запросов. name (per member): K запросов, если реализовано наивно. Total = 1 + N + (N*M) + (N*M*K) — потенциально тысячи запросов при умеренном fan-out." },
+        { prompt: "Шаг 2: детект — как выглядит APM trace?", reveal: "Водопад с сотнями похожих DB-span'ов, все стреляют внутри resolver-дерева. Каждый resolver-level span показывает свой DB-вызов. Trace 'широкий и высокий' — много span'ов на каждом уровне. Это GraphQL N+1 сигнатура, отличная от REST N+1 (обычно один глубокий стек)." },
+        { prompt: "Шаг 3: каноничный фикс?", reveal: "DataLoader на каждом resolver-уровне. Один DataLoader на тип (TeamLoader, ProjectLoader, MemberLoader). Каждый resolver зовёт loader.load(id) вместо прямого запроса. DataLoader батчит все ID по дереву в один запрос на тип на запрос. Total: 1 (teams by owner) + 1 (projects WHERE team_id IN ...) + 1 (members WHERE project_id IN ...) + 1 (member names — обычно включено в member-fetch). С тысяч до 4-5." },
+        { prompt: "Шаг 4: предсказанное воздействие?", reveal: "Query count падает 100-1000x в зависимости от cardinality. p99 падает по Амдалу на round-trip-доле: если 90% 1,4 с — DB round-trip'ы, фикс убирает большую часть; p99 падает до ~150-200 мс. Остаток — data assembly + сериализация, теперь CPU-bound, не I/O." },
+        { prompt: "Шаг 5: governance — предотвращение?", reveal: "Регистрация DataLoader в GraphQL-context как обязательный boilerplate. Код-ревью: любой resolver, запрашивающий БД напрямую (не через loader), отклоняется. CI: load-test со сложным запросом, fail при превышении per-request query count threshold (например, 10). Observability: панель 'queries per GraphQL operation' алертит при регрессии." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      title="Диагноз N+1 из Rails ActiveRecord query log"
+      output={`# tail -f log/development.log | grep -E "SELECT|Loading"
+
+Started GET "/dashboard" for 127.0.0.1
+Processing by DashboardController#show as HTML
+
+User Load (0.4ms)        SELECT "users".* FROM "users" WHERE "users"."id" = 42
+Project Load (0.6ms)     SELECT "projects".* FROM "projects" WHERE "projects"."user_id" = 42 LIMIT 50
+Task Load (0.3ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 1
+Task Load (0.3ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 2
+Task Load (0.4ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 3
+... (ещё 47 похожих Task Load)
+Comment Load (0.2ms)     SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 1
+Comment Load (0.2ms)     SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 2
+... (ещё 243 похожих Comment Load)
+
+Completed 200 OK in 980ms (Views: 250.3ms | ActiveRecord: 689.4ms)`}
+      outputLang="log"
+      question="Total: 980 мс. ActiveRecord: 689 мс на 300+ запросов. Структура: User → 50 Projects → tasks → comments. Диагноз и multi-level фикс?"
+      hint="Два уровня N+1. Каждому нужен includes."
+      answer="Диагноз: классический nested N+1 на трёх уровнях. Уровень 1 — user → projects уже эффективен (один запрос). Уровень 2 — projects → tasks: N+1 (50 отдельных Task Load, по одному на проект). Уровень 3 — tasks → comments: N+1 поверх N+1 (200-300 отдельных Comment Load). Total: 1 user + 1 projects + 50 tasks + ~250 comments = ~300 запросов. При ~1 мс RTT в dev (Postgres localhost) — ~300 мс serial wall-clock, совпадает с ActiveRecord 689 мс (разница — parsing + result handling). Фикс: nested eager loading через Rails .includes с hash для глубины. Меняем `User.find(42).projects.limit(50)` на `User.find(42).projects.includes(:tasks => :comments).limit(50)`. Rails переводит в: 1 user + 1 projects + 1 'SELECT * FROM tasks WHERE project_id IN (1, 2, ..., 50)' + 1 'SELECT * FROM comments WHERE task_id IN (...)'. Total: 4 запроса. Эквиваленты в других ORM: Django `.select_related().prefetch_related('tasks__comments')`, SQLAlchemy `.options(selectinload(Project.tasks).selectinload(Task.comments))`, Prisma `include: { tasks: { include: { comments: true } } }`, Hibernate EntityGraph или @BatchSize(size=50). Предсказанное воздействие: query count с 300 до 4, ActiveRecord с 689 мс до ~10-20 мс, total страница с 980 мс до ~280 мс. Верификация: пере-загрузка страницы, в логе 4 запроса с IN-clause'ами. Предотвращение в production: Rails Bullet gem в dev/test для детекта missing includes; CI-ассерт, что critical-endpoints не превышают N запросов; APM-алерт при росте per-endpoint query count неделя-над-неделей."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      prompt="E-commerce /products рендерит 50 продуктов, у каждого category, brand, top 3 reviews, stock. Натуральный ORM-доступ создаёт ~200 запросов. Сеньорный фикс?"
+      options={[
+        { name: "Layered eager-load: nested includes/prefetch + DataLoader для shared lookups", summary: "Самое прагматичное.", correct: true, justification: "Применить ORM eager-loading для доминирующих иерархий (product → category, product → brand, product → top_reviews). DataLoader или counter cache для shared lookups (category by id может появляться много раз). Результат: 4-6 запросов вместо 200, без архитектурного переписывания. Типовой сеньорный выбор для стандартной product-страницы." },
+        { name: "Перевести на materialized view / CQRS read model", summary: "Лучшая latency, высшая цена.", justification: "Пре-вычислить весь product-listing в read-optimised таблицу; один запрос возвращает всё готовое. p99 < 10мс. Цена: write-side сложность (consistency, refresh, staleness). Оправдано для most-trafficked путей (homepage, search), overkill для стандартного product-list." },
+        { name: "GraphQL gateway с DataLoader на тип", summary: "Правильно для multi-source.", justification: "Если страница собирает данные из многих сервисов (catalog, inventory, reviews), GraphQL + DataLoader разруливает multi-source N+1 чисто. Для single-DB ORM-based страниц overkill — ORM eager-load проще." },
+        { name: "Закэшировать весь response страницы", summary: "Обходит проблему.", justification: "Кэширование помогает, если страница reusable между юзерами/запросами; не помогает для персонализированных страниц. Разумно для product-list-by-category для анонимов; не для logged-in персонализированных view'ов." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="Какая библиотека ввела паттерн DataLoader как каноничный фикс GraphQL N+1 и каков core-механизм?"
+      choices={[
+        { rfc: "Facebook `dataloader` npm-пакет (2015), теперь под graphql/dataloader", title: "DataLoader queue'ит ID по запросу, батчит в один запрос на тип на event-loop tick, кэширует результаты внутри запроса. Открыт Facebook в 2015 вместе с GraphQL.js; паттерн портирован на каждый язык с GraphQL.", correct: true },
+        { rfc: "Apollo Server", title: "Apollo Server использует DataLoader внутри, но не изобрёл паттерн." },
+        { rfc: "Rails .includes", title: "Rails .includes решает ORM-уровень N+1, но предшествует DataLoader и не request-scoped батчинг по resolver'ам." },
+        { rfc: "JPA EntityGraph", title: "JPA EntityGraph — Java/Hibernate-эквивалент eager loading, но не GraphQL-паттерн." },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      question="Команда добавляет .includes для фикса N+1; query count падает с 50 до 2. Но p99 ухудшается на 30%. Самое вероятное объяснение?"
+      choices={[
+        { label: "JOIN раздувает result set из-за дублирования parent-колонок per-child строку; сетевая + ORM parsing цена перевешивает экономию round-trip'ов. Переключиться с joinedload на selectinload (IN-based) для устранения дублирования.", correct: true },
+        { label: "Eager loading всегда медленнее", misconception: "Обычно eager loading быстрее; проблема в JOIN vs IN стратегии на этой cardinality." },
+        { label: "БД не поддерживает eager-load запрос", misconception: "Все major DB поддерживают; проблема в plan / payload size." },
+        { label: "Не хватает индексов", misconception: "Индексы влияют на per-query скорость, но симптом — payload-size цена, не query speed." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      prompt="Спроектируй programme детекта + предотвращения N+1 для 100-инженерного монолита (Rails или Django), где кодбаза накопила query-amplification годами. Цель: ловить N+1 на PR-time, устранить top-20 за 6 месяцев, не ломая velocity."
+      constraints={[
+        "Production: Postgres 14, несколько read replicas.",
+        "Existing observability: Prometheus + Grafana + Datadog APM с auto-instrumentation.",
+        "CI: GitHub Actions с parallel test runners.",
+        "Команда продукт-focused; perf-работа должна быть лёгкой и не блокировать фичи.",
+      ]}
+      canonical="Фаза 1, недели 1-2 — фундамент инструментирования. Добавить per-request query-counter middleware, выставляющий 'queries_per_request' histogram by endpoint в Prometheus. Datadog APM уже ловит DB-span'ы; настроить daily-репорт с 'top 10 endpoints by p95 query count'. Baseline: какие endpoint'ы сейчас превышают 20 запросов / запрос? Вероятно 30-50 кандидатов в 100-инженерном монолите. Фаза 2, недели 3-4 — test-time гейт. В Rails: 'bullet' gem в test-mode, configured RAISE на lazy-loaded relations при render. В Django: 'silk' или кастомный test-middleware. Гейт fires при unexpected N+1 в controller-тесте; тест fail'ит. Изначально warning-only (не блокировать merge) 2 недели — baseline и чистка очевидных. Фаза 3, недели 5-8 — top-20 атака. Daily-репорт top-10 by query count; каждый assign'ить owning-team. Каждый фикс — стандартный паттерн: диагноз (query log), apply .includes/.select_related/prefetch_related, пере-измерить (query count + p99), commit. Цель: 2-3 фикса/неделю в нормальном sprint'е. Шесть недель = 12-18 top-offender'ов. Фаза 4, недели 9-12 — конверсия warning→failure. Test-time gate с warning на failure. Новые PR с N+1 fail'ят CI. Существующие test-failures из non-fixed endpoint'ов — в backlog-ticket (visible) но bypass через per-endpoint allowlist (explicit, с fix-by-date). Паттерн: любой N+1 в коде = visible debt с deadline. Фаза 5, ongoing — observability. Datadog dashboard per service: queries_per_request p99 по времени. Алерт при росте p99 endpoint'а >50% неделя-над-неделей (потенциальная N+1 регрессия). Квартально: review top-20 by query count, plan next batch. Фаза 6 — культура. Одностраничный runbook: 'страница медленная → query count → если >5 на запрос, ищи N+1'. Распространение при on-call onboarding. Pattern library: wiki с 5-10 каноничными fix-примерами из своей кодбазы (анонимизированными). Чек-лист код-ревью: 'обращается ли этот controller / serializer к lazy relations в loop? Если да — eager-load директива'. Engineering-менеджер: 'queries-per-request' — один из quality-метрик команды; trend важнее абсолютного. Фаза 7 — escalation для hard cases. Часть N+1 структурна (deep nesting, multi-tenancy, polymorphic relations). Для них: architecture-review сессии: counter cache vs materialized view vs query rewrite. 1-2-дневные спайки/квартал, владельцы — perf-aware инженеры. Outcome-метрики на 6 месяцев: (1) ≥90% endpoint'ов с p99 query count <10, (2) ноль новых N+1 регрессий через CI-гейт, (3) минимум 15 исторических N+1 endpoint'ов починены, (4) on-call инциденты с 'slow page' → N+1 падают почти до нуля. Programme работает, потому что делает N+1 visible на multiple stages (test, PR, runtime, retro), конвертирует каждый encounter в малый фикс или tracked debt вместо невидимого роста."
+      keyPoints={[
+        "Per-request query-counter middleware → Prometheus histogram by endpoint.",
+        "Test-time N+1 гейт (bullet / silk) стартует warning, становится failure на неделе 9.",
+        "Top-20 worst offenders атака 2-3/неделю через нормальные sprints.",
+        "Datadog APM дашборды surface регрессии неделя-над-неделей.",
+        "Runbook + чек-лист код-ревью + pattern library институционализируют дисциплину.",
+        "Allowlist треккает debt с deadline'ами.",
+        "Архитектурный escalation для структурных случаев.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="ru"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Пройди, как DataLoader отличается от ORM eager loading, и когда какой инструмент правильный.",
+          answer: <p>ORM eager loading — декларативно внутри запроса: говоришь ORM 'фетча parent, забирай эти relations' через .includes / .select_related / joinedload и т.д. ORM выбирает JOIN или IN, исполняет небольшое число запросов upfront. Scope: один query plan, одна entry-point. Работает, когда знаешь заранее, на месте конструирования запроса, какие relations нужны consuming-коду. Ограничение: должно быть указано на query-boundary; если несколько code-path'ов потребляют ту же parent-коллекцию по-разному, либо over-fetch (preload всё), либо риск N+1 для non-preloaded путей. DataLoader — request-scoped батчинг: код зовёт loader.load(id) где нужно, loader queue'ит ID по всему запросу, выстреливает один батч на event-loop tick, кэширует результаты в запросе. Scope: весь запрос, многие entry-point'ы. Работает, когда много частей запроса нуждаются в lookup'ах по ID и заранее не знаешь, какие ID из каких entry-point'ов. Critical для GraphQL, где каждый resolver — потенциальный entry-point, но полезно и в REST при сборке страницы из многих сервисов/модулей. Tradeoff'ы: DataLoader требует async/event-loop рантайма; добавляет caching-слой (осторожно с мутациями в запросе); добавляет latency (ждёт batch-окно, типично &lt;1мс). ORM eager loading проще и быстрее для known-shape queries; DataLoader гибче для multi-source request-assembly. Правильный инструмент зависит от 'знаю ли я заранее, какие данные нужны этому запросу?' Да — eager-load. Разбросаны по многим code-path'ам — DataLoader.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Опиши, как N+1 в production может каскадировать в connection-pool exhaustion и какие observability-сигналы алертить.",
+          answer: <p>N+1-bound endpoint держит DB-соединение через много serial-запросов. С pool-size 25 и 50 запросами на запрос по ~2мс каждый, каждый запрос держит соединение ~100мс. Throughput per connection: ~10 req/s. Total across pool: 250 req/s. При нагрузке выше 250 req/s новые запросы queue'ятся, ждя соединений. Wait-time добавляется к perceived latency; queue добавляет memory pressure; некоторые timeout'ятся. Каскад: latency tail-spiral; failing health checks выталкивают pod'ы; оставшиеся видят больше нагрузки; eventual 503. Проксимальный фикс immediate-инцидента — убить N+1; если каждый запрос становится 2-3 вместо 50, throughput per connection с 10 до ~150 req/s, на порядок облегчение. Долгосрочный фикс тот же плюс capacity planning. Observability-сигналы: (а) Pool utilisation (active/max) 80%+ sustained — leading. (б) Connection wait-time на пуле (pgbouncer cl_waiting, Rails ActiveRecord pool wait stats) &gt;10мс — definitive trouble. (в) Queries per request p99 by endpoint &gt;20 — N+1 marker. (г) Per-endpoint p99 latency растёт при стабильной query latency — round-trip-cost рост. (д) Postgres 'pg_stat_activity' с многими, ждущими row locks или IDLE in transaction — connection-hold паттерны. Production-grade алертинг комбинирует pool utilisation + per-endpoint query count; когда оба spike — runbook направляет on-call на offending endpoint. Сеньорный паттерн: N+1 — не DB-проблема, application-concurrency проблема; фикс снимает DB-нагрузку как побочный эффект.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>N+1 = много мелких round-trip'ов доминируют wall-clock. Диагноз — query log или APM, не CPU-профиль. Семья: JOIN / IN / preload / DataLoader. Верификация — падение query count.</KeyTakeaway>
+
+<SpiralCue thread="latency">
+Тот же цикл, что и остальной пиллар: профиль называет hot path, hot-paths классифицирует I/O-bound, этот фрагмент даёт фикс. Round-trip — единица; уменьшение trip'ов — рычаг.
+</SpiralCue>
+
+**Пререквизиты:** `performance/01-profile-first`, `performance/02-hot-paths` — hotspot классифицирован как I/O-bound или syscall-bound.
+
+**Дальше:** `06-batching` — обобщённая семья: когда много мелких операций доминируют, батч. Применимо за пределами БД — syscall'ы, message queues, cache writes.
