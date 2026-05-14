@@ -4,24 +4,444 @@ lang: en
 pillar: performance
 chapter: 13-performance
 order: 5
-title: "N plus one"
-summary: "Coming soon — Performance: profile first"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "N+1: one logical operation, many round-trips"
+summary: "Why one screen renders into 200 database queries, the four fix patterns (JOIN, IN, batch-loader, prefetch) with their tradeoffs, and how the same problem repeats across REST, gRPC, and microservice fan-out."
+readingMin: 24
+status: ready
+prereqs: ["performance/01-profile-first", "performance/02-hot-paths"]
+spiral: ["latency", "statefulness"]
+personas: ["bea", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-nplus1
+  tradeoff: card-nplus1-numbers
+  failure_mode: mc-orm-magic
+  numbers: card-nplus1-numbers
 sources:
-  - https://example.com/placeholder
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://guides.rubyonrails.org/active_record_querying.html
+  - https://hibernate.org/orm/documentation/
+  - https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+  - https://github.com/graphql/dataloader
+  - https://shopify.engineering/improving-graphql-performance
+  - https://blog.cloudflare.com/scaling-up-or-out/
+  - https://docs.djangoproject.com/en/5.0/ref/models/querysets/
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Big-O lies. Cache behavior tells the truth. Where do you actually look?</Crux>
+When hot-paths classifies a bottleneck as syscall-bound or I/O-bound — many small round-trips dominating wall-clock — this piece is the fix family. The textbook example is the database N+1 query, but the same shape appears everywhere: HTTP fan-out, gRPC microservice calls, file reads in a loop, cache lookups in a loop. One logical operation that should be one call becomes N+1.
 
-_This piece is on the roadmap. Outline is in the chapter index._
+<Crux>One trip = fast. N+1 trips = slow. Each round-trip pays RTT; one query of 100 rows beats 100 queries of one row.</Crux>
+
+The N+1 problem is the most common production performance bug in any application that touches a database. The user requests "show me a list of orders with their customer names"; the ORM happily executes one query for orders, then one query per order to fetch the customer — 1 + N queries. With 50 orders on a page, that's 51 database round-trips for one page render. Each round-trip pays network RTT (1-5 ms intra-DC, 10-50 ms cross-region) plus query overhead. The page that should take 20 ms takes 500 ms — and the engineer cannot find it in any single function's CPU profile, because the cost is distributed across many fast calls.
+
+<TierAccordion id="tier-nplus1" lang="en">
+  <Fragment slot="junior">
+    <p><strong>What this is in one sentence.</strong> When one logical operation (load a page, render a list) turns into many small calls to the database or another service — instead of one bigger call that gets everything at once.</p>
+    <p><strong>Why care.</strong> Each round-trip pays a fixed cost (network time, query overhead). Doing 50 small queries is 30-50x slower than doing one query that fetches the same data. The page feels slow without any single function being slow.</p>
+    <p><strong>The metaphor.</strong> Cooking pasta, need garlic, oil, salt, basil. Option A: walk to the pantry once, grab all four, walk back. Option B: walk for garlic, walk back; walk for oil, walk back; repeat. Same work, four walks vs one. N+1 = option B; batch loading = option A. Reduce the walks.</p>
+    <p><strong>Bea and Sven.</strong> <PersonaTag id="bea" lang="en" /> ships /orders at 800 ms. CPU profile: nothing wide. <PersonaTag id="sven" lang="en" /> opens the query log: one SELECT * FROM orders, then 50 separate SELECT * FROM customers WHERE id = ?. 51 round-trips × ~15 ms = 765 ms. He adds JOIN customers; the page goes 800 ms → 40 ms.</p>
+    <p><strong>One scenario.</strong> A dashboard renders teams → projects → members. Naive ORM: 1 + N + M queries. With 10 teams × 5 projects × 8 members = 61 queries. Fix: preload in a single query or batch loader. Render drops 1.5 s → 80 ms.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="A page is slow but the CPU profile shows no wide functions. The database query log shows hundreds of small queries. What's the most likely cause?"
+      choices={[
+        { label: "N+1 query pattern — one logical operation is making many small round-trips. The cost is in the round-trips, not in any single function's compute, so the CPU profile doesn't surface it.", correct: true },
+        { label: "The database is slow", misconception: "Each individual query is fast; the problem is the COUNT of queries, not their speed." },
+        { label: "There's a memory leak", misconception: "Memory leaks don't cause hundreds of fast queries; they cause growing RSS." },
+        { label: "The profiler is broken", misconception: "The profiler is correctly showing no CPU hotspot — the bottleneck is round-trip latency, which CPU profile doesn't measure." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="Why does fetching 100 rows in ONE query beat fetching 100 rows in 100 queries?"
+      choices={[
+        { label: "Each round-trip has a fixed cost (network RTT + query parse + planner overhead). One query pays it once; 100 queries pay it 100 times, even if each query is itself fast.", correct: true },
+        { label: "One query uses less memory", misconception: "Memory is not the primary factor; round-trip count is." },
+        { label: "The database doesn't support 100 queries", misconception: "Databases can handle many queries; the cost is per-round-trip overhead." },
+        { label: "ORMs forbid it", misconception: "ORMs allow N queries — that's exactly the N+1 problem." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      prompt="Order the four common fix patterns for N+1, from simplest to most flexible:"
+      items={[
+        "JOIN — fetch parent and child in one query with a SQL join",
+        "IN (...) — first query gets parent IDs, second query fetches all children with WHERE child_id IN (parents)",
+        "Eager loading / preload — ORM directive that turns lazy access into one batched query",
+        "Batch loader (DataLoader) — collect all child IDs across the request, fire one batched query when the event loop yields",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      setup="Fill in the blank: an N+1 query pattern is N+1 _______ — each one fast on its own, but the total of all the trips is what makes the page slow."
+      accepted={["round-trips", "trips", "calls", "queries", "requests"]}
+      canonical="round-trips (each paying network latency + query parse + planner overhead)"
+      explanation="The unit of cost here is the round-trip: time from your code asking for data to time the data is in your hands. RTT, query parse, planner, lock acquisition, result encoding — all paid per query. One query of 100 rows pays them once; 100 queries pay them 100 times. The optimisation is reducing trips, not making individual trips faster."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "In one paragraph: explain to a teammate why the N+1 query problem is hard to find with a CPU profile and where to look instead.",
+          answer: <p>A CPU profile measures where the program spends compute time. The N+1 problem doesn't burn CPU in any one function — each query is dispatched quickly, the program waits for the database, the response comes back fast, and the next query goes. The wait is off-CPU; the CPU profile sees fast little blips with no wide leaf. The bottleneck is in the wall-clock between sending the query and receiving the result, not in compute. To find N+1, look at the database query log (Postgres log_min_duration_statement, MySQL slow query log, ORM logger), the application's request trace (Tempo / Jaeger / Datadog APM showing the full waterfall of queries), or a wall-clock / off-CPU profile that captures wait time. The signature is unmistakable: dozens to hundreds of small, similar queries per request, often the same SELECT differing only in the WHERE id = ? parameter. Once you see the pattern, the fix family is clear: turn the many queries into one through JOIN, IN, prefetch, or batch loading. The fix is structural — change how the ORM is asked, not how the database executes individual queries.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Why ORMs ship N+1 by default.</strong> Object-relational mappers expose a programming model where each object has fields and relationships, accessed like ordinary properties. <code>order.customer</code> reads as if it's a plain attribute; under the hood, the ORM triggers a query if the customer isn't yet loaded. This "lazy loading" is convenient — you don't have to declare what you need up front — but it's the source of N+1. Loop over orders, access <code>order.customer.name</code> on each, and you've fired N queries without writing N queries. The ORMs that try hardest to be transparent (Active Record, Django ORM, classic Hibernate sessions) make this trap especially easy to fall into. The pattern is so universal that every major ORM ships explicit anti-N+1 features: Rails <code>includes()</code>, Django <code>select_related()</code> / <code>prefetch_related()</code>, SQLAlchemy <code>joinedload()</code> / <code>selectinload()</code>, Hibernate <code>FetchType.EAGER</code> / <code>@BatchSize</code> / <code>EntityGraph</code>, Prisma <code>include</code>, GraphQL DataLoader. Each is a different shape of "tell the ORM in advance what you'll need, so it can fetch in one or two queries instead of N+1".</p>
+    <p><strong>The four fix families.</strong> (1) JOIN — fetch parent and child in one query (<code>SELECT * FROM orders o JOIN customers c ON o.customer_id = c.id</code>). One round-trip, but the result set duplicates parent columns for each child row. Good when the relationship is one-to-one or small one-to-many. Bad when one-to-many fans out (a parent with 100 children means 100 rows of parent data duplicated 100x). (2) IN — two round-trips: first fetch parents, then <code>SELECT * FROM customers WHERE id IN (1, 2, 3, ...)</code>. Avoids duplication, scales with parent count. Bad when the IN list grows huge (many DBs have practical limits around 1000-10000 elements; Postgres handles longer lists but query plan changes). (3) Preload / eager fetch — ORM-directed batched loading triggered by a single directive (Rails .includes, Django .select_related, SQLAlchemy joinedload). Under the hood, the ORM picks JOIN or IN strategy; you declare intent, the ORM picks tactics. (4) DataLoader / batch loader — request-scoped pattern: instead of executing queries immediately, queue child IDs across all parts of the request, batch them into one query when the event loop yields. Originally GraphQL-native (Facebook's dataloader package, 2015) but applicable to any request-response system. Best for GraphQL, fan-out APIs, or any context where many parts of the same request need similar data.</p>
+    <p><strong>Detection in profiles and traces.</strong> N+1 hides from CPU profiles. The right tools are: (a) Database query log with timestamps — Postgres <code>log_min_duration_statement=0</code> logs every query; MySQL slow log; SQL Server extended events. Grep by request-id; if you see dozens of similar queries for one request, that's N+1. (b) APM tracing (Datadog, New Relic, Tempo + auto-instrumentation): the trace waterfall shows database spans inline with code spans; a row of 50 similar DB spans on one request screams N+1. (c) ORM-side instrumentation: Rails has <code>strict_loading</code> mode that raises if a lazy load happens during request render; Hibernate has <code>spring.jpa.show-sql</code> + N+1 detection in tools like Hibernate Statistics. (d) Custom middleware that counts queries per request and alerts when count exceeds a threshold (typical: 20 queries per request triggers a warning in dev, 50 fails the test in CI). The strict mode + CI gate combination is the senior pattern: catch N+1 at PR time instead of in production.</p>
+    <p><strong>The math: why N+1 wrecks p99.</strong> Round-trip latency to the database is typically 0.5-5 ms intra-DC, 10-50 ms cross-region. A page that fires 50 queries pays 50 × RTT in serial wall-clock — minimum 25 ms intra-DC, 500 ms-2.5 s cross-region. Even with batch fixes, query count × per-round-trip cost is the dominant factor. p99 is worse than mean because RTT itself has a tail (any one of 50 queries hitting a slow planner pass, a locking blip, or a network jitter contributes its tail to the page's tail). A page with 50 queries amplifies any DB tail-latency by ~50x at the page level. Going from 51 queries to 2 queries doesn't just multiply mean by 25; it eliminates 49 chances to hit the DB's tail. Production teams running on per-request query budgets (e.g., max 5 queries per page render) maintain stable p99 even when individual queries fluctuate.</p>
+    <p><strong>Cross-protocol: N+1 is not just SQL.</strong> The same shape appears in HTTP fan-out (a microservice that calls 10 other microservices per request), gRPC streaming with per-row RPC, cache lookups in a loop (one Redis GET per item instead of one MGET), file reads (open/read/close per file instead of one batched read or mmap), even Kafka producer sends (one send per message instead of batched). The fix family is the same: collect, batch, send once, distribute results. For Redis: MGET / pipelined commands. For HTTP: GraphQL batched queries or aggregator service. For gRPC: streaming RPC or batch RPC. For file I/O: io_uring batched submission. The protocol changes; the pattern doesn't.</p>
+    <p><strong>The cost of fixes: payload bloat and cardinality.</strong> Each fix has its own cost. JOIN: result set inflates because parent rows duplicate for each child. A query returning 1000 orders with 5 line-items each as JOIN returns 5000 rows where 4000 of the columns are repeated parent data — network bandwidth + parsing cost can offset the round-trip savings. IN list: works well to ~1000 items; beyond that, DB query planning changes and some engines hit hard limits (Oracle has historical 1000-item IN limit; Postgres handles longer but planner cost grows). DataLoader: per-request memory for the batch queue, latency from the event-loop wait, complexity in caching. Preload (eager): if you preload too aggressively, you fetch data the request never uses — wasted I/O. Senior tuning chooses the fix family based on the workload's shape: one-to-one → JOIN, one-to-many fan-out → IN or selectinload, request-scoped multi-source → DataLoader.</p>
+    <p><strong>The 1+1 floor and when even one extra trip matters.</strong> The minimum round-trip count for a parent+child page is 1 (single JOIN query) or 2 (parent then batched children). For most workloads, 2 is fine — the IN approach is simpler than JOIN and avoids result-set duplication. For latency-extreme paths (HFT, gaming, real-time bidding) where every millisecond counts, even 1+1 is too many; teams pre-compute denormalised views (materialised views, write-time denormalisation, CQRS read models) so the page fetches with one query that returns everything ready. The tradeoff: write-side complexity + storage cost for read-side simplicity + latency. Senior teams pick CQRS / denormalisation only for paths where the latency win justifies the complexity; for everything else, 2-3 queries per request is the comfortable floor.</p>
+    <p><strong>The CI test-time gate.</strong> The most leveraged anti-N+1 mechanism is catching the regression at PR time, not in production. Rails: the `bullet` gem in test mode raises on any lazy-loaded relation accessed during request render — a controller test that triggers N+1 fails. Django: `silk` middleware in test settings, or a custom query counter (`assertNumQueries(N)` in Django's test framework). SQLAlchemy: enable `strict_loading_for_polymorphic` + manual `assertion that engine.scalar('select sum(...) from pg_stat_statements') stayed below threshold`. Hibernate: use `org.hibernate.Statistics` to assert query count per test. The pattern across all of them: PR triggers tests, tests fire requests, query counter exceeds the per-endpoint threshold, test fails, PR cannot merge. Production teams running this gate report 70-90% reduction in N+1 incidents reaching production. Initial setup cost: 1-2 weeks (instrumenting + baseline cleanup of historical N+1). Ongoing maintenance: trivial — the gate runs as part of CI.</p>
+    <p><strong>Parallelisation: the fan-out variant.</strong> The N+1 shape extends to non-database fan-out: 8 downstream services called serially per request = 8x latency vs 1x for the slowest. The fix is concurrency: Promise.all (JavaScript), errgroup.Wait (Go), CompletableFuture.allOf (Java), asyncio.gather (Python). Same structural change: instead of `result1 = service1.call(); result2 = service2.call(); ...` use `[r1, r2, ...] = await Promise.all([service1.call(), service2.call(), ...])`. The wall-clock becomes max(latencies) instead of sum(latencies). Limits: services with strict dependencies must remain serialised; failure-handling must consider partial failure (some calls succeed, some fail — what's the response?); coordination overhead is small but non-zero. Senior code review for any service-fan-out: flag any await/wait in a loop over service calls. The fix is one diff, one declarative parallel-collect.</p>
+    <p><strong>Observability anatomy: what to monitor.</strong> Production-grade observability for N+1 rests on three metrics. (1) Queries-per-request histogram by endpoint — published by middleware on every successful request. Grouped by controller#action; visualised p50/p99/max. Alert when endpoint p99 &gt; 20 or grows &gt; 50% week-over-week. (2) Database span count per request — captured by APM (Datadog auto-instrumentation, Tempo, Honeycomb). The trace waterfall shows at a glance that one request fires 100 DB calls. Alert when per-endpoint p95 grows &gt; 30%. (3) Connection pool wait time — pgbouncer cl_waiting metric or Rails ActiveRecord pool stats. Pool wait &gt; 10 ms is a leading indicator that an N+1 endpoint is holding connections longer than the pool can rotate. The three together diagnose 95% of cases in minutes. Dashboard layout: per-endpoint table with p99 query count + p99 latency + pool-wait, sortable. On-call opens it during page-out, sees the top-3 offenders, picks one for immediate fix.</p>
+    <p><strong>Structural alternatives: when batch isn't enough.</strong> For paths with latency-extreme requirements (HFT, real-time bidding, live video) even 2-3 queries are expensive. Denormalisation is the answer. Counter cache (Rails counter_cache, Django annotate + cache, Mongo precomputed counters): stores derived data on the parent record; instead of count() per request, one SELECT of a field. Materialised view (Postgres MATERIALIZED VIEW, Snowflake, ClickHouse): precomputes complex join + aggregation; the page fetches one query with a fully-ready view. CQRS read model: write-side updates normalised schema, event-handler writes to a read-optimised table with pre-joined data. Tradeoff: write-side complexity + storage cost. When to apply: read p99 SLO &lt; 50 ms on heavy joins AND read load 1000+ × write load. For balanced workloads, ORM eager-loading is simpler and sufficient.</p>
+    <NumbersCard
+      id="card-nplus1-numbers"
+      title="N+1 cost numbers"
+      stats={[
+        { label: "Typical DB RTT (intra-DC)", value: "0.5-5 ms" },
+        { label: "Typical DB RTT (cross-region)", value: "10-50 ms" },
+        { label: "ORM-style 50-query page (intra-DC)", value: "100-300 ms" },
+        { label: "Same 50 rows via JOIN", value: "5-20 ms" },
+        { label: "IN list practical limit (Postgres)", value: "10k+ (planner cost grows)" },
+        { label: "IN list practical limit (MySQL)", value: "65,535 (max_allowed_packet)" },
+        { label: "Postgres prepared-statement parse savings", value: "~30-50% per repeat query" },
+        { label: "DataLoader batch window", value: "1 event-loop tick (typically <1 ms)" },
+      ]}
+    />
+    <Misconception id="mc-orm-magic">
+      <p><strong>"My ORM handles this automatically."</strong> No ORM does. Every modern ORM ships lazy loading as the default, and lazy loading is exactly the N+1 trap. ORMs ship anti-N+1 features (.includes, .preload, joinedload, FetchType.EAGER) but you must use them — declare what you need up front, or get N+1 by default.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-nplus1-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      title="Detect and fix an N+1 query in a Rails/Django/SQLAlchemy app"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Setup.</strong> The /orders page takes 1200 ms p99. Profile shows no wide CPU leaf. The Rails ORM logger shows for one request:</p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT * FROM orders WHERE user_id = 42 LIMIT 50
+SELECT * FROM customers WHERE id = 1
+SELECT * FROM customers WHERE id = 2
+SELECT * FROM customers WHERE id = 3
+...
+SELECT * FROM customers WHERE id = 50
+
+# 51 queries × ~20 ms RTT = ~1020 ms — matches the page p99.
+
+# Application code:
+@orders = Order.where(user_id: current_user.id).limit(50)
+@orders.each do |order|
+  render :partial, locals: { order: order, customer: order.customer }
+end
+
+# Each order.customer triggers a fresh customer query.
+
+# Fix: eager-load with .includes
+@orders = Order.where(user_id: current_user.id).includes(:customer).limit(50)
+# Now Rails issues:
+#   SELECT * FROM orders WHERE user_id = 42 LIMIT 50;
+#   SELECT * FROM customers WHERE id IN (1, 2, ..., 50);
+# 2 queries instead of 51.
+
+# Equivalent in other ORMs:
+# Django: .select_related('customer').filter(user=request.user)[:50]
+# SQLAlchemy: .options(selectinload(Order.customer)).filter_by(...).limit(50)
+# Prisma: prisma.order.findMany({ where: { ... }, include: { customer: true } })
+
+# Re-measure: page p99 drops from 1200ms to ~80ms.`}</code></pre>
+            <p><strong>The pattern.</strong> Detect via query log or APM trace. Fix with the ORM's eager-load primitive. Verify the query count drops to 2 (or however few you predicted). p99 drops by Amdahl on the round-trip share — typically 5-20x for an N+1 fix on a list page.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "If a page renders a tree of teams → projects → members, and the naive code triggers 1 + N + N*M queries, which ORM directive (any ecosystem) reduces it to ~3 queries?",
+          blanks: [
+            { id: "directive", expected: "nested eager", placeholder: "directive style" },
+          ],
+        },
+        blank: {
+          prompt: "Why does the IN-based eager load (2 queries) often beat the JOIN-based eager load (1 query) for one-to-many?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>A JOIN duplicates parent columns for every child row. 50 orders with 5 line items each as JOIN returns 250 rows where 200 columns repeat the parent. The network payload + ORM parsing cost can outweigh the second round-trip's RTT, especially when parent columns are large. The IN approach sends 2 queries but no duplication: 50 order rows + 250 line-item rows total. For most one-to-many workloads, IN beats JOIN; for one-to-one, JOIN wins because there's no duplication.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "directive:include": "Close — Rails uses `.includes`, Prisma uses `include`. Other ORMs: Django `select_related`/`prefetch_related`, SQLAlchemy `joinedload`/`selectinload`. The category is 'eager loading' or 'preload'.",
+        "directive:join": "JOIN is a SQL primitive; the ORM directive that wraps eager-loading typically uses JOIN or IN under the hood depending on cardinality. The directive name is `includes` (Rails), `select_related` (Django), `joinedload`/`selectinload` (SQLAlchemy).",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="A REST endpoint calls 8 downstream microservices to assemble a response, each one taking ~30 ms. Total latency is 240 ms. What's the most general fix family?"
+      choices={[
+        { label: "Parallelise the downstream calls (Promise.all / Future.join / errgroup) so they run concurrently. Total ≈ max latency ≈ 30 ms.", correct: true },
+        { label: "Switch to a faster RPC protocol", misconception: "Protocol changes give incremental wins; parallelisation gives the structural fix from 8x serial to 1x parallel." },
+        { label: "Cache the responses", misconception: "Caching helps if data is reusable across requests; the immediate fix for serial fan-out is parallel dispatch." },
+        { label: "Reduce the number of services", misconception: "Architectural option, but heavy lift; parallelisation is the per-request fix." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="A GraphQL query has 'me { posts { author { name } } }' on 50 posts and triggers 1 + 50 author lookups. What's the canonical fix?"
+      choices={[
+        { label: "DataLoader — batches all author IDs across the resolver tree and fires one query per type per event-loop tick", correct: true },
+        { label: "Disable GraphQL and use REST", misconception: "GraphQL's N+1 is a well-known issue with a well-known fix (DataLoader); switching away is overkill." },
+        { label: "Limit the page to 10 posts", misconception: "Workaround, not a fix — the underlying N+1 is still there at smaller scale." },
+        { label: "Add a JOIN in the resolver", misconception: "Doesn't generalise to multi-source data; DataLoader handles caching + batching automatically." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="A page that does .each { |x| redis.get(x.key) } over 100 items hits Redis 100 times. What's the Redis-native one-trip fix?"
+      choices={[
+        { label: "MGET — single command that fetches multiple keys in one round-trip. Or pipelining if results need conditional logic per item.", correct: true },
+        { label: "Switch Redis to disk-backed mode", misconception: "Storage tier doesn't help; you're paying for round-trip count." },
+        { label: "Use Lua scripting", misconception: "Lua scripts are good for atomic multi-op; MGET is the simpler fix for batched reads." },
+        { label: "Add an index", misconception: "Redis doesn't have SQL-style indexes; the fix is fewer round-trips." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      scenario="A team owns /dashboard which renders 1.8s p99. APM trace shows 142 database spans per request. Trace the diagnosis and fix."
+      steps={[
+        { prompt: "Step 1: 142 DB spans for one request. What's the first read?", reveal: "Categorise the queries: are they the same query repeated (classic N+1) or many different queries assembling a complex view? Group by query template (parameterised SQL) and count occurrences." },
+        { prompt: "Step 2: query log shows: 1 × 'SELECT * FROM users', 30 × 'SELECT * FROM teams WHERE owner_id = ?', 80 × 'SELECT * FROM projects WHERE team_id = ?', 30 × 'SELECT count(*) FROM members WHERE project_id = ?'. Read the structure.", reveal: "Three levels of N+1. The user query loads 30 owners (probably the org). Then for each owner, a teams query (N=30). Then for each team's projects, a project count query (N=80). And per-project member counts (another 30). Nested N+1." },
+        { prompt: "Step 3: which fix family per level?", reveal: "Level 1 (teams): preload with .includes(:teams) or selectinload(User.teams). Level 2 (projects): nested .includes(teams: :projects) or chained selectinload. Level 3 (member counts): per-project count is a special case — best handled by a counter cache (cached count column on project) or a single aggregate query SELECT project_id, count(*) FROM members WHERE project_id IN (...) GROUP BY project_id. Most ORMs offer this via .group + count or a custom join." },
+        { prompt: "Step 4: predicted impact?", reveal: "From 142 queries to ~4-5 queries (1 user, 1 teams preload, 1 projects preload, 1 aggregated members count). Round-trip share drops by ~30x. Page p99 drops from 1.8 s to ~80-150 ms (Amdahl on the ~80% of latency that was round-trip-bound)." },
+        { prompt: "Step 5: verify and prevent recurrence?", reveal: "Re-measure: query count must hit single digits, p99 must clear SLO. Prevention: add per-request query-count alerting (warn at 20, fail CI at 50). Add Rails strict_loading or Django's silk middleware to surface lazy loads at PR-time. Add a runbook entry: 'page slow → check query count first'." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      scenario="A microservice 'profile-aggregator' calls 12 downstream services per request, all serial. p99 is 480 ms. Trace fix options."
+      steps={[
+        { prompt: "Step 1: 12 serial calls. What's the failure mode?", reveal: "Serial fan-out — each call waits for the previous to complete. With ~35-40 ms per call, 12 in serial = 420-480 ms, matching p99. The bottleneck is wall-clock sequencing, not any single call." },
+        { prompt: "Step 2: first fix to consider?", reveal: "Parallel fan-out — fire all 12 calls concurrently (Promise.all in Node, errgroup in Go, CompletableFuture.allOf in Java, asyncio.gather in Python). Total latency becomes max(latencies) + small coordination overhead. With slowest call ~50 ms, total drops from 480 ms to ~60 ms." },
+        { prompt: "Step 3: edge case — some calls depend on others?", reveal: "DAG of calls: services with no dependencies start immediately; dependent calls wait only for their parents. Implement as a topological sort + parallel dispatch per level. Most fan-out APIs have shallow DAGs (1-2 levels of dependency); fully serial is rare and usually accidental." },
+        { prompt: "Step 4: second optimisation — reduce call count?", reveal: "Aggregate downstream services where it makes sense: BFF (backend-for-frontend) pattern, GraphQL gateway with batched resolvers, or a dedicated aggregator service that the downstream services push to. Reduces fan-out from 12 to 1-3. Tradeoff: more architectural complexity for less per-request latency." },
+        { prompt: "Step 5: what governance prevents future serial fan-out?", reveal: "Lint rule rejecting `await` inside a for-loop over service calls (Node/JS). Code-review checklist item: 'this loop calls a remote service N times — is it batched?'. Observability: dashboard panel per service showing 'fan-out factor' (downstream calls per inbound request); alert when it grows. PR-time: trace assertions in load tests can fail PRs that increase fan-out beyond a threshold." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      prompt="Order the steps of attacking an N+1 problem the senior way:"
+      items={[
+        "Diagnose: enable DB query log or APM trace, count queries per request, look for repeated similar queries",
+        "Identify the call site (often a loop over parents accessing a child relation lazily)",
+        "Pick the fix family by cardinality: one-to-one → JOIN, one-to-many → IN/selectinload, multi-source → DataLoader",
+        "Apply the ORM directive (includes / select_related / joinedload / etc.) or batch loader",
+        "Verify by re-reading query log: count should drop to 2-5 from N+1",
+        "Re-measure p99 — should drop by 5-20x for typical N+1 fixes",
+        "Add CI gate: per-request query count budget, fail PRs that regress",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Walk through the four fix families for N+1 with one example of when each is the right choice.",
+          answer: <p><strong>JOIN</strong> — fetch parent and child in one query with SQL JOIN. Right when relationship is one-to-one or small one-to-many (1-5 children per parent), and parent columns are small. Example: order → shipping_address (1:1) → one query with JOIN. <strong>IN (...)</strong> — first query gets parent IDs, second query fetches all children with WHERE id IN (...). Right for one-to-many where children fan out heavily. Example: 50 orders → all their line items → one orders query + one line_items WHERE order_id IN (...) query. Two round-trips, no duplication. <strong>Eager loading / preload</strong> — ORM directive (Rails .includes, Django .select_related, SQLAlchemy joinedload/selectinload, Hibernate FetchType.EAGER, Prisma include). The directive declares intent; the ORM picks JOIN or IN under the hood. Right when you want to declare relationships up front and let the framework optimise. Example: User.includes(:posts, :comments).first(100) — one declarative line, ORM picks optimal strategy. <strong>DataLoader / batch loader</strong> — request-scoped batching: queue child IDs across the entire request, fire a single batched query per type when the event loop yields. Right for GraphQL (where resolvers can request data from many points), HTTP fan-out APIs, or any context where the same type of data is requested from multiple unrelated code paths. Example: a GraphQL query with deeply-nested fields all needing User lookups; DataLoader batches all user IDs into one query. Each fix family has tradeoffs: JOIN bloats payload, IN has size limits, preload over-fetches if not used carefully, DataLoader adds request-scope complexity. The senior choice depends on the relationship's cardinality, payload size, and how the data is consumed.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Why is N+1 invisible in CPU profiles, and what tools surface it correctly?",
+          answer: <p>CPU profiling samples stack traces of running threads. The N+1 problem doesn't burn CPU in any one place — each query is dispatched in microseconds, the program waits for the database (off-CPU), the response returns, and the next query dispatches. The wait is the bottleneck, but the wait is off-CPU; the profile sees fast little blips. The cumulative cost is spread across many fast operations rather than concentrated in one slow function, which is what CPU profilers find. Tools that surface N+1 correctly: (a) Database query log — Postgres log_min_duration_statement=0, MySQL slow query log, SQL Server extended events, or ORM-side logging (Rails ActiveRecord::Base.logger, Django LOGGING with django.db.backends DEBUG, SQLAlchemy echo=True). The signature: dozens of similar queries per request, often differing only in parameter values. (b) APM tracing — Datadog APM, New Relic, Grafana Tempo, Honeycomb with auto-instrumentation. The trace waterfall shows database spans inline with code execution; an N+1 manifests as a row of 30-100 short DB spans in the request's trace. (c) Off-CPU profiling — eBPF off-CPU, Java async-profiler in wall-clock mode, JFR socket-wait events. Shows that the application is spending most wall-time waiting on the DB socket, not running code. (d) Request-level counters — middleware that counts queries per request and either logs (&gt;20 queries) or alerts (&gt;50 queries). Production-grade teams expose this as a metric (queries_per_request histogram by endpoint) and alert when an endpoint's p99 query count grows. The right diagnostic is whichever tool counts queries per request and lets you sort by endpoint; CPU profile is the wrong tool for this class of problem and using it leads to "the profile looks healthy but the page is slow" confusion.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>DataLoader internals.</strong> Facebook's dataloader (2015) became the canonical pattern. The mechanism: in a request scope, application code calls <code>loader.load(id)</code>, which returns a Promise. The loader doesn't execute immediately — it queues the ID in a batch. When the event loop reaches its next tick (after the current synchronous work finishes), the loader fires one batched query (<code>SELECT * FROM users WHERE id IN (queued_ids)</code>), receives all results, and resolves each Promise with its corresponding row. The pattern provides three properties: (1) automatic batching — many load() calls become one query, (2) automatic caching — repeated load(id) within the same request returns the cached result, no second query, (3) request scope — the cache is scoped to the request, so stale data doesn't leak across requests. Implementations: graphql/dataloader (Node), graphql-java/dataloader (Java), aiodataloader (Python), Promise.from in C# with similar libraries. The pattern is fundamentally tied to async / promise-based runtimes because it relies on event-loop ticks; synchronous codebases need explicit batch-coordination instead.</p>
+    <p><strong>Prepared statements and the parse-once cache.</strong> Even when N+1 is unavoidable (legacy code, exploratory queries), prepared statements cut overhead. Each unparameterised query goes through parse + plan + bind + execute; prepared statements parse + plan once, then bind + execute many. PostgreSQL: <code>PREPARE myquery AS SELECT ...</code> then <code>EXECUTE myquery(?)</code>. MySQL has equivalent. ORMs use prepared statements by default for parameterised queries — the ORM-side parameter binding (?, $1, :name) is exactly the prepared-statement protocol. Savings: typically 30-50% per repeated query on Postgres, depending on query complexity. For a service running thousands of repeated queries per second, prepared statements alone can drop DB CPU by 10-30%. The tradeoff: connection-pool affinity (prepared statements are connection-scoped in some setups; pgbouncer transaction mode disables them). Senior teams understand which pool mode they run and whether their hot queries are prepared.</p>
+    <p><strong>Connection pool exhaustion as a downstream failure mode.</strong> An N+1-bound service with 50 queries per request and a connection pool of size 25 has each request holding a connection through 50 serialised queries. Connection pool throughput is limited by the slowest query × pool size. Under load, requests queue waiting for connections; latency tail-spirals; eventual 503s. The proximate fix: kill the N+1 so each request holds a connection for 2-5 queries instead of 50, freeing the pool. Diagnostic signature: connection pool saturation metric high, query latency stable, request queue growing. Production-grade observability tracks per-pool active-connection ratio + queue depth; alert when ratio > 80% sustained or queue > 0 for more than seconds. The same shape applies to HTTP client pools, gRPC connection pools, Redis pools — any pooled resource where the hold-time is the bottleneck.</p>
+    <p><strong>Cardinality, selectivity, and query plan changes.</strong> N+1 fixes can change the database's query plan in ways that surprise. A query <code>WHERE id IN (1, 2, ..., 1000)</code> may be planned differently than <code>WHERE id = 1</code> — Postgres might switch from index lookup to bitmap scan to seq scan depending on selectivity estimates. Hibernate's "subselect" loading strategy executes <code>SELECT * FROM child WHERE parent_id IN (SELECT id FROM parent WHERE ...)</code>, which can produce a very different plan than the parent's main query. Senior production discipline: after fixing N+1, run EXPLAIN ANALYZE on the new query under representative data sizes; verify the plan doesn't regress for edge cases (very small parent sets, very large parent sets, special parameter values). The fix that works at 50 rows may degrade at 5000 because of plan flip. Tools: Postgres pg_stat_statements + auto_explain.log_min_duration; MySQL performance_schema; SQL Server query store. Alert on plan instability for hot queries.</p>
+    <p><strong>The microservice variant: synchronous fan-out.</strong> When the application is split into microservices, the N+1 shape moves up the stack. A "profile aggregator" calls user-service, preferences-service, posts-service, notifications-service... serially, each over HTTP/gRPC. Same problem; the round-trip is now network instead of TCP-to-localhost-Postgres, and each costs 1-10 ms instead of 0.5 ms. Fixes: (1) parallelise — fire all calls concurrently, take max(latencies). Easy, immediate, but doesn't reduce work. (2) BFF / aggregator — a dedicated service that calls downstream and returns one composed response; the client makes one call. (3) Push-side denormalisation — downstream services publish events; aggregator service maintains a read-optimised view it serves from local storage. (4) GraphQL federation — one schema across services, the GraphQL gateway batches downstream calls. Each has tradeoffs in consistency, latency, and operational complexity. Senior architectural choice: parallelise within services (cheap), use BFF for product-shaped responses (medium), federation for org-wide consistency (expensive but reusable).</p>
+    <p><strong>Security: query amplification as DoS.</strong> An N+1 path can be an attack vector. If a public endpoint allows the user to request N items, and the handler does N+1 queries per item, the attacker can crash the database with one large request. Real CVEs: Strapi 2021 (CVE-2021-32820: deeply-nested filter could amplify queries 1000x), various GraphQL providers (cyclic queries cause exponential resolver expansion), Hasura early versions (permission filters not properly bounded). Mitigations: query depth limits in GraphQL (apollo-validation-rules has graphql-depth-limit, graphql-query-complexity); per-request query budget enforced at framework level (Rails strict_loading + max queries middleware); cost analysis on GraphQL queries (apollo's @cost directives, Hasura's automatic complexity analysis). The security framing: any user-controlled parameter that multiplies query count is a DoS vector. Senior code review for ORM-using code includes "could this allow query amplification under hostile input".</p>
+    <p><strong>The denormalisation alternative.</strong> When even 2-3 queries are too expensive, denormalise. Counter caches (Rails counter_cache, Django annotations, Mongo aggregations) store derived data in the parent (e.g., posts_count on user) instead of computing per-request. CQRS read models duplicate write-side data into purpose-built read structures. Materialised views (Postgres, BigQuery, ClickHouse, Snowflake) precompute joins and aggregations. Each removes round-trips by paying complexity at write-time. Tradeoffs: staleness (read view lags writes by milliseconds to seconds), storage (you keep multiple copies of derived data), maintenance (the derivation logic must stay correct as schema evolves). Senior teams use denormalisation for paths where the latency SLO bound is hostile (read p99 < 50 ms on heavy joins) or where the load pattern is read-dominant (10000x more reads than writes). For balanced workloads, ORM eager-loading is enough.</p>
+    <p><strong>The history of the N+1 name.</strong> The term entered mainstream programming around 2003-2005 with the rise of object-relational mappers — particularly Active Record (Rails 2004) and Hibernate (Java, 2001+). The pattern itself existed in any system with lazy loading: ORMs in the 1990s (TopLink, EOF), older O-R bridges, even hand-written JDBC code that accidentally iterated lazily-fetched relations. The name "N+1" reflects the worst case: 1 query for the parent collection, then 1 per parent = 1 + N. By 2005-2008 the pattern was in every Rails/Hibernate book; by 2010 it was the canonical interview question. GraphQL's rise (2015+) brought a second wave of N+1 problems (resolver-per-field model) and the canonical fix (DataLoader). The shape now reappears in every new data-access framework — Prisma added include in 2020, every modern ORM ships it. The pattern is old; the name persists because the pattern persists. Senior engineers know that "no N+1" is shorthand for "I've validated my query count".</p>
+    <p><strong>Production failures.</strong> Shopify 2016 — checkout page accidentally regressed to N+1 on shipping calculations; outage. Slack 2018 — message search hit a deeply-nested join that exploded query plans under search-result fan-out. Discord 2020 — GraphQL N+1 caused per-channel resolvers to fan out to permissions service; DataLoader retrofit cut DB load 40%. GitHub 2021 — repo settings page loaded 200+ queries per render after a refactor introduced lazy loading; reverted, then refactored with proper preload. LinkedIn 2023 — feed-aggregator service was running 8-way serial RPC fan-out; parallelised, p99 dropped 6x. Every large engineering org has an N+1 retrospective; the pattern reappears whenever a new layer or ORM is introduced. The runbook entry exists in every mature team: "page slow → check query count first; look for N+1 before anything else".</p>
+    <p><strong>The bigger picture.</strong> N+1 is the fix family for I/O-bound hot paths where the cost is distributed across many small round-trips. The diagnosis is "many trips, each fast"; the fix is "fewer trips, batched". The next piece (batching) generalises this to non-I/O contexts: when many small operations dominate, batch them. The capstone weaves N+1 detection + GC pressure + bundle budgets + profile-first into a unified service-wide practice. The chapter's framework — profile, classify, apply the right family, verify — applies the same here as everywhere: identify the round-trip cost, pick JOIN/IN/preload/DataLoader, verify query count drops, ship the diff.</p>
+    <Misconception id="mc-orm-magic-2">
+      <p><strong>"Adding an index will fix the N+1."</strong> No. Indexes make individual queries faster; N+1 is about query COUNT, not per-query speed. Even with perfect indexes, 100 queries × 2 ms RTT each = 200 ms — unchanged by index. The fix is fewer queries, not faster queries.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      scenario="A team's GraphQL service shows p99 1.4 s on a single query 'me { teams { projects { members { name } } } }'. Trace the diagnosis through resolver-level N+1."
+      steps={[
+        { prompt: "Step 1: what's the natural N+1 shape in this GraphQL query?", reveal: "Four-level nesting; each level's resolver runs once per parent. teams: 1 query. projects (per team): N queries (one per team). members (per project): M queries (one per project). name (per member): could be K queries (one per member) if implemented naively. Total = 1 + N + (N*M) + (N*M*K) — potentially thousands of queries for moderate fan-out." },
+        { prompt: "Step 2: detection — what does the APM trace look like?", reveal: "A waterfall with hundreds of similar DB spans, all firing within the resolver tree. Each resolver-level span shows its database call. The trace looks 'wide and tall' — many spans at each nesting level. This is the GraphQL N+1 signature, distinct from REST N+1 (which is usually a single deep stack)." },
+        { prompt: "Step 3: canonical fix?", reveal: "DataLoader at each resolver level. Define one DataLoader per type (TeamLoader, ProjectLoader, MemberLoader). Each resolver calls loader.load(id) instead of querying directly. DataLoader batches all IDs across the resolver tree into one query per type per request. Total queries: 1 (teams by owner) + 1 (projects WHERE team_id IN ...) + 1 (members WHERE project_id IN ...) + 1 (member names — usually included in member fetch). From thousands to 4-5." },
+        { prompt: "Step 4: predicted impact?", reveal: "Query count drops by 100-1000x depending on cardinality. p99 drops by Amdahl on the round-trip share: if 90% of the 1.4s was DB round-trips, fix removes most of it; p99 falls to ~150-200ms. The remaining latency is the data assembly + serialisation, which is now CPU-bound, not I/O-bound." },
+        { prompt: "Step 5: governance — preventing future GraphQL N+1?", reveal: "Add DataLoader registration to the GraphQL context as required boilerplate. Code review: any resolver that queries DB directly (instead of via loader) gets rejected. CI: load-test with a complex query, fail if per-request query count exceeds threshold (e.g., 10). Observability: dashboard panel showing 'queries per GraphQL operation' alerts when an operation regresses." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      title="Diagnose an N+1 from a Rails ActiveRecord query log"
+      output={`# tail -f log/development.log | grep -E "SELECT|Loading"
+
+Started GET "/dashboard" for 127.0.0.1
+Processing by DashboardController#show as HTML
+
+User Load (0.4ms)        SELECT "users".* FROM "users" WHERE "users"."id" = 42
+Project Load (0.6ms)     SELECT "projects".* FROM "projects" WHERE "projects"."user_id" = 42 LIMIT 50
+Task Load (0.3ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 1
+Task Load (0.3ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 2
+Task Load (0.4ms)        SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 3
+... (47 more similar Task Load entries)
+Comment Load (0.2ms)     SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 1
+Comment Load (0.2ms)     SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 2
+... (243 more similar Comment Load entries)
+
+Completed 200 OK in 980ms (Views: 250.3ms | ActiveRecord: 689.4ms)`}
+      outputLang="log"
+      question="Total request: 980 ms. ActiveRecord: 689 ms across 300+ queries. The structure: User → 50 Projects → tasks per project → comments per task. What's the diagnosis and the multi-level fix?"
+      hint="Two levels of N+1. Each needs an includes."
+      answer="Diagnosis: classic nested N+1 across three levels. Level 1 — user → projects is already efficient (one query). Level 2 — projects → tasks is N+1: 50 separate Task Load queries, one per project. Level 3 — tasks → comments is N+1 on top of N+1: 200-300 separate Comment Load queries, one per task. Total: 1 user + 1 projects + 50 tasks + ~250 comments = ~300 queries. At ~1 ms RTT each in dev (Postgres on localhost), that's ~300 ms of round-trip serial wall-clock, matching the ActiveRecord time of 689 ms (the difference accounts for parsing + result handling). Fix: nested eager loading via Rails .includes with a hash to specify the nesting depth. Change `User.find(42).projects.limit(50)` to `User.find(42).projects.includes(:tasks => :comments).limit(50)`. Rails translates this into: 1 query for user + 1 query for projects + 1 query 'SELECT * FROM tasks WHERE project_id IN (1, 2, ..., 50)' + 1 query 'SELECT * FROM comments WHERE task_id IN (...)'. Total: 4 queries. Equivalent in other ORMs: Django `.select_related().prefetch_related('tasks__comments')`, SQLAlchemy `.options(selectinload(Project.tasks).selectinload(Task.comments))`, Prisma `include: { tasks: { include: { comments: true } } }`, Hibernate `EntityGraph` or `@BatchSize(size=50)` on the relationship. Predicted impact: query count from 300 to 4, ActiveRecord time from 689 ms to ~10-20 ms, total page from 980 ms to ~280 ms (250 ms views + 20 ms ActiveRecord + 10 ms overhead). Verification: re-load the page, check the log shows 4 queries with IN-clauses. Production prevention: add Rails `Bullet` gem in dev/test mode to detect missing includes; add a CI assertion that critical endpoints don't exceed N queries per request; add APM alerting if a per-endpoint query count regresses week-over-week."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      prompt="An e-commerce /products page renders 50 products, each with category, brand, top 3 reviews, and stock count. The natural ORM access creates ~200 queries per page. Pick the senior fix."
+      options={[
+        { name: "Layered eager-load: nested includes/prefetch + DataLoader for shared lookups", summary: "Most pragmatic.", correct: true, justification: "Apply ORM eager-loading for the dominant hierarchies (product → category, product → brand, product → top_reviews). Use DataLoader or counter cache for shared lookups (category by id might appear multiple times). Result: 4-6 queries instead of 200, no architectural rewrite. This is the typical senior choice for a standard product page." },
+        { name: "Switch the page to a materialised view / CQRS read model", summary: "Best latency, highest cost.", justification: "Pre-compute the entire product listing into a read-optimised table; one query returns everything ready. p99 drops to sub-10ms. Cost: write-side complexity (consistency, refresh logic, staleness handling). Worth it for the most-trafficked paths (homepage, search) but overkill for a standard product list." },
+        { name: "GraphQL gateway with DataLoader per type", summary: "Right for multi-source.", justification: "If the page assembles data from multiple services (catalog service, inventory service, reviews service), GraphQL + DataLoader handles the multi-source N+1 cleanly. For single-DB ORM-based pages, this is overkill — ORM eager-load is simpler." },
+        { name: "Cache the entire page response", summary: "Skips the problem.", justification: "Caching helps if the page is reusable across users/requests; doesn't help for personalised pages. Reasonable for product-list-by-category for anonymous users; doesn't apply for logged-in personalised views." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="Which library introduced the DataLoader pattern as the canonical GraphQL N+1 fix, and what is its core mechanism?"
+      choices={[
+        { rfc: "Facebook's `dataloader` npm package (2015), now under graphql/dataloader", title: "DataLoader queues IDs across a request, batches them into one query per type when the event loop ticks, and caches results within the request. Open-sourced by Facebook in 2015 alongside GraphQL.js; the pattern has been ported to every major language with GraphQL support.", correct: true },
+        { rfc: "Apollo Server", title: "Apollo Server uses DataLoader internally but didn't invent the pattern." },
+        { rfc: "Rails .includes", title: "Rails .includes solves ORM-level N+1 but predates DataLoader and isn't request-scoped batching across resolvers." },
+        { rfc: "JPA EntityGraph", title: "JPA EntityGraph is the Java/Hibernate equivalent of eager loading but isn't the GraphQL pattern." },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      question="A team adds .includes to fix N+1; query count drops from 50 to 2. But p99 worsens 30%. What's the likeliest explanation?"
+      choices={[
+        { label: "The JOIN inflates the result set because parent columns duplicate per child row; network + ORM parsing cost outweighs the round-trip savings. Switch from joinedload to selectinload (IN-based) to avoid duplication.", correct: true },
+        { label: "Eager loading is always slower", misconception: "Eager loading is usually faster; the issue is JOIN vs IN strategy for this particular cardinality." },
+        { label: "The database doesn't support the eager-load query", misconception: "All major DBs support it; the issue is plan / payload size." },
+        { label: "Indexes are missing", misconception: "Indexes affect per-query speed, but the symptom is payload-size cost, not query speed." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      prompt="Design an N+1 detection + prevention programme for a 100-engineer monolith (Rails or Django) where the codebase has accumulated query-amplification across the years. Goal: catch N+1 at PR time, eliminate the existing top-20 offenders in 6 months, ship without breaking velocity."
+      constraints={[
+        "Production: Postgres 14, multiple read replicas.",
+        "Existing observability: Prometheus + Grafana + Datadog APM with auto-instrumentation.",
+        "CI: GitHub Actions with parallel test runners.",
+        "Engineering team is product-focused; performance work must be lightweight and not block features.",
+      ]}
+      canonical="Phase 1, weeks 1-2 — instrumentation foundation. Add per-request query counter middleware to the application, exposing 'queries_per_request' histogram by endpoint to Prometheus. Datadog APM is already capturing DB spans; configure a daily report that lists 'top 10 endpoints by p95 query count'. Establish baseline: which endpoints currently exceed 20 queries / request? Likely 30-50 candidates from a 100-engineer monolith. Phase 2, weeks 3-4 — develop the test-time gate. In Rails: add the 'bullet' gem in test mode, configured to RAISE on lazy-loaded relations during request render. In Django: add 'silk' or a custom test middleware. The gate fires when a controller test triggers an unexpected N+1; the test fails. Initially run as warnings only (don't block merges) for 2 weeks to baseline and clean up obvious cases. Phase 3, weeks 5-8 — top-20 attack. Take the daily report's top-10 by query count; assign each to an owning team for fix. Each fix follows the standard pattern: diagnose (query log), apply .includes/.select_related/prefetch_related, re-measure (query count + endpoint p99), commit. Target: ship 2-3 fixes per week as part of normal sprints. Six weeks at this pace clears 12-18 top offenders. Phase 4, weeks 9-12 — convert warnings to failures. Move the test-time gate from warning to failure mode. New PRs that introduce N+1 fail CI. Existing test failures from un-fixed N+1 endpoints are tracked in a backlog ticket (visible) but bypassed via per-endpoint allowlist (declared explicitly, requires fix-by-date). The pattern: any N+1 in code = visible debt with a deadline. Phase 5, ongoing — observability. Datadog dashboard panel per service: queries_per_request p99 over time. Alert when an endpoint's p99 grows >50% week-over-week (potential N+1 regression). Quarterly: review top-20 by query count, plan next batch of fixes. Phase 6 — culture. One-page runbook: 'page slow → check query count → if >5 per request, look for N+1'. Distributed at on-call onboarding. Pattern library: a wiki page with 5-10 canonical fix examples from your own codebase (anonymised). Code-review checklist item: 'does this controller / serializer access lazy relations in a loop? If yes, add eager-load directive'. Engineering manager: 'queries-per-request' tracked as one of the team's quality metrics; trend matters more than absolute. Phase 7 — escalation path for hard cases. Some N+1 are structural (deep nesting, multi-tenancy, polymorphic relations). For these, schedule architecture-review sessions: counter cache vs materialised view vs query rewrite. These are 1-2 day spikes per quarter, owned by performance-aware engineers. Outcome metrics at 6 months: (1) ≥90% of endpoints have p99 query count under 10, (2) zero new N+1 regressions merged via the CI gate, (3) at least 15 historical N+1 endpoints fixed, (4) on-call incidents with 'slow page' root-causing to N+1 drop to near-zero. The programme works because it makes N+1 visible at multiple stages (test, PR, runtime, retro) and converts every encounter into a small fix or a tracked deficit, instead of letting the debt grow invisibly."
+      keyPoints={[
+        "Per-request query counter middleware → Prometheus histogram by endpoint.",
+        "Test-time N+1 gate (bullet / silk) starts as warning, becomes failure at week 9.",
+        "Top-20 worst offenders attacked at 2-3 / week through normal sprints.",
+        "Datadog APM dashboards surface regressions week-over-week.",
+        "Runbook + code-review checklist + pattern library institutionalise the discipline.",
+        "Allowlist tracks debt explicitly with deadlines.",
+        "Architectural escalation path for the structural cases.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="05-n-plus-one"
+      lang="en"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Walk through how DataLoader differs from ORM eager loading, and explain when each is the right tool.",
+          answer: <p>ORM eager loading is declarative within a query: you tell the ORM 'when you fetch this parent, also fetch these relations' via .includes / .select_related / joinedload / etc. The ORM picks JOIN or IN under the hood and executes a small number of queries upfront. Scope: a single query plan, one entry point. Works when you know up front, at the query construction site, what relations the consuming code will use. Limitation: must be specified at the query boundary; if multiple code paths consume the same parent collection differently, you either over-fetch (preload everything) or risk N+1 for paths not preloaded. DataLoader is request-scoped batching: code calls loader.load(id) wherever it needs a record, the loader queues IDs across the entire request, fires one batched query when the event loop ticks, and caches results within the request. Scope: the whole request, multiple entry points. Works when many parts of a request need lookups by ID and you don't know in advance which IDs from which entry points. Critical for GraphQL where every resolver is a potential entry point, but also useful in REST when assembling a page from multiple services or modules. Tradeoffs: DataLoader requires async/event-loop runtime; adds caching layer (must be careful with mutations within a request); adds latency (waits for the batch window, typically &lt;1ms). ORM eager loading is simpler and faster for known-shape queries; DataLoader is more flexible for multi-source request assembly. The right tool depends on the question 'do I know up front what data this request will need?' If yes — eager load. If the data needs are scattered across many code paths — DataLoader.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Describe how an N+1 problem in production can cascade into a connection pool exhaustion incident, and what observability signals to alert on.",
+          answer: <p>An N+1-bound endpoint holds a database connection through many serialised queries. With a connection pool size of 25 and 50 queries per request taking ~2ms each, each request holds a connection for ~100ms. Throughput per connection: ~10 req/s. Total throughput across the pool: 250 req/s. Once load exceeds 250 req/s, new requests queue waiting for connections. Wait time adds to perceived latency; the queue itself adds memory pressure; some requests time out. The cascade: latency tail-spirals as the queue grows; failing health checks pull pods out of rotation; remaining pods see even more load; eventual 503 service unavailable. The proximate fix for the immediate incident is killing the N+1 — if each request becomes 2-3 queries instead of 50, throughput per connection goes from 10 req/s to ~150 req/s, an order of magnitude relief. Long-term fix is the same plus capacity planning (more pool, more replicas, query budgets). Observability signals to alert on: (a) Connection pool utilisation (active / max) at 80%+ sustained — leading indicator. (b) Connection wait time on the pool itself (pgbouncer cl_waiting, Rails ActiveRecord connection pool wait stats) &gt; 10ms — definitive trouble. (c) Queries per request p99 by endpoint &gt; 20 — N+1 marker. (d) Per-endpoint p99 latency growing while individual query latency stable — round-trip-cost growth. (e) Database 'pg_stat_activity' showing many waiting on row locks or just IDLE in transaction — connection-hold patterns. Production-grade alerting combines pool utilisation + per-endpoint query count; when both spike, the runbook directs on-call to the offending endpoint. The senior pattern: N+1 isn't a database problem, it's an application-level concurrency problem; fixing it relieves database pressure as a side effect.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>N+1 = many small round-trips dominating wall-clock. Diagnose with query log or APM, not CPU profile. Fix family: JOIN / IN / preload / DataLoader. Verify by query count drop.</KeyTakeaway>
+
+<SpiralCue thread="latency">
+Same loop as the rest of the pillar: profile names the hot path, hot-paths classifies it as I/O-bound, this piece supplies the fix. Round-trip is the unit; reducing trips is the lever.
+</SpiralCue>
+
+**Prereqs:** `performance/01-profile-first`, `performance/02-hot-paths` — you need to have classified the hotspot as I/O-bound or syscall-bound before reaching here.
+
+**Next:** `06-batching` — the generalised fix family: when many small operations dominate, batch them. Applies beyond databases to syscalls, message queues, and cache writes.
