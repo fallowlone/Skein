@@ -148,3 +148,89 @@ Two threads do the work. The **main thread** owns Parse HTML, CSSOM construction
       ]}
     />
   </Fragment>
+  <Fragment slot="senior">
+    <p><strong>Forced synchronous layout (layout thrash).</strong> Layout is dirty-flag-driven: the browser batches style writes and only flushes them when it needs the latest geometry. The pathological case is a read-then-write loop in JS:</p>
+
+```javascript
+for (const row of rows) {
+  const w = row.offsetWidth;     // read → forces flush of pending writes
+  row.style.width = w + 10 + 'px'; // write → marks layout dirty again
+}
+```
+
+    <p>Each iteration forces the browser to compute layout to answer <code>offsetWidth</code>, then immediately dirties layout for the next iteration. N rows = N full layouts. A 5000-row list at 1 ms per layout = 5 seconds of main-thread blocking. DevTools shows this as a violet "Layout" bar followed by a "Forced reflow while executing JavaScript took XX ms" console warning.</p>
+
+    <p><strong>Compositor layer creation.</strong> Layers are not free. Each layer is a GPU bitmap that costs memory (width × height × 4 bytes) and a one-time paint. On a phone with 256 MB of GPU memory, fifty 1080p layers exhausts the budget; the browser evicts layers, re-rasterises on the fly, and the page stutters more than if you had not asked for layers at all. <code>will-change: transform</code> is a hint that says "this element will animate, please promote to a layer." Use it for the duration of the animation and remove it afterwards. Slapping <code>will-change: *</code> on a hundred elements is the will-change anti-pattern — you trade a known animation cost for an unknown memory bill.</p>
+
+    <p><strong>Why composite-only animations are special.</strong> Once an element is a layer, the main thread paints it once. From that point the compositor thread is the only consumer of <code>transform</code> and <code>opacity</code> changes; the main thread can be busy parsing a 200 KB JSON blob and the animation still runs at 60 fps. This is the architectural reason transform-based animations beat top/left animations by orders of magnitude — not "GPU is faster," but "the slow thread is no longer in the loop."</p>
+
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="02-render-pipeline"
+      lang="en"
+      label="DevTools console — Forced reflow warnings"
+      output={`[Violation] Forced reflow while executing JavaScript took 42 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 47 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 51 ms
+    at applyRowWidths (list.js:88)
+    ...`}
+      outputLang="log"
+      question="Three identical 'Forced reflow' warnings, all pointing at list.js:88 inside a resize handler. What pattern caused this and what is the surgical fix?"
+      hint="The function name 'applyRowWidths' is a hint. Look at the loop body — what does it read before each write?"
+      answer="The handler loops over visible rows and reads offsetWidth (or getBoundingClientRect) at the top of each iteration, then writes a style change at the bottom. The read forces a layout flush of the pending writes from the previous iteration. With N rows you trigger N forced layouts. The surgical fix is to batch reads and writes: first pass reads every row's offsetWidth into an array; second pass writes the new widths from the array. The browser then performs one layout pass for the whole batch. Time drops from O(N × layout) to O(layout). If you cannot decouple the reads from the writes, cache the width at component mount and recompute only when the parent actually changes size."
+    />
+    <TradeoffMatrix
+      id="card-composite-cost"
+      pieceSlug="02-render-pipeline"
+      lang="en"
+      prompt="Animate a card from y=0 to y=200 over 300 ms at 60 fps. Pick the implementation."
+      options={[
+        { name: "CSS animation on transform: translateY(...)", summary: "Composite-only, no main thread cost.", correct: true, justification: "Transform changes do not invalidate layout or paint. The element is promoted to a layer once; the compositor moves the GPU bitmap for the next 18 frames. Main thread is free to do anything else. This is the default for almost every UI animation." },
+        { name: "CSS animation on top: 0 → 200px", summary: "Layout per frame.", justification: "Top is a flow-affecting property. Each animation tick invalidates layout for the card and any sibling that depends on it. 18 layouts in 300 ms. On a complex page this is the difference between 60 fps and 20 fps." },
+        { name: "transform: translateY with will-change: transform set on mount, never removed", summary: "GPU memory leak.", justification: "Will-change reserves a layer for the lifetime of the element. A list of 100 cards permanently holds 100 layers — possibly 200 MB of GPU memory. Removed cards may not free the layer immediately. The fix is to set will-change just before the animation starts and remove it on animationend." },
+        { name: "requestAnimationFrame loop setting element.style.top each frame", summary: "Worst of both.", justification: "rAF still flips layout dirty flags via style writes to top. You also lose the browser's animation-aware scheduling (it cannot defer the work outside the user-visible window). Same cost as the second option, plus you wrote more code." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="02-render-pipeline"
+      lang="en"
+      question="Which W3C / WHATWG spec defines `will-change` — the property that hints to the browser an element is about to animate?"
+      choices={[
+        { rfc: "CSS Will Change Module Level 1 (W3C / CSSWG)", title: "Defines the will-change property, accepted values, and UA guidance", correct: true },
+        { rfc: "CSS Transforms Module Level 2", title: "Defines transform but not will-change" },
+        { rfc: "CSS Color Module Level 4", title: "Color spaces — unrelated to layer creation" },
+        { rfc: "HTML Standard", title: "Defines parsing and DOM, not CSS layer hints" },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="02-render-pipeline"
+      lang="en"
+      prompt="Design the scrolling behaviour for a virtualised chat list that holds 50 000 messages and must hit 60 fps on a mid-range Android phone."
+      constraints={[
+        "Frame budget: 16.67 ms. Realistic main-thread budget after browser overhead: ~10 ms.",
+        "Layout must not depend on off-screen rows.",
+        "Composite-only path during scroll. Layout and paint allowed only when new rows enter the viewport.",
+        "GPU memory: assume 200 MB available. Layer count must stay below 30 at any time.",
+        "Resize handler must not loop reads and writes (no forced reflow).",
+      ]}
+      canonical="Virtualise the list: only the rows in the viewport plus a small overscan (5-10 rows above and below) are mounted in the DOM. Use a single tall scrollable container whose height = totalRows × rowHeight; rows are absolutely positioned inside it with transform: translateY(index × rowHeight). Scroll handler does no DOM measurements — it reads scrollTop, computes the visible index range with integer math, and updates the rendered slice via React/Preact state. Each row uses transform-based positioning so a scroll moves rows on the compositor thread; layout only runs when the visible slice changes and new rows mount. Apply will-change: transform on the scroll-container only, removed when the scroll ends. Resize handler batches: first pass reads container height once, second pass writes any per-row state to a stable buffer; never read offsetWidth inside the per-row loop. Verify with DevTools Performance recording: scroll for 5 seconds, confirm zero 'Forced reflow' warnings, layout time per frame under 1 ms, composite per frame under 0.5 ms, no dropped frames in the FPS meter."
+      keyPoints={[
+        "Virtualisation caps DOM size regardless of dataset size.",
+        "Transform-based positioning routes scroll through the compositor.",
+        "Scroll handler does no measurements — pure math from scrollTop.",
+        "Will-change is scoped to the animating element and the active window.",
+        "Resize is batched: all reads, then all writes.",
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
