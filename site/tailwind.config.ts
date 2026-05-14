@@ -5,6 +5,56 @@ export default {
   theme: {
     extend: {
       colors: {
+        /* ─────────────────────────────────────────────
+           NEW editorial-technical tokens (P1 redesign).
+           Reference CSS variables so dark mode and density
+           switches propagate automatically.
+           ───────────────────────────────────────────── */
+        paper:    "var(--paper)",
+        "paper-2": "var(--paper-2)",
+        card:     "var(--card)",
+        "card-2": "var(--card-2)",
+        ink:      "var(--ink)",
+        "ink-2":  "var(--ink-2)",
+        muted:    "var(--muted)",
+        "muted-2": "var(--muted-2)",
+        rule:        "var(--rule)",
+        "rule-strong": "var(--rule-strong)",
+        hairline:    "var(--hairline)",
+        accent:      "var(--accent)",
+        ok:          "var(--ok)",
+        danger:      "var(--danger)",
+
+        /* pillar palette — base + 16% bg tint */
+        pillar: {
+          lilac:    "var(--p-lilac)",
+          "lilac-bg": "var(--p-lilac-bg)",
+          mint:     "var(--p-mint)",
+          "mint-bg":  "var(--p-mint-bg)",
+          peach:    "var(--p-peach)",
+          "peach-bg": "var(--p-peach-bg)",
+          sky:      "var(--p-sky)",
+          "sky-bg":   "var(--p-sky-bg)",
+          rose:     "var(--p-rose)",
+          "rose-bg":  "var(--p-rose-bg)",
+        },
+
+        /* personas — used by PersonaTag and persona-related dots */
+        pers: {
+          bea:   "var(--pers-bea)",
+          rex:   "var(--pers-rex)",
+          rita:  "var(--pers-rita)",
+          sven:  "var(--pers-sven)",
+          cara:  "var(--pers-cara)",
+          otto:  "var(--pers-otto)",
+          patty: "var(--pers-patty)",
+        },
+
+        /* ─────────────────────────────────────────────
+           LEGACY tokens — preserved so existing components
+           (pre-P1) keep rendering. Migrated piece by piece
+           in P2–P5. Do NOT use in new code.
+           ───────────────────────────────────────────── */
         panel: {
           lilac: { DEFAULT: "#EEEAFE", ink: "#7C3AED" },
           mint:  { DEFAULT: "#E6F6EE", ink: "#16A34A" },
@@ -13,25 +63,34 @@ export default {
           rose:  { DEFAULT: "#FCE7F3", ink: "#DB2777" },
         },
         bbg: {
-          teal: "#1FBFA8",
-          purple: "#7C3AED",
-          ink: "#1F2937",
-          muted: "#6B7280",
-          warn: "#DC2626",
+          teal:    "#1FBFA8",
+          purple:  "#7C3AED",
+          ink:     "#1F2937",
+          muted:   "#6B7280",
+          warn:    "#DC2626",
           success: "#16A34A",
-          annot: "#374151",
-          paper: "#FAFAFA",
+          annot:   "#374151",
+          paper:   "#FAFAFA",
         },
       },
+
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["ui-monospace", "Menlo", "monospace"],
+        /* new editorial stack */
+        display: ['"Fraunces"', '"Source Serif Pro"', "Georgia", "serif"],
+        body:    ['"Inter Tight"', '"Inter"', "ui-sans-serif", "system-ui", "sans-serif"],
+        mono:    ['"JetBrains Mono"', '"SF Mono"', '"Berkeley Mono"', "ui-monospace", "Menlo", "monospace"],
+        meta:    ['"Inter Tight"', "ui-sans-serif", "system-ui", "sans-serif"],
+
+        /* legacy alias — pre-P1 code uses `font-sans` (= Inter) */
+        sans: ['"Inter Tight"', '"Inter"', "ui-sans-serif", "system-ui", "sans-serif"],
       },
+
       boxShadow: {
         "soft-sm": "0 1px 2px rgba(0,0,0,0.04)",
         "soft":    "0 1px 3px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.04)",
         "soft-md": "0 2px 4px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.06)",
       },
+
       keyframes: {
         breath: {
           "0%, 100%": { transform: "scale(1)" },
