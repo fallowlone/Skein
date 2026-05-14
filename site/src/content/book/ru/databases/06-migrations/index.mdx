@@ -4,24 +4,508 @@ lang: ru
 pillar: databases
 chapter: 06-databases
 order: 6
-title: "Migrations"
-summary: "Скоро — Внутренности Postgres для прикладника"
-readingMin: 12
-status: stub
-prereqs: []
-spiral: []
-personas: []
+title: "Миграции схемы в PostgreSQL: блокировки, expand-contract и режим отказа очереди блокировок"
+summary: "Почему ALTER TABLE за долгим запросом замораживает базу, матрица блокировок Postgres, expand-contract для breaking changes, безопасные ADD COLUMN / NOT NULL / type-change, дисциплина CREATE INDEX CONCURRENTLY, pgroll и Atlas в 2026."
+readingMin: 26
+status: ready
+prereqs: ["01-relational-model", "02-indexes", "05-pooling"]
+spiral: ["statefulness", "latency"]
+personas: ["otto", "sven"]
 depth:
-  mechanism: tbd-mechanism
-  tradeoff: tbd-tradeoff
-  failure_mode: tbd-failure
-  numbers: tbd-numbers
+  mechanism: tier-migrations
+  tradeoff: card-migration-modes
+  failure_mode: mc-lock-queue
+  numbers: card-migration-numbers
 sources:
-  - https://example.com/placeholder
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/sql-altertable.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+  - https://xata.io/blog/migrations-and-exclusive-locks
+  - https://postgres.ai/blog/20210923-zero-downtime-postgres-schema-migrations-lock-timeout-and-retries
+  - https://github.com/xataio/pgroll
+  - https://atlasgo.io/
+  - https://squawkhq.com/
 ---
 
+import TierAccordion from "../../../../../components/pedagogy/TierAccordion.astro";
+import FadedExample from "../../../../../components/pedagogy/FadedExample.tsx";
+import RetrievalDrawer from "../../../../../components/pedagogy/RetrievalDrawer.tsx";
 import Crux from "../../../../../components/prose/Crux.astro";
+import SpiralCue from "../../../../../components/prose/SpiralCue.astro";
+import PersonaTag from "../../../../../components/pedagogy/PersonaTag.astro";
+import NumbersCard from "../../../../../components/layout/NumbersCard.astro";
+import Misconception from "../../../../../components/layout/Misconception.astro";
+import KeyTakeaway from "../../../../../components/prose/KeyTakeaway.astro";
+import Quiz from "../../../../../components/pedagogy/Quiz.astro";
+import DragOrder from "../../../../../components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "../../../../../components/pedagogy/MetaphorComplete.astro";
+import TraceScenario from "../../../../../components/pedagogy/TraceScenario.astro";
+import DebugLog from "../../../../../components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "../../../../../components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "../../../../../components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "../../../../../components/pedagogy/DesignPrompt.astro";
 
-<Crux>Почему запрос медленный и почему миграция опасна.</Crux>
+Пулинг (<a href="/ru/databases/05-pooling/">05-pooling</a>) показал, как транзакции держат соединения; этот фрагмент про особую транзакцию, держащую кое-что более разрушительное — AccessExclusiveLock на горячей таблице — и как senior-команды деплоят изменения схемы без выключения базы. Суть в FIFO очереди блокировок Postgres: когда DDL вроде `ALTER TABLE` не может сразу получить блокировку, потому что другая транзакция держит даже маленький read lock, DDL ждёт — и каждый последующий запрос к таблице встаёт в очередь за этим ждущим DDL, независимо от того, какой lock ему нужен. Один медленный `SELECT` + один нетерпеливый `ALTER TABLE` = вся таблица заморожена на время медленного SELECT. Фикс не «дождаться часов низкой нагрузки» (downtime в 2026 редко приемлем), а `SET lock_timeout` + retries + декомпозиция любого breaking change на серию всегда-безопасных, всегда-обратимых шагов через expand-contract. Senior-инструменты — pgroll, Atlas, Squawk, gh-ost-style online schema change — кодируют эти паттерны, чтобы инженеры не вспоминали наизусть.
 
-_Этот фрагмент в плане. Содержание см. в оглавлении главы._
+<Crux>ALTER TABLE берёт AccessExclusiveLock. Очередь FIFO. SET lock_timeout. Breaking changes — через expand-contract.</Crux>
+
+Миграция Postgres — это транзакция с DDL (`CREATE TABLE`, `ALTER TABLE`, `CREATE INDEX`, `DROP COLUMN` и т.д.). DDL берут табличные блокировки по матрице Postgres: большинство — `ACCESS EXCLUSIVE` (самый строгий — конфликтует с любым другим, включая `ACCESS SHARE`, который нужен `SELECT`). Матрица — поверхность дизайна: история безопасности любой миграции сводится к «какой lock берёт, с чем конфликтует, сколько держит». Современный Postgres делает много операций драматически безопаснее, чем учебники: `ADD COLUMN ... DEFAULT 'x'` мгновенный с PG 11 (default в метаданных, без переписывания), `CREATE INDEX CONCURRENTLY` берёт лёгкий `SHARE UPDATE EXCLUSIVE` (не блокирует чтение/запись), `ALTER TABLE ... ADD CONSTRAINT ... NOT VALID` + `VALIDATE CONSTRAINT` разделяют работу на две короткие транзакции вместо одной длинной. Дисциплина — знать, какая форма безопасна, и использовать её; режим отказа — написать форму из учебника, задеплоить в 14:00 и получить пейдж в 14:01.
+
+<TierAccordion id="tier-migrations" lang="ru">
+  <Fragment slot="junior">
+    <p><strong>Одно предложение.</strong> Миграция — это версионированный, упорядоченный SQL-скрипт, изменяющий схему БД (добавление колонки, создание таблицы, построение индекса), применяемый шаг-в-шаг с кодом приложения, который от него зависит.</p>
+    <p><strong>Почему важно.</strong> Любое продуктовое изменение, которому нужно сохранять новые данные, требует изменения схемы. Миграции — артефакт, превращающий «нам нужно новое поле» в «у базы есть поле, приложение его использует, откат возможен»: ревьюабельные, аудируемые, деплоятся как код.</p>
+    <p><strong>Метафора.</strong> Миграция — шаг рецепта в версионированной поваренной книге. Правила: каждый шаг пронумерован (V1, V2, V3...), каждый шаг применяется ровно один раз на каждой кухне (базе), книга записывает, какие шаги применены. Новый повар на кухне запускает книгу с того места, где остановились; кухня приходит в известное состояние. Без книги «как выглядит база» — вопрос, на который никто не ответит; с ней схема воспроизводима с нуля.</p>
+    <p><strong>Отто и Свен.</strong> <PersonaTag id="otto" lang="ru" /> хочет добавить `phone` в `users`. <PersonaTag id="sven" lang="ru" /> напоминает писать миграцию, не запускать `ALTER TABLE` в psql. Отто пишет `prisma/migrations/20260514120000_add_user_phone/migration.sql` с `ALTER TABLE users ADD COLUMN phone TEXT`. CI запускает на стейдже, потом в проде. Через полгода новый джуниор делает `git pull`, запускает `prisma migrate dev` и получает рабочую базу с той же схемой. Без миграции пришлось бы спрашивать Отто.</p>
+    <p><strong>Один сценарий.</strong> Команда деплоит `ALTER TABLE orders ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'` в 14:00. На таблице 50M строк до Postgres 11 это переписывало всю таблицу (15+ минут с AccessExclusiveLock — все чтения и записи заблокированы). Результат: дашборды timeout, ошибки клиентам, пейдж дежурному. На Postgres 11+ тот же statement мгновенный (default в метаданных). Урок: тот же SQL, разный результат в зависимости от версии Postgres + семантики. Senior-команда знает, какие формы безопасны.</p>
+    <Quiz
+      id="jr-quiz-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="Зачем использовать файлы миграций вместо ad-hoc ALTER TABLE в psql?"
+      choices={[
+        { label: "Миграции версионированы, ревьюабельны, воспроизводимы по средам, аудируемы — отвечают на «что изменилось и когда» для любого изменения состояния БД", correct: true },
+        { label: "Postgres требует файлы миграций", misconception: "Не требует; можно ad-hoc DDL, но теряете историю и воспроизводимость." },
+        { label: "Производительность — файлы быстрее", misconception: "Тот же SQL выполняется одинаково." },
+        { label: "Бэкап — psql не бэкапит DDL", misconception: "Бэкапы захватывают схему в любом случае; проблема в forward-воспроизводимости, не в бэкапах." },
+      ]}
+    />
+    <Quiz
+      id="jr-quiz-2"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="В Postgres 11+ какая форма мгновенная (без переписывания таблицы)?"
+      choices={[
+        { label: "ALTER TABLE t ADD COLUMN x TEXT DEFAULT 'pending'", correct: true },
+        { label: "ALTER TABLE t ADD COLUMN x TEXT DEFAULT clock_timestamp()", misconception: "Volatile default форсирует вычисление per-row → полное переписывание." },
+        { label: "ALTER TABLE t ADD COLUMN x TEXT NOT NULL", misconception: "NOT NULL без default падает, если есть строки; сам по себе не переписывает, но шаг валидации тяжёлый." },
+        { label: "ALTER TABLE t ALTER COLUMN x TYPE int USING x::int", misconception: "Смена типа с USING переписывает таблицу." },
+      ]}
+    />
+    <DragOrder
+      id="jr-drag-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      prompt="Расположите шаги безопасного добавления not-nullable колонки в продакшн-таблицу 100M строк:"
+      items={[
+        "ADD COLUMN с константным DEFAULT (мгновенно в PG 11+, заполняет новые строки + сохраняет default)",
+        "Backfill существующих строк батчами UPDATE ... WHERE id BETWEEN ... (маленькие транзакции)",
+        "Деплой кода приложения, пишущего колонку на каждом INSERT/UPDATE",
+        "После подтверждения завершения backfill — добавить NOT NULL через ADD CONSTRAINT NOT VALID",
+        "Запустить VALIDATE CONSTRAINT отдельным statement (лёгкий lock, сканирует без блокировки записей)",
+        "Опционально удалить DEFAULT, когда код приложения всегда подаёт значение",
+      ]}
+    />
+    <MetaphorComplete
+      id="jr-metaphor-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      setup="Заполните пропуск: миграция БД — это для изменений схемы то же, что git ________ для изменений кода — версионированная, упорядоченная, ревьюабельная единица, переводящая систему из состояния N в N+1."
+      accepted={["коммит", "commit", "коммиты"]}
+      canonical="коммит"
+      explanation="Коммит переводит код из одного состояния в другое с историей, ревью и откатом. Миграция делает то же для схемы. Оба имеют упорядоченную родословную; оба immutable после shipping; оба — то, как команда рассуждает об изменениях."
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-migrations"
+      lang="ru"
+      questions={[
+        {
+          id: "jr-q1",
+          q: "В двух предложениях: почему порядок деплоя кода и запуска миграции так важен?",
+          answer: <p>Схема БД и код приложения, использующий её, должны оставаться совместимыми в каждый момент деплоя, потому что продакшн-трафик не останавливается для миграции. Если миграция добавляет колонку, а новый код её читает — порядок «миграция, потом код»: иначе старый код в порядке, а новый падает, пока миграция не завершилась. Если миграция <em>удаляет</em> колонку — порядок обратный: задеплоить новый код (он больше не читает колонку), дождаться, пока старый код сдренируется, потом миграция. Expand-contract формализует это: любое breaking change декомпозировано на additive («expand») шаг до деплоя кода + removal («contract») шаг после деплоя, когда старый код ушёл. Однотранзакционные миграции, удаляющие или переименовывающие колонки за раз, — классический deploy-coupled баг; фикс — замедлиться и разделить на expand + contract.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="middle">
+    <p><strong>Матрица блокировок Postgres — поверхность дизайна.</strong> Восемь режимов от `ACCESS SHARE` (нужен `SELECT`) до `ACCESS EXCLUSIVE` (большинство DDL). Матрица говорит, что блокирует что: `ACCESS EXCLUSIVE` конфликтует со <em>всем</em>, включая `ACCESS SHARE`, так что любой DDL с ним блокирует всех читателей и писателей на время удержания. `SHARE UPDATE EXCLUSIVE` (используется `CREATE INDEX CONCURRENTLY`, `VACUUM`, `ANALYZE`, `VALIDATE CONSTRAINT`) конфликтует только с собой и более строгими — не блокирует DML. Senior-интуиция: до написания миграции спросите «какой lock берёт» и «какая типичная длительность»; если оба ответа — «AccessExclusive» и «больше 50 мс», разделяйте.</p>
+    <p><strong>Очередь блокировок — реальный режим отказа.</strong> Postgres получает блокировки в порядке прихода (FIFO). Когда `ALTER TABLE` ждёт `ACCESS EXCLUSIVE`, он встаёт в очередь за держателем конфликтующего lock — часто медленный `SELECT` на 30 секунд. Пока `ALTER TABLE` ждёт, каждый <em>новый</em> `SELECT` тоже ждёт, потому что `ALTER TABLE` впереди в очереди, и им нужен lock, конфликтующий с `ACCESS EXCLUSIVE`. Итог: один медленный `SELECT` + один благонамеренный `ALTER TABLE` = вся таблица недоступна, пока медленный SELECT не закончится. Это канонический инцидент «запустил миграцию, и сайт упал». Митигация: `SET lock_timeout = '2s'` на каждую сессию миграции. Если lock не получен за 2 секунды, миграция чисто прерывается, очередь не страдает. Retry: backoff + повтор; pgroll и Atlas делают это автоматически.</p>
+    <p><strong>Безопасные операции (лёгкие или мгновенные).</strong> <em>ADD COLUMN с константным default</em> (PG 11+): мгновенно, default в pg_attribute.atthasmissing/attmissingval; без переписывания. <em>ADD COLUMN без default</em>: мгновенно, NULL для существующих. <em>SET/DROP DEFAULT</em>: только для новых INSERT/UPDATE; метаданные. <em>DROP NOT NULL</em>: метаданные. <em>RENAME COLUMN/TABLE</em>: метаданные, но ломает зависимый код. <em>ADD CONSTRAINT ... NOT VALID</em>: enforce только для новых строк, без скана. <em>VALIDATE CONSTRAINT</em>: скан под `SHARE UPDATE EXCLUSIVE` (не блокирует DML). <em>CREATE INDEX CONCURRENTLY</em>: двухфазная постройка, `SHARE UPDATE EXCLUSIVE`; не блокирует чтение/запись. Все эти — production-дефолт. У неверных форм есть безопасные эквиваленты; senior-паттерн — знать маппинг.</p>
+    <p><strong>Небезопасные операции и их фиксы.</strong> <em>ADD COLUMN с volatile default</em> (`DEFAULT clock_timestamp()`): полное переписывание под `ACCESS EXCLUSIVE`. Фикс: ADD COLUMN без default, backfill батчами, потом SET DEFAULT для новых. <em>ALTER COLUMN TYPE</em> когда типы не binary-coercible: полное переписывание. Фикс: новая колонка + dual-write + backfill + swap + drop. <em>ADD NOT NULL на колонке с существующими строками</em>: полный скан под `ACCESS EXCLUSIVE`. Фикс: ADD CHECK CONSTRAINT NOT VALID (... IS NOT NULL), VALIDATE CONSTRAINT (лёгкий lock), потом ALTER COLUMN SET NOT NULL (проверяет уже доказанный constraint, быстро). <em>ADD FOREIGN KEY</em> обычно требует `ACCESS EXCLUSIVE` + скан. Фикс: ADD CONSTRAINT ... NOT VALID + VALIDATE CONSTRAINT. <em>DROP COLUMN</em>: обычно быстро (метит как dropped, ленивая очистка), но ломает код. <em>RENAME COLUMN</em>: быстро, но ломает код. У каждой небезопасной операции есть многошаговый безопасный паттерн; линтер Squawk ловит небезопасные формы автоматически в CI.</p>
+    <p><strong>Expand-contract — универсальный паттерн.</strong> Любое breaking change декомпозируется на: (1) <em>Expand</em>: добавить новый элемент схемы (колонку/таблицу/индекс) рядом со старым. Код dual-write в старое и новое. (2) <em>Backfill</em>: скопировать историю старое → новое батчами. (3) <em>Cut over</em>: код читает из нового. (4) <em>Contract</em>: перестать писать в старое; удалить старое. Каждый шаг независимо деплоится и обратим. Паттерн многословный — переименование колонки = 5+ деплоев за дни — но единственный способ сделать изменения схемы реально безопасными под продакшн-трафиком. pgroll и Atlas автоматизируют boilerplate; даже руками написанные миграции должны следовать паттерну.</p>
+    <p><strong>CREATE INDEX CONCURRENTLY в деталях.</strong> Строит индекс, не блокируя чтения/записи. Цена: в 2-3× дольше непараллельного, не может в транзакции (большинство migration-tool нуждаются в специальной non-transactional аннотации), может упасть посередине, оставив индекс в состоянии INVALID (видно в pg_indexes как `indisvalid = false`). Режимы отказа: долгие транзакции на таблице задерживают вторую фазу; OOM прерывает постройку. Senior-runbook: всегда CREATE INDEX CONCURRENTLY в проде; всегда проверяйте `indisvalid = true` после; если упал — DROP INDEX CONCURRENTLY (тоже не блокирующий) и retry. Atlas, pgroll умеют детектировать INVALID индексы и retry.</p>
+    <p><strong>lock_timeout и statement_timeout.</strong> Два GUC, превращающие runaway-миграцию в чистый отказ. `lock_timeout = '2s'` (на сессию миграции): если lock не получен за 2 секунды — abort. С retry (exponential backoff) миграция в конце концов получит lock в тихий момент между долгими запросами. `statement_timeout = '30s'` (на сессию миграции, выше типичной длительности но ограниченный): если реальная работа миграции (backfill UPDATE) идёт дольше 30с — abort. Вместе превращают «миграция заморозила базу» в «миграция залогировала ошибку, retry попозже» — graceful degradation. Заметка: НЕ ставьте глобально в postgresql.conf; ставьте per-session через migration tool. Большинство (golang-migrate, Flyway, Prisma, Drizzle, Atlas) имеют хуки для этого.</p>
+    <p><strong>Ландшафт migration-tool в 2026.</strong> <em>golang-migrate</em>: простой, language-agnostic, «up.sql» + «down.sql», CLI. <em>Flyway</em>: Java, зрелый, та же файловая модель. <em>Liquibase</em>: XML/YAML, более декларативный. <em>Prisma Migrate</em>: TS/Node, интеграция с Prisma schema (single source — schema.prisma → миграции). <em>Drizzle</em>: TS, аналогично. <em>Atlas</em> (Ariga): современный, декларативный + императивный; линтит миграции; понимает семантику Postgres; запускает миграции безопасно с lock_timeout, retry, dry-run; растёт в популярности. <em>pgroll</em>: zero-downtime через виртуальные схемы (views) + автоматический backfill + триггеры для dual-write — самая агрессивная safety-обёртка. <em>Squawk</em>: линтер, ловящий unsafe DDL в ревью PR (например, флагает `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT`). Стек 2026: Prisma/Drizzle/Atlas для повседневных миграций + Squawk в CI + pgroll или дисциплина паттерна для редких breaking changes.</p>
+    <p><strong>Сопряжение миграций с деплоями.</strong> Порядок миграции vs деплоя кода определяет безопасность. <em>Additive</em> (добавить колонку, читаемую новым кодом): сначала миграция, потом код. Новый код находит колонку готовой. <em>Removal</em> (удалить колонку, которую читает старый код): сначала деплой кода (он перестаёт читать), дождаться полного дренажа старого кода, потом миграция. <em>Rename</em>: за один шаг нельзя. Expand: добавить новую колонку. Деплой: dual-write. Backfill: старое → новое. Деплой: чтение из нового. Подождать. Contract: удалить старое. Пять деплоев на дни. <em>Фундаментальное правило</em>: в каждый момент и текущий, и новый код приложения должны корректно работать против текущей схемы. Нарушение этого правила — это как «миграция сломала приложение» случается.</p>
+    <p><strong>Подсказка: rollback — это не «down-миграция».</strong> Down-миграции (обратный SQL up-миграции) звучат безопасно, но редко работают в проде. Если up-миграция добавила колонку, и новый код в неё писал — запуск down (DROP COLUMN) уничтожает данные. Если up-миграция была мгновенным ADD COLUMN, down быстрая, но вы потеряли всё, что в неё записали. Production-откат — вперёд: написать новую миграцию, фиксящую проблему, задеплоить, не «откатывать» предыдущую. Воспринимайте down как документацию для dev-окружений, не как production safety net.</p>
+    <p><strong>Практический воркфлоу написания миграции.</strong> Перед открытием PR senior-инженер проходит ментальный чек-лист. (1) Какая операция: additive (ADD COLUMN, CREATE TABLE, CREATE INDEX) или breaking (DROP, RENAME, ALTER TYPE)? Additive → одна миграция. Breaking → expand-contract последовательность из 4-6 шагов на дни. (2) Какой lock берёт DDL и какая ожидаемая длительность? AccessExclusive + миллисекунды — поставить lock_timeout = '2s' и идти. AccessExclusive + минуты — переделывать в безопасный паттерн (NOT VALID + VALIDATE, CONCURRENTLY, expand-contract). (3) Где writes? Любой ADD COLUMN с NOT NULL без default или volatile default требует backfill — отдельная миграция батчами с pg_sleep. (4) Где код приложения? Если код пишет новое поле — миграция первой; если код читает старое — миграция последней. (5) Что в release notes Postgres? Версия PG может изменить семантику: PG 11 сделал ADD COLUMN с default мгновенным, PG 14 улучшил CONCURRENTLY, PG 17 добавил DEALLOCATE-over-protocol. Senior-команда сверяется с release notes своей версии до написания SQL.</p>
+    <p><strong>Code-review checklist для миграций.</strong> Когда PR с миграцией попадает на ревью, ревьюер задаёт 5 вопросов до approve. (1) <em>Squawk-clean?</em> CI должен показать green; если warn — обсудить и либо переписать, либо принять с justification в описании PR. (2) <em>lock_timeout + statement_timeout?</em> Сессия миграции должна явно ставить оба; без них — request changes. (3) <em>Backfill для NOT NULL/volatile default?</em> Если миграция добавляет NOT NULL колонку или volatile default, должен быть отдельный backfill PR с батчевой логикой и pg_sleep. (4) <em>Координация с code deploy?</em> В описании PR явно указан порядок: «миграция перед деплоем кода», «деплой кода перед миграцией» или «expand-contract последовательность с шагами X, Y, Z». (5) <em>Rollback plan?</em> Forward-fix (не down-миграция) — что мы напишем, если эта миграция сломается? Эти 5 вопросов — 2 минуты ревью; они ловят 95% классов багов, попадающих в production.</p>
+    <p><strong>Тестирование миграций до прода.</strong> Senior-практика: каждая миграция гоняется на production-size снимке БД в staging до того, как попасть в прод. Это не просто синтаксическая проверка — это измерение реального времени выполнения, реального удержания lock, реального impact на конкурентный трафик. Инструменты: pg_dump-restore прод-снимка в staging еженедельно (или CDC через pglogical для near-realtime); скрипт нагрузочного теста, гоняющий реалистичный трафик параллельно с миграцией; metric collection через pg_stat_activity + pg_locks для измерения lock-wait time. Результат — измеренная длительность миграции с CI-числом, прикреплённым к PR. Если ожидаемое 10 мс, а измеренное 8 с — это сигнал, что миграция требует переписывания в безопасный паттерн. Без этой практики первое production-измерение происходит во время инцидента; с ней инцидент предотвращён в staging.</p>
+    <NumbersCard
+      id="card-migration-modes"
+      title="Паттерны изменений схемы: цена и безопасность"
+      stats={[
+        { label: "Длительность AccessExclusiveLock: ADD COLUMN с константным default", value: "~мс (мгновенно с PG 11)" },
+        { label: "AccessExclusiveLock: ADD COLUMN с volatile default", value: "минуты на 100M строк" },
+        { label: "AccessExclusiveLock: ALTER TYPE с переписыванием", value: "минуты на 100M строк" },
+        { label: "AccessExclusiveLock: DROP COLUMN", value: "~мс (только метаданные)" },
+        { label: "CREATE INDEX CONCURRENTLY", value: "10-30 мин на 100M строк" },
+        { label: "VALIDATE CONSTRAINT (после NOT VALID)", value: "~скан без блокировки" },
+        { label: "Рекомендуемый lock_timeout", value: "1-5 с" },
+        { label: "Рекомендуемый statement_timeout", value: "30-60 с" },
+        { label: "Span деплоев expand-contract", value: "дни-недели" },
+        { label: "Squawk lint в CI", value: "≤30 с на PR" },
+      ]}
+    />
+    <Misconception id="mc-lock-queue">
+      <p><strong>«Моя миграция только метаданные — она ничего не блокирует».</strong> Неверно. Даже мгновенный `ALTER TABLE` нуждается в `AccessExclusiveLock` на момент; если долгий запрос держит хотя бы `ACCESS SHARE`, ALTER ждёт, и каждый новый запрос встаёт за ним в очередь. Всегда SET lock_timeout. Всегда.</p>
+    </Misconception>
+    <FadedExample
+      client:load
+      id="fe-mig-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      title="Безопасно добавить NOT NULL колонку в продакшн-таблицу 100M строк"
+      steps={{
+        solved: (
+          <div class="space-y-3 text-sm">
+            <p><strong>Цель:</strong> добавить `users.email_verified BOOLEAN NOT NULL DEFAULT false` в таблицу 100M строк с активным трафиком.</p>
+            <p><strong>Миграция 1 (деплой с кодом, пишущим колонку):</strong></p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`-- migrations/20260514_add_email_verified.sql
+SET lock_timeout = '2s';
+SET statement_timeout = '10s';
+
+-- Мгновенно в PG 11+: default в метаданных, без переписывания.
+ALTER TABLE users ADD COLUMN email_verified BOOLEAN DEFAULT false;`}</code></pre>
+            <p><strong>Миграция 2 (после деплоя кода, пишущего колонку для новых INSERT):</strong></p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`-- migrations/20260515_backfill_email_verified.sql
+-- Запускается ВНЕ транзакции миграции (батчевый UPDATE).
+-- Псевдокод в хуке "data migration":
+
+DO $$
+DECLARE batch_size INT := 10000;
+DECLARE batch_count INT;
+BEGIN
+  LOOP
+    UPDATE users SET email_verified = false
+    WHERE email_verified IS NULL
+      AND ctid IN (
+        SELECT ctid FROM users
+        WHERE email_verified IS NULL
+        LIMIT batch_size
+      );
+    GET DIAGNOSTICS batch_count = ROW_COUNT;
+    EXIT WHEN batch_count = 0;
+    PERFORM pg_sleep(0.1); -- передышка
+  END LOOP;
+END $$;`}</code></pre>
+            <p><strong>Миграция 3 (после подтверждения завершения backfill):</strong></p>
+            <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`-- migrations/20260516_add_email_verified_notnull.sql
+SET lock_timeout = '2s';
+SET statement_timeout = '60s';
+
+-- Шаг 1: NOT VALID check (мгновенно, без скана).
+ALTER TABLE users
+  ADD CONSTRAINT users_email_verified_not_null
+  CHECK (email_verified IS NOT NULL) NOT VALID;
+
+-- Шаг 2: валидация отдельным statement
+-- (SHARE UPDATE EXCLUSIVE, не блокирует DML).
+ALTER TABLE users VALIDATE CONSTRAINT users_email_verified_not_null;
+
+-- Шаг 3: продвинуть до настоящего NOT NULL (быстро — constraint проверен).
+ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
+
+-- Шаг 4: удалить check (теперь избыточен).
+ALTER TABLE users DROP CONSTRAINT users_email_verified_not_null;`}</code></pre>
+            <p><strong>Почему каждый шаг:</strong> Миграция 1 мгновенна (PG 11+ stored-default). Миграция 2 backfill батчами по 10к с передышкой — никогда не держит долгий lock, никогда не идёт долго. Миграция 3 продвигает колонку до NOT NULL через паттерн NOT VALID + VALIDATE: NOT VALID добавляет constraint без скана; VALIDATE сканирует под лёгким lock без блокировки записей; SET NOT NULL быстрый, потому что constraint уже доказан. Три миграции, каждая безопасна, все обратимы.</p>
+          </div>
+        ),
+        semi: {
+          prompt: "Будет ли `ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT false` одним statement безопасен на 100M-строчной таблице PG 16?",
+          blanks: [
+            { id: "answer", expected: "да", placeholder: "да или нет" },
+          ],
+        },
+        blank: {
+          prompt: "Почему паттерн NOT VALID + VALIDATE лучше, чем `ALTER TABLE ... ALTER COLUMN ... SET NOT NULL` на 100M-строчной таблице?",
+          reveal: (
+            <div class="space-y-2 text-sm">
+              <p>`ALTER COLUMN ... SET NOT NULL` сканирует каждую строку для проверки constraint, удерживая `AccessExclusiveLock` на время скана — на 100M строк это минуты, в течение которых каждый читатель и писатель заблокирован. NOT VALID + VALIDATE разделяет работу: NOT VALID добавляет constraint без скана (мгновенно, короткий AccessExclusive); VALIDATE сканирует под `SHARE UPDATE EXCLUSIVE` (не блокирует DML); SET NOT NULL потом берёт короткий AccessExclusive, потому что constraint уже доказывает прохождение строк. Время удержания lock: миллисекунды вместо минут.</p>
+            </div>
+          ),
+        },
+      }}
+      misconceptions={{
+        "answer:да": "Даже с мгновенными default PG 11+ ADD COLUMN с NOT NULL работает — но в сочетании с трафиком + долгим запросом, держащим lock на таблице, ожидание AccessExclusiveLock встроит всех читателей/писателей в очередь. lock_timeout + retry обязателен; многошаговый паттерн всё равно безопаснее.",
+      }}
+    />
+    <Quiz
+      id="mid-quiz-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="Миграция запускает ALTER TABLE на горячей таблице. Идёт долгий SELECT. Что с новыми SELECT?"
+      choices={[
+        { label: "Они встают в очередь за ALTER TABLE и ждут окончания и долгого SELECT, и ALTER TABLE — таблица фактически заморожена", correct: true },
+        { label: "Они работают, потому что им нужен только ACCESS SHARE", misconception: "ALTER впереди них в FIFO с конфликтующим запросом; они ждут." },
+        { label: "Postgres приоритизирует короткие запросы", misconception: "Нет; очередь FIFO." },
+        { label: "Они сразу падают", misconception: "Они ждут, часто до собственного timeout." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-2"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="Правильный способ добавить CHECK constraint на большую таблицу без блокировки записей?"
+      choices={[
+        { label: "ADD CONSTRAINT ... NOT VALID, потом VALIDATE CONSTRAINT отдельным statement", correct: true },
+        { label: "ADD CONSTRAINT (без NOT VALID)", misconception: "Сканирует таблицу под AccessExclusive — блокирует записи на время скана." },
+        { label: "Использовать триггер", misconception: "Триггеры добавляют сложность и runtime-стоимость; NOT VALID + VALIDATE — production-путь." },
+        { label: "Удалить и пересоздать таблицу", misconception: "Уничтожает данные и вызывает downtime." },
+      ]}
+    />
+    <Quiz
+      id="mid-quiz-3"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="Вы поставили `SET lock_timeout = '2s'` в сессии миграции. Что происходит, если lock не получен за 2 секунды?"
+      choices={[
+        { label: "Миграция aborts с ошибкой; очередь блокировок очищается; migration tool retry с backoff — graceful degradation", correct: true },
+        { label: "Миграция всё равно ждёт", misconception: "lock_timeout abort после таймаута." },
+        { label: "Postgres убивает другие запросы", misconception: "Не убивает; lock_timeout затрагивает только текущую сессию." },
+        { label: "Сессия переподключается", misconception: "Никакого переподключения." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      scenario="Команда собирается добавить колонку в 200M-строчную горячую таблицу в 11:00. Опишите безопасный деплой."
+      steps={[
+        { prompt: "Шаг 1: аудит SQL до merge.", reveal: "Squawk в CI на PR. Линтер флагает небезопасные паттерны: ADD COLUMN с volatile DEFAULT, ADD COLUMN с NOT NULL DEFAULT на больших таблицах, CREATE INDEX без CONCURRENTLY. Если чисто — миграция ADD COLUMN с константным default — мгновенна в PG 11+. Code review подтверждает, что код приложения готов писать колонку на каждом новом INSERT/UPDATE." },
+        { prompt: "Шаг 2: safety net.", reveal: "Сессия миграции начинается с `SET lock_timeout = '2s'; SET statement_timeout = '10s';`. Atlas/pgroll/Prisma имеют config для этого; иначе — в начале .sql. Migration tool также имеет retry policy: 5 попыток с exponential backoff (1с, 2с, 4с, 8с, 16с)." },
+        { prompt: "Шаг 3: pre-migration проверки.", reveal: "Проверка долгих транзакций: `SELECT pid, query_start, query FROM pg_stat_activity WHERE state IN ('active','idle in transaction') AND query_start &lt; now() - interval '30 seconds';`. Если есть — kill через pg_terminate_backend или подождать. Проверка autovacuum на целевой таблице: долгий autovacuum может держать конфликтующий lock; временно cancel (`SELECT pg_cancel_backend(pid)`)." },
+        { prompt: "Шаг 4: запуск миграции.", reveal: "Запуск через migration tool. Tool оборачивает в транзакцию (кроме CREATE INDEX CONCURRENTLY), применяет .sql, записывает версию в schema_migrations, commit. Если lock_timeout срабатывает — tool retry с backoff. Если statement_timeout (редко для мгновенного DDL) — миграция падает, пейдж дежурному." },
+        { prompt: "Шаг 5: деплой кода + проверка.", reveal: "Деплой кода приложения, читающего/пишущего колонку. Дашборды: latency, error rate, pg_stat_activity на необычные состояния. Проверка в psql: колонка существует, default правильный. Обновить runbook timeline'ом. Вся последовательность — 5-15 минут; реальное удержание lock — миллисекунды." },
+      ]}
+    />
+    <TraceScenario
+      id="mid-trace-2"
+      pieceSlug="06-migrations"
+      lang="ru"
+      scenario="Нужен rename колонки. Опишите expand-contract последовательность."
+      steps={[
+        { prompt: "Шаг 1: спроектировать шаги.", reveal: "Цель: rename `users.username` → `users.handle`. Прямой RENAME быстрый, но ломает каждую запущенную версию приложения. Декомпозиция. (1) Expand: добавить `users.handle` как дублирующую колонку с default = значение username через триггер. (2) Dual-write: деплой кода, пишущего ОБА. (3) Backfill: UPDATE батчами для копирования username → handle для исторических строк. (4) Read swap: деплой кода, читающего handle (всё ещё пишет оба). (5) Drop-write: деплой кода, не пишущего username. (6) Contract: DROP COLUMN username." },
+        { prompt: "Шаг 2: expand.", reveal: "Миграция 1: ADD COLUMN handle TEXT (без default, мгновенно). Миграция 1.5 (опционально): триггер копирования username → handle на каждом INSERT/UPDATE (BEFORE INSERT OR UPDATE) — нужен только если код нельзя задеплоить сразу в шаге 3. Деплой: dual-write в обе колонки. Приложение корректно: пишет в handle, также в username (для пользы старого кода)." },
+        { prompt: "Шаг 3: backfill.", reveal: "Вне транзакции миграции, батчевый UPDATE: UPDATE users SET handle = username WHERE handle IS NULL ORDER BY id LIMIT 10000; повторять до 0 строк. Каждый батч — короткая транзакция; lock_timeout защищает любую отдельную. Проверка: SELECT COUNT(*) FROM users WHERE handle IS NULL — должно быть 0." },
+        { prompt: "Шаг 4: cut over reads.", reveal: "Деплой кода, читающего handle исключительно (записи всё ещё в обе). Следить за ошибками; проверить, что запросы попадают на новую колонку. После 24-48 ч без регрессий — дальше. Dual-write избыточен, но держит rollback возможным." },
+        { prompt: "Шаг 5: contract.", reveal: "Деплой кода, пишущего только handle (убирает username из записей). Подождать дренажа всех старых экземпляров (rolling deploy завершён). Миграция 4: DROP COLUMN username (быстро, только метаданные). Миграция 5 (опционально): drop триггера, если был. Общий span: 3-7 дней на rename. Оправдано: zero downtime, полный rollback на каждом шаге." },
+      ]}
+    />
+    <DragOrder
+      id="mid-drag-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      prompt="Расположите фиксы unsafe-DDL от самых частых к редким в проде:"
+      items={[
+        "ADD COLUMN с volatile DEFAULT → ADD COLUMN без default + backfill + SET DEFAULT",
+        "ALTER COLUMN TYPE (не coercible) → новая колонка + dual-write + backfill + swap + drop",
+        "ADD NOT NULL → ADD CHECK NOT VALID + VALIDATE + SET NOT NULL + DROP CHECK",
+        "ADD FOREIGN KEY → ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT",
+        "CREATE INDEX → CREATE INDEX CONCURRENTLY",
+        "DROP COLUMN (с активным чтением кода) → сначала деплой кода, дренаж, потом DROP",
+        "RENAME COLUMN → полный expand-contract: новая + dual-write + backfill + read-swap + drop-write + drop",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-migrations"
+      lang="ru"
+      questions={[
+        {
+          id: "mid-q1",
+          q: "Объясните детально, почему lock_timeout обязателен для production-миграций, и что происходит на каждом этапе инцидента очереди блокировок.",
+          answer: <p>Lock manager Postgres обрабатывает запросы на блокировку в порядке прихода (FIFO в очереди по объекту). Когда сессия запрашивает lock, конфликтующий с уже удерживаемым другим сессией, она встаёт в очередь ожидания. Последующие запросы на любой конфликтующий lock — даже более лёгкий — тоже встают в очередь, потому что выдача их вне очереди привела бы к голоданию первого ждущего. Канонический инцидент по этапам. <em>T=0с</em>: медленный аналитический SELECT стартует на `orders`. Берёт `ACCESS SHARE` (легчайший lock, нужный SELECT). Ожидаемая длительность: 60 секунд. <em>T=10с</em>: миграция запускает `ALTER TABLE orders ADD COLUMN ...`. Дефолтный `lock_timeout = 0` (ждать вечно). ALTER запрашивает `ACCESS EXCLUSIVE`, конфликтующий с удерживаемым `ACCESS SHARE`. ALTER встаёт в очередь. <em>T=10с+</em>: каждый новый SELECT на `orders` приходит. Каждому нужен `ACCESS SHARE`. Lock manager проверяет: есть ли впереди в очереди что-то, конфликтующее с ACCESS SHARE? Да — `ACCESS EXCLUSIVE` ожидающего ALTER конфликтует. Новые SELECT встают в очередь за ALTER. Таблица заморожена для всего, кроме оригинального SELECT. <em>T=70с</em>: медленный SELECT завершается. ALTER получает lock, выполняется (обычно миллисекунды для мгновенного DDL), commit. Очередь дренируется: каждый ждущий SELECT теперь работает в порядке прихода. <em>Общий impact</em>: 60 секунд без-новых-запросов на таблицу, хотя сама миграция мгновенна. Application-эффект: исчерпание пула соединений (каждый checkout ждёт 60с), таймауты запросов каскадируют, дашборды краснеют. Фикс — `SET lock_timeout = '2s'` на сессии миграции. С lock_timeout ALTER ждёт максимум 2 секунды; если не получил — чисто abort, освобождает позицию в очереди. Очередь сразу пропускает ждущие SELECT (получают свои легчайшие lock). Migration tool retry с backoff (1с, 2с, 4с, ...) — в итоге медленный SELECT завершается или приходит тихий момент, ALTER получает 2-секундное окно. <em>Без lock_timeout</em>: одна миграция кладёт базу на время самого длинного запроса. <em>С lock_timeout</em>: миграция делает пару retry, очередь здорова, никто не замечает. Обязательно — значит обязательно.</p>,
+        },
+        {
+          id: "mid-q2",
+          q: "Опишите expand-contract как общий фреймворк и объясните, почему нельзя пропустить шаги для production-миграций.",
+          answer: <p>Expand-contract декомпозирует любое breaking-изменение схемы в последовательность additive (expand) и removal (contract) шагов со свойством: <em>в каждый момент и предыдущая, и следующая версия приложения корректно работают против текущей схемы</em>. Этот инвариант делает zero-downtime деплой возможным. Общий фреймворк. (1) <em>Expand</em>: добавить новый элемент схемы (колонку, таблицу, индекс, constraint) <em>рядом</em> со старым. Схема — supersеt; старый код не знает о новом, новый знает. (2) <em>Dual-write</em>: задеплоить код, пишущий и в старое, и в новое. Чтения по-прежнему идут в старое. (3) <em>Backfill</em>: копирование исторических данных old → new. (4) <em>Cut over reads</em>: задеплоить код, читающий из new, но всё ещё пишущий оба. (5) <em>Stop dual-write</em>: задеплоить код, пишущий только в new. (6) <em>Contract</em>: удалить старый элемент. Почему пропуск шагов проваливается. Допустим, вы переименовали `username` в `handle` одной миграцией (`ALTER TABLE users RENAME COLUMN username TO handle`). Миграция быстрая, но в момент её commit каждый запущенный экземпляр приложения, использующий `username` в SQL, падает с «column does not exist». Пока приложение не передеплоено (секунды-минуты в rolling deploy), каждый запрос падает. То же касается drop (drop колонки, читаемой запущенным кодом), изменения типа (код ждёт int, колонка теперь text), добавления constraint (код генерирует строки, проваливающие constraint). Expand-contract убирает эти окна: схема всегда поддерживает обе версии кода. Цена — операционная сложность: rename = 5+ деплоев на дни, каждый требует мониторинга. Production-команды принимают это, потому что альтернатива — окна downtime, видимые клиентам. Инструменты вроде pgroll автоматизируют boilerplate, поддерживая виртуальные схемы (views), представляющие «старую» и «новую» форму старому и новому коду соответственно, с триггерами, прозрачно делающими dual-write — складывая 5+ деплоев обратно в одну декларативную миграцию. Даже без pgroll senior-паттерн: любое изменение, удаляющее, переименовывающее или сужающее что-то — expand-contract; любое только-добавление — один шаг (с lock_timeout). Решение per-migration; никогда не сочетайте breaking изменения в одну транзакцию.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+
+  <Fragment slot="senior">
+    <p><strong>Транзакционная семантика DDL в Postgres.</strong> Большинство DDL транзакционны: `BEGIN; CREATE TABLE; ALTER TABLE; COMMIT;` — либо всё успешно, либо всё откатывается, и конкурентные сессии видят изменение атомарно на момент commit (через snapshot/MVCC). Исключения: `CREATE INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY`, `ALTER TYPE ... ADD VALUE` (до PG 12, потом транзакционный) и пара других — не могут в `BEGIN..COMMIT`. Migration tool по умолчанию оборачивают каждую миграцию в транзакцию — правильная политика: многоstatement-миграция, упавшая посередине, должна оставить схему в pre-migration состоянии. Следствие: любая миграция с CONCURRENT операцией должна запустить её вне транзакционной обёртки — большинство инструментов имеют директиву `-- atlas:txmode none` или `-- prisma:nontx`.</p>
+    <p><strong>Паттерн advisory-lock для сериализации миграций.</strong> Несколько app-серверов, стартующих одновременно, могут пытаться запустить pending миграции — без координации два процесса могут применить одну дважды или конкурировать на schema_migrations. Стандартный фикс — Postgres advisory lock в начале: `SELECT pg_advisory_lock(<unique_int>);` — первый сервер получает lock, гоняет миграции, освобождает; остальные ждут. golang-migrate использует lock_id=хеш имени БД; Prisma похоже. Senior-команды проверяют, что lock удерживается всю миграцию (не только на старте), инспектируя pg_locks во время теста. Также полезен pg_try_advisory_lock с коротким retry-циклом для неблокирующего поведения старта.</p>
+    <p><strong>Инструменты online-schema-change и их место.</strong> <em>pgroll</em> (xata): поддерживает виртуальные схемы через views. Миграция создаёт новый view рядом со старым; старый код читает старый view (оригинальная форма колонки), новый код читает новый view (новая форма); оба views на одной физической таблице, с триггерами трансляции записей. По завершении старый view удаляется. Zero downtime; сложные breaking changes (rename, drop-with-data-preservation, type-change) декларативны. <em>Atlas</em>: декларативный + линтер. Определите желаемую схему; Atlas вычисляет план миграции, линтит на unsafe, запускает с lock_timeout + retry. Работает без виртуальных схем; полагается на дисциплину expand-contract от приложения. <em>gh-ost</em> (MySQL, но паттерн похож в Postgres через pg_squeeze, pg_repack): для редкого случая настоящего переписывания (ALTER COLUMN TYPE с несовместимыми типами, table-clustering changes) — shadow-table подход: создать новую таблицу, копировать батчами с триггерами на репликацию записей, swap атомарно. Резервируйте для случаев, не подходящих под expand-contract.</p>
+    <p><strong>ADD COLUMN со stored default: реализация PG 11.</strong> До PG 11 `ALTER TABLE ... ADD COLUMN ... DEFAULT 'x'` переписывал каждую строку для материализации default. В PG 11+ при non-volatile default Postgres хранит его в `pg_attribute.atthasmissing = true` и `pg_attribute.attmissingval = 'x'`. Существующие строки сохраняют старую физическую форму tuple (без колонки); SELECT возвращает missing default на чтение; новые строки хранят колонку нормально. Итог: ADD COLUMN с default мгновенный на таблицах любого размера. Есть маленькая read-time стоимость (missing-default path), исчезающая по мере переписывания нормальным UPDATE-трафиком; production-команды либо оставляют (стоимость пренебрежима), либо запускают one-time UPDATE для материализации. Механизм — один из крупнейших практических wins современного Postgres — однопальцево устранил самую частую причину инцидентов миграций до 2018.</p>
+    <p><strong>Validate constraints под нагрузкой.</strong> `ADD CONSTRAINT ... NOT VALID` мгновенный, но enforce только для новых строк; существующие могут нарушать. `VALIDATE CONSTRAINT` сканирует таблицу для проверки. Берёт `SHARE UPDATE EXCLUSIVE` — не блокирует нормальный DML (INSERT/UPDATE/DELETE/SELECT), но блокирует другой DDL на той же таблице. Следствие: валидируйте при нормально работающем приложении; единственное влияние — другие DDL встают в очередь. Senior-паттерн: планируйте валидацию на off-peak; мониторьте прогресс скана через `pg_stat_progress_analyze` или возраст xact_start удерживающей транзакции. Долгий validate (например, на 1B-строчной таблице за час) ок, если другая миграция не очерёдывается за ним. То же касается `CREATE INDEX CONCURRENTLY` — долго, но DML-safe.</p>
+    <p><strong>ALTER COLUMN TYPE: исключение binary-coercible.</strong> Большинство type changes переписывают таблицу. Исключения: type changes, которые <em>binary-coercible</em> — то же физическое представление. Примеры: `varchar(50)` → `varchar(100)` (шире, но те же байты), `varchar` → `text` (то же), `text` → `varchar` (то же), `numeric(10,2)` → `numeric(12,2)` (шире, то же). Postgres детектирует и пропускает rewrite — быстро, кратко AccessExclusive, без записей строк. Non-coercible (int → bigint, text → int, json → jsonb до PG 14) требуют либо полного переписывания, либо shadow-column expand-contract. Каталог pg_type содержит правила coercibility; Atlas знает их и предупреждает, когда изменение перепишет. Senior-паттерн: для любого ALTER TYPE, не доказуемо coercible, — expand-contract.</p>
+    <p><strong>Линтер Squawk и интеграция CI.</strong> Squawk (Linux Foundation, изначально Stripe) парсит SQL миграции и предупреждает на unsafe паттернах: ADD COLUMN с не-константным default, ALTER COLUMN TYPE без проверки coercibility, CREATE INDEX без CONCURRENTLY, drop NOT NULL на FK, rename, drop без предыдущего деплоя кода. Запуск в CI на каждом PR, трогающем `migrations/`. Настраивается error vs warn per rule; команды обычно error на опасные (rewrite-causing) и warn на операционные (rename, drop). Сочетайте с Atlas для визуализации плана (`atlas migrate diff` показывает ровно то, что запустится, включая SQL, который выполнит Postgres), и команда имеет видимость до merge вместо обнаружения после инцидента. CI-стоимость: меньше 30 секунд на PR миграции; сэкономленные инциденты стоят порядков больше.</p>
+    <p><strong>Партиционирование и scope миграций.</strong> Партиционированные таблицы (декларативное партиционирование, PG 10+) меняют расчёт миграций. ADD COLUMN на партиционированной таблице каскадирует на все партиции одним statement — мгновенно для константных default, дорого для переписывания. CREATE INDEX надо делать per-partition (или CREATE INDEX ON ONLY parent + attach к каждой) — большинство migration tool это умеют. ATTACH PARTITION и DETACH PARTITION — операционные примитивы для ротации (drop старых time-партиций, add новых). Важно: ATTACH PARTITION кратко берёт AccessExclusive; с `lock_timeout` безопасно; в PG 14+ ATTACH PARTITION CONCURRENTLY ослабляет lock ещё. Senior-команды относятся к partition-операциям как к first-class миграциям и используют partition-поддержку migration tool; собственная реализация обычно упускает corner cases.</p>
+    <p><strong>Координация миграций с continuous deploy.</strong> Deploy-machinery — Kubernetes rolling updates, blue/green, canary — взаимодействует с миграциями нетривиально. (1) <em>Миграция до rollout pod</em> (самое частое): деплой стартует; init-контейнер или pre-deploy job запускает `migrate up`; после успеха новые pod выкатываются. Минус: старые pod ещё работают и могут увидеть новую схему до своего обновления; схема должна быть backwards-compatible (только expand). (2) <em>Миграция как часть startup pod</em> (каждый pod пытается; advisory lock сериализует): проще, но медленнее (каждый новый pod ждёт проверку). Минус: race conditions без правильного lock. (3) <em>Миграция отдельно от деплоя</em> (вручную или через выделенные migration jobs): полный контроль, проще планировать, но люди координируют с кодом. Senior-паттерн: отделить migration runner от lifecycle app pod; запускать миграции из выделенного CI job после merge кода, но до деплоя кода; gate деплой на успех миграции. Atlas и pgroll предоставляют gates для этого.</p>
+    <p><strong>Таксономия режимов отказа.</strong> (а) <em>Lock-queue freeze</em>: ALTER ждёт, очередь забивается, таблица заморожена. Фикс: lock_timeout + retry. (б) <em>CREATE INDEX CONCURRENTLY оставлен INVALID</em>: постройка упала (долгая транзакция блокировала вторую фазу или OOM); pg_indexes показывает indisvalid = false. Фикс: DROP INDEX CONCURRENTLY + retry. Детект: мониторинг indisvalid после миграции. (в) <em>Deadlock миграций</em>: две миграции или миграция + трафик конкурируют на порядок acquisition. Фикс: сериализация миграций через advisory lock; не запускать параллельные миграции на связанных таблицах. (г) <em>Откат, уничтожающий данные</em>: down-миграция дропает колонку с новыми данными. Фикс: forward-only; не полагайтесь на down в продакшне. (д) <em>Дрейф схемы между репликами</em>: миграция применена на primary, но replication lag задерживает на standby; код читает со standby и видит старую схему. Фикс: gate деплоев кода на replica lag = 0 (или близко); использовать replica-aware mode migration tool. (е) <em>Backfill UPDATE ест WAL</em>: один огромный UPDATE генерирует ГБ WAL, заполняет диск, реплики отстают. Фикс: батчевать UPDATE по 1k-10k со sleep между; мониторить WAL generation rate. (ж) <em>Volatile default rewrite скрытый</em>: `DEFAULT now()` на ADD COLUMN выглядит безопасно, но volatile → rewrite. Фикс: детект через Squawk; константный default + post-migration update. (з) <em>NOT NULL добавлен без backfill</em>: в колонке есть NULL; SET NOT NULL падает. Фикс: backfill сначала; использовать паттерн NOT VALID + VALIDATE. (и) <em>RENAME во время деплоя</em>: старый код ссылается на старое имя, падает между миграцией и pod rollout. Фикс: expand-contract вместо single-step rename.</p>
+    <p><strong>Стратегическая позиция: миграции — first-class production-артефакты.</strong> Зрелые команды относятся к коду миграций с той же строгостью, что к коду приложения: PR review с явными reviewer, CI lint (Squawk + dry-run через Atlas), staging deploy на production-size датасете до прода, runbook на каждую миграцию с ожидаемым impact, observability на runtime миграции + время acquisition lock. Цена умеренная (квартальный обзор паттернов + автоматический lint); выгода — каденс деплоев десятков безопасных изменений в неделю вместо «гоняем миграции в maintenance window раз в месяц». Senior-команды ship breaking changes рутинно; junior — избегают. Разница — процесс и тулинг, не храбрость.</p>
+    <NumbersCard
+      id="card-migration-numbers"
+      title="Senior-уровень: production-числа миграций"
+      stats={[
+        { label: "lock_timeout (рекомендуемый)", value: "1-5 с" },
+        { label: "statement_timeout для DDL", value: "30-60 с" },
+        { label: "Попытки retry миграции", value: "3-5 с backoff" },
+        { label: "ADD COLUMN константный default", value: "Мгновенно (PG 11+)" },
+        { label: "ADD COLUMN volatile default", value: "Полное переписывание" },
+        { label: "CREATE INDEX CONCURRENTLY", value: "2-3× non-concurrent" },
+        { label: "Размер batch backfill", value: "1k-10k строк" },
+        { label: "Span expand-contract", value: "3-7 дней" },
+        { label: "Squawk CI runtime", value: "≤ 30 с" },
+        { label: "Production-деплои с изменениями схемы", value: "Ежедневно (зрелые команды)" },
+      ]}
+    />
+    <Misconception id="mc-down-migration">
+      <p><strong>«Down-миграции — стратегия отката».</strong> Нет. Down, удаляющий колонку, удаляет и данные, в которые новый код писал. Production-откат — вперёд: написать новую миграцию, фиксящую проблему. Воспринимайте down как dev-каркас, никогда не как production safety net.</p>
+    </Misconception>
+    <TraceScenario
+      id="sr-trace-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      scenario="Senior-инженер аудитит Postgres 16 codebase на безопасность миграций после недавнего lock-queue инцидента. Опишите аудит."
+      steps={[
+        { prompt: "Шаг 1: интегрировать Squawk в CI.", reveal: "Добавить Squawk как GitHub Action, запускающийся на каждом PR, трогающем `migrations/**`. Конфиг: error на unsafe-add-column, alter-column-type-without-cast, create-index-non-concurrent; warn на rename, drop-column. Первый rollout флагает 30+ legacy миграций; документ, но не fail исторические. Идущие далее — каждая новая миграция проходит Squawk до merge." },
+        { prompt: "Шаг 2: enforce lock_timeout.", reveal: "Обновить конфиг migration tool (Atlas/Prisma/golang-migrate) ставить `lock_timeout = '2s'` и `statement_timeout = '30s'` в начале каждой сессии миграции. 5 попыток retry с exponential backoff. Проверка через тест намеренного конфликта в стейдже: старт долгого SELECT, потом миграция; наблюдать retry + успех." },
+        { prompt: "Шаг 3: классифицировать unsafe-паттерны в legacy.", reveal: "Сканировать историю миграций на паттерны: ADD COLUMN с NOT NULL на больших таблицах (без NOT VALID), ALTER COLUMN TYPE без binary-coercibility, CREATE INDEX (non-concurrent), DROP COLUMN без предыдущего code-deploy, RENAME COLUMN без expand-contract. Документировать legacy как 'tech debt'; превентивно фиксить паттерны, всё ещё используемые в production data-tier." },
+        { prompt: "Шаг 4: observability.", reveal: "Инструментировать migration runner: длительность, попытки retry, время acquisition lock, indisvalid после CREATE INDEX. Дашборды: запуски миграций во времени, среднее + P99 длительности, попытки на миграцию. Алерты: миграция с retry &gt; 3 → page; любой indisvalid = false → page. Migration tool уже логирует в schema_migrations; pipe в централизованную инфру логов." },
+        { prompt: "Шаг 5: написать runbook миграций.", reveal: "Документ. (1) Всегда ставить lock_timeout. (2) До запуска — проверка pg_stat_activity на долгие запросы; cancel при необходимости. (3) Только Squawk-clean PR. (4) Expand-contract для rename/drop/type-change. (5) Backfill батчами 1-10k со sleep. (6) CREATE INDEX CONCURRENTLY для всех production индексов. (7) Проверка indisvalid после. (8) Никогда не полагаться на down-миграции для отката; писать forward-fix. (9) Atlas dry-run + Squawk lint в CI блокируют merge при падении." },
+      ]}
+    />
+    <DebugLog
+      id="sr-debug-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      title="Миграция казалась мгновенной, но вызвала 90-секундный outage — диагностика"
+      output={`# 2026-05-14 14:00:00  deploy: migrations/20260514_add_user_status.sql
+
+# Содержимое миграции (один statement):
+ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active';
+
+# Лог migration tool:
+14:00:00.123  migrate: starting migration 20260514_add_user_status
+14:00:00.124  migrate: acquiring connection from pool
+14:00:00.130  migrate: BEGIN
+14:00:00.131  migrate: executing: ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'
+
+# Postgres pg_stat_activity на 14:00:30:
+pid    state         query_start  query
+8231   active        13:58:42     SELECT * FROM users LEFT JOIN orders... (медленная аналитика)
+9842   active        14:00:00     ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'
+9851   active        14:00:05     SELECT id, email FROM users WHERE id=42
+9852   active        14:00:05     SELECT id FROM users WHERE email='x@y.com'
+(...300+ похожих строк...)
+
+# Postgres pg_locks на 14:00:30:
+relation     granted  mode                  pid
+users        t        AccessShareLock       8231     # slow query, granted at 13:58:42
+users        f        AccessExclusiveLock   9842     # миграция, WAITING с 14:00:00
+users        f        AccessShareLock       9851     # ждёт за миграцией
+users        f        AccessShareLock       9852     # ждёт за миграцией
+...
+
+# Логи приложения на 14:00:30:
+api-server-1: ERROR: pool checkout timeout (10s exceeded, pool size 24)
+api-server-1: ERROR: pool checkout timeout
+api-server-2: ERROR: HTTP 503 from /users/:id endpoint
+...
+
+# 14:01:30: медленный запрос завершается (168 с total).
+# 14:01:30.412: ALTER TABLE получает AccessExclusive, работает 8 мс, commit.
+# 14:01:30.420: очередь дренируется, latency восстанавливается.
+
+# Конфиг Postgres:
+lock_timeout = 0
+statement_timeout = 0
+
+# Конфиг migration tool:
+no lock_timeout set per session
+no retry policy`}
+      outputLang="log"
+      question="Почему мгновенный `ALTER TABLE ADD COLUMN` вызвал 90 секунд недоступности? Долгосрочный фикс?"
+      hint="Сама миграция выполняется за 8 мс — но чего-то ждала."
+      answer="Причина: учебниковый lock-queue freeze. В 14:00:00 миграция запустила `ALTER TABLE users ADD COLUMN ...` — мгновенно в PG 11+ (default в метаданных, без переписывания), нужен только короткий `AccessExclusiveLock`. Но в 13:58:42 стартовал медленный аналитический SELECT на `users`, удерживая `AccessShareLock`. AccessExclusive ALTER конфликтует с удерживаемым AccessShare → ALTER встал в очередь в 14:00:00. С этого момента каждый новый SELECT (HTTP API на /users/:id, lookup по email и т.д.) запрашивал `AccessShareLock` — сам по себе совместим с удерживаемым `AccessShareLock`, НО lock manager обрабатывает очередь по порядку, и pending `AccessExclusive` ALTER был впереди. Новые SELECT встали за ALTER. Итог: таблица `users` стала недоступна для новых запросов на длительность медленного SELECT (90 секунд), хотя сама миграция работала бы 8 мс. Пул соединений исчерпался за ~10 секунд (24 backend застряли на ожидании `users`), API возвращал 503, дашборды засветились. Почему нет lock_timeout? Дефолт Postgres `0` (ждать вечно); migration tool не настроен переопределять per-session. Долгосрочный фикс (в порядке): **1. lock_timeout сессии миграции** — каждая миграция стартует с `SET lock_timeout = '2s'; SET statement_timeout = '30s';`. С lock_timeout ALTER abortнул бы через 2 секунды, освободив позицию очереди; новые SELECT разблокировались бы сразу. **2. Retry policy migration tool** — конфиг Atlas/Prisma/golang-migrate: 5 retry с exponential backoff (1с, 2с, 4с, 8с, 16с). После abort tool sleep + retry; в итоге медленный SELECT закончится или придёт тихий момент, и ALTER получит 2-секундное окно. **3. Pre-migration проверка** — до запуска запрос pg_stat_activity на транзакции старше 30 с на целевой таблице; если есть — поднять оператору и либо подождать, либо `pg_terminate_backend` (с суждением). Документ в runbook. **4. CI lint через Squawk** — флагать любую миграцию без `SET lock_timeout` и `SET statement_timeout`; блокировать PR без них. Делайте безопасность путём наименьшего сопротивления. **5. Observability** — метрики на длительность миграции И время acquisition lock; алерт если retry &gt; 3 (что-то структурно не так). **6. statement_timeout на стороне приложения** — отдельно от миграций: долгие аналитические SELECT на OLTP-таблицах должны иметь session-level statement_timeout, чтобы 168-секундный SELECT убился на 30с. Связанный, но отдельный фикс (ограничивает blast radius любого медленного запроса). **Уроки**: (1) 'мгновенный DDL' не мгновенный при конфликтующих lock; lock_timeout обязателен, не опционален. (2) Очередь блокировок — реальный режим отказа миграций, не сам DDL. (3) Дефолтные настройки Postgres сделаны для безопасности миграции (ждать lock вечно), не для безопасности приложения (очередь всех за ALTER). Прод тюнит. (4) Одна строка конфига (`SET lock_timeout = '2s'`) предотвращает крупнейший класс инцидентов миграций. Внедрите до следующего деплоя."
+    />
+    <TradeoffMatrix
+      id="sr-tradeoff-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      prompt="Команда на Postgres-backed B2B SaaS 5k QPS выбирает стратегию миграций на 2026. Выберите."
+      options={[
+        { name: "Atlas + Squawk + ручной expand-contract для breaking changes", summary: "Прагматичный дефолт 2026.", correct: true, justification: "Правильный ответ в ~70% случаев. Atlas обрабатывает генерацию плана, конфиг lock_timeout, retry, dry-run; Squawk линтит в CI; команда руками следует expand-contract для редких breaking changes в квартал. Без сложности виртуальных схем; инструменты open-source и хорошо поддерживаются. Минус: полагается на дисциплину команды; один неверный PR проскочит при поверхностном ревью." },
+        { name: "pgroll для полной автоматизации zero-downtime через виртуальные схемы", summary: "Агрессивная автоматизация.", justification: "Правильно, когда breaking changes часты (несколько в неделю) или команда мала и не может позволить ручных циклов expand-contract. pgroll обрабатывает rename/type-change/drop через views и триггеры автоматически. Минус: сложнее операционно (отладка триггеров, view-слои в pg_dump), привязка к жизненному циклу одного инструмента, PG 14+ только." },
+        { name: "Prisma Migrate / Drizzle native + custom lock_timeout wrapper", summary: "Stack-integrated.", justification: "Правильно, когда команда сильно инвестирована в Prisma/Drizzle и хочет schema-first эргономики (schema.prisma → авто-генерация миграций). Добавить custom wrapper, ставящий lock_timeout + retry перед каждой миграцией. Минус: меньше migration-safety tooling, чем у Atlas; полагается на команду писать expand-contract вручную без помощи линтера." },
+        { name: "Без инструмента; psql ad-hoc в maintenance windows", summary: "До-современный подход.", justification: "Неверно для любой современной команды. Теряет воспроизводимость, историю, аудит, lint, автоматизацию. Допустимо только для крошечных команд с низкой скоростью изменений. Не масштабируется за пределы ментальной модели одного инженера." },
+      ]}
+    />
+    <RFCQuiz
+      id="sr-rfc-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="В какой версии Postgres впервые `ALTER TABLE ... ADD COLUMN ... DEFAULT 'x'` стал мгновенным на больших таблицах (без переписывания при non-volatile default)?"
+      choices={[
+        { rfc: "PostgreSQL 11 (октябрь 2018)", title: "Ввёл быстрый ALTER TABLE ADD COLUMN с non-volatile default — хранится в pg_attribute.atthasmissing/attmissingval, без переписывания. Убрал крупнейшую историческую причину инцидентов миграций.", correct: true },
+        { rfc: "PostgreSQL 10", title: "Добавил декларативное партиционирование и логическую репликацию, не быстрый ADD COLUMN" },
+        { rfc: "PostgreSQL 12", title: "Добавил generated columns и улучшения JSON; быстрый ADD COLUMN уже в 11" },
+        { rfc: "PostgreSQL 14", title: "Добавил bottom-up index deletion; быстрый ADD COLUMN гораздо раньше" },
+      ]}
+    />
+    <Quiz
+      id="sr-quiz-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      question="Миграция использует `CREATE INDEX CONCURRENTLY`, но постройка падает посередине. В каком состоянии индекс и как починить?"
+      choices={[
+        { label: "INVALID — pg_indexes показывает indisvalid=false; планировщик не использует индекс. Фикс: DROP INDEX CONCURRENTLY, потом retry миграции.", correct: true },
+        { label: "Индекс автоматически удаляется", misconception: "Нет; остаётся в INVALID и должен быть удалён." },
+        { label: "Индекс частично построен и пригоден", misconception: "Postgres не использует INVALID индекс; запросы не получат выгоды." },
+        { label: "Postgres retry сам", misconception: "Нет; retry — работа migration tool или оператора." },
+      ]}
+    />
+    <DesignPrompt
+      id="sr-design-1"
+      pieceSlug="06-migrations"
+      lang="ru"
+      prompt="Спроектируйте полный pipeline миграций для B2B SaaS на Postgres 16 (8 ядер, 32 ГБ RAM, primary + 2 replica). Изменения схемы: 5-10 в неделю, в основном additive, ~1 breaking в квартал. Приложение: 20 Node.js worker (k8s, rolling deploy), 5k QPS пик. Стек: Prisma. Дайте: конфиг migration tool, CI-интеграцию, координацию деплоя, safety nets, observability, runbook для breaking changes."
+      constraints={[
+        "Цель: ноль deploy-related downtime в steady state; никаких lock-queue инцидентов.",
+        "Миграции Squawk-clean до merge.",
+        "Деплои кода gated на успех миграций.",
+        "Postgres 16+; можно использовать NOT VALID + VALIDATE, instant ADD COLUMN и т.д.",
+      ]}
+      canonical="**Слой 1: migration tool** — Prisma Migrate (стек на Prisma) + Atlas как вспомогательный линтер/runner для production-деплоев. Миграции в `prisma/migrations/&lt;timestamp&gt;_&lt;name&gt;/migration.sql`. Каждый файл начинается с: `SET lock_timeout = '2s'; SET statement_timeout = '30s';`. Prisma `migrate deploy` — runner; для breaking changes с data-migration шагами — Prisma `--create-only` + ручное редактирование SQL. **Слой 2: CI lint** — GitHub Action на каждом PR, трогающем `prisma/migrations/**`: (1) `prisma migrate diff` против предыдущей версии (валидирует schema → migration маппинг); (2) Squawk на SQL (error на: ADD COLUMN с volatile default, ADD COLUMN NOT NULL на таблицах &gt; 1M строк, CREATE INDEX без CONCURRENTLY, drop NOT NULL на FK, RENAME COLUMN/TABLE; warn на: DROP COLUMN, ALTER TYPE); (3) Atlas `migrate lint --dev-url` против стейджа со снимком production-схемы для визуализации плана. PR с failing проверками не мерджатся. **Слой 3: координация деплоя** — порядок CI pipeline: (1) Тесты на merge в main. (2) Migration job (k8s Job или GitHub Action) с `prisma migrate deploy` против production primary. (3) Успех миграции gates деплой кода; падение пейджит дежурного и приостанавливает pipeline. (4) Деплой кода rolling update по 1 pod за раз. (5) Health-check gates следующий pod. **Слой 4: safety nets** — Postgres GUC: `idle_in_transaction_session_timeout = 60s`; `statement_timeout = 30s` (на app-роль, не миграцию); `lock_timeout = 0` глобально, но `2s` на сессию миграции. Конфиг Prisma: `migrate.deploy.retry` = 5 попыток с exponential backoff (1с/2с/4с/8с/16с). Pre-migration скрипт: `psql -c 'SELECT pid, query_start, query FROM pg_stat_activity WHERE ...'` — если есть активные транзакции старше 30 секунд, abort job и пейдж. **Слой 5: observability** — метрики migration runner: длительность, retry, время acquisition lock, indisvalid любых новых индексов. Дашборды: миграции в неделю, среднее + P99 длительности, retry на миграцию. Алерты: миграция с &gt; 3 retry → page; любой indisvalid = false после деплоя → page; длительность миграции &gt; 30с → warn (переписывает таблицу?). Метрики приложения: latency pool checkout на сервис (ловит cascading lock-queue эффекты). **Слой 6: runbook breaking changes (1 в квартал)** — в `/docs/breaking-migrations/`, один документ на миграцию. Шаблон: (1) Цель + риск. (2) Список шагов expand-contract с gates деплоя. (3) Backfill SQL с batch size и каденсом pg_sleep. (4) Проверочные запросы между шагами. (5) План rollback (forward-fix, не down). (6) Timeline деплоя (какой день — какой шаг). Пример rename колонки: D1 add new + dual-write deploy; D2 backfill; D3 read-from-new deploy; D7 проверка нулевого трафика на старый read; D8 drop-write-old deploy; D14 drop column. Каждый шаг — отдельный PR со своей Squawk-clean миграцией. **Результаты** — 5-10 additive миграций в неделю автоматически с zero downtime; breaking changes отслеживаются, планируются, выполняются за дни с полной обратимостью; lock-queue инциденты структурно невозможны (lock_timeout + retry); моральный дух: разработчики ship изменения схемы уверенно, потому что tooling enforce безопасность."
+      keyPoints={[
+        "Migration tool (Prisma native + Atlas linter) — рельсы. Каждая миграция начинается с lock_timeout + statement_timeout.",
+        "CI gate через Squawk ловит unsafe-паттерны до merge. Без lint-clean миграция не shipped.",
+        "Порядок деплоя: сначала миграция (gated на успех), потом app rolling deploy. Код не лендит, пока схема не готова.",
+        "Pre-migration sanity на pg_stat_activity — никогда не запускайте миграцию при активных долгих запросах на целевой таблице.",
+        "Retry с exponential backoff превращают lock-queue ожидания в graceful re-attempt.",
+        "Breaking changes (rename, drop, type-change) — через expand-contract: один документ, один timeline, один PR на шаг.",
+        "Observability обязательна: tracking длительности, retry, indisvalid; алерт на регрессии до того, как заметят пользователи.",
+      ]}
+    />
+    <RetrievalDrawer
+      client:load
+      pieceSlug="06-migrations"
+      lang="ru"
+      questions={[
+        {
+          id: "sr-q1",
+          q: "Опишите, что внутренне делает Postgres при ALTER TABLE ADD COLUMN с константным default на 100M-строчной таблице в PG 11+ vs PG 10, и почему изменение разблокировало целый класс zero-downtime миграций.",
+          answer: <p>В PG 10 и ранее `ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'` работал так. (1) Получить AccessExclusiveLock на таблице. (2) Для каждой строки материализовать default в новую версию tuple (heap переписывается через full scan + emit новых tuple). (3) Обновить индексы для каждой переписанной строки (на практике: перестроить каждый индекс). (4) Освободить lock. На 100M строк — минуты; AccessExclusiveLock удерживался всё время; каждый читатель и писатель блокирован. Это была каноническая причина «миграция уронила базу» до 2018. В PG 11 (октябрь 2018) реализация поменялась для non-volatile default. (1) Получить AccessExclusiveLock (кратко). (2) Обновить pg_attribute для новой колонки: attmissingval = 'x', atthasmissing = true. (3) Обновить pg_class отразить новый счётчик колонок. (4) Освободить lock. Heap не трогается. Существующие строки сохраняют pre-migration форму tuple (без колонки); физические байты не меняются. Новые tuple (от последующих INSERT/UPDATE) получают колонку нормально. Read-time поведение: при чтении существующей строки без колонки Postgres консультируется с pg_attribute.attmissingval и синтезирует default на чтение. Маленькая per-row стоимость (обычно одно сравнение + загрузка), исчезающая по мере переписывания нормальным UPDATE-трафиком. Выигрыш огромный: ADD COLUMN с default мгновенный независимо от размера таблицы. Почему это разблокировало zero-downtime миграции как класс: самое частое breaking-изменение в продуктовой разработке — «добавить колонку». До 11 каждое такое изменение требовало либо (а) maintenance window с downtime, либо (б) полный expand-contract танец (add через другой механизм, backfill и т.д.). После 11 простейшая форма работает — ADD COLUMN с константным default — на любом масштабе. В сочетании с NOT VALID + VALIDATE для NOT NULL (отдельный паттерн, тоже под лёгким lock) операции типичной продуктовой миграции теперь все в «мгновенно или DML-safe» категории. Сдвиг распространился на экосистему migration tool: Atlas, Prisma, pgroll, Squawk предполагают PG 11+ семантику и предупреждают только для паттернов, всё ещё требующих expand-contract (volatile default, не-coercible type change, rename, drop с активными читателями). PG 12 добавил больше (ATTACH PARTITION CONCURRENTLY-light); PG 14 улучшил надёжность CREATE INDEX CONCURRENTLY; PG 17 добавил DEALLOCATE-over-protocol (помогая PgBouncer prepared-statement pooling, см. piece 05). Траектория ясная: каждый release делает больше операций дешевле, постепенно перемещая zero-downtime из сложной задачи в дефолт. Senior-команды держат руку на пульсе, читая раздел «performance и reliability улучшения для ALTER TABLE» в release notes каждый год.</p>,
+        },
+        {
+          id: "sr-q2",
+          q: "Объясните, почему expand-contract — структурно единственный корректный способ обработать column rename, drop или type-change в продакшне, и как pgroll автоматизирует boilerplate без компромисса паттерна.",
+          answer: <p>Column rename, drop или non-coercible type change создаёт момент, когда схема не поддерживает одновременно старую и новую версию приложения. Во время rolling deploy — единственно безопасного паттерна на любом масштабе — старые pod продолжают обслуживать трафик, пока новые встают. Если миграция commit, а старые pod ещё работают — они выдают SQL, ссылающийся на старое имя колонки (rename) или старый тип (type change), и Postgres возвращает ошибки. С точки зрения клиента деплой «сломал» приложение, хотя и новый код, и новая схема индивидуально корректны. Expand-contract убирает это окно, поддерживая supersеt схемы: в каждый момент обе версии кода могут работать против текущей схемы. Общий протокол. (1) Expand: добавить новую колонку/таблицу/индекс <em>рядом</em> со старым. Старый код не затронут; новый видит обе. (2) Dual-write: задеплоить код, пишущий в обе. Чтения по-прежнему в старое. Старый path не затронут (записи новой невидимы ему). (3) Backfill: копирование old → new. Батчами с передышкой; без lock-contention. (4) Read swap: задеплоить код, читающий из new (записи всё ещё в обе). И старый (пишет обе, читает старое), и новый (пишет обе, читает новое) работают корректно. (5) Stop writing old: задеплоить код, пишущий только в new. (6) Contract: удалить старую колонку. Каждый шаг — отдельный деплой со своим PR + миграцией. Общий span — дни (3-14 типично), но каждый шаг обратим и инкрементально безопасен. Почему pgroll не компромисс паттерна, а автоматизация boilerplate: pgroll использует views Postgres как виртуальные схемы. Когда вы запускаете pgroll-миграцию «rename username to handle», pgroll: (1) создаёт виртуальную схему для новой версии («v2») с view users, экспонирующим колонку как `handle`, бэкенд на реальной колонке. (2) Создаёт виртуальную схему для старой («v1») с view, экспонирующим колонку как `username`. (3) Добавляет триггеры трансляции записей: когда v1 view получает UPDATE, ставящий `username`, триггер пишет в реальную колонку; когда v2 получает UPDATE, ставящий `handle`, тоже пишет в реальную. (4) Старые pod коннектятся с `search_path = v1, public`; новые — с `search_path = v2, public`. Оба видят колонку под своим именем; обе записи идут в одну underlying storage. (5) Когда pgroll contract фаза запускается (после ухода старых pod), v1 схема удаляется вместе с триггером; underlying колонка переименовывается в финальное имя. Customer-видимый эффект: rename выглядит как одна декларативная миграция, но исполняет полный expand-contract, и приложение не знает. Цена: pgroll требует, чтобы приложение ставило search_path per-connection, что связывает приложение с pgroll-managed schema versioning; отладка требует понимания view-слоя; вывод pg_dump сложнее. Для команд, способных принять эти ограничения, pgroll складывает 5-деплойный expand-contract за неделю в одну декларативную миграцию. Для остальных ручной паттерн работает и — production-дефолт. Senior-интуиция: expand-contract — инвариант корректности zero-downtime миграций; не опционален. Пишите его руками или через pgroll — паттерн делает деплой безопасным. Пропуск — фабрика deploy-coupled багов.</p>,
+        },
+      ]}
+    />
+  </Fragment>
+</TierAccordion>
+
+<KeyTakeaway>ALTER TABLE берёт AccessExclusiveLock; очередь FIFO; SET lock_timeout = '2s' обязателен. ADD COLUMN с константным default мгновенно с PG 11. NOT VALID + VALIDATE для constraint. CREATE INDEX CONCURRENTLY для индексов. Breaking changes (rename, drop, type-change) — через expand-contract за дни. Squawk в CI; pgroll/Atlas автоматизируют; Prisma/Drizzle запускают.</KeyTakeaway>
+
+<SpiralCue thread="statefulness">
+Миграции — место, где пулинг (05) и MVCC (04) сталкиваются жёстко: долгая транзакция держит и MVCC snapshot, И блокирует AccessExclusiveLock миграции, И ставит весь пул в очередь. Следующий фрагмент (07-sharding) строит на той же дисциплине DDL, но умножает: у каждого шарда своя схема, и миграция должна дойти до каждого шарда с теми же гарантиями expand-contract, часто через параллельные per-shard миграции, координируемые слоем приложения.
+</SpiralCue>
