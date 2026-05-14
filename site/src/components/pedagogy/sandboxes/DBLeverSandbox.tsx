@@ -68,6 +68,9 @@ export function rankLevers(input: SandboxInput): Lever[] {
   if (symptom === "hot-shard" && tenancy === "multi" && rows >= 100_000_000) {
     return [lever("07-sharding"), lever("01-relational-model"), lever("03-execution-plans")];
   }
+  if (symptom === "hot-shard") {
+    return [lever("07-sharding"), lever("01-relational-model"), lever("03-execution-plans")];
+  }
   if (symptom === "connection-storm") {
     return [lever("05-pooling"), lever("04-mvcc-isolation"), lever("03-execution-plans")];
   }
