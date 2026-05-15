@@ -23,7 +23,7 @@ export default function ReactiveDiagram({ id, inputs, compute, render }: Props) 
   const [vals, setVals] = useState<Record<string, number>>(init);
   const derived = compute(vals);
   return (
-    <section id={id} class="my-8 rounded-2xl border-2 border-bbg-teal bg-white p-6">
+    <section id={id} class="my-8 rounded-2xl border-2 border-bbg-teal bg-card p-6">
       <div class="grid grid-cols-1 md:grid-cols-[260px_minmax(0,1fr)] gap-6">
         <div>
           <ul class="space-y-4 list-none p-0">
