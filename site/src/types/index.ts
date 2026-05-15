@@ -17,3 +17,9 @@ export type SpiralThread = "encapsulation" | "multiplexing" | "statefulness" | "
 export type Status = "stub" | "draft" | "ready";
 
 export type Bilingual = { en: string; ru: string };
+
+export type Track = "math" | "algorithms";
+
+export const TRACKS: Track[] = ["math", "algorithms"];
+
+export type LessonStatus = "stub" | "draft" | "ready";
