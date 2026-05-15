@@ -1,6 +1,6 @@
 import { defineCollection, z } from "astro:content";
 import { glob, file } from "astro/loaders";
-import { PILLARS } from "../types";
+import { PILLARS, TRACKS } from "../types";
 
 const Pillar = z.enum(PILLARS as [string, ...string[]]);
 const Lang = z.enum(["en", "ru"]);
@@ -62,4 +62,53 @@ const book = defineCollection({
   }),
 });
 
-export const collections = { pillars, chapters, book };
+const Track = z.enum(TRACKS as [string, ...string[]]);
+const SlugRe = /^\d{2}-[a-z0-9-]+$/;
+
+const tracks = defineCollection({
+  loader: file("src/content/tracks.json"),
+  schema: z.object({
+    slug: Track,
+    order: z.number().int().positive(),
+    title: Bi,
+    blurb: Bi,
+    color: z.enum(["lilac", "mint", "peach", "sky", "rose"]),
+  }),
+});
+
+const units = defineCollection({
+  loader: file("src/content/units.json"),
+  schema: z.object({
+    slug: z.string().regex(SlugRe),
+    track: Track,
+    order: z.number().int().positive(),
+    title: Bi,
+    crux: Bi,
+    lessons: z.array(z.string().regex(SlugRe)),
+  }),
+});
+
+const lessons = defineCollection({
+  loader: glob({
+    pattern: "**/*.{md,mdx}",
+    base: "./src/content/lessons",
+    generateId: ({ entry }) =>
+      entry.replace(/\/index\.(md|mdx)$/, "").replace(/\.(md|mdx)$/, ""),
+  }),
+  schema: z.object({
+    slug: z.string().regex(SlugRe),
+    lang: Lang,
+    track: Track,
+    unit: z.string().regex(SlugRe),
+    order: z.number().int().positive(),
+    title: z.string().min(1).max(120),
+    summary: z.string().min(1).max(280),
+    estMin: z.number().int().positive(),
+    status: Status.default("stub"),
+    prereqs: z.array(z.string()).default([]),
+    concepts: z.array(z.string()).default([]),
+    sources: z.array(z.string().url()).min(1),
+  }),
+});
+
+export const collections = { pillars, chapters, book, tracks, units, lessons };
