@@ -28,7 +28,7 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
     <section
       id={id}
       data-active-step={steps[active].id}
-      class="my-8 rounded-2xl border-2 border-bbg-ink/10 bg-white p-6"
+      class="my-8 rounded-2xl border-2 border-bbg-ink/10 bg-card p-6"
     >
       <div class="relative">{children}</div>
       <div class="mt-4 flex items-center gap-3">
