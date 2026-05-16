@@ -91,6 +91,26 @@ The command enforces:
 - Status flow: stub → draft (optional) → ready.
 - Exactly 5 `..` segments in component import paths.
 
+## Secondary command: `/teach <track>/<NN-unit>/<NN-lesson>`
+
+Author a single absolute-beginner lesson (EN + RU) for the `foundations` section —
+a learning track parallel to, and isolated from, the 16-pillar fullstack program.
+
+- **First track:** `math` (mathematics from zero — for a reader who knows only basic
+  arithmetic). The `algorithms` track is a later cycle.
+- **Content lives in** `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`,
+  with `tracks.json` and `units.json` as the track/unit data files.
+- **Lesson format is linear** (Hook → Goal → Explanation → Visual → WorkedExample →
+  Practice → Check → Recap), with optional collapsible `<Inset>` blocks — the
+  inverse of the tiered fullstack piece.
+- **Routing:** `/learn/<track>/<lesson>`.
+- **Linter:** the foundations rules in `src/lint/rules/lessons.ts` run in the same
+  build pass; lesson pages have a hydration cap of 5 and require ≥4 practice
+  problems and ≥1 visual.
+
+The `/infographic` command and its fullstack domain lock are unchanged. `/teach` has
+its own domain (mathematics; later algorithms).
+
 ## MCP servers (when to use)
 
 - **`claude.ai Figma`** — design-to-code, screenshots, FigJam diagrams, Code Connect. Use for Figma URLs (parse `fileKey` and `nodeId`; convert `-` → `:`).
