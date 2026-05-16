@@ -115,7 +115,7 @@ a learning track parallel to, and isolated from, the 16-pillar fullstack program
   problems and ≥1 visual.
 
 The `/infographic` command and its fullstack domain lock are unchanged. `/teach` has
-its own domain (mathematics; later algorithms).
+its own domain (mathematics and algorithms).
 
 ## MCP servers (when to use)
 
