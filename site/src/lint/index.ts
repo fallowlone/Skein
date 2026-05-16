@@ -13,7 +13,7 @@ import { checkReducedMotion } from "./rules/reduced-motion";
 import { checkPersonas } from "./rules/personas";
 import { checkTierWordBudgets } from "./rules/tier-word-budgets";
 import { checkExerciseCounts } from "./rules/exercise-counts";
-import { checkLessonRules, checkLessonParity } from "./rules/lessons";
+import { checkLessonRules, checkLessonParity, checkMathPrereqs } from "./rules/lessons";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -54,6 +54,7 @@ export function lintCurriculum(): AstroIntegration {
         const siteSrc = fileURLToPath(new URL("../src/", dir));
         errors.push(...(await checkI18nParity(siteSrc)));
         errors.push(...(await checkLessonParity(siteSrc)));
+        errors.push(...(await checkMathPrereqs(siteSrc)));
         errors.push(...(await checkReducedMotion(root)));
 
         await writeFile(
