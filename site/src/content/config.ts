@@ -106,6 +106,7 @@ const lessons = defineCollection({
     estMin: z.number().int().positive(),
     status: Status.default("stub"),
     prereqs: z.array(z.string()).default([]),
+    mathPrereqs: z.array(z.string()).default([]),
     concepts: z.array(z.string()).default([]),
     sources: z.array(z.string().url()).min(1),
   }),
