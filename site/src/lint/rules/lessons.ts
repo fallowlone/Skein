@@ -1,14 +1,14 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-const REQUIRED_SECTIONS = ["hook", "goal", "worked-example", "check", "recap"] as const;
+const MATH_SECTIONS = ["hook", "goal", "worked-example", "check", "recap"] as const;
+const ALGO_SECTIONS = ["hook", "goal", "idea", "code", "trace", "complexity", "check", "recap"] as const;
 
-/** True only for built lesson pages: dist/<lang>/learn/<track>/<lesson>/index.html */
-function lessonSlugFromPath(file: string): string | null {
+/** Built lesson page: dist/<lang>/learn/<track>/<lesson>/index.html — else null. */
+function lessonInfoFromPath(file: string): { slug: string; track: string } | null {
   const seg = file.split(/[\\/]/).filter(Boolean);
-  // ["dist", "en", "learn", "math", "01-counting", "index.html"]
   if (seg.length === 6 && seg[0] === "dist" && seg[2] === "learn" && seg[5].startsWith("index.")) {
-    return seg[4];
+    return { track: seg[3], slug: seg[4] };
   }
   return null;
 }
@@ -18,40 +18,21 @@ function orderOf(slug: string): number {
   return m ? Number(m[1]) : NaN;
 }
 
-export function checkLessonRules(html: string, file: string): string[] {
-  const lessonSlug = lessonSlugFromPath(file);
-  if (!lessonSlug) return [];
-  const errs: string[] = [];
-
-  // Rule 1: skeleton sections present and ordered.
+/** First occurrence index of each data-lesson-section value. */
+function sectionIndexes(html: string): Map<string, number> {
   const seen = new Map<string, number>();
-  const sectionRe = /data-lesson-section="([a-z-]+)"/g;
+  const re = /data-lesson-section="([a-z-]+)"/g;
   let m: RegExpExecArray | null;
-  while ((m = sectionRe.exec(html))) {
+  while ((m = re.exec(html))) {
     if (!seen.has(m[1])) seen.set(m[1], m.index);
   }
-  const stepIdx = html.search(/data-lesson-step\b/);
-  const visualIdx = html.search(/data-lesson-visual\b/);
-  const practiceIdx = html.search(/data-practice-set\b/);
+  return seen;
+}
 
-  for (const s of REQUIRED_SECTIONS) {
-    if (!seen.has(s)) errs.push(`${file}: lesson skeleton missing "${s}" section`);
-  }
-  if (stepIdx < 0) errs.push(`${file}: lesson skeleton missing explanation (no Step component)`);
-  if (visualIdx < 0) errs.push(`${file}: lesson has no visual widget`);
-  if (practiceIdx < 0) errs.push(`${file}: lesson skeleton missing practice (no PracticeSet)`);
+type OrderEntry = readonly [string, number | undefined];
 
-  // Ordering: hook < goal < step < visual < worked-example < practice < check < recap.
-  const order = [
-    ["hook", seen.get("hook")],
-    ["goal", seen.get("goal")],
-    ["step", stepIdx >= 0 ? stepIdx : undefined],
-    ["visual", visualIdx >= 0 ? visualIdx : undefined],
-    ["worked-example", seen.get("worked-example")],
-    ["practice", practiceIdx >= 0 ? practiceIdx : undefined],
-    ["check", seen.get("check")],
-    ["recap", seen.get("recap")],
-  ] as const;
+function checkOrder(order: readonly OrderEntry[], file: string): string[] {
+  const errs: string[] = [];
   let prev = -1;
   let prevName = "start";
   for (const [name, idx] of order) {
@@ -60,37 +41,106 @@ export function checkLessonRules(html: string, file: string): string[] {
     prev = idx;
     prevName = name;
   }
+  return errs;
+}
 
-  // Rule: >= 4 practice problems.
+/** Rules every track shares: visual, practice count, hydration cap, forward links, sources. */
+function commonLessonRules(html: string, file: string, slug: string, track: string): string[] {
+  const errs: string[] = [];
+
+  if (html.search(/data-lesson-visual\b/) < 0) errs.push(`${file}: lesson has no visual widget`);
+  if (html.search(/data-practice-set\b/) < 0) {
+    errs.push(`${file}: lesson skeleton missing practice (no PracticeSet)`);
+  }
+
   const practiceBlock = html.match(/<section[^>]*data-practice-set[^>]*>([\s\S]*?)<\/section>/);
   if (practiceBlock) {
     const problems = practiceBlock[1].match(/data-practice-problem\b/g)?.length ?? 0;
-    if (problems < 4) {
-      errs.push(`${file}: practice problems: ${problems} found (min 4)`);
-    }
+    if (problems < 4) errs.push(`${file}: practice problems: ${problems} found (min 4)`);
   }
 
-  // Rule: hydration cap 5.
   const islands = html.match(/<astro-island\b/g)?.length ?? 0;
   if (islands > 5) errs.push(`${file}: ${islands} hydration islands (max 5 on lesson pages)`);
 
-  // Rule: no forward links to a higher-ordered lesson in the same track.
-  const thisOrder = orderOf(lessonSlug);
-  const linkRe = /href="\/(?:en|ru)\/learn\/[a-z-]+\/(\d{2}-[a-z0-9-]+)\/?"/g;
+  // Forward link: only links within the same track to a higher-ordered lesson count.
+  const thisOrder = orderOf(slug);
+  const linkRe = /href="\/(?:en|ru)\/learn\/([a-z-]+)\/(\d{2}-[a-z0-9-]+)\/?"/g;
+  let m: RegExpExecArray | null;
   while ((m = linkRe.exec(html))) {
-    const targetOrder = orderOf(m[1]);
+    if (m[1] !== track) continue;
+    const targetOrder = orderOf(m[2]);
     if (Number.isFinite(targetOrder) && Number.isFinite(thisOrder) && targetOrder > thisOrder) {
-      errs.push(`${file}: forward link to higher-ordered lesson "${m[1]}"`);
+      errs.push(`${file}: forward link to higher-ordered lesson "${m[2]}"`);
     }
   }
 
-  // Rule: sources footer must carry an external link.
   const footer = html.match(/<footer[^>]*>([\s\S]*?)<\/footer>/)?.[1] ?? "";
   if ((/Sources/i.test(footer) || /Источник/i.test(footer)) && !/href="https?:\/\//.test(footer)) {
     errs.push(`${file}: lesson sources footer has no external link`);
   }
-
   return errs;
+}
+
+function checkMathLesson(html: string, file: string, slug: string): string[] {
+  const errs = commonLessonRules(html, file, slug, "math");
+  const seen = sectionIndexes(html);
+  for (const s of MATH_SECTIONS) {
+    if (!seen.has(s)) errs.push(`${file}: lesson skeleton missing "${s}" section`);
+  }
+  const stepIdx = html.search(/data-lesson-step\b/);
+  if (stepIdx < 0) errs.push(`${file}: lesson skeleton missing explanation (no Step component)`);
+  const visualIdx = html.search(/data-lesson-visual\b/);
+  const practiceIdx = html.search(/data-practice-set\b/);
+  errs.push(
+    ...checkOrder(
+      [
+        ["hook", seen.get("hook")],
+        ["goal", seen.get("goal")],
+        ["step", stepIdx >= 0 ? stepIdx : undefined],
+        ["visual", visualIdx >= 0 ? visualIdx : undefined],
+        ["worked-example", seen.get("worked-example")],
+        ["practice", practiceIdx >= 0 ? practiceIdx : undefined],
+        ["check", seen.get("check")],
+        ["recap", seen.get("recap")],
+      ],
+      file
+    )
+  );
+  return errs;
+}
+
+function checkAlgoLesson(html: string, file: string, slug: string): string[] {
+  const errs = commonLessonRules(html, file, slug, "algorithms");
+  const seen = sectionIndexes(html);
+  for (const s of ALGO_SECTIONS) {
+    if (!seen.has(s)) errs.push(`${file}: algorithm lesson missing "${s}" section`);
+  }
+  const practiceIdx = html.search(/data-practice-set\b/);
+  errs.push(
+    ...checkOrder(
+      [
+        ["hook", seen.get("hook")],
+        ["goal", seen.get("goal")],
+        ["idea", seen.get("idea")],
+        ["code", seen.get("code")],
+        ["trace", seen.get("trace")],
+        ["complexity", seen.get("complexity")],
+        ["practice", practiceIdx >= 0 ? practiceIdx : undefined],
+        ["check", seen.get("check")],
+        ["recap", seen.get("recap")],
+      ],
+      file
+    )
+  );
+  return errs;
+}
+
+export function checkLessonRules(html: string, file: string): string[] {
+  const info = lessonInfoFromPath(file);
+  if (!info) return [];
+  return info.track === "algorithms"
+    ? checkAlgoLesson(html, file, info.slug)
+    : checkMathLesson(html, file, info.slug);
 }
 
 async function walkMdx(dir: string): Promise<string[]> {
@@ -124,7 +174,6 @@ export async function checkLessonParity(siteSrc: string): Promise<string[]> {
     if (!lang || status !== "ready") continue;
     const parts = f.split(/[\\/]/);
     const idx = parts.findIndex((p) => p === "lessons");
-    // .../lessons/<lang>/<track>/<unit>/<lesson>/index.mdx
     const key = `${parts[idx + 2]}/${parts[idx + 3]}/${parts[idx + 4]}`;
     if (lang === "en") enReady.add(key);
     else ruReady.add(key);
@@ -134,6 +183,34 @@ export async function checkLessonParity(siteSrc: string): Promise<string[]> {
   }
   for (const k of ruReady) {
     if (!enReady.has(k)) errs.push(`lesson-parity: RU ready lesson "${k}" missing EN twin`);
+  }
+  return errs;
+}
+
+/** Source-level: every mathPrereqs entry resolves to an existing math lesson. */
+export async function checkMathPrereqs(siteSrc: string): Promise<string[]> {
+  const errs: string[] = [];
+  const lessonsDir = join(siteSrc, "content/lessons");
+  const files = await walkMdx(lessonsDir);
+
+  const mathKeys = new Set<string>();
+  for (const f of files) {
+    const parts = f.split(/[\\/]/);
+    const idx = parts.findIndex((p) => p === "lessons");
+    if (parts[idx + 2] !== "math") continue;
+    mathKeys.add(`math/${parts[idx + 3]}/${parts[idx + 4]}`);
+  }
+
+  for (const f of files) {
+    const body = await readFile(f, "utf8");
+    const fm = body.match(/^mathPrereqs:\s*\[([^\]]*)\]/m);
+    if (!fm) continue;
+    const refs = [...fm[1].matchAll(/["']([^"']+)["']/g)].map((r) => r[1]);
+    for (const ref of refs) {
+      if (!mathKeys.has(ref)) {
+        errs.push(`math-prereq: "${f}" references missing math lesson "${ref}"`);
+      }
+    }
   }
   return errs;
 }
