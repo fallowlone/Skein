@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { checkLessonRules, checkLessonParity } from "./lessons";
+import { checkLessonRules, checkLessonParity, checkMathPrereqs } from "./lessons";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -88,6 +88,84 @@ describe("checkLessonParity", () => {
     await lessonFixture(root, "ru", "ready");
     const errs = await checkLessonParity(root);
     await rm(root, { recursive: true, force: true });
+    expect(errs).toEqual([]);
+  });
+});
+
+const ALGO_PATH = "dist/en/learn/algorithms/01-what-is-an-algorithm/index.html";
+
+function algoSkeleton(opts: Partial<Record<string, boolean>> = {}): string {
+  const has = (k: string) => opts[k] !== false;
+  return [
+    has("hook") ? `<div data-lesson-section="hook"></div>` : "",
+    has("goal") ? `<div data-lesson-section="goal"></div>` : "",
+    has("idea") ? `<div data-lesson-section="idea"></div>` : "",
+    has("code") ? `<div data-lesson-section="code"></div>` : "",
+    has("trace") ? `<div data-lesson-section="trace"><div data-lesson-visual></div></div>` : "",
+    has("complexity") ? `<div data-lesson-section="complexity"></div>` : "",
+    has("practice")
+      ? `<section data-practice-set><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div></section>`
+      : "",
+    has("check") ? `<div data-lesson-section="check"></div>` : "",
+    has("recap") ? `<div data-lesson-section="recap"></div>` : "",
+    `<footer>Sources <a href="https://example.com">x</a></footer>`,
+  ].join("\n");
+}
+
+describe("checkLessonRules — algorithms track", () => {
+  test("a complete algorithm lesson passes", () => {
+    expect(checkLessonRules(algoSkeleton(), ALGO_PATH)).toEqual([]);
+  });
+
+  test("flags a missing algorithm section", () => {
+    const errs = checkLessonRules(algoSkeleton({ complexity: false }), ALGO_PATH);
+    expect(errs.some((e) => /complexity/.test(e))).toBe(true);
+  });
+
+  test("flags a missing trace visual", () => {
+    const errs = checkLessonRules(
+      algoSkeleton().replace(`<div data-lesson-visual></div>`, ""),
+      ALGO_PATH
+    );
+    expect(errs.some((e) => /visual/.test(e))).toBe(true);
+  });
+
+  test("does not require the math 'worked-example' section", () => {
+    const errs = checkLessonRules(algoSkeleton(), ALGO_PATH);
+    expect(errs.some((e) => /worked-example/.test(e))).toBe(false);
+  });
+
+  test("a cross-track link to a math lesson is not a forward link", () => {
+    const html = algoSkeleton() + `<a href="/en/learn/math/08-logarithms/">x</a>`;
+    const errs = checkLessonRules(html, ALGO_PATH);
+    expect(errs.some((e) => /forward/.test(e))).toBe(false);
+  });
+});
+
+async function mpFixture(root: string, rel: string, body: string) {
+  const dir = join(root, "content/lessons", rel);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, "index.mdx"), body);
+}
+
+describe("checkMathPrereqs", () => {
+  test("flags a mathPrereqs ref with no matching math lesson", async () => {
+    const r = await mkdtemp(join(tmpdir(), "mp-"));
+    await mpFixture(r, "en/algorithms/01-thinking-complexity/01-what-is-an-algorithm",
+      `---\nslug: 01-what-is-an-algorithm\nlang: en\ntrack: algorithms\nmathPrereqs: ["math/08-growth/02-logarithms"]\n---\nbody\n`);
+    const errs = await checkMathPrereqs(r);
+    await rm(r, { recursive: true, force: true });
+    expect(errs.some((e) => /02-logarithms/.test(e))).toBe(true);
+  });
+
+  test("passes when the referenced math lesson exists", async () => {
+    const r = await mkdtemp(join(tmpdir(), "mp-"));
+    await mpFixture(r, "en/math/08-growth/02-logarithms",
+      `---\nslug: 02-logarithms\nlang: en\ntrack: math\n---\nbody\n`);
+    await mpFixture(r, "en/algorithms/01-thinking-complexity/01-what-is-an-algorithm",
+      `---\nslug: 01-what-is-an-algorithm\nlang: en\ntrack: algorithms\nmathPrereqs: ["math/08-growth/02-logarithms"]\n---\nbody\n`);
+    const errs = await checkMathPrereqs(r);
+    await rm(r, { recursive: true, force: true });
     expect(errs).toEqual([]);
   });
 });
