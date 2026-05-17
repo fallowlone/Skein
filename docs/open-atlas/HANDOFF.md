@@ -91,10 +91,13 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Work queue (in order)
 
-1. **Glossary — plan 2: definition backfill.** Author `defEn`+`defRu` for the 439
-   terms in `glossary.json` that lack a definition (+ `seeAlso` for key terms). The
-   glossary page (plan 1) is done; this fills its content. Batched, subagent-driven —
-   needs its own written plan.
+1. **Glossary — plan 2: definition backfill (IN PROGRESS).** Author `defEn`+`defRu`
+   for the 439 terms in `glossary.json` that lacked a definition. Plan written:
+   `docs/superpowers/plans/2026-05-17-glossary-backfill.md` — 30 research batches of
+   ~15 terms, subagent-driven, full WebSearch/Context7 research per term.
+   DONE: Task 1 (merge/check tooling) + Batch B01 (networking). glossary now
+   147/571 defined. RESUME at Task 3 / Batch B02 — see the PROGRESS note at the top
+   of the plan file. `seeAlso` field stays unpopulated (optional, future polish).
 2. **Base CS foundations track** — the missing rung between Mathematics and Algorithms
    (the algorithms track currently assumes "knows one programming language"). Broad
    "base CS": programming + how computers work. Code language = TS/JS. New track #3 in
