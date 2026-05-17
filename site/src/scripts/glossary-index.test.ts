@@ -60,3 +60,20 @@ describe("scanKeys", () => {
     expect(scanKeys("plain text, no terms").size).toBe(0);
   });
 });
+
+describe("deriveRelations — seeAlso", () => {
+  it("copies seeAlso arrays from the glossary", () => {
+    const g = {
+      tcp: { en: "TCP", ru: "TCP", seeAlso: ["syn"] },
+      syn: { en: "SYN", ru: "SYN" },
+    };
+    const rel = deriveRelations([], g);
+    expect(rel.seeAlso.tcp).toEqual(["syn"]);
+    expect(rel.seeAlso.syn).toEqual([]);
+  });
+
+  it("throws on a seeAlso reference to a missing key", () => {
+    const g = { tcp: { en: "TCP", ru: "TCP", seeAlso: ["ghost"] } };
+    expect(() => deriveRelations([], g)).toThrow(/seeAlso.*ghost/i);
+  });
+});
