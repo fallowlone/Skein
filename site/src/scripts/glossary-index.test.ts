@@ -76,4 +76,14 @@ describe("deriveRelations — seeAlso", () => {
     const g = { tcp: { en: "TCP", ru: "TCP", seeAlso: ["ghost"] } };
     expect(() => deriveRelations([], g)).toThrow(/seeAlso.*ghost/i);
   });
+
+  it("treats an explicit empty seeAlso array as no relations", () => {
+    const g = { tcp: { en: "TCP", ru: "TCP", seeAlso: [] as string[] } };
+    expect(deriveRelations([], g).seeAlso.tcp).toEqual([]);
+  });
+
+  it("throws on a seeAlso reference to itself", () => {
+    const g = { tcp: { en: "TCP", ru: "TCP", seeAlso: ["tcp"] } };
+    expect(() => deriveRelations([], g)).toThrow(/references itself/i);
+  });
 });
