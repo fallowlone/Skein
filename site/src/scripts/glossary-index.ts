@@ -51,6 +51,9 @@ export function deriveRelations(
     introducedIn[key] = null;
     const refs = glossary[key].seeAlso ?? [];
     for (const ref of refs) {
+      if (ref === key) {
+        throw new Error(`glossary "${key}": seeAlso references itself`);
+      }
       if (!(ref in glossary)) {
         throw new Error(`glossary "${key}": seeAlso references unknown key "${ref}"`);
       }
