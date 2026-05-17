@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { deriveRelations, type ScanEntry } from "./glossary-index";
+import { deriveRelations, scanKeys, type ScanEntry } from "./glossary-index";
 
 const glossary = {
   tcp: { en: "TCP", ru: "TCP" },
@@ -38,5 +38,25 @@ describe("deriveRelations — usedIn / introducedIn", () => {
     const r2 = deriveRelations([], glossary);
     expect(r2.introducedIn.tcp).toBeNull();
     expect(r2.usedIn.tcp).toEqual([]);
+  });
+});
+
+describe("scanKeys", () => {
+  it("extracts the k attribute from Term tags", () => {
+    expect([...scanKeys('<Term k="tcp" lang="en">TCP</Term>')]).toEqual(["tcp"]);
+  });
+
+  it("matches k regardless of attribute order", () => {
+    expect([...scanKeys('<Term lang="en" k="syn">SYN</Term>')]).toEqual(["syn"]);
+  });
+
+  it("dedupes repeated keys and returns multiple distinct keys", () => {
+    const keys = scanKeys('<Term k="tcp">a</Term> <Term k="tcp">b</Term> <Term k="syn">c</Term>');
+    expect([...keys].sort()).toEqual(["syn", "tcp"]);
+  });
+
+  it("returns an empty set for a body with no Term tags", () => {
+    expect(scanKeys("").size).toBe(0);
+    expect(scanKeys("plain text, no terms").size).toBe(0);
   });
 });
