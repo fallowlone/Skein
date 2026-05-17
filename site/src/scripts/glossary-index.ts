@@ -49,7 +49,13 @@ export function deriveRelations(
   for (const key of Object.keys(glossary)) {
     usedIn[key] = [];
     introducedIn[key] = null;
-    seeAlso[key] = [];
+    const refs = glossary[key].seeAlso ?? [];
+    for (const ref of refs) {
+      if (!(ref in glossary)) {
+        throw new Error(`glossary "${key}": seeAlso references unknown key "${ref}"`);
+      }
+    }
+    seeAlso[key] = refs;
   }
 
   for (const entry of entries) {
