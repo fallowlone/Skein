@@ -89,7 +89,7 @@ The command enforces:
 - Text budgets (Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240).
 - Hydration cap = 5 islands per page (TierAccordion + FadedExample + RetrievalDrawer + 2 baseline).
 - Status flow: stub → draft (optional) → ready.
-- Exactly 5 `..` segments in component import paths.
+- Component imports use the `~/` alias (`~` → `site/src/`); no `..` relative segments.
 
 ## Secondary command: `/teach <track>/<NN-unit>/<NN-lesson>`
 
