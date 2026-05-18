@@ -117,19 +117,40 @@ by following a connected path of lessons. Practice is deferred (theory first).
     why-high-level-languages, compilation-vs-interpretation, the-runtime,
     source-to-running-program. 14 glossary terms added (assembler, compiler,
     interpreter, jit, runtime_system, garbage_collection, …).
-  units.json lesson lists for units 02–04 are filled. Build clean (1727 pages,
-  lint 0/0). **Remaining: P2 (units 05–08), P3 (units 09–12)** — per-unit `/teach`
-  authoring, following the P0/P1 pattern in the plan. NEXT STEP: merge `base-cs-p1`
-  into main (or open a PR), then start P2.
+  units.json lesson lists for units 02–04 are filled. `base-cs-p1` was merged into
+  main (fast-forward) and the branch deleted.
+  **P2 DONE** (branch `base-cs-p2`, off main, NOT yet merged) — the programming-theory
+  arc starts, units 05–08, authored EN+RU, each unit implementer→quality-review→fix
+  cycle complete, build clean (1849 pages, lint 0/0). 23 commits. P2 introduced the
+  first `coding`-skeleton lessons; both skeletons verified rendering end-to-end:
+  - Unit 05 "Values and types" — 4 lessons: what-a-value-is (concept),
+    types-interpret-bits (concept), primitive-types (coding), why-types-exist
+    (concept). 17 glossary terms added (hyphen-keyed).
+  - Unit 06 "Variables and state" — 4 lessons: a-variable-is-a-named-cell (concept),
+    assignment (coding), mutation-and-state (concept), references-vs-values (coding).
+    14 glossary terms added (underscore-keyed).
+  - Unit 07 "Control flow" — 4 lessons: what-flow-means, conditionals-as-branches,
+    loops-as-repeated-jumps (all concept), tracing-a-program (coding).
+  - Unit 08 "Functions and the call stack" — 5 lessons: what-a-function-is (concept),
+    the-call-stack (coding), parameters-and-return (coding), scope (concept),
+    recursion-preview (coding). 7 glossary terms added.
+  units.json lesson lists for units 05–08 are filled.
+  Note: base-cs glossary keys are mixed-convention (Unit 05 used hyphens, Units 06/08
+  used underscores); the lessons linter does not gate glossary coverage for
+  `lessons/`, so this is cosmetic — normalise if a future task touches the glossary.
+  **Remaining: P3 (units 09–12)** — per-unit `/teach` authoring, following the
+  P0/P1/P2 pattern in the plan. NEXT STEP: merge `base-cs-p2` into main (or open a
+  PR), then start P3.
 
 ## Work queue (in order)
 
-1. **Base CS track — P2–P3** — author the remaining 8 units (05–12) via `/teach`,
+1. **Base CS track — P3** — author the remaining 4 units (09–12) via `/teach`,
    per the plan `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`.
-   P0 (infra + Unit 01) and P1 (units 02–04) are done — see "Built so far". P1 lives
-   on unmerged branch `base-cs-p1`; merge it before starting P2. Each unit: fix its
-   lesson list into `units.json`, author each lesson EN+RU, clean build at the unit
-   boundary. P2 introduces the first `coding`-skeleton lessons.
+   P0 (infra + Unit 01), P1 (units 02–04), and P2 (units 05–08) are done — see
+   "Built so far". P2 lives on unmerged branch `base-cs-p2`; merge it before starting
+   P3. Each unit: fix its lesson list into `units.json`, author each lesson EN+RU,
+   clean build at the unit boundary. P3 ends with a clean build of the full 12-unit
+   track and the algorithms track confirmed still building at `order: 3`.
 2. **Migration: 3-tier → single-level lessons** — large. Convert the authored
    networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
    rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
