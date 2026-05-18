@@ -16,7 +16,7 @@ allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, mcp__plugin_context
 2. **Read `curriculum.md` depth bar + forbidden simplifications before drafting.** Middle+/senior engineer only.
 3. **Bilingual EN+RU or refuse.** No partial-language pieces.
 4. **Site-only output.** Write to `site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx`. Never edit `site/dist/` or legacy `infographics/` tree.
-5. **Per-piece import path depth: exactly 5 `..` segments** (verified against `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` template).
+5. **Component imports use the `~/` alias** (`~` → `site/src/`); no `..` relative segments (verified against `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` template).
 6. **Text budgets enforced** (linter + manual): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
 7. **Hydration cap = 5 islands per page** (linter-enforced). Typical budget: TierAccordion + FadedExample + RetrievalDrawer + 2 baseline.
 8. **Status flow:** stub → draft (optional) → ready. Only `ready` renders real content to users.
@@ -123,9 +123,9 @@ Body structure is fixed — three-tier disclosure via `<TierAccordion>` with one
 ```
 
 **Import rules:**
-- All components live under `../../../../../components/` (5 `..` segments from the piece's `index.mdx`).
-- Example: `import TierAccordion from "../../../../../components/pedagogy/TierAccordion.tsx";`
-- Verify every import path has exactly 5 `..`.
+- Components are imported via the `~/` path alias (`~` → `site/src/`, configured in `astro.config.mjs` + `tsconfig.json`).
+- Example: `import TierAccordion from "~/components/pedagogy/TierAccordion.tsx";`
+- Never use `..` relative segments — all component imports start with `~/components/`.
 
 **Hydration budget:**
 - TierAccordion (1 island) — tier selector if the piece has per-tier content.
@@ -254,7 +254,7 @@ Concerns:       none
 ## Failure modes
 
 - **Validating the wrong stub.** Always check `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` exists before starting.
-- **Import path depth mismatch.** Count your `..` segments. Should be exactly 5.
+- **Import path mismatch.** Component imports must start with `~/components/` — no `..` relative segments.
 - **Incomplete depth checkpoints.** If any of `mechanism`, `tradeoff`, `failure_mode`, `numbers` is missing from frontmatter, the piece fails linting and cannot merge.
 - **Text budget overruns.** Crux > 140, KeyTakeaway > 220, Misconception > 320 → linter fails.
 - **Partial translation.** If RU is absent or incomplete, status cannot be `ready`. Report DONE_WITH_CONCERNS.
