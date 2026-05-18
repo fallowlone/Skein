@@ -169,3 +169,74 @@ describe("checkMathPrereqs", () => {
     expect(errs).toEqual([]);
   });
 });
+
+function basecsConcept(opts: Partial<Record<string, boolean>> = {}): string {
+  const has = (k: string) => opts[k] !== false;
+  return [
+    `<article data-lesson-type="concept">`,
+    has("hook") ? `<div data-lesson-section="hook"></div>` : "",
+    has("goal") ? `<div data-lesson-section="goal"></div>` : "",
+    has("step") ? `<div data-lesson-step></div>` : "",
+    has("visual") ? `<div data-lesson-visual></div>` : "",
+    has("worked") ? `<div data-lesson-section="worked-example"></div>` : "",
+    has("practice")
+      ? `<section data-practice-set><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div></section>`
+      : "",
+    has("check") ? `<div data-lesson-section="check"></div>` : "",
+    has("recap") ? `<div data-lesson-section="recap"></div>` : "",
+    `<footer>Sources <a href="https://example.com">x</a></footer>`,
+    `</article>`,
+  ].join("\n");
+}
+
+function basecsCoding(opts: Partial<Record<string, boolean>> = {}): string {
+  const has = (k: string) => opts[k] !== false;
+  return [
+    `<article data-lesson-type="coding">`,
+    has("hook") ? `<div data-lesson-section="hook"></div>` : "",
+    has("goal") ? `<div data-lesson-section="goal"></div>` : "",
+    has("idea") ? `<div data-lesson-section="idea"></div>` : "",
+    has("code") ? `<div data-lesson-section="code"></div>` : "",
+    has("trace") ? `<div data-lesson-section="trace"></div>` : "",
+    has("visual") ? `<div data-lesson-visual></div>` : "",
+    has("practice")
+      ? `<section data-practice-set><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div><div data-practice-problem></div></section>`
+      : "",
+    has("check") ? `<div data-lesson-section="check"></div>` : "",
+    has("recap") ? `<div data-lesson-section="recap"></div>` : "",
+    `<footer>Sources <a href="https://example.com">x</a></footer>`,
+    `</article>`,
+  ].join("\n");
+}
+
+const BASECS_PATH = "dist/en/learn/base-cs/01-bits-and-binary/index.html";
+
+describe("checkLessonRules — base-cs", () => {
+  test("a complete concept lesson passes", () => {
+    expect(checkLessonRules(basecsConcept(), BASECS_PATH)).toEqual([]);
+  });
+
+  test("a complete coding lesson passes", () => {
+    expect(checkLessonRules(basecsCoding(), BASECS_PATH)).toEqual([]);
+  });
+
+  test("flags a base-cs lesson with no lessonType", () => {
+    const html = basecsConcept().replace(' data-lesson-type="concept"', "");
+    const errs = checkLessonRules(html, BASECS_PATH);
+    expect(errs.some((e) => /lessonType/.test(e))).toBe(true);
+  });
+
+  test("flags a concept lesson missing the worked-example section", () => {
+    const errs = checkLessonRules(basecsConcept({ worked: false }), BASECS_PATH);
+    expect(errs.some((e) => /worked-example/.test(e))).toBe(true);
+  });
+
+  test("flags a coding lesson missing the trace section", () => {
+    const errs = checkLessonRules(basecsCoding({ trace: false }), BASECS_PATH);
+    expect(errs.some((e) => /trace/.test(e))).toBe(true);
+  });
+
+  test("does not require a complexity section on a coding lesson", () => {
+    expect(checkLessonRules(basecsCoding(), BASECS_PATH)).toEqual([]);
+  });
+});
