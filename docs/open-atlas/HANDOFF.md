@@ -90,13 +90,29 @@ by following a connected path of lessons. Practice is deferred (theory first).
   retranslated (was macaronic + had CJK leaks); RFC 7748 factual error fixed in
   `03-tcp-handshake` EN+RU; new linter rule `site/src/lint/rules/cjk-leak.ts` wired into
   `site/src/lint/index.ts`.
+- **Base CS foundations track — P0 DONE.** Third `foundations` track (`base-cs`), the
+  spine rung between Mathematics and Algorithms. Theory-focused (theory of computation +
+  theory of programming constructs, hardware-led); not a hands-on language course.
+  P0 shipped on branch `algorithms-units-06-12`: track registered in `tracks.json`
+  (order 2; algorithms shifted to 3) + 12 units in `units.json`; new optional
+  `lessonType: concept | coding` schema field; layout emits `data-lesson-type`; the
+  linter (`lessons.ts`) gained a `base-cs` branch with two skeletons (concept = math
+  shape; coding = algo shape minus Complexity), TDD-tested; new static widget
+  `MachineFigure` (`components/algo/`); `/teach` domain lock extended to base-cs.
+  Unit 01 "What a computer is" fully authored EN+RU (5 lessons: bits-and-binary,
+  counting-in-binary, encoding-the-world, boolean-logic, logic-gates), each
+  spec+quality reviewed. Build clean (1669 pages, lint 0/0). Spec:
+  `docs/superpowers/specs/2026-05-18-foundations-base-cs-track-design.md`. Plan:
+  `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`. **Remaining: P1
+  (units 02–04), P2 (units 05–08), P3 (units 09–12)** — per-unit `/teach` authoring,
+  following the P0 pattern in the plan.
 
 ## Work queue (in order)
 
-1. **Base CS foundations track** — the missing rung between Mathematics and Algorithms
-   (the algorithms track currently assumes "knows one programming language"). Broad
-   "base CS": programming + how computers work. Code language = TS/JS. New track #3 in
-   `foundations`. One open question remains (see below).
+1. **Base CS track — P1–P3** — author the remaining 11 units (02–12) via `/teach`,
+   per the plan `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`.
+   P0 (infra + Unit 01) is done — see "Built so far". Each unit: fix its lesson list
+   into `units.json`, author each lesson EN+RU, clean build at the unit boundary.
 2. **Migration: 3-tier → single-level lessons** — large. Convert the authored
    networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
    rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
@@ -104,10 +120,11 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Open questions
 
-- **Base-CS lesson skeleton** (queue #1): one skeleton with an optional Code beat, vs
-  two skeletons (coding / concept), vs reuse the existing two skeletons. Undecided.
 - A whole-graph "connections page" was rejected (hairball). A personal "your path /
   what's next" planner is optional, later.
+
+(Resolved: the Base-CS lesson-skeleton question — settled on **two skeletons**,
+`concept` and `coding`, selected per-lesson via the `lessonType` frontmatter field.)
 
 ## Continuity protocol — running this across chats
 
