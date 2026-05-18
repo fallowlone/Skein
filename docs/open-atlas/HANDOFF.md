@@ -169,8 +169,9 @@ by following a connected path of lessons. Practice is deferred (theory first).
      — Phase A infra → B content (51 units) → C stubs (81) → D teardown; per-task and
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
-   Next: execute Phase A. A fresh chat resumes from CONTINUE-PROMPT.md + the plan's
-   checkboxes.
+   Phase A IN PROGRESS — A1-A3 done (commits `9437c70`, `3889476`, `e6fb26b`); build
+   green, lint 0/0 throughout. Resume at A4 (connections-index). A fresh chat resumes
+   from CONTINUE-PROMPT.md + the plan's progress dashboard.
 
 ## Open questions
 
