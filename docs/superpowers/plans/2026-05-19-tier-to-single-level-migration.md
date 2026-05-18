@@ -14,12 +14,27 @@
 
 ## Progress dashboard
 
-- [ ] **Phase A** — additive infra (A1–A10)
+- [ ] **Phase A** — additive infra (A1–A10) — IN PROGRESS
+  - [x] A1 — 16 pillar tracks registered (commit `9437c70`)
+  - [x] A2 — lessons schema gains level/deepensInto/spiral, lessonType topic (commit `3889476`)
+  - [x] A3 — topic skeleton + section sentinels (commit `e6fb26b`)
+  - [ ] A4 — connections-index ← **RESUME HERE**
+  - [ ] A5 — connected-lessons block · A6 — checkTopicLesson · A7 — connection-integrity
+  - [ ] A8 — /infographic rework · A9 — routing · A10 — Phase A gate
 - [ ] **Phase B** — content migration (51 units: 44 ready-pillar + 7 lone ready)
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
-Update this dashboard and the per-task / per-unit checkboxes as work lands so any chat can resume.
+**Carry-forward facts (discovered during A1–A3):**
+- `tracks.json` lives at `site/src/content/tracks.json` (single JSON file). The `Track`
+  enum is derived from the `TRACKS` constant in `site/src/types/index.ts`, not config.ts.
+- Section sentinel: built HTML carries `data-lesson-section="<kebab>"`. The linter
+  detects sections via regex `/data-lesson-section="([a-z-]+)"/g` — see `sectionIndexes()`
+  in `site/src/lint/rules/lessons.ts`. A6 must use this exact mechanism.
+- `Explanation.astro` (new) emits `data-lesson-section="explanation"`; `Crux.astro` and
+  `KeyTakeaway.astro` now emit `crux` / `key-takeaway`. Scaffold: `site/scaffolds/topic-lesson.mdx`.
+
+Update this dashboard as work lands so any chat can resume.
 
 ---
 
