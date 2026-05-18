@@ -5,8 +5,8 @@ section. Every lesson is English + Russian or the command refuses.
 
 ## Domain lock
 
-This command authors **mathematics** and **algorithms** lessons only. Refuse any
-off-domain request (anything outside math or algorithms).
+This command authors **mathematics**, **algorithms**, and **Base CS** lessons only.
+Refuse any off-domain request (anything outside math, algorithms, or Base CS).
 
 ## Input form
 
@@ -15,6 +15,8 @@ off-domain request (anything outside math or algorithms).
 /teach math/08-growth/04-what-is-a-logarithm
 /teach algorithms/01-thinking-complexity/01-what-is-an-algorithm
 /teach algorithms/09-graphs/03-breadth-first-search
+/teach base-cs/01-what-a-computer-is/01-bits-and-binary
+/teach base-cs/08-functions-and-the-call-stack/03-recursion-preview
 ```
 
 ## Pipeline
@@ -27,12 +29,22 @@ off-domain request (anything outside math or algorithms).
    beginner mistakes, and effective metaphors. Minimum 3 queries.
    For algorithms, use CLRS, Sedgewick, competitive-programming references, NeetCode,
    and vetted algorithm resources — not Khan Academy / OpenStax.
+   For Base CS, use nand2tetris, Petzold's "Code", CSAPP (in moderation), MDN and the
+   TC39 specifications for JS semantics, and vetted CS references — not Khan Academy /
+   OpenStax, not CLRS / NeetCode.
 3. **Author EN MDX** — follow the fixed linear skeleton for the track, in order:
    - **math:** Hook -> Goal -> Explanation (Step components) -> Visual (a math widget)
      -> WorkedExample -> Practice (PracticeSet, >= 4 problems) -> Check (a Quiz) ->
      Recap.
    - **algorithms:** Hook -> Goal -> Idea -> Code -> Trace (AlgoTrace) -> Complexity
      -> Practice (AlgoPractice, >= 4 problems) -> Check (a Quiz) -> Recap.
+   - **base-cs:** the skeleton depends on the lesson's `lessonType` frontmatter.
+     `concept`: Hook -> Goal -> Explanation (Step components) -> Visual (a MachineFigure
+     or StructureFigure) -> WorkedExample -> Practice (PracticeSet, >= 4 problems) ->
+     Check (a Quiz) -> Recap.
+     `coding`: Hook -> Goal -> Idea -> Code -> Trace (AlgoTrace) -> Practice
+     (AlgoPractice, >= 4 problems) -> Check (a Quiz) -> Recap. No Complexity beat.
+     Every base-cs lesson MUST set `lessonType: concept | coding` in its frontmatter.
    Insert `<Inset>` blocks (`why` / `practice` / `mistake` / `edgecase`) where useful.
 4. **Translate to RU** — use `site/src/i18n/glossary.json`; add new terms
    alphabetically. Keep EN and RU structurally identical.
