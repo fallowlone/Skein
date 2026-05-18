@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "astro/config";
 import tailwind from "@astrojs/tailwind";
 import mdx from "@astrojs/mdx";
@@ -21,5 +22,10 @@ export default defineConfig({
   },
   vite: {
     ssr: { noExternal: ["gsap"] },
+    resolve: {
+      alias: {
+        "~": fileURLToPath(new URL("./src", import.meta.url)),
+      },
+    },
   },
 });

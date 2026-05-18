@@ -68,6 +68,6 @@ Refuse any off-domain request (anything outside math, algorithms, or Base CS).
 - >= 1 visual widget.
 - Hydration cap: <= 5 islands per lesson page.
 - Status flow: stub -> draft -> ready.
-- Exactly 6 `..` segments in component import paths
-  (`../../../../../../components/...` from a lesson MDX file — verify against the
-  proof lesson once it exists).
+- Component imports use the `~/` path alias (`~` → `site/src/`, configured in
+  `astro.config.mjs` + `tsconfig.json`), e.g.
+  `import Hook from "~/components/lesson/Hook.astro";` — never `..` relative segments.
