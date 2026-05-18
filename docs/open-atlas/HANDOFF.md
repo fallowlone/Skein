@@ -78,10 +78,12 @@ by following a connected path of lessons. Practice is deferred (theory first).
   on branch `glossary-redesign`, build clean (1627 pages), verified EN+RU + mobile.
   Spec: `docs/superpowers/specs/2026-05-17-glossary-redesign-design.md`. Plan:
   `docs/superpowers/plans/2026-05-17-glossary-page.md`.
-  STILL PENDING — **plan 2: definition backfill**. 571 terms total, only 132 have a
-  definition; 439 need `defEn`+`defRu` authored (+ `seeAlso` for key terms). The page
-  renders "definition pending" for the rest. Backfill is its own plan (batched,
-  subagent-driven) — not yet written.
+  **Plan 2: definition backfill — DONE.** All 571 glossary terms now have authored,
+  researched `defEn`+`defRu`. Done via `docs/superpowers/plans/2026-05-17-glossary-backfill.md`
+  — 30 subagent-driven research batches (B01–B30) + merge/check tooling, each batch
+  spec-reviewed then accuracy-reviewed. Build clean (1627 pages), lint clean
+  (`i18n-parity` + `cjk-leak` cover glossary EN/RU). The `seeAlso` field is still
+  unpopulated — optional future polish, the page handles its absence.
 - `~/.claude/launch.json` — Claude Preview server config, name `atlas-preview`, serves
   `site/dist` on port 4400 (python http.server). Build first, then preview.
 - Earlier fixes (committed-state unknown — verify with git): networking RU piece 12
@@ -91,25 +93,18 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Work queue (in order)
 
-1. **Glossary — plan 2: definition backfill (IN PROGRESS).** Author `defEn`+`defRu`
-   for the 439 terms in `glossary.json` that lacked a definition. Plan written:
-   `docs/superpowers/plans/2026-05-17-glossary-backfill.md` — 30 research batches of
-   ~15 terms, subagent-driven, full WebSearch/Context7 research per term.
-   DONE: Task 1 (merge/check tooling) + Batch B01 (networking). glossary now
-   147/571 defined. RESUME at Task 3 / Batch B02 — see the PROGRESS note at the top
-   of the plan file. `seeAlso` field stays unpopulated (optional, future polish).
-2. **Base CS foundations track** — the missing rung between Mathematics and Algorithms
+1. **Base CS foundations track** — the missing rung between Mathematics and Algorithms
    (the algorithms track currently assumes "knows one programming language"). Broad
    "base CS": programming + how computers work. Code language = TS/JS. New track #3 in
    `foundations`. One open question remains (see below).
-3. **Migration: 3-tier → single-level lessons** — large. Convert the authored
+2. **Migration: 3-tier → single-level lessons** — large. Convert the authored
    networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
    rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
    while only 1 of 16 pillars is authored. Give it its own written plan.
 
 ## Open questions
 
-- **Base-CS lesson skeleton** (queue #3): one skeleton with an optional Code beat, vs
+- **Base-CS lesson skeleton** (queue #1): one skeleton with an optional Code beat, vs
   two skeletons (coding / concept), vs reuse the existing two skeletons. Undecided.
 - A whole-graph "connections page" was rejected (hairball). A personal "your path /
   what's next" planner is optional, later.
