@@ -96,13 +96,13 @@ The command enforces:
 Author a single absolute-beginner lesson (EN + RU) for the `foundations` section —
 a learning track parallel to, and isolated from, the 16-pillar fullstack program.
 
-- **Tracks:** `math` (mathematics from zero — for a reader who knows only basic
-  arithmetic, complete) and `algorithms` (algorithms from zero — for a reader who knows
-  one programming language but no algorithms; endpoint: confidently solve LeetCode
-  Medium and most Hard). The `algorithms` track uses a distinct lesson skeleton
-  (Hook -> Goal -> Idea -> Code -> Trace -> Complexity -> Practice -> Check -> Recap),
-  its widgets live in `site/src/components/algo/`, and lessons may declare `mathPrereqs`
-  cross-track prerequisites into the math track.
+- **Tracks:** `math` (mathematics from zero), `algorithms` (algorithms from zero),
+  and `base-cs` (Base CS from zero — the spine rung between math and algorithms:
+  how a computer runs code and what every programming construct means). The
+  `algorithms` and `base-cs` tracks use distinct lesson skeletons; `base-cs` selects
+  its skeleton per-lesson via the `lessonType: concept | coding` frontmatter field.
+  Its widgets live in `site/src/components/algo/`, and lessons may declare
+  `mathPrereqs` cross-track prerequisites into the math track.
 - Spec: `docs/superpowers/specs/2026-05-16-foundations-algorithms-track-design.md`.
 - **Content lives in** `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`,
   with `tracks.json` and `units.json` as the track/unit data files.
