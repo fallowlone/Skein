@@ -59,9 +59,11 @@ Refuse any off-domain request (anything outside math, algorithms, or Base CS).
 - Bilingual or refuse.
 - Absolute-zero vocabulary: introduce every term before using it; use no term that
   is first defined in a later lesson.
-- Skeleton present and in order for the track (math or algorithm skeleton).
-- Algorithm lessons may declare `mathPrereqs` (cross-track prerequisites into the math
-  track); each must resolve to an existing math lesson.
+- Skeleton present and in order for the track (math, algorithm, or base-cs skeleton;
+  a base-cs lesson picks its `concept` or `coding` skeleton from the `lessonType`
+  frontmatter field).
+- Algorithm and base-cs lessons may declare `mathPrereqs` (cross-track prerequisites
+  into the math track); each must resolve to an existing math lesson.
 - >= 4 practice problems in the PracticeSet.
 - >= 1 visual widget.
 - Hydration cap: <= 5 islands per lesson page.
