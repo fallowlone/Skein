@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 const MATH_SECTIONS = ["hook", "goal", "worked-example", "check", "recap"] as const;
 const ALGO_SECTIONS = ["hook", "goal", "idea", "code", "trace", "complexity", "check", "recap"] as const;
+const BASECS_CODING_SECTIONS = ["hook", "goal", "idea", "code", "trace", "check", "recap"] as const;
 
 /** Built lesson page: dist/<lang>/learn/<track>/<lesson>/index.html — else null. */
 function lessonInfoFromPath(file: string): { slug: string; track: string } | null {
@@ -135,12 +136,67 @@ function checkAlgoLesson(html: string, file: string, slug: string): string[] {
   return errs;
 }
 
+function checkBaseCsLesson(html: string, file: string, slug: string): string[] {
+  const errs = commonLessonRules(html, file, slug, "base-cs");
+  const type = html.match(/data-lesson-type="(concept|coding)"/)?.[1];
+  if (!type) {
+    errs.push(`${file}: base-cs lesson has no lessonType (concept|coding)`);
+    return errs;
+  }
+  const seen = sectionIndexes(html);
+  const practiceIdx = html.search(/data-practice-set\b/);
+
+  if (type === "concept") {
+    for (const s of MATH_SECTIONS) {
+      if (!seen.has(s)) errs.push(`${file}: lesson skeleton missing "${s}" section`);
+    }
+    const stepIdx = html.search(/data-lesson-step\b/);
+    if (stepIdx < 0) errs.push(`${file}: lesson skeleton missing explanation (no Step component)`);
+    const visualIdx = html.search(/data-lesson-visual\b/);
+    errs.push(
+      ...checkOrder(
+        [
+          ["hook", seen.get("hook")],
+          ["goal", seen.get("goal")],
+          ["step", stepIdx >= 0 ? stepIdx : undefined],
+          ["visual", visualIdx >= 0 ? visualIdx : undefined],
+          ["worked-example", seen.get("worked-example")],
+          ["practice", practiceIdx >= 0 ? practiceIdx : undefined],
+          ["check", seen.get("check")],
+          ["recap", seen.get("recap")],
+        ],
+        file
+      )
+    );
+  } else {
+    for (const s of BASECS_CODING_SECTIONS) {
+      if (!seen.has(s)) errs.push(`${file}: coding lesson missing "${s}" section`);
+    }
+    errs.push(
+      ...checkOrder(
+        [
+          ["hook", seen.get("hook")],
+          ["goal", seen.get("goal")],
+          ["idea", seen.get("idea")],
+          ["code", seen.get("code")],
+          ["trace", seen.get("trace")],
+          ["practice", practiceIdx >= 0 ? practiceIdx : undefined],
+          ["check", seen.get("check")],
+          ["recap", seen.get("recap")],
+        ],
+        file
+      )
+    );
+  }
+  return errs;
+}
+
 export function checkLessonRules(html: string, file: string): string[] {
   const info = lessonInfoFromPath(file);
   if (!info) return [];
-  return info.track === "algorithms"
-    ? checkAlgoLesson(html, file, info.slug)
-    : checkMathLesson(html, file, info.slug);
+  if (info.track === "algorithms") return checkAlgoLesson(html, file, info.slug);
+  if (info.track === "base-cs") return checkBaseCsLesson(html, file, info.slug);
+  return checkMathLesson(html, file, info.slug);
 }
 
 async function walkMdx(dir: string): Promise<string[]> {
