@@ -160,10 +160,17 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Work queue (in order)
 
-1. **Migration: 3-tier → single-level lessons** — large. Convert the authored
-   networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
-   rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
-   while only 1 of 16 pillars is authored. Give it its own written plan.
+1. **Migration: 3-tier → single-level lessons** — IN PROGRESS (started 2026-05-19).
+   Convert all 16 pillars from the 3-tier `book/` model to single-level connected
+   lessons. Scope expanded from networking-only to all 16 pillars by user decision
+   (the repo had 5 fully-authored pillars, not 1). Brainstorm + spec + plan DONE:
+   - Spec: `docs/superpowers/specs/2026-05-19-tier-to-single-level-migration-design.md`
+   - Plan: `docs/superpowers/plans/2026-05-19-tier-to-single-level-migration.md`
+     — Phase A infra → B content (51 units) → C stubs (81) → D teardown; per-task and
+     per-unit checkboxes track progress.
+   - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
+   Next: execute Phase A. A fresh chat resumes from CONTINUE-PROMPT.md + the plan's
+   checkboxes.
 
 ## Open questions
 
