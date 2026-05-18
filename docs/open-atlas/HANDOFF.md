@@ -90,7 +90,7 @@ by following a connected path of lessons. Practice is deferred (theory first).
   retranslated (was macaronic + had CJK leaks); RFC 7748 factual error fixed in
   `03-tcp-handshake` EN+RU; new linter rule `site/src/lint/rules/cjk-leak.ts` wired into
   `site/src/lint/index.ts`.
-- **Base CS foundations track — P0 DONE.** Third `foundations` track (`base-cs`), the
+- **Base CS foundations track — P0 + P1 DONE.** Third `foundations` track (`base-cs`), the
   spine rung between Mathematics and Algorithms. Theory-focused (theory of computation +
   theory of programming constructs, hardware-led); not a hands-on language course.
   P0 shipped on branch `algorithms-units-06-12`: track registered in `tracks.json`
@@ -100,19 +100,36 @@ by following a connected path of lessons. Practice is deferred (theory first).
   shape; coding = algo shape minus Complexity), TDD-tested; new static widget
   `MachineFigure` (`components/algo/`); `/teach` domain lock extended to base-cs.
   Unit 01 "What a computer is" fully authored EN+RU (5 lessons: bits-and-binary,
-  counting-in-binary, encoding-the-world, boolean-logic, logic-gates), each
-  spec+quality reviewed. Build clean (1669 pages, lint 0/0). Spec:
+  counting-in-binary, encoding-the-world, boolean-logic, logic-gates). Spec:
   `docs/superpowers/specs/2026-05-18-foundations-base-cs-track-design.md`. Plan:
-  `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`. **Remaining: P1
-  (units 02–04), P2 (units 05–08), P3 (units 09–12)** — per-unit `/teach` authoring,
-  following the P0 pattern in the plan.
+  `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`.
+  **P1 DONE** (branch `base-cs-p1`, off main, NOT yet merged) — the rest of the
+  machine arc, units 02–04, authored EN+RU, each lesson spec+quality reviewed with
+  review fixes applied. All 14 P1 lessons are `lessonType: concept`:
+  - Unit 02 "Memory" — 4 lessons: addressable-cells, the-byte, value-vs-address,
+    stack-and-heap.
+  - Unit 03 "The processor" — 5 lessons: the-instruction, fetch-decode-execute,
+    registers, machine-code, a-toy-cpu. Review fix: the toy-CPU ISA was made
+    internally consistent (2-byte instructions — opcode byte + 8-bit operand byte);
+    `MachineFigure` gained an optional `lang` prop so the `kind="cpu"`
+    Fetch/Decode/Execute strip localizes for RU lessons.
+  - Unit 04 "From machine code to a language" — 5 lessons: the-assembler-idea,
+    why-high-level-languages, compilation-vs-interpretation, the-runtime,
+    source-to-running-program. 14 glossary terms added (assembler, compiler,
+    interpreter, jit, runtime_system, garbage_collection, …).
+  units.json lesson lists for units 02–04 are filled. Build clean (1727 pages,
+  lint 0/0). **Remaining: P2 (units 05–08), P3 (units 09–12)** — per-unit `/teach`
+  authoring, following the P0/P1 pattern in the plan. NEXT STEP: merge `base-cs-p1`
+  into main (or open a PR), then start P2.
 
 ## Work queue (in order)
 
-1. **Base CS track — P1–P3** — author the remaining 11 units (02–12) via `/teach`,
+1. **Base CS track — P2–P3** — author the remaining 8 units (05–12) via `/teach`,
    per the plan `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`.
-   P0 (infra + Unit 01) is done — see "Built so far". Each unit: fix its lesson list
-   into `units.json`, author each lesson EN+RU, clean build at the unit boundary.
+   P0 (infra + Unit 01) and P1 (units 02–04) are done — see "Built so far". P1 lives
+   on unmerged branch `base-cs-p1`; merge it before starting P2. Each unit: fix its
+   lesson list into `units.json`, author each lesson EN+RU, clean build at the unit
+   boundary. P2 introduces the first `coding`-skeleton lessons.
 2. **Migration: 3-tier → single-level lessons** — large. Convert the authored
    networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
    rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
