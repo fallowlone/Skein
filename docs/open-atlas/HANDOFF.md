@@ -90,7 +90,7 @@ by following a connected path of lessons. Practice is deferred (theory first).
   retranslated (was macaronic + had CJK leaks); RFC 7748 factual error fixed in
   `03-tcp-handshake` EN+RU; new linter rule `site/src/lint/rules/cjk-leak.ts` wired into
   `site/src/lint/index.ts`.
-- **Base CS foundations track — P0 + P1 DONE.** Third `foundations` track (`base-cs`), the
+- **Base CS foundations track — COMPLETE (P0–P3).** Third `foundations` track (`base-cs`), the
   spine rung between Mathematics and Algorithms. Theory-focused (theory of computation +
   theory of programming constructs, hardware-led); not a hands-on language course.
   P0 shipped on branch `algorithms-units-06-12`: track registered in `tracks.json`
@@ -138,20 +138,29 @@ by following a connected path of lessons. Practice is deferred (theory first).
   Note: base-cs glossary keys are mixed-convention (Unit 05 used hyphens, Units 06/08
   used underscores); the lessons linter does not gate glossary coverage for
   `lessons/`, so this is cosmetic — normalise if a future task touches the glossary.
-  **Remaining: P3 (units 09–12)** — per-unit `/teach` authoring, following the
-  P0/P1/P2 pattern in the plan. NEXT STEP: merge `base-cs-p2` into main (or open a
-  PR), then start P3.
+  `base-cs-p2` was merged into main (fast-forward) and the branch deleted.
+  **P3 DONE** (branch `base-cs-p3`, off main, NOT yet merged) — the final arc,
+  units 09–12, authored EN+RU, each unit implementer→quality-review→fix cycle complete.
+  Build clean (1947 pages, lint 0/0). The full 12-unit Base CS track (52 lessons EN +
+  52 RU) is now authored; the algorithms track confirmed still building at `order: 3`.
+  - Unit 09 "Data in memory" — 4 lessons: arrays-as-contiguous-cells (coding),
+    indexing-and-offsets (concept), objects-as-key-value (coding), collections-in-memory
+    (concept). 7 glossary keys added.
+  - Unit 10 "Abstraction" — 4 lessons: what-abstraction-is (concept),
+    bundling-data-and-behaviour (coding), modules (concept), why-abstraction-exists
+    (concept). 4 glossary keys added.
+  - Unit 11 "When a program fails" — 4 lessons: errors-vs-exceptions (concept),
+    the-stack-trace (coding), undefined-behaviour (concept), debugging-as-reasoning
+    (concept). 12 glossary keys added.
+  - Unit 12 "Time and concurrency" — 4 lessons: why-async-exists (concept),
+    blocking-vs-non-blocking (concept), the-event-loop (coding), concurrency-vs-
+    parallelism (concept). 10 glossary keys added.
+  units.json lesson lists for units 09–12 are filled. New P3 glossary keys all use the
+  underscore convention. NEXT STEP: merge `base-cs-p3` into main (or open a PR).
 
 ## Work queue (in order)
 
-1. **Base CS track — P3** — author the remaining 4 units (09–12) via `/teach`,
-   per the plan `docs/superpowers/plans/2026-05-18-foundations-base-cs-track.md`.
-   P0 (infra + Unit 01), P1 (units 02–04), and P2 (units 05–08) are done — see
-   "Built so far". P2 lives on unmerged branch `base-cs-p2`; merge it before starting
-   P3. Each unit: fix its lesson list into `units.json`, author each lesson EN+RU,
-   clean build at the unit boundary. P3 ends with a clean build of the full 12-unit
-   track and the algorithms track confirmed still building at `order: 3`.
-2. **Migration: 3-tier → single-level lessons** — large. Convert the authored
+1. **Migration: 3-tier → single-level lessons** — large. Convert the authored
    networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
    rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
    while only 1 of 16 pillars is authored. Give it its own written plan.
