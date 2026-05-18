@@ -12,7 +12,7 @@
 
 **Scale note:** 439 terms × full research is a deliberately large, multi-session effort (user chose full research over model-knowledge authoring). Execution is resumable — completed batches are committed; the checkbox state tracks progress.
 
-> **PROGRESS (2026-05-17):** Task 1 (tooling) DONE — commits `cc9352b`. Task 2 / Batch B01 (networking, 15 terms) DONE — commits `1123ba3` + `2d4180e` (accuracy fixes). Pipeline + two-stage review validated end-to-end. **RESUME AT Task 3 / Batch B02.** glossary now 147/571 defined. Continue with subagent-driven-development: one batch per implementer subagent (model: standard/sonnet — definition accuracy matters), then spec-compliance review (right keys, only `glossary.json` changed) then accuracy review (factual correctness of every `defEn`/`defRu` — this gate caught real errors in B01). Run `cd site && node scripts/check-definitions.mjs --all` any time to see the live count.
+> **PROGRESS — COMPLETE (2026-05-18):** All tasks done. Task 1 (tooling) + Batches B01–B30 (Tasks 2–31) authored, merged, spec-reviewed, accuracy-reviewed. **glossary now 571/571 defined.** Task 32 final verification done: build clean (1627 pages), lint clean. HANDOFF updated. The accuracy-review gate caught and fixed real factual errors in many batches (B02 latency figures, B04 RRSIG keys, B05 isolation anomalies, B06 SSI structure, B07 PgBouncer SET, B08 Big-O wording, B09 prose leak, B10 pivot depth, B11 ALPN h3, B13 implicit grant, B15 CSSOM layout, B16 V8 Ignition/hydration, B17 Skia, B18 TurboFan IR, B22 negative-cache TTL, B23 IP TTL, B25 instrumentation overhead, B27 NUMA/TLB/Smi). `seeAlso` field intentionally left unpopulated (optional future polish).
 
 ---
 
