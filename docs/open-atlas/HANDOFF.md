@@ -169,9 +169,10 @@ by following a connected path of lessons. Practice is deferred (theory first).
      — Phase A infra → B content (51 units) → C stubs (81) → D teardown; per-task and
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
-   Phase A IN PROGRESS — A1-A3 done (commits `9437c70`, `3889476`, `e6fb26b`); build
-   green, lint 0/0 throughout. Resume at A4 (connections-index). A fresh chat resumes
-   from CONTINUE-PROMPT.md + the plan's progress dashboard.
+   Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
+   1977 pages, lint 0/0, 66 migration tests pass. Resume at Phase B (content
+   migration), first unit `networking/01-physical-link`. A fresh chat resumes from
+   CONTINUE-PROMPT.md + the plan's progress dashboard.
 
 ## Open questions
 
