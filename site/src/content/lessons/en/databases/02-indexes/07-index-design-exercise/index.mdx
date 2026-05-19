@@ -1,0 +1,230 @@
+---
+slug: 07-index-design-exercise
+lang: en
+track: databases
+unit: 02-indexes
+order: 7
+title: "Index design exercise: full-text search strategy"
+summary: "A synthesis exercise: choose the right index strategy for a full-text search feature, evaluate tradeoffs between GIN tsvector, pg_trgm, Elasticsearch, and pgvector HNSW, and design indexes for a complete ticketing system."
+estMin: 20
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["06-production-failures-and-audit"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["full-text-search", "tsvector", "hnsw-pgvector", "pg-trgm", "index-design", "tradeoff-analysis"]
+sources:
+  - https://www.postgresql.org/docs/current/textsearch.html
+  - https://www.postgresql.org/docs/current/pgtrgm.html
+  - https://github.com/pgvector/pgvector
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+
+<Hook>
+The team ships a search box. Users type in it. The query is `WHERE title ILIKE '%invoice%'`. In staging with 10k tasks this is fine. In production with 50M tasks it takes 12 seconds. ILIKE with a leading wildcard cannot use a B-tree. The fix is not "add an index on title." It is choosing the right index type for the question being asked. That choice depends on whether users want keyword match, fuzzy match, or semantic match — and this lesson works through all three.
+</Hook>
+
+<Crux>GIN tsvector: keyword search. pg_trgm: fuzzy/substring. pgvector HNSW: semantic. Different write overhead. Wrong choice wastes infra.</Crux>
+
+<Explanation>
+
+## Why ILIKE cannot scale
+
+`WHERE title ILIKE '%term%'` has a leading wildcard. B-tree indexes require a known prefix; they cannot answer "does this string contain the term anywhere." Every row must be evaluated — this is always O(n).
+
+The three scalable alternatives:
+
+1. **GIN on tsvector** — word-level inverted index; answers "which documents contain this word or phrase"; understands stemming and language rules.
+2. **pg_trgm GIN** — trigram decomposition; answers "which strings contain this substring or are similar to this string"; handles typos and partial input.
+3. **pgvector HNSW** — graph-based approximate nearest-neighbour on embeddings; answers "which documents are semantically similar to this query"; requires a model inference pipeline.
+
+## GIN on tsvector: the Postgres-native choice
+
+```sql
+-- Add a generated tsvector column (Postgres 12+)
+ALTER TABLE tasks
+  ADD COLUMN tsv_search TSVECTOR
+  GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
+  ) STORED;
+
+-- GIN index on the generated column
+CREATE INDEX CONCURRENTLY idx_tasks_search
+  ON tasks USING GIN (tsv_search);
+
+-- Query
+SELECT id, title, ts_rank(tsv_search, query) AS rank
+FROM tasks, to_tsquery('english', 'invoice & payment') AS query
+WHERE tsv_search @@ query
+ORDER BY rank DESC
+LIMIT 20;
+```
+
+Trade: GIN indexes are 2-5x the size of the column data. Each insert updates GIN posting lists for every lexeme in the document. For documents with 200 words, each insert touches ~200 GIN entries. `fastupdate=on` (the default) defers these updates — writes are fast, but the deferred buffer must eventually flush, causing periodic latency spikes. Use `fastupdate=off` for write-heavy tables where consistent latency matters more than peak throughput.
+
+Does not handle: typos (`invoce`), substring matches inside words (`inv`), semantic similarity.
+
+## pg_trgm: fuzzy and substring search
+
+The `pg_trgm` extension breaks strings into trigrams (3-character windows) and builds a GIN or GiST index over them. This enables:
+- `LIKE '%term%'` and `ILIKE '%term%'` with index support
+- Similarity search (`% operator`) for typo tolerance
+- `<->` similarity distance ordering
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX CONCURRENTLY idx_tasks_title_trgm
+  ON tasks USING GIN (title gin_trgm_ops);
+
+-- Now these use the index:
+SELECT * FROM tasks WHERE title ILIKE '%invoice%';
+SELECT * FROM tasks WHERE title % 'invoce';  -- similarity, handles typo
+```
+
+Trade: trigram indexes are large (similar to GIN on tsvector or larger for short strings), and similarity queries are slower than exact-match GIN searches. Best for short strings (usernames, SKUs, titles) where fuzzy matching is the dominant use case.
+
+## pgvector HNSW: semantic search
+
+Embeddings represent meaning numerically. Two semantically similar documents have embeddings that are close in vector space. HNSW (Hierarchical Navigable Small World) is a graph-based index for approximate nearest-neighbour search on high-dimensional vectors.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE tasks ADD COLUMN embedding VECTOR(1536);  -- e.g., OpenAI text-embedding-3-small
+
+CREATE INDEX CONCURRENTLY idx_tasks_embedding_hnsw
+  ON tasks USING HNSW (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+-- Semantic search: find tasks semantically similar to a query embedding
+SELECT id, title, 1 - (embedding <=> $1::vector) AS similarity
+FROM tasks
+ORDER BY embedding <=> $1::vector
+LIMIT 20;
+```
+
+Trade: HNSW indexes are large (vector dimension × row count; a 1,536-dimension embedding on 10M rows = ~60 GB). Writes are slow — graph rebalancing per insert. The index is approximate: recall@10 is typically 95-99%. An embedding pipeline (model inference per document and query) is required.
+
+In 2026 production AI/ML systems, pgvector + HNSW is the canonical choice for semantic search when Postgres is the primary store. For scale or advanced feature requirements beyond pgvector's reach (hundreds of millions of vectors, real-time filtering), dedicated vector databases (Pinecone, Weaviate, Milvus) are alternatives.
+
+## Hybrid: combining approaches
+
+For most product search requirements, a hybrid approach combines exact-match and semantic results:
+
+```sql
+-- GIN tsvector for exact keyword ranking
+-- HNSW for semantic similarity ranking
+-- Application layer: merge and re-rank results
+SELECT id, title, ts_rank(tsv_search, query) AS kw_rank, NULL AS sem_rank
+FROM tasks, to_tsquery('english', $1) AS query
+WHERE tsv_search @@ query
+UNION ALL
+SELECT id, title, NULL AS kw_rank, 1 - (embedding <=> $2::vector) AS sem_rank
+FROM tasks
+ORDER BY embedding <=> $2::vector
+LIMIT 50;
+-- Merge by id, sum ranks, re-sort, take top 20
+```
+
+This is more complex to implement but provides both exact-match recall and semantic relevance.
+
+<TradeoffMatrix
+  id="07-search-tradeoff-1"
+  lessonSlug="07-index-design-exercise"
+  lang="en"
+  prompt="A new full-text search feature on a 'documents' table (50M rows) needs an index. Pick the right strategy."
+  options={[
+    { name: "GIN on tsvector column (STORED GENERATED) — queries use @@ operator with to_tsquery", summary: "Canonical Postgres full-text search.", correct: true, justification: "GIN on a tsvector is the production default for SQL-native full-text search. Generate the tsvector as a STORED GENERATED column; create a GIN index on it. Queries use tsvector @@ to_tsquery with ts_rank for relevance ordering. Works for hundreds of millions of documents on commodity hardware with the right index. No extra infrastructure. For most B2B SaaS-scale search this is the right answer — simple, maintainable, and fast." },
+    { name: "pg_trgm GIN index for fuzzy substring matching", summary: "Specialised — fuzzy and substring search.", justification: "pg_trgm enables LIKE-anywhere and similarity-based fuzzy search. Different use case: it does not understand words or stems, but handles typos and partial matches. Use when search is fuzzy and short (usernames, SKUs) not when searching long documents. Can combine with GIN tsvector: tsvector for precision, trgm for recall." },
+    { name: "Elasticsearch / OpenSearch as a separate service", summary: "Heavy infrastructure, maximum features.", justification: "Right when you need advanced relevance ranking, faceted search, geo + text combined, or language analysis Postgres cannot match. Wrong as default — adds an entire infrastructure component, requires data sync (CDC or replication), introduces consistency concerns. Default to Postgres full-text; reach for ES when you have specific needs Postgres cannot meet at your scale." },
+    { name: "pgvector HNSW for embedding-based semantic search", summary: "Modern AI-era semantic search.", justification: "Semantic search via embeddings is a different model — match documents whose embedding is close to the query embedding. Requires an embedding pipeline. Strong for natural-language search; weak for exact-term lookup. In 2026 a common pattern is hybrid: GIN tsvector for exact, pgvector for semantic, results merged. Use when keyword search alone is insufficient for user satisfaction." },
+  ]}
+/>
+
+<RFCQuiz
+  id="07-design-rfc-1"
+  lessonSlug="07-index-design-exercise"
+  lang="en"
+  question="Which Postgres version introduced the INCLUDE clause in CREATE INDEX, enabling covering indexes without the included columns affecting the sort key?"
+  choices={[
+    { rfc: "PostgreSQL 11 (October 2018)", title: "Added support for B-tree INCLUDE columns — non-key payload columns stored in the leaf pages, enabling index-only scans for queries that need extra projection columns beyond the sort key", correct: true },
+    { rfc: "PostgreSQL 12", title: "Added generated columns and partition improvements — not INCLUDE" },
+    { rfc: "PostgreSQL 14", title: "Added bottom-up index deletion and improved CONCURRENTLY reliability — not INCLUDE" },
+    { rfc: "PostgreSQL 16", title: "Added performance improvements including pgvector ecosystem support — INCLUDE is older" },
+  ]}
+/>
+
+<Quiz
+  id="07-design-quiz-1"
+  lessonSlug="07-index-design-exercise"
+  lang="en"
+  question="A team adds an FK with ON DELETE CASCADE from comments(post_id) to posts(id) but does NOT index comments(post_id). What happens on DELETE FROM posts WHERE id = 42 if comments has 100M rows?"
+  choices={[
+    { label: "The CASCADE is handled by an internal map and runs in milliseconds", misconception: "Postgres does not maintain an internal reverse-index; it queries comments by post_id each time." },
+    { label: "Postgres scans the entire comments table to find rows with post_id = 42 — a Seq Scan of 100M rows, holding locks for minutes", correct: true },
+    { label: "The DELETE fails because of the missing index", misconception: "It succeeds, just slowly — and holds locks the entire time." },
+    { label: "Postgres builds a temporary index automatically for the CASCADE", misconception: "It does not." },
+  ]}
+/>
+
+<DesignPrompt
+  id="07-design-prompt-1"
+  lessonSlug="07-index-design-exercise"
+  lang="en"
+  prompt="Design the complete index set for a ticketing system. Table: tasks (id BIGSERIAL PK, workspace_id BIGINT, project_id BIGINT, assignee_user_id BIGINT, status TEXT, priority SMALLINT, title TEXT, body TEXT, ticket_id TEXT, created_at TIMESTAMPTZ). Scale: 100M tasks; 80% done (cold), 15% open (hot), 5% in_progress (hot). Budget: total index storage under 20% of table size. Five hot queries listed below."
+  constraints={[
+    "Query A: list open/in_progress tasks in a project, ordered by priority then created_at.",
+    "Query B: list open/in_progress tasks assigned to a specific user across all projects in a workspace.",
+    "Query C: find task by ticket_id (unique per workspace).",
+    "Query D: full-text search across task titles and bodies.",
+    "Query E: find tasks created in the last 24 hours in a workspace.",
+  ]}
+  canonical="Index 1 — idx_tasks_ws_project_open: btree (workspace_id, project_id, priority, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, title, assignee_user_id). Serves Query A. Leading workspace_id scopes to tenant. project_id narrows to project. priority + created_at DESC serve the ORDER BY. Partial WHERE cuts index to 20% of table. INCLUDE makes it covering for the typical list projection. Index 2 — idx_tasks_ws_assignee_open: btree (workspace_id, assignee_user_id, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, project_id, title, priority). Serves Query B. workspace_id as tenant scope, assignee_user_id for user filter, created_at for sort. Partial same as above. Index 3 — idx_tasks_ws_ticket_unique: btree UNIQUE (workspace_id, ticket_id). Serves Query C. Point lookup in microseconds. Also enforces per-tenant uniqueness. Index 4 — idx_tasks_search: GIN on stored generated column tsv_search = to_tsvector('english', coalesce(title,'') || ' ' || coalesce(body,'')). Serves Query D. Full-text on title + body. Index 5 — idx_tasks_ws_recent: btree (workspace_id, created_at DESC) INCLUDE (id, title, status, assignee_user_id). Serves Query E. No status filter (shows all statuses in the 24h feed). Cost: Index 1 and 2 are partial (20% of 100M = 20M entries each), ~600 MB each. Index 3 covers full 100M rows (ticket_id is short text), ~2 GB. Index 4 GIN ~3-5 GB depending on document length. Index 5 full 100M rows, ~1.5 GB. Total ~8-10 GB on a ~40 GB table — within 20% budget. Write overhead: each insert touches all 5 indexes; each open→done status update does not touch partial indexes 1 and 2 (they only index open/in_progress). Drop any pre-existing single-column index on workspace_id — Index 1, 2, and 5 all cover that prefix."
+  keyPoints={[
+    "Partial WHERE status IN ('open','in_progress') cuts index size by 80% and makes writes to done tasks cheaper.",
+    "INCLUDE columns cover the typical projection without bloating the sort key.",
+    "A UNIQUE index on (workspace_id, ticket_id) doubles as both the constraint enforcement and the lookup index.",
+    "GIN on a STORED GENERATED tsvector column is the Postgres-native full-text answer — no extra infrastructure.",
+    "Budget accounting: sum index sizes; verify they are under 20% of table size; verify write overhead is acceptable.",
+    "After design, drop redundant prefix indexes that composites now cover.",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does Postgres need six index types when most other databases default to one? Because the fundamental data structures are incompatible. B-tree requires a total order. JSONB documents have no total order. Geometric shapes require spatial predicates. Text search requires word-level inverted lists. Embedding similarity requires high-dimensional graph navigation. A single universal index structure would either be astronomically expensive or unable to express the right operations. The design trade — multiple specialized types, each fit for its data shape — keeps query performance practical at production scale.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>GIN on a tsvector STORED GENERATED column is the Postgres-native full-text search solution — no extra infrastructure, handles stemming, scales to hundreds of millions of documents. pg_trgm GIN handles fuzzy and substring matching. pgvector HNSW handles semantic embedding search. For a ticketing system: partial composites (WHERE status IN ('open','in_progress')) cut index size by 80%, INCLUDE makes them covering, UNIQUE composite indexes enforce per-tenant constraints, and GIN tsvector handles full-text — total under 20% of table size.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-design-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why GIN tsvector is the default full-text search choice in Postgres, and what its limitations are.", a: "GIN tsvector is the default because: (1) it is built into Postgres with no extra infrastructure — no Elasticsearch cluster to manage, no sync pipeline, no consistency concerns; (2) it understands word-level semantics — stemming (run/running/ran), stop words, language-specific rules — giving relevance ranking via ts_rank; (3) it scales to hundreds of millions of documents on commodity hardware when properly indexed; (4) queries compose naturally with other SQL predicates (AND workspace_id = $1 AND tsv_search @@ query). Limitations: (1) does not handle typos or fuzzy matches — 'invoce' will not find 'invoice'; (2) does not understand semantic meaning — 'car' will not match 'automobile' unless stemming covers it; (3) GIN index is large (2-5x the column data) and has high write overhead for long documents (updating a posting list entry for each lexeme); (4) relevance ranking via ts_rank is simple (term frequency) — not as sophisticated as BM25 or learning-to-rank. For typo tolerance: add pg_trgm GIN. For semantic search: add pgvector HNSW with an embedding pipeline. For advanced relevance and faceted search at scale: Elasticsearch." },
+    { q: "Design an index for a query that: filters by workspace_id and status, sorts by created_at DESC, and projects only id and title. Explain every choice.", a: "Index: CREATE INDEX CONCURRENTLY idx_example ON tasks (workspace_id, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, title). Reasoning — workspace_id as leading column: this is the always-present tenant filter; it narrows the index immediately to one workspace's rows. created_at DESC in the sort key: this serves the ORDER BY created_at DESC directly from the index with no extra Sort step. WHERE status IN ('open','in_progress') partial predicate: the query only cares about hot statuses; this cuts the index to 20% of table size and eliminates index-write overhead for done rows. INCLUDE (id, title): projection columns stored in leaf pages, not the sort key; enables index-only scan (no heap fetch) for queries that project only id and title; keeps the sort key uncluttered. Expected plan: Index Only Scan with Heap Fetches: 0, Sort step absent (sort served by index), execution time under 1ms for top-50 results on 100M-row table. status is not in the sort key because all rows from this partial index are already status in ('open','in_progress') — the query does not need to sort by or range-scan on status." },
+    { q: "When would you choose pgvector HNSW over GIN tsvector for search, and what are the operational costs?", a: "Choose pgvector HNSW when: (1) users search with natural language and keyword matching has poor recall — 'team communication tool' should find tasks about Slack, email, and meetings even if those words are not in the query; (2) the product requires semantic similarity ('find tasks similar to this one'); (3) multilingual search where tsvector stemming is language-specific and you need a single universal search. Operational costs: (1) storage — HNSW index for 1536-dimension embeddings on 10M rows is approximately 60 GB; much larger than GIN tsvector for the same rows; (2) write cost — each insert requires graph rebalancing in the HNSW structure, 10-100x slower than GIN insert; (3) embedding pipeline — every document and every query must be passed through a model (e.g., OpenAI text-embedding-3-small) to generate the embedding before insertion or search; adds latency and cost; (4) approximate results — HNSW does not guarantee finding the closest vector, only approximately; recall@10 is typically 95-99% but not 100%. Production pattern: use both — GIN tsvector for exact keyword recall, HNSW for semantic recall, merge results in the application layer." },
+  ]}
+/>
+
+<Recap lang="en">
+`WHERE title ILIKE '%term%'` is always O(n) — leading wildcards defeat B-tree. Scalable alternatives: GIN on a tsvector STORED GENERATED column for keyword full-text (stemming, ts_rank, no extra infrastructure); pg_trgm GIN for fuzzy and substring matching (typo tolerance, ILIKE-anywhere); pgvector HNSW for semantic embedding search (natural language, requires model inference pipeline).
+
+For a ticketing system at 100M rows, the deliberate index set: two partial composites (WHERE status IN ('open','in_progress')) for the hot 20% of data, covering the open-tasks dashboard queries; a UNIQUE composite for per-tenant ticket_id; a GIN tsvector for full-text; a full-table composite for the recent-24h feed — total under 20% of table size, all within write-overhead budget.
+
+The INCLUDE clause (Postgres 11+) adds projection columns to index leaves without affecting the sort key, enabling index-only scans for typical list projections. Partial indexes cut size proportionally to the selectivity of the WHERE clause — the most underused performance lever in production Postgres schemas.
+</Recap>

@@ -1,0 +1,367 @@
+---
+slug: 06-production-failures-and-audit
+lang: ru
+track: databases
+unit: 02-indexes
+order: 6
+title: "Типичные сбои в продакшне и аудит индексов"
+summary: "Семь самых распространённых причин сбоев с индексами в продакшне — отсутствующий FK-индекс, приведение типов, устаревшая статистика, bloat, неверный порядок composite, JSONB cardinality bomb — плюс квартальный аудит и стратегия по окружениям."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["05-index-only-scans-and-visibility"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["index-audit", "index-bloat", "reindex-concurrently", "implicit-type-coercion", "pg-stat-user-indexes", "pg-stat-statements", "replica-index-strategy"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-examine.html
+  - https://www.postgresql.org/docs/current/monitoring-stats.html
+  - https://www.postgresql.org/docs/current/sql-reindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+
+<Hook>
+`DELETE FROM posts WHERE id = 42` с ON DELETE CASCADE выполняется 7 минут и всё это время удерживает row-level блокировки. Причина: `comments(post_id)` не проиндексирован. Postgres делает полный скан 200 млн строк комментариев, чтобы найти строки для удаления. Один отсутствующий индекс на внешнем ключе вызвал инцидент в продакшне. Этот урок каталогизирует типичные сбои и плейбук, который позволяет найти их до того, как они найдут вас.
+</Hook>
+
+<Crux>Семь сбоев: FK без индекса, type coercion, стale stats, bloat, неверный composite, JSONB GIN bomb, неверная структура. Аудит ежеквартально.</Crux>
+
+<Explanation>
+
+## Семь типичных причин сбоев
+
+### 1. Отсутствующий индекс на FK-столбце
+
+Внешние ключи не индексируются автоматически. Когда вы добавляете `REFERENCES posts(id)`, Postgres создаёт индекс на `posts(id)` (referenced-столбец), но не на `comments(post_id)` (referencing-столбец). ON DELETE CASCADE на родительской таблице выполняет полный скан дочерней таблицы для поиска каскадируемых строк.
+
+```sql
+-- Опасный паттерн:
+ALTER TABLE comments ADD CONSTRAINT fk_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE;
+-- Нет индекса на comments(post_id) — DELETE FROM posts теперь O(n) по comments
+
+-- Исправление:
+CREATE INDEX CONCURRENTLY idx_comments_post_id ON comments(post_id);
+```
+
+Правило: индексируйте каждый FK-столбец — если только не можете доказать, что родительская таблица никогда не удаляется и ни один запрос не фильтрует дочернюю по FK.
+
+### 2. Неявное приведение типов отключает индекс
+
+```sql
+-- orders.user_id имеет тип BIGINT; индекс на orders(user_id) существует
+SELECT * FROM orders WHERE user_id = '42';  -- '42' — TEXT
+```
+
+Postgres применяет неявное приведение TEXT → BIGINT, но для этого ему нужно применить cast к каждой строке — он не может обойти B-tree (cast применяется к столбцу, не к константе). Результат: Seq Scan. Диагностика: `EXPLAIN ANALYZE` запроса. Исправление: используйте типизированные параметры (`$1::BIGINT` или корректный тип в query builder).
+
+Другие распространённые ловушки: `created_at::date = '2024-01-01'` отключает индекс на `created_at`; используйте `created_at >= '2024-01-01' AND created_at < '2024-01-02'`.
+
+### 3. Устаревшая статистика приводит к неверному плану
+
+Модель стоимости планировщика зависит от данных `pg_statistic` — распределения значений, количества строк, корреляций. После массовой вставки, большого удаления или изменения схемы autovacuum планирует ANALYZE, но по умолчанию только после изменения 20% строк. До запуска ANALYZE у планировщика неверные оценки.
+
+Симптом: EXPLAIN показывает `rows=50`, а фактически было `rows=500 000` — промах в 10 000 раз. Планировщик выбрал nested-loop с индексом, который катастрофичен при таком количестве строк.
+
+Исправление: запускайте `ANALYZE table_name` после массовых операций с данными. Для таблиц с сильно скошенными данными (например, 90% заказов принадлежат 5 воркспейсам) используйте `CREATE STATISTICS (ndistinct) ON workspace_id, status FROM orders`, чтобы дать планировщику лучшую многостолбцовую статистику.
+
+### 4. Bloat индекса замедляет сканирование
+
+Индексы накапливают мёртвые записи от UPDATE и DELETE. Postgres 14+ выполняет bottom-up удаление в индексах (агрессивная очистка горячих листовых страниц без ожидания vacuum), но у таблиц с частыми UPDATE может накапливаться значительный bloat.
+
+Симптом: размер индекса в 5–10 раз превышает ожидаемый для данного числа строк; запросы медленные несмотря на использование индекса.
+
+```sql
+-- Пересоздать индекс без блокировки чтения/записи
+REINDEX INDEX CONCURRENTLY idx_orders_user_id;
+```
+
+REINDEX CONCURRENTLY (Postgres 12+) строит новый индекс в фоне, затем атомарно подменяет старый. Продолжительность аналогична первоначальному CREATE INDEX CONCURRENTLY.
+
+### 5. Неверный порядок столбцов в composite-индексе
+
+Composite-индекс `(status, workspace_id)`, где большинство запросов фильтруют только по `workspace_id`, не ускоряет эти запросы. Планировщик падает обратно на Seq Scan.
+
+Это нарушение правила leading-column, рассмотренного в уроке 02. В продакшне оно часто появляется, когда индекс проектировался для одного запроса, а позже добавился второй горячий запрос с другим паттерном фильтрации.
+
+Исправление: добавьте второй индекс с корректным ведущим столбцом или переосмыслите composite, если исходный паттерн запросов менее частый.
+
+### 6. JSONB GIN — cardinality bomb
+
+JSONB-столбец, где документы содержат миллионы уникальных ключей, создаёт GIN-индекс с миллионами различных записей в posting-листах. Такой индекс вытесняет горячие страницы кучи из `shared_buffers` и имеет огромную стоимость записи (обновление posting-листа для каждого уникального ключа на каждый INSERT).
+
+Симптом: размер GIN-индекса в 10–50 раз превышает размер столбца; коэффициент попаданий в кэш shared_buffers падает; задержки INSERT растут после добавления GIN.
+
+Исправление: используйте expression B-tree индексы на известных горячих полях вместо GIN на всём столбце:
+
+```sql
+-- Вместо: CREATE INDEX ON events USING GIN (payload)
+-- Используйте:
+CREATE INDEX ON events ((payload->>'event_type'));
+CREATE INDEX ON events ((payload->>'user_id'));
+```
+
+Это создаёт небольшие B-tree индексы только на двух известных горячих полях вместо монолитного GIN.
+
+### 7. «Индекс есть — но всё равно медленно»
+
+Самый коварный случай: нужный индекс существует, но план всё равно медленный, потому что:
+- Индекс не покрывающий (heap-обращения доминируют при масштабе).
+- Столбец ORDER BY не входит в индекс (полная сортировка после index scan).
+- Ведущий столбец индекса не соответствует наиболее селективному фильтру.
+
+Диагностика — всегда `EXPLAIN (ANALYZE, BUFFERS)` на точном запросе с реалистичными параметрами, а не на искусственном тестовом запросе и не на staging с в 100 раз меньшим числом строк.
+
+## Квартальный плейбук аудита индексов
+
+Запускайте этот плейбук ежеквартально на каждой продакшн-базе Postgres. Обычно это занимает 1–2 часа и возвращает 10–30% экономии хранилища плюс измеримое улучшение write-throughput.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Шаг</th>
+        <th class="border border-border px-3 py-2 text-left">Запрос / инструмент</th>
+        <th class="border border-border px-3 py-2 text-left">Действие</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. Неиспользуемые индексы</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_user_indexes WHERE idx_scan = 0</code></td>
+        <td class="border border-border px-3 py-2">DROP CONCURRENTLY после проверки, что это не индекс constraint или batch-job</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. Раздутые индексы</td>
+        <td class="border border-border px-3 py-2"><code>pgstattuple_approx()</code> на горячих индексах</td>
+        <td class="border border-border px-3 py-2">REINDEX CONCURRENTLY для индексов с bloat &gt;30%</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Отсутствующие индексы</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_statements</code> top-N по total_time + EXPLAIN</td>
+        <td class="border border-border px-3 py-2">CREATE INDEX CONCURRENTLY для Seq Scan на больших таблицах</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4. Избыточные индексы</td>
+        <td class="border border-border px-3 py-2">Каталог <code>pg_index</code> — поиск префиксных дубликатов</td>
+        <td class="border border-border px-3 py-2">DROP CONCURRENTLY более короткий, если composite его покрывает</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">5. Состояние VM</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_user_tables.n_dead_tup</code></td>
+        <td class="border border-border px-3 py-2">VACUUM если n_dead_tup &gt;5% живых строк на IOS-зависимых таблицах</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Шаг 1: найти неиспользуемые индексы
+
+```sql
+SELECT
+  schemaname,
+  relname AS table_name,
+  indexrelname AS index_name,
+  idx_scan,
+  pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+  AND indexrelname NOT LIKE '%_pkey'
+ORDER BY pg_relation_size(indexrelid) DESC;
+```
+
+Предостережения: (a) `pg_stat_reset()` происходит при рестарте — если сервер недавно перезапускался, счётчик сканирований вводит в заблуждение; используйте систему мониторинга, отслеживающую значения во времени. (b) Некоторые индексы используются только периодическими batch-задачами — сверьтесь с `pg_stat_statements` за более длительный период. (c) Unique-индексы на constraint-столбцах могут показывать idx_scan = 0, но всё равно проверяют constraint при каждом INSERT.
+
+### Шаг 2: найти раздутые индексы
+
+```sql
+-- Требует расширение pgstattuple
+SELECT
+  indexrelid::regclass AS index_name,
+  pg_size_pretty(pg_relation_size(indexrelid)) AS total_size,
+  round(100 * (approx_free_space + dead_tuple_len)::numeric
+    / GREATEST(1, pg_relation_size(indexrelid)), 2) AS bloat_pct
+FROM (
+  SELECT indexrelid, (pgstattuple_approx(indexrelid::regclass)).*
+  FROM pg_stat_user_indexes
+) AS s
+ORDER BY bloat_pct DESC;
+```
+
+Индексы с bloat_pct выше 30% — кандидаты для `REINDEX CONCURRENTLY`. Планируйте в часы низкой нагрузки.
+
+### Шаг 3: найти отсутствующие индексы
+
+Возьмите top-20 запросов из `pg_stat_statements` по `total_exec_time`. Для каждого запустите `EXPLAIN (ANALYZE, BUFFERS)` с реалистичными параметрами. Ищите `Seq Scan` на таблицах более 10k строк, где фильтр селективный (возвращается малая доля строк). Каждый такой случай — кандидат на создание индекса.
+
+### Шаг 4: найти избыточные индексы
+
+Два индекса избыточны, если ключевые столбцы одного являются префиксом другого. `idx_on_a` и `idx_on_a_b` — `idx_on_a` избыточен, если composite `idx_on_a_b` всегда используется вместо него. Удалите более короткий.
+
+```sql
+-- Найти потенциальные дубликаты (требует ручной проверки)
+SELECT
+  i.indexrelid::regclass AS index_name,
+  array_to_string(array_agg(a.attname ORDER BY x.n), ', ') AS columns
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indrelid
+CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS x(attnum, n)
+JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum
+GROUP BY i.indexrelid, i.indrelid
+ORDER BY i.indrelid, columns;
+```
+
+## Стратегия индексирования по окружениям
+
+Разные окружения требуют разного подхода:
+
+**Development**: минимальные индексы — только PK и обязательные unique constraints. Цель — быстрая итерация схемы, а не производительность запросов. Добавление всех продакшн-индексов замедляет миграции и скрывает архитектурные проблемы (не стоит опираться на индексы для компенсации плохой схемы).
+
+**Staging**: воспроизводите продакшн-индексы при нагрузочном тестировании или бенчмарках; пропускайте при чисто функциональном тестировании. Это помогает поймать «работает в dev, медленно на staging» до продакшна.
+
+**Production**: полный продуманный набор индексов со всеми инструментами из этого раздела — covering composite, partial indexes, INCLUDE, регулярный аудит. Добавление индексов в продакшн проходит code review вместе с запросом, для которого он создаётся.
+
+**Реплики / аналитические копии**: могут иметь дополнительные OLAP-специфичные индексы (широкие composites, BRIN на диапазонах дат, GIN для полнотекстового поиска), которые были бы слишком дорогими для поддержки на OLTP-primary. При использовании логической репликации в аналитический Postgres — добавляйте такие индексы только на реплику, не на primary.
+
+## Стратегическая позиция
+
+Самый распространённый постмортем на продакшн-масштабе: «отсутствующий индекс на этом горячем запросе». Второй по частоте: «слишком много индексов замедляют запись». Обе проблемы имеют одну причину — индексы не рассматривались как часть дизайна.
+
+Зрелые команды:
+- Добавляют индекс в ту же миграцию, что и фичу (запрос + индекс в одном PR).
+- Проверяют индексы в code review вместе с SQL.
+- Владеют стратегией индексирования на уровне платформы, а не на уровне команды.
+- Проводят аудит ежеквартально.
+
+Цена дисциплины: один пункт чеклиста на каждый PR с SQL. Цена её отсутствия: ночная тревога, когда дашборд клиента тормозит из-за FK, добавленного на прошлой неделе без индекса.
+
+<NumbersCard
+  id="06-audit-numbers"
+  title="Числа аудита индексов"
+  stats={[
+    { label: "Периодичность аудита", value: "раз в квартал" },
+    { label: "Типичная экономия хранилища после аудита", value: "10–30%" },
+    { label: "Улучшение write-скорости после удаления неиспользуемых", value: "2–5x на write-heavy таблицах" },
+    { label: "Продолжительность REINDEX CONCURRENTLY", value: "как первоначальный CREATE INDEX CONCURRENTLY" },
+    { label: "Порог bloat для REINDEX (pgstattuple_approx)", value: "&gt;30%" },
+    { label: "Окно idx_scan = 0 (мониторинг, не только сброс)", value: "&gt;30 дней" },
+    { label: "Top-N pg_stat_statements для поиска отсутствующих индексов", value: "top 20 по total_exec_time" },
+    { label: "FK-индекс: создаёт ли Postgres автоматически?", value: "Нет — требует ручного создания" },
+  ]}
+/>
+
+<Misconception id="06-audit-mc-1">
+<strong>«Postgres автоматически индексирует FK-столбцы.»</strong> Нет. Индексируется только referenced PK-сторона, не referencing-столбец. При ON DELETE CASCADE — O(n) скан дочерней таблицы. Индексируй каждый FK-столбец, если не доказано обратное.
+</Misconception>
+
+<DebugLog
+  id="06-audit-debug-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="ru"
+  title="Запрос использует индекс — но всё равно медленный. Диагностика"
+  output={`slow_query: SELECT id, total_cents FROM orders WHERE workspace_id = 42 AND status = 'pending' ORDER BY created_at DESC LIMIT 50;
+execution_time: 4280 ms
+rows_returned: 50
+
+EXPLAIN ANALYZE:
+Limit  (cost=320..380 rows=50 width=24) (actual time=4271..4280 rows=50 loops=1)
+  ->  Sort  (cost=320..18420 rows=180000 width=24) (actual time=4270..4275 rows=50 loops=1)
+        Sort Key: created_at DESC
+        Sort Method: top-N heapsort  Memory: 32kB
+        ->  Index Scan using idx_orders_workspace_status on orders
+              (cost=0.42..18000 rows=180000 width=24) (actual time=0.02..3800 rows=178240 loops=1)
+              Index Cond: ((workspace_id = 42) AND (status = 'pending'::text))
+
+Определения индексов:
+  idx_orders_workspace_status: btree (workspace_id, status)
+  Размер idx_orders_workspace_status: 1.2 GB
+  Размер таблицы: 18 GB, строк: 80M
+
+Статистика:
+  n_dead_tup: 12.4M (15% от общего числа)
+  last_autovacuum: 14 дней назад
+  last_analyze: 30 дней назад`}
+  outputLang="log"
+  question="Почему запрос выполняется 4280 мс несмотря на использование индекса? Что является полным исправлением?"
+  hint="Индекс используется — посмотрите, что план делает после index scan. И проверьте временные метки статистики."
+  answer="Корневые причины — (1) индекс сужает до строк (workspace_id + status), но не обеспечивает ORDER BY created_at DESC. Планировщик читает все 178 240 совпадающих строк кучи, затем сортирует их в памяти/на диске (top-N heapsort), затем берёт 50. Чтение 178k строк кучи при ~225 байт среднем = ~40 МБ случайного I/O на каждое выполнение запроса. Вот где уходят 4.28 с. (2) last_analyze — 30 дней назад, 15% строк мёртвые — оценки строк планировщика могут быть неточными, и visibility map устаревшая, что добавляет heap-обращения. Исправление (долгосрочное): заменить индекс покрывающим composite, который обслуживает и фильтр, и сортировку. CREATE INDEX CONCURRENTLY idx_orders_ws_pending_recent ON orders (workspace_id, created_at DESC) WHERE status = 'pending' INCLUDE (id, total_cents). Почему каждая часть: workspace_id как ведущий столбец (всегда присутствующий tenant-фильтр). created_at DESC в ключе (порядок сортировки — теперь планировщик получает ORDER BY из индекса, шаг Sort исчезает). WHERE status = 'pending' (partial index: только pending-заказы, ~5–20% таблицы). INCLUDE (id, total_cents) (покрывающий для index-only scan). Ожидаемый план после исправления: Index Only Scan по idx_orders_ws_pending_recent, 50 строк из листовых страниц индекса, Heap Fetches: 0, время выполнения менее 1 мс. Дополнительные действия: (1) ANALYZE orders для обновления статистики. (2) VACUUM orders для обновления visibility map. (3) ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02). (4) После подтверждения, что новый индекс используется, DROP INDEX CONCURRENTLY idx_orders_workspace_status."
+/>
+
+<TraceScenario
+  id="06-audit-trace-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="ru"
+  scenario="Провести полный квартальный аудит индексов на 500 ГБ продакшн-базе Postgres."
+  steps={[
+    { prompt: "Шаг 1: выявить неиспользуемые индексы.", reveal: "Запустить: SELECT schemaname, relname, indexrelname, idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) FROM pg_stat_user_indexes WHERE idx_scan = 0 ORDER BY pg_relation_size(indexrelid) DESC. Отфильтровать PK и unique constraints. Для каждого кандидата: сверить с pg_stat_statements за 30+ дней, чтобы убедиться, что индекс не используется периодическими batch-задачами. Если подтверждено неиспользование: пометить для DROP INDEX CONCURRENTLY. Типичная находка: 3–5 индексов на большую таблицу, добавленных «на всякий случай» годы назад. Типичная экономия хранилища: 20–50 ГБ на 500 ГБ базе." },
+    { prompt: "Шаг 2: выявить раздутые индексы.", reveal: "Установить pgstattuple (CREATE EXTENSION pgstattuple). Запустить pgstattuple_approx на каждом крупном индексе; вычислить bloat_pct = (approx_free_space + dead_tuple_len) / total_size. Индексы с bloat выше 30%: запланировать REINDEX CONCURRENTLY в ближайшее малоактивное окно. Приоритизировать по size × bloat_pct — индекс 10 ГБ с 40% bloat важнее индекса 100 МБ с 50% bloat." },
+    { prompt: "Шаг 3: выявить отсутствующие индексы.", reveal: "Взять top-20 запросов по total_exec_time из pg_stat_statements. Для каждого EXPLAIN ANALYZE с реалистичными продакшн-параметрами. Флаги: Seq Scan на таблицах более 10k строк, estimated rows >> actual rows (устаревшая статистика), actual time >> 50ms на выполнение. Для каждого флага: спроектировать подходящий индекс (правило leading-column, partial если применимо, INCLUDE для покрытия). Добавить через CREATE INDEX CONCURRENTLY в миграции. Проверить EXPLAIN ANALYZE после деплоя." },
+    { prompt: "Шаг 4: выявить избыточные индексы.", reveal: "Использовать pg_index для списка определений индексов. Искать: (a) одностолбцовый индекс на 'a', когда существует composite (a, b) или (a, b, c) — одностолбцовый является префиксом composite; composite покрывает его use case. Удалить одностолбцовый. (b) Два composite с одинаковыми ведущими столбцами, но разными trailing — можно объединить с INCLUDE. (c) Дублирующиеся индексы от разных авторов миграций. Типичная находка: 1–3 избыточных индекса на большую таблицу." },
+    { prompt: "Шаг 5: валидация и мониторинг.", reveal: "До изменений: снять снимок pg_stat_user_indexes (idx_scan, size) и базовую линию медленных запросов из pg_stat_statements. Вносить изменения таблица за таблицей через несколько деплоев. После каждого: перезапустить медленные запросы из базовой линии, сравнить EXPLAIN-планы. Мониторить 1 неделю: нет новых медленных запросов, задержки записи стабильны или улучшились, хранилище освобождено. Если какой-то запрос неожиданно замедляется: расследовать (был ли удалённый индекс всё-таки используемым?). При необходимости откатить. Задокументировать все изменения в журнале аудита для следующего квартала." },
+  ]}
+/>
+
+<Quiz
+  id="06-audit-quiz-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="ru"
+  question="Запрос выполняется: WHERE LOWER(email) = 'alice@x.com'. На таблице есть индекс на (email). Почему запрос делает Seq Scan?"
+  choices={[
+    { label: "Таблица слишком маленькая — планировщик не утруждает себя индексом", misconception: "Планировщик использует индексы независимо от размера таблицы, если селективность оправдывает это." },
+    { label: "LOWER() применяется к значению столбца во время выполнения; индекс хранит исходные значения и не может ответить на LOWER()-сравнение — cast предотвращает использование индекса", correct: true },
+    { label: "Email-индексы не работают для строковых сравнений", misconception: "B-tree индексы на текстовых столбцах отлично работают для равенства; проблема — в применении функции." },
+    { label: "Планировщик предпочитает Seq Scan для сравнений на равенство", misconception: "Планировщик предпочитает index scan для равенства при высокой селективности." },
+  ]}
+/>
+
+<Quiz
+  id="06-audit-quiz-2"
+  lessonSlug="06-production-failures-and-audit"
+  lang="ru"
+  question="Индекс 200 МБ на таблице 2 ГБ показывает idx_scan = 0 за последние 45 дней. Что является корректным действием?"
+  choices={[
+    { label: "Оставить — хранилище дешёвое", misconception: "Индекс добавляет write-накладные расходы на каждый INSERT/UPDATE, замедляя запись независимо от того, используется он или нет." },
+    { label: "REINDEX для уменьшения bloat", misconception: "REINDEX исправляет bloat; здесь проблема в том, что индекс неиспользуемый, а не раздутый." },
+    { label: "Убедиться, что это не constraint-индекс и не batch-job-only индекс; если ни то ни другое — DROP INDEX CONCURRENTLY", correct: true },
+    { label: "Запустить ANALYZE, чтобы обновить статистику и планировщик начал его использовать", misconception: "idx_scan = 0 означает, что планировщик никогда не выбирал этот индекс; устаревшая статистика — не причина." },
+  ]}
+/>
+
+<Inset kind="warning" lang="ru">
+Никогда не удаляйте индекс только потому, что idx_scan = 0. Всегда проверяйте: (1) это unique/exclusion constraint-индекс? (2) используется ли он периодической batch-задачей, запускающейся ежемесячно или ежеквартально, за пределами окна мониторинга? (3) был ли сервер недавно перезапущен, сбросив все счётчики? Сверяйтесь с pg_stat_statements за 30+ дней и консультируйтесь с командой разработки перед удалением.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Семь причин сбоев в продакшне: отсутствующий FK-индекс, приведение типов отключающее индекс, устаревшая статистика вызывающая неверный план, bloat индекса, неверный порядок столбцов composite, JSONB cardinality bomb, и «есть индекс — но всё равно медленно». Квартальный аудит находит неиспользуемые индексы (idx_scan=0), раздутые (pgstattuple_approx), отсутствующие (top-запросы pg_stat_statements) и избыточные (префиксные дубликаты). Правило: индексировать каждый FK-столбец; использовать EXPLAIN (ANALYZE, BUFFERS) на каждом медленном запросе; никогда не удалять индекс без проверки pg_stat_statements за 30+ дней.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-audit-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Назовите семь типичных причин сбоев с индексами в продакшне и дайте однострочную диагностику для каждой.", a: "(1) Отсутствующий FK-индекс: DELETE на родительской таблице делает Seq Scan на дочерней — диагностировать EXPLAIN на DELETE. (2) Неявное приведение типов: WHERE bigint_col = '42' вызывает cast, отключающий индекс — диагностировать EXPLAIN точного запроса с реальным типом параметра. (3) Устаревшая статистика: оценка строк планировщика ошибается в 10–1000 раз, выбирается неверный план — диагностировать EXPLAIN ANALYZE, сравнивая estimated vs actual rows, исправлять через ANALYZE. (4) Bloat индекса: размер индекса в 5–10 раз больше ожидаемого для числа строк, запросы медленные несмотря на использование — диагностировать pgstattuple_approx, исправлять REINDEX CONCURRENTLY. (5) Неверный порядок composite: горячий запрос фильтрует по не-ведущему столбцу, Seq Scan несмотря на composite — диагностировать EXPLAIN, проверяя какие столбцы фильтрует запрос и какой ведущий столбец индекса. (6) JSONB GIN cardinality bomb: GIN-индекс в 10–50 раз больше столбца, скачок задержки INSERT, падение cache-hit ratio shared_buffers — диагностировать pg_relation_size GIN vs столбца, исправлять expression B-tree на известных горячих полях. (7) «Есть индекс — но медленно»: нужный индекс есть, но неправильной структуры (нет столбца сортировки, нет INCLUDE, неверный ведущий столбец) — диагностировать EXPLAIN (ANALYZE, BUFFERS), находить heap-обращения, шаги Sort и стоимости узлов плана." },
+    { q: "Пройдите квартальный аудит индексов за пять шагов.", a: "(1) Неиспользуемые индексы: SELECT из pg_stat_user_indexes WHERE idx_scan = 0, исключая PK; проверить, не constraint и не batch-job-only; DROP INDEX CONCURRENTLY кандидаты. Типичная экономия: 10–30%. (2) Раздутые индексы: использовать pgstattuple_approx() на крупных индексах; REINDEX CONCURRENTLY на индексах с bloat более 30%; планировать в малоактивные окна. (3) Отсутствующие индексы: взять top-20 запросов по total_exec_time из pg_stat_statements; EXPLAIN ANALYZE каждый; флагировать Seq Scan на больших таблицах; создавать через CREATE INDEX CONCURRENTLY. (4) Избыточные индексы: находить префиксные дубликаты в pg_index — если индекс (a) существует вместе с composite (a, b), одностолбцовый избыточен; DROP CONCURRENTLY. (5) Валидация: сравнить базовую линию медленных запросов до и после; мониторить 1 неделю; откатить если какой-то запрос неожиданно деградирует. Аудит занимает 1–2 часа и обычно возвращает 10–30% экономии хранилища плюс измеримое улучшение write-throughput." },
+    { q: "Чем различается стратегия индексирования для development, staging и production?", a: "Development: минимальные индексы — только PK и обязательные unique constraints. Важна быстрая итерация схемы; производительность запросов не приоритет; все продакшн-индексы замедляют миграции и скрывают плохие архитектурные решения. Staging: воспроизводить продакшн-индексы при нагрузочном тестировании или бенчмарках; пропускать при функциональном тестировании. Это помогает найти «работает в dev, медленно на staging» до продакшна. Production: полный продуманный набор индексов — covering composites, partial indexes, INCLUDE, регулярный аудит. Каждое добавление индекса в миграции вместе с запросом, для которого он создаётся, проверяется на code review. Реплики / аналитические копии: могут иметь дополнительные OLAP-специфичные индексы (широкие composites, BRIN на диапазонах дат, GIN для полнотекстового поиска), которые были бы слишком дорогими для поддержки на OLTP-primary. Используйте логическую репликацию в аналитический Postgres и добавляйте такие индексы только на реплику, не на primary. Дисциплина: никогда не добавлять индекс в продакшн без понимания, для какого запроса он предназначен, и без проверки EXPLAIN, что он используется." },
+  ]}
+/>
+
+<Recap lang="ru">
+Семь причин сбоев покрывают продакшн-инциденты с индексами: отсутствующий FK-индекс (неиндексированный дочерний столбец вызывает O(n) каскадный скан); неявное приведение типов (функция на столбце отключает индекс — используйте типизированные параметры); устаревшая статистика (неверный план от неактуальных оценок строк — запускайте ANALYZE после массовых операций); bloat индекса (REINDEX CONCURRENTLY на индексах с bloat выше 30%); неверный порядок composite (нарушение leading-column — переосмыслите или добавьте второй индекс); JSONB GIN cardinality bomb (переходите на expression-индексы для известных горячих полей); и «есть индекс — но всё равно медленно» (неверная структура — проверяйте EXPLAIN ANALYZE на Sort-шаги и Heap Fetches).
+
+Квартальный аудит: (1) DROP CONCURRENTLY неиспользуемых (idx_scan=0 за 30+ дней, не constraints). (2) REINDEX CONCURRENTLY раздутых. (3) CREATE CONCURRENTLY отсутствующих найденных через pg_stat_statements. (4) DROP CONCURRENTLY избыточных префиксных дубликатов. (5) Мониторить одну неделю после изменений.
+
+Стратегия по окружениям: минимум в dev (быстрая итерация), зеркалирование продакшна на staging для бенчмарков, полный продуманный набор в production. OLAP-специфичные индексы — только на аналитических репликах, не на OLTP-primary.
+</Recap>

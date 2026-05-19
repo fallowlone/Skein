@@ -1,0 +1,367 @@
+---
+slug: 06-production-failures-and-audit
+lang: en
+track: databases
+unit: 02-indexes
+order: 6
+title: "Production failure modes and the index audit playbook"
+summary: "The seven most common index failures in production — missing FK index, type coercion, stale stats, bloat, wrong composite order, JSONB cardinality bomb — plus the quarterly audit playbook and per-environment index strategy."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["05-index-only-scans-and-visibility"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["index-audit", "index-bloat", "reindex-concurrently", "implicit-type-coercion", "pg-stat-user-indexes", "pg-stat-statements", "replica-index-strategy"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-examine.html
+  - https://www.postgresql.org/docs/current/monitoring-stats.html
+  - https://www.postgresql.org/docs/current/sql-reindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+
+<Hook>
+A `DELETE FROM posts WHERE id = 42` with ON DELETE CASCADE takes 7 minutes and holds row-level locks the entire time. Root cause: `comments(post_id)` is not indexed. Postgres does a sequential scan of 200M comments to find the rows to delete. One missing index on a foreign key caused a production incident. This lesson catalogs the failure modes and the playbook to find them before they find you.
+</Hook>
+
+<Crux>Seven production failures: FK unindexed, type coercion, stale stats, bloat, wrong composite, JSONB GIN bomb, bad structure. Audit quarterly.</Crux>
+
+<Explanation>
+
+## The seven failure modes
+
+### 1. Missing index on FK column
+
+Foreign-key columns are not automatically indexed. When you add `REFERENCES posts(id)`, Postgres creates an index on `posts(id)` (the referenced column), but not on `comments(post_id)` (the referencing column). ON DELETE CASCADE on the parent table does a sequential scan of the child table to find rows to cascade to.
+
+```sql
+-- This is the dangerous pattern:
+ALTER TABLE comments ADD CONSTRAINT fk_post FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE;
+-- No index on comments(post_id) -- DELETE FROM posts is now O(n) on comments
+
+-- Fix:
+CREATE INDEX CONCURRENTLY idx_comments_post_id ON comments(post_id);
+```
+
+Rule: index every FK column unless you can prove the parent table is never deleted and no queries filter the child by the FK.
+
+### 2. Implicit type coercion defeats the index
+
+```sql
+-- orders.user_id is BIGINT; index on orders(user_id) exists
+SELECT * FROM orders WHERE user_id = '42';  -- '42' is TEXT
+```
+
+Postgres applies an implicit cast from TEXT to BIGINT — but to do so on every row, it cannot walk the B-tree (the cast is applied to the column, not the constant). Result: Seq Scan. Diagnosis: `EXPLAIN ANALYZE` on the query. Fix: use typed parameters (`$1::BIGINT` or the correct type in the query builder).
+
+Other common coercion traps: `created_at::date = '2024-01-01'` defeats an index on `created_at`; use `created_at >= '2024-01-01' AND created_at < '2024-01-02'` instead.
+
+### 3. Stale statistics cause wrong plan choice
+
+The planner's cost model depends on `pg_statistic` data — value distributions, row counts, correlations. After a bulk insert, large delete, or schema change, autovacuum schedules an ANALYZE, but by default only after 20% of rows change. Until ANALYZE runs, the planner has wrong estimates.
+
+Symptom: EXPLAIN shows `rows=50` but actual was `rows=500,000` — a 10,000x miss. The planner picked a nested-loop with an index that is catastrophic at that row count.
+
+Fix: run `ANALYZE table_name` after bulk data operations. For tables with highly skewed data (e.g., 90% of orders are for 5 workspaces), use `CREATE STATISTICS (ndistinct) ON workspace_id, status FROM orders` to give the planner better multi-column statistics.
+
+### 4. Index bloat slows scans
+
+Indexes accumulate dead entries from updates and deletes. Postgres 14+ does bottom-up index deletion (aggressive cleanup on hot leaf pages without waiting for vacuum), but heavy-update tables can still develop significant bloat over time.
+
+Symptom: index size is 5-10x the expected size for the row count; queries are slow despite using the index.
+
+```sql
+-- Rebuild the index without blocking reads/writes
+REINDEX INDEX CONCURRENTLY idx_orders_user_id;
+```
+
+REINDEX CONCURRENTLY (Postgres 12+) builds a new index in the background and then swaps it in. Duration is similar to the initial CREATE INDEX CONCURRENTLY build.
+
+### 5. Wrong composite column order
+
+A composite index `(status, workspace_id)` where most queries filter by `workspace_id` alone does not accelerate those queries. The planner falls back to Seq Scan.
+
+This is the leading-column rule violation discussed in lesson 02. In production, it often appears when an index was designed for one query but a second hot query was added later with a different filter pattern.
+
+Fix: add a second index with the correct leading column, or redesign the composite if the original query shape is less common.
+
+### 6. JSONB GIN cardinality bomb
+
+A JSONB column where documents contain millions of unique keys creates a GIN index with millions of distinct posting-list entries. This index overwhelms `shared_buffers` (evicting hot heap pages) and has enormous write cost (updating the posting list for every unique key on each insert).
+
+Symptom: GIN index size is 10-50x the underlying column size; shared_buffers cache-hit ratio drops; insert latency spikes after adding the GIN.
+
+Fix: use expression B-tree indexes on known-hot fields instead of a GIN on the whole column:
+
+```sql
+-- Instead of: CREATE INDEX ON events USING GIN (payload)
+-- Use:
+CREATE INDEX ON events ((payload->>'event_type'));
+CREATE INDEX ON events ((payload->>'user_id'));
+```
+
+This indexes only two known-hot fields with small B-tree indexes instead of a monolithic GIN.
+
+### 7. "Has an index" but still slow
+
+The most insidious failure: the right index exists, but the plan is still slow because:
+- The index is not covering (heap fetches dominate at scale).
+- The ORDER BY column is not in the index (full sort after index scan).
+- The index's leading column does not match the most selective filter.
+
+Diagnosis is always `EXPLAIN (ANALYZE, BUFFERS)` on the exact query with realistic parameters — not a contrived test query, not a staging environment with 100x fewer rows.
+
+## The quarterly index audit playbook
+
+Run this playbook every quarter on every production Postgres database. It typically takes 1-2 hours and returns 10-30% storage savings plus measurable write-throughput improvements.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">Query / tool</th>
+        <th class="border border-border px-3 py-2 text-left">Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. Unused indexes</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_user_indexes WHERE idx_scan = 0</code></td>
+        <td class="border border-border px-3 py-2">DROP CONCURRENTLY after verifying not a constraint or batch-job index</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. Bloated indexes</td>
+        <td class="border border-border px-3 py-2"><code>pgstattuple_approx()</code> on hot indexes</td>
+        <td class="border border-border px-3 py-2">REINDEX CONCURRENTLY on indexes with &gt;30% bloat</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Missing indexes</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_statements</code> top-N by total_time + EXPLAIN</td>
+        <td class="border border-border px-3 py-2">CREATE INDEX CONCURRENTLY for Seq Scans on large tables</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4. Redundant indexes</td>
+        <td class="border border-border px-3 py-2"><code>pg_index</code> catalog — find prefix duplicates</td>
+        <td class="border border-border px-3 py-2">DROP CONCURRENTLY the shorter prefix when a composite covers it</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">5. VM health</td>
+        <td class="border border-border px-3 py-2"><code>pg_stat_user_tables.n_dead_tup</code></td>
+        <td class="border border-border px-3 py-2">VACUUM if n_dead_tup &gt; 5% of live rows on IOS-dependent tables</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Step 1: find unused indexes
+
+```sql
+SELECT
+  schemaname,
+  relname AS table_name,
+  indexrelname AS index_name,
+  idx_scan,
+  pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+FROM pg_stat_user_indexes
+WHERE idx_scan = 0
+  AND indexrelname NOT LIKE '%_pkey'
+ORDER BY pg_relation_size(indexrelid) DESC;
+```
+
+Caveats: (a) reset `pg_stat_reset()` happens on restart — if the server was recently restarted, the scan count is misleading; use a monitoring system that tracks these over time. (b) Some indexes are used only by periodic batch jobs — cross-reference `pg_stat_statements` over a longer window. (c) Unique indexes on constraint columns (UNIQUE, exclusion constraints) may show idx_scan = 0 but are still enforcing the constraint on every insert.
+
+### Step 2: find bloated indexes
+
+```sql
+-- Requires pgstattuple extension
+SELECT
+  indexrelid::regclass AS index_name,
+  pg_size_pretty(pg_relation_size(indexrelid)) AS total_size,
+  round(100 * (approx_free_space + dead_tuple_len)::numeric
+    / GREATEST(1, pg_relation_size(indexrelid)), 2) AS bloat_pct
+FROM (
+  SELECT indexrelid, (pgstattuple_approx(indexrelid::regclass)).*
+  FROM pg_stat_user_indexes
+) AS s
+ORDER BY bloat_pct DESC;
+```
+
+Indexes with bloat_pct over 30% are candidates for `REINDEX CONCURRENTLY`. Schedule during off-peak.
+
+### Step 3: find missing indexes
+
+Pull the top-20 queries from `pg_stat_statements` by `total_exec_time`. For each, run `EXPLAIN (ANALYZE, BUFFERS)` with realistic parameters. Look for `Seq Scan` on tables over 10k rows where the filter is selective (rows returned is small fraction of total). Each such query is a missing-index candidate.
+
+### Step 4: find redundant indexes
+
+Two indexes are redundant when one's key columns are a prefix of another's. `idx_on_a` and `idx_on_a_b` — the `idx_on_a` is redundant if the `idx_on_a_b` composite is always used instead. Drop the shorter one.
+
+```sql
+-- Find potential duplicates (manual inspection required)
+SELECT
+  i.indexrelid::regclass AS index_name,
+  array_to_string(array_agg(a.attname ORDER BY x.n), ', ') AS columns
+FROM pg_index i
+JOIN pg_class c ON c.oid = i.indrelid
+CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY AS x(attnum, n)
+JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = x.attnum
+GROUP BY i.indexrelid, i.indrelid
+ORDER BY i.indrelid, columns;
+```
+
+## Index strategy across environments
+
+Different environments have different needs:
+
+**Development**: minimal indexes — only PKs and essential unique constraints. The goal is fast schema iteration, not query performance. Adding all production indexes slows migrations and obscures schema design (you should not lean on indexes to compensate for bad schema choices).
+
+**Staging**: mirror production indexes when running load tests or benchmarking; skip them for pure functional testing. The staging index set helps catch "works in dev, slow in staging" before production.
+
+**Production**: the full deliberate index set, with all the controls described in this unit — covering composites, partial indexes, INCLUDE, regular audits. Production index additions go through migration review alongside the query that requires them.
+
+**Replicas / analytics copies**: may have additional OLAP-specific indexes (wide composites, BRIN on date ranges, GIN for full-text) that would be too expensive to maintain on the OLTP primary. If using logical replication to a dedicated analytics Postgres, add those indexes only on the replica.
+
+## Strategic posture
+
+The single most common performance postmortem at production scale: "missing index on this hot query." The second most common: "too many indexes slowing writes." Both have the same root cause — indexes were not treated as part of the design.
+
+Senior teams:
+- Add the index to the migration that ships the feature (query + index in one PR).
+- Review indexes in code review alongside the SQL.
+- Own index strategy at the platform level, not per-team.
+- Audit quarterly.
+
+The cost of this discipline: one checklist item per PR touching SQL. The cost of not doing it: a 3am page when a customer dashboard times out because someone added a new FK last week without indexing the referencing column.
+
+<NumbersCard
+  id="06-audit-numbers"
+  title="Index audit numbers"
+  stats={[
+    { label: "Audit cadence", value: "quarterly" },
+    { label: "Typical storage savings from audit", value: "10-30%" },
+    { label: "Typical write-rate improvement from dropping unused", value: "2-5x on write-heavy tables" },
+    { label: "REINDEX CONCURRENTLY duration", value: "similar to initial CREATE INDEX CONCURRENTLY" },
+    { label: "pgstattuple_approx bloat threshold for reindex", value: "&gt;30%" },
+    { label: "idx_scan = 0 window (use monitoring, not just reset)", value: "&gt;30 days" },
+    { label: "pg_stat_statements top-N for missing-index scan", value: "top 20 by total_exec_time" },
+    { label: "FK column index: enforced by Postgres?", value: "No — manual index required" },
+  ]}
+/>
+
+<Misconception id="06-audit-mc-1">
+<strong>"Postgres auto-indexes FK columns."</strong> It does not. Postgres indexes the referenced PK column, never the referencing column. On DELETE CASCADE it does an O(n) scan of the child table without an index. Index every FK column unless proven unused in cascades and joins.
+</Misconception>
+
+<DebugLog
+  id="06-audit-debug-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="en"
+  title="Query has an index but is still slow — diagnose"
+  output={`slow_query: SELECT id, total_cents FROM orders WHERE workspace_id = 42 AND status = 'pending' ORDER BY created_at DESC LIMIT 50;
+execution_time: 4280 ms
+rows_returned: 50
+
+EXPLAIN ANALYZE:
+Limit  (cost=320..380 rows=50 width=24) (actual time=4271..4280 rows=50 loops=1)
+  ->  Sort  (cost=320..18420 rows=180000 width=24) (actual time=4270..4275 rows=50 loops=1)
+        Sort Key: created_at DESC
+        Sort Method: top-N heapsort  Memory: 32kB
+        ->  Index Scan using idx_orders_workspace_status on orders
+              (cost=0.42..18000 rows=180000 width=24) (actual time=0.02..3800 rows=178240 loops=1)
+              Index Cond: ((workspace_id = 42) AND (status = 'pending'::text))
+
+Index definitions:
+  idx_orders_workspace_status: btree (workspace_id, status)
+  idx_orders_workspace_status size: 1.2 GB
+  table size: 18 GB, row count: 80M
+
+Statistics:
+  n_dead_tup: 12.4M (15% of total)
+  last_autovacuum: 14 days ago
+  last_analyze: 30 days ago`}
+  outputLang="log"
+  question="Why is the query 4280 ms despite using the index? What is the complete fix?"
+  hint="The index is used — look at what the plan does after the index scan. And check the statistics timestamps."
+  answer="Root causes — (1) the index narrows to matching rows (workspace_id + status) but does not provide the ORDER BY created_at DESC. The planner reads all 178,240 matching heap rows, then sorts them in memory/disk (top-N heapsort), then takes 50. Reading 178k heap rows at ~225 bytes average = ~40 MB of random I/O per query execution. That is where the 4.28 s goes. (2) last_analyze was 30 days ago and 15% of rows are dead tuples — the planner's row estimate may be off and the visibility map is stale, adding heap fetches. Fix (durable): replace the index with a covering composite that serves both the filter AND the sort. CREATE INDEX CONCURRENTLY idx_orders_ws_pending_recent ON orders (workspace_id, created_at DESC) WHERE status = 'pending' INCLUDE (id, total_cents). Why each part: workspace_id as leading column (the always-present tenant filter). created_at DESC in the key (the sort order — now the planner gets the ORDER BY from the index itself, no Sort step). WHERE status = 'pending' (partial index: only pending orders, ~5-20% of table). INCLUDE (id, total_cents) (covering the projection for index-only scan). Expected plan after fix: Index Only Scan on idx_orders_ws_pending_recent, 50 rows from index leaf pages, Heap Fetches: 0, execution time under 1 ms. Additional actions: (1) ANALYZE orders to refresh statistics. (2) VACUUM orders to update visibility map. (3) ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02). (4) After verifying the new index is used, DROP INDEX CONCURRENTLY idx_orders_workspace_status."
+/>
+
+<TraceScenario
+  id="06-audit-trace-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="en"
+  scenario="Walk the full quarterly index audit on a 500 GB production Postgres database."
+  steps={[
+    { prompt: "Step 1: identify unused indexes.", reveal: "Run: SELECT schemaname, relname, indexrelname, idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) FROM pg_stat_user_indexes WHERE idx_scan = 0 ORDER BY pg_relation_size(indexrelid) DESC. Filter out PKs and unique constraints. For each candidate: cross-reference with pg_stat_statements over 30+ days to verify the index is not used by periodic batch jobs. If confirmed unused: mark for DROP INDEX CONCURRENTLY. Common finding: 3-5 indexes per large table that were added 'just in case' years ago. Typical storage reclaim: 20-50 GB on a 500 GB database." },
+    { prompt: "Step 2: identify bloated indexes.", reveal: "Install pgstattuple (CREATE EXTENSION pgstattuple). Run pgstattuple_approx on each large index; compute bloat_pct = (approx_free_space + dead_tuple_len) / total_size. Indexes over 30% bloat: schedule REINDEX CONCURRENTLY in the next low-traffic maintenance window. Priority-order by size × bloat_pct — a 10 GB index at 40% bloat is more impactful than a 100 MB index at 50% bloat." },
+    { prompt: "Step 3: identify missing indexes.", reveal: "Pull top-20 queries by total_exec_time from pg_stat_statements. For each, EXPLAIN ANALYZE with realistic production-scale parameters. Flag: Seq Scan on tables over 10k rows, estimated rows >> actual rows (stale stats), actual time >> 50ms per query execution. For each flag: design the appropriate index (leading-column rule, partial if applicable, INCLUDE for covering). Add via CREATE INDEX CONCURRENTLY in a migration. Verify with EXPLAIN ANALYZE after deploy." },
+    { prompt: "Step 4: identify redundant indexes.", reveal: "Use pg_index to list index definitions. Look for: (a) single-column index on 'a' where a composite (a, b) or (a, b, c) also exists — the single is a prefix of the composite; the composite covers the single's use case. Drop the single. (b) Two composites with the same leading columns but different trailing columns — might merge into one with INCLUDE. (c) Duplicate indexes from multiple migration authors. Typical finding: 1-3 redundant indexes per large table." },
+    { prompt: "Step 5: validate and monitor.", reveal: "Before changes: snapshot pg_stat_user_indexes (idx_scan, size) and a slow-query baseline from pg_stat_statements. Apply changes one table at a time over multiple deploys. After each: re-run the slow queries from the baseline, compare EXPLAIN plans. Monitor for 1 week: no new slow queries, write latency stable or improved, storage reclaimed. If any query slows unexpectedly: investigate (was a dropped index actually in use?). Restore if needed. Document all changes in the audit log for next quarter." },
+  ]}
+/>
+
+<Quiz
+  id="06-audit-quiz-1"
+  lessonSlug="06-production-failures-and-audit"
+  lang="en"
+  question="A query runs: WHERE LOWER(email) = 'alice@x.com'. The table has an index on (email). Why does the query do a Seq Scan?"
+  choices={[
+    { label: "The table is too small for the planner to bother with an index", misconception: "The planner uses indexes regardless of table size when the selectivity warrants it." },
+    { label: "LOWER() is applied to the column value at runtime; the index stores original values and cannot answer the LOWER() comparison — the cast prevents index use", correct: true },
+    { label: "Email indexes do not work on string comparisons", misconception: "B-tree indexes on text columns work fine for equality; the issue is the function application." },
+    { label: "The planner prefers Seq Scan for equality comparisons", misconception: "The planner prefers index scans for equality when selectivity is high." },
+  ]}
+/>
+
+<Quiz
+  id="06-audit-quiz-2"
+  lessonSlug="06-production-failures-and-audit"
+  lang="en"
+  question="A 200 MB index on a 2 GB table shows idx_scan = 0 for the last 45 days. What is the correct action?"
+  choices={[
+    { label: "Keep it — storage is cheap", misconception: "The index adds write overhead on every insert/update, slowing writes whether it is used or not." },
+    { label: "REINDEX it to reduce bloat", misconception: "REINDEX repairs bloat; the issue here is the index is unused, not bloated." },
+    { label: "Verify it is not a constraint index or batch-job-only index; if neither, DROP INDEX CONCURRENTLY", correct: true },
+    { label: "Run ANALYZE to refresh statistics so the planner uses it", misconception: "idx_scan = 0 means the planner never chose this index; stale stats are not the issue." },
+  ]}
+/>
+
+<Inset kind="warning" lang="en">
+Never drop an index just because idx_scan = 0. Always verify: (1) is it a unique/exclusion constraint index? (2) is it used by a periodic batch job that runs monthly or quarterly, outside the monitoring window? (3) was the server recently restarted, resetting all counters? Cross-reference pg_stat_statements over 30+ days and ask the application team before dropping.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The seven production failure modes: missing FK index, type coercion bypassing the index, stale stats causing wrong plan, index bloat, wrong composite column order, JSONB cardinality bomb, and "has an index but still slow." The quarterly audit finds unused indexes (idx_scan=0), bloated indexes (pgstattuple_approx), missing indexes (pg_stat_statements top queries), and redundant indexes (prefix duplicates). Rule: index every FK column; use EXPLAIN (ANALYZE, BUFFERS) on every slow query; never drop an index without cross-checking pg_stat_statements over 30+ days.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-audit-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the seven production index failure modes and for each give the one-sentence diagnostic.", a: "(1) Missing FK index: DELETE on parent table does Seq Scan on child — diagnose with EXPLAIN on the DELETE. (2) Implicit type coercion: WHERE bigint_col = '42' causes a cast that disables index use — diagnose with EXPLAIN on the exact query with the actual parameter type. (3) Stale statistics: planner row estimate is 10-1000x off, wrong plan chosen — diagnose with EXPLAIN ANALYZE comparing estimated vs actual rows, fix with ANALYZE. (4) Index bloat: index size 5-10x expected for row count, queries slow despite index use — diagnose with pgstattuple_approx, fix with REINDEX CONCURRENTLY. (5) Wrong composite order: hot query filters by non-leading column, Seq Scan despite composite — diagnose with EXPLAIN checking which columns the query filters and what the index leading column is. (6) JSONB GIN cardinality bomb: GIN index 10-50x column size, insert latency spike, shared_buffers hit ratio drops — diagnose with pg_relation_size on the GIN index vs the column, fix with expression B-tree on known-hot fields. (7) Has index but still slow: correct index exists but wrong structure (missing sort column, no INCLUDE, wrong leading column) — diagnose with EXPLAIN (ANALYZE, BUFFERS), identify heap fetches, sort steps, and plan node costs." },
+    { q: "Walk the quarterly index audit in five steps.", a: "(1) Unused indexes: SELECT from pg_stat_user_indexes WHERE idx_scan = 0, excluding PKs; verify not constraint or batch-job-only; DROP INDEX CONCURRENTLY candidates. Typical storage recovery: 10-30%. (2) Bloated indexes: use pgstattuple_approx() on large indexes; REINDEX CONCURRENTLY on indexes with over 30% bloat; schedule in low-traffic windows. (3) Missing indexes: pull top-20 queries by total_exec_time from pg_stat_statements; EXPLAIN ANALYZE each; flag Seq Scans on large tables; create indexes with CREATE INDEX CONCURRENTLY. (4) Redundant indexes: find prefix duplicates in pg_index — where index (a) also exists alongside composite (a, b), the single-column index is redundant; DROP CONCURRENTLY. (5) Validate: compare slow-query baseline before vs after; monitor for 1 week; revert if any query unexpectedly degrades. The audit takes 1-2 hours and typically returns 10-30% storage savings plus measurable write-throughput improvement." },
+    { q: "What is the correct index strategy difference between development, staging, and production?", a: "Development: minimal indexes — PKs and essential unique constraints only. Fast schema iteration matters; query performance is not the concern; adding all production indexes slows migrations and masks bad schema decisions. Staging: mirror production indexes when running load tests or performance benchmarks; skip for functional testing. This catches 'works in dev, slow in staging' regressions before production. Production: full deliberate index set — covering composites, partial indexes, INCLUDE, regular audits. Every index addition is in a migration alongside the query it serves, reviewed in code review. Replicas / analytics copies: may have additional OLAP-specific indexes (wide composites, BRIN on date ranges, GIN for full-text search) that would be too expensive on the OLTP primary. Use logical replication to an analytics Postgres and add those indexes only on the replica, not the primary. The discipline: never add an index to production without knowing which query it serves and verifying with EXPLAIN that it is used." },
+  ]}
+/>
+
+<Recap lang="en">
+Seven failure modes cover the production index incidents: missing FK index (unindexed child column causes O(n) cascade scans); implicit type coercion (function on column disables index — use typed parameters); stale statistics (wrong plan from outdated row estimates — run ANALYZE after bulk ops); index bloat (REINDEX CONCURRENTLY on over-30% bloated indexes); wrong composite order (leading-column violation — redesign or add second index); JSONB GIN cardinality bomb (narrow to expression indexes on known-hot fields); and "has an index but still slow" (wrong structure — check EXPLAIN ANALYZE for Sort steps and Heap Fetches).
+
+The quarterly audit: (1) DROP CONCURRENTLY unused indexes (idx_scan=0 for 30+ days, not constraints). (2) REINDEX CONCURRENTLY bloated indexes. (3) CREATE CONCURRENTLY missing indexes found via pg_stat_statements. (4) DROP CONCURRENTLY redundant prefix indexes. (5) Monitor for one week after changes.
+
+Index strategy by environment: minimal in dev (fast iteration), mirror-production in staging for benchmarks, full deliberate set in production. OLAP-specific indexes belong on analytics replicas, not the OLTP primary.
+</Recap>
