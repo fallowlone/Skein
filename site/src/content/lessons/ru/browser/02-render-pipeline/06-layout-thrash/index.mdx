@@ -1,0 +1,208 @@
+---
+slug: 06-layout-thrash
+lang: ru
+track: browser
+unit: 02-render-pipeline
+order: 6
+title: "Layout thrash: форсированная синхронная компоновка"
+summary: "Как чтение геометрии после записи стилей вызывает немедленный сброс компоновки, как выглядят N форсированных компоновок за кадр в DevTools и двухпроходное батч-лечение."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["05-devtools-and-frame-lifecycle"]
+deepensInto: ["07-beginmainframe-and-gpu"]
+spiral: ["statefulness"]
+concepts: ["forced-synchronous-layout", "06-layout-thrash", "dirty-flag", "two-pass-batch", "offsetWidth", "getBoundingClientRect", "resize-handler"]
+sources:
+  - https://developer.chrome.com/docs/devtools/performance/reference
+  - https://web.dev/articles/rendering-performance
+  - https://gist.github.com/paulirish/5d52fb081b3570c81e3a
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Resize-обработчик итерирует 5000 строк. Каждая строка читает свою ширину, затем записывает новую. Страница блокируется на 5 секунд. CPU не делает ничего экзотического — он запускает один и тот же расчёт компоновки 5000 раз, по разу на строку, потому что никто не сказал ему батчить.
+</Hook>
+
+<Crux>Чтение геометрии после записи стиля немедленно сбрасывает компоновку — N чтений после N записей равно N компоновок.</Crux>
+
+<Explanation>
+
+## Как работает форсированная синхронная компоновка
+
+Компоновка управляется dirty-флагами: браузер батчит записи стилей и сбрасывает их только когда нужна свежая геометрия. Патологический случай — цикл чтение-запись в JS:
+
+```javascript
+for (const row of rows) {
+  const w = row.offsetWidth;        // чтение → форсирует сброс ожидающих записей
+  row.style.width = w + 10 + 'px'; // запись → снова помечает компоновку dirty
+}
+```
+
+Каждая итерация заставляет браузер вычислять компоновку для ответа на `offsetWidth`, затем немедленно помечает компоновку dirty для следующей итерации. N строк = N полных компоновок.
+
+Список из 5000 строк при 1 мс на компоновку = **5 секунд блокировки главного потока**. DevTools показывает это как фиолетовую Layout-полосу с предупреждением в консоли «Forced reflow while executing JavaScript took XX ms».
+
+<div data-lesson-visual class="my-6 rounded-lg border border-border bg-surface-2 p-4 text-sm">
+  <p class="font-semibold mb-3">Жизненный цикл dirty-флага в цикле чтение-запись</p>
+  <div class="flex flex-col gap-1 font-mono text-xs">
+    <div class="rounded bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1">Итерация 1: запись style.width (компоновка dirty)</div>
+    <div class="rounded bg-red-100 dark:bg-red-900/30 px-2 py-1">Итерация 2: чтение offsetWidth → СБРОС компоновки (1 полная компоновка)</div>
+    <div class="rounded bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1">Итерация 2: запись style.width (компоновка снова dirty)</div>
+    <div class="rounded bg-red-100 dark:bg-red-900/30 px-2 py-1">Итерация 3: чтение offsetWidth → СБРОС компоновки (2-я полная компоновка)</div>
+    <div class="text-center text-ink-2">… × N итераций = N компоновок</div>
+  </div>
+</div>
+
+## Двухпроходное батч-лечение
+
+Разделите все чтения и все записи:
+
+```javascript
+// Двухпроходный батч: сначала читаем, потом пишем.
+const widths = [];
+for (const row of rows) {
+  widths.push(row.offsetWidth);          // проход 1: все чтения
+}
+for (let i = 0; i < rows.length; i++) {
+  rows[i].style.width = (widths[i] + 10) + 'px'; // проход 2: все записи
+}
+```
+
+Поскольку ни одно чтение не следует за записью в одном цикле, браузер батчит все записи и выполняет **один проход компоновки** для всего батча. Временная сложность падает с O(N × компоновка) до O(компоновка).
+
+**Общее правило:** в любой функции, трогающей геометрию, сначала все чтения, потом все записи.
+
+Если разделить чтения от записей невозможно, кэшируйте ширину при монтировании компонента и пересчитывайте только при реальном изменении размера родителя.
+
+## Свойства, вызывающие форсированную компоновку
+
+Любое свойство, возвращающее вычисленную геометрию, форсирует сброс компоновки при чтении. Полный список включает:
+
+`offsetWidth`, `offsetHeight`, `offsetTop`, `offsetLeft`, `offsetParent`, `clientWidth`, `clientHeight`, `clientTop`, `clientLeft`, `scrollWidth`, `scrollHeight`, `scrollTop`, `scrollLeft`, `getBoundingClientRect()`, `getComputedStyle()`, `scrollIntoView()`, `focus()` (иногда).
+
+<Misconception id="mc-layout-thrash">
+**Миф:** Оборачивание цикла чтение-запись в `requestAnimationFrame` батчит работу компоновки.
+
+**Реальность:** rAF батчит только вызов. Чтение layout-значения (`offsetWidth`, `getBoundingClientRect`) после записи форсирует синхронный сброс даже внутри rAF. Лечение — разделить чтения от записей.
+</Misconception>
+
+<DebugLog
+  id="06-layout-thrash-debug-1"
+  lessonSlug="06-layout-thrash"
+  lang="ru"
+  label="Консоль DevTools — предупреждения Forced reflow"
+  output={`[Violation] Forced reflow while executing JavaScript took 42 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 47 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 51 ms
+    at applyRowWidths (list.js:88)
+    ...`}
+  outputLang="log"
+  question="Три одинаковых предупреждения 'Forced reflow', все указывают на list.js:88 внутри resize-обработчика. Какой паттерн вызвал это и каково хирургическое лечение?"
+  hint="Имя функции 'applyRowWidths' — подсказка. Посмотрите на тело цикла — что оно читает перед каждой записью?"
+  answer="Обработчик итерирует видимые строки и читает offsetWidth (или getBoundingClientRect) в начале каждой итерации, затем записывает изменение стиля в конце. Чтение форсирует сброс компоновки ожидающих записей из предыдущей итерации. С N строками вы запускаете N форсированных компоновок. Хирургическое лечение — батч чтений и записей: первый проход читает offsetWidth каждой строки в массив; второй проход записывает новые ширины из массива. Браузер выполняет один проход компоновки для всего батча. Время падает с O(N × компоновка) до O(компоновка)."
+/>
+
+<FadedExample
+  client:visible
+  id="06-layout-thrash-faded-1"
+  lessonSlug="06-layout-thrash"
+  lang="ru"
+  title="Устранение форсированной синхронной компоновки в resize-обработчике"
+  steps={{
+    solved: (
+      <pre><code>{`function applyRowWidths(rows, padding) {
+  // Двухпроходный батч: сначала читаем, потом пишем.
+  const widths = [];
+  for (const row of rows) {
+    widths.push(row.offsetWidth);   // проход 1: все чтения
+  }
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].style.width = (widths[i] + padding) + 'px'; // проход 2: все записи
+  }
+}`}</code></pre>
+    ),
+    semi: {
+      prompt: (
+        <p>Заполните пропуски, чтобы функция стала батчевым двухпроходом.</p>
+      ),
+      blanks: [
+        { id: "passname1", expected: /чтени|измер|сбор/i, placeholder: "глагол для прохода 1" },
+        { id: "passname2", expected: /запис|примен|установ/i, placeholder: "глагол для прохода 2" },
+      ],
+    },
+    blank: {
+      prompt: (
+        <p>Обработчик итерирует строки, читая <code>offsetWidth</code>, затем записывая <code>style.width</code> для той же строки. Перепишите его так, чтобы компоновка сбрасывалась только один раз для всех строк. В чём структурное изменение?</p>
+      ),
+      reveal: (
+        <p>Два прохода: первый проход собирает каждый <code>offsetWidth</code> в массив, затем второй проход записывает новые ширины из массива. Поскольку ни одно чтение не следует за записью в одном цикле, браузер батчит все записи и выполняет один проход компоновки. Временная сложность падает с O(N × компоновка) до O(компоновка). Общее правило: в любой функции, трогающей геометрию, сначала все чтения, потом все записи.</p>
+      ),
+    },
+  }}
+/>
+
+<Quiz
+  id="06-layout-thrash-quiz-1"
+  lessonSlug="06-layout-thrash"
+  lang="ru"
+  question="Scroll-обработчик читает `element.offsetTop`, затем записывает новый стиль. Браузер зависает. Что произошло?"
+  choices={[
+    { label: "Форсированная синхронная компоновка: чтение запросило свежую геометрию, поэтому браузер сбросил ожидающие записи стилей и выполнил компоновку на месте", correct: true },
+    { label: "Браузер занят рендерингом предыдущего кадра", misconception: "Рендеринг предыдущего кадра — задача композитора; он не блокирует главный поток. Зависание происходит на главном потоке." },
+    { label: "Сетевая задержка при загрузке стилевого файла", misconception: "Сетевая работа происходит вне главного потока и не вызывала бы синхронного зависания внутри обработчика." },
+    { label: "Сборка мусора", misconception: "GC-паузы видны в DevTools как оранжевые полосы. Паузы форсированной компоновки выглядят как фиолетовые Layout-полосы, запущенные изнутри scripting-полосы — это отличительная сигнатура." },
+  ]}
+/>
+
+<Quiz
+  id="06-layout-thrash-quiz-2"
+  lessonSlug="06-layout-thrash"
+  lang="ru"
+  question="Вы оборачиваете цикл чтение-запись в `requestAnimationFrame`. Это лечит layout thrash?"
+  choices={[
+    { label: "Нет — rAF батчит вызов, не инвалидацию. Чтения всё равно форсируют сброс внутри rAF.", correct: true },
+    { label: "Да — rAF откладывает всю компоновку на следующую границу кадра", misconception: "rAF откладывает колбэк на следующий анимационный кадр. Но чтения внутри колбэка всё равно форсируют сбросы компоновки. Цикл нужно реструктурировать в два прохода, а не просто перенести в rAF." },
+    { label: "Да — rAF предотвращает немедленное вступление в силу всех записей стилей", misconception: "Записи стилей внутри rAF не предотвращают форсированную компоновку при последующих чтениях. Запись, за которой сразу следует чтение, всё равно вызывает сброс, даже внутри rAF." },
+    { label: "Только при дополнительном использовании `scheduler.yield()`", misconception: "scheduler.yield() помогает уступить рендереру в середине задачи, но не предотвращает форсированную компоновку внутри тесного цикла чтение-запись. Структурное лечение (двухпроходный батч) обязательно." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Чтение геометрии (`offsetWidth`, `getBoundingClientRect`) после записи стиля форсирует немедленный сброс компоновки. В цикле из N строк это N компоновок. Лечение — двухпроходный батч: сначала все чтения, потом все записи — стоимость падает с O(N × компоновка) до O(компоновка).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-layout-thrash-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое форсированная синхронная компоновка (layout thrash)?", a: "Чтение геометрического свойства (offsetWidth, getBoundingClientRect) после записи стиля заставляет браузер сбросить все ожидающие мутации стилей и немедленно выполнить полную компоновку. В цикле это происходит N раз, блокируя главный поток на N × cost_компоновки миллисекунд." },
+    { q: "Почему оборачивание цикла чтение-запись в rAF не лечит layout thrash?", a: "rAF батчит вызов колбэка на следующую границу кадра. Но чтения внутри колбэка всё равно форсируют синхронные сбросы компоновки. Лечение структурное: разделить все чтения в первый проход и все записи во второй." },
+    { q: "Назовите пять свойств, чтение которых форсирует сброс компоновки.", a: "offsetWidth, offsetHeight, offsetTop, offsetLeft, clientWidth, clientHeight, scrollTop, scrollHeight, getBoundingClientRect(), getComputedStyle(). Любое свойство, возвращающее вычисленную геометрию, форсирует сброс." },
+  ]}
+/>
+
+<Recap lang="ru">
+Форсированная синхронная компоновка (layout thrash) возникает, когда JS читает вычисленно-геометрическое свойство после записи стиля. Браузер обязан сбросить все ожидающие записи и выполнить полный проход компоновки для ответа на чтение. В цикле из N элементов это N полных компоновок — список из 5000 строк при 1 мс/компоновка блокирует главный поток на 5 секунд. Лечение — двухпроходный батч: собрать все чтения в массив в первом проходе, затем применить все записи во втором. Браузер сбрасывает компоновку один раз для всего батча. Оборачивание цикла в rAF не лечит проблему — rAF перемещает границу вызова, но не инвалидации.
+</Recap>

@@ -1,0 +1,208 @@
+---
+slug: 06-layout-thrash
+lang: en
+track: browser
+unit: 02-render-pipeline
+order: 6
+title: "Layout thrash: forced synchronous layout"
+summary: "How reading geometry after writing styles forces an immediate layout flush, what N forced layouts per frame look like in DevTools, and the two-pass batch fix."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["05-devtools-and-frame-lifecycle"]
+deepensInto: ["07-beginmainframe-and-gpu"]
+spiral: ["statefulness"]
+concepts: ["forced-synchronous-layout", "06-layout-thrash", "dirty-flag", "two-pass-batch", "offsetWidth", "getBoundingClientRect", "resize-handler"]
+sources:
+  - https://developer.chrome.com/docs/devtools/performance/reference
+  - https://web.dev/articles/rendering-performance
+  - https://gist.github.com/paulirish/5d52fb081b3570c81e3a
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A resize handler loops over 5000 rows. Each row reads its width then writes a new width. The page blocks for 5 seconds. The CPU is doing nothing exotic — it is running the same layout calculation 5000 times, once per row, because no one told it to batch.
+</Hook>
+
+<Crux>Reading a geometry value after a style write flushes the layout engine immediately — N reads after N writes equals N full layouts.</Crux>
+
+<Explanation>
+
+## How forced synchronous layout works
+
+Layout is dirty-flag-driven: the browser batches style writes and only flushes them when it needs the latest geometry. The pathological case is a read-then-write loop in JS:
+
+```javascript
+for (const row of rows) {
+  const w = row.offsetWidth;        // read → forces flush of pending writes
+  row.style.width = w + 10 + 'px'; // write → marks layout dirty again
+}
+```
+
+Each iteration forces the browser to compute layout to answer `offsetWidth`, then immediately dirties layout for the next iteration. N rows = N full layouts.
+
+A 5000-row list at 1 ms per layout = **5 seconds of main-thread blocking**. DevTools shows this as a violet "Layout" bar followed by a "Forced reflow while executing JavaScript took XX ms" console warning.
+
+<div data-lesson-visual class="my-6 rounded-lg border border-border bg-surface-2 p-4 text-sm">
+  <p class="font-semibold mb-3">Dirty-flag lifecycle in a read-then-write loop</p>
+  <div class="flex flex-col gap-1 font-mono text-xs">
+    <div class="rounded bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1">Iteration 1: write style.width (layout dirty)</div>
+    <div class="rounded bg-red-100 dark:bg-red-900/30 px-2 py-1">Iteration 2: read offsetWidth → FLUSH layout (1 full layout)</div>
+    <div class="rounded bg-yellow-100 dark:bg-yellow-900/30 px-2 py-1">Iteration 2: write style.width (layout dirty again)</div>
+    <div class="rounded bg-red-100 dark:bg-red-900/30 px-2 py-1">Iteration 3: read offsetWidth → FLUSH layout (2nd full layout)</div>
+    <div class="text-center text-ink-2">… × N iterations = N layouts</div>
+  </div>
+</div>
+
+## The two-pass batch fix
+
+Separate all reads from all writes:
+
+```javascript
+// Two-pass batch: read first, write second.
+const widths = [];
+for (const row of rows) {
+  widths.push(row.offsetWidth);          // pass 1: all reads
+}
+for (let i = 0; i < rows.length; i++) {
+  rows[i].style.width = (widths[i] + 10) + 'px'; // pass 2: all writes
+}
+```
+
+Because no read follows a write inside the same loop, the browser batches all the writes and runs **one layout pass** for the whole batch. Time complexity drops from O(N × layout) to O(layout).
+
+**The general rule:** in any function that touches geometry, all reads come first, then all writes.
+
+If you cannot decouple the reads from the writes, cache the width at component mount and recompute only when the parent actually changes size.
+
+## Properties that trigger forced layout
+
+Any property that reports computed geometry forces a layout flush when read. The comprehensive list includes:
+
+`offsetWidth`, `offsetHeight`, `offsetTop`, `offsetLeft`, `offsetParent`, `clientWidth`, `clientHeight`, `clientTop`, `clientLeft`, `scrollWidth`, `scrollHeight`, `scrollTop`, `scrollLeft`, `getBoundingClientRect()`, `getComputedStyle()`, `scrollIntoView()`, `focus()` (sometimes).
+
+<Misconception id="mc-layout-thrash">
+**Myth:** Wrapping a read-then-write loop in `requestAnimationFrame` batches layout work.
+
+**Reality:** rAF batches invocation only. Reading a layout value (`offsetWidth`, `getBoundingClientRect`) after a write forces a synchronous flush even inside rAF. The fix is separating reads from writes, not wrapping in rAF.
+</Misconception>
+
+<DebugLog
+  id="06-layout-thrash-debug-1"
+  lessonSlug="06-layout-thrash"
+  lang="en"
+  label="DevTools console — Forced reflow warnings"
+  output={`[Violation] Forced reflow while executing JavaScript took 42 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 47 ms
+    at applyRowWidths (list.js:88)
+    at handleResize (list.js:34)
+    at window.onresize (list.js:12)
+
+[Violation] Forced reflow while executing JavaScript took 51 ms
+    at applyRowWidths (list.js:88)
+    ...`}
+  outputLang="log"
+  question="Three identical 'Forced reflow' warnings, all pointing at list.js:88 inside a resize handler. What pattern caused this and what is the surgical fix?"
+  hint="The function name 'applyRowWidths' is a hint. Look at the loop body — what does it read before each write?"
+  answer="The handler loops over visible rows and reads offsetWidth (or getBoundingClientRect) at the top of each iteration, then writes a style change at the bottom. The read forces a layout flush of the pending writes from the previous iteration. With N rows you trigger N forced layouts. The surgical fix is to batch reads and writes: first pass reads every row's offsetWidth into an array; second pass writes the new widths from the array. The browser then performs one layout pass for the whole batch. Time drops from O(N × layout) to O(layout). If you cannot decouple the reads from the writes, cache the width at component mount and recompute only when the parent actually changes size."
+/>
+
+<FadedExample
+  client:visible
+  id="06-layout-thrash-faded-1"
+  lessonSlug="06-layout-thrash"
+  lang="en"
+  title="Eliminate forced sync layout in a resize handler"
+  steps={{
+    solved: (
+      <pre><code>{`function applyRowWidths(rows, padding) {
+  // Two-pass batch: read first, write second.
+  const widths = [];
+  for (const row of rows) {
+    widths.push(row.offsetWidth);   // pass 1: all reads
+  }
+  for (let i = 0; i < rows.length; i++) {
+    rows[i].style.width = (widths[i] + padding) + 'px'; // pass 2: all writes
+  }
+}`}</code></pre>
+    ),
+    semi: {
+      prompt: (
+        <p>Fill in the missing pieces to make this function a batched two-pass.</p>
+      ),
+      blanks: [
+        { id: "passname1", expected: /read|measure|gather/i, placeholder: "verb for pass 1" },
+        { id: "passname2", expected: /write|apply|set/i, placeholder: "verb for pass 2" },
+      ],
+    },
+    blank: {
+      prompt: (
+        <p>The handler loops over rows reading <code>offsetWidth</code> then writing <code>style.width</code> on the same row. Rewrite it so layout flushes only once across all rows. What is the structural change?</p>
+      ),
+      reveal: (
+        <p>Two passes: first pass collects every <code>offsetWidth</code> into an array, then a second pass writes the new widths from the array. Because no read follows a write inside the same loop, the browser batches all the writes and runs one layout pass. Time complexity drops from O(N × layout) to O(layout). The general rule: in any function that touches geometry, all reads come first, then all writes.</p>
+      ),
+    },
+  }}
+/>
+
+<Quiz
+  id="06-layout-thrash-quiz-1"
+  lessonSlug="06-layout-thrash"
+  lang="en"
+  question="A scroll handler reads `element.offsetTop` and then writes a new style. The browser pauses. What just happened?"
+  choices={[
+    { label: "Forced synchronous layout: the read demanded fresh geometry, so the browser flushed pending style writes and ran layout on the spot", correct: true },
+    { label: "The browser is busy rendering the previous frame", misconception: "Rendering the previous frame is the compositor's job; it does not block the main thread. The pause is on the main thread itself." },
+    { label: "Network latency from loading a stylesheet", misconception: "Network work happens off the main thread and would not cause a synchronous mid-handler pause." },
+    { label: "Garbage collection", misconception: "GC pauses are visible in DevTools as orange bars. Forced-layout pauses appear as purple Layout bars triggered from inside a script bar — that is the distinctive signature." },
+  ]}
+/>
+
+<Quiz
+  id="06-layout-thrash-quiz-2"
+  lessonSlug="06-layout-thrash"
+  lang="en"
+  question="You wrap a read-then-write loop in `requestAnimationFrame`. Does this fix layout thrash?"
+  choices={[
+    { label: "No — rAF batches the invocation, not the invalidation. Reads still force flushes inside rAF.", correct: true },
+    { label: "Yes — rAF defers all layout to the next frame boundary", misconception: "rAF defers the callback to the next animation frame. But reads inside the callback still force layout flushes. The loop must be restructured into two passes, not just moved to rAF." },
+    { label: "Yes — rAF prevents all style writes from taking effect immediately", misconception: "Style writes inside rAF do not prevent forced layout on subsequent reads. A write followed immediately by a read still causes a flush, even inside rAF." },
+    { label: "Only if you also use `scheduler.yield()`", misconception: "scheduler.yield() helps yield to the renderer mid-task, but it does not prevent forced layout inside a tight read-then-write loop. The structural fix (two-pass batch) is required." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Reading geometry (`offsetWidth`, `getBoundingClientRect`) after a style write forces an immediate layout flush. In an N-row loop this means N layouts. The fix is a two-pass batch: all reads first, all writes second — cost drops from O(N × layout) to O(layout).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-layout-thrash-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is forced synchronous layout (layout thrash)?", a: "Reading a geometry property (offsetWidth, getBoundingClientRect) after a style write forces the browser to flush all pending style mutations and run a full layout immediately. In a loop this happens N times, blocking the main thread for N × layout_cost milliseconds." },
+    { q: "Why does wrapping a read-then-write loop in rAF not fix layout thrash?", a: "rAF batches the callback's invocation to the next frame boundary. But reads inside the callback still force layout flushes synchronously. The fix is structural: separate all reads into a first pass and all writes into a second pass." },
+    { q: "Name five properties whose read triggers a forced layout flush.", a: "offsetWidth, offsetHeight, offsetTop, offsetLeft, clientWidth, clientHeight, scrollTop, scrollHeight, getBoundingClientRect(), getComputedStyle(). Any property that reports computed geometry forces a flush." },
+  ]}
+/>
+
+<Recap lang="en">
+Forced synchronous layout (layout thrash) occurs when JS reads a computed-geometry property after writing a style. The browser must flush all pending writes and run a full layout pass to answer the read. In a loop over N elements this runs N full layouts — a 5000-row list at 1 ms/layout blocks the main thread for 5 seconds. The fix is a two-pass batch: collect all reads into an array in pass one, then apply all writes in pass two. The browser flushes layout once for the entire batch. Wrapping the loop in rAF does not fix the problem — rAF moves the invocation boundary, not the invalidation boundary.
+</Recap>
