@@ -1,28 +1,29 @@
 ---
-description: Fullstack curriculum site piece authoring. Queries/researches/authors bilingual EN+RU pieces. Strict to site/ pipeline.
-argument-hint: <pillar>/<NN-chapter>/<NN-piece> | <pillar>/<NN-chapter> (chapter mode not yet implemented)
+description: Fullstack curriculum site topic lesson authoring. Queries/researches/authors bilingual EN+RU topic lessons per unit. Strict to site/ pipeline.
+argument-hint: <track>/<unit> (e.g. networking/03-tcp-handshake)
 allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, mcp__plugin_context7_context7__resolve-library-id, mcp__plugin_context7_context7__query-docs
 ---
 
-# /infographic — fullstack curriculum site piece authoring
+# /infographic — fullstack curriculum site topic lesson authoring
 
 **Input:** `$ARGUMENTS`
 
-**Purpose:** Author a single piece (stub → draft → ready) for the site's bilingual curriculum. Pieces live under `site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx`. Every piece is bilingual or the command refuses.
+**Purpose:** Author a unit's N single-level `topic` lessons (stub → draft → ready) for the site's bilingual curriculum. Lessons live under `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`. Every lesson is bilingual or the command refuses.
 
 **Hard rules:**
 
 1. **Domain locked to fullstack development.** Off-domain input → refuse with 2-line message, stop immediately.
 2. **Read `curriculum.md` depth bar + forbidden simplifications before drafting.** Middle+/senior engineer only.
-3. **Bilingual EN+RU or refuse.** No partial-language pieces.
-4. **Site-only output.** Write to `site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx`. Never edit `site/dist/` or legacy `infographics/` tree.
-5. **Component imports use the `~/` alias** (`~` → `site/src/`); no `..` relative segments (verified against `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` template).
-6. **Text budgets enforced** (linter + manual): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
-7. **Hydration cap = 5 islands per page** (linter-enforced). Typical budget: TierAccordion + FadedExample + RetrievalDrawer + 2 baseline.
+3. **Bilingual EN+RU or refuse.** No partial-language lessons.
+4. **Site-only output.** Write to `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`. Never edit `site/dist/` or legacy `infographics/` or `book/` trees.
+5. **Component imports use the `~/` alias** (`~` → `site/src/`); never use `..` relative segments. All component imports start with `~/components/`.
+6. **Text budgets enforced** (linter + manual): Crux ≤140 chars, KeyTakeaway ≤220 chars, Misconception ≤320 chars, Card annotation ≤240 chars.
+7. **Hydration cap = 5 islands per lesson** (linter-enforced). Typical budget: RetrievalDrawer + exercises + 2–3 baseline.
 8. **Status flow:** stub → draft (optional) → ready. Only `ready` renders real content to users.
-9. **Commit only when status = ready.** Format: `git commit -m "content(<pillar>): <NN-piece> EN+RU ready"`.
-10. **Three-tier mandatory.** Every piece must ship junior + middle + senior panels inside a single `<TierAccordion>`. Refuse to mark `ready` if any tier is missing, below its word floor, above its ceiling, or short on the exercise mix in Step 8. Linter promotes `tier-word-budgets` and `exercise-counts` to errors — build will fail.
-11. **Scaffold first.** New pieces start from `site/scaffolds/3-tier-piece.mdx` (copy → fill placeholders). Do not write a fresh MDX from scratch.
+9. **Commit only when all lessons in the unit are ready.** Format: `git commit -m "content(<track>): <unit> EN+RU ready"`.
+10. **Topic skeleton mandatory.** Every lesson starts from `site/scaffolds/topic-lesson.mdx` (copy → fill placeholders). Do not write MDX from scratch.
+11. **Linter contract (`checkTopicLesson`) enforced.** Required sections: `hook`, `crux`, `explanation`, `key-takeaway`, `recap`; ≥1 element with `data-lesson-visual`; ≥2 exercise widgets; exactly 1 `RetrievalDrawer`. Build fails if any requirement is missing.
+12. **Set lesson metadata.** Each lesson's frontmatter must include: `level` (`junior`|`middle`|`senior`), `prereqs` (lesson slugs this one builds on), `deepensInto` (lesson slugs this one spirals up into, same subtopic higher level), `spiral` (cross-topic thread tags).
 
 ---
 
@@ -30,193 +31,240 @@ allowed-tools: Bash, Read, Write, Edit, WebSearch, WebFetch, mcp__plugin_context
 
 If `$ARGUMENTS` matches:
 
-- `<pillar>/<NN>-<chapter>/<NN>-<piece>` (3 path segments) → **piece mode**, extract pillar/chapter/piece slugs, skip classification.
-- `<pillar>/<NN>-<chapter>` (2 path segments) → **chapter mode** (NOT YET IMPLEMENTED; ask user to split into per-piece invocations).
-- Anything else → **refuse** with message: "Piece form: `/infographic <pillar>/<NN-chapter>/<NN-piece>`. Pillar must exist in `site/src/content/pillars/*.json`."
+- `<track>/<unit>` (2 path segments, e.g. `networking/03-tcp-handshake`) → **unit mode**: extract track and unit slugs.
+- Anything else → **refuse** with message: "Unit form: `/infographic <track>/<unit>`. Track must exist in `site/src/content/tracks.json`. Unit must exist in `site/src/content/units.json`."
 
 Validate:
-- Pillar exists in `site/src/content/pillars/*.json`.
-- Chapter exists in `site/src/content/chapters/<pillar>/<NN>-*.json` (if multiple chapters per pillar, verify).
-- Piece stub exists at `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` (EN must exist; RU is created if absent).
+- Track slug exists in `site/src/content/tracks.json`.
+- Unit slug exists in `site/src/content/units.json` under that track.
 
-If validation fails, report the missing path and stop.
+If validation fails, report the missing entry and stop.
 
 ---
 
-## Pipeline (per piece)
+## Pipeline (per unit)
 
-### Step 1 — Verify piece stub exists
+### Step 1 — Verify unit exists
 
 ```bash
-# Check EN stub
-test -f "site/src/content/book/en/<pillar>/<NN-piece>/index.mdx" || {
-  echo "ERROR: EN stub not found at site/src/content/book/en/<pillar>/<NN-piece>/index.mdx"
-  exit 1
-}
+# Check tracks.json contains the track
+node -e "const t=require('./site/src/content/tracks.json');console.log(t.find(x=>x.slug==='<track>')?'ok':'MISSING')"
+
+# Check units.json contains the unit under that track
+node -e "const u=require('./site/src/content/units.json');console.log(u.find(x=>x.slug==='<unit>'&&x.track==='<track>')?'ok':'MISSING')"
 ```
 
-The stub file must have:
-- Frontmatter: `slug`, `lang: en`, `pillar`, `chapter`, `order`, `title`, `summary`, `readingMin`, `status: stub` (or `draft` or `ready`).
-- No body yet (or stub prose like "Coming soon").
+Both must return `ok`. On failure, report the missing path and stop.
 
-### Step 2 — Research (WebSearch + Context7)
+### Step 2 — Plan the lesson inventory (cut plan)
 
-Execute **≥3 queries** targeting middle+/senior depth:
+Read the unit's entry in `site/src/content/units.json` to understand its scope: `title`, `crux`, any existing `lessons` list.
+
+If this is a migration from a `book/` piece (Phase B), also read:
+- `site/src/content/book/en/<track>/<unit>/index.mdx` — source piece
+
+Decide the split (typically 3–7 lessons per unit):
+- One focused lesson per distinct subtopic/level band.
+- Junior-level intro → 1 lesson (level: `junior`).
+- Middle-level mechanism → 1–2 lessons (level: `middle`).
+- Senior-level internals / edge cases → 1–2 lessons (level: `senior`).
+
+Write the lesson inventory before authoring: for each lesson record `slug`, `level`, `title`, the subtopic it covers. Example:
+
+```
+01-what-and-why        junior   What TCP handshake is and why it exists
+02-three-way-mechanics middle   SYN/SYN-ACK/ACK packet sequence and state machine
+03-latency-and-numbers middle   RTT budgets, window scaling, slow start
+04-failure-modes       senior   SYN floods, RST injection, TIME_WAIT exhaustion
+```
+
+### Step 3 — Research (WebSearch + Context7)
+
+Execute **≥3 queries** targeting middle+/senior depth per unit topic:
 
 - Query 1 → mechanism details (e.g., "TCP three-way handshake RFC packet flow").
 - Query 2 → one tradeoff or failure mode (e.g., "TCP SYN flood attack mitigation").
 - Query 3 → concrete numbers / benchmarks (e.g., "TCP RTT latency typical values").
 
-Log sources into a scratch note. Use `context7:resolve-library-id` + `context7:query-docs` for APIs/frameworks (e.g., fetching React reconciler details from React docs).
+Log sources into a scratch note. Use `context7:resolve-library-id` + `context7:query-docs` for APIs/frameworks (e.g., fetching Node.js `net` module docs).
 
 **Depth checkpoint:** Can you explain mechanism + one tradeoff + one failure mode + one number without guessing? If not, research more.
 
-### Step 3 — Author EN MDX body
+### Step 4 — Author EN lessons
 
-Update the stub's frontmatter:
-- `status: draft` (not yet ready, still authoring).
-- `depth.mechanism`, `depth.tradeoff`, `depth.failure_mode`, `depth.numbers` → set to element IDs you will create in the body (e.g., `section-three-way`, `card-rtt`, `mc-syn-flood`, `card-tcp-numbers`).
-- Verify all four depth fields are populated (linter will catch missing ones).
+For each lesson in the plan, copy the scaffold and fill placeholders:
 
-Start from the scaffold: `cp site/scaffolds/3-tier-piece.mdx site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` (only if the stub does not already exist; otherwise edit the stub and add the missing panels).
-
-Body structure is fixed — three-tier disclosure via `<TierAccordion>` with one `<Fragment slot>` per tier. Reference: `site/src/content/book/en/networking/05-tls-handshake/index.mdx`.
-
-```mdx
-<!-- Topic reactivation: 1-2 sentences linking the prior piece(s). -->
-
-<Crux>One-sentence hook (≤140 chars).</Crux>
-
-<!-- Context frame: 3-6 sentences stating goal + tradeoff. -->
-
-<TierAccordion id="tier-mechanism" lang="en">
-  <Fragment slot="junior">
-    {/* 200-700w. Metaphor + persona dialog + 1 scenario.
-        Forbidden: RFC numbers, raw measurements, jargon without expansion.
-        Required: "What it does" (1 sentence), "Why care" (1 sentence),
-        metaphor paragraph, persona dialog (2 personas, 120-180w),
-        one scenario linking to prior/next pieces. */}
-  </Fragment>
-
-  <Fragment slot="middle">
-    {/* 2500-3700w. Mechanism + tradeoff + numbers + failure mode.
-        Required: mechanism details (packets/data structures/syscalls),
-        optional deeper-view subsection, explicit tradeoff with NumbersCard,
-        failure mode (Misconception or prose), ≥1 FadedExample. */}
-  </Fragment>
-
-  <Fragment slot="senior">
-    {/* 2500-4000w. Edge cases + kernel/library internals + security +
-        observability + history + RFC quotes. Hit ≥7 of these 10 dimensions:
-        edge cases, kernel internals + tunables, security pitfalls + CVE refs,
-        production tradeoffs, observability (USE/RED metrics), history (RFC
-        progression), cross-protocol interactions, deployment patterns,
-        real-world failure telemetry, RFC quotes with section refs. */}
-  </Fragment>
-</TierAccordion>
-
-<KeyTakeaway>One-paragraph synthesis (≤220 chars).</KeyTakeaway>
-
-<SpiralCue thread="<thread>">Connection to thread or sibling piece.</SpiralCue>
-
-<!-- Cross-links: prereqs + next piece. -->
+```bash
+mkdir -p site/src/content/lessons/en/<track>/<unit>/<lesson>/
+cp site/scaffolds/topic-lesson.mdx site/src/content/lessons/en/<track>/<unit>/<lesson>/index.mdx
 ```
 
-**Import rules:**
-- Components are imported via the `~/` path alias (`~` → `site/src/`, configured in `astro.config.mjs` + `tsconfig.json`).
-- Example: `import TierAccordion from "~/components/pedagogy/TierAccordion.tsx";`
-- Never use `..` relative segments — all component imports start with `~/components/`.
+Edit the copy — fill every placeholder:
+
+**Frontmatter fields:**
+- `slug`: lesson slug (e.g., `02-three-way-mechanics`).
+- `lang: en`.
+- `track`: pillar track slug.
+- `unit`: unit slug.
+- `order`: integer (1, 2, 3, …).
+- `title`, `summary`, `estMin`.
+- `status: draft`.
+- `lessonType: topic`.
+- `level`: `junior` | `middle` | `senior`.
+- `prereqs`: list of lesson slugs this lesson builds on (empty for first lesson in unit; previous lessons for subsequent ones).
+- `deepensInto`: list of lesson slugs this one spirals into (higher-level lessons covering the same subtopic; empty if this is the highest-level lesson on this subtopic).
+- `spiral`: cross-topic thread tags (e.g., `["latency", "multiplexing"]`).
+- `concepts`: key concepts introduced.
+- `sources`: ≥3 primary sources (RFC numbers, documentation URLs, papers).
+
+**Body structure (fixed — `topic` skeleton):**
+
+```mdx
+<Hook>
+{/* 1-2 sentences. Open with a concrete production pain point or everyday
+    situation. No jargon in the first sentence. */}
+</Hook>
+
+<Crux>One-sentence core question or insight this lesson answers (≤140 chars).</Crux>
+
+<Explanation>
+{/* Mechanism: how it works, concrete steps, numbers where meaningful.
+    Tradeoff: explicit cost statement — what you gain, what you pay.
+    Failure mode: what breaks first, how to detect it.
+
+    Required: ≥1 Visual element with data-lesson-visual attribute.
+    Required: ≥2 exercise widgets (Quiz, DragOrder, TraceScenario, etc.)
+    interleaved with prose sections.
+    Optional: <Inset kind="why|mistake|edgecase"> for deep-dive asides. */}
+
+{/* VISUAL — required example: */}
+{/* <StructureFigure cells={[...]} caption="..." data-lesson-visual /> */}
+
+<Inset kind="why" lang="en">
+{/* Use for lateral insights, historical notes, or design-choice explanations
+    that would break the main flow. Senior-tier material maps well here. */}
+</Inset>
+
+{/* EXERCISES — interleave with prose */}
+{/* <PracticeSet id="<slug>-practice" lessonSlug="<slug>" lang="en" problems={[...]} /> */}
+</Explanation>
+
+<KeyTakeaway>One-paragraph synthesis (≤220 chars). State the tradeoff, not just the definition.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="<slug>-retrieval"
+  lang="en"
+  questions={[
+    { q: "<question 1>", a: "<answer 1>" },
+    { q: "<question 2>", a: "<answer 2>" },
+    { q: "<question 3>", a: "<answer 3>" },
+  ]}
+/>
+
+<Recap lang="en">
+{/* 3-5 sentences. Restate mechanism, tradeoff, and failure mode.
+    Do NOT copy KeyTakeaway — expand with one concrete number or name. */}
+</Recap>
+```
+
+**Import block (fixed):**
+```mdx
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+```
+
+Add exercise/visual component imports as needed — all via `~/components/`.
 
 **Hydration budget:**
-- TierAccordion (1 island) — tier selector if the piece has per-tier content.
-- FadedExample (1 island) — optional worked example.
-- RetrievalDrawer (1 island) — required for retrieval practice.
-- Baseline islands: SpacedRevisitBanner (sticky) + ChapterSidebarTOC (sticky) = 2 islands.
-- **Total ≤ 5.** If your piece needs more, split it or defer some widgets.
+- RetrievalDrawer (1 island) — required.
+- Exercise widgets (1 island each) — 1–3 typical.
+- SpacedRevisitBanner / sticky nav = 2 islands baseline.
+- **Total ≤ 5.** If your lesson needs more, split exercise sets.
 
-**Text budgets (enforced):**
-- `<Crux>` ≤ 140 chars.
-- `<KeyTakeaway>` ≤ 220 chars.
-- `<Misconception>` body ≤ 320 chars.
-- Card annotations ≤ 240 chars each.
+### Step 5 — Translate to RU
 
-### Step 4 — Translate to RU
+For each EN lesson, create the RU mirror:
 
-Create `site/src/content/book/ru/<pillar>/<NN-piece>/index.mdx` with identical frontmatter but `lang: ru`.
+```bash
+mkdir -p site/src/content/lessons/ru/<track>/<unit>/<lesson>/
+cp site/src/content/lessons/en/<track>/<unit>/<lesson>/index.mdx \
+   site/src/content/lessons/ru/<track>/<unit>/<lesson>/index.mdx
+```
 
-Translate the body using `site/src/i18n/glossary.json` as the canonical translation source. For new technical terms not yet in the glossary:
+Change frontmatter `lang: ru`. Translate the body using `site/src/i18n/glossary.json` as the canonical source.
+
+For new technical terms not yet in the glossary:
 1. Add them in **alphabetical order** (by English term).
 2. Include both EN and RU versions.
 3. Example: `"TCP handshake": { "en": "TCP handshake", "ru": "трёхсторонний хендшейк TCP" }`.
 
 **RU rules:**
-- Latin acronyms (TCP, RTT, RFC, SYN) stay Latin.
-- Prose flow must match EN, but RU idioms ≥ EN idioms (don't force word-for-word).
-- No auto-translate tools (Google Translate, etc.); manual + glossary only.
-- If you cannot translate with confidence, report DONE_WITH_CONCERNS and leave the RU file unmerged.
+- Latin acronyms (TCP, RTT, RFC, SYN, HTTP) stay Latin.
+- Prose flow must match EN, but RU idioms ≥ EN idioms (avoid word-for-word translation).
+- No auto-translate tools; manual + glossary only.
+- If you cannot translate with confidence, report DONE_WITH_CONCERNS and leave the RU files unmerged.
 
-### Step 5 — Update frontmatter status
+### Step 6 — Update frontmatter status
 
-Set both EN and RU frontmatter to `status: ready`.
+Set both EN and RU frontmatter to `status: ready` for every lesson in the unit once authored and reviewed.
 
-### Step 6 — Verify build passes
+### Step 7 — Update units.json
+
+Add (or update) the `lessons` array in the unit's `units.json` entry with the lesson slugs in junior→senior order:
+
+```json
+{
+  "slug": "<unit>",
+  "track": "<track>",
+  "order": <N>,
+  "title": { "en": "...", "ru": "..." },
+  "crux":  { "en": "...", "ru": "..." },
+  "lessons": ["01-what-and-why", "02-three-way-mechanics", "03-latency-and-numbers", "04-failure-modes"]
+}
+```
+
+### Step 8 — Verify build passes
 
 ```bash
-cd /Users/artemmac/dev/awesome-everything/site && bun run build
+cd /Users/artemmac/dev/awesome-everything/.claude/worktrees/interesting-antonelli-002bf7/site && bun run build
 ```
 
 Check:
 - Build completes without error.
-- `site/dist/lint-report.json` has no errors for this piece (new depth ids should be present, import paths valid, text budgets met).
-- No `WARN` for missing translations.
+- `site/dist/lint-report.json` shows 0 errors, 0 warnings for these lessons.
+- No WARN for missing translations.
+- No dangling `prereqs` / `deepensInto` references (`connection-integrity` rule).
 
 If linter errors, fix and re-run.
 
-### Step 7 — Visual verification
+### Step 9 — Visual verification
 
-Open both locales in a browser (or `dist/` output):
-- `site/dist/en/<pillar>/<NN-piece>/index.html`
-- `site/dist/ru/<pillar>/<NN-piece>/index.html`
+Open both locales in a browser (or inspect `dist/` output):
+- `site/dist/en/learn/<track>/<lesson>/index.html`
+- `site/dist/ru/learn/<track>/<lesson>/index.html`
 
-Verify:
-- Layout renders without layout shift.
-- Hydration islands load (TierAccordion, RetrievalDrawer, etc. are interactive).
-- Depth IDs are linkable (right-click → copy link → paste and it points to `#section-three-way` etc.).
-- Images load (if any).
+Verify for each lesson:
+- Layout renders without shift.
+- Hook / Crux / Explanation / KeyTakeaway / Recap sections present.
+- Hydration islands load (RetrievalDrawer, exercises are interactive).
 - RU text is readable (no mojibake, correct line breaks).
-
-### Step 8 — Tier sizing + exercise mix
-
-The piece MUST contain (within the TierAccordion block):
-
-| Tier | Slot | Word budget (hard) | Required components |
-|---|---|---|---|
-| Junior | `<Fragment slot="junior">` | 200-700 | ≥1 PersonaTag dialog, ≥1 metaphor sentence |
-| Middle | `<Fragment slot="middle">` | 2500-3700 | Mechanism + tradeoff + numbers + failure mode + ≥1 FadedExample |
-| Senior | `<Fragment slot="senior">` | 2500-4000 | ≥3 RFC refs, kernel/tunable references, edge cases, ≥7 of 10 senior dimensions |
-
-Per-tier exercise count (linter enforces, build fails if below):
-
-- Junior: 5 exercises (Quiz × 2, DragOrder × 1, MetaphorComplete × 1, retrieval Q × 1)
-- Middle: 8 (Quiz × 2, TraceScenario × 2, DragOrder × 1, FadedExample × 1, retrieval Q × 2)
-- Senior: 7 (TraceScenario × 1, DebugLog × 1, TradeoffMatrix × 1, RFCQuiz × 1, DesignPrompt × 1, retrieval Q × 2)
-
-**Refusal rules** — refuse to mark a piece `ready` and refuse to commit if any of the following hold:
-- Any tier `<Fragment slot>` missing or empty.
-- Tier word count below floor or above ceiling (see table above).
-- Per-tier exercise mix below the targets above.
-- Any required exercise component missing from `site/src/components/pedagogy/` — surface the missing component, do not silently skip.
-
-### Step 9 — Verify
-
-Run `/verify-piece <pillar>/<NN-piece>`. Address all `✗` findings. `⚠` findings: judge fix-or-accept case by case.
+- Visual element is visible on the page.
 
 ### Step 10 — Commit
 
 ```bash
-cd /Users/artemmac/dev/awesome-everything
-git add site/src/content/book/en/<pillar>/<NN-piece>/ site/src/content/book/ru/<pillar>/<NN-piece>/ site/src/i18n/glossary.json
-git commit -m "content(<pillar>): <NN-piece> EN+RU ready"
+cd /Users/artemmac/dev/awesome-everything/.claude/worktrees/interesting-antonelli-002bf7
+git add site/src/content/lessons/en/<track>/<unit>/ \
+        site/src/content/lessons/ru/<track>/<unit>/ \
+        site/src/content/units.json \
+        site/src/i18n/glossary.json
+git commit -m "content(<track>): <unit> EN+RU ready"
 git log -1 --oneline  # Report the commit SHA
 ```
 
@@ -226,9 +274,9 @@ git log -1 --oneline  # Report the commit SHA
 
 ```
 Status:         DONE / DONE_WITH_CONCERNS / BLOCKED
-Piece:          <pillar>/<NN-piece>
-Slug:           <NN-piece-slug>
-Files:          site/src/content/book/{en,ru}/<pillar>/<NN-piece>/index.mdx
+Unit:           <track>/<unit>
+Lessons:        <N> lessons (slugs: ...)
+Files:          site/src/content/lessons/{en,ru}/<track>/<unit>/*/index.mdx
 Glossary:       + N new terms
 Build:          [last 3 lines of build output]
 Lint report:    [link to dist/lint-report.json or "clean"]
@@ -239,11 +287,11 @@ Concerns:       [none / list]
 Example:
 ```
 Status:         DONE
-Piece:          networking/03-tcp-handshake
-Slug:           03-tcp-handshake
-Files:          site/src/content/book/{en,ru}/networking/03-tcp-handshake/index.mdx
+Unit:           networking/03-tcp-handshake
+Lessons:        4 lessons (01-what-and-why, 02-three-way-mechanics, 03-latency-and-numbers, 04-failure-modes)
+Files:          site/src/content/lessons/{en,ru}/networking/03-tcp-handshake/*/index.mdx
 Glossary:       + 2 new terms (TCP window, congestion window)
-Build:          [successful, 301 pages]
+Build:          ✓ 320 pages, lint 0 errors 0 warnings
 Lint report:    clean
 Commit:         abc1234 content(networking): 03-tcp-handshake EN+RU ready
 Concerns:       none
@@ -253,13 +301,18 @@ Concerns:       none
 
 ## Failure modes
 
-- **Validating the wrong stub.** Always check `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx` exists before starting.
+- **Validating wrong paths.** Always check `tracks.json` and `units.json` before starting. The old `book/` tree is not the target.
 - **Import path mismatch.** Component imports must start with `~/components/` — no `..` relative segments.
-- **Incomplete depth checkpoints.** If any of `mechanism`, `tradeoff`, `failure_mode`, `numbers` is missing from frontmatter, the piece fails linting and cannot merge.
-- **Text budget overruns.** Crux > 140, KeyTakeaway > 220, Misconception > 320 → linter fails.
+- **Missing required sections.** `checkTopicLesson` linter flags any lesson missing `hook`, `crux`, `explanation`, `key-takeaway`, or `recap` sentinels. Build fails.
+- **Missing visual.** Every lesson must have ≥1 element emitting `data-lesson-visual`. Linter fails if absent.
+- **Too few exercises.** ≥2 exercise widgets required per lesson. Linter fails below this.
+- **RetrievalDrawer count.** Exactly 1 `RetrievalDrawer` per lesson — linter fails on 0 or 2+.
+- **Hydration overrun.** >5 islands per lesson → linter error. Split exercise sets if needed.
+- **Text budget overruns.** Crux >140, KeyTakeaway >220, Misconception >320 → linter fails.
+- **Dangling prereqs / deepensInto.** Every slug in `prereqs` and `deepensInto` must resolve to an existing lesson. `connection-integrity` rule catches dangling refs.
 - **Partial translation.** If RU is absent or incomplete, status cannot be `ready`. Report DONE_WITH_CONCERNS.
+- **units.json not updated.** The `lessons` array in the unit entry must be filled before committing.
 - **Building stale site/dist.** Always run `bun run build` after edits. The linter runs at build time.
-- **Forgetting glossary.json.** New RU terms must be added and committed together with the piece.
+- **Forgetting glossary.json.** New RU terms must be added and committed together with the lessons.
 - **Off-domain topic.** If the topic is not fullstack engineering, refuse immediately.
-- **Missing tier panel.** Junior/middle/senior all required. A piece with only middle (legacy shape) is not `ready`. Linter blocks build.
-- **Skipping scaffold.** Always copy `site/scaffolds/3-tier-piece.mdx` instead of writing fresh MDX — keeps imports + Fragment slot wiring consistent across all 256 piece slots.
+- **Skipping scaffold.** Always copy `site/scaffolds/topic-lesson.mdx` — keeps imports and section sentinel wiring consistent.
