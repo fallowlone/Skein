@@ -1,0 +1,235 @@
+---
+slug: 04-jsonb-and-arrays
+lang: ru
+track: databases
+unit: 01-relational-model
+order: 4
+title: "JSONB, массивы и когда side table побеждает"
+summary: "Когда JSONB и типизированные массивы — правильный выбор, стратегии GIN и expression B-tree индексов, FK при масштабе, generated STORED колонки и паттерн «реляционного ярлыка»."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-normalization"]
+deepensInto: ["05-heap-and-toast"]
+spiral: ["statefulness", "encapsulation"]
+concepts: ["JSONB", "GIN-index", "expression-btree", "typed-array", "generated-column", "FK-at-scale", "relational-shortcut", "jsonb_path_ops"]
+sources:
+  - https://www.postgresql.org/docs/current/datatype-json.html
+  - https://www.postgresql.org/docs/current/gin-intro.html
+  - https://www.postgresql.org/docs/current/ddl-generated-columns.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+Команда добавляет колонку «metadata» JSONB для «случайных дополнительных полей». Через три года в колонке 30 полей, к которым обращается каждый запрос — ни одного индекса, ни одного ограничения, все парсятся при каждом чтении. Схема выросла именно в то, чего пытались избежать.
+</Hook>
+
+<Crux>JSONB — для переменных данных. Поле, которое запрашивается больше раза, становится типизированной колонкой.</Crux>
+
+<Explanation>
+
+## JSONB vs JSON: всегда JSONB
+
+У Postgres два типа JSON-хранения. `JSON` хранит текст дословно — парсится заново при каждом чтении, не индексируемый, немного меньше. `JSONB` хранит разобранную бинарную структуру — индексируемый, запрашиваемый через path-операторы, немного больше. В продакшне всегда `JSONB`. Единственная причина использовать `JSON` — сохранение порядка ключей или дублирующихся ключей, чего легитимные схемы никогда не делают.
+
+## Когда JSONB является правильным выбором
+
+JSONB хорошо подходит для трёх форм данных:
+
+1. **Действительно гетерогенные данные.** Логи событий, где каждый тип события имеет разную форму payload. Ответы сторонних API, где схему контролирует кто-то другой. Объекты конфигурации, где ключи различаются у каждого tenant.
+
+2. **Метаданные «длинного хвоста».** Таблица products, где 80% продуктов имеют 10 общих колонок и 20% имеют 50 дополнительных полей специфических для поставщика. 10 колонок типизированы; хвост из 50 полей — JSONB.
+
+3. **Схема первична, запросы редки.** Данные, которые вы храните, но редко запрашиваете по полям — метаданные загрузчика файлов, пользовательские настройки на строку.
+
+Неверная форма: любое поле, по которому вы GROUP BY, JOIN, агрегируете, принудительно обеспечиваете уникальность или ссылаетесь через foreign key. Эти поля должны быть типизированными колонками.
+
+## Когда side table побеждает
+
+Типизированные массивы (`TEXT[]`, `INTEGER[]`) и JSONB проигрывают side table когда:
+
+- Нужно запрашивать «все строки с тегом X» в масштабе — GIN индекс помогает, но join-таблица с B-tree индексом по `(tag_id, row_id)` быстрее и позволяет принудительно соблюдать FK integrity.
+- Нужно глобально переименовать тег X — одно UPDATE в таблице тегов vs сканирование каждой строки с тегом.
+- Нужно считать строки по тегу или соединять теги с другой таблицей — SQL агрегация по join-таблице на порядок дешевле GIN-indexed JSONB.
+- Нужна уникальность на строку (нет дублирующихся тегов в одном элементе) — легко принудительно соблюдается составным PK join-таблицы; невозможно внутри массива без constraint function.
+
+Правило решения: если нужно только читать «теги этой строки», колонка-массив нормальна. В момент, когда запрос идёт со стороны тега, используйте side table.
+
+## Стратегии JSONB-индексов
+
+У JSONB два семейства индексов. Выбор неправильного делает запросы в 10-100 раз медленнее.
+
+**GIN (Generalized Inverted Index).** Индексирует каждый ключ или путь внутри JSONB. Класс операторов по умолчанию индексирует каждый ключ; `jsonb_path_ops` индексирует целые пути (быстрее для запросов `@>` containment, больше индекс). Поддерживает операторы `@>`, `?`, `?|`, `?&`.
+
+```sql
+-- GIN по умолчанию: поддерживает ?, ?|, ?& и @>
+CREATE INDEX idx_events_payload ON events USING GIN (payload);
+
+-- jsonb_path_ops: только @>, но быстрее для него
+CREATE INDEX idx_events_payload_paths ON events USING GIN (payload jsonb_path_ops);
+```
+
+**Expression B-tree.** Индексирует один конкретный путь, извлечённый как типизированное значение. Поддерживает равенство и range-запросы по этому пути. Намного меньше GIN.
+
+```sql
+-- Индексирует поле user_id как текст
+CREATE INDEX idx_events_user_id ON events ((payload->>'user_id'));
+
+-- Индексирует user_id как integer
+CREATE INDEX idx_events_user_id_int ON events (((payload->>'user_id')::BIGINT));
+```
+
+Используйте GIN для «содержит ли этот JSONB ключ/значение X?». Используйте expression B-tree для «найти строки где `data.field` равно конкретному значению».
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип индекса</th>
+        <th class="border border-border px-3 py-2 text-left">Лучше всего для</th>
+        <th class="border border-border px-3 py-2 text-left">Размер</th>
+        <th class="border border-border px-3 py-2 text-left">Операторы</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border border-border px-3 py-2">GIN (дефолт)</td><td class="border border-border px-3 py-2">Наличие ключей, containment по многим путям</td><td class="border border-border px-3 py-2">В 5-20 раз больше B-tree</td><td class="border border-border px-3 py-2">?, ?|, ?&amp;, @&gt;</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">GIN (jsonb_path_ops)</td><td class="border border-border px-3 py-2">Только @&gt; containment, быстрее поиск</td><td class="border border-border px-3 py-2">Меньше дефолтного GIN</td><td class="border border-border px-3 py-2">Только @&gt;</td></tr>
+      <tr><td class="border border-border px-3 py-2">Expression B-tree</td><td class="border border-border px-3 py-2">Один конкретный путь, равенство/range</td><td class="border border-border px-3 py-2">Сравним с обычным B-tree</td><td class="border border-border px-3 py-2">=, &lt;, &gt;, BETWEEN</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Generated STORED колонки
+
+Postgres поддерживает generated-колонки, значение которых вычисляется из других колонок при записи и хранится:
+
+```sql
+ALTER TABLE order_items
+  ADD COLUMN line_total_cents INTEGER
+  GENERATED ALWAYS AS (unit_price_cents * quantity) STORED;
+```
+
+Колонка запрашиваемая, индексируемая и обновляется автоматически при каждой записи. В отличие от триггера, вычисление объявлено в схеме и видимо любому читателю без знания о триггере.
+
+Сценарии использования: производные значения, которые часто запрашиваются (`full_name`, `line_total`, `is_final` из enum статуса), аудит-флаги, вычисленная денормализация. Цена: записи немного медленнее (выражение вычисляется при каждой записи); миграции на generated-колонках могут вызвать перезапись таблицы.
+
+<Inset kind="why" lang="ru">
+Почему не использовать триггер для вычисляемых колонок? Триггеры работают, но невидимы на уровне схемы — читатель, изучающий DDL, не знает, что триггер существует или что он делает. Generated-колонки самодокументированы, принудительно соблюдаются движком и корректно сохраняются в дампах схемы. Используйте триггеры когда вычисление зависит от данных из других строк или таблиц (чего generated-колонки не могут). Используйте generated-колонки для per-row арифметики.
+</Inset>
+
+## FK при масштабе: паттерн PlanetScale
+
+Некоторые гиперскейл-компании (PlanetScale на Vitess, несколько крупных Postgres-инсталляций) рекомендуют отключать foreign keys. Конкретные условия, где это обосновано:
+
+- Данные шардированы и связь пересекает границы шардов — FK не могут охватывать шарды.
+- Каскад создаст транзакцию на несколько миллионов строк, удерживающую блокировки минутами.
+- Проход проверки FK при DDL-изменении типа колонки является операционным узким местом.
+
+Ни одно из этих условий не применимо к типичной SaaS-схеме ниже ~100M строк в таблице. Для большинства команд FK-ограничение стоит ~5-50 мкс на строку при записи и навсегда отказывает всем строкам-сиротам. Его отключение перемещает гарантию integrity в код приложения, где она реализуется непоследовательно и ломается при рефакторингах.
+
+Опытные инженеры воспринимают «мы отключили FK» как сигнал конкретных ограничений масштаба — не как общую лучшую практику.
+
+<FadedExample
+  client:load
+  id="04-jsonb-and-arrays-faded-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="ru"
+  title="Добавить теги к продуктам: колонка-массив, JSONB или side table?"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Сценарий:</strong> Маркетплейс добавляет произвольные теги к продуктам. Приложению нужно: (a) показывать теги на странице продукта, (b) перечислять продукты с тегом «eco-friendly», (c) показывать счётчики использования тегов, (d) глобально переименовывать тег.</p>
+        <p><strong>Колонка-массив (TEXT[]):</strong> Просто для (a). Можно GIN-индексировать для (b). Ломается для (c) — агрегация внутри массивов дорогостоящая. Ломается для (d) — переименование требует обновления каждой строки с тегом. Вердикт: используйте только если запросы (c) и (d) никогда не понадобятся.</p>
+        <p><strong>Колонка JSONB:</strong> Тот же компромисс что и массив, но хуже: больше overhead парсинга, нет type enforcement, GIN индексы на JSON-массиве строк не быстрее TEXT[] GIN. Нет преимуществ над подходом с массивом.</p>
+        <p><strong>Side table:</strong></p>
+        <pre class="text-xs bg-zinc-100 dark:bg-zinc-800 p-2 rounded overflow-x-auto"><code>{`CREATE TABLE tags (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE product_tags (
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  tag_id BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, tag_id)
+);
+CREATE INDEX idx_product_tags_tag_id ON product_tags(tag_id);`}</code></pre>
+        <p>Поддерживает все четыре запроса: (a) JOIN product_tags + tags; (b) JOIN от tags WHERE name = 'eco-friendly' + B-tree индекс по tag_id; (c) COUNT(*) GROUP BY tag_id; (d) единственный UPDATE на tags.name. Составной PK запрещает дублирующиеся теги на продукт. FK предотвращают сиротские назначения тегов. B-tree индекс на tag_id — ключевой элемент для запросов (b) и (c).</p>
+      </div>
+    ),
+    semi: {
+      prompt: "PRIMARY KEY (product_id, tag_id) в product_tags покрывает «какие теги есть у продукта X». Для «какие продукты имеют тег Y» нужен индекс на _______ .",
+      blanks: [
+        { id: "col", expected: "tag_id", placeholder: "имя колонки" },
+      ],
+    },
+    blank: {
+      prompt: "Если теги были пользовательскими предпочтениями ('у пользователя много любимых тегов') и единственным запросом всегда был 'покажи мне теги этого пользователя', была бы всё равно нужна side table?",
+      reveal: (
+        <div class="text-sm space-y-2">
+          <p>Нет — если единственный запрос 'покажи теги этого пользователя' (никогда 'какие пользователи имеют тег X', никогда 'количество пользователей по тегу', никогда 'переименовать тег глобально'), TEXT[] колонка в users — более простой и дешёвый выбор. Массив читается за одну выборку колонки без JOIN. Добавьте GIN-индекс если нужен фильтр 'есть ли у пользователя тег X'. Side table добавляет overhead, который окупается только при запросе со стороны тега.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "col:product_id": "PK (product_id, tag_id) уже покрывает product_id как ведущую колонку. Нужно обратное направление — индекс по tag_id — для 'какие продукты имеют этот тег'.",
+  }}
+/>
+
+<Quiz
+  id="04-jsonb-and-arrays-quiz-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="ru"
+  question="Запрос `WHERE payload @> '{&quot;event_type&quot;: &quot;purchase&quot;}'` на таблице в 50M строк выполняется 200 мс с полным GIN-индексом, но нужно менее 20 мс. Что попробовать первым?"
+  choices={[
+    { label: "Добавить второй GIN-индекс с классом операторов jsonb_path_ops, который быстрее для запросов @> containment и создаёт меньший индекс", correct: true },
+    { label: "Изменить колонку с JSONB на JSON", misconception: "JSON не индексируемый. Это замедлит запрос, а не ускорит." },
+    { label: "Добавить B-tree индекс на всю JSONB-колонку", misconception: "B-tree индексы на JSONB не поддерживаются; JSONB требует GIN или expression индексы." },
+    { label: "Партиционировать таблицу по event_type", misconception: "Партиционирование помогло бы, но требует сначала продвинуть event_type в типизированную колонку — тогда expression B-tree по этой колонке и является правильным индексом." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="04-jsonb-and-arrays-tradeoff-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="ru"
+  prompt="Новый сервис хранит 'рецензии на продукты' (одна рецензия на пользователя на продукт, рейтинг + текст + опциональные структурированные теги). Какая форма схемы?"
+  options={[
+    { name: "Реляционная: reviews(user_id, product_id, rating, body) с составным PK и FK; теги как join-таблица review_tags с каталогом тегов", summary: "Канонический реляционный дизайн.", correct: true, justification: "Составной PK принудительно соблюдает одну рецензию на пользователя-продукта без единой строки кода приложения. FK гарантируют отсутствие сиротских рецензий. Join-таблица тегов позволяет запрашивать в обоих направлениях, переименовывать теги за O(1) и агрегировать по тегу. CHECK на rating (1-5) отсекает плохие вставки." },
+    { name: "Одна таблица со всем в JSONB (рейтинг, тело, теги — всё в одной колонке)", summary: "Соблазнительно для прототипа, дорого в долгосрочной перспективе.", justification: "Ломается в момент, когда нужно принудительно соблюдать уникальность ('одна рецензия на пользователя-продукта'), запрашивать по тегу, агрегировать рейтинги или строить очередь модерации. Каждое из этих требует GIN-индексы или runtime-парсинг." },
+    { name: "Реляционный рейтинг + тело, но JSONB для тегов (массив внутри JSONB)", summary: "Работает для некоторых запросов.", justification: "Приемлемо если теги — только для чтения, никогда не агрегируются. Ломается для 'количество рецензий по тегу' или 'переименовать тег X в Y'. Используйте только если теги — истинные per-row метки, а не общий словарь." },
+    { name: "Document store (MongoDB) для всей функции", summary: "Неправильный инструмент для этой формы.", justification: "Рецензии имеют потребности в referential integrity (должны ссылаться на реальных пользователей и продукты), уникальности (одна на пользователя-продукта) и агрегации (средний рейтинг по продукту). Document stores либо жертвуют integrity, либо симулируют её неэффективно." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>JSONB подходит для гетерогенных или long-tail данных; типизированные колонки — для всего, что вы запрашиваете, агрегируете или ограничиваете. GIN для containment/наличия ключей; expression B-tree для одного конкретного пути. Generated STORED колонки заменяют триггеры для per-row арифметики. Отключайте FK только при шардировании или измеренном риске каскадов — не как общую практику.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-jsonb-and-arrays-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Назовите правило решения для JSONB vs типизированная колонка и приведите пример где каждый вариант правильный.", a: "Правило: если поле запрашивается больше одного раза — фильтрация, агрегация, сортировка или JOIN по нему — оно должно быть типизированной колонкой. JSONB правильный для действительно переменных или long-tail данных, которые читаются как единое целое (event payload с per-type схемами, per-tenant конфигурационные объекты, метаданные загрузчика файлов). Типизированная колонка правильная для любого поля, которое появляется в WHERE, GROUP BY, ORDER BY, FK или CHECK — как статус заказа, email пользователя или price_cents." },
+    { q: "В чём разница между GIN-индексом с классом операторов по умолчанию и с jsonb_path_ops, и когда выбирать каждый?", a: "GIN по умолчанию индексирует каждый ключ и значение в JSONB, поддерживает операторы ?, ?|, ?& и @>. jsonb_path_ops индексирует только целые пути, поддерживает только @> (containment), но быстрее для containment-запросов и создаёт меньший индекс. Выбирайте GIN по умолчанию для запросов наличия ключей (?). Выбирайте jsonb_path_ops когда все ваши JSONB-запросы — @> containment и вы хотите более быстрые поиски и меньший индекс." },
+    { q: "Назовите условия, при которых отключение foreign keys является обоснованным инженерным решением.", a: "Отключение FK обосновано когда (a) данные шардированы и связь пересекает границы шардов (FK не могут охватывать шарды), (b) каскад создаст транзакцию на несколько миллионов строк, блокирующую таблицы на минуты, или (c) проверка FK при DDL-изменении типа колонки является операционным узким местом. Ни одно из этих условий не применимо к типичной SaaS-схеме под ~100M строк. Отключение FK без этих обоснований перемещает принуждение integrity в код приложения, где оно реализуется непоследовательно." },
+  ]}
+/>
+
+<Recap lang="ru">
+JSONB (всегда JSONB вместо JSON) — правильный выбор для гетерогенных схем, long-tail метаданных и данных, которые хранятся, но редко запрашиваются по полям. Как только поле появляется в WHERE, GROUP BY или JOIN, нужна типизированная колонка. Side tables превосходят массивы и JSONB когда запрос идёт с обеих сторон, нужна агрегация или уникальность между строкой и тегом. GIN поддерживает наличие ключей и containment; expression B-tree поддерживает один конкретный путь для равенства и range. Generated STORED колонки заменяют триггеры для per-row арифметики — объявлены в схеме, видимы любому читателю. FK-ограничения стоят ~5-50 мкс на запись и навсегда предотвращают строки-сироты; отключайте их только при конкретных ограничениях шардирования или каскадов, не как общую практику.
+</Recap>
