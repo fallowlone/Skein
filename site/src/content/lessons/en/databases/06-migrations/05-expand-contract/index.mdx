@@ -1,0 +1,231 @@
+---
+slug: 05-expand-contract
+lang: en
+track: databases
+unit: 06-migrations
+order: 5
+title: "Expand-contract: zero-downtime for breaking schema changes"
+summary: "Any breaking change — rename, drop, type-change — decomposes into an expand (add) phase and a contract (remove) phase, each independently deployable and reversible."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/06-migrations/04-safe-ddl-patterns"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["expand-contract-migration", "dual-write", "backfill", "zero-downtime-deploy", "down-migration"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-altertable.html
+  - https://github.com/xataio/pgroll
+  - https://xata.io/blog/migrations-and-exclusive-locks
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team renames `users.username` to `users.handle` in one ALTER TABLE statement at deploy time. The migration commits instantly. But the rolling deploy is still in progress — old pods are still running SQL that references `users.username`. Every request from an old pod fails with "column does not exist". A fast migration caused a real outage.
+</Hook>
+
+<Crux>Expand-contract keeps a schema superset live: old and new app versions coexist — the only way to change a schema zero-downtime.</Crux>
+
+<Explanation>
+
+## Why rename/drop/type-change cannot be done in one step
+
+A **rolling deploy** — the only safe deploy strategy at any scale — runs old and new code simultaneously for seconds to minutes. If a migration commits before all old pods drain:
+
+- **Rename**: old code references old column name → `column does not exist` errors.
+- **Drop**: old code references dropped column → same.
+- **Type change**: old code expects int, column is now text → type cast errors.
+
+The invariant that must hold at every moment: **the current schema is simultaneously compatible with the previous application version and the next one**. A one-step rename, drop, or type change breaks this invariant.
+
+## The general expand-contract framework
+
+Every breaking change decomposes into six phases:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Phase</th>
+        <th class="border border-border px-3 py-2 text-left">Migration action</th>
+        <th class="border border-border px-3 py-2 text-left">Code action</th>
+        <th class="border border-border px-3 py-2 text-left">Both versions compatible?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. Expand</td>
+        <td class="border border-border px-3 py-2">Add new element alongside old</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Yes — old code unaffected</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. Dual-write</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Write to both old and new</td>
+        <td class="border border-border px-3 py-2">Yes — old reads old, new writes both</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Backfill</td>
+        <td class="border border-border px-3 py-2">Copy historical data old → new in batches</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4. Cut over reads</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Read from new, still write both</td>
+        <td class="border border-border px-3 py-2">Yes — full rollback still possible</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">5. Stop old writes</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Write only to new</td>
+        <td class="border border-border px-3 py-2">Yes — old element still present</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">6. Contract</td>
+        <td class="border border-border px-3 py-2">Drop the old element</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">Yes — no code references old element</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Column rename walkthrough: username → handle
+
+The canonical example. Total span: 3–7 days.
+
+**Day 1 — Expand:**
+```sql
+-- Migration 1: instant, no default
+ALTER TABLE users ADD COLUMN handle TEXT;
+```
+
+**Day 1 — Dual-write deploy:**
+App code now writes both `username` and `handle` on every INSERT/UPDATE. Old code still reads `username`. New code reads `username` (for now).
+
+**Day 2 — Backfill:**
+```sql
+-- Outside a migration transaction (batched loop):
+UPDATE users SET handle = username
+WHERE handle IS NULL
+  AND id BETWEEN :batch_start AND :batch_end;
+-- Repeat until SELECT COUNT(*) FROM users WHERE handle IS NULL = 0
+```
+
+Batches of 1k–10k rows, each a short transaction with `pg_sleep(0.1)` between.
+
+**Day 3 — Cut over reads:**
+Deploy code that reads `handle` exclusively. Writes still go to both columns. Watch dashboards for 24h.
+
+**Day 5 — Stop dual-write:**
+Deploy code that writes only `handle`. Wait for rolling deploy to complete.
+
+**Day 7 — Contract:**
+```sql
+-- Migration 4: fast (metadata only)
+ALTER TABLE users DROP COLUMN username;
+```
+
+Every step is independently deployable and reversible. Zero-downtime throughout.
+
+## Down migrations are not rollback
+
+Down migrations (reverse SQL of an up migration) appear in many tools (`down.sql` counterpart files). They work in development but are dangerous in production:
+
+- A down migration that drops `handle` also destroys all the data that new code wrote to it.
+- If the up migration was `ADD COLUMN`, the down is `DROP COLUMN` — destructive.
+
+**Production rollback is forward**: write a new migration that corrects the problem, deploy it, and move forward. Treat down migrations as development scaffolding only.
+
+<NumbersCard
+  id="card-expand-contract"
+  title="Expand-contract deployment facts"
+  stats={[
+    { label: "Typical span for a column rename", value: "3–7 days" },
+    { label: "Number of deploys for a column rename", value: "5+ separate PRs" },
+    { label: "Backfill batch size", value: "1k–10k rows" },
+    { label: "pg_sleep between batches", value: "0.1 s (breathing room)" },
+    { label: "Each phase: independently reversible?", value: "Yes" },
+    { label: "Production rollback direction", value: "Forward (new migration)" },
+  ]}
+/>
+
+<Misconception id="mc-down-migration">
+  <p><strong>"Down migrations are the rollback strategy."</strong> They are not. A down migration that drops a column also drops the data the new app wrote to it. Production rollback is forward: write a new migration that fixes the problem. Treat down migrations as development scaffolding, never as a production safety net.</p>
+</Misconception>
+
+<Inset kind="why" lang="en">
+pgroll (by Xata) automates expand-contract via Postgres views. When you declare a migration that "renames username to handle", pgroll creates a v1 view (exposes `username`) and a v2 view (exposes `handle`), both backed by the same underlying column, with triggers translating writes. Old pods connect with `search_path = v1`; new pods with `search_path = v2`. When migration completes, the v1 view is dropped. This collapses 5+ deploys into one declarative migration — at the cost of view-layer complexity in debugging and pg_dump output.
+</Inset>
+
+<Quiz
+  id="05-expand-contract-quiz-1"
+  lessonSlug="05-expand-contract"
+  lang="en"
+  question="Why can a direct RENAME COLUMN migration cause an outage during a rolling deploy?"
+  choices={[
+    { label: "A rolling deploy runs old and new code simultaneously; old code references the old column name and fails the moment the rename commits, before old pods are replaced", correct: true },
+    { label: "RENAME COLUMN acquires ACCESS EXCLUSIVE and blocks everything during the rename", misconception: "RENAME COLUMN is fast (metadata only). The problem is not the lock duration but the window where old code runs against a renamed schema." },
+    { label: "Postgres does not support renaming columns on tables with active connections", misconception: "Postgres allows RENAME COLUMN with active connections; the issue is application-level compatibility during the deploy window." },
+    { label: "The application cache still refers to the old column name after rename", misconception: "Application caches may be an issue, but the primary failure is live SQL references to the old column name from still-running old pods." },
+  ]}
+/>
+
+<Quiz
+  id="05-expand-contract-quiz-2"
+  lessonSlug="05-expand-contract"
+  lang="en"
+  question="At which phase of expand-contract is rollback easiest, and why?"
+  choices={[
+    { label: "During dual-write (phase 2): both columns exist and are written; reverting means switching code reads back to the old column — no data loss", correct: true },
+    { label: "After the contract (phase 6): both columns are clean", misconception: "After the contract, the old element is gone — rollback would require restoring it from backup." },
+    { label: "At the backfill (phase 3): data is being copied", misconception: "Rollback during backfill is possible but requires stopping the backfill and cleaning up partial data." },
+    { label: "Before the expand (phase 1): nothing has changed", misconception: "Before expand, no change has happened — but this is not a phase of the pattern itself." },
+  ]}
+/>
+
+<Quiz
+  id="05-expand-contract-quiz-3"
+  lessonSlug="05-expand-contract"
+  lang="en"
+  question="A team runs a down migration in production that drops the new column added in the up migration. What data is lost?"
+  choices={[
+    { label: "All data written to the new column by the new application version since the up migration ran — potentially hours or days of user data", correct: true },
+    { label: "Nothing — the down migration is a no-op if no data was in the column", misconception: "The new app code writes to the new column from the moment the up migration completes; that data is dropped." },
+    { label: "Only the column definition, not the data", misconception: "DROP COLUMN removes both the definition and all stored values for that column." },
+    { label: "Nothing — Postgres rolls back a down migration if it would lose data", misconception: "Postgres does not protect you from dropping columns with data; it executes DROP COLUMN as given." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Expand-contract decomposes every breaking change into additive expand + removal contract phases, each independently deployable. Both the old and new app versions can run against the schema at every moment. Rolling back during dual-write is safe; running a down migration in production destroys data.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-expand-contract-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the core invariant of expand-contract and explain why skipping the dual-write phase breaks it.", a: "The invariant: at every moment during a deploy, the current database schema must be compatible with both the previous application version and the next one simultaneously. Skipping dual-write breaks this by creating a window where the schema supports only the new code. For example, skipping from expand directly to cut-over reads means old pods (still in the rolling deploy) try to write the old column — but new code has stopped writing it. If the old column is about to be dropped in the contract phase, old pod writes fail. Dual-write keeps both write paths active, so both code versions are compatible." },
+    { q: "Walk through the six phases of rename: username → handle, naming the migration or code change at each step.", a: "(1) Expand: migration — ADD COLUMN handle TEXT (instant). (2) Dual-write: code deploy — writes both username and handle on every INSERT/UPDATE. (3) Backfill: migration (batched) — UPDATE users SET handle = username WHERE handle IS NULL, in 1k–10k row batches. (4) Cut over reads: code deploy — reads handle exclusively, still writes both. (5) Stop old writes: code deploy — writes only handle. (6) Contract: migration — DROP COLUMN username (fast, metadata). Each step is a separate PR reviewed and merged independently." },
+    { q: "Why are down migrations unsafe in production and what is the correct production rollback strategy?", a: "Down migrations drop or alter schema elements that the new application code has already written data to. A down migration that drops the new column destroys all the data the new code wrote since the up migration ran — potentially hours of user data. Postgres does not protect you from this; it executes DROP COLUMN unconditionally. The correct production rollback is forward: write a new migration that corrects the problem (re-add the column, restore defaults, fix constraints) and deploy it as a forward migration. Down migrations are useful only in development environments where data loss is acceptable." },
+  ]}
+/>
+
+<Recap lang="en">
+Expand-contract is the only correct pattern for zero-downtime rename, drop, or type-change migrations. It maintains a schema superset at every moment: both old and new code versions run simultaneously against a schema that supports both. A column rename becomes five independent deploys over 3–7 days: add new column (expand), deploy dual-write code, backfill historical rows in batches, deploy read-swap code, deploy drop-old-write code, then drop the old column (contract). Down migrations appear safe but destroy data already written by the new code; production rollback is always a forward migration that fixes the problem.
+</Recap>

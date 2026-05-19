@@ -1,0 +1,213 @@
+---
+slug: 06-advisory-lock-and-tooling
+lang: en
+track: databases
+unit: 06-migrations
+order: 6
+title: "Advisory locks, migration tools, and deploy coordination"
+summary: "pg_advisory_lock serialises concurrent migration runners; migration tool choice (Atlas, pgroll, Prisma, Drizzle) determines how much safety is automated vs manual."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/06-migrations/05-expand-contract"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["advisory_lock", "pg-advisory-lock", "migration-tooling", "Atlas", "pgroll", "deploy-coordination", "DDL-transaction-semantics"]
+sources:
+  - https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS
+  - https://github.com/xataio/pgroll
+  - https://atlasgo.io/
+  - https://squawkhq.com/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A Kubernetes deployment scales from zero to three replicas simultaneously. All three pods boot and each tries to run the pending migration. Without coordination, all three apply it in parallel — one succeeds, two fail with duplicate-constraint errors, the app half-starts in an unknown state.
+</Hook>
+
+<Crux>pg_advisory_lock serialises concurrent migration runners; tooling encodes lock_timeout, retries, lint, and deploy gating.</Crux>
+
+<Explanation>
+
+## Postgres DDL transaction semantics
+
+Most DDL in Postgres is **transactional**: `BEGIN; CREATE TABLE; ALTER TABLE; COMMIT;` either all succeeds or all rolls back atomically. Concurrent sessions see the change only after `COMMIT` (MVCC snapshot isolation).
+
+Exceptions that cannot run inside a transaction block:
+- `CREATE INDEX CONCURRENTLY`
+- `REINDEX CONCURRENTLY`
+- `ALTER TYPE ... ADD VALUE` (in PG 11 and earlier; transactional from PG 12+)
+
+Migration tools wrap each migration in a transaction by default. Any migration containing a `CONCURRENT` operation needs a **non-transactional mode** annotation. Most tools support this:
+
+- Atlas: `-- atlas:txmode none`
+- golang-migrate: `-- migrate:notransaction`
+- Prisma: not natively supported; use `prisma db execute` with a raw SQL file
+
+If you mix a CONCURRENT operation with other DDL in one migration file, split them into two files.
+
+## The advisory lock pattern for serialised migration runners
+
+Multiple application servers booting simultaneously can each try to run pending migrations. Without coordination, two processes might apply the same migration twice or conflict on the `schema_migrations` table.
+
+The standard fix is a Postgres **advisory lock** at migration start:
+
+```sql
+-- Acquired before any migrations run:
+SELECT pg_advisory_lock(12345);  -- 12345 = stable integer key for this app
+
+-- Migrations run here ...
+
+-- Released after all migrations complete:
+SELECT pg_advisory_unlock(12345);
+```
+
+`pg_advisory_lock` blocks until it acquires the lock. The first server gets it and runs migrations; subsequent servers wait. When the first finishes and releases, the next server acquires — but finds all migrations already applied and does nothing.
+
+Most migration tools implement this automatically:
+- **golang-migrate**: acquires `pg_advisory_lock(hashInt64(databaseName))` at start.
+- **Prisma**: uses a `_prisma_migrations` table with row-level locking.
+- **Atlas**: uses `pg_advisory_lock` with a configurable key.
+
+For non-blocking startup behaviour, use `pg_try_advisory_lock` with a retry loop:
+
+```sql
+-- Returns true if acquired, false if already held
+SELECT pg_try_advisory_lock(12345);
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+        <th class="border border-border px-3 py-2 text-left">lock_timeout support</th>
+        <th class="border border-border px-3 py-2 text-left">Retries</th>
+        <th class="border border-border px-3 py-2 text-left">DDL lint</th>
+        <th class="border border-border px-3 py-2 text-left">Non-transactional mode</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Atlas</td>
+        <td class="border border-border px-3 py-2">Yes (config)</td>
+        <td class="border border-border px-3 py-2">Yes (exponential backoff)</td>
+        <td class="border border-border px-3 py-2">Yes (built-in + Squawk)</td>
+        <td class="border border-border px-3 py-2">Yes (txmode none)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">pgroll</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Via view-layer safety</td>
+        <td class="border border-border px-3 py-2">N/A (handles CONCURRENT internally)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Prisma Migrate</td>
+        <td class="border border-border px-3 py-2">Manual (SET in SQL)</td>
+        <td class="border border-border px-3 py-2">Manual</td>
+        <td class="border border-border px-3 py-2">Squawk (separate CI step)</td>
+        <td class="border border-border px-3 py-2">Limited</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">golang-migrate</td>
+        <td class="border border-border px-3 py-2">Manual (SET in SQL)</td>
+        <td class="border border-border px-3 py-2">External</td>
+        <td class="border border-border px-3 py-2">Squawk (separate CI step)</td>
+        <td class="border border-border px-3 py-2">Yes (notransaction)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Flyway</td>
+        <td class="border border-border px-3 py-2">Manual (SET in SQL)</td>
+        <td class="border border-border px-3 py-2">Manual</td>
+        <td class="border border-border px-3 py-2">Pro edition only</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Deploy coordination: migration before pod rollout
+
+The three common patterns:
+
+1. **Pre-deploy job (recommended)**: a k8s Job or CI step runs `migrate up` against production before the rolling deploy. Code deploy is gated on migration success. Old pods handle traffic during migration; schema is additive (expand-only). This is the cleanest pattern — clear separation of concerns.
+
+2. **Init container on each pod**: each new pod runs `migrate up` on boot; advisory lock serialises them. Simple but slow — every pod waits for the migration check, even if nothing is pending.
+
+3. **Separate migration pipeline**: migration is run manually or on its own cadence, fully decoupled from code deploy. Requires human coordination; error-prone at scale.
+
+**2026 senior default**: separate pre-deploy job (pattern 1), gated on migration success. The migration job emits metrics; any failure pages on-call and blocks the code rollout.
+
+<NumbersCard
+  id="card-migration-tooling"
+  title="Migration tool landscape (2026)"
+  stats={[
+    { label: "Atlas (recommended for Postgres teams)", value: "Declarative + lint + retries + dry-run" },
+    { label: "pgroll (zero-downtime via virtual schemas)", value: "Views + triggers, PG 14+" },
+    { label: "Prisma Migrate (TS/Node stacks)", value: "Schema-first, generates migration SQL" },
+    { label: "Drizzle (TS/Node, lightweight)", value: "Schema-first, similar to Prisma" },
+    { label: "golang-migrate (language-agnostic)", value: "Simple up/down SQL files" },
+    { label: "Squawk (linter)", value: "CI: catches unsafe DDL in PRs" },
+    { label: "Advisory lock acquired at startup", value: "Standard in golang-migrate, Atlas" },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does pgroll use views instead of the direct schema? pgroll's goal is to make a declarative migration that renames a column feel like a single-step operation to the developer. Underneath, it has to maintain compatibility for both old and new code simultaneously — views with triggers are the only Postgres-native mechanism to present two different column names backed by the same storage, without application changes to manage dual-write manually. The cost is operational complexity: debugging a migration incident requires understanding the view layer.
+</Inset>
+
+<Quiz
+  id="06-advisory-lock-and-tooling-quiz-1"
+  lessonSlug="06-advisory-lock-and-tooling"
+  lang="en"
+  question="Three k8s pods boot simultaneously and each tries to run pending migrations. Without an advisory lock, what is the most likely failure mode?"
+  choices={[
+    { label: "Two or more pods apply the same migration in parallel — one succeeds, others fail with constraint or duplicate errors, leaving the app in an inconsistent state", correct: true },
+    { label: "All three pods succeed because each migration is idempotent by default", misconception: "Migrations are not idempotent by default; CREATE TABLE or ADD COLUMN fails if run twice on the same database." },
+    { label: "Postgres queues the migrations and runs them one by one", misconception: "Postgres does not know the migrations are logically related; each session issues DDL independently and they race." },
+    { label: "The second and third pods skip the migration because schema_migrations already shows it applied", misconception: "Without locking, multiple pods can check the table simultaneously, both see the migration as pending, and both attempt to apply it." },
+  ]}
+/>
+
+<Quiz
+  id="06-advisory-lock-and-tooling-quiz-2"
+  lessonSlug="06-advisory-lock-and-tooling"
+  lang="en"
+  question="Which migration tool offers built-in DDL linting, lock_timeout configuration, retries, and non-transactional mode for Postgres in 2026?"
+  choices={[
+    { label: "Atlas (atlasgo.io) — declarative schema + built-in lint, lock_timeout, exponential-backoff retries, and txmode annotations", correct: true },
+    { label: "golang-migrate — simple up/down SQL files, no built-in lint or retry", misconception: "golang-migrate is solid for simple cases but requires manual SET lock_timeout in SQL and external retry logic." },
+    { label: "Flyway — mature Java ecosystem tool, Pro edition lint only", misconception: "Flyway's lint is a paid feature and it does not configure lock_timeout automatically." },
+    { label: "Squawk — catches unsafe DDL patterns", misconception: "Squawk is a linter, not a migration runner. It does not apply migrations or manage lock_timeout." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>pg_advisory_lock serialises concurrent migration runners (standard in Atlas and golang-migrate). Atlas automates lock_timeout, retries, lint, and dry-run. The production deploy pattern is a pre-deploy migration job gated before the code rollout, with observability on migration duration and retries.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-advisory-lock-and-tooling-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does pg_advisory_lock prevent duplicate migration execution across concurrent pods, and how do tools implement it?", a: "pg_advisory_lock(key) is a session-level Postgres lock not tied to any table or row. The first session to call it gets the lock; subsequent callers block until it is released. Migration tools call it as their first action: the first pod to acquire the lock runs all pending migrations and releases; subsequent pods acquire (find nothing pending) and release. golang-migrate uses pg_advisory_lock(hashInt64(databaseName)); Atlas uses a configurable key; Prisma uses row-level locking on its _prisma_migrations table. The advisory lock must be held throughout the entire migration run, not just at the start — inspecting pg_locks during a test migration verifies this." },
+    { q: "What is the recommended deploy coordination pattern for a k8s app, and why is it preferred over running migrations on pod startup?", a: "Recommended: a pre-deploy migration job (k8s Job or CI step) runs migrate up before the rolling deploy. The code rollout is gated on migration success — if the migration fails, the deploy is aborted and on-call is paged. Benefits: (1) clear separation of concerns — migration lifecycle is not tied to pod startup health; (2) a failed migration does not leave pods in crash-loop restarts; (3) the migration job can be monitored, retried, and rolled back independently. Pod-startup migration (init container) is simpler but slower — every new pod waits for the migration check even when nothing is pending, and a long migration during scale-up delays pod readiness checks." },
+    { q: "Why must CREATE INDEX CONCURRENTLY run outside a transaction, and how do you configure this in migration tools?", a: "CONCURRENTLY builds the index in two scan phases across multiple transactions. The first phase scans and builds a snapshot index while traffic continues; the second catches up on writes during the first phase. If wrapped inside BEGIN..COMMIT, Postgres would hold a single transaction open across both phases — other transactions could not see their own writes as committed during the second phase, breaking the catch-up logic. Postgres enforces this: it raises an error if you try CONCURRENTLY inside a transaction. Migration tools handle this with per-migration annotations: Atlas uses `-- atlas:txmode none`, golang-migrate uses `-- migrate:notransaction`, Prisma requires a raw SQL file via `prisma db execute`. Any migration file with CONCURRENTLY must be so annotated." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres DDL is transactional — `BEGIN; ALTER TABLE; COMMIT;` rolls back atomically on failure — except for `CREATE INDEX CONCURRENTLY` and a few other operations that must run outside a transaction block and need a tool-level annotation. When multiple application pods boot simultaneously, all may try to run pending migrations; `pg_advisory_lock` serialises them by letting only one session run at a time. Atlas (declarative schema, built-in lint, lock_timeout, retries, dry-run) is the most complete Postgres migration tool in 2026; pgroll adds virtual-schema zero-downtime for teams with frequent breaking changes; Prisma/Drizzle provide schema-first ergonomics for TS stacks. The recommended deploy pattern is a pre-deploy migration job gated before the rolling pod deploy, with Squawk CI lint blocking unsafe PRs before merge.
+</Recap>

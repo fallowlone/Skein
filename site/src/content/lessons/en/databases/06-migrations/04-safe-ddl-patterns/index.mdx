@@ -1,0 +1,212 @@
+---
+slug: 04-safe-ddl-patterns
+lang: en
+track: databases
+unit: 06-migrations
+order: 4
+title: "Safe DDL patterns: NOT VALID, CONCURRENTLY, and unsafe-op fixes"
+summary: "Every unsafe DDL has a safe multi-step equivalent; the discipline is to know the mapping and use it instead of the textbook one-liner."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/06-migrations/03-lock-queue-incident"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["CREATE-INDEX-CONCURRENTLY", "NOT-VALID-constraint", "VALIDATE-CONSTRAINT", "binary-coercible-type-change", "ADD-FOREIGN-KEY-safe"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-altertable.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+  - https://squawkhq.com/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A team runs `CREATE INDEX ON orders(user_id)` at 10:00 AM. On a 200M-row table this holds `ACCESS EXCLUSIVE` for 20 minutes — reads and writes blocked. The same index built with `CREATE INDEX CONCURRENTLY` takes 45 minutes but blocks nothing. Same index, same data, wildly different production impact.
+</Hook>
+
+<Crux>Every unsafe DDL has a safe multi-step equivalent. Know the mapping; always use the safe form in production.</Crux>
+
+<Explanation>
+
+## CREATE INDEX CONCURRENTLY
+
+Regular `CREATE INDEX` takes `ACCESS EXCLUSIVE` for the full build duration. On large tables this blocks reads and writes for minutes.
+
+`CREATE INDEX CONCURRENTLY` builds the index in two phases, both under `SHARE UPDATE EXCLUSIVE` (does not block DML):
+
+1. Phase 1: scan the table and build a draft index, while normal traffic continues.
+2. Phase 2: catch up on writes that happened during phase 1; mark index valid.
+
+Trade-offs:
+- Takes 2–3× longer than non-concurrent.
+- **Cannot run inside a transaction block** — if your migration tool wraps migrations in `BEGIN..COMMIT`, you need to annotate this migration as non-transactional.
+- Can fail mid-build and leave an `INVALID` index (visible in `pg_indexes` where `indisvalid = false`).
+
+**Production runbook for CONCURRENT index:**
+1. Always use `CREATE INDEX CONCURRENTLY` in production.
+2. After the migration, verify: `SELECT indexname, indisvalid FROM pg_indexes JOIN pg_class ... WHERE indisvalid = false` — should return nothing.
+3. If you find an INVALID index: `DROP INDEX CONCURRENTLY` (also non-blocking), then retry.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Operation</th>
+        <th class="border border-border px-3 py-2 text-left">Lock</th>
+        <th class="border border-border px-3 py-2 text-left">Blocks DML</th>
+        <th class="border border-border px-3 py-2 text-left">In transaction?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>CREATE INDEX</code></td>
+        <td class="border border-border px-3 py-2">ACCESS EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>CREATE INDEX CONCURRENTLY</code></td>
+        <td class="border border-border px-3 py-2">SHARE UPDATE EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">No — must run outside BEGIN</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>DROP INDEX CONCURRENTLY</code></td>
+        <td class="border border-border px-3 py-2">SHARE UPDATE EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT
+
+Adding a CHECK or FOREIGN KEY constraint normally acquires `ACCESS EXCLUSIVE` and scans the entire table.
+
+The two-step pattern:
+
+```sql
+-- Step 1: add constraint, enforce only for NEW rows (instant, brief ACCESS EXCLUSIVE)
+ALTER TABLE orders
+  ADD CONSTRAINT orders_status_valid
+  CHECK (status IN ('pending', 'active', 'closed')) NOT VALID;
+
+-- Step 2: verify existing rows (SHARE UPDATE EXCLUSIVE — does not block DML)
+ALTER TABLE orders VALIDATE CONSTRAINT orders_status_valid;
+```
+
+`NOT VALID` means: enforce for new rows from this moment; existing rows are not checked. `VALIDATE CONSTRAINT` then scans all rows under `SHARE UPDATE EXCLUSIVE`, which does not block `INSERT`, `UPDATE`, or `DELETE`. The scan can run while traffic is live.
+
+This pattern applies to:
+- `CHECK` constraints
+- `FOREIGN KEY` constraints: `ADD CONSTRAINT ... FOREIGN KEY ... NOT VALID` + `VALIDATE CONSTRAINT`
+- `NOT NULL` via `CHECK (col IS NOT NULL) NOT VALID` (see lesson 02)
+
+## Unsafe operations and their safe equivalents
+
+<NumbersCard
+  id="card-safe-ddl"
+  title="Unsafe DDL → safe replacement"
+  stats={[
+    { label: "ADD COLUMN volatile DEFAULT → ADD no default + backfill + SET DEFAULT", value: "Fix" },
+    { label: "ALTER COLUMN TYPE (non-coercible) → add col + dual-write + backfill + swap + drop", value: "Fix" },
+    { label: "ADD NOT NULL on existing nullable → NOT VALID + VALIDATE + SET NOT NULL", value: "Fix" },
+    { label: "ADD FOREIGN KEY → ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT", value: "Fix" },
+    { label: "CREATE INDEX → CREATE INDEX CONCURRENTLY", value: "Fix" },
+    { label: "DROP COLUMN (code still reading) → deploy code first, drain, then DROP", value: "Fix" },
+    { label: "RENAME COLUMN → full expand-contract (lesson 05)", value: "Fix" },
+  ]}
+/>
+
+## ALTER COLUMN TYPE: the binary-coercible exception
+
+Most type changes rewrite the table. Exceptions are **binary-coercible** types — the same physical representation:
+
+- `varchar(50)` → `varchar(100)` (wider, same bytes)
+- `varchar` → `text` (equivalent storage)
+- `text` → `varchar` (same)
+
+Postgres detects these and skips the rewrite — brief `ACCESS EXCLUSIVE`, no rows written. Non-coercible changes (`int` → `bigint`, `text` → `int`, `json` → `jsonb`) require either a full rewrite or the shadow-column expand-contract pattern (lesson 05).
+
+<Misconception id="mc-not-valid-production">
+  <p><strong>&quot;NOT VALID + VALIDATE is slower — two statements instead of one.&quot;</strong> False. ADD CONSTRAINT (without NOT VALID) holds ACCESS EXCLUSIVE for the full scan. NOT VALID is instant; VALIDATE scans under SHARE UPDATE EXCLUSIVE. DML continues during VALIDATE; it stops during a plain ADD CONSTRAINT scan.</p>
+</Misconception>
+
+<Inset kind="why" lang="en">
+Why does VALIDATE CONSTRAINT use SHARE UPDATE EXCLUSIVE instead of ACCESS EXCLUSIVE? VALIDATE is read-only — it scans rows to confirm they pass the constraint, but does not change any row. Only DDL operations that modify the table structure or rewrite rows need ACCESS EXCLUSIVE. Read-only validation needs only enough isolation to prevent concurrent DDL from changing the constraint definition mid-scan.
+</Inset>
+
+<Quiz
+  id="04-safe-ddl-patterns-quiz-1"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="en"
+  question="CREATE INDEX CONCURRENTLY fails halfway on a 300M-row table. What state is the index in, and what is the correct fix?"
+  choices={[
+    { label: "INVALID — pg_indexes shows indisvalid = false; the index is unusable by the planner. Fix: DROP INDEX CONCURRENTLY, then retry the build.", correct: true },
+    { label: "The index is removed automatically when the build fails", misconception: "Postgres leaves the INVALID index; it is not cleaned up automatically." },
+    { label: "The index is partially valid and used for some queries", misconception: "Postgres will not use an INVALID index for query plans. It is entirely unusable until rebuilt." },
+    { label: "Postgres retries the build itself in the background", misconception: "Retry is the responsibility of the migration tool or the operator." },
+  ]}
+/>
+
+<Quiz
+  id="04-safe-ddl-patterns-quiz-2"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="en"
+  question="Which is the right way to add a CHECK constraint to a 100M-row table without blocking writes?"
+  choices={[
+    { label: "ADD CONSTRAINT ... NOT VALID (instant), then VALIDATE CONSTRAINT in a separate statement (scans under SHARE UPDATE EXCLUSIVE)", correct: true },
+    { label: "ADD CONSTRAINT (without NOT VALID) at an off-peak hour", misconception: "Still takes ACCESS EXCLUSIVE for the full scan — minutes of write blocking regardless of time." },
+    { label: "Use a trigger to enforce the constraint instead", misconception: "Triggers add per-row runtime overhead and do not provide the same guarantees as constraints. NOT VALID + VALIDATE is the production path." },
+    { label: "Run the constraint addition inside a short transaction to limit lock time", misconception: "The lock is held for the scan duration regardless of whether it is in a transaction. Short transaction does not help." },
+  ]}
+/>
+
+<DragOrder
+  id="04-safe-ddl-patterns-drag-1"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="en"
+  prompt="Order the unsafe-DDL fixes from most to least common in production:"
+  items={[
+    { id: "a", label: "ADD COLUMN with volatile DEFAULT → ADD COLUMN without default + backfill in batches + SET DEFAULT" },
+    { id: "b", label: "ALTER COLUMN TYPE (non-coercible) → add new column + dual-write + backfill + swap reads + drop old" },
+    { id: "c", label: "ADD NOT NULL → ADD CHECK NOT VALID + VALIDATE + SET NOT NULL + DROP CHECK" },
+    { id: "d", label: "ADD FOREIGN KEY → ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT" },
+    { id: "e", label: "CREATE INDEX → CREATE INDEX CONCURRENTLY (+ verify indisvalid after)" },
+    { id: "f", label: "DROP COLUMN (code still reading) → deploy code first to stop reading, drain old pods, then DROP" },
+    { id: "g", label: "RENAME COLUMN → full expand-contract over days (lesson 05)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CREATE INDEX CONCURRENTLY avoids ACCESS EXCLUSIVE but cannot run in a transaction and can leave INVALID indexes. NOT VALID + VALIDATE splits constraint enforcement: instant add for new rows, then a DML-safe scan for existing ones.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-safe-ddl-patterns-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two failure modes of CREATE INDEX CONCURRENTLY and how do you handle each?", a: "1. Mid-build failure (OOM or a long-running transaction blocking phase 2): the index is left in INVALID state (pg_indexes shows indisvalid = false). Fix: DROP INDEX CONCURRENTLY (also non-blocking), then retry the build. 2. Build completes but indisvalid stays false (rare, usually a duplicate): same fix. Always verify indisvalid after every CONCURRENTLY build as part of the migration post-check." },
+    { q: "Why must CREATE INDEX CONCURRENTLY run outside a transaction block, and how do migration tools handle this?", a: "CONCURRENTLY builds the index in two scan phases while traffic continues. If wrapped in BEGIN..COMMIT, Postgres would hold the transaction open across both phases, preventing other transactions from seeing each other's changes (snapshot isolation), which breaks the phase-2 catch-up logic. Postgres enforces this: it raises an error if you try CONCURRENTLY inside a transaction. Migration tools (Atlas, Prisma, golang-migrate) support a non-transactional annotation per-migration file (e.g., `-- atlas:txmode none`, `-- notransaction`). Use it for any CONCURRENT operation." },
+    { q: "Explain the difference between ADD CONSTRAINT and ADD CONSTRAINT NOT VALID, and why VALIDATE CONSTRAINT does not block DML.", a: "ADD CONSTRAINT (without NOT VALID) acquires ACCESS EXCLUSIVE and performs a full table scan inside that lock — blocks all reads and writes for the scan duration. NOT VALID skips the scan: the constraint is enforced only for rows inserted or updated after this point; existing rows are unchecked (they may violate). VALIDATE CONSTRAINT then performs the scan to check existing rows, but it takes SHARE UPDATE EXCLUSIVE, which conflicts only with other DDL and autovacuum — not with INSERT, UPDATE, DELETE, or SELECT. So DML continues normally during VALIDATE. The two-step pattern gives the same final consistency as one-step, with production-safe behaviour." },
+  ]}
+/>
+
+<Recap lang="en">
+Every unsafe DDL has a production-safe equivalent. `CREATE INDEX CONCURRENTLY` takes `SHARE UPDATE EXCLUSIVE` instead of `ACCESS EXCLUSIVE`, leaving DML unblocked during the build — but it cannot run inside a transaction and leaves `INVALID` indexes on failure (fix: `DROP INDEX CONCURRENTLY` + retry). `ADD CONSTRAINT ... NOT VALID` instantly enforces a constraint for new rows without scanning existing ones; `VALIDATE CONSTRAINT` then scans under `SHARE UPDATE EXCLUSIVE`, blocking only concurrent DDL, not DML. Binary-coercible type changes (`varchar(50)` → `varchar(100)`) skip the rewrite; non-coercible ones require the shadow-column expand-contract pattern. The Squawk linter flags unsafe forms in CI so teams catch them before merge.
+</Recap>

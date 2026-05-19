@@ -1,0 +1,232 @@
+---
+slug: 07-migration-failure-taxonomy
+lang: en
+track: databases
+unit: 06-migrations
+order: 7
+title: "Migration failure taxonomy and production discipline"
+summary: "Nine named failure modes — lock-queue freeze, INVALID index, WAL flood, schema drift — each with a detection signal and a durable fix."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/06-migrations/06-advisory-lock-and-tooling"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["migration-failure-taxonomy", "WAL-flood", "schema-drift", "replica-lag", "migration-observability", "Squawk-CI"]
+sources:
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://squawkhq.com/
+  - https://atlasgo.io/
+  - https://postgres.ai/blog/20210923-zero-downtime-postgres-schema-migrations-lock-timeout-and-retries
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Six months after introducing a migration pipeline, a team has had no lock-queue incidents. Then a backfill update generates 40 GB of WAL in ten minutes — replication lag climbs to 120 seconds, standby reads go stale, and two read endpoints return rows that contradict each other. The migration ran fine; the database failed around it.
+</Hook>
+
+<Crux>Every migration failure has a name, a signal, and a fix. Senior teams know all nine and surface each one as an alert.</Crux>
+
+<Explanation>
+
+## The nine migration failure modes
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Mode</th>
+        <th class="border border-border px-3 py-2 text-left">Signal</th>
+        <th class="border border-border px-3 py-2 text-left">Durable fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">(a) Lock-queue freeze</td>
+        <td class="border border-border px-3 py-2">Table frozen, pool exhausted, 503s</td>
+        <td class="border border-border px-3 py-2">lock_timeout + retries (lesson 03)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">(b) INVALID index</td>
+        <td class="border border-border px-3 py-2">pg_indexes indisvalid = false post-deploy</td>
+        <td class="border border-border px-3 py-2">DROP INDEX CONCURRENTLY + retry; alert on indisvalid</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">(c) Migration deadlock</td>
+        <td class="border border-border px-3 py-2">ERROR: deadlock detected in migration log</td>
+        <td class="border border-border px-3 py-2">Serialise via advisory lock; never parallel migrations on related tables</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">(d) Rollback destroying data</td>
+        <td class="border border-border px-3 py-2">Data loss discovered after down migration</td>
+        <td class="border border-border px-3 py-2">Never use down migrations in production; use forward fixes</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">(e) Schema drift on replicas</td>
+        <td class="border border-border px-3 py-2">Standby queries fail; replica lag metric spikes</td>
+        <td class="border border-border px-3 py-2">Gate code deploy on replica lag near-zero; use replica-aware tooling</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">(f) Backfill WAL flood</td>
+        <td class="border border-border px-3 py-2">WAL generation rate spikes; replica lag climbs; disk fills</td>
+        <td class="border border-border px-3 py-2">Batch UPDATEs in 1k–10k rows; pg_sleep between batches; monitor WAL rate</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">(g) Volatile default hidden rewrite</td>
+        <td class="border border-border px-3 py-2">Migration took minutes; table was rewritten unexpectedly</td>
+        <td class="border border-border px-3 py-2">Squawk catches `DEFAULT now()` in CI; constant default + post-migration update</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">(h) NOT NULL without backfill</td>
+        <td class="border border-border px-3 py-2">ALTER COLUMN SET NOT NULL fails at apply time</td>
+        <td class="border border-border px-3 py-2">Backfill first; use NOT VALID + VALIDATE pattern (lesson 04)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">(i) RENAME during rolling deploy</td>
+        <td class="border border-border px-3 py-2">Old pods: column does not exist errors</td>
+        <td class="border border-border px-3 py-2">Expand-contract instead of single-step rename (lesson 05)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The backfill WAL flood in depth
+
+A naive backfill runs one large UPDATE:
+
+```sql
+-- NEVER do this on a large table:
+UPDATE users SET handle = username WHERE handle IS NULL;
+```
+
+On 100M rows, this generates a WAL (Write-Ahead Log) entry for every updated row — potentially 20–50 GB of WAL in minutes. Replicas must consume this WAL before they can serve reads; replication lag spikes to minutes or longer. During that window, standby read endpoints return stale data. If the lag exceeds `max_standby_streaming_delay`, Postgres cancels conflicting queries on the standby.
+
+**Durable fix**: batch in 1k–10k row chunks with breathing room:
+
+```sql
+DO $$
+DECLARE
+  batch INT;
+BEGIN
+  LOOP
+    UPDATE users SET handle = username
+    WHERE handle IS NULL
+      AND ctid IN (
+        SELECT ctid FROM users WHERE handle IS NULL LIMIT 5000
+      );
+    GET DIAGNOSTICS batch = ROW_COUNT;
+    EXIT WHEN batch = 0;
+    PERFORM pg_sleep(0.1);
+  END LOOP;
+END $$;
+```
+
+Monitor `SELECT * FROM pg_stat_replication` — watch `sent_lsn - replay_lsn` stay near zero during the backfill.
+
+## Schema drift on replicas
+
+A migration applied on the primary propagates to replicas via streaming replication. Replication lag (normal range: &lt;1 s; under load: 5–30 s) means replicas may see the old schema for seconds after the migration commits. If code is deployed before replication catches up:
+
+- Read replicas serve queries against old schema.
+- New code expecting the new column gets NULLs or errors from standby reads.
+
+**Durable fix**: gate the code rollout on replication lag approaching zero. Monitor via `pg_stat_replication.replay_lag` on the primary. Most migration tools' pre-deploy checks include a replica-lag query.
+
+## Squawk CI and strategic migration posture
+
+**Squawk** (Linux Foundation) parses migration SQL and warns or errors on unsafe patterns:
+
+- `ADD COLUMN with volatile DEFAULT` → error
+- `ALTER COLUMN TYPE` without cast coercibility check → error  
+- `CREATE INDEX` without `CONCURRENTLY` → error
+- `RENAME COLUMN / TABLE` → warn
+- `DROP COLUMN` without prior code-deploy confirmation → warn
+
+Run Squawk on every PR touching `migrations/**`. Cost: under 30 s per migration PR. Benefit: catches the most common failure modes before merge.
+
+**The strategic posture**: treat migration code with the same discipline as application code — PR review, CI lint, staging deploy on production-size data, runbook entry, observability on runtime and lock acquisition. Senior teams ship breaking changes routinely; the difference is that every change is planned, linted, observable, and forward-rollback-capable.
+
+<NumbersCard
+  id="card-migration-observability"
+  title="Migration observability targets"
+  stats={[
+    { label: "Alert threshold: migration retries", value: "&gt; 3 → page on-call" },
+    { label: "Alert threshold: indisvalid index post-deploy", value: "Any = page" },
+    { label: "Alert threshold: migration duration", value: "&gt; 30 s → warn (rewrite?)" },
+    { label: "Alert threshold: replication lag during backfill", value: "&gt; 10 s → slow batches" },
+    { label: "Squawk CI runtime", value: "&lt; 30 s per migration PR" },
+    { label: "Production schema changes (mature teams)", value: "Daily" },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does Postgres use WAL for replicas instead of just copying changed rows? WAL is the source of truth for crash recovery and point-in-time restore. Every change is recorded as a WAL entry before it is applied to the heap. Streaming replication simply tails the WAL and replays it on standbys. This means backfill operations that touch millions of rows generate millions of WAL entries — there is no way to suppress WAL generation for DML. Batching keeps WAL volume manageable by limiting the number of rows changed per transaction.
+</Inset>
+
+<Quiz
+  id="07-migration-failure-taxonomy-quiz-1"
+  lessonSlug="07-migration-failure-taxonomy"
+  lang="en"
+  question="A large single UPDATE backfill generates 40 GB of WAL in minutes. What is the first observable symptom on a primary + 2 replica setup?"
+  choices={[
+    { label: "Replication lag climbs on replicas as they cannot consume WAL fast enough — standby reads return stale data for seconds to minutes", correct: true },
+    { label: "The primary runs out of disk space and crashes", misconception: "Possible if WAL retention is misconfigured, but the first observable symptom is replication lag on standbys before disk fills." },
+    { label: "The backfill UPDATE takes longer than expected", misconception: "The UPDATE may finish quickly; the blast radius comes from replicas falling behind on WAL replay, not from the UPDATE duration." },
+    { label: "Postgres prevents large UPDATEs from running to protect replicas", misconception: "Postgres has no mechanism to prevent large DML based on replication impact." },
+  ]}
+/>
+
+<Quiz
+  id="07-migration-failure-taxonomy-quiz-2"
+  lessonSlug="07-migration-failure-taxonomy"
+  lang="en"
+  question="Squawk runs in CI and flags `CREATE INDEX ON orders(user_id)` (without CONCURRENTLY). What is the correct response?"
+  choices={[
+    { label: "Change to CREATE INDEX CONCURRENTLY ON orders(user_id) and annotate the migration file as non-transactional — this is the production-safe form", correct: true },
+    { label: "Disable the Squawk rule for this migration — CREATE INDEX without CONCURRENTLY is fine on small tables", misconception: "The table may grow; Squawk exists to catch these before they become incidents. Fix it, do not suppress it." },
+    { label: "Schedule the migration for off-hours — the lock is safe during low traffic", misconception: "Off-peak reduces risk but does not eliminate it. CONCURRENTLY eliminates the DML block entirely." },
+    { label: "Split the migration into two: one for the table and one for the index", misconception: "Splitting does not change the lock behaviour. The fix is CONCURRENTLY, not splitting." },
+  ]}
+/>
+
+<Quiz
+  id="07-migration-failure-taxonomy-quiz-3"
+  lessonSlug="07-migration-failure-taxonomy"
+  lang="en"
+  question="A migration applies on the primary. Replication lag is currently 15 seconds. What happens if the code deploy starts immediately?"
+  choices={[
+    { label: "Read replicas serve queries against the old schema for up to 15 seconds — new code expecting the new column may get NULLs or column-not-found errors from standby reads", correct: true },
+    { label: "The primary routes standby reads to itself until replicas catch up", misconception: "Postgres does not automatically failover reads to the primary; the application's read replica routing is unchanged." },
+    { label: "Replicas block reads until they replay the WAL — no stale data is possible", misconception: "By default replicas serve reads even under lag; stale data is the trade-off for read scalability." },
+    { label: "Nothing — the new code only reads from the primary, not replicas", misconception: "Most production apps route reads to standbys; the code deploy configuration determines this, not Postgres." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Nine named failure modes cover every common migration incident. Lock-queue freeze and INVALID index are caught by lock_timeout and indisvalid monitoring. WAL flood is prevented by batched backfills. Schema drift on replicas is prevented by gating code deploy on near-zero replication lag. Squawk CI catches the rest before merge.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-migration-failure-taxonomy-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a large single-statement UPDATE backfill flood WAL, and what is the batch-size guideline?", a: "Every row modified by an UPDATE generates a WAL record before it is written to the heap. Postgres cannot suppress WAL generation for DML — WAL is the source of truth for crash recovery and replication. A single UPDATE on 100M rows generates one WAL entry per row — 20–50 GB in minutes. Streaming replicas receive and replay this WAL sequentially; if they cannot keep up, replication lag climbs and standby reads go stale. The fix: batch in 1k–10k rows per transaction with pg_sleep(0.1) between batches. Each batch generates a bounded amount of WAL; the sleep gives replicas time to catch up. Monitor pg_stat_replication.replay_lag during the backfill and slow down if lag exceeds 5–10 s." },
+    { q: "What is schema drift on replicas and how does gating the code deploy on replication lag prevent it?", a: "Schema drift on replicas occurs when a migration commits on the primary but replication lag means standbys have not yet replayed the WAL that includes the DDL change. During this window, standby queries see the old schema. If the code deploy starts before lag reaches near-zero, new code that reads the new column from a standby gets column-not-found errors or NULLs. The fix: before starting the rolling pod deploy, query the primary for `pg_stat_replication.replay_lag` on all standbys; gate the deploy until lag is under 1–2 seconds. Atlas and other tools support a replica-lag check in their pre-deploy phase. For critical breaking changes, temporarily route all reads to the primary during the migration window." },
+    { q: "Name four things Squawk checks for in CI and explain why each is unsafe without the check.", a: "(1) ADD COLUMN with volatile DEFAULT — causes full table rewrite under ACCESS EXCLUSIVE; large tables freeze for minutes. (2) ALTER COLUMN TYPE without coercibility check — non-binary-coercible changes rewrite the table; lock held for the rewrite duration. (3) CREATE INDEX without CONCURRENTLY — takes ACCESS EXCLUSIVE for the full build; reads and writes blocked for minutes on large tables. (4) RENAME COLUMN / TABLE — breaking change during rolling deploy: old pods reference old name, get column-not-found errors. Squawk flags these at PR time for 30 s per migration file, turning incidents into review comments before they reach production." },
+  ]}
+/>
+
+<Recap lang="en">
+Senior migration discipline names nine failure modes and builds observability for each. Lock-queue freeze (mode a) is the most common — fix: `lock_timeout` + retries. INVALID index (b) is detected by monitoring `indisvalid` post-deploy — fix: `DROP INDEX CONCURRENTLY` + retry. Backfill WAL flood (f) spikes replication lag — fix: 1k–10k row batches with `pg_sleep`. Schema drift on replicas (e) causes stale reads after fast-propagating DDL — fix: gate code deploy on near-zero replication lag. Squawk CI catches unsafe DDL at PR time: volatile defaults, non-concurrent indexes, renames, and coercibility-unchecked type changes. Mature teams ship schema changes daily because their tooling makes safety the path of least resistance, not a special-occasion discipline.
+</Recap>

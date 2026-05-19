@@ -1,0 +1,186 @@
+---
+slug: 02-add-column-safely
+lang: ru
+track: databases
+unit: 06-migrations
+order: 2
+title: "ADD COLUMN: мгновенно в PG 11+ против перезаписи в старом Postgres"
+summary: "Константное значение по умолчанию делает ADD COLUMN мгновенным на любой таблице начиная с PG 11; волатильные дефолты и NOT NULL без бэкфила всё ещё вызывают полную перезапись или блокируют записи на минуты."
+estMin: 10
+status: ready
+lessonType: topic
+level: junior
+prereqs: ["databases/06-migrations/01-what-a-migration-is"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["ADD-COLUMN-instant", "pg-attribute-missing-val", "volatile-default", "NOT-NULL-pattern", "backfill"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-altertable.html
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://xata.io/blog/migrations-and-exclusive-locks
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Команда деплоит `ALTER TABLE orders ADD COLUMN status TEXT NOT NULL DEFAULT 'pending'` на таблице с 50 млн строк. На Postgres 10 база зависает на 15 минут. На Postgres 11+ тот же запрос выполняется за миллисекунды. Одинаковый SQL, принципиально разный результат.
+</Hook>
+
+<Crux>ADD COLUMN с константным дефолтом мгновенен с PG 11 — дефолт в метаданных, не в строках. Волатильные дефолты вызывают перезапись.</Crux>
+
+<Explanation>
+
+## Как Postgres 11 сделал ADD COLUMN мгновенным
+
+До PG 11 `ALTER TABLE t ADD COLUMN c TEXT DEFAULT 'x'` перезаписывал каждую строку, материализуя значение по умолчанию. На таблице с 100 млн строк это означало минуты удержания `AccessExclusiveLock` — каждый читатель и писатель блокировался на всё время.
+
+Начиная с PG 11, если дефолт **не является волатильным** (строковый литерал, число, булево или стабильное выражение), Postgres хранит его в системном каталоге `pg_attribute`:
+- `pg_attribute.atthasmissing = true`
+- `pg_attribute.attmissingval = 'x'`
+
+Существующие строки сохраняют исходное физическое хранилище — в них ничего не пишется. При `SELECT` старой строки Postgres читает `attmissingval` и синтезирует значение во время чтения. Новые строки после миграции хранят колонку обычным образом. Время удержания блокировки падает с минут до миллисекунд.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Операция</th>
+        <th class="border border-border px-3 py-2 text-left">PG 10</th>
+        <th class="border border-border px-3 py-2 text-left">PG 11+</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>ADD COLUMN c TEXT DEFAULT 'pending'</code></td>
+        <td class="border border-border px-3 py-2">Полная перезапись — минуты на 100 млн строк</td>
+        <td class="border border-border px-3 py-2">Мгновенно — дефолт в метаданных pg_attribute</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ADD COLUMN c TEXT DEFAULT clock_timestamp()</code></td>
+        <td class="border border-border px-3 py-2">Полная перезапись</td>
+        <td class="border border-border px-3 py-2">Полная перезапись — волатильный дефолт, нужна материализация для каждой строки</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>ADD COLUMN c TEXT</code> (без дефолта)</td>
+        <td class="border border-border px-3 py-2">Мгновенно — NULL для существующих строк</td>
+        <td class="border border-border px-3 py-2">Мгновенно — NULL для существующих строк</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ADD COLUMN c TEXT NOT NULL</code> (без дефолта, строки есть)</td>
+        <td class="border border-border px-3 py-2">Ошибка — существующие NULL нарушают NOT NULL</td>
+        <td class="border border-border px-3 py-2">Ошибка — существующие NULL нарушают NOT NULL</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Волатильные дефолты всё равно вызывают перезапись
+
+`DEFAULT clock_timestamp()`, `DEFAULT random()`, `DEFAULT gen_random_uuid()` — любая волатильная функция — не может храниться как единое пропущенное значение, потому что каждая строка нуждается в разном результате. Postgres должен обойти каждую существующую строку, вызвать функцию и записать результат — полная перезапись таблицы под `AccessExclusiveLock`.
+
+**Решение**: добавить колонку без дефолта (мгновенно), затем выполнить бэкфил существующих строк в пакетах через `UPDATE`, затем установить дефолт для будущих вставок через `ALTER TABLE t ALTER COLUMN c SET DEFAULT gen_random_uuid()`.
+
+## Безопасное добавление NOT NULL на большой таблице
+
+`ADD COLUMN c TEXT NOT NULL DEFAULT 'x'` нормально работает на PG 11+ с константным дефолтом — мгновенно, без перезаписи. Опасность возникает при добавлении NOT NULL к существующей nullable-колонке, в которой могут быть NULL:
+
+```sql
+-- НЕПРАВИЛЬНО на большой таблице: сканирует каждую строку под AccessExclusiveLock
+ALTER TABLE users ALTER COLUMN email_verified SET NOT NULL;
+```
+
+Безопасный многошаговый паттерн (подробно разобран в уроке 04):
+
+1. Добавить колонку без NOT NULL: мгновенно.
+2. Бэкфил существующих NULL небольшими пакетами.
+3. Добавить `CHECK (col IS NOT NULL) NOT VALID` — применяется только для новых строк, без сканирования таблицы.
+4. `VALIDATE CONSTRAINT` — сканирует под более лёгкой блокировкой, которая не блокирует записи.
+5. `ALTER COLUMN SET NOT NULL` — быстро, так как constraint уже доказал валидность.
+
+<NumbersCard
+  id="card-add-column-costs-ru"
+  title="Стоимость ADD COLUMN"
+  stats={[
+    { label: "ADD COLUMN с константным дефолтом, PG 11+", value: "Мгновенно (мс)" },
+    { label: "ADD COLUMN с волатильным дефолтом, любой PG", value: "Минуты на 100 млн строк" },
+    { label: "ADD COLUMN без дефолта", value: "Мгновенно (NULL для существующих строк)" },
+    { label: "Блокировка при ADD COLUMN", value: "AccessExclusiveLock (кратко или долго)" },
+    { label: "Стоимость чтения для строк с missing-дефолтом", value: "Незначительная (один lookup в pg_attribute)" },
+    { label: "Стоимость исчезает по мере UPDATE строк", value: "Пассивно, через обычный трафик" },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему Postgres ждал до версии 11 (2018), чтобы сделать ADD COLUMN мгновенным? Изменение потребовало нового механизма в коде чтения heap-кортежей: каждое чтение кортежа старого формата должно проверять `atthasmissing` и подставлять сохранённый дефолт. Это слегка усложнило путь чтения и потребовало тщательного тестирования. Результат оказался огромным — это устранило наиболее распространённую причину простоев из-за миграций до 2018 года.
+</Inset>
+
+<Quiz
+  id="02-add-column-safely-quiz-1"
+  lessonSlug="02-add-column-safely"
+  lang="ru"
+  question="В PG 11+, какой вариант ADD COLUMN является мгновенным (без перезаписи таблицы)?"
+  choices={[
+    { label: "ALTER TABLE t ADD COLUMN x TEXT DEFAULT 'pending'", correct: true },
+    { label: "ALTER TABLE t ADD COLUMN x TEXT DEFAULT clock_timestamp()", misconception: "Волатильный дефолт требует вычисления для каждой строки — полная перезапись даже в PG 11+." },
+    { label: "ALTER TABLE t ALTER COLUMN x TYPE bigint USING x::bigint", misconception: "Изменение типа с USING перезаписывает таблицу — это другая операция." },
+    { label: "ALTER TABLE t ADD COLUMN x TEXT NOT NULL (без дефолта, строки есть)", misconception: "Это завершится ошибкой — существующие строки были бы NULL, нарушая ограничение." },
+  ]}
+/>
+
+<Quiz
+  id="02-add-column-safely-quiz-2"
+  lessonSlug="02-add-column-safely"
+  lang="ru"
+  question="Что PG 11 хранит в pg_attribute, чтобы сделать ADD COLUMN с константным дефолтом мгновенным?"
+  choices={[
+    { label: "atthasmissing = true и attmissingval = значение дефолта — старые строки не перезаписываются; дефолт синтезируется при чтении", correct: true },
+    { label: "Триггер, который заполняет дефолт для каждой старой строки при первом чтении", misconception: "Никакого триггера нет — путь чтения напрямую проверяет pg_attribute." },
+    { label: "Фоновое задание, которое со временем заполняет дефолт", misconception: "Нет никакого фонового задания; дефолт синтезируется лениво во время запроса." },
+    { label: "Ничего — таблица обновляется немедленно, но быстрее, чем раньше", misconception: "Существующие строки не затрагиваются. Изменение метаданных заставляет путь чтения создавать значение." },
+  ]}
+/>
+
+<DragOrder
+  id="02-add-column-safely-drag-1"
+  lessonSlug="02-add-column-safely"
+  lang="ru"
+  prompt="Упорядочите шаги для безопасного добавления NOT NULL-колонки в таблицу с 100 млн строк:"
+  items={[
+    { id: "a", label: "ADD COLUMN с константным DEFAULT (мгновенно в PG 11+; NULL-дефолт, если не нужен)" },
+    { id: "b", label: "Деплой кода приложения, который пишет новую колонку при каждом INSERT и UPDATE" },
+    { id: "c", label: "Бэкфил существующих NULL-строк пакетами по 1к–10к с pg_sleep между пакетами" },
+    { id: "d", label: "ADD CONSTRAINT ... CHECK (col IS NOT NULL) NOT VALID (мгновенно, без сканирования)" },
+    { id: "e", label: "VALIDATE CONSTRAINT (сканирует под SHARE UPDATE EXCLUSIVE — не блокирует DML)" },
+    { id: "f", label: "ALTER COLUMN SET NOT NULL (быстро — constraint уже доказал валидность всех строк)" },
+    { id: "g", label: "Опционально DROP CHECK constraint (он избыточен после установки NOT NULL)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>ADD COLUMN с константным дефолтом мгновенен в PG 11+ через хранимые метаданные; волатильные дефолты всё равно вызывают перезапись. Никогда не устанавливайте NOT NULL за один шаг на большой таблице — используйте ADD COLUMN + бэкфил + NOT VALID + VALIDATE + SET NOT NULL.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-add-column-safely-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Как PG 11+ делает ADD COLUMN с константным дефолтом мгновенным и каково поведение при чтении старых строк?", a: "PG 11 хранит дефолт в pg_attribute.attmissingval (с atthasmissing = true) вместо материализации в каждую строку. Старые строки сохраняют исходное хранилище. Когда запрос читает старую строку без новой колонки, исполнитель проверяет pg_attribute и подставляет пропущенное значение во время чтения. Новые строки после миграции хранят колонку обычным образом. Время удержания блокировки падает с минут (полная перезапись) до миллисекунд (обновление каталога)." },
+    { q: "Почему волатильные дефолты всё равно вызывают полную перезапись таблицы даже в PG 11+?", a: "Волатильная функция, такая как clock_timestamp() или random(), производит разное значение при каждом вызове. Postgres не может хранить единое общее пропущенное значение в pg_attribute, потому что каждая строка нуждается в своём уникальном результате. База должна обойти каждую существующую строку, вызвать функцию и записать результат — полная перезапись heap под AccessExclusiveLock, как и до PG 11." },
+    { q: "Какой многошаговый паттерн безопасно добавляет NOT NULL-ограничение к nullable-колонке на большой таблице?", a: "Шаг 1: ADD COLUMN без NOT NULL (мгновенно, существующие строки получают NULL). Шаг 2: деплой кода приложения, который всегда пишет колонку. Шаг 3: бэкфил NULL-строк пакетами по 1к–10к с паузами pg_sleep. Шаг 4: ADD CONSTRAINT c CHECK (col IS NOT NULL) NOT VALID — применяется для новых строк, без сканирования таблицы. Шаг 5: VALIDATE CONSTRAINT — сканирует под SHARE UPDATE EXCLUSIVE (не блокирует DML). Шаг 6: ALTER COLUMN SET NOT NULL — быстро, потому что constraint уже доказал валидность всех строк." },
+  ]}
+/>
+
+<Recap lang="ru">
+Начиная с PG 11, `ADD COLUMN` с не-волатильным константным дефолтом хранит значение в `pg_attribute.attmissingval` и возвращает его синтетически при чтении — строки не затрагиваются, операция выполняется за миллисекунды на таблице любого размера. Волатильные дефолты (функции типа `clock_timestamp()`) всё равно требуют материализации для каждой строки и вызывают полную перезапись. Добавление `NOT NULL` к существующей nullable-колонке без сканирования бэкфила никогда не безопасно за один `ALTER COLUMN SET NOT NULL` на большой таблице; правильный путь разбивает работу на мгновенное добавление колонки, пакетный бэкфил, ограничение `NOT VALID`, `VALIDATE CONSTRAINT` под лёгкой блокировкой и наконец быстрый `SET NOT NULL`.
+</Recap>
