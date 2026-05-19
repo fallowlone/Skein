@@ -1,0 +1,250 @@
+---
+slug: 03-pool-sizing-math
+lang: ru
+track: databases
+unit: 05-pooling
+order: 3
+title: "Размер пула: формула (ядра × 2) + шпинделей и двухуровневый стек"
+summary: "Пропускная способность Postgres достигает пика при (ядра × 2) + шпиндели активных backend'ов; клиентский пул на воркер определяется как concurrent_requests × db_calls × avg_ms / budget_ms; многоуровневая математика удерживает оба параметра в границах."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/05-pooling/02-pgbouncer-modes"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["pool-sizing", "PgBouncer", "connection-pool", "multiplexing"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://node-postgres.com/guides/pool-sizing
+  - https://www.pgbouncer.org/config.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Команда добавляет PgBouncer и устанавливает pool_size = 200 — по числу клиентов. P99 не падает, а растёт. Добавление backend'ов к Postgres сделало всё медленнее. Формула размера пула — не «одно соединение на клиента».
+</Hook>
+
+<Crux>Пик Postgres — (ядра × 2) + шпиндели backend'ов, не число клиентов. Клиентский пул на воркер считается отдельно; слои держат оба в норме.</Crux>
+
+<Explanation>
+
+## Почему больше Postgres backend'ов не означает больше пропускной способности
+
+Каждый Postgres backend — это отдельный OS-процесс. После нескольких кратного числа ядер CPU дополнительные активные backend'ы перестают давать прирост пропускной способности и начинают её снижать: больше переключений контекста, больше конкуренции за общие структуры памяти (proc array при снятии снапшота, таблица блокировок), больше накладных расходов ядра на планирование.
+
+**Формула, популяризированная HikariCP**, для оптимального числа активных backend'ов на стороне Postgres:
+
+```
+pool_size = (ядра CPU × 2) + effective_spindle_count
+```
+
+- `ядра × 2` покрывает CPU-параллелизм и часть эффекта hyper-threading
+- `effective_spindle_count` добавляет запас для I/O-параллелизма, когда хранилище может обслуживать несколько параллельных чтений
+
+На современных NVMe при хорошо прогретом кэше число шпинделей фактически равно 0 — формула сводится к `ядра × 2`. На **16-ядерном Postgres-сервере с данными в RAM: pool_size ≈ 32**, а не 200.
+
+Это `pool_size` (или `default_pool_size`) в PgBouncer, а не число воркеров приложения.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Сценарий</th>
+        <th class="border border-border px-3 py-2 text-left">Результат формулы</th>
+        <th class="border border-border px-3 py-2 text-left">Примечания</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">8 ядер, NVMe, данные в RAM</td>
+        <td class="border border-border px-3 py-2">(8 × 2) + 0 = 16</td>
+        <td class="border border-border px-3 py-2">+50% запас → pool_size = 24</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">16 ядер, NVMe, данные в RAM</td>
+        <td class="border border-border px-3 py-2">(16 × 2) + 0 = 32</td>
+        <td class="border border-border px-3 py-2">+50% запас → pool_size = 48</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">8 ядер, HDD RAID, холодные данные</td>
+        <td class="border border-border px-3 py-2">(8 × 2) + 6 = 22</td>
+        <td class="border border-border px-3 py-2">+50% → pool_size = 33</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Наивный подход «по числу клиентов»</td>
+        <td class="border border-border px-3 py-2">200–1000</td>
+        <td class="border border-border px-3 py-2">Пропускная способность Postgres деградирует; не делайте так</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Размер клиентского пула на воркер
+
+Клиентский пул (node-postgres, HikariCP, asyncpg) размеряется иначе — по внутреннему параллелизму воркера, а не по числу ядер Postgres:
+
+```
+worker_pool_size ≈ concurrent_requests × db_calls_per_request × avg_query_ms / request_budget_ms
+```
+
+Пример: 100 параллельных запросов на воркер, 2 вызова БД по 5 мс, бюджет запроса 50 мс:
+
+```
+= 100 × 2 × 5 / 50 = 20 соединений
+```
+
+При 10 воркерах: **200 клиентских соединений к PgBouncer** — дёшево (~2 КБ на соединение). PgBouncer мультиплексирует их на пул из ~24 backend'ов.
+
+## Конкретный пример расчёта пула
+
+<FadedExample
+  client:load
+  id="fe-pool-sizing"
+  lessonSlug="03-pool-sizing-math"
+  lang="ru"
+  title="Расчёт пула для Node.js API за PgBouncer в transaction mode"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Входные данные:</strong> 10 Node.js воркеров, каждый обрабатывает 200 параллельных HTTP-запросов, каждый делает 3 вызова БД в среднем по 4 мс, бюджет запроса 100 мс, Postgres — 8 ядер (NVMe SSD, данные в RAM), max_connections = 100.</p>
+        <p><strong>Шаг 1 — Клиентский пул на воркер:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`worker_pool ≈ concurrent_reqs × db_calls × avg_query_ms / request_budget_ms
+            = 200 × 3 × 4 / 100
+            = 24 соединения на воркер`}</code></pre>
+        <p><strong>Шаг 2 — Всего клиентских соединений к PgBouncer:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`24 × 10 воркеров = 240 клиентских соединений
+(PgBouncer обрабатывает тысячи — это нормально)`}</code></pre>
+        <p><strong>Шаг 3 — Backend-пул PgBouncer (сторона Postgres):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`pool_size = (8 ядер × 2) + 0 шпинделей = 16
++50% запас = 24 backend'а
+(намного ниже max_connections = 100)`}</code></pre>
+        <p><strong>Конфиг node-postgres (на воркер):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`new Pool({
+  host: 'pgbouncer.internal',
+  max: 24,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 2_000,
+})`}</code></pre>
+        <p><strong>Конфиг PgBouncer:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`[pgbouncer]
+pool_mode = transaction
+default_pool_size = 24
+max_client_conn = 1000
+reserve_pool_size = 6
+reserve_pool_timeout = 3
+server_idle_timeout = 600
+server_lifetime = 3600
+max_prepared_statements = 1000`}</code></pre>
+      </div>
+    ),
+    semi: {
+      prompt: "Если переключить с transaction на session mode при том же клиентском пуле, 240 клиентских соединений создадут проблему?",
+      blanks: [
+        { id: "answer", expected: "да", placeholder: "да или нет" },
+      ],
+    },
+    blank: {
+      prompt: "Почему ответ на исчерпание пула под нагрузкой редко бывает «поднять pool_size»?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>Исчерпание пула почти всегда вызвано ростом времени удержания соединения на запрос — медленный запрос, внешний API-вызов внутри транзакции, баг с idle-in-transaction. Увеличение пула даёт больше соединений при том же времени удержания, но корневая причина распространяется дальше: больше backend'ов борются за одни блокировки, больше давления на общую память. Пропускная способность Postgres на активный backend снижается. Сначала исправляйте удержание: добавьте индекс на медленный запрос, уберите API-вызовы из транзакции, включите idle_in_transaction_session_timeout. Когда удержание станет коротким, тот же пул обслужит больше трафика. Поднимайте pool_size только убедившись, что все checkout'ы короткие, а узкое место — реальный параллелизм.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "answer:нет": "В session mode каждый клиент привязан к одному backend. 240 клиентских соединений = 240 backend-соединений — далеко за пределами max_connections = 100. Postgres отклонит лишние соединения.",
+  }}
+/>
+
+## Ключевые параметры PgBouncer
+
+**`pool_size`** (целевой размер backend-пула на БД, по умолчанию 20) — устанавливайте в `(ядра × 2) + шпиндели + ~50% запас`. Это потолок реальных Postgres backend'ов, которые поддерживает PgBouncer.
+
+**`reserve_pool_size`** — дополнительные backend'ы, которые PgBouncer может поднять под пиковую нагрузку (по умолчанию 0; устанавливайте ~25% от pool_size).
+
+**`max_client_conn`** — максимальное число входящих клиентских соединений PgBouncer (по умолчанию 100; устанавливайте в тысячи — клиентские соединения дёшевы).
+
+**`server_reset_query = DISCARD ALL`** — SQL, выполняемый против backend'а перед возвратом в пул; очищает утёкшее состояние сессии.
+
+**`query_wait_timeout`** — сколько клиент может ждать backend'а перед отклонением (по умолчанию 120 с; в production: 10–30 с для быстрого отказа).
+
+<Inset kind="why" lang="ru">
+Почему формула использует ядра × 2, а не ядра × 1? Одно ядро CPU может обрабатывать немного больше одного активного backend'а, потому что Postgres backend'ы часть времени ждут I/O или блокировок, а не непрерывно потребляют CPU. Множитель ×2 — практическое среднее для смешанных CPU + I/O нагрузок; для исключительно CPU-bound запросов (сложные агрегации, JIT) множитель должен быть ближе к 1.
+</Inset>
+
+<NumbersCard
+  id="card-sizing-numbers"
+  title="Референсные числа для размера пула"
+  stats={[
+    { label: "Формула: оптимальное число backend'ов", value: "(ядра × 2) + шпиндели" },
+    { label: "Типичный pool_size в production (8 ядер)", value: "24 (16 + 50% запас)" },
+    { label: "Формула клиентского пула на воркер", value: "concurrent × calls × avg_ms / budget_ms" },
+    { label: "Память PgBouncer на клиентское соединение", value: "~2 КБ" },
+    { label: "Память Postgres backend", value: "~5–10 МБ" },
+    { label: "Рекомендация reserve_pool_size", value: "~25% от pool_size" },
+    { label: "Типичный max_client_conn", value: "1 000–10 000" },
+  ]}
+/>
+
+<Misconception id="mc-more-connections">
+  <p><strong>«Больше backend'ов = больше пропускной способности Postgres.»</strong> Ложь после точки (ядра × 2). Каждый дополнительный backend добавляет переключения контекста и конкуренцию за общую память. Пропускная способность достигает пика при малом числе и падает после. Измеряйте, потом устанавливайте pool_size.</p>
+</Misconception>
+
+<Quiz
+  id="03-pool-sizing-quiz-1"
+  lessonSlug="03-pool-sizing-math"
+  lang="ru"
+  question="Postgres-сервер имеет 16 ядер, все данные помещаются в RAM (NVMe). Какой правильный стартовый pool_size для PgBouncer?"
+  choices={[
+    { label: "(16 × 2) + 0 = 32, плюс ~50% запас = ~48", correct: true },
+    { label: "По числу воркеров приложения, например 200", misconception: "Равнение по числу клиентов создаёт 200 активных backend'ов Postgres — значительно выше пика пропускной способности для 16 ядер." },
+    { label: "max_connections / 2 = 50 при max_connections = 100", misconception: "Это не формула; max_connections — жёсткий потолок, не связанный с оптимальным размером по пропускной способности." },
+    { label: "1 соединение на vCPU = 16", misconception: "Множитель ×2 учитывает ожидания I/O и смешанные нагрузки; чистый ×1 занижает размер для типичного OLTP." },
+  ]}
+/>
+
+<Quiz
+  id="03-pool-sizing-quiz-2"
+  lessonSlug="03-pool-sizing-math"
+  lang="ru"
+  question="Node.js воркер обрабатывает 100 параллельных запросов, каждый делает 2 вызова БД по 5 мс в среднем, бюджет запроса 50 мс. Каков правильный max клиентского пула?"
+  choices={[
+    { label: "100 × 2 × 5 / 50 = 20 соединений", correct: true },
+    { label: "100 — одно соединение на параллельный запрос", misconception: "Каждый запрос делает 2 последовательных вызова БД, поэтому перекрытие параллелизма означает больше 1 соединения на запрос." },
+    { label: "10 — каждое соединение обслуживает 10 запросов", misconception: "Соединения пула эксклюзивны — только один запрос на соединение одновременно." },
+    { label: "200 — по числу вызовов БД", misconception: "Не все 200 вызовов БД выполняются одновременно; формула учитывает временное перекрытие." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Устанавливайте PgBouncer pool_size как (ядра × 2) + шпиндели + 50% запас — не по числу клиентов. Размер клиентского пула каждого воркера считается как concurrent_requests × db_calls × avg_ms / budget_ms. Двухуровневый стек мультиплексирует тысячи клиентов на число backend'ов, рассчитанное под CPU, а не под трафик.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-pool-sizing-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему `(ядра × 2) + шпиндели` — формула для активных backend'ов на стороне Postgres, а не для числа клиентов?", a: "Формула моделирует оптимальное число активных параллельных backend'ов на стороне Postgres. Backend'ы — это OS-процессы; после небольшого кратного числа ядер каждый дополнительный активный процесс тратит CPU на переключения контекста и конкуренцию за структуры общей памяти (proc array, таблица блокировок) быстрее, чем добавляет полезный параллелизм. Формула — про параллелизм Postgres, а не про число воркеров или клиентов. В transaction mode тысячи клиентов мультиплексируются на небольшой backend-пул без отношения 1:1." },
+    { q: "Какие параметры PgBouncer управляют backend-пулом и клиентским потолком, и как каждый из них следует устанавливать?", a: "`pool_size` (или `default_pool_size`) задаёт потолок реальных backend-соединений Postgres на БД; устанавливайте (ядра × 2) + шпиндели + ~50% запас. `reserve_pool_size` добавляет backend'ы для пиковых всплесков — ~25% от pool_size с `reserve_pool_timeout` 3–5 с. `max_client_conn` ограничивает входящих клиентов — соединения PgBouncer дёшевы (~2 КБ каждое), поэтому ставьте тысячи. `query_wait_timeout` ограничивает ожидание клиента — 10–30 с для быстрого отказа в production." },
+    { q: "Когда формулу (ядра × 2) нужно корректировать вверх, а когда вниз?", a: "Вверх: когда запросы преимущественно I/O-bound (большие сканы с холодным кэшем), а не CPU-bound — добавляйте число независимых физических шпинделей (или эффективную глубину очереди NVMe). Вниз: когда запросы исключительно CPU-intensive (сложные агрегации, Postgres JIT) — каждый backend занимает полное ядро; снижайте множитель к ×1. Также вниз при высоком parallel_workers_per_gather — один backend может занимать несколько ядер через воркеры параллельных запросов. Формула — стартовая точка; проверяйте нагрузочным тестом при 2× целевого трафика и наблюдайте за исчерпанием пула против простаивающих backend'ов." },
+  ]}
+/>
+
+<Recap lang="ru">
+Пропускная способность Postgres достигает пика примерно при `(ядра × 2) + шпиндели` активных backend'ов. После этого переключения контекста и конкуренция за общую память снижают пропускную способность на backend. Устанавливайте PgBouncer `pool_size` к этому числу плюс ~50% запас на пики — на типичном 8-ядерном NVMe-сервере это 24 backend'а, не 200. Клиентский пул каждого воркера рассчитывается отдельно по формуле параллелизма: `concurrent_requests × db_calls × avg_ms / budget_ms`. Двухуровневый стек (клиентский пул на воркер → пул PgBouncer в transaction mode → Postgres) мультиплексирует тысячи клиентов на небольшое число backend'ов, реально насыщающих CPU без его перегрузки.
+</Recap>
