@@ -1,0 +1,205 @@
+---
+slug: 06-observability-and-traces
+lang: en
+track: networking
+unit: 12-putting-it-together
+order: 6
+title: "Observability: distributed traces, USE/RED, and sampling"
+summary: "OpenTelemetry W3C Trace Context propagation reveals which hop ate the 500 ms; USE and RED methods discipline instrumentation; head-based vs tail-based sampling controls the cost of capturing traces at 1M req/s."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "02-dns-tcp-tls-sequence"
+  - "05-quic-websocket-paths"
+deepensInto:
+  - "07-resilience-and-cascades"
+spiral: ["latency", "statefulness"]
+concepts: ["OpenTelemetry", "traceparent", "span", "trace-propagation", "head-based-sampling", "tail-based-sampling", "USE-method", "RED-method", "error-budget", "SLO", "RUM"]
+sources:
+  - https://opentelemetry.io/
+  - https://www.w3.org/TR/trace-context/
+  - https://web.dev/articles/vitals/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+
+<Hook>
+p95 latency tripled overnight from 80 ms to 240 ms. You have logs from the load balancer, the application, and the database. Three logs, three clocks, three grep sessions. Without distributed traces, "where did the 160 ms go" takes hours. With OpenTelemetry, it takes 30 seconds — look at the span that grew, and you have a suspect.
+</Hook>
+
+<Crux>Distributed tracing propagates a single trace ID through every hop; the span that grew is the bottleneck — no grep, no guessing.</Crux>
+
+<Explanation>
+
+## OpenTelemetry and W3C Trace Context
+
+Modern observability instruments every network hop with a shared identifier. The **W3C Trace Context** standard defines two HTTP headers:
+
+- **`traceparent`**: `00-<16-byte trace-id>-<8-byte span-id>-<flags>` — the globally unique trace ID and the current span's ID.
+- **`tracestate`**: vendor-specific metadata (Datadog trace ID, Jaeger flags, etc.).
+
+Every component in the request path — browser, CDN edge (via Cloudflare Workers), load balancer, application server, database call, external API call — reads the incoming `traceparent`, creates a child span with a new span-id, does its work, emits timing data, and passes the same trace-id forward in its outbound request headers.
+
+**The result:** an observability backend (Tempo, Jaeger, Honeycomb, Datadog APM) can display the entire request as a **waterfall of spans** — each hop, each dependency, each database query, each external API call — with exact start times and durations. Finding "where did 500 ms go" reduces to looking at the longest span.
+
+<DebugLog
+  id="sr-debug-1"
+  lessonSlug="06-observability-and-traces"
+  lang="en"
+  title="OpenTelemetry trace for a single slow request — find the bottleneck"
+  output={`Trace 7a8f3c... duration 587ms
+
+span: HTTP request                              0–587ms (587ms)
+  span: DNS lookup                              0–4ms    (4ms)
+  span: TCP connect                             4–32ms   (28ms)
+  span: TLS handshake                           32–67ms  (35ms)
+  span: HTTP request send                       67–69ms  (2ms)
+  span: Server processing                       69–512ms (443ms)
+    span: Auth middleware                       69–73ms  (4ms)
+    span: Database query SELECT users           73–78ms  (5ms)
+    span: Database query SELECT user_settings   78–82ms  (4ms)
+    span: External API call third-party.com     82–489ms (407ms)
+    span: Response serialisation                489–512ms (23ms)
+  span: HTTP response receive                   512–587ms (75ms)`}
+  outputLang="log"
+  question="Total request is 587 ms. Which span is the bottleneck and what is your action item?"
+  hint="Look for the single longest span and consider whether it can be reduced or moved off the critical path."
+  answer="The 'External API call to third-party.com' takes 407 ms — 69% of the entire request. Action items: (1) check if the third-party call is necessary on this code path — can it be moved off the critical path (async, background job, cached result)? (2) if mandatory, can the response be cached locally with a short TTL? (3) if it must be fresh, can it be parallelised with other independent work? The network round-trips (DNS+TCP+TLS 67 ms, response receive 75 ms) sum to 142 ms — not great but not the main problem. Database is fast. Auth middleware is fast. Fix: cache the third-party API result for some configured TTL, or move it off the synchronous request path. p95 drops from 587 ms to under 200 ms."
+/>
+
+## Propagation through the CDN edge
+
+CDN edges (Cloudflare Workers, Fastly Compute, AWS CloudFront Functions) now support trace propagation. When a request arrives at the edge:
+1. Edge reads `traceparent` from the incoming request.
+2. Creates an edge span with its own span-id.
+3. Records time-to-first-byte from origin.
+4. Passes `traceparent` (with original trace-id, edge's span-id) to the origin.
+
+Result: the trace shows CDN edge latency as a distinct span. If the edge span is 5 ms and the origin span is 400 ms, you know to optimise origin, not CDN. Without trace propagation, you see one 405 ms total and guess at the breakdown.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="text-sm w-full border-collapse">
+    <thead>
+      <tr class="bg-slate-100">
+        <th class="border px-3 py-2 text-left">Component</th>
+        <th class="border px-3 py-2 text-left">Trace header action</th>
+        <th class="border px-3 py-2 text-left">What it records</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border px-3 py-1">Browser</td><td class="border px-3 py-1">Generates root trace-id + span-id</td><td class="border px-3 py-1">Navigation timing (LCP, DNS, TCP, TLS)</td></tr>
+      <tr><td class="border px-3 py-1">CDN edge worker</td><td class="border px-3 py-1">Reads traceparent, creates child span</td><td class="border px-3 py-1">Edge cache hit/miss, origin RTT</td></tr>
+      <tr><td class="border px-3 py-1">Load balancer</td><td class="border px-3 py-1">Passes traceparent, records routing</td><td class="border px-3 py-1">Backend selection, queue time</td></tr>
+      <tr><td class="border px-3 py-1">Application server</td><td class="border px-3 py-1">Reads, creates child span per handler</td><td class="border px-3 py-1">Auth, business logic, DB calls</td></tr>
+      <tr><td class="border px-3 py-1">Database driver</td><td class="border px-3 py-1">Records query + execution plan</td><td class="border px-3 py-1">Query text, rows examined, index hit</td></tr>
+      <tr><td class="border px-3 py-1">External API client</td><td class="border px-3 py-1">Passes traceparent outbound</td><td class="border px-3 py-1">Dependency latency, error rate</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## USE and RED operational frameworks
+
+Two disciplined instrumentation frameworks prevent "metric sprawl" — collecting 500 metrics and not knowing which matter.
+
+**USE method** (Brendan Gregg) for resources (CPU, memory, disk, network interfaces, connection pools):
+- **U**tilization — what fraction of the resource is in use? (CPU 80%, connection pool 95%)
+- **S**aturation — is work queuing because the resource is full? (request queue depth, run queue length)
+- **E**rrors — is the resource failing? (TCP errors, disk errors, OOM kills)
+
+**RED method** (Tom Wilkie) for services (APIs, microservices):
+- **R**ate — how many requests per second?
+- **E**rrors — what fraction return errors?
+- **D**uration — what is the latency distribution (p50, p95, p99)?
+
+**Using both together.** RED tells you *what* is broken (service error rate spiked). USE tells you *why* (CPU saturation caused by a CPU-bound handler, or connection pool saturation because the DB is slow). Together they reduce MTTR from hours to minutes.
+
+## Sampling strategies
+
+Tracing every request at 1 M req/s produces terabytes of trace data per day — cost-prohibitive. Two strategies balance completeness against cost:
+
+**Head-based sampling.** Decide at request entry whether to trace — fixed percentage (e.g., 1% of requests). Cheap and deterministic: the trace-id carries the sampling decision propagated to all downstream components. Downside: most errors and slow requests happen in the 99% you did not trace. You have no traces for your worst incidents.
+
+**Tail-based sampling.** Buffer all spans in memory, decide after seeing the request outcome:
+- 100% of requests with error status (4xx, 5xx)
+- 100% of requests with duration > threshold (p99 cutoff)
+- 0.1% of fast, successful requests (baseline)
+
+Implemented by the **OpenTelemetry Collector** with a `tail_sampling` processor. Downside: requires buffering all spans for the decision window (typically 30–60 s), using memory proportional to in-flight requests. At 1 M req/s with 30 s window, that is 30 M spans in memory — manageable with proper sharding.
+
+**Adaptive sampling.** Adjusts sample rate dynamically based on system load or time of day. During incidents, bumps to 100% for error traces; during quiet periods, reduces to 0.01%.
+
+**Right pattern:** head-based sampling for steady-state baseline data (cheap); tail-based sampling for errors + slow requests (guarantees traces for what matters); adaptive for cost management under variable load.
+
+<Inset kind="why" lang="en">
+Pure head-based sampling misses critical incidents: the 1% sample is unlikely to capture the rare 500 ms database query that occurred in the 99%. Pure tail-based has prohibitive memory cost at high traffic unless properly sharded. The combination — head for the bulk, tail for errors — achieves coverage of actionable events at acceptable cost.
+</Inset>
+
+<TraceScenario
+  id="sr-trace-tls"
+  lessonSlug="06-observability-and-traces"
+  lang="en"
+  scenario="A senior SRE is paged: p95 latency tripled overnight. Trace the diagnosis using distributed tracing."
+  steps={[
+    { prompt: "Step 1: which dashboard do you open first?", reveal: "Distributed trace dashboard. Pull a slow request from the last hour and look at the span breakdown — which span grew compared to yesterday's baseline?" },
+    { prompt: "Step 2: trace shows 160 ms spent in 'tls.handshake' span at the edge. Was the edge unhealthy?", reveal: "Edge metrics (CPU, memory, error rate) look normal. The TLS handshake span grew because CDN session-resumption cache was effectively cleared — a deploy likely rotated the STEK (Session Ticket Encryption Key) without keeping the previous key in the overlap window." },
+    { prompt: "Step 3: confirm with ALPN + resumption metrics. tls_resumption_rate dropped from 80% to 5%.", reveal: "Hypothesis confirmed. Every request now does a full TLS 1.3 handshake instead of resumption. 160 ms × traffic volume = the p95 you observed." },
+    { prompt: "Step 4: immediate mitigation?", reveal: "Re-deploy with the previous STEK in the rotation set so warm connections can resume. Resumption rate climbs back as old session tickets become valid again. p95 should drop within 10–30 minutes as caches warm." },
+    { prompt: "Step 5: post-mortem fix?", reveal: "Document the STEK-rotation runbook: always keep at least the previous 24 keys in decrypt-only mode for ticket continuity. Add a monitoring alert on tls_resumption_rate with threshold (e.g., drop below 60% sustained for 10 min triggers PagerDuty)." },
+  ]}
+/>
+
+<Quiz
+  id="sr-q1"
+  lessonSlug="06-observability-and-traces"
+  lang="en"
+  question="Why does pure head-based sampling miss the incidents you most need traces for?"
+  choices={[
+    { label: "Head-based sampling does not propagate the trace ID to downstream services", misconception: "The trace ID is propagated; the issue is selection bias, not propagation." },
+    { label: "Errors and slow requests are rare; a fixed 1% sample is unlikely to capture them, so you have no trace when the incident happens", correct: true },
+    { label: "Head-based sampling only works for HTTP/1.1, not HTTP/3", misconception: "Sampling strategy is independent of the transport protocol." },
+    { label: "Tail-based sampling captures 100% of traffic, so it is always strictly better", misconception: "Tail-based has high memory cost; the combination of both is the right pattern." },
+  ]}
+/>
+
+<Quiz
+  id="sr-q2"
+  lessonSlug="06-observability-and-traces"
+  lang="en"
+  question="The USE method applies to resources. Which of these correctly uses USE for a database connection pool?"
+  choices={[
+    { label: "Rate = 500 queries/s, Errors = 2%, Duration = p95 80 ms", misconception: "That is RED (for services), not USE (for resources)." },
+    { label: "Utilization = 95% of connections in use, Saturation = 200 requests queued waiting for a connection, Errors = 0 connection timeouts/min", correct: true },
+    { label: "Throughput = 500 queries/s, Latency = 80 ms, Availability = 99.9%", misconception: "Those are RED-adjacent metrics; USE specifically is Utilization + Saturation + Errors." },
+    { label: "CPU = 60%, Memory = 4 GB, Disk I/O = 200 IOPS", misconception: "Those are individual resource USE metrics, not USE applied to a connection pool specifically." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>W3C traceparent propagates one trace ID through every hop; the longest span is always the bottleneck; tail-based sampling captures 100% of errors without the cost of tracing every request.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-observability-and-traces-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why distributed tracing requires both head-based and tail-based sampling in production.", a: "Head-based sampling decides at request entry — cheap and deterministic, low memory. But it misses errors and slow requests in the unsampled majority. Tail-based samples 100% of errors + 100% of slow requests + small fraction of fast successes — but requires buffering all spans for the decision window (high memory). Combination: head for steady-state baseline data at low cost; tail for the requests that matter most (errors, slow tails). OTel Collector implements tail-based sampling with configurable policies." },
+    { q: "What does W3C Trace Context define, and how does it propagate through a CDN edge?", a: "W3C Trace Context defines the traceparent HTTP header: 00-<16B trace-id>-<8B span-id>-<flags>. The CDN edge (e.g., Cloudflare Worker) reads the incoming traceparent, creates a child span with a new span-id, records edge latency, then forwards the original trace-id with its own span-id as the parent in the outbound request to origin. The result: one trace waterfall from browser to origin to database, with each hop as a distinct span." },
+    { q: "How does the USE method differ from RED, and when do you use each?", a: "USE (Utilization, Saturation, Errors) applies to resources — CPU, memory, disk, connection pools. It answers: is this resource the bottleneck? RED (Rate, Errors, Duration) applies to services — APIs, microservices. It answers: is this service working correctly and at what latency? Use RED first to detect a problem (error rate spiked). Use USE to diagnose why (CPU saturation, connection pool exhausted). Together they reduce MTTR." },
+  ]}
+/>
+
+<Recap lang="en">
+OpenTelemetry and the W3C Trace Context standard propagate a single trace ID through every hop in a request — browser, CDN edge, load balancer, application, database — surfacing a span waterfall that makes "where did 500 ms go" a 30-second question instead of a multi-hour log archaeology session. CDN edges (Cloudflare Workers, Fastly Compute) now participate in trace propagation, making edge latency measurable as a distinct span. The USE method (Utilization, Saturation, Errors) instruments resources; RED (Rate, Errors, Duration) instruments services — together they discipline you to collect metrics that drive actions. Sampling at 1 M req/s requires combining head-based sampling (low cost, steady-state baseline) with tail-based sampling (100% of errors + slow requests at the OTel Collector), because pure head-based misses the incidents you most need traces for.
+</Recap>
