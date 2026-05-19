@@ -24,6 +24,24 @@ per the spec.
 - Spec + plan + migration commits are on that branch, on top of `main` (`6d162d6`).
 - Run `git branch --show-current`; confirm you are on `interesting-antonelli-002bf7`.
 
+## Concurrency lock — ACQUIRE BEFORE ANYTHING ELSE
+
+Scheduled and manual agents can target this worktree at once and collide (it happened
+2026-05-19 on unit 01 — two agents overwrote each other's lessons). A `ps`/mtime check
+is racy. Use this atomic lock. At run start, before reading files or authoring:
+
+1. `cd` to the worktree, then: `mkdir docs/open-atlas/.migration-lock`
+   - **Succeeds** → you hold the lock. Record ownership:
+     `printf '%s  %s\n' "$$" "$(date -u +%FT%TZ)" > docs/open-atlas/.migration-lock/owner`
+   - **Fails** → the lock is held. Read `docs/open-atlas/.migration-lock/owner`. If its
+     timestamp is more than 90 minutes old the holder is presumed dead — `rm -rf
+     docs/open-atlas/.migration-lock` and retry once. Otherwise STOP: another agent is
+     migrating this worktree. Do not read further, do not author/edit, do not commit —
+     report "withdrew: lock held" and exit.
+2. Release the lock on EVERY exit path — clean rotation or abort:
+   `rm -rf docs/open-atlas/.migration-lock`.
+3. The lock dir is git-ignored — never `git add` it.
+
 ## State (as of 2026-05-19)
 - `import-alias-refactor` merged into `main` (`6d162d6`).
 - Migration brainstormed; spec written and committed (`32582c1`).
@@ -59,5 +77,8 @@ per the spec.
 - Update `HANDOFF.md` whenever a phase or queue item completes.
 
 ## First action
-`cd` to the worktree, read the three files above, confirm git state, then continue
-from the plan's progress markers — or, if no plan exists, from Next step 1.
+`cd` to the worktree, then **acquire the concurrency lock** (see the section above) —
+if it is held by a live agent, withdraw and exit. Holding the lock: read the three
+files above, confirm git state, then continue from the plan's progress dashboard
+(Phase B, next unmarked unit). Release the lock (`rm -rf docs/open-atlas/.migration-lock`)
+when you rotate or exit.
