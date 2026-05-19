@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (13/51 units done — networking 12/12, browser 1/8) ← **RESUME HERE: browser/02-render-pipeline**
+- [ ] **Phase B** — content migration (20/51 units done — networking 12/12, browser 8/8) ← **RESUME HERE: databases/01-relational-model**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
