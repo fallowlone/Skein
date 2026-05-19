@@ -1,0 +1,190 @@
+---
+slug: 05-reconnection-strategy
+lang: en
+track: networking
+unit: 08-websocket-realtime
+order: 5
+title: "Reconnection: jittered backoff, thundering herd, message resumption"
+summary: "How to reconnect without crashing your own server — jittered exponential backoff, message IDs, and the at-least-once delivery guarantee with deduplication."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "08-websocket-realtime/04-backpressure-and-flow"
+deepensInto:
+  - "07-production-architecture"
+spiral: ["statefulness", "latency"]
+concepts: ["reconnection", "exponential-backoff", "jitter", "thundering-herd", "message-resumption", "message-id", "at-least-once", "deduplication"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc6455
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Your server restarts for a deploy. All 10 million connected clients instantly get close code 1006. They all retry at exactly 1 second. Ten million SYN packets hit your load balancer simultaneously. It collapses. The server never recovers. WebSocket has no built-in reconnection — which means you are one naive retry loop away from killing your own service during a maintenance window.
+</Hook>
+
+<Crux>WebSocket has no built-in reconnection; without jittered backoff, simultaneous retries create a thundering herd that prevents recovery.</Crux>
+
+<Explanation>
+
+## What happens on disconnect
+
+When a WebSocket connection drops — network glitch, server restart, proxy timeout — the client receives a `close` event with close code 1006 (abnormal closure — no close frame was received). The application must decide: reconnect, and if so, when and how.
+
+WebSocket itself provides zero reconnection logic. The application owns this entirely.
+
+## The thundering herd problem
+
+If every client retries at the same fixed interval after a disconnect, the retries arrive at the server in synchronized waves:
+
+- T=0: service goes down, 10 million clients disconnect.
+- T=1s: all 10 million clients retry simultaneously.
+- Server gets 10 million SYN packets in ~1 second.
+- TCP SYN backlog fills. New connections are dropped.
+- T=2s: all 10 million retry again at the same interval.
+- Server never gets a quiet moment to recover.
+
+Even exponential backoff without jitter fails: the synchronized doubling still creates synchronized bursts.
+
+## Jittered exponential backoff
+
+The fix is to add **randomness (jitter)** to each client's retry timing so the 10 million retries spread over a window of seconds instead of arriving simultaneously.
+
+Algorithm:
+
+```
+attempt = 0
+base_ms = random(100, 500)      // different per client
+max_ms  = 60_000
+
+while not connected:
+  delay = min(base_ms * 2^attempt, max_ms)
+  delay = delay * random(0.5, 1.5)   // ±50% jitter
+  sleep(delay)
+  attempt += 1
+  try_connect()
+```
+
+Example spread for a 100k-client server restart:
+- Client A picks base=150 ms, jitter → retries at 186 ms
+- Client B picks base=340 ms, jitter → retries at 412 ms
+- Client C picks base=210 ms, jitter → retries at 288 ms
+
+The 100k retries are spread over 10+ seconds. The server processes them in small batches and recovers within 1–2 retry windows instead of being crushed.
+
+<NumbersCard
+  id="card-reconnect-numbers"
+  title="Reconnection strategy parameters"
+  data-lesson-visual
+  stats={[
+    { label: "Recommended base delay range", value: "100–500 ms (random per client)" },
+    { label: "Jitter factor", value: "±50% of computed delay" },
+    { label: "Max delay cap", value: "30–60 seconds" },
+    { label: "Reconnect spread for 10M clients with jitter", value: "10+ seconds" },
+    { label: "Reconnect spread without jitter (fixed 1s interval)", value: "< 1 second (thundering herd)" },
+    { label: "Libraries shipping jittered backoff by default", value: "grpc-go, Phoenix, @tensorflow/tfjs" },
+  ]}
+/>
+
+## Message resumption and at-least-once delivery
+
+Reconnection re-establishes the connection. It does not restore lost messages. Any messages the server sent while the client was disconnected — or that the client sent but the server had not yet ACK'd — are gone unless the application tracks them.
+
+**The pattern:**
+
+1. **Every message gets a client-generated ID.** The sender keeps the message in a retry queue until it receives an ACK for that ID.
+2. **The server ACKs each message ID.** The sender removes ACK'd messages from its retry queue.
+3. **On reconnect, the client resends unACK'd messages.** The server checks its Redis stream or database: if the message ID already exists, it sends ACK to the client but does not republish (prevents duplicates for other subscribers).
+
+This implements **at-least-once delivery with idempotent deduplication** — no message is lost, no message is delivered more than once to other clients.
+
+For the server to deduplicate, it needs durable state that survives restarts. The typical store:
+- **Redis stream** (fast, persistent, ordered, with configurable retention).
+- **PostgreSQL** (durable, queryable, suited for message history with audit requirements).
+
+The client reconnect flow:
+
+```
+1. Reconnect with backoff.
+2. On connection established, send { type: "resume", lastSeenId: "msg-4291" }.
+3. Server reads the stream from msg-4292 onward and delivers missed messages.
+4. Server ACKs the delivery.
+5. Client confirms receipt and updates its lastSeenId.
+```
+
+<Inset kind="why" lang="en">
+**Why not session-layer resumption instead?** Some protocols (QUIC, MPTCP) handle connection migration at the transport layer — the application is unaware of reconnects. WebSocket sits on TCP which has no migration. Rolling your own session layer (token + Redis resume state) adds 50–100 ms of latency on reconnect but works across any TCP/TLS WebSocket deployment. The choice is: simplicity + universality of the custom session layer vs. the migration-at-the-transport approach of WebTransport/QUIC (narrower browser and server support as of 2026).
+</Inset>
+
+<TraceScenario
+  id="ws-sr-trace-1"
+  pieceSlug="05-reconnection-strategy"
+  lang="en"
+  scenario="Trace a cascade failure on a WebSocket server after a brief network partition — with and without jitter."
+  steps={[
+    { prompt: "A 1 Gbps link hiccups for 5 seconds. All 100,000 WebSocket clients get close code 1006. What does the server see?", reveal: "Active connection count drops instantly from 100k to near zero. OS closes the sockets. Server memory drops as connection state is freed." },
+    { prompt: "Without jitter: all 100k clients retry at 1 second fixed interval. What hits the server?", reveal: "100,000 TCP SYN packets arrive in ~1 second. The SYN backlog fills. The OS starts dropping SYN packets or engaging SYN cookies. Legitimate new connections are blocked." },
+    { prompt: "The server is still starting up when the second synchronized wave (at T=2s) arrives. What happens?", reveal: "The server is still under load from the first wave. The second wave collapses the SYN backlog again. The server cannot accept connections fast enough to recover between waves." },
+    { prompt: "With jitter: clients pick base=100–500 ms, add ±50% jitter, double each attempt. Describe the first 10 seconds of reconnect traffic.", reveal: "The 100k clients spread their first retry across the 100–750 ms window. The server accepts a few hundred per second — well within capacity. By T=10s, 95%+ of clients have reconnected and the server is healthy." },
+    { prompt: "On reconnect, a client sends resume token with lastSeenId=msg-4291. The server's Redis stream has msg-4292 through msg-4300. What does the server do?", reveal: "It reads the Redis stream from msg-4292 onward and delivers the 9 missed messages to the client in order. It ACKs delivery. The client updates its lastSeenId to msg-4300. No messages are lost." },
+  ]}
+/>
+
+<Quiz
+  id="ws-sr-quiz-1"
+  pieceSlug="05-reconnection-strategy"
+  lang="en"
+  question="You are designing a load balancer in front of a WebSocket cluster. A client sends a message to server A, then the network partitions and the client reconnects to server B. Why is sticky session routing (client always goes to the same server) safer than per-request load balancing, even though servers have pub/sub?"
+  choices={[
+    { label: "Without sticky session, the client's application state on server A is lost when it connects to server B", correct: true },
+    { label: "Pub/sub automatically fails if the client switches servers", misconception: "Pub/sub is backend state, not per-client; it works across any server." },
+    { label: "Sticky session reduces latency by avoiding server handoff overhead", misconception: "The latency concern is real but minor; the main reason is that unacked local state on server A is lost." },
+    { label: "Without sticky session, the new server cannot compute Sec-WebSocket-Accept", misconception: "Accept is computed fresh on each new handshake; it is not tied to the previous server." },
+  ]}
+/>
+
+<Quiz
+  id="ws-sr-quiz-2"
+  pieceSlug="05-reconnection-strategy"
+  lang="en"
+  question="A mobile WebSocket client loses connectivity, reconnects 45 seconds later, and sends a queued message with a message ID it had not yet received an ACK for. The server has a Redis stream retaining 24 hours of messages. What is the correct server action?"
+  choices={[
+    { label: "ACK the message ID immediately and publish it to the stream, even though the server already has a record of it", misconception: "This causes duplicate delivery to other subscribers — at-least-once becomes at-most-twice." },
+    { label: "Check if the message ID already exists in the Redis stream; if yes, send ACK to the client but do not republish; if no, publish and ACK", correct: true },
+    { label: "Drop the message because it arrived 45 seconds late and is now stale", misconception: "Message age is irrelevant when the client is deduplicating by ID. Late delivery is correct; dropping is data loss." },
+    { label: "Forward it to the original server A that the client was connected to before", misconception: "Server identity is irrelevant with state replication. The new server handles it if it has stream access." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>WebSocket has no built-in reconnection — implement jittered exponential backoff (base 100–500 ms, ±50% jitter, cap 60 s) to spread 10 million client retries over seconds instead of milliseconds. Pair it with message IDs + Redis stream dedup for at-least-once delivery with no duplicates on reconnect.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-reconnection-strategy-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why exponential backoff without jitter still produces a thundering herd problem.", a: "Without jitter, every client doubles its delay by the same factor starting from the same base. After the first retry at T=1s, the second retry is at T=2s for every client, the third at T=4s for every client — the waves are synchronized even though they are spaced. Jitter randomizes each client's delay independently, so the 10M clients spread across a continuous window rather than arriving in synchronized bursts every 2^n seconds." },
+    { q: "What durable store does message resumption require on the server, and why must it survive server restarts?", a: "A persistent message log — typically a Redis stream (fast, ordered, configurable retention) or a database table. It must survive restarts because on reconnect the client sends its lastSeenId; the server must be able to read all messages after that ID. If the log were in process memory, a server restart would lose all message history and force every reconnecting client to replay from scratch or lose messages." },
+    { q: "Describe the full reconnect flow with message resumption: what does the client send, what does the server return, and what dedup check prevents duplicate delivery?", a: "1) Client reconnects with backoff, then sends { type: resume, lastSeenId: msg-4291 }. 2) Server reads the stream from msg-4292 onward, delivers each missed message in order to the client. 3) Client ACKs each message and updates lastSeenId. 4) For messages the client is resending (unACK'd), the server checks the stream: if the message ID already exists, it sends ACK but does not re-publish (dedup); if not, it publishes and ACKs. This guarantees at-least-once delivery to the client and exactly-once publish to the stream." },
+  ]}
+/>
+
+<Recap lang="en">
+WebSocket has no built-in reconnection mechanism — close code 1006 fires and the application must decide what to do. Without jitter, a mass disconnect causes a thundering herd: all clients retry at synchronized intervals, making SYN waves that prevent the server from recovering. Jittered exponential backoff (base 100–500 ms per client, ±50% random jitter, doubling each attempt, capped at 30–60 s) spreads 10 million retries over seconds — the standard approach in all major WebSocket libraries. Message resumption pairs a Redis stream (or database) with client-generated message IDs: the sender keeps unACK'd messages in a local queue, resends on reconnect, and the server deduplicates by checking the stream before publishing, achieving at-least-once delivery with no duplicates. Sticky session routing helps preserve in-flight state on the server the client was previously connected to, though full durability requires externalized state in Redis or a database.
+</Recap>
