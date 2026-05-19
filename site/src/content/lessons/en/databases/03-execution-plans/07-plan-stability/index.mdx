@@ -1,0 +1,188 @@
+---
+slug: 07-plan-stability
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 7
+title: "Production failure modes and plan stability"
+summary: "Eight real failure modes — stale stats, generic-plan trap, correlated columns, SSD mis-tuning, JIT overhead, work_mem spill, random_page_cost drift, and plan flips — plus the operational strategy to detect and prevent plan regressions across deploys."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["06-plan-cache-and-tuning"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["plan-stability", "plan-regression", "pg-hint-plan", "auto-explain", "plan-cache", "plan-audit", "autovacuum-analyze", "stale-statistics"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+A B2B SaaS product's orders dashboard degrades every Monday morning. By Tuesday it is fine again. The pattern: a batch import runs Sunday night, shifting data distributions; autovacuum has not triggered ANALYZE yet by Monday morning; the planner picks a Nested Loop on a 1000× underestimated join. ANALYZE in the post-batch hook eliminates the incident forever.
+</Hook>
+
+<Crux>Eight failure modes, one strategy: fresh stats, CREATE STATISTICS, plan_cache_mode, auto_explain alerting, ANALYZE per deploy.</Crux>
+
+<Explanation>
+
+## Eight real production failure modes
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Failure mode</th>
+        <th class="border border-border px-3 py-2 text-left">Symptom</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Stale statistics cascade</td>
+        <td class="border border-border px-3 py-2">Sudden slowdown after bulk insert; rows-estimated wildly off actual</td>
+        <td class="border border-border px-3 py-2">ANALYZE in post-batch hook; lower autovacuum_analyze_scale_factor</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Generic-plan trap</td>
+        <td class="border border-border px-3 py-2">High stddev_exec_time; bimodal latency on prepared statement</td>
+        <td class="border border-border px-3 py-2">plan_cache_mode = force_custom_plan for the role</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Correlated-column blowup</td>
+        <td class="border border-border px-3 py-2">Nested Loop running 1M iterations; rows-estimated ~1000× low</td>
+        <td class="border border-border px-3 py-2">CREATE STATISTICS (dependencies, mcv); ANALYZE</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">random_page_cost mis-tuned (SSD)</td>
+        <td class="border border-border px-3 py-2">Planner picks Seq Scan where Index Scan should win; queries read whole tables</td>
+        <td class="border border-border px-3 py-2">SET random_page_cost = 1.1 in postgresql.conf</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">JIT overhead on OLTP</td>
+        <td class="border border-border px-3 py-2">Short queries slower than expected; JIT compilation time exceeds execution savings</td>
+        <td class="border border-border px-3 py-2">Raise jit_above_cost to 500000 or SET jit = off for OLTP role</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">work_mem spill</td>
+        <td class="border border-border px-3 py-2">Sort Method: external merge; Hash Batches &gt; 1; queries slow on joins/sorts</td>
+        <td class="border border-border px-3 py-2">SET work_mem = '32MB' per session; not globally without memory budget check</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">effective_cache_size too low</td>
+        <td class="border border-border px-3 py-2">Planner prefers Seq Scan even on SSD with large RAM because it assumes cold data</td>
+        <td class="border border-border px-3 py-2">SET effective_cache_size = '24GB' (~75% of total RAM)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Plan flips with workload phase</td>
+        <td class="border border-border px-3 py-2">Same query gets different plans at different times; autovacuum eventually rebalances</td>
+        <td class="border border-border px-3 py-2">pg_hint_plan for critical paths; otherwise accept variance and alert on it</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Plan stability across deploys
+
+The most common operational pain: a deploy with new tables, new data, or different volumes causes plan regressions on unchanged queries.
+
+**The five-layer strategy:**
+
+**Layer 1 — cost-constant tuning (one-time):** Set `random_page_cost = 1.1`, `effective_cache_size` to 75% of RAM, `work_mem = 16-32MB`. Verify with EXPLAIN on the top-20 queries. This ensures the planner has the right mental model of your hardware.
+
+**Layer 2 — statistics freshness:** Lower `autovacuum_analyze_scale_factor = 0.02` on hot tables. Add `ANALYZE critical_tables` to every deploy hook. Create `CREATE STATISTICS` objects for correlated column groups identified via EXPLAIN.
+
+**Layer 3 — plan cache for skewed workloads:** Set `plan_cache_mode = 'force_custom_plan'` on roles that run parameterised queries with skewed parameter distributions (identified via high `stddev_exec_time`).
+
+**Layer 4 — observability:** Configure `auto_explain` (log_min_duration = 500ms, log_analyze = true, log_buffers = true, log_format = json, sample_rate = 0.05). Archive `pg_stat_statements` weekly (reset + save to file/S3).
+
+**Layer 5 — deploy procedure:** Before every deploy, snapshot `pg_stat_statements` + `EXPLAIN` of top-20 queries to JSON. After deploy: ANALYZE critical tables, wait 5 minutes, re-snapshot. Diff key metrics. Flag any query whose plan structure changed or whose `mean_exec_time` grew by more than 50%.
+
+<TraceScenario
+  id="07-stability-trace-1"
+  lessonSlug="07-plan-stability"
+  lang="en"
+  scenario="A senior engineer tunes a Postgres 16 OLTP database on NVMe SSD (32GB RAM, 500GB DB, ~5k QPS) that was deployed with default planner settings."
+  steps={[
+    { prompt: "Step 1: baseline.", reveal: "Snapshot pg_stat_statements: top queries by total_exec_time, mean_exec_time, stddev. Capture EXPLAIN (ANALYZE, BUFFERS) for the top-20. Note: which use Seq Scan on large tables? Which spill (Hash Batches > 1, Sort Method: external merge)? Which have large rows-estimated vs actual gaps? Which have high stddev? Save plans as JSON for later comparison." },
+    { prompt: "Step 2: SSD cost tuning.", reveal: "ALTER SYSTEM SET random_page_cost = 1.1; ALTER SYSTEM SET effective_cache_size = '24GB'; SELECT pg_reload_conf(); Verify: SHOW random_page_cost. Re-run EXPLAIN on the top-20. Expect some plans to shift from Seq Scan to Index Scan — that is correct on SSD. For any shift that looks like a regression, inspect per-query before continuing." },
+    { prompt: "Step 3: statistics refresh and extension.", reveal: "ANALYZE; -- entire database. For high-skew columns: ALTER TABLE ... ALTER COLUMN ... SET STATISTICS 1000. For correlated column groups: CREATE STATISTICS (dependencies, mcv) ON col1, col2 FROM tbl. Re-ANALYZE. Re-EXPLAIN top queries; rows-estimated should track rows-actual within 2x on most nodes." },
+    { prompt: "Step 4: memory and JIT.", reveal: "SET work_mem = '16MB' in postgresql.conf (with max_connections budget: 200 × 16MB = 3.2GB worst case). Lower autovacuum_analyze_scale_factor on hot tables. For OLTP-only workloads: ALTER SYSTEM SET jit_above_cost = 500000 or SET jit = off for the application role." },
+    { prompt: "Step 5: observability.", reveal: "Configure auto_explain (log_min_duration = '500ms', log_analyze = true, log_buffers = true, sample_rate = 0.05). Set up weekly pg_stat_statements_reset() with prior-week snapshot archival. Set up alerts: any top-20 query mean_exec_time > 50ms, or stddev_exec_time > 10x mean. Document all settings with justifications — every non-default value needs a comment." },
+  ]}
+/>
+
+<Misconception id="07-stability-mc-1">
+<strong>"If the planner is wrong, force the plan with hints."</strong> pg_hint_plan is the last resort. Every forced plan stops adapting; tomorrow's data makes today's hint wrong. Fix the root cause first. Reserve hints only for 1-3 queries with a permanently correct plan shape.
+</Misconception>
+
+<TradeoffMatrix
+  id="07-stability-tradeoff-1"
+  lessonSlug="07-plan-stability"
+  lang="en"
+  prompt="A team needs to stabilise execution plans across deploys for the top-20 OLTP queries. Pick the strategy."
+  options={[
+    { name: "Statistics-first: aggressive ANALYZE in post-deploy + extended statistics + auto_explain alerting", summary: "Default production discipline.", correct: true, justification: "Right answer for ~90% of cases. Fresh, accurate statistics let the planner make the right choice even as data grows. CREATE STATISTICS for correlated columns eliminates the largest class of row-estimate failures. auto_explain catches regressions automatically. Cost: a few ANALYZE commands in post-deploy hook + auto_explain config + weekly review of pg_stat_statements deltas. Preserves the planner's ability to adapt as data shapes shift." },
+    { name: "Hint-based pinning via pg_hint_plan for the top-20 queries", summary: "Lock plans hard.", justification: "Right for stability-critical queries where regression cost > adaptation benefit (financial reporting, fixed-SLA endpoints). Embed hints in SQL: /*+ IndexScan(orders idx_x) HashJoin(orders customers) */. Trades planner adaptability for predictability — tomorrow's data shape may make today's hint wrong. Reserve for the 1-3 queries that absolutely cannot regress; use statistics-first for the rest." },
+    { name: "Disable join reordering globally: SET from_collapse_limit = 1; SET join_collapse_limit = 1;", summary: "Lock-down option.", justification: "Forces Postgres to respect the explicit JOIN order in SQL — useful when developers hand-tune queries and want them to stay tuned. Global flag is a sledgehammer; sets it for every query. Better as per-session or per-role for analytic workloads. Side effect: large OLTP queries may miss optimal join order. Use selectively, not globally." },
+    { name: "Cache plans externally and replay them via a custom executor", summary: "Custom and exotic.", justification: "Sometimes seen in extreme scale-out setups. Wrong default. Reinventing planner caching outside Postgres adds operational complexity, breaks tooling, and ages poorly. Use only when no Postgres-native mechanism (hints, statistics, plan_cache_mode) suffices — which is rare." },
+  ]}
+/>
+
+<Quiz
+  id="07-stability-quiz-1"
+  lessonSlug="07-plan-stability"
+  lang="en"
+  question="A batch job inserts 20M rows into the orders table every Sunday night. Every Monday morning, queries that were fast on Friday are slow. By Tuesday they are fast again. What is the root cause and the fix?"
+  choices={[
+    { label: "Statistics went stale after the bulk insert; autovacuum had not triggered ANALYZE yet by Monday morning. Fix: add ANALYZE orders to the post-batch hook so statistics are current before traffic resumes.", correct: true },
+    { label: "The table grew too large for indexes to be useful; fix with REINDEX", misconception: "Index usefulness depends on selectivity, not just table size. The issue is stale statistics, not index bloat." },
+    { label: "Monday traffic is heavier than Friday traffic; fix by scaling up the database server", misconception: "The pattern (slow Monday, fine by Tuesday) is consistent with autovacuum catching up, not traffic differences." },
+    { label: "The batch job left locks that prevent queries from running", misconception: "Lock contention manifests as waiting queries, not slow queries. And it resolves when the transaction ends, not by Tuesday." },
+  ]}
+/>
+
+<Quiz
+  id="07-stability-quiz-2"
+  lessonSlug="07-plan-stability"
+  lang="en"
+  question="A query shows `Sort Method: external merge Disk: 450MB` in EXPLAIN ANALYZE. What is the interpretation and fix?"
+  choices={[
+    { label: "The sort exceeded work_mem (default 4MB) and spilled 450MB to disk; fix with SET work_mem = '512MB' for this session or query pattern", correct: true },
+    { label: "The sort is distributed across 450MB of shared_buffers — this is normal", misconception: "External merge means the data did not fit in work_mem and Postgres used disk — this is a performance problem, not normal." },
+    { label: "The sort index is missing; add an index on the ORDER BY column", misconception: "An index can sometimes eliminate a sort, but the external merge symptom is about work_mem, not index presence." },
+    { label: "There is disk corruption; run pg_check to verify", misconception: "External merge is a planned disk-based sort, not a corruption symptom." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Eight failure modes, one playbook: fresh statistics (ANALYZE in every deploy hook), extended statistics for correlated columns, force_custom_plan for skewed prepared statements, random_page_cost = 1.1 on SSD, work_mem per session for heavy queries, auto_explain + pg_stat_statements for observability, and hints only for the 1-3 queries that must never regress.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-stability-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why the gap between rows-estimated and rows-actual at every plan node is the single most important diagnostic in Postgres.", a: "The planner's job is to pick the cheapest plan. 'Cheapest' is computed using row estimates at every node — they feed into the cost formula at each level, and they determine the choice between alternative plans at the level above. A bad row estimate at a leaf node (e.g., a scan that emits 1000x more rows than predicted) cascades upward: the join above picks the wrong algorithm because it expects a smaller input; the sort above picks the wrong sort method because it expects less data; the limit above does not push down because the planner thinks all rows must be read. The result is not 'one wrong number' — it is 'every decision in the tree above this node is wrong.' That cascade is why senior Postgres tuning starts with row estimates, not with join algorithms or scan types. The systematic process: for each plan node, compute rows-actual / rows-estimated. Flag any node with ratio > 10x as suspect; ratio > 100x as urgent. Trace the predicate, identify the cause (stale stats, correlated columns, non-sargable expression), and fix it. The plan choice corrects itself." },
+    { q: "Design the plan-stability strategy for a B2B SaaS Postgres 16 database on NVMe SSD (32GB RAM, 500GB DB, 5k OLTP QPS). Top-20 queries identified via pg_stat_statements. 3 of 20 are heavy aggregations.", a: "Five layers. Layer 1 — cost constants: random_page_cost = 1.1, seq_page_cost = 1.0, effective_cache_size = '24GB', work_mem = '16MB' (with max_connections=200, total budget 3.2GB). Layer 2 — statistics: autovacuum_analyze_scale_factor = 0.02 on hot tables; CREATE STATISTICS (dependencies, mcv) for correlated column groups identified via EXPLAIN; bump SET STATISTICS 1000 on skewed columns; ANALYZE in post-deploy hook. Layer 3 — plan cache: plan_cache_mode = 'force_custom_plan' on reporting role for the 3 heavy aggregation queries (skewed parameters, high stddev_exec_time); leave OLTP role at default 'auto'. Layer 4 — observability: auto_explain (log_min_duration = '500ms', log_analyze = true, log_buffers = true, log_format = json, sample_rate = 0.05); weekly pg_stat_statements archive + reset. Layer 5 — deploy procedure: pre-deploy snapshot of pg_stat_statements + EXPLAIN of top-20; post-deploy ANALYZE, 5-minute wait, re-snapshot + diff; alert on any query mean_exec_time > 50ms or plan structure change. Reserve pg_hint_plan for at most 1-3 reporting queries that are mission-critical and known to have a permanently correct plan shape." },
+  ]}
+/>
+
+<Recap lang="en">
+Eight production failure modes cover most Postgres plan regressions: stale statistics after bulk operations (ANALYZE in post-batch hook), generic-plan trap on prepared statements with skewed parameters (plan_cache_mode = force_custom_plan), correlated-column row-estimate failures (CREATE STATISTICS dependencies + mcv), SSD mis-tuning (random_page_cost = 1.1), JIT overhead on OLTP (raise jit_above_cost), work_mem spill (sort / hash spill to disk — fix per-session), effective_cache_size mismatch, and plan flips with data phase changes. The operational strategy has five layers: SSD-tuned cost constants, aggressive statistics maintenance, selective plan_cache_mode overrides, auto_explain + pg_stat_statements observability, and a deploy procedure that diffs plans and metrics before and after every deploy. Use pg_hint_plan only for the 1-3 queries where the plan must be pinned and the correct plan shape is permanently known; let the planner adapt to everything else.
+</Recap>

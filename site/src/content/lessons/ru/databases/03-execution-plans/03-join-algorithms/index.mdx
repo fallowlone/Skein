@@ -1,0 +1,238 @@
+---
+slug: 03-join-algorithms
+lang: ru
+track: databases
+unit: 03-execution-plans
+order: 3
+title: "Алгоритмы соединения и каскад ошибок оценки строк"
+summary: "Postgres выбирает Nested Loop, Hash Join или Merge Join на основе оценок строк. Когда внешняя сторона недооценена в 1000×, Nested Loop взрывается — алгоритм является симптомом, а плохая оценка строк — причиной."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["02-scan-types"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["nested-loop", "hash-join", "merge-join", "row-estimate-cascade", "non-sargable-predicate", "work-mem", "sargable"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+Запрос возвращает 50 строк за 50 мс на staging. В production — та же схема, идентичные индексы, тот же запрос — 4.2 секунды. EXPLAIN ANALYZE показывает `Nested Loop ... loops=520000`. Внутренний index scan выполнился полмиллиона раз. Планировщик думал, что на внешней стороне 50 строк. Их было 520,000. Одна плохая оценка. Один неверный выбор соединения. Замедление в 80×.
+</Hook>
+
+<Crux>Алгоритм соединения — симптом. Плохие оценки строк — причина. Исправьте оценку, и выбор алгоритма исправится сам.</Crux>
+
+<Explanation>
+
+## Три алгоритма соединения
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Алгоритм</th>
+        <th class="border border-border px-3 py-2 text-left">Форма стоимости</th>
+        <th class="border border-border px-3 py-2 text-left">Побеждает когда</th>
+        <th class="border border-border px-3 py-2 text-left">Опасность</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Nested Loop</td>
+        <td class="border border-border px-3 py-2">outer_rows × inner_cost</td>
+        <td class="border border-border px-3 py-2">Внешняя сторона мала (десятки строк), внутренняя имеет индекс</td>
+        <td class="border border-border px-3 py-2">Взрывается при недооценке внешней стороны как малой</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Hash Join</td>
+        <td class="border border-border px-3 py-2">build_cost + probe_cost</td>
+        <td class="border border-border px-3 py-2">Средние и большие equi-join; ни одна сторона не имеет индекса на ключе сортировки</td>
+        <td class="border border-border px-3 py-2">Сбрасывается на диск, если хеш-таблица превышает work_mem</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Merge Join</td>
+        <td class="border border-border px-3 py-2">sort_cost + merge_cost</td>
+        <td class="border border-border px-3 py-2">Обе стороны уже отсортированы (подходящий индекс); большие equi-join</td>
+        <td class="border border-border px-3 py-2">Требует отсортированного ввода; сортировка может сброситься при малом work_mem</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Nested Loop
+
+Для каждой строки внешнего отношения ищет совпадающие строки во внутреннем — как правило, через индекс. Стоимость: `outer_rows × inner_cost_per_lookup`. Побеждает, когда внешняя сторона мала (десятки строк), потому что стоимость внутреннего поиска по индексу уплачивается столько же раз. Катастрофически проигрывает при недооценке внешней стороны: если планировщик думает, что внешних строк 10, а их 10,000, внутренний поиск выполняется 10,000 раз вместо 10 — в 1000× больше работы.
+
+**Диагностика**: счётчик `loops` на внутреннем узле. В здоровом Nested Loop: `loops=50`. В «взорвавшемся»: `loops=520000`.
+
+### Hash Join
+
+Строит хеш-таблицу из меньшей (build) стороны, затем проверяет её строками из большей (probe) стороны. Стоимость: build + probe. Побеждает для средних и больших equi-join, где ни одна сторона не имеет индекса, выровненного по ключу соединения. Критический параметр — `work_mem`: хеш-таблица должна помещаться в памяти. Когда нет, `Hash Batches` превышает 1 и таблица сбрасывается на диск — ищите `Batches: 64` или аналогичное в выводе плана. Исправление: `SET work_mem = '64MB'` для сессии (не глобально, без учёта `max_connections`).
+
+### Merge Join
+
+Сортирует обе стороны по ключу соединения (или использует индексы, уже обеспечивающие порядок), затем сливает параллельно. Побеждает, когда обе стороны приходят отсортированными — например, при соединении двух таблиц с `ORDER BY id` и соответствующими индексами. Не добавляет дополнительной стоимости сортировки. Полезен для range join и когда порядок сортировки нужен и для финального результата.
+
+## Каскад ошибок оценки строк
+
+Это самая важная концепция урока. Плохая оценка строк на одном узле плана каскадирует на каждый узел выше:
+
+1. Планировщик думает, что фильтр `WHERE country='US' AND region='CA' AND status='shipped'` вернёт 50 строк (независимые вероятности: 50% × 5% × 20% = 0.5%)
+2. Планировщик выбирает **Nested Loop** — дёшево когда внешняя сторона мала
+3. Реальность: колонки коррелированы (все CA-заказы в US), реальная селективность 5% × 20% = 1% — и планировщик ошибся с кардинальностью индекса; реальных строк = 520,000
+4. Внутренний index scan выполняется 520,000 раз вместо 50 — в 10,400× больше работы
+
+Неверный алгоритм (Nested Loop вместо Hash Join) — **симптом**. Неверная оценка строк — **причина**. Принудительный выбор алгоритма (например, `SET enable_nestloop = off`) маскирует симптом, оставляя корень причины. Исправьте оценку — выбор алгоритма последует.
+
+<Misconception id="03-join-mc-1">
+<strong>«Мой запрос медленный, потому что выбрал неверный алгоритм соединения.»</strong> Почти всегда алгоритм — симптом; плохие оценки строк — причина. Планировщик выбирает Nested Loop, ожидая 10 внешних строк; их 10,000; цикл взрывается. Исправьте оценку — алгоритм последует.
+</Misconception>
+
+## Несаргабельные предикаты
+
+Предикат «саргабелен» (Search ARGument-ABLE), если планировщик может использовать индекс для его вычисления. Несаргабельные предикаты принудительно вызывают Seq Scan и искажают оценки строк.
+
+Типичные нарушители:
+- `WHERE LOWER(email) = 'alice@x.com'` — функция на индексируемой колонке → используйте выражаемый индекс `CREATE INDEX ON users (LOWER(email))`
+- `WHERE created_at::date = '2026-01-01'` — приведение типа → перепишите как `WHERE created_at >= '2026-01-01' AND created_at < '2026-01-02'`
+- `WHERE EXTRACT(year FROM created_at) = 2026` — вызов функции → тот же диапазонный рефактор
+- `WHERE id::text = '42'` — неявное приведение → `WHERE id = 42` (исправьте тип в приложении)
+- `WHERE name LIKE '%foo'` — лидирующий wildcard → GIN-индекс pg_trgm для нечёткого поиска
+
+EXPLAIN сразу это обнаруживает: Seq Scan + Filter там, где ожидался Index Scan. Строка Filter показывает, что применялось после сканирования, а не до — то есть индекс не помог.
+
+<FadedExample
+  client:load
+  id="03-join-fe-1"
+  lessonSlug="03-join-algorithms"
+  lang="ru"
+  title="Диагностика и исправление взрыва оценки строк"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Медленный запрос (4.2 секунды, возвращает 50 строк):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT o.id, o.total_cents, c.name
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE o.workspace_id = 42
+  AND o.country = 'US' AND o.region = 'CA'
+  AND o.status = 'shipped'
+ORDER BY o.created_at DESC
+LIMIT 50;`}</code></pre>
+        <p><strong>EXPLAIN ANALYZE (с аннотациями):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`Limit  (actual time=4180..4192 rows=50 loops=1)
+  -> Nested Loop  (actual time=4180..4192 rows=50 loops=1)
+       -> Index Scan on orders
+            (cost=0..3800000 rows=50)
+            (actual time=12..3950 rows=520000 loops=1)
+            Index Cond: (workspace_id = 42)
+            Filter: (country='US' AND region='CA' AND status='shipped')
+            Rows Removed by Filter: 4480000
+       -> Index Scan on customers_pkey
+            (actual time=0.002..0.002 rows=1 loops=520000)`}</code></pre>
+        <p><strong>Диагноз:</strong> Планировщик оценил <em>rows=50</em> при сканировании orders (цель Limit) и выбрал Nested Loop. Реальность: Filter по (country, region, status) убирает 4.48M строк после сужения по workspace_id; сканирование orders выдаёт 520,000 строк. Внутренний index scan по customers выполняется 520,000 раз. Корень причины: планировщик предположил, что country, region, status независимы, и перемножил их вероятности — крайне неверно для коррелированных колонок.</p>
+        <p><strong>Исправление:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`-- Учим Postgres, что колонки коррелированы:
+CREATE STATISTICS stx_orders_geo (dependencies, mcv)
+  ON country, region, status FROM orders;
+ANALYZE orders;
+
+-- Лучший составной индекс для этого шаблона запроса:
+CREATE INDEX CONCURRENTLY idx_orders_filtered_recent
+  ON orders (workspace_id, country, region, status, created_at DESC)
+  INCLUDE (id, total_cents, customer_id);`}</code></pre>
+        <p><strong>После исправления:</strong> оценка строк при сканировании orders соответствует реальности (~50 строк для этой комбинации workspace/geo/status), Nested Loop остаётся уместным, выполнение падает с 4.2с до ~3мс.</p>
+      </div>
+    ),
+    semi: {
+      prompt: "Допустим, вы видите `rows=10 ... actual rows=12000` на нижнем узле плана, но планировщик не выбрал Nested Loop выше. Является ли оценка строк всё равно проблемой, требующей исправления?",
+      blanks: [
+        { id: "answer", expected: "да", placeholder: "да или нет" },
+      ],
+    },
+    blank: {
+      prompt: "Почему CREATE STATISTICS решает проблему, которую повышение default_statistics_target само по себе не решает?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>default_statistics_target только уточняет одноколоночную статистику. По умолчанию планировщик предполагает независимость колонок: P(country='US' AND region='CA') = P(country='US') × P(region='CA'). Если country='US' — это 50% строк, а region='CA' — 5%, планировщик предсказывает селективность 2.5% — но реально только US-заказы могут быть в CA (функциональная зависимость), поэтому реальная селективность = 5%. На 100M строк разница: 2.5M предсказанных строк vs 5M реальных. CREATE STATISTICS с `dependencies` учит планировщика, что country определяет region, а `mcv` хранит наиболее частые комбинации напрямую. Оценка становится точной; выбор плана следует за ней.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "answer:нет": "Даже если алгоритм соединения выше сейчас верен, ошибка оценки строк в 1000× — это тикающая бомба. Любое небольшое изменение запроса или данных может склонить планировщик к плохому выбору. Исправляйте оценку, когда её видите.",
+  }}
+/>
+
+<Quiz
+  id="03-join-quiz-1"
+  lessonSlug="03-join-algorithms"
+  lang="ru"
+  question="EXPLAIN ANALYZE показывает `Nested Loop (cost=0..50 rows=10) ... -> Index Scan ... (loops=10000)`. Какова наиболее вероятная причина?"
+  choices={[
+    { label: "Внешняя сторона была сильно недооценена; планировщик ожидал 10 строк, но внутренний index scan выполнился 10,000 раз", correct: true },
+    { label: "Postgres сломан", misconception: "Postgres работает корректно; планировщик принял решение на основе стоимостей, используя плохую статистику." },
+    { label: "Отсутствует внутренний индекс", misconception: "Внутренний узел выполняет Index Scan, то есть индекс есть — проблема в том, что цикл выполнялся слишком много раз." },
+    { label: "Конкуренция за блокировки", misconception: "Блокировки не влияют на выбор плана; они иначе проявляются в pg_stat_activity." },
+  ]}
+/>
+
+<Quiz
+  id="03-join-quiz-2"
+  lessonSlug="03-join-algorithms"
+  lang="ru"
+  question="В плане запроса показано `Hash Join ... Hash Batches: 64`. Что это означает и каково исправление?"
+  choices={[
+    { label: "Хеш-таблица 64 раза сбрасывалась на диск, потому что превысила work_mem; исправление: SET work_mem = '64MB' или выше для этой сессии", correct: true },
+    { label: "Соединение выполнялось 64 раза — это цикл внутри другого цикла", misconception: "Hash Batches — не счётчик итераций; это количество партиций при сбросе хеш-таблицы на диск." },
+    { label: "В ключе соединения 64 NULL-значения", misconception: "Количество Batches не связано с NULL-значениями." },
+    { label: "Было просканировано 64 индекса", misconception: "Hash Join не использует индексы для самого соединения — он строит хеш-таблицу из build-стороны." },
+  ]}
+/>
+
+<Quiz
+  id="03-join-quiz-3"
+  lessonSlug="03-join-algorithms"
+  lang="ru"
+  question="Какой предикат является НЕСАРГАБЕЛЬНЫМ и вызовет последовательное сканирование, даже если на `created_at` есть индекс?"
+  choices={[
+    { label: "WHERE created_at >= '2026-01-01' AND created_at < '2026-02-01'", misconception: "Это диапазонный предикат на индексируемой колонке — саргабелен, индекс может быть использован." },
+    { label: "WHERE EXTRACT(year FROM created_at) = 2026", correct: true },
+    { label: "WHERE created_at = '2026-01-15'", misconception: "Равенство на индексируемой колонке — саргабельно, индекс может быть использован." },
+    { label: "WHERE created_at IS NOT NULL", misconception: "IS NOT NULL саргабелен в Postgres — индекс может быть использован." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Nested Loop побеждает при малых внешних сторонах; Hash Join — для средних equi-join; Merge Join — когда обе стороны уже отсортированы. Плохая оценка строк на внешней стороне каскадирует в взрыв цикла на 1000× — исправляйте статистику, а не алгоритм. Несаргабельные предикаты (функции на индексируемых колонках, неявные приведения) предотвращают использование индекса и искажают оценки.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-join-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните каскад ошибок оценки строк: почему плохая оценка на одном узле ломает весь план выше него?", a: "Формула стоимости планировщика на каждом узле зависит от оценок строк из узлов ниже. Плохая оценка на листовом узле (например, сканирование, выдающее в 1000× больше строк, чем предсказано) распространяется вверх: соединение выше выбирает неверный алгоритм (Nested Loop, потому что планировщик думает, что внешняя сторона мала); сортировка выше выбирает неверный метод (в памяти, потому что планировщик думает, что датасет мал); Limit выше не проталкивается вниз, потому что планировщик думает, что нужно сначала прочитать все строки. Каждое решение в дереве выше неверной оценки построено на ложной посылке. Вот почему старший Postgres-тюнинг начинается с rows-estimated vs actual на каждом узле, а не с типов соединений или методов сортировки — корень причины всегда upstream в статистике." },
+    { q: "Когда Hash Join является правильным выбором и что заставляет его сбрасываться на диск?", a: "Hash Join побеждает для средних и больших equi-join (оператор = на ключе соединения), где ни одна сторона не имеет индекса, отсортированного по ключу соединения. Он строит хеш-таблицу из меньшей (build) стороны, затем проверяет её строками из большей (probe) стороны. Сбрасывается на диск, когда хеш-таблица превышает work_mem — Postgres разбивает данные на партиции, каждая помещается в work_mem, и обрабатывает их последовательно. Симптом: Hash Batches > 1 в EXPLAIN ANALYZE (Batches: 64 означает 64 прохода). Исправление: увеличить work_mem для сессии (SET work_mem = '64MB'). Не поднимайте work_mem глобально без учёта max_connections × work_mem — важен суммарный бюджет RAM." },
+    { q: "Что такое несаргабельный предикат, почему он важен для производительности и как исправить типичные случаи?", a: "Предикат саргабелен, если планировщик может использовать индекс для его вычисления. Несаргабельный предикат принудительно вызывает последовательное сканирование всей таблицы. Наиболее частые причины и исправления: (1) Функция на индексируемой колонке: WHERE LOWER(email) = 'x' — исправление через выражаемый индекс CREATE INDEX ON users (LOWER(email)). (2) Приведение типа: WHERE id::text = '42' — исправление через передачу правильного типа из приложения. (3) Функция от даты: WHERE EXTRACT(year FROM created_at) = 2026 — исправление через диапазонный предикат WHERE created_at >= '2026-01-01' AND created_at < '2027-01-01'. (4) Лидирующий wildcard: WHERE name LIKE '%foo' — исправление через GIN-индекс pg_trgm. EXPLAIN обнаруживает несаргабельные предикаты как Seq Scan + Filter там, где ожидался Index Scan." },
+  ]}
+/>
+
+<Recap lang="ru">
+Postgres выбирает среди трёх алгоритмов соединения: Nested Loop (outer_rows × inner_cost, побеждает при малых внешних с внутренним индексом), Hash Join (построить хеш-таблицу + проверить, побеждает для средних и больших equi-join, сбрасывается на диск когда хеш-таблица превышает work_mem), Merge Join (сортировать обе стороны, слить параллельно, побеждает когда обе стороны приходят отсортированными). Выбор алгоритма определяется оценками строк на каждом узле — недооценка в 1000× на внешней стороне Nested Loop превращает внутренний поиск в 1000× больше работы, чем запланировано. Неверный алгоритм всегда симптом; неверная оценка строк всегда причина. Исправляйте оценки (ANALYZE, расширенная статистика) и выбор алгоритма скорректируется сам. Несаргабельные предикаты (функции на индексируемых колонках, неявные приведения) предотвращают использование индекса и искажают оценки — перепишите их как диапазонные предикаты или добавьте выражаемые индексы.
+</Recap>

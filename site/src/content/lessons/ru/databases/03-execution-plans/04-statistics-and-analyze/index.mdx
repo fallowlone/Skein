@@ -1,0 +1,226 @@
+---
+slug: 04-statistics-and-analyze
+lang: ru
+track: databases
+unit: 03-execution-plans
+order: 4
+title: "pg_statistic, ANALYZE и производственная наблюдаемость"
+summary: "Оценки строк планировщика берутся из pg_statistic: MCV-списки, гистограммы, корреляция, n_distinct. ANALYZE поддерживает их свежесть. auto_explain и pg_stat_statements вместе говорят, какие запросы медленные и почему."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-join-algorithms"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["pg-statistic", "analyze", "autovacuum-analyze", "default-statistics-target", "most-common-vals", "histogram-bounds", "auto-explain", "pg-stat-statements"]
+sources:
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Запрос, выполнявшийся за 5 мс вчера, сегодня занимает 4 секунды. В приложении ничего не изменилось. План другой. Причина почти всегда одна: статистика устарела и планировщик сделал другой выбор. Знание того, как Postgres строит и использует статистику, — вот как предотвратить следующий инцидент.
+</Hook>
+
+<Crux>pg_statistic: MCV, гистограмма, n_distinct. Старая статистика — неверные планы. ANALYZE исправляет; auto_explain обнаруживает.</Crux>
+
+<Explanation>
+
+## Внутри pg_statistic
+
+При запуске `ANALYZE orders` Postgres выборочно сканирует таблицу (по умолчанию 300 × `default_statistics_target` = 30,000 строк при целевом значении 100) и вычисляет статистику на уровне колонок, хранящуюся в `pg_statistic` (читается через `pg_stats`):
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Статистика</th>
+        <th class="border border-border px-3 py-2 text-left">Что хранит</th>
+        <th class="border border-border px-3 py-2 text-left">Используется для</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">most_common_vals (MCV)</td>
+        <td class="border border-border px-3 py-2">Top-N значений + их частоты</td>
+        <td class="border border-border px-3 py-2">Точная селективность для частых значений</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">histogram_bounds</td>
+        <td class="border border-border px-3 py-2">Равночастотная гистограмма не-MCV значений</td>
+        <td class="border border-border px-3 py-2">Селективность для диапазонных и равенственных условий на редких значениях</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">n_distinct</td>
+        <td class="border border-border px-3 py-2">Количество уникальных значений (отрицательное = доля строк)</td>
+        <td class="border border-border px-3 py-2">Оценки кардинальности GROUP BY</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">correlation</td>
+        <td class="border border-border px-3 py-2">Корреляция физического и логического порядка (−1 до 1)</td>
+        <td class="border border-border px-3 py-2">Оценка стоимости случайного vs последовательного I/O при index scan</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Как планировщик использует это для `WHERE x = 42`:
+1. Есть ли 42 в MCV-списке? Используем его точную частоту напрямую.
+2. Не MCV? Находим бакет гистограммы, содержащий 42, предполагаем равномерное распределение внутри бакета.
+3. Комбинируем с `reltuples` (счётчик строк в `pg_class`) для получения оценки количества строк.
+
+Для диапазонных предикатов (`x > 100`) гистограмма интегрируется по диапазону. Для многоколоночных предикатов планировщик по умолчанию **предполагает независимость** и перемножает селективности — что неверно для коррелированных колонок (рассматривается в уроке 05).
+
+Чтайте каталог напрямую:
+
+```sql
+SELECT tablename, attname, n_distinct, most_common_vals, most_common_freqs,
+       histogram_bounds, correlation
+FROM pg_stats
+WHERE tablename = 'orders';
+```
+
+## ANALYZE: когда запускать
+
+Autovacuum планирует ANALYZE для каждой таблицы на основе:
+
+```
+autovacuum_analyze_threshold (умолчание 50 строк) +
+autovacuum_analyze_scale_factor × reltuples (умолчание 0.1 = 10%)
+```
+
+На таблице из 100M строк autovacuum анализирует только после 10M изменений строк — слишком редко для таблиц с косыми или быстро меняющимися распределениями данных. Операционные исправления:
+
+```sql
+-- Снизьте scale factor для горячих таблиц:
+ALTER TABLE orders SET (autovacuum_analyze_scale_factor = 0.02);
+
+-- Поднимите целевой показатель статистики для косых колонок:
+ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000;
+ANALYZE orders;
+```
+
+Ручной `ANALYZE` выполняется за секунды даже на таблицах из 100M строк (он делает выборку, а не полное сканирование). Всегда запускайте его:
+- После массовых вставок или больших UPDATE, сдвигающих распределения
+- После изменений схемы, добавляющих колонки
+- В post-deploy хуках перед возобновлением трафика
+
+## Опции EXPLAIN для диагностики
+
+Помимо базового плана, несколько опций `EXPLAIN` необходимы:
+
+- `FORMAT JSON | XML | YAML | TEXT` — JSON для инструментов (explain.depesz.com, explain.dalibo.com, pganalyze)
+- `VERBOSE` — добавляет списки выходных колонок для каждого узла
+- `SETTINGS` (PG 12+) — печатает не-дефолтные GUC планировщика; диагностирует дрейф окружения между staging и production
+- `WAL` (PG 13+) — показывает байты WAL, сгенерированные оператором
+- `GENERIC_PLAN` (PG 16+) — планирует параметризованный запрос без примерных значений; необходим для диагностики подготовленных операторов (рассматривается в уроке 06)
+- `SERIALIZE` (PG 17+) — включает стоимость сериализации строк для клиента; сокращает разрыв между полным временем EXPLAIN ANALYZE и наблюдаемой клиентом задержкой
+
+## auto_explain и pg_stat_statements
+
+Два расширения, которые должны быть на каждом production Postgres:
+
+**pg_stat_statements** записывает каждый выполненный запрос (нормализованный по параметрам), отслеживая `calls`, `total_exec_time`, `mean_exec_time`, `rows` и счётчики буферов. Запрос: `SELECT query, calls, total_exec_time, mean_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20`. Эти top-20 по `total_exec_time` — ваши цели оптимизации — запрос за 2 мс, вызванный 10M раз, важнее запроса за 500 мс, вызванного дважды.
+
+**auto_explain** автоматически логирует `EXPLAIN ANALYZE` для любого запроса, превышающего порог длительности:
+
+```sql
+-- Дополнения к postgresql.conf:
+shared_preload_libraries = 'auto_explain'
+auto_explain.log_min_duration = '500ms'
+auto_explain.log_analyze = true
+auto_explain.log_buffers = true
+auto_explain.log_format = 'json'
+auto_explain.sample_rate = 0.01   -- 1% медленных запросов для ограничения объёма логов
+```
+
+Медленные запросы попадают в логи Postgres с полными планами ANALYZE + BUFFERS, без необходимости воспроизводить их на staging. Вместе они отвечают на вопрос «какие запросы медленные и почему» без инструментирования приложения.
+
+<TraceScenario
+  id="04-stats-trace-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="ru"
+  scenario="Запрос, выполнявшийся за 5 мс вчера, сегодня занимает 4 секунды. В приложении ничего не изменилось. Диагностируйте."
+  steps={[
+    { prompt: "Шаг 1: подтвердить регрессию.", reveal: "Запустите EXPLAIN ANALYZE на медленном запросе. Сравните текущий план со вчерашним (сохранённым или восстановленным). Если планы одинаковые, но тайминги отличаются, проблема во время исполнения (блокировки, конкуренция, I/O, состояние кеша). Если планы отличаются, проблема во время планирования." },
+    { prompt: "Шаг 2: проверить отличия во время планирования.", reveal: "Запустите EXPLAIN (без ANALYZE) — сравните оценки строк и структуру плана. Типичные причины: (a) ANALYZE запустился ночью и обновил статистику, изменив оценки селективности. (b) Большая вставка или удаление сдвинули распределения. (c) Индекс был добавлен или удалён. (d) Изменился GUC планировщика. Используйте EXPLAIN (SETTINGS) для сравнения не-дефолтных GUC между окружениями." },
+    { prompt: "Шаг 3: проверить отличия во время исполнения.", reveal: "Тот же план, другие тайминги. Проверьте BUFFERS — высокое количество reads там, где вчера были hits, означает вытеснение кеша (другая нагрузка выдавила данные). Проверьте блокировки через pg_locks и pg_stat_activity. Проверьте активность autovacuum через pg_stat_progress_vacuum — vacuum на той же таблице конкурирует за I/O." },
+    { prompt: "Шаг 4: выявить ловушку подготовленных операторов.", reveal: "Подготовленный оператор переключается с кастомного на общий план после 5 выполнений. Если общий план плох для реального распределения параметров, симптом именно такой: тот же запрос, вдруг медленнее через некоторое время. Диагностируйте с EXPLAIN (GENERIC_PLAN) на подготовленной форме. Исправление: SET plan_cache_mode = 'force_custom_plan' (рассматривается в уроке 06)." },
+    { prompt: "Шаг 5: стабилизировать.", reveal: "После выявления причины применяйте исправление (ANALYZE, индекс, GUC, plan_cache_mode). Добавьте мониторинг: diff pg_stat_statements во времени автоматически улавливает этот класс регрессий. Задокументируйте причину в runbook — этот тип инцидента, как правило, повторяется по мере роста данных." },
+  ]}
+/>
+
+<DragOrder
+  id="04-stats-drag-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="ru"
+  prompt="Упорядочьте диагностические проверки EXPLAIN ANALYZE от наибольшего к наименьшему сигналу:"
+  items={[
+    { id: "a", label: "Rows estimated vs rows actual на каждом узле — большой разрыв = устаревшая статистика" },
+    { id: "b", label: "Узел плана, занимающий наибольшее реальное время — доминирующая стоимость запроса" },
+    { id: "c", label: "Счётчик loops на внутренней стороне Nested Loop — обнажает недооценку внешних строк" },
+    { id: "d", label: "Sort Method (in-memory quicksort vs external merge) — помещается ли в work_mem" },
+    { id: "e", label: "BUFFERS shared hit vs read — состояние кеша и картина I/O" },
+    { id: "f", label: "Index Cond vs Filter — индекс сужает или только пост-фильтрует" },
+    { id: "g", label: "Planning Time vs Execution Time — доминирование планирования редко, но реально" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+<Quiz
+  id="04-stats-quiz-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="ru"
+  question="На таблице из 100M строк с настройками autovacuum по умолчанию, после скольких изменений строк autovacuum запустит ANALYZE?"
+  choices={[
+    { label: "После 50 изменений строк (умолчание autovacuum_analyze_threshold)", misconception: "Порог = threshold + scale_factor × rows = 50 + 0.1 × 100M = 10,000,050 изменений." },
+    { label: "После 10M изменений строк (50 + 0.1 × 100M)", correct: true },
+    { label: "После 1M изменений строк", misconception: "Scale factor равен 0.1 (10%), поэтому на 100M строках это 10M изменений." },
+    { label: "Никогда — autovacuum только запускает VACUUM, но не ANALYZE", misconception: "Autovacuum запускает и VACUUM, и ANALYZE; ANALYZE запускается по порогу/scale_factor анализа." },
+  ]}
+/>
+
+<Quiz
+  id="04-stats-quiz-2"
+  lessonSlug="04-statistics-and-analyze"
+  lang="ru"
+  question="Какой запрос правильно определяет цели медленных запросов для оптимизации с помощью pg_stat_statements?"
+  choices={[
+    { label: "SELECT query, total_exec_time FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 20", misconception: "Упорядочение по mean_exec_time находит наиболее медленное отдельное выполнение, но пропускает частые недорогие запросы, суммарно потребляющие больше времени." },
+    { label: "SELECT query, calls, total_exec_time, mean_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20", correct: true },
+    { label: "SELECT query FROM pg_stat_statements WHERE calls > 1000 ORDER BY calls DESC LIMIT 20", misconception: "Высокий счётчик вызовов не означает высокое потребление ресурсов; быстрый запрос, вызванный 1M раз, может быть нормой." },
+    { label: "SELECT query FROM pg_stat_statements ORDER BY rows DESC LIMIT 20", misconception: "Счётчик строк — ненадёжный прокси потребления ресурсов." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Оценки строк планировщика берутся из pg_statistic: MCV-списки для частых значений, гистограммы — для остальных. ANALYZE поддерживает их свежесть — запускайте вручную после массовых операций и в post-deploy хуках. auto_explain автоматически логирует планы медленных запросов; pg_stat_statements ранжирует, что стоит оптимизировать, по total_exec_time.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-stats-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опишите, как планировщик Postgres использует pg_statistic для оценки селективности WHERE x = 42.", a: "Для предиката WHERE x = 42 планировщик спрашивает: сколько строк совпадёт? Он читает строку pg_stats колонки. Шаг 1: есть ли 42 в списке most_common_vals? Если да, используем соответствующую частоту напрямую как селективность. Шаг 2: если 42 — не MCV, находим бакет гистограммы, содержащий 42, и предполагаем равномерное распределение внутри этого бакета. Шаг 3: комбинируем с reltuples (счётчик строк из pg_class) для получения оценки количества строк. Для диапазонных предикатов (x > 100) гистограмма интегрируется по диапазону. Для многоколоночных предикатов планировщик по умолчанию перемножает одноколоночные селективности — что ломается для коррелированных колонок. Исправление для коррелированных колонок: CREATE STATISTICS (dependencies, mcv) — рассматривается в уроке 05." },
+    { q: "Какая операционная дисциплина поддерживает точность статистики в быстро меняющейся production базе данных?", a: "(1) Снизить autovacuum_analyze_scale_factor до 0.02 на горячих таблицах, чтобы autovacuum запускался после 2% изменений строк вместо 10%. (2) Запускать ANALYZE вручную в post-deploy хуке любой миграции, сдвигающей распределения данных или добавляющей колонки. (3) Поднять default_statistics_target на косых колонках: ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000 — это даёт планировщику более детальный MCV-список и гистограмму для этой колонки. (4) Установить pg_stat_statements и еженедельно просматривать top-20 по total_exec_time — rows-estimated vs actual в EXPLAIN ANALYZE — это триггер для запуска более целевого ANALYZE. (5) Настроить auto_explain для захвата планов запросов, выполняющихся дольше 500 мс, без ручного воспроизведения." },
+    { q: "Объясните, что делает auto_explain, как его настроить для production и какова его стоимость.", a: "auto_explain — расширение Postgres, автоматически логирующее вывод EXPLAIN ANALYZE для любого запроса, чьё время выполнения превышает auto_explain.log_min_duration. Работает внутри backend — без инструментирования приложения. Конфигурация: добавить 'auto_explain' в shared_preload_libraries в postgresql.conf; задать auto_explain.log_min_duration = '500ms', log_analyze = true, log_buffers = true, log_format = json. Установить auto_explain.sample_rate = 0.01 до 0.05 для логирования только 1-5% медленных запросов и ограничения объёма логов. Стоимость: log_analyze = true добавляет инструментирование накладных расходов к каждому захватываемому запросу — тайминг каждого узла добавляет ~5-20% накладных расходов к уже медленным запросам. Для быстрых OLTP (sub-ms запросы), где даже медленные запросы занимают меньше 500 мс, повысьте log_min_duration до '1s'. Преимущество: полностью автоматический захват планов без воспроизведения инцидентов на staging." },
+  ]}
+/>
+
+<Recap lang="ru">
+Оценки строк планировщика вычисляются из `pg_statistic`: для каждой колонки ANALYZE хранит список наиболее распространённых значений (MCV) с точными частотами, равночастотную гистограмму для остальных, `n_distinct` для кардинальности GROUP BY и `correlation` для оценки стоимости индексного сканирования. ANALYZE выборочно сканирует таблицу (30,000 строк по умолчанию) и выполняется за секунды даже на больших таблицах. Autovacuum запускает его после 10% изменений строк на 100M-строчной таблице — слишком редко для горячих данных; настройте `autovacuum_analyze_scale_factor = 0.02` на критических таблицах и запускайте `ANALYZE` вручную в post-deploy хуках. Для наблюдаемости в production `pg_stat_statements` ранжирует запросы по `total_exec_time` для выявления целей оптимизации; `auto_explain` автоматически захватывает планы медленных запросов без ручного воспроизведения.
+</Recap>

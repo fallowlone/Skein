@@ -1,0 +1,200 @@
+---
+slug: 02-scan-types
+lang: ru
+track: databases
+unit: 03-execution-plans
+order: 2
+title: "Типы сканирования: Seq, Index, Bitmap, Index-Only"
+summary: "Postgres выбирает среди четырёх типов сканирования на основе селективности и стоимости ввода-вывода. Чтение строки стоимости говорит о том, что предполагал планировщик и подтверждает ли это BUFFERS."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-explain-and-plans"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["seq-scan", "index-scan", "bitmap-heap-scan", "index-only-scan", "cost-model", "random-page-cost", "seq-page-cost", "buffers"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+`EXPLAIN` показывает `Seq Scan` на таблице из 10M строк, хотя индекс на колонке фильтрации существует. Планировщик не сломан — он подсчитал, что последовательное сканирование дешевле для данной селективности. Понимать, когда и почему планировщик выбирает тот или иной тип сканирования — вот что отличает угадывание от диагностики.
+</Hook>
+
+<Crux>Seq Scan выигрывает при низкой селективности; Index Scan — при высокой; Bitmap — между. Выбор: стоимостные константы и оценки строк.</Crux>
+
+<Explanation>
+
+## Чтение строки стоимости
+
+Каждый узел плана печатает:
+
+```
+(cost=startup..total rows=N width=B)
+```
+
+- `startup` — стоимость до выдачи первой строки. Ноль для Seq Scan; ненулевая для Sort (нужно прочитать всё первым делом).
+- `total` — стоимость полного выполнения узла.
+- `rows` — оценка строк, которые выдаст этот узел.
+- `width` — средняя ширина строки в байтах.
+
+Стоимость измеряется в произвольных единицах, где `1.0 ≈ одно последовательное чтение страницы`. Важны только соотношения; абсолютные числа без контекста бессмысленны. С `ANALYZE` каждый узел также получает `(actual time=startup..total rows=N loops=L)` — реальное wall time в миллисекундах.
+
+**Правило интерпретации**: если узел находится на внутренней стороне Nested Loop, делите `actual time` на `loops`, чтобы получить стоимость одного выполнения.
+
+## Четыре типа сканирования
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип сканирования</th>
+        <th class="border border-border px-3 py-2 text-left">Паттерн I/O</th>
+        <th class="border border-border px-3 py-2 text-left">Побеждает когда</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Seq Scan</td>
+        <td class="border border-border px-3 py-2">Полная куча, последовательно</td>
+        <td class="border border-border px-3 py-2">Предикат совпадает со многими строками или нет пригодного индекса</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Index Scan</td>
+        <td class="border border-border px-3 py-2">Обход индекса + чтение кучи на строку (случайный I/O)</td>
+        <td class="border border-border px-3 py-2">Мало совпадающих строк (&lt;5-15% таблицы) и строки не кластеризованы</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Bitmap Heap Scan</td>
+        <td class="border border-border px-3 py-2">Обход индекса → битовая карта TID → упорядоченное чтение кучи</td>
+        <td class="border border-border px-3 py-2">Много разрозненных строк (сотни — миллионы); преобразует случайный I/O в последовательный</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Index Only Scan</td>
+        <td class="border border-border px-3 py-2">Только листья индекса — без чтения кучи</td>
+        <td class="border border-border px-3 py-2">Все нужные колонки в индексе И Visibility Map говорит, что страницы all-visible</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Seq Scan
+
+Формула стоимости: `relpages × seq_page_cost + reltuples × cpu_tuple_cost`. По умолчанию `seq_page_cost = 1.0`, `cpu_tuple_cost = 0.01`. Для таблицы в 5000 страниц: `5000 × 1.0 + 1M × 0.01 = 15,000` единиц. Оптимален, когда предикат неселективен (совпадает большинство строк) — читать всю кучу последовательно быстрее, чем случайно переходить к каждой совпадающей строке.
+
+### Index Scan
+
+Стоимость растёт с `random_page_cost × matching_rows`. По умолчанию `random_page_cost = 4.0` (эпоха HDD). Для 100 совпадающих строк: `100 × 4.0 = 400` — намного дешевле, чем Seq Scan за 15,000. Для 100,000 совпадающих строк: `100,000 × 4.0 = 400,000` — Seq Scan выигрывает. Точка пересечения примерно там, где предикат совпадает с 5–15% таблицы.
+
+**Замечание по настройке для SSD**: на NVMe SSD случайные чтения лишь в 1.5–2× медленнее последовательных — не в 4×. Установите `random_page_cost = 1.1` в `postgresql.conf` для SSD-систем. Планировщик будет предпочитать Index Scan для значительно большей доли запросов.
+
+### Bitmap Heap Scan
+
+Двухэтапный процесс: сначала `Bitmap Index Scan` строит в памяти битовую карту всех совпадающих TID из индекса; затем `Bitmap Heap Scan` сортирует TID по физическому адресу страницы и читает кучу по порядку. Это преобразует разрозненные случайные чтения в почти последовательный обход кучи. Побеждает, когда совпадает много строк, но они разбросаны по куче — промежуток между Index Scan и Seq Scan.
+
+Битовую карту можно объединять через OR для нескольких индексов (узел BitmapOr) — полезно, когда предикат OR имеет индекс на каждую колонку.
+
+### Index Only Scan
+
+Читает только листья индекса — без чтения кучи — при двух условиях: (1) все нужные запросу колонки хранятся в индексе (как ключевые или через `INCLUDE`), и (2) Visibility Map подтверждает, что страница «all-visible» (каждый кортеж виден всем транзакциям). Когда бит VM не установлен, Postgres должен обратиться к куче для этой страницы. В выводе `EXPLAIN ANALYZE` значение `Heap Fetches: N` показывает, как часто это происходило — высокое N означает, что VM устарела и VACUUM давно не запускался.
+
+## BUFFERS: картина I/O
+
+`EXPLAIN (ANALYZE, BUFFERS)` добавляет учёт буферов на каждом узле:
+
+```
+Seq Scan on orders  (actual time=0.1..450 rows=1000000 loops=1)
+  Buffers: shared hit=4800 read=200
+```
+
+- `shared hit` — страница найдена в кеше `shared_buffers` Postgres (без дискового I/O)
+- `read` — страница получена с диска или из ОС
+- `dirtied` — страница изменена этим узлом
+- `written` — страница сброшена на диск
+
+Высокий `read` при низком `hit` означает, что рабочий набор больше `shared_buffers` или запрос обращается к холодным данным. Это диагностирует «медленно из-за CPU или I/O»: высокие reads = ограничен I/O; мало reads, но высокое actual time = ограничен CPU (обычно плохое соединение или тяжёлая сортировка).
+
+<NumbersCard
+  id="02-scan-numbers"
+  title="Константы стоимости типов сканирования (умолчания Postgres)"
+  stats={[
+    { label: "seq_page_cost (умолчание)", value: "1.0" },
+    { label: "random_page_cost (умолчание, для HDD)", value: "4.0" },
+    { label: "random_page_cost (настройка для SSD)", value: "1.1" },
+    { label: "cpu_tuple_cost", value: "0.01" },
+    { label: "cpu_index_tuple_cost", value: "0.005" },
+    { label: "Точка пересечения Index Scan vs Seq Scan (типично)", value: "~5-15% строк таблицы" },
+    { label: "Ускорение Index Only Scan vs Index Scan", value: "~10-100x на горячих чтениях" },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-1"
+  lessonSlug="02-scan-types"
+  lang="ru"
+  question="Таблица из 1M строк имеет индекс на `status`. Запрос `WHERE status = 'active'` возвращает 400,000 строк (40% таблицы). Какой тип сканирования, скорее всего, выберет планировщик?"
+  choices={[
+    { label: "Seq Scan — 40% селективность означает, что нужна большая часть таблицы; последовательные чтения дешевле 400,000 случайных обращений к куче", correct: true },
+    { label: "Index Scan — индекс существует, поэтому планировщик всегда его использует", misconception: "Планировщик использует стоимость, а не наличие индекса. 400,000 случайных обращений стоят дороже последовательного сканирования при такой селективности." },
+    { label: "Index Only Scan — всегда быстрее, когда есть индекс", misconception: "Index Only Scan требует всех проецируемых колонок в индексе И актуальной Visibility Map." },
+    { label: "Bitmap Heap Scan — всегда используется для больших результирующих наборов", misconception: "Bitmap побеждает когда строки разрозненны; при такой селективности планировщик сравнивает стоимость Bitmap vs Seq Scan." },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-2"
+  lessonSlug="02-scan-types"
+  lang="ru"
+  question="EXPLAIN ANALYZE показывает `Index Only Scan ... Heap Fetches: 12000`. Что это означает?"
+  choices={[
+    { label: "Биты Visibility Map сброшены для многих страниц — VACUUM давно не запускался, поэтому Postgres должен читать кучу для подтверждения видимости строк", correct: true },
+    { label: "В индексе отсутствуют некоторые колонки, нужные запросу", misconception: "Если бы колонок не хватало, планировщик использовал бы Index Scan вместо Index Only Scan." },
+    { label: "12,000 строк не найдено в индексе", misconception: "Heap Fetches считает страницы, которым нужна проверка видимости, а не отсутствующие строки." },
+    { label: "Индекс INVALID", misconception: "INVALID индекс вообще не используется — в плане был бы Seq Scan." },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-3"
+  lessonSlug="02-scan-types"
+  lang="ru"
+  question="На NVMe SSD сервере вы оставляете `random_page_cost` со значением по умолчанию 4.0. Каков производственный эффект?"
+  choices={[
+    { label: "Планировщик систематически недоиспользует индексы и предпочитает Seq Scan, потому что считает случайный I/O в 4× дороже, чем он реально стоит на SSD", correct: true },
+    { label: "Ничего — умолчания подходят для любого железа", misconception: "Умолчания откалиброваны под HDD. На NVMe SSD соотношение случайной/последовательной стоимости намного меньше (1.5-2×), а не 4×." },
+    { label: "Postgres становится быстрее, избегая обращений к индексу", misconception: "Он становится медленнее: Seq Scan читает больше страниц, чем селективные обращения к индексу." },
+    { label: "Растёт потребление памяти", misconception: "random_page_cost — параметр модели стоимости, а не настройка памяти." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Seq Scan читает кучу последовательно — дёшево на страницу, но всегда полностью. Index Scan выполняет случайный I/O на каждую совпавшую строку — дёшево только когда мало строк. Bitmap Heap Scan сортирует TID перед чтением, занимая промежуточное положение. Index Only Scan пропускает кучу полностью — быстрее всего, когда VM актуальна. Настройте random_page_cost = 1.1 для SSD-систем.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-scan-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, почему планировщик выбирает Seq Scan на таблице из 1M строк, когда на колонке фильтрации есть индекс.", a: "Модель стоимости планировщика говорит, что Seq Scan побеждает, когда предикат совпадает с большой долей таблицы. Стоимость Seq Scan = relpages × seq_page_cost + reltuples × cpu_tuple_cost. Стоимость Index Scan = matching_rows × random_page_cost. Для 1M строк: Seq Scan ≈ 5000 × 1.0 + 1M × 0.01 = 15,000 единиц. Index Scan для 100,000 совпавших строк ≈ 100,000 × 4.0 = 400,000 — Seq Scan выигрывает. Для 100 совпавших строк Index Scan ≈ 400 — Index Scan выигрывает в 40×. Точка пересечения ~5-15% таблицы. Это корректное поведение: последовательные чтения реально быстрее сотен тысяч операций случайного I/O. Когда Seq Scan неверен (предикат на самом деле селективен), причина — ошибка оценки строк; ANALYZE, расширенная статистика или выражаемые индексы исправляют оценку, и выбор сканирования следует за ней." },
+    { q: "Когда Bitmap Heap Scan выигрывает у обоих Index Scan и Seq Scan?", a: "Bitmap Heap Scan побеждает, когда совпадает много строк (сотни — миллионы), но они разрозненны по куче. Он строит в памяти битовую карту всех совпадающих TID из индекса, сортирует их по физическому адресу страницы, затем читает кучу в порядке страниц — преобразуя разрозненные случайные чтения в почти последовательный обход кучи. Index Scan потребовал бы одного случайного I/O на строку (дорого для многих строк); Seq Scan читал бы всю кучу (дорого, если совпадающих строк мало или средне). Bitmap занимает промежуточное место. Он также умеет в BitmapOr — объединяя несколько index scan через OR, когда предикаты OR затрагивают отдельно индексируемые колонки." },
+    { q: "Что такое вывод BUFFERS в EXPLAIN ANALYZE и как им диагностировать I/O vs CPU узкие места?", a: "EXPLAIN (ANALYZE, BUFFERS) добавляет учёт буферов на каждом узле: 'shared hit' (страница найдена в кеше shared_buffers, без дискового I/O) и 'read' (страница получена с диска/ОС). Высокое количество read при низком hit означает, что рабочий набор больше shared_buffers или запрос обращается к холодным данным — узкое место I/O. Мало read, но высокое actual time означает узкое место CPU: тяжёлые вычисления, неэффективное соединение или сортировка большого датасета. Это позволяет различить 'добавить RAM/настроить shared_buffers' (I/O-bound) от 'исправить план запроса или добавить индекс' (CPU-bound)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Postgres выбирает среди четырёх типов сканирования на основе стоимости: Seq Scan читает каждую страницу кучи последовательно и побеждает, когда совпадает большинство строк; Index Scan обходит B-дерево и читает строки кучи по одной, побеждая при селективном предикате (примерно &lt;10% строк); Bitmap Heap Scan строит упорядоченную битовую карту TID и читает кучу по порядку, побеждая в среднем диапазоне селективности; Index Only Scan полностью пропускает кучу, когда все нужные колонки есть в индексе и Visibility Map актуальна. Планировщик использует константные стоимости — `seq_page_cost`, `random_page_cost`, `cpu_tuple_cost` — для сравнения вариантов. На NVMe SSD установите `random_page_cost = 1.1`, чтобы планировщик корректно предпочитал Index Scan для селективных предикатов. Используйте `EXPLAIN (ANALYZE, BUFFERS)`, чтобы видеть, ограничен ли запрос I/O (много читаемых страниц) или CPU (высокое actual time при малом числе чтений).
+</Recap>

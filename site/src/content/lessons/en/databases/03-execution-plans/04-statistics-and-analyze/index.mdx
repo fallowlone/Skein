@@ -1,0 +1,226 @@
+---
+slug: 04-statistics-and-analyze
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 4
+title: "pg_statistic, ANALYZE, and production observability"
+summary: "The planner's row estimates come from pg_statistic: MCV lists, histograms, correlation, and n_distinct. ANALYZE keeps them fresh. auto_explain and pg_stat_statements together tell you which queries are slow and why."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-join-algorithms"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["pg-statistic", "analyze", "autovacuum-analyze", "default-statistics-target", "most-common-vals", "histogram-bounds", "auto-explain", "pg-stat-statements"]
+sources:
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+A query that ran in 5ms yesterday takes 4 seconds today. Nothing in the application changed. The plan is different. The cause is almost always the same: statistics drifted and the planner made a different choice. Knowing how Postgres builds and uses statistics is how you prevent the next incident.
+</Hook>
+
+<Crux>pg_statistic holds MCV, histogram, n_distinct. Stale stats → wrong estimates → wrong plans. ANALYZE fixes; auto_explain detects.</Crux>
+
+<Explanation>
+
+## Inside pg_statistic
+
+When you run `ANALYZE orders`, Postgres samples the table (by default 300 × `default_statistics_target` = 30,000 rows with the default target of 100) and computes per-column statistics stored in `pg_statistic` (readable via `pg_stats`):
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Statistic</th>
+        <th class="border border-border px-3 py-2 text-left">What it stores</th>
+        <th class="border border-border px-3 py-2 text-left">Used for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">most_common_vals (MCV)</td>
+        <td class="border border-border px-3 py-2">Top-N values + their frequencies</td>
+        <td class="border border-border px-3 py-2">Exact selectivity for frequent values</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">histogram_bounds</td>
+        <td class="border border-border px-3 py-2">Equi-frequency histogram of non-MCV values</td>
+        <td class="border border-border px-3 py-2">Selectivity for range and equality on rare values</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">n_distinct</td>
+        <td class="border border-border px-3 py-2">Distinct value count (negative = fraction of rows)</td>
+        <td class="border border-border px-3 py-2">GROUP BY cardinality estimates</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">correlation</td>
+        <td class="border border-border px-3 py-2">Correlation between physical and logical order (−1 to 1)</td>
+        <td class="border border-border px-3 py-2">Index scan random vs sequential cost estimate</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+How the planner uses these for `WHERE x = 42`:
+1. Is 42 in the MCV list? Use its exact frequency directly.
+2. Not an MCV? Find the histogram bucket containing 42, assume uniform distribution within the bucket.
+3. Combine with `reltuples` (row count in `pg_class`) to get the estimated row count.
+
+For range predicates (`x > 100`), the histogram is integrated over the range. For multi-column predicates, by default the planner **assumes independence** and multiplies selectivities — which is wrong for correlated columns (covered in lesson 05).
+
+Read the catalog yourself:
+
+```sql
+SELECT tablename, attname, n_distinct, most_common_vals, most_common_freqs,
+       histogram_bounds, correlation
+FROM pg_stats
+WHERE tablename = 'orders';
+```
+
+## ANALYZE: when to run it
+
+Autovacuum schedules ANALYZE per table based on:
+
+```
+autovacuum_analyze_threshold (default 50 rows) +
+autovacuum_analyze_scale_factor × reltuples (default 0.1 = 10%)
+```
+
+On a 100M-row table, autovacuum analyzes only after 10M row changes — far too infrequent for tables with skewed or fast-changing data distributions. Operational fixes:
+
+```sql
+-- Lower the scale factor for hot tables:
+ALTER TABLE orders SET (autovacuum_analyze_scale_factor = 0.02);
+
+-- Bump statistics target for skewed columns:
+ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000;
+ANALYZE orders;
+```
+
+Manual `ANALYZE` runs in seconds even on 100M-row tables (it samples, not full-scans). Always run it:
+- After bulk inserts or large UPDATEs that shift distributions
+- After schema changes that add columns
+- In post-deploy hooks before traffic resumes
+
+## EXPLAIN options for diagnostics
+
+Beyond the basic plan, several `EXPLAIN` options are essential:
+
+- `FORMAT JSON | XML | YAML | TEXT` — JSON for tooling (explain.depesz.com, explain.dalibo.com, pganalyze)
+- `VERBOSE` — adds output column lists per node
+- `SETTINGS` (PG 12+) — prints non-default planner GUCs; diagnose environment drift between staging and production
+- `WAL` (PG 13+) — shows WAL bytes generated by the statement
+- `GENERIC_PLAN` (PG 16+) — plans a parameterised query without sample values; essential for prepared-statement diagnostics (covered in lesson 06)
+- `SERIALIZE` (PG 17+) — includes the cost of serialising rows for the client; closes the gap between EXPLAIN ANALYZE total time and client-observed latency
+
+## auto_explain and pg_stat_statements
+
+Two extensions every production Postgres should have:
+
+**pg_stat_statements** records every executed query (normalised by parameter), tracking `calls`, `total_exec_time`, `mean_exec_time`, `rows`, and buffer counts. Query: `SELECT query, calls, total_exec_time, mean_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20`. These top-20 by `total_exec_time` are your optimisation targets — a 2ms query called 10M times beats a 500ms query called twice.
+
+**auto_explain** automatically logs `EXPLAIN ANALYZE` for any query exceeding a duration threshold:
+
+```sql
+-- postgresql.conf additions:
+shared_preload_libraries = 'auto_explain'
+auto_explain.log_min_duration = '500ms'
+auto_explain.log_analyze = true
+auto_explain.log_buffers = true
+auto_explain.log_format = 'json'
+auto_explain.sample_rate = 0.01   -- 1% of slow queries to limit log volume
+```
+
+Slow queries land in the Postgres logs with full ANALYZE + BUFFERS plans, no need to reproduce them in staging. Together they answer "which queries are slow, and why" without instrumenting the application.
+
+<TraceScenario
+  id="04-stats-trace-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="en"
+  scenario="A query that ran in 5ms yesterday now takes 4 seconds. Nothing changed in the application. Diagnose."
+  steps={[
+    { prompt: "Step 1: confirm the regression.", reveal: "Run EXPLAIN ANALYZE on the slow query. Compare the current plan to yesterday's (saved or reconstructed). If the plans are the same but timings differ, the issue is execution-time (locks, contention, I/O, cache state). If plans differ, the issue is planning-time." },
+    { prompt: "Step 2: check for planning-time differences.", reveal: "Run EXPLAIN (no ANALYZE) — compare row estimates and plan structure. Common causes: (a) ANALYZE ran overnight and refreshed statistics, shifting selectivity estimates. (b) A large insert or delete shifted distributions. (c) An index was added or dropped. (d) A planner GUC changed. Use EXPLAIN (SETTINGS) to diff non-default GUCs between environments." },
+    { prompt: "Step 3: check for execution-time differences.", reveal: "Same plan, different timings. Check BUFFERS — high reads where there were hits yesterday mean the cache was evicted (a different workload pushed data out). Check for locks via pg_locks and pg_stat_activity. Check autovacuum activity via pg_stat_progress_vacuum — a vacuum on the same table competes for I/O." },
+    { prompt: "Step 4: identify the prepared-statement trap.", reveal: "A prepared statement switches from custom to generic plan after 5 executions. If the generic plan is bad for the actual parameter distribution, the symptom is exactly this: same query, suddenly slower after a while. Diagnose with EXPLAIN (GENERIC_PLAN) on the prepared form. Fix with SET plan_cache_mode = 'force_custom_plan' (covered in lesson 06)." },
+    { prompt: "Step 5: stabilise.", reveal: "Once the cause is identified, apply the fix (ANALYZE, index, GUC, plan_cache_mode). Add monitoring: pg_stat_statements diff over time catches this class of regression automatically. Document the cause in a runbook — this exact issue tends to repeat as data scales." },
+  ]}
+/>
+
+<DragOrder
+  id="04-stats-drag-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="en"
+  prompt="Order the EXPLAIN ANALYZE diagnostic checks from highest to lowest signal:"
+  items={[
+    { id: "a", label: "Rows estimated vs rows actual on every node — large gap = stale statistics" },
+    { id: "b", label: "Plan node taking most actual time — the dominant cost in this query" },
+    { id: "c", label: "loops count on inner side of Nested Loop — exposes outer-row underestimate" },
+    { id: "d", label: "Sort Method (in-memory quicksort vs external merge) — work_mem fit" },
+    { id: "e", label: "BUFFERS shared hit vs read — cache state and I/O picture" },
+    { id: "f", label: "Index Cond vs Filter — index is narrowing, or only post-filtering" },
+    { id: "g", label: "Planning Time vs Execution Time — planning dominance is rare but real" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+<Quiz
+  id="04-stats-quiz-1"
+  lessonSlug="04-statistics-and-analyze"
+  lang="en"
+  question="On a 100M-row table with default autovacuum settings, after how many row changes will autovacuum trigger ANALYZE?"
+  choices={[
+    { label: "After 50 row changes (autovacuum_analyze_threshold default)", misconception: "The threshold is threshold + scale_factor × rows = 50 + 0.1 × 100M = 10,000,050 changes." },
+    { label: "After 10M row changes (50 + 0.1 × 100M)", correct: true },
+    { label: "After 1M row changes", misconception: "The scale factor is 0.1 (10%), so on 100M rows that is 10M changes." },
+    { label: "Never — autovacuum only runs VACUUM, not ANALYZE", misconception: "Autovacuum runs both VACUUM and ANALYZE; ANALYZE is triggered by the analyze threshold/scale_factor." },
+  ]}
+/>
+
+<Quiz
+  id="04-stats-quiz-2"
+  lessonSlug="04-statistics-and-analyze"
+  lang="en"
+  question="Which query correctly identifies the top slow-query targets for optimisation using pg_stat_statements?"
+  choices={[
+    { label: "SELECT query, total_exec_time FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 20", misconception: "Ordering by mean_exec_time finds the slowest individual execution but misses high-frequency cheaper queries that consume more total time." },
+    { label: "SELECT query, calls, total_exec_time, mean_exec_time FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT 20", correct: true },
+    { label: "SELECT query FROM pg_stat_statements WHERE calls > 1000 ORDER BY calls DESC LIMIT 20", misconception: "High call count does not mean high resource consumption; a fast query called 1M times may be fine." },
+    { label: "SELECT query FROM pg_stat_statements ORDER BY rows DESC LIMIT 20", misconception: "Row count is not a reliable proxy for resource consumption." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The planner's row estimates come from pg_statistic: MCV lists for frequent values, histograms for the rest. ANALYZE keeps them fresh — run it manually after bulk operations and in post-deploy hooks. auto_explain logs plans for slow queries automatically; pg_stat_statements ranks which queries are worth optimising by total_exec_time.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-stats-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how the Postgres planner uses pg_statistic to estimate the selectivity of WHERE x = 42.", a: "For a predicate like WHERE x = 42, the planner asks: how many rows will match? It reads the column's pg_stats row. Step 1: is 42 in the most_common_vals list? If yes, use the corresponding frequency directly as the selectivity. Step 2: if 42 is not an MCV, find the histogram bucket containing 42 and assume uniform distribution within that bucket. Step 3: combine with reltuples (row count from pg_class) to get a row count estimate. For range predicates (x > 100), the histogram is integrated over the range. For multi-column predicates, the planner by default multiplies single-column selectivities — which fails for correlated columns. The fix for correlated columns is CREATE STATISTICS (dependencies, mcv) — covered in lesson 05." },
+    { q: "What operational discipline keeps statistics accurate in a fast-changing production database?", a: "(1) Lower autovacuum_analyze_scale_factor to 0.02 on hot tables so autovacuum triggers after 2% row changes instead of 10%. (2) Run ANALYZE manually in the post-deploy hook of any migration that shifts data distributions or adds columns. (3) Bump default_statistics_target on skewed columns: ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000 — this gives the planner a finer MCV list and histogram for that column. (4) Install pg_stat_statements and review the top-20 by total_exec_time weekly — rows-estimated vs actual in EXPLAIN ANALYZE is the trigger to run more targeted ANALYZE. (5) Configure auto_explain to capture plans for queries over 500ms without needing to reproduce them manually." },
+    { q: "Explain what auto_explain does, how to configure it for production, and what its cost is.", a: "auto_explain is a Postgres extension that automatically logs EXPLAIN ANALYZE output for any query whose execution time exceeds auto_explain.log_min_duration. It runs inside the backend — no application instrumentation needed. Configuration: add 'auto_explain' to shared_preload_libraries in postgresql.conf; set auto_explain.log_min_duration = '500ms', log_analyze = true, log_buffers = true, log_format = json. Set auto_explain.sample_rate = 0.01 to 0.05 to log only 1-5% of slow queries and limit log volume. Cost: log_analyze = true adds instrumentation overhead to every captured query — timing each node adds ~5-20% overhead on already-slow queries. For very fast OLTP (sub-ms queries) where even slow queries are under 500ms, raise log_min_duration to '1s'. The benefit is fully automatic plan capture without reproducing incidents in staging." },
+  ]}
+/>
+
+<Recap lang="en">
+The planner's row estimates are computed from `pg_statistic`: for each column, ANALYZE stores a most-common-values list (MCV) with exact frequencies, an equi-frequency histogram for the rest, `n_distinct` for GROUP BY cardinality, and `correlation` for index cost estimation. ANALYZE samples the table (30,000 rows by default) and runs in seconds even on large tables. Autovacuum triggers it after 10% row changes on a 100M-row table — too infrequent for hot data; tune `autovacuum_analyze_scale_factor = 0.02` on critical tables and run `ANALYZE` manually in post-deploy hooks. For production observability, `pg_stat_statements` ranks queries by `total_exec_time` to identify optimisation targets; `auto_explain` automatically captures plans for slow queries without manual reproduction.
+</Recap>
