@@ -4,6 +4,29 @@ import { join } from "node:path";
 const MATH_SECTIONS = ["hook", "goal", "worked-example", "check", "recap"] as const;
 const ALGO_SECTIONS = ["hook", "goal", "idea", "code", "trace", "complexity", "check", "recap"] as const;
 const BASECS_CODING_SECTIONS = ["hook", "goal", "idea", "code", "trace", "check", "recap"] as const;
+const TOPIC_SECTIONS = ["hook", "crux", "explanation", "key-takeaway", "recap"] as const;
+
+const EXERCISE_COMPONENTS = new Set([
+  "Quiz", "FadedExample", "RetrievalDrawer", "TraceScenario", "DebugLog",
+  "TradeoffMatrix", "DragOrder", "MetaphorComplete", "RFCQuiz", "DesignPrompt",
+  "AnimationStep", "NumberDrill", "Sandbox", "RequestBudgetSandbox",
+]);
+const ISLAND_COMPONENT_RE = /<astro-island[^>]*component-url="[^"]*\/([A-Za-z]+)\.[^"]+\.js"/g;
+
+function countExerciseWidgets(html: string): number {
+  let n = 0;
+  const re = new RegExp(ISLAND_COMPONENT_RE.source, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (EXERCISE_COMPONENTS.has(m[1])) n++;
+  }
+  return n;
+}
+
+function countRetrievalDrawers(html: string): number {
+  const re = /<astro-island[^>]*component-url="[^"]*\/RetrievalDrawer\.[^"]+\.js"/g;
+  return html.match(re)?.length ?? 0;
+}
 
 /** Built lesson page: dist/<lang>/learn/<track>/<lesson>/index.html — else null. */
 function lessonInfoFromPath(file: string): { slug: string; track: string } | null {
@@ -191,9 +214,50 @@ function checkBaseCsLesson(html: string, file: string, slug: string): string[] {
   return errs;
 }
 
+function checkTopicLesson(html: string, file: string, slug: string): string[] {
+  const errs: string[] = [];
+
+  // Required sections present and in order
+  const seen = sectionIndexes(html);
+  for (const s of TOPIC_SECTIONS) {
+    if (!seen.has(s)) errs.push(`${file}: topic lesson missing "${s}" section`);
+  }
+  errs.push(
+    ...checkOrder(
+      [
+        ["hook", seen.get("hook")],
+        ["crux", seen.get("crux")],
+        ["explanation", seen.get("explanation")],
+        ["key-takeaway", seen.get("key-takeaway")],
+        ["recap", seen.get("recap")],
+      ],
+      file
+    )
+  );
+
+  // ≥1 visual widget
+  if (html.search(/data-lesson-visual\b/) < 0) errs.push(`${file}: topic lesson has no visual widget`);
+
+  // ≥2 exercise widgets
+  const exerciseCount = countExerciseWidgets(html);
+  if (exerciseCount < 2) errs.push(`${file}: topic lesson has ${exerciseCount} exercise widget(s) (min 2)`);
+
+  // Exactly 1 RetrievalDrawer
+  const drawerCount = countRetrievalDrawers(html);
+  if (drawerCount !== 1) errs.push(`${file}: topic lesson must have exactly 1 RetrievalDrawer (found ${drawerCount})`);
+
+  // ≤5 hydration islands
+  const islands = html.match(/<astro-island\b/g)?.length ?? 0;
+  if (islands > 5) errs.push(`${file}: ${islands} hydration islands (max 5 on lesson pages)`);
+
+  return errs;
+}
+
 export function checkLessonRules(html: string, file: string): string[] {
   const info = lessonInfoFromPath(file);
   if (!info) return [];
+  const lessonType = html.match(/data-lesson-type="([a-z]+)"/)?.[1];
+  if (lessonType === "topic") return checkTopicLesson(html, file, info.slug);
   if (info.track === "algorithms") return checkAlgoLesson(html, file, info.slug);
   if (info.track === "base-cs") return checkBaseCsLesson(html, file, info.slug);
   return checkMathLesson(html, file, info.slug);

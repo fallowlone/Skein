@@ -240,3 +240,129 @@ describe("checkLessonRules — base-cs", () => {
     expect(checkLessonRules(basecsCoding(), BASECS_PATH)).toEqual([]);
   });
 });
+
+// ── Topic lesson tests ────────────────────────────────────────────────────────
+
+const TOPIC_PATH = "dist/en/learn/topic/01-networking/index.html";
+
+/**
+ * Minimal complete topic skeleton.
+ * - sections: hook, crux, explanation, key-takeaway, recap
+ * - 1 data-lesson-visual
+ * - 2 exercise widgets (astro-island components from EXERCISE_COMPONENTS set)
+ * - exactly 1 RetrievalDrawer island
+ * - ≤5 astro-island total (2 exercises = 1 retrieval + 1 other; well within cap)
+ */
+function topicSkeleton(opts: Partial<Record<string, boolean | number>> = {}): string {
+  const has = (k: string) => opts[k] !== false;
+  const retrieval = opts["retrievalCount"] as number | undefined;
+  const extraExercises = opts["extraExercises"] as number | undefined;
+  const retrievalIslands = retrieval !== undefined ? retrieval : 1;
+  const exerciseIslands = extraExercises !== undefined ? extraExercises : 1; // + 1 RetrievalDrawer = 2 total
+  const extraIslands = opts["extraIslands"] as number | undefined;
+
+  const retrievalHtml = Array.from({ length: retrievalIslands }, () =>
+    `<astro-island component-url="/dist/RetrievalDrawer.abc123.js"></astro-island>`
+  ).join("\n");
+
+  const exerciseHtml = Array.from({ length: exerciseIslands }, () =>
+    `<astro-island component-url="/dist/FadedExample.abc123.js"></astro-island>`
+  ).join("\n");
+
+  const extraIslandHtml = extraIslands
+    ? Array.from({ length: extraIslands }, () =>
+        `<astro-island component-url="/dist/Other.abc123.js"></astro-island>`
+      ).join("\n")
+    : "";
+
+  return [
+    `<article data-lesson-type="topic">`,
+    has("hook") ? `<div data-lesson-section="hook"></div>` : "",
+    has("crux") ? `<div data-lesson-section="crux"></div>` : "",
+    has("explanation") ? `<div data-lesson-section="explanation"></div>` : "",
+    has("visual") ? `<div data-lesson-visual></div>` : "",
+    has("retrieval") ? retrievalHtml : "",
+    has("exercises") ? exerciseHtml : "",
+    has("key-takeaway") ? `<div data-lesson-section="key-takeaway"></div>` : "",
+    has("recap") ? `<div data-lesson-section="recap"></div>` : "",
+    extraIslandHtml,
+    `<footer>Sources <a href="https://example.com">x</a></footer>`,
+    `</article>`,
+  ].join("\n");
+}
+
+describe("checkLessonRules — topic lessonType", () => {
+  test("a complete topic lesson passes", () => {
+    expect(checkLessonRules(topicSkeleton(), TOPIC_PATH)).toEqual([]);
+  });
+
+  test("flags missing hook section", () => {
+    const errs = checkLessonRules(topicSkeleton({ hook: false }), TOPIC_PATH);
+    expect(errs.some((e) => /hook/.test(e))).toBe(true);
+  });
+
+  test("flags missing crux section", () => {
+    const errs = checkLessonRules(topicSkeleton({ crux: false }), TOPIC_PATH);
+    expect(errs.some((e) => /crux/.test(e))).toBe(true);
+  });
+
+  test("flags missing explanation section", () => {
+    const errs = checkLessonRules(topicSkeleton({ explanation: false }), TOPIC_PATH);
+    expect(errs.some((e) => /explanation/.test(e))).toBe(true);
+  });
+
+  test("flags missing key-takeaway section", () => {
+    const errs = checkLessonRules(topicSkeleton({ "key-takeaway": false }), TOPIC_PATH);
+    expect(errs.some((e) => /key-takeaway/.test(e))).toBe(true);
+  });
+
+  test("flags missing recap section", () => {
+    const errs = checkLessonRules(topicSkeleton({ recap: false }), TOPIC_PATH);
+    expect(errs.some((e) => /recap/.test(e))).toBe(true);
+  });
+
+  test("flags no visual widget", () => {
+    const errs = checkLessonRules(topicSkeleton({ visual: false }), TOPIC_PATH);
+    expect(errs.some((e) => /visual/.test(e))).toBe(true);
+  });
+
+  test("flags fewer than 2 exercise widgets", () => {
+    // Only 1 RetrievalDrawer, 0 other exercise widgets = 1 total, below the minimum 2
+    const errs = checkLessonRules(topicSkeleton({ exercises: false }), TOPIC_PATH);
+    expect(errs.some((e) => /exercise/.test(e))).toBe(true);
+  });
+
+  test("flags zero RetrievalDrawers (requires exactly 1)", () => {
+    const errs = checkLessonRules(topicSkeleton({ retrieval: false }), TOPIC_PATH);
+    expect(errs.some((e) => /RetrievalDrawer/.test(e))).toBe(true);
+  });
+
+  test("flags more than 1 RetrievalDrawer", () => {
+    const errs = checkLessonRules(topicSkeleton({ retrievalCount: 2 }), TOPIC_PATH);
+    expect(errs.some((e) => /RetrievalDrawer/.test(e))).toBe(true);
+  });
+
+  test("flags more than 5 hydration islands", () => {
+    // 1 retrieval + 1 exercise + 6 extra = 8 islands total → over cap
+    const errs = checkLessonRules(topicSkeleton({ extraIslands: 6 }), TOPIC_PATH);
+    expect(errs.some((e) => /hydration/.test(e))).toBe(true);
+  });
+
+  test("sections must be in order: hook before crux before explanation before key-takeaway before recap", () => {
+    const html = [
+      `<article data-lesson-type="topic">`,
+      `<div data-lesson-section="recap"></div>`,
+      `<div data-lesson-section="hook"></div>`,
+      `<div data-lesson-section="crux"></div>`,
+      `<div data-lesson-section="explanation"></div>`,
+      `<div data-lesson-visual></div>`,
+      `<astro-island component-url="/dist/RetrievalDrawer.abc123.js"></astro-island>`,
+      `<astro-island component-url="/dist/FadedExample.abc123.js"></astro-island>`,
+      `<div data-lesson-section="key-takeaway"></div>`,
+      `<footer>Sources <a href="https://example.com">x</a></footer>`,
+      `</article>`,
+    ].join("\n");
+    const errs = checkLessonRules(html, TOPIC_PATH);
+    expect(errs.some((e) => /before/.test(e))).toBe(true);
+  });
+});
