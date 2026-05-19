@@ -1,0 +1,195 @@
+---
+slug: 05-session-affinity
+lang: en
+track: networking
+unit: 09-proxy-load-balancing
+order: 5
+title: "Session affinity, consistent hashing, and the right fix"
+summary: "Sticky sessions pin clients to one backend and cause 1.5–2.5x load imbalance and session loss on failure; consistent hashing maps keys to backends with minimal remapping on membership changes; the right fix is externalizing session state to Redis."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "09-proxy-load-balancing/01-what-reverse-proxies-do"
+  - "09-proxy-load-balancing/02-balancing-algorithms"
+deepensInto:
+  - "07-resilient-lb-architecture"
+spiral: ["statefulness"]
+concepts: ["session-affinity", "sticky-sessions", "cookie-based-affinity", "ip-hash-affinity", "consistent-hashing", "virtual-nodes", "rendezvous-hashing", "redis-session-store"]
+sources:
+  - https://en.wikipedia.org/wiki/Consistent_hashing
+  - https://www.nginx.com/blog/nginx-power-of-two-choices-load-balancing-algorithm/
+  - https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A user logs in. Their session lives on backend B2. The next request routes to B3. Session not found. They are logged out mid-flow. This is what happens when your application stores state on a single backend and you rely on session affinity to hide it — until affinity breaks.
+</Hook>
+
+<Crux>Sticky sessions cause 1.5–2.5× imbalance and session loss on failure; consistent hashing solves cache locality; Redis solves sessions.</Crux>
+
+<Explanation>
+
+## Why sticky sessions exist
+
+Some applications store **session state on the backend** — in memory, or in a local file. If the next request routes to a different backend, the state is missing: the user is logged out, the shopping cart is empty, the upload context is gone.
+
+**Sticky sessions** (session affinity) make the LB route all requests from one client to the same backend. The client's requests are "pinned" to one server.
+
+## Cookie-based affinity
+
+The LB sets a cookie on the first response:
+
+```
+Set-Cookie: LB_ROUTE=backend_2; Path=/
+```
+
+On every subsequent request, the browser sends this cookie. The LB reads it and routes to `backend_2`.
+
+**Advantages:**
+- Survives client-IP changes (mobile handover, NAT failover).
+- Allows graceful failover: if `backend_2` is unhealthy, the LB can pick a new backend and update the cookie.
+
+**Disadvantage:** Cookie-based affinity requires HTTP. Non-HTTP protocols cannot use it.
+
+## IP-hash affinity
+
+Route by `Hash(client_IP) % num_backends`. No cookie needed — works for any protocol.
+
+**Disadvantages:**
+- Breaks when the client IP changes (mobile handover, VPN reconnect).
+- **Clusters badly:** 50 clients behind one corporate NAT all hash to the same backend — that backend gets 50× the load of others.
+
+<Misconception id="lb-sticky-good">
+"Sticky sessions make my app resilient." They do the opposite. Sticky sessions cause 1.5–2.5× load imbalance and create a session SPOF. If the pinned backend crashes, the session is lost permanently — no failover. They are a workaround, not a solution.
+</Misconception>
+
+<NumbersCard
+  id="card-affinity-numbers"
+  title="Session affinity costs and options"
+  data-lesson-visual
+  stats={[
+    { label: "Load imbalance with sticky sessions", value: "1.5–2.5x worse" },
+    { label: "Session loss on pinned backend crash", value: "100% for that session" },
+    { label: "Cookie-based: survives IP change", value: "yes" },
+    { label: "IP-hash: survives IP change", value: "no" },
+    { label: "IP-hash with 50 clients behind NAT", value: "all 50 hit one backend" },
+    { label: "Right fix: session TTL in Redis", value: "any backend can resume" },
+  ]}
+/>
+
+## The right fix: externalized session state
+
+Store session data in a **distributed cache** (Redis, Memcached, DynamoDB) keyed by session ID. Every backend reads from and writes to this store.
+
+Now the LB can route requests **freely** using power-of-two-choices. No affinity needed. No pinning. Session data survives backend failures because it is in Redis, not in memory on one backend.
+
+This is the pattern used at Netflix, Airbnb, Shopify, and any service that scales horizontally.
+
+## Consistent hashing: for cache locality, not session state
+
+Session affinity is about *user state*. Consistent hashing is about *cache locality*: routing a cache key to the same backend so you get a cache hit instead of a miss.
+
+**Problem with round-robin for caching:**
+- Request `user:42` → B1 (cached there).
+- Next request `user:42` → B2 (cache miss, fetches from DB).
+- No locality, no benefit from caching.
+
+**Consistent hashing** maps each key to a point on a **hash ring**. Backends are also mapped to points (with many **virtual nodes** per backend to spread them evenly, ~150–300). A key routes to the nearest backend clockwise on the ring.
+
+**Key property:** When a backend joins or leaves, only ~1/N keys remap. All other keys stay on the same backend. This minimizes cache disruption on topology changes.
+
+**Lookup cost:** O(log N) with a sorted tree (binary search over virtual node positions).
+
+**Use consistent hashing for:**
+- Distributed caches (Memcached shards, Redis cluster).
+- Database sharding (route by shard key).
+- Sticky request routing for cache locality (media encoding jobs, analytics aggregations).
+
+**Do not use** consistent hashing for general request balancing — power-of-two-choices adapts to real-time load, consistent hashing does not.
+
+## Rendezvous hashing (highest-random-weight)
+
+Alternative to ring-based consistent hashing:
+1. For each backend, compute `Hash(key, backend_id)`.
+2. Route to the backend with the **highest hash value**.
+
+No ring, no virtual nodes — simpler to implement. O(N) per lookup but for small N (&lt;100 backends) the difference is negligible. Hash distribution is often more uniform than ring-based consistent hashing in practice. Some CDNs and Facebook's TAO use rendezvous hashing for sharding.
+
+<Inset kind="why" lang="en">
+**Why virtual nodes matter.** Without virtual nodes each backend occupies one arc on the ring. With 4 backends (A, B, C, D) placed at 0, 90, 180, 270 degrees, the arcs are perfectly even — but that is the ideal case. In practice, hash(backend_id) clusters backends unevenly. Virtual nodes map each backend to 150–300 positions on the ring, spreading it into 150–300 small arcs. This averages out the distribution so no single backend claims a disproportionately large arc.
+</Inset>
+
+<DragOrder
+  id="lb-mid-drag-affinity"
+  pieceSlug="05-session-affinity"
+  lang="en"
+  prompt="Order the steps of session affinity failover (cookie-based) showing why it fails without Redis:"
+  items={[
+    "Client sends a request with cookie LB_ROUTE=backend_2.",
+    "LB reads the cookie and routes to backend_2.",
+    "Backend_2 crashes or becomes unhealthy.",
+    "LB stops routing new requests to backend_2 but cannot migrate the existing session.",
+    "Client's session is lost because only backend_2 held it in memory.",
+    "Client retries; LB picks a new backend, but the session data is gone.",
+    "Right fix: store session in Redis, accessible from any backend, so failover is transparent.",
+  ]}
+/>
+
+<Quiz
+  id="lb-mid-quiz-affinity"
+  pieceSlug="05-session-affinity"
+  lang="en"
+  question="What is the main drawback of IP-hash session affinity compared to cookie-based affinity?"
+  choices={[
+    { label: "It requires a central session store", misconception: "IP-hash does not use a session store. The problem is network-level." },
+    { label: "It breaks when the client's IP changes (mobile handover, NAT failover) and clusters badly when many clients share one corporate NAT IP", correct: true },
+    { label: "It requires more CPU per request than cookie-based affinity", misconception: "Both are O(1) hash computations. CPU is not the differentiator." },
+    { label: "It causes 5× worse load imbalance than no affinity", misconception: "Both sticky modes cause 1.5–2.5× imbalance, not 5×. IP-hash's unique failure is IP-change brittleness." },
+  ]}
+/>
+
+<Quiz
+  id="lb-mid-quiz-consistent"
+  pieceSlug="05-session-affinity"
+  lang="en"
+  question="When a backend is removed from a consistent-hash ring, what fraction of keys must remap to a new backend?"
+  choices={[
+    { label: "All keys must remap", misconception: "That would make consistent hashing no better than modular hashing. The key property is minimal remapping." },
+    { label: "~1/N of keys, where N is the number of backends", correct: true },
+    { label: "~50% of keys remap regardless of N", misconception: "The fraction is 1/N — smaller rings cause less remapping when a backend leaves." },
+    { label: "No keys remap — they all shift clockwise", misconception: "Keys assigned to the removed backend must remap. Only those keys are affected; ~1/N of the total." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Sticky sessions hide stateful backend design at the cost of 1.5–2.5x load imbalance and complete session loss on failure. Consistent hashing minimizes cache remapping (~1/N of keys) on topology changes. The right fix for session state is always Redis: externalize state, route freely with power-of-two-choices, and sessions survive any backend failure.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-session-affinity-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is session affinity considered an anti-pattern, and what is the correct fix?", a: "Sticky sessions cause 1.5–2.5x worse load imbalance by pinning clients to one backend, preventing rebalancing. More critically, if the pinned backend crashes, the session is lost with no failover. The correct fix: store session state in a distributed cache (Redis) keyed by session ID. All backends read/write the same store, so the LB can route freely and a backend crash is invisible to the user." },
+    { q: "What problem does consistent hashing solve that round-robin cannot?", a: "Cache locality. With round-robin, the same cache key (user:42) routes to different backends on consecutive requests — cache miss every time. With consistent hashing, user:42 always routes to the same backend (until topology changes), maximizing cache hit rate. Round-robin distributes load evenly but destroys cache locality." },
+    { q: "What are virtual nodes in consistent hashing and why are they necessary?", a: "Virtual nodes map each backend to 150–300 positions on the hash ring instead of one. Without virtual nodes, backends cluster unevenly due to hash(backend_id) not distributing uniformly — one backend might claim a 30% arc while another claims 5%. Virtual nodes spread each backend into many small arcs, averaging out the distribution so each backend claims approximately 1/N of the ring." },
+  ]}
+/>
+
+<Recap lang="en">
+Session affinity routes each client to one backend using a cookie (`LB_ROUTE=backend_2`) or IP hash. Cookie-based affinity survives IP changes; IP-hash breaks on IP changes and clusters badly behind NAT. Both cause 1.5–2.5× worse load imbalance and lose sessions on backend failure — they are workarounds, not solutions. The correct architecture: externalize session state to Redis so any backend can resume any session and the LB can route freely. Consistent hashing is a different tool for cache locality: it maps a key to the same backend with ~1/N remapping on membership change, using virtual nodes (150–300 per backend) to even out the ring distribution. Use consistent hashing for caches and sharding; use power-of-two-choices for live request balancing.
+</Recap>

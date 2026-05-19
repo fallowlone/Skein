@@ -1,0 +1,189 @@
+---
+slug: 06-retry-storms-and-circuit-breakers
+lang: en
+track: networking
+unit: 09-proxy-load-balancing
+order: 6
+title: "Retry storms, circuit breakers, and load shedding"
+summary: "Automatic retries amplify load 2^K× across K microservice layers; circuit breakers stop the cascade with fast 503s; retry budgets and exponential backoff with jitter are the minimum production mitigations."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "09-proxy-load-balancing/02-balancing-algorithms"
+  - "09-proxy-load-balancing/04-health-checks-and-draining"
+deepensInto:
+  - "07-resilient-lb-architecture"
+spiral: ["latency", "statefulness"]
+concepts: ["retry-storm", "retry-amplification", "circuit-breaker", "exponential-backoff-jitter", "retry-budget", "load-shedding", "thundering-herd"]
+sources:
+  - https://learn.microsoft.com/en-us/azure/architecture/antipatterns/retry-storm/
+  - https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/circuit_breaking
+  - https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A backend has a 500 ms GC pause. One hundred clients time out. Each retries. Now the backend has 200 requests queued on an already-paused backend. The retries from the retries pile on. Within seconds, a 500 ms blip has become a full cluster outage. This is the retry storm — and automatic retries caused it.
+</Hook>
+
+<Crux>Retries amplify load 2^K× across K layers; circuit breakers return 503 fast; retry budgets and jitter are mandatory production mitigations.</Crux>
+
+<Explanation>
+
+## The retry-amplification problem
+
+A backend blips (GC pause, thread pool exhaustion, momentary overload). Requests time out. Clients and the LB retry. The retry adds load to an already-impaired backend. The backend falls further behind. More retries accumulate.
+
+**Amplification math.** With N=100 clients and 1 retry each: 100 original requests + 100 retries = **200 requests** on a backend that could not handle 100. With 2 retries each: 300. With K=10 microservice layers each doing 1 retry on error, worst-case amplification approaches **2^10 = 1024×** the original load.
+
+This is not a theoretical concern. It is the most common cause of sustained cluster-wide outages in microservice architectures.
+
+**Why retries make it worse, not better.** Retries are correct for *transient* failures (momentary packet loss, brief DNS blip). They are catastrophic for *overload* failures: retrying into an overloaded backend adds the exact load that caused the overload. The backend cannot drain its queue because retries keep refilling it.
+
+<Misconception id="lb-retries-resilient">
+"Automatic retries make systems resilient." Retries amplify overload failures. One timeout becomes 2× load on a drowning backend. Across N microservice layers, a single blip cascades into outage. Fix: retry budgets (~10%), circuit breakers, exponential backoff with jitter. Fail fast, not hard.
+</Misconception>
+
+## Circuit breakers
+
+A circuit breaker sits at the LB or service client level and tracks failure rates for each backend. Three states:
+
+1. **Closed (normal):** Requests flow through. Failure count is monitored.
+2. **Open:** After N consecutive failures (or a failure rate threshold is exceeded), the breaker opens. All new requests receive `503 Service Unavailable` **immediately** — no queuing, no waiting.
+3. **Half-open:** After a cooldown period, one request is allowed through. If it succeeds, the breaker closes. If it fails, it reopens and the cooldown resets.
+
+**Why fast 503 helps.** When the breaker is open, clients get `503` immediately instead of waiting for a timeout (30 s). They can route to a fallback, retry a different service, or shed the request. The overloaded backend gets no new load — it can drain its existing queue and recover.
+
+**Envoy circuit breaking config:**
+- `max_connections`: max concurrent TCP connections to a backend (e.g., 1 000). 1 001st request: 503 immediately.
+- `max_pending_requests`: max requests queued when all connections are busy (e.g., 100). Excess: 503 immediately.
+- `max_requests`: max concurrent HTTP/2 requests per connection (e.g., 1 000).
+
+<NumbersCard
+  id="card-retry-storm-numbers"
+  title="Retry storm amplification"
+  data-lesson-visual
+  stats={[
+    { label: "100 clients × 1 retry", value: "200 requests on a drowning backend" },
+    { label: "100 clients × 2 retries", value: "300 requests" },
+    { label: "K=10 layers × 1 retry each", value: "up to 1 024× amplification" },
+    { label: "Safe retry rate (production SLO)", value: "&lt;0.1% of request rate" },
+    { label: "Circuit breaker open → client sees", value: "503 immediately (no timeout wait)" },
+    { label: "Jitter range (backoff base 1 s)", value: "0–1 s random delay added" },
+  ]}
+/>
+
+## Retry budgets
+
+Instead of unlimited retries, set a **global retry budget**: cap the total number of retries across all clients to ~10% of the total request rate.
+
+Example: If the service handles 10 000 RPS, allow at most 1 000 RPS of retries. Any retry beyond this returns 503 immediately (fail fast). This prevents the amplification from exceeding a bounded factor regardless of how many clients are retrying simultaneously.
+
+## Exponential backoff with jitter
+
+Clients must not retry immediately — that synchronizes all retries and creates a thundering herd. Two components:
+
+1. **Exponential backoff:** Retry delay doubles on each attempt: 1 s → 2 s → 4 s → 8 s → … up to a maximum (e.g., 32 s).
+2. **Jitter:** Add a random value `random(0, base)` to each delay. This desynchronizes clients so they retry at staggered times.
+
+```
+delay = min(base × 2^attempt + random(0, base), max_delay)
+```
+
+Example with base=1 s, max=32 s:
+- Attempt 1: 1 s + rand(0, 1 s).
+- Attempt 2: 2 s + rand(0, 2 s).
+- Attempt 3: 4 s + rand(0, 4 s).
+
+Without jitter, all 100 clients that timed out at t=30 s retry at t=31 s, creating another burst. With jitter, they retry spread across t=31–32 s.
+
+## Load shedding
+
+The LB and backend both enforce queue depth limits. When the queue exceeds a threshold, **new requests are dropped immediately with 503** rather than accepted and queued.
+
+Without load shedding:
+- Queue grows unbounded.
+- Latency of every queued request increases.
+- Memory bloats.
+- Eventually, everything times out simultaneously.
+
+With load shedding:
+- Clients get fast 503 — they know to back off.
+- The backend queue stays bounded.
+- Requests that do enter the queue get served in finite time.
+- System drains and recovers instead of collapsing.
+
+<TraceScenario
+  id="lb-sr-trace-retry"
+  pieceSlug="06-retry-storms-and-circuit-breakers"
+  lang="en"
+  scenario="Trace a cascading failure: backend overload, retry storm, circuit breaker engagement."
+  steps={[
+    { prompt: "Backend B1 experiences thread pool exhaustion. Requests queue. Active health check (HTTP GET) still succeeds (the endpoint is reachable). What do the LB and clients see?", reveal: "The health check returns 200 OK — it hits the health endpoint which is outside the thread pool. But real requests time out (30 s or application-level timeout). Clients and the LB layer retry. B1 is still accepting connections so each retry adds another queued request." },
+    { prompt: "With 100 clients each retrying once, load on B1 goes from 100 to how many requests? What happens to B1's queue?", reveal: "200+ requests (100 originals + 100 retries, some of which also time out and retry). B1's queue grows. Processing time per request increases as the thread pool stays exhausted. B1 now also starts returning 5xx on the health check endpoint as the application degrades. Passive outlier detection ejects B1 after 5 consecutive 5xx." },
+    { prompt: "B1 is ejected. Its 200 queued requests now redistribute to B2, B3, B4. What is the risk?", reveal: "B2, B3, B4 now absorb B1's traffic plus their own. If they were already near capacity, they hit their limits within seconds. Without circuit breakers, they accept the queued load and start timing out too, triggering their own retries. The cascade spreads." },
+    { prompt: "The LB has a circuit breaker: max 100 concurrent requests per backend. B2 hits it. What do new requests see?", reveal: "503 Service Unavailable immediately — no waiting, no queuing. Clients receive fast failure and can apply exponential backoff with jitter. The cluster sheds load instead of accumulating it. B2 can drain its current queue and recover." },
+    { prompt: "B1's thread pool recovers after 2 minutes. How should it rejoin the pool?", reveal: "Slow start: traffic ramps 10% → 50% → 100% over 5 minutes. Without slow-start, the full cluster load surges to B1 immediately, potentially re-triggering the outage. The gradual ramp lets its thread pool stabilize and its in-process queue drain." },
+  ]}
+/>
+
+<DebugLog
+  id="lb-sr-debug-1"
+  pieceSlug="06-retry-storms-and-circuit-breakers"
+  lang="en"
+  title="Envoy stats dump during a retry storm"
+  output={`cluster.api_backend.requests: 10000
+cluster.api_backend.errors: 245
+cluster.api_backend.retries: 189
+cluster.api_backend_retry_limit: 1200
+upstream_rq_retry.api_backend: 189
+upstream_rq_retry_limit_exceeded: 45
+upstream_rq_total.api_backend: 10000
+upstream_cx: 156
+health_checks.failed: 12
+health_checks.success: 188
+circuit_breaker.default.rq_open: 0
+circuit_breaker.default.cx_open: 0
+outlier_detection.ejected_count: 0
+load_balancer.least_request.unbalanced_requests_delta: 234`}
+  outputLang="log"
+  question="Stats show 189 retries out of 10 000 requests (~1.9% retry rate) and 45 requests hit the retry limit. Is the cluster healthy, and what should the operator do?"
+  hint="Look at the retry rate vs the 0.1% SLO. What does 1.9% retry rate indicate? The circuit breaker is not open — what does that mean?"
+  answer="1.9% retry rate is well above the 0.1% SLO — this signals backend issues (application errors, slowness, or a degraded node). The 45 requests hitting the retry limit means they exhausted their retry budget and failed fast — correct behavior. The circuit breaker is not open, meaning no complete outage, but the system is stressed. Action: investigate backends — check CPU, memory, database connection pool, GC logs. The health check shows 12 failures and 188 successes — occasional failures suggest flakiness. Increase the failure threshold to 3–5 to reduce flapping. Add alerting on retry rate > 0.1%. Identify whether it is one degraded node or a systemic issue."
+/>
+
+<Inset kind="edgecase" lang="en">
+**Per-layer retry budget vs global.** In a microservice stack, if each of 10 layers allows 1 retry, the worst-case amplification is 2^10. The correct architecture: allocate the total retry budget at the **outermost** layer (the API gateway or client) and propagate a `retry-remaining` header inward. Inner services do not retry at all unless the header grants them budget. This keeps amplification bounded at 2× regardless of stack depth.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Retries amplify overload: 100 clients × 1 retry = 200 requests on a drowning backend; K layers × 1 retry = 2^K amplification. Circuit breakers return 503 immediately after N failures, stopping the cascade. Retry budgets (&lt;10% of RPS), exponential backoff with jitter, and load shedding are mandatory production mitigations — not optional hardening.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-retry-storms-and-circuit-breakers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the retry amplification problem in a microservice architecture with N layers. Why is a 1% retry rate per layer catastrophic?", a: "With N=10 layers each implementing 1% automatic retry, a single database error generates a retry at each layer. The amplification is 1 + 0.01 + ... initially, but if the error is due to overload, retries add more load, spiking the error rate to 5%, 10%, 50% — at which point retry amplification becomes exponential. Worst case: 2^10 = 1024× the original load across 10 layers. Fix: retry budgets (cap at ~10% of RPS globally), circuit breakers at each service boundary, exponential backoff with jitter." },
+    { q: "How does a circuit breaker stop a retry storm, and what are its three states?", a: "Closed (normal): requests flow through, failures are monitored. Open (after N failures): all requests receive 503 immediately — no queuing, no timeout wait. Half-open (after cooldown): one test request is sent; if it succeeds, the breaker closes; if it fails, it reopens. The open state stops the storm by giving the backend no new load to process while it drains its queue and recovers." },
+    { q: "Why must jitter be added to exponential backoff, and what does it prevent?", a: "Without jitter, all clients that timed out simultaneously (e.g., at t=30 s) retry at the same time (t=31 s after a 1 s base delay). This creates a synchronized burst — a thundering herd — that overloads the recovering backend again. Jitter adds a random component (0 to base) so different clients retry at staggered times: t=31.0 s, t=31.4 s, t=31.7 s. The burst desynchronizes and the backend sees a gradual ramp instead of a spike." },
+  ]}
+/>
+
+<Recap lang="en">
+Retry storms are the most common cause of sustained microservice outages. When a backend blips, automatic retries add load to an already-impaired backend — amplified 2^K× across K service layers. Circuit breakers stop the cascade by returning 503 immediately after N failures, giving the backend space to drain and recover. The minimum production mitigations are: retry budgets capping retries at &lt;10% of RPS; exponential backoff with jitter to desynchronize retry timing; and load shedding to drop new requests when queue depth exceeds a threshold. Alert on retry rates above 0.1% — that is the earliest warning sign before a storm escalates.
+</Recap>
