@@ -1,0 +1,235 @@
+---
+slug: 04-jsonb-and-arrays
+lang: en
+track: databases
+unit: 01-relational-model
+order: 4
+title: "JSONB, arrays, and when a side table wins"
+summary: "When JSONB and typed arrays are the right choice, GIN vs expression B-tree index strategies, FK at scale, generated STORED columns, and the relational-shortcut pattern that keeps the schema honest."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-normalization"]
+deepensInto: ["05-heap-and-toast"]
+spiral: ["statefulness", "encapsulation"]
+concepts: ["JSONB", "GIN-index", "expression-btree", "typed-array", "generated-column", "FK-at-scale", "relational-shortcut", "jsonb_path_ops"]
+sources:
+  - https://www.postgresql.org/docs/current/datatype-json.html
+  - https://www.postgresql.org/docs/current/gin-intro.html
+  - https://www.postgresql.org/docs/current/ddl-generated-columns.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A team adds a "metadata" JSONB column for "occasional extra fields." Three years later the column has 30 fields that every query touches — none indexed, none constrained, all parsed on every read. The schema grew into exactly what they were trying to avoid.
+</Hook>
+
+<Crux>JSONB fits genuinely variable data. For anything you query, aggregate, or constrain more than once, use a typed column.</Crux>
+
+<Explanation>
+
+## JSONB vs JSON: always JSONB
+
+Postgres has two JSON storage types. `JSON` stores text verbatim — it is re-parsed on every read, not indexable, and slightly smaller. `JSONB` stores a parsed binary structure — indexable, queryable with path operators, slightly larger. In production, always `JSONB`. The only reason to use `JSON` is if you need to preserve key order or duplicate keys, which legitimate schemas never do.
+
+## When JSONB is the right choice
+
+JSONB fits three shapes well:
+
+1. **Genuinely heterogeneous data.** Event logs where each event type has a different payload shape. Third-party API responses where the schema is controlled by someone else. Configuration objects where keys differ per tenant.
+
+2. **Long-tail metadata.** A products table where 80% of products share 10 columns and 20% have 50 additional supplier-specific fields. The 10 columns are typed; the 50-field tail is JSONB.
+
+3. **Schema-first, query-last.** Data you store but rarely query — file uploader metadata, per-row user preferences. If the only query is "show me this row's metadata," JSONB is fine.
+
+The wrong shape: any field you GROUP BY, JOIN on, aggregate, enforce uniqueness on, or reference with a foreign key. Those fields must be typed columns.
+
+## When a side table wins
+
+Typed arrays (`TEXT[]`, `INTEGER[]`) and JSONB both lose to a side table when:
+
+- You need to query "all rows with tag X" at scale — a GIN index helps, but a join table with a B-tree index on `(tag_id, row_id)` is faster and lets you enforce FK integrity.
+- You need to rename tag X globally — one UPDATE on the tags table vs. scanning every row that contains the tag.
+- You need to count rows per tag, or join tags to another table — SQL aggregation over a join table is an order of magnitude cheaper than GIN-indexed JSONB.
+- You need uniqueness per row (no duplicate tags on one item) — easily enforced on a join table's composite PK; impossible to enforce inside an array without a constraint function.
+
+The decision rule: if you only ever read "the tags on this row," an array column is fine. The moment you query from the tag direction, use a side table.
+
+## JSONB index strategies
+
+JSONB has two index families. Choosing the wrong one makes queries 10-100x slower than needed.
+
+**GIN (Generalized Inverted Index).** Indexes every key or path inside the JSONB. Default operator class indexes every key; `jsonb_path_ops` indexes whole paths (faster for `@>` containment queries, larger index). Supports `@>`, `?`, `?|`, `?&` operators.
+
+```sql
+-- Default GIN: supports ?, ?|, ?& and @>
+CREATE INDEX idx_events_payload ON events USING GIN (payload);
+
+-- jsonb_path_ops: only @> (containment), but faster for it
+CREATE INDEX idx_events_payload_paths ON events USING GIN (payload jsonb_path_ops);
+```
+
+**Expression B-tree.** Indexes one specific path extracted as a typed value. Supports equality and range queries on that path. Much smaller than GIN.
+
+```sql
+-- Indexes the user_id field as text
+CREATE INDEX idx_events_user_id ON events ((payload->>'user_id'));
+
+-- Indexes user_id as integer (cast)
+CREATE INDEX idx_events_user_id_int ON events ((( payload->>'user_id')::BIGINT));
+```
+
+Use GIN for "does this JSONB contain key/value X?" Use expression B-tree for "find rows where `data.field` equals this specific value."
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Index type</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+        <th class="border border-border px-3 py-2 text-left">Size</th>
+        <th class="border border-border px-3 py-2 text-left">Operators</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border border-border px-3 py-2">GIN (default)</td><td class="border border-border px-3 py-2">Key existence, containment over many paths</td><td class="border border-border px-3 py-2">5-20x larger than B-tree</td><td class="border border-border px-3 py-2">?, ?|, ?&amp;, @&gt;</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">GIN (jsonb_path_ops)</td><td class="border border-border px-3 py-2">@&gt; containment only, faster lookups</td><td class="border border-border px-3 py-2">Smaller than default GIN</td><td class="border border-border px-3 py-2">@&gt; only</td></tr>
+      <tr><td class="border border-border px-3 py-2">Expression B-tree</td><td class="border border-border px-3 py-2">One specific path, equality/range</td><td class="border border-border px-3 py-2">Similar to regular B-tree</td><td class="border border-border px-3 py-2">=, &lt;, &gt;, BETWEEN</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Generated STORED columns
+
+Postgres supports generated columns whose value is computed from other columns at write time and stored:
+
+```sql
+ALTER TABLE order_items
+  ADD COLUMN line_total_cents INTEGER
+  GENERATED ALWAYS AS (unit_price_cents * quantity) STORED;
+```
+
+The column is queryable, indexable, and updated automatically on every write. Unlike a trigger, the computation is declared in the schema and is visible to any reader without knowing the trigger exists.
+
+Use cases: derived values you query frequently (`full_name`, `line_total`, `is_final` from a status enum), audit flags, computed denormalization. Trade: writes are slightly slower (expression evaluated per write); migrations on generated columns can trigger table rewrites.
+
+<Inset kind="why" lang="en">
+Why not use a trigger for computed columns? Triggers work, but they are invisible at schema level — a reader examining the DDL does not know the trigger exists or what it does. Generated columns are self-documenting, enforced by the engine, and survive schema dumps cleanly. Use triggers when the computation depends on data from other rows or tables (which generated columns cannot access). Use generated columns when the computation is per-row arithmetic.
+</Inset>
+
+## FK at scale: the PlanetScale pattern
+
+Some hyperscale shops (PlanetScale on Vitess, several large Postgres deployments) recommend disabling foreign keys. The specific conditions where this is reasonable:
+
+- Data is sharded and the relationship crosses shard boundaries — FKs cannot span shards.
+- A cascade would create a multi-million-row transaction holding locks for minutes.
+- The FK validation pass on a column-type-change DDL is the operational bottleneck.
+
+None of those conditions apply to a typical SaaS schema below ~100M rows per table. For most teams, the FK constraint costs ~5-50 μs per row at write time and refuses every orphan-row bug forever. Disabling it pushes the integrity guarantee into application code, where it is implemented inconsistently and breaks during refactors.
+
+Senior engineers should treat "we disabled FKs" as a signal of specific scale constraints — not a general best practice.
+
+<FadedExample
+  client:load
+  id="04-jsonb-and-arrays-faded-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="en"
+  title="Add product tags: array column, JSONB, or side table?"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Scenario:</strong> A marketplace adds free-form tags to products. Tags are user-supplied strings. The application needs: (a) show tags on a product page, (b) list products with tag "eco-friendly", (c) show tag usage counts, (d) rename a tag globally.</p>
+        <p><strong>Array column (TEXT[]):</strong> Simple for (a). Can be GIN-indexed for (b). Breaks for (c) — aggregating inside arrays is expensive. Breaks for (d) — renaming requires updating every row that contains the tag. Verdict: use only if queries (c) and (d) will never happen.</p>
+        <p><strong>JSONB column:</strong> Same trade as array, but worse — higher parsing overhead, no type enforcement, and GIN indexes on a JSON array of strings are no faster than a TEXT[] GIN. No benefit over the array approach.</p>
+        <p><strong>Side table:</strong></p>
+        <pre class="text-xs bg-zinc-100 dark:bg-zinc-800 p-2 rounded overflow-x-auto"><code>{`CREATE TABLE tags (
+  id BIGSERIAL PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE product_tags (
+  product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+  tag_id BIGINT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  PRIMARY KEY (product_id, tag_id)
+);
+CREATE INDEX idx_product_tags_tag_id ON product_tags(tag_id);`}</code></pre>
+        <p>Supports all four queries: (a) JOIN product_tags + tags; (b) JOIN from tags WHERE name = 'eco-friendly' + B-tree index on tag_id; (c) COUNT(*) GROUP BY tag_id; (d) single UPDATE on tags.name. The composite PK prevents duplicate tags per product. FKs prevent orphan tag assignments. The B-tree index on tag_id is the key enabler for queries (b) and (c).</p>
+      </div>
+    ),
+    semi: {
+      prompt: "The PRIMARY KEY (product_id, tag_id) on product_tags covers 'which tags does product X have'. For 'which products have tag Y', you need an index on _______ .",
+      blanks: [
+        { id: "col", expected: "tag_id", placeholder: "column name" },
+      ],
+    },
+    blank: {
+      prompt: "If tags were per-user preferences ('user has many favourite tags') and the only query was ever 'show me this user's tags', would a side table still be required?",
+      reveal: (
+        <div class="text-sm space-y-2">
+          <p>No — if the only query is 'show me this user's tags' (never 'which users have tag X', never 'count users per tag', never 'rename tag globally'), a TEXT[] array column on users is the simpler and cheaper choice. The array is read in one column fetch with no join. Add a GIN index if you need 'does this user have tag X' as a filter. The side table adds overhead that is only paid back when you query from the tag direction.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "col:product_id": "The PK (product_id, tag_id) already covers product_id as the leading column. You need the reverse direction — index on tag_id — for 'which products have this tag'.",
+  }}
+/>
+
+<Quiz
+  id="04-jsonb-and-arrays-quiz-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="en"
+  question="A query `WHERE payload @> '{&quot;event_type&quot;: &quot;purchase&quot;}'` on a 50M-row events table runs in 200 ms with a full GIN index but you need it under 20 ms. Which index change to try first?"
+  choices={[
+    { label: "Add a second GIN index with jsonb_path_ops operator class, which is faster for @> containment queries and produces a smaller index", correct: true },
+    { label: "Change the column from JSONB to JSON", misconception: "JSON is not indexable. This makes the query slower, not faster." },
+    { label: "Add a B-tree index on the entire JSONB column", misconception: "B-tree indexes on JSONB are not supported; JSONB requires GIN or expression indexes." },
+    { label: "Partition the table by event_type", misconception: "Partitioning would help, but it requires promoting event_type to a proper column first — at which point the expression B-tree on that column is the right index, not a JSONB change." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="04-jsonb-and-arrays-tradeoff-1"
+  lessonSlug="04-jsonb-and-arrays"
+  lang="en"
+  prompt="A new service stores 'product reviews' (one review per user per product, rating + text + optional structured tags). Which schema shape?"
+  options={[
+    { name: "Relational: reviews(user_id, product_id, rating, body) with composite PK and FKs; tags as a review_tags join table with a tags catalogue", summary: "Canonical relational design.", correct: true, justification: "Composite PK enforces one-review-per-user-product with zero application code. FKs guarantee no orphan reviews. The tags join table lets you query from both directions, rename tags in O(1), and aggregate by tag. CHECK constraint on rating (1-5) catches bad inserts. This is the design that scales to billions of reviews." },
+    { name: "Single table with everything in JSONB (rating, body, tags all inside one column)", summary: "Tempting for prototyping, expensive long-term.", justification: "Fails the moment you enforce uniqueness ('one review per user-product'), query by tag ('all reviews with tag X'), aggregate ratings, or build a moderation queue. Each requires GIN indexes or runtime parsing. After two years, this becomes the table everyone wants to migrate." },
+    { name: "Relational rating + body, but JSONB for tags (array inside JSONB)", summary: "Works for some queries.", justification: "Acceptable if tags are read-only metadata never queried in aggregate. Fails for 'count reviews per tag' or 'rename tag X to Y'. Use only when tags are genuinely per-row labels, not a shared vocabulary." },
+    { name: "Document store (MongoDB) for the whole feature", summary: "Wrong tool for this shape.", justification: "Reviews have referential integrity needs (must reference real users and products), uniqueness needs (one per user-product), and aggregation needs (average rating per product). Document stores either give up the integrity or simulate it inefficiently." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>JSONB fits heterogeneous or long-tail data; typed columns fit anything you query, aggregate, or constrain. GIN for containment/key-existence; expression B-tree for one specific path. Generated STORED columns replace triggers for per-row computed values. Disable FKs only when sharding or cascade risk is measured; it is not a general best practice.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-jsonb-and-arrays-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the decision rule for JSONB vs typed column and give one example where each is correct.", a: "Rule: if you query a field more than once — filter, aggregate, sort, or join on it — it must be a typed column. JSONB is correct for genuinely variable or long-tail data you read as a unit (event payloads with per-type schemas, per-tenant configuration objects, file uploader metadata). Typed column is correct for any field that appears in WHERE, GROUP BY, ORDER BY, FK, or CHECK — like order status, user email, or price_cents." },
+    { q: "What is the difference between a GIN index with the default operator class and one with jsonb_path_ops, and when do you choose each?", a: "Default GIN indexes every key and value in the JSONB, supporting ?, ?|, ?&, and @> operators. jsonb_path_ops indexes only whole paths, supporting only @> (containment), but is faster for containment queries and produces a smaller index. Choose default GIN when you need key-existence queries (?). Choose jsonb_path_ops when your only JSONB queries are @> containment and you want faster lookups and a smaller index." },
+    { q: "Articulate the conditions under which disabling foreign keys is a reasonable engineering choice.", a: "Disabling FKs is reasonable when (a) data is sharded and the relationship crosses shard boundaries (FKs cannot span shards), (b) a cascade would create a multi-million-row transaction locking tables for minutes, or (c) FK validation during a column-type-change DDL is the operational bottleneck for online schema changes. None of these conditions apply to a typical SaaS schema under ~100M rows per table. Disabling FKs without these justifications pushes integrity enforcement into application code, where it is implemented inconsistently." },
+  ]}
+/>
+
+<Recap lang="en">
+JSONB (always JSONB over JSON) is the right choice for heterogeneous schemas, long-tail metadata, and data you store but rarely query by field. The moment a field appears in a WHERE, GROUP BY, or JOIN, it needs a typed column. Side tables beat arrays and JSONB when you query from either direction, need to aggregate, or need to enforce uniqueness between a row and a tag. GIN indexes support key-existence and containment; expression B-tree indexes support one specific path for equality and range. Generated STORED columns replace triggers for per-row arithmetic — declared in the schema, visible to any reader. FK constraints cost ~5-50 μs per write and prevent orphan rows forever; disable them only under specific sharding or cascade constraints, not as a general practice.
+</Recap>
