@@ -1,0 +1,193 @@
+---
+slug: 06-0rtt-and-encryption
+lang: en
+track: networking
+unit: 10-quic-internals
+order: 6
+title: "0-RTT resumption and packet encryption"
+summary: "QUIC's 0-RTT resumption lets clients piggyback data on the first packet — but without replay protection. Almost-full packet encryption eliminates passive sniffing and RST injection at the cost of operational opacity."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "05-tls-handshake/03-forward-secrecy-and-certificates"
+  - "10-quic-internals/03-handshake-and-1rtt"
+  - "10-quic-internals/04-connection-migration"
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["0-rtt-resumption", "replay-attack", "early-data", "425-too-early", "long-header", "short-header", "packet-encryption"]
+sources:
+  - https://datatracker.ietf.org/doc/rfc9001/
+  - https://datatracker.ietf.org/doc/html/rfc9000
+  - https://datatracker.ietf.org/doc/html/rfc8470
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A user revisits a site they visited yesterday. Their browser has a session ticket. QUIC sends the HTTP request in the very first packet — zero round trips — before the server even responds. But if an attacker intercepts and replays that first packet, the server will execute the request twice.
+</Hook>
+
+<Crux>0-RTT sends data before the handshake — no replay protection means servers must accept only idempotent requests in 0-RTT.</Crux>
+
+<Explanation>
+
+## 0-RTT resumption mechanics
+
+On subsequent connections to the same server, the client can reuse a cached **session ticket** — a blob of encrypted TLS state the server issued at the end of the previous connection. The client includes this ticket in the ClientHello and attaches application data (0-RTT data) in the same Initial packet.
+
+The server receives the Initial, decrypts the session ticket (which contains the resumption keys), and can immediately process the 0-RTT data — without waiting for a full handshake.
+
+**Latency:** 0 RTT before the server processes the first request. On a 100 ms link, this is 100 ms saved on a reconnection — on top of the 100 ms already saved by the 1-RTT handshake vs. TCP+TLS.
+
+## The replay vulnerability
+
+0-RTT data is encrypted with the session ticket's symmetric key. An **on-path attacker** who captures the Initial packet can replay the entire packet to the server later. Because 0-RTT lacks TLS record-level replay protection, the server will receive and process the replayed request.
+
+**Concrete attack:** Alice sends `POST /api/transfer amount=5000 from=alice to=bob` in 0-RTT. An attacker captures and replays the packet. The server executes the transfer twice: Alice loses 10,000 instead of 5,000.
+
+**The defense:**
+
+1. **Restrict 0-RTT to idempotent requests only.** GET, HEAD, and safe operations are safe — replaying them produces the same result. POST, DELETE, and state-changing operations must wait for 1-RTT keys.
+2. **425 Too Early response.** When the server forwards 0-RTT to an origin backend it includes an `Early-Data: 1` header. The origin can respond `425 (Too Early)` forcing the client to retry after the full handshake (RFC 8470).
+3. **Session ticket isolation.** Servers should not share session ticket keys across data centers — a ticket from Server A should only be valid on Server A. Short ticket lifetimes (1–24 hours) limit the replay window.
+
+<TraceScenario
+  id="06-sr-trace-1"
+  lessonSlug="06-0rtt-and-encryption"
+  lang="en"
+  scenario="Trace a QUIC 0-RTT attack and the defense."
+  steps={[
+    { prompt: "Client connects to server.example.com and receives a session ticket. Later it opens a new connection with 0-RTT data in ClientHello: POST /api/transfer amount=5000 from=alice to=bob.", reveal: "The client and server negotiate the connection. The server sends Finished. The 0-RTT POST is on the wire, encrypted but without replay protection in the TLS record." },
+    { prompt: "An on-path attacker captures the entire Initial packet containing the 0-RTT POST. What can the attacker do?", reveal: "The attacker can replay the entire packet to the server. Because 0-RTT lacks TLS record-level replay protection, the server will receive and process the POST request again." },
+    { prompt: "The server executes the same transfer twice. How does the server defend against this?", reveal: "By rejecting the 0-RTT POST entirely OR accepting only idempotent requests (GET, HEAD) in 0-RTT. Non-idempotent requests in 0-RTT must wait for the 1-RTT keys and Finished message before processing, or be answered with 425 (Too Early) forcing a retry." },
+    { prompt: "The server forwards the 0-RTT to an origin backend. What header must it include?", reveal: "Early-Data: 1, signaling to the origin that this request came from 0-RTT. The origin can respond 425 (Too Early) forcing the client to retry after handshake, or accept it if the request is idempotent." },
+    { prompt: "Can the attacker replay the same 0-RTT packet to a different server (example.com's backup replica)?", reveal: "Yes, if both servers share the same session ticket key. This is why servers should NOT share session ticket keys across data centers — ticket keys should be short-lived, per-server, and rotated frequently." },
+  ]}
+/>
+
+## Almost-full packet encryption
+
+TCP headers are cleartext — source/dest IP, ports, sequence numbers are all visible to any observer. QUIC encrypts almost everything:
+
+**Long-form headers** (handshake and Initial packets):
+- Unencrypted: outermost 4 bytes (version + connection ID length) and the Connection ID itself.
+- Encrypted: packet number, payload — using the appropriate level's key.
+
+**Short-form headers** (post-handshake packets):
+- Carry only the connection ID and encrypted packet number + payload.
+- Almost entirely opaque to observers.
+
+**Security consequences:**
+- An on-path attacker **cannot inject RST packets** — they cannot construct a valid encrypted packet without the 1-RTT key. TCP's RST injection vulnerability is eliminated.
+- **Passive sniffing** of stream contents is eliminated — all stream data is 1-RTT encrypted.
+- **Traffic analysis** based on sequence numbers is impossible without decryption.
+
+**Operational consequence:** `tcpdump` of QUIC traffic shows only opaque blobs. Network engineers cannot count HTTP requests per endpoint, identify slow clients, or detect misbehavior at the packet level without application-level instrumentation.
+
+<div data-lesson-visual class="rounded-lg border border-slate-200 bg-slate-50 p-4 my-4 text-sm space-y-3">
+  <div class="font-semibold text-slate-700 mb-1">QUIC vs TCP: what is visible to a network observer</div>
+  <div class="grid grid-cols-2 gap-4 text-xs">
+    <div class="space-y-1">
+      <div class="font-semibold text-slate-500">TCP (cleartext)</div>
+      <div class="text-green-700">Source / Dest IP: visible</div>
+      <div class="text-green-700">Source / Dest Port: visible</div>
+      <div class="text-green-700">Sequence numbers: visible</div>
+      <div class="text-green-700">SYN/FIN/RST flags: visible</div>
+      <div class="text-amber-600">TLS payload: encrypted (if TLS)</div>
+    </div>
+    <div class="space-y-1">
+      <div class="font-semibold text-slate-500">QUIC (post-handshake)</div>
+      <div class="text-green-700">Source / Dest IP: visible (IP header)</div>
+      <div class="text-green-700">UDP Port: visible</div>
+      <div class="text-green-700">Connection ID: visible</div>
+      <div class="text-red-600">Packet number: encrypted</div>
+      <div class="text-red-600">Payload / stream data: encrypted</div>
+    </div>
+  </div>
+</div>
+
+<Quiz
+  id="06-sr-quiz-1"
+  lessonSlug="06-0rtt-and-encryption"
+  lang="en"
+  question="In QUIC, why is 0-RTT data vulnerable to replay but TCP Fast Open (TFO) is not?"
+  choices={[
+    { label: "Because QUIC 0-RTT is not encrypted, allowing attackers to read and modify it", misconception: "0-RTT is encrypted; the vulnerability is that the same ciphertext can be sent to the server twice." },
+    { label: "TFO uses a server-validated cookie with a TTL; QUIC 0-RTT uses a session ticket without built-in temporal replay protection", correct: true },
+    { label: "Because UDP has no built-in replay protection unlike TCP", misconception: "The replay protection issue is at the TLS layer, not the UDP or TCP transport layer." },
+    { label: "TFO is always replay-safe; QUIC 0-RTT is always unsafe and should be disabled", misconception: "QUIC 0-RTT is safe for idempotent requests if the server enforces it and isolates session ticket keys." },
+  ]}
+/>
+
+<Quiz
+  id="06-sr-quiz-2"
+  lessonSlug="06-0rtt-and-encryption"
+  lang="en"
+  question="Why does QUIC's almost-full packet encryption break traditional network monitoring?"
+  choices={[
+    { label: "Because QUIC uses an unknown port that monitoring tools cannot detect", misconception: "QUIC typically uses port 443 (same as HTTPS). The issue is payload opacity, not unknown ports." },
+    { label: "Encrypted packet numbers and stream data make it impossible to count requests, measure RTTs, or detect misbehavior at the packet level without application instrumentation", correct: true },
+    { label: "Because QUIC uses a custom header format that tcpdump does not support", misconception: "tcpdump can capture QUIC packets; the issue is that their contents are encrypted and cannot be analyzed without decryption." },
+    { label: "QUIC packets are compressed and cannot be parsed at line rate", misconception: "QUIC packets are not compressed by default. The opacity comes from encryption, not compression." },
+  ]}
+/>
+
+<RFCQuiz
+  id="06-rfc-1"
+  lessonSlug="06-0rtt-and-encryption"
+  lang="en"
+  question="Which RFC standardizes the 425 (Too Early) HTTP response code and the Early-Data header used to protect against 0-RTT replay?"
+  choices={[
+    { rfc: "RFC 8470", title: "Using Early Data in HTTP", correct: true },
+    { rfc: "RFC 9001", title: "QUIC Cryptography" },
+    { rfc: "RFC 9000", title: "QUIC: A UDP-Based Multiplexed and Secure Transport" },
+    { rfc: "RFC 9114", title: "HTTP/3" },
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+**Comparing 0-RTT replay defence to TCP Fast Open:** TCP Fast Open stores a cookie issued by the server, which includes a server-computed HMAC and TTL. The server validates the cookie at request time — if expired, TFO is rejected and a standard handshake is forced. This built-in temporal validation protects TFO from replay without application involvement. QUIC's 0-RTT lacks this: the session ticket's validity is controlled by the ticket lifetime, and within that lifetime the ciphertext can be replayed. This is why RFC 9001 mandates application-level idempotency enforcement rather than relying on TLS for replay protection.
+</Inset>
+
+<NumbersCard
+  id="06-0rtt-numbers"
+  title="0-RTT and encryption trade-offs"
+  stats={[
+    { label: "0-RTT latency saving on reconnect", value: "100 ms on 100 ms link" },
+    { label: "0-RTT replay risk", value: "any non-idempotent request" },
+    { label: "Packet types with long headers", value: "Initial, 0-RTT, Handshake, Retry" },
+    { label: "Packet types with short headers", value: "1-RTT (post-handshake)" },
+    { label: "TCP RST injection surface eliminated", value: "yes (no valid RST constructable)" },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>0-RTT sends application data in the ClientHello — zero round trips — but attackers can replay the ciphertext. Servers must restrict 0-RTT to idempotent requests and use 425 Too Early to force retries. Short-form headers encrypt nearly everything post-handshake, eliminating RST injection and passive sniffing at the cost of network opacity.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-0rtt-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why QUIC's 0-RTT is vulnerable to replay but TCP Fast Open is not.", a: "TCP Fast Open stores a cookie in the SYN packet computed with a server-side HMAC and TTL. The server validates the cookie and rejects it if expired, providing built-in temporal replay protection. QUIC's 0-RTT is encrypted with the session ticket's symmetric key — an attacker who captures the Initial packet can replay the same ciphertext later, and the server has no way to distinguish the replay from a legitimate reconnect at the TLS layer. Mitigation is application-level: restrict 0-RTT to idempotent requests, use 425 Too Early for non-idempotent ones, and isolate session ticket keys per server." },
+    { q: "What is the 425 Too Early response code and when should an origin server send it?", a: "RFC 8470 defines 425 Too Early for exactly this case: when a server receives an HTTP request that came from 0-RTT early data (signaled by Early-Data: 1 header), it can respond 425 to force the client to retry after the full 1-RTT handshake. The origin should send 425 for any non-idempotent request (POST, DELETE, PATCH) arriving via 0-RTT. Safe/idempotent requests (GET, HEAD) can be processed immediately." },
+    { q: "Why does QUIC's almost-full packet encryption break traditional packet-level network monitoring?", a: "Post-handshake QUIC packets use short-form headers that encrypt the packet number and all payload. Unlike TCP where sequence numbers, flow direction, and timing are visible, QUIC exposes only the Connection ID and UDP port to a network observer. Network tools like tcpdump, traffic analysis systems, and DPI firewalls see opaque blobs. Counting HTTP requests, measuring RTTs, and detecting misbehavior all require application-level metrics or kernel-bypass instrumentation (eBPF probes on the userspace socket)." },
+  ]}
+/>
+
+<Recap lang="en">
+0-RTT resumption uses a cached session ticket to attach application data to the ClientHello — zero round trips for reconnected clients. The cost is replay vulnerability: an on-path attacker can capture and replay the 0-RTT ciphertext, executing non-idempotent operations twice. The defense is three-part: restrict 0-RTT to safe/idempotent requests, use the 425 Too Early mechanism for non-idempotent cases forwarded by proxies, and isolate session ticket keys per server to prevent cross-datacenter replay. QUIC's almost-full packet encryption goes beyond what TLS alone provides: short-form headers encrypt packet numbers and all stream data, preventing RST injection attacks and making passive sniffing impossible. The trade-off is operational opacity — network engineers must instrument at the application layer rather than the packet layer.
+</Recap>
