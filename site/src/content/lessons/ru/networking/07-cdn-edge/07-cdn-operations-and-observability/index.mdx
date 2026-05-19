@@ -1,0 +1,205 @@
+---
+slug: 07-cdn-operations-and-observability
+lang: ru
+track: networking
+unit: 07-cdn-edge
+order: 7
+title: "CDN: операции и observability"
+summary: "Cache-tag purge, multi-CDN steering, WAF на edge, ключевые метрики для обнаружения CDN-инцидентов до того, как пользователи заметят, и разбор кейса новостного издателя."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "07-cdn-edge/05-stale-while-revalidate-and-stampede"
+  - "07-cdn-edge/06-edge-workers-and-esi"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["cache-tags", "multi-cdn", "waf", "bot-management", "rum", "cache-hit-ratio", "origin-shield-offload", "mTLS", "argo", "global-accelerator", "design-case-study"]
+sources:
+  - https://blog.cloudflare.com/argo-intelligent-routing/
+  - https://httpwg.org/specs/rfc8297.html
+  - https://developer.chrome.com/docs/web-platform/early-hints
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Вы задеплоили hotfix в 3 часа ночи. Origin обновлён. Но через 20 минут 40% пользователей по-прежнему на старой версии — разные CDN-регионы в разных состояниях кеша, устаревший edge в Азиатско-Тихоокеанском регионе раздаёт вчерашние данные, а мониторинг показывает только агрегированные частоты ошибок, выглядящие нормально. CDN-инциденты невидимы — пока не становятся видимыми.
+</Hook>
+
+<Crux>Production CDN: метрики hit rate по регионам, purge при деплое, WAF + mTLS для origin, явная graceful degradation.</Crux>
+
+<Explanation>
+
+## Cache-tag purge: точечная инвалидация в масштабе
+
+Для сайта с тысячами URL (новостной издатель, e-commerce каталог) purge по URL операционно неуправляем. **Cache tags** (Cloudflare Enterprise, Fastly) решают это:
+
+1. Origin устанавливает `Cache-Tag: article-1001, category-tech` на ответы статей.
+2. При редактировании статьи CMS вызывает `POST /cdn/purge {"tag": "article-1001"}`.
+3. CDN инвалидирует все закешированные ответы с этим тегом — по всем POP, за секунды.
+4. Тег категории позволяет почистить все статьи категории (`tag: category-tech`) одним API-вызовом.
+
+Без cache tags: каждое редактирование вызывает O(URL) purge-вызовов. С cache tags: каждое редактирование — O(тегов) вызовов, обычно 1–5.
+
+## Multi-CDN управление трафиком
+
+Крупные операторы (Netflix, Apple, крупные новостные сайты) одновременно используют два и более CDN для:
+
+- **Устойчивость к отказу вендора**: отказ одного CDN не роняет сайт.
+- **Региональная оптимизация**: у одного CDN может быть лучший пиринг в Азии, у другого — в Латинской Америке.
+- **Коммерческие рычаги**: конкурирующие CDN-контракты снижают стоимость за ГБ.
+
+Механизм управления: **DNS-based steering** (NS1 Pulsar, Cedexis Openmix, кастомный). Агрегируют real-user-monitoring (RUM) данные и обновляют DNS-записи каждые несколько секунд, направляя к наиболее производительному CDN по региону. DNS TTL: 30 с для быстрой реакции на управление.
+
+**Цена:** операционная сложность. Purge, заголовки и код edge-worker должны работать идентично на каждом CDN. Purge, отправленный в CDN A, не очищает CDN B автоматически — каждый требует собственного API-вызова.
+
+<NumbersCard
+  id="card-cdn-ops-numbers"
+  title="Ключевые числа CDN-операций"
+  data-lesson-visual
+  stats={[
+    { label: "Время распространения cache-tag purge (Cloudflare, Fastly)", value: "1–5 секунд глобально" },
+    { label: "DNS TTL для multi-CDN steering", value: "30 с (быстрый failover)" },
+    { label: "mTLS edge-to-origin: защита от прямого доступа к origin IP", value: "CDN client cert обязателен для origin" },
+    { label: "Уровень блокировок WAF OWASP Top 10 (типичный production)", value: "0.1–2% запросов (настраивается под приложение)" },
+    { label: "Целевой cache hit rate (статические ассеты)", value: ">90%" },
+    { label: "Целевой cache hit rate (HTML-страницы)", value: ">70%" },
+    { label: "Целевой коэффициент offload origin shield", value: ">90% edge-промахов не достигают origin" },
+  ]}
+/>
+
+## BGP-оптимизация: Argo и Global Accelerator
+
+Anycast выбирает POP, ближайший по BGP, а не по задержке. На межконтинентальных путях «ближайший по BGP» и «наименьшая задержка» существенно расходятся.
+
+**Cloudflare Argo Smart Routing** и **AWS Global Accelerator** непрерывно измеряют реальную end-to-end задержку со всех POP и направляют трафик через **приватный backbone** (не публичный интернет) к POP с наименьшей задержкой. Типичная экономия: 30–50% снижение p95-задержки на межконтинентальных путях. Цена: повышенная стоимость за ГБ за backbone-транзит. Оправдано для latency-sensitive API; обычно избыточно для доставки статических ассетов, где BGP уже эффективен.
+
+**mTLS edge-to-origin.** Даже с Anycast, скрывающим IP origin, атакующие могут обнаружить его через историю DNS, certificate transparency logs или неправильно настроенные пути прямого доступа. mTLS (mutual TLS): origin принимает соединения только если клиент предъявляет сертификат CDN. Без CDN-сертификата прямые запросы к origin отклоняются — раскрытие origin IP больше не имеет значения.
+
+## WAF и управление ботами на edge
+
+CDN стоят на пути всего трафика — что делает их самым дешёвым слоем защиты от атак:
+
+- **WAF (Web Application Firewall)**: сопоставляет паттерны запросов с наборами правил OWASP Top 10 (SQL injection, XSS, path traversal, command injection). Блокировка за &lt;1 мс на edge, без участия origin.
+- **Управление ботами**: TLS-фингерпринтинг JA3/JA4 (фингерпринт TLS ClientHello), поведенческий анализ, IP-репутация для различения человеческого и автоматизированного трафика. Блокирует credential stuffing, парсинг и злоупотребление API.
+- **Rate limiting**: по IP, по токену, по маршруту. Конфигурируется на edge; выполняется без round-trip к origin.
+- **DDoS scrubbing**: объёмные атаки (L3/L4) поглощаются на edge до достижения origin. Anycast-сеть Cloudflare охватывает 330+ городов, распределяя атакующий трафик по всем POP.
+
+## 103 Early Hints
+
+RFC 8297 определяет информационный ответ `103 Early Hints`, отправляемый до финального `200 OK`. Edge может отправить `Link: </style.css>; rel=preload` в ответе 103, пока origin генерирует основной HTML. Браузер начинает загружать критические ассеты до прихода HTML, экономя один RTT из критического пути рендеринга. По состоянию на 2026: 93% поддержки браузерами, ~5% реального использования. Vercel лидирует с ~2.8%; Cloudflare и Fastly ниже 1%. Трение при внедрении: edge должен знать, какие ресурсы подсказывать для каждой страницы — без поддержки фреймворка автоматизировать сложно.
+
+## Ключевые метрики observability
+
+CDN-инцидент часто начинается как дрейф метрик до появления жалоб пользователей:
+
+| Метрика | Цель | Порог алерта |
+|---------|------|-------------|
+| Cache hit rate (статические ассеты) | &gt;90% | &lt;80% — требует расследования |
+| Cache hit rate (HTML-страницы) | &gt;70% | &lt;60% — требует расследования |
+| Коэффициент offload origin shield | &gt;90% | &lt;80% — edge может обращаться к origin напрямую |
+| p95 времени ответа edge по регионам | &lt;50 мс | &gt;100 мс — проблема регионального POP |
+| p99 времени ответа edge по регионам | &lt;200 мс | &gt;500 мс — серьёзная региональная деградация |
+| Кардинальность Vary-key на URL | &lt;100 | &gt;1000 — проверить ловушку Vary: User-Agent |
+| Уровень блокировок WAF | 0.1–2% | &gt;5% — возможная атака; &lt;0.01% — правила WAF слишком мягкие |
+
+Экспортируйте из CDN-дашбордов в Prometheus/OTel для SLO-алертинга. Нативные CDN-дашборды (Cloudflare Analytics, Fastly Real-Time) полезны для углублённого анализа, но не для кросс-CDN корреляции.
+
+<DebugLog
+  id="sr-debug-1"
+  pieceSlug="07-cdn-operations-and-observability"
+  lang="ru"
+  title="Вывод curl -I, раскрывающий мисконфигурацию CDN"
+  output={`$ curl -I https://example.com/article/123
+HTTP/2 200
+date: Wed, 13 May 2026 14:33:00 GMT
+content-type: text/html; charset=utf-8
+cache-control: public, max-age=3600
+cf-cache-status: MISS
+vary: User-Agent, Accept-Encoding, Cookie, Authorization
+age: 0
+server: cloudflare`}
+  outputLang="log"
+  question="Cache hit rate 5%. Что не так с заголовками ответа и как исправить?"
+  hint="Посмотрите на заголовок Vary. Сколько уникальных комбинаций этих четырёх заголовков существует среди реальных пользователей?"
+  answer="Vary перечисляет четыре заголовка: User-Agent (~тысячи уникальных значений: браузер × версия × ОС), Accept-Encoding (~5), Cookie (потенциально уникален для каждой сессии), Authorization (каждый авторизованный пользователь имеет свой вариант). Совокупная кардинальность — эффективно per-user: cache key почти уникален на запрос, полностью уничтожая эффективность кеша. Исправление: убрать Vary: User-Agent (вместо этого раздавать responsive HTML). Убрать Vary: Cookie и Authorization — для персонализированных endpoints использовать Cache-Control: private. После исправления Vary станет только Vary: Accept-Encoding; hit rate должен приблизиться к 90%+ для этого кешируемого HTML."
+/>
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="07-cdn-operations-and-observability"
+  lang="ru"
+  scenario="Origin недоступен 8 минут во время failover базы данных. Пользователи обращаются к CDN в течение простоя. Что видят пользователи с настроенным и без stale-if-error?"
+  steps={[
+    { prompt: "Без stale-if-error: пользователь запрашивает страницу товара во время простоя. Кеш был свежим 20 минут назад (max-age=300, теперь истёк). Что он видит?", reveal: "503 Service Unavailable — CDN форвардит к origin, origin недоступен, CDN возвращает ошибку. Хуже: CDN может закешировать 503-ответ на короткое время, раздавая его всем пользователям даже после восстановления origin." },
+    { prompt: "С stale-if-error=86400 (1 день): тот же сценарий. Что видят пользователи?", reveal: "Страницу товара 20-минутной давности — немного устаревшую, но работающую. CDN раздаёт последний известный корректный ответ, потому что origin вернул 5xx. Пользователи могут продолжать просмотр, добавлять в корзину и завершать покупки. 8-минутный простой невидим для большинства пользователей." },
+    { prompt: "Origin восстанавливается. Как CDN понимает, что нужно прекратить раздавать устаревший контент?", reveal: "При следующей попытке ревалидации после восстановления origin возвращает 200 со свежим ответом. CDN кеширует его и с этого момента раздаёт свежий контент. Ручного вмешательства не нужно — директива stale-if-error применяется только пока origin возвращает ошибки." },
+    { prompt: "Какие типы контента НЕ должны использовать stale-if-error?", reveal: "Всё, где корректность критична: цены (устаревшие цены вызывают неверные списания), уровни запасов (устаревшая доступность приводит к пересорту), auth-endpoints (устаревшее состояние аутентификации создаёт проблемы безопасности), страницы подтверждения заказа. Используйте stale-if-error только для read-only страниц просмотра, документации и маркетингового контента." },
+  ]}
+/>
+
+<DesignPrompt
+  id="sr-design-1"
+  pieceSlug="07-cdn-operations-and-observability"
+  lang="ru"
+  prompt="Спроектируйте конфигурацию CDN для новостного издателя: 50 млн читателей в месяц, статьи с встроенным платным контентом, баннер срочных новостей в реальном времени и комментарии читателей."
+  constraints={[
+    "Тело статьи (большинство байт страницы) может устаревать до 5 минут.",
+    "Баннер срочных новостей должен обновляться в течение 30 секунд глобально.",
+    "Комментарии читателей — user-specific (нельзя разделять между пользователями), но сам список комментариев разделяемый.",
+    "Пейволл: анонимные пользователи видят 3 бесплатные статьи в месяц по IP, затем блокировка пейволла.",
+  ]}
+  canonical="Трёхуровневая стратегия кеша. (1) Тело статьи и хром: кеш на edge max-age=300, stale-while-revalidate=3600. Тег article-id для быстрого purge при редактировании. (2) Баннер срочных новостей: edge worker получает из глобально-реплицированного KV-хранилища с TTL 30 с — один origin fetch на edge каждые 30 с, не на пользователя. (3) Список комментариев: разделяемый, cache max-age=60. Собственное состояние взаимодействия пользователя с комментариями инжектируется edge worker'ом из session KV. (4) Пейволл: edge worker считает анонимные чтения в KV по IP+месяц; при счётчике >3 edge возвращает paywall HTML без обращения к origin — экономит запрос к origin и не обходится очисткой браузерного состояния. (5) mTLS edge↔origin. WAF + rate-limiting на edge. (6) Мониторинг: cache hit rate по URL-префиксам статей, задержка KV срочных новостей, уровень блокировок пейволла, p95 edge-задержка по регионам."
+  keyPoints={[
+    "Трёхуровневая кешируемость: тело статьи (TTL 5 мин + SWR), срочные новости (KV 30 с, не per-user fetch), per-user состояние (edge worker из session KV).",
+    "stale-while-revalidate предотвращает cache stampede на популярных статьях при истечении TTL.",
+    "Cache-tag article-id обеспечивает точечный purge при редактировании без очистки других статей.",
+    "Edge worker выполняет подсчёт пейволла без round-trip к origin — не обходится очисткой cookies.",
+    "Per-region observability улавливает региональные проблемы кеша до того, как пользователи замечают.",
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="07-cdn-operations-and-observability"
+  lang="ru"
+  question="Почему multi-CDN traffic steering использует DNS, а не HTTP-редиректы?"
+  choices={[
+    { label: "DNS обновляется быстрее, чем балансировщики нагрузки", misconception: "Балансировщики нагрузки можно обновлять мгновенно; DNS имеет задержки TTL-распространения. Причина — задержка, а не скорость обновления." },
+    { label: "HTTP-редиректы добавляют полный лишний round-trip на запрос; DNS-steering происходит до любого HTTP-трафика, выбирая лучший CDN без overhead на каждый запрос", correct: true },
+    { label: "CDN не поддерживают HTTP-редиректы", misconception: "CDN полностью поддерживают HTTP-редиректы; их просто не используют для steering из-за стоимости round-trip задержки." },
+    { label: "HTTP-редиректы работают только для GET-запросов", misconception: "HTTP-редиректы работают для всех методов; причина DNS-steering — стоимость round-trip задержки." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Production CDN-операции требуют: cache-tag purge для точечной инвалидации в масштабе, автоматического purge в деплой-пайплайнах, multi-CDN steering через DNS для устойчивости, mTLS edge-to-origin для защиты от IP-экспозиции, WAF и управления ботами на edge, и per-region алертинга по cache hit rate и p99-задержке до того, как user-impacting инциденты появятся в частоте ошибок.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-cdn-operations-and-observability-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните разницу между origin shield и стандартным edge-кешем и когда shield критичен.", a: "Стандартный edge-кеш хранит ответы рядом с пользователями. В каждом регионе может быть десятки или сотни POP, каждый со своим кешем. При cache miss каждый POP независимо запрашивает origin — если 100 POP в одном регионе все промахиваются по одному популярному URL одновременно, origin видит 100 запросов. Origin shield — региональный кеш между edge и origin: все edge в регионе направляют промахи через один shield. Shield поглощает всплеск; происходит только один запрос к origin на регион независимо от числа промахнувшихся edge. Критичен для: всплесков трафика после инвалидации, истечения популярного контента, дорогостоящих origin-ответов. Дешёвые CDN-планы опускают shield как оптимизацию стоимости; production-уровневые планы включают по умолчанию." },
+    { q: "Деплой-пайплайн обновляет origin, но не чистит CDN. Через 30 минут пользователи в Европе видят устаревший контент, в Азии — свежий. Почему?", a: "Разные CDN edge имеют разный возраст кеша в момент деплоя. Азиатский edge мог недавно обновить кеш (его TTL был ближе к истечению), тогда как у европейского оставалось полное окно TTL. Без автоматического post-deploy purge каждый edge ждёт истечения своего индивидуального TTL перед получением свежего контента. Исправление: добавить CDN purge шаг в деплой-пайплайн, запускающийся сразу после обновления origin, инвалидируя все затронутые URL или cache tags по всем регионам одновременно." },
+    { q: "Cache hit rate CDN падает с 92% до 45% за два дня. Перечислите три возможные причины по вероятности на основе типичных production-инцидентов.", a: "(1) Регрессия заголовка Vary — самая частая причина. Новый деплой кода добавил Vary: User-Agent или Vary: Cookie к часто используемому endpoint, дико фрагментировав кеш. Проверить заголовок Vary на недавно изменённых endpoints. (2) Изменение типа контента — endpoint, возвращавший кешируемые ответы, теперь возвращает Cache-Control: private или no-store после изменения фичи (например, добавили user-specific данные в ранее разделяемую страницу). (3) Изменение микса трафика — новый высоконагруженный endpoint (возможно новый API-маршрут), который никогда не настраивали как кешируемый. Новые маршруты по умолчанию pass-through без явного Cache-Control: public." },
+  ]}
+/>
+
+<Recap lang="ru">
+Эксплуатация CDN в production-масштабе требует четырёх возможностей. (1) Cache-tag purge: назначать семантические теги кешируемым ответам, чистить по тегу при обновлении контента — O(тегов) API-вызовов вместо O(URL). (2) Интеграция с деплой-пайплайном: каждый деплой запускает purge затронутых URL-паттернов или тегов сразу после обновления origin. (3) Multi-CDN устойчивость: DNS-based steering (TTL 30 с) с RUM-данными направляет пользователей к наиболее производительному CDN по региону; mTLS edge-to-origin предотвращает обход при IP-экспозиции. (4) Observability: cache hit rate по URL-префиксам, коэффициент offload origin shield, p95/p99 времени ответа edge по регионам, кардинальность Vary-key. Алертировать на дрейф метрик — падение hit rate предшествует жалобам пользователей на минуты и часы. WAF и управление ботами на edge останавливают атаки до достижения origin.
+</Recap>

@@ -1,0 +1,175 @@
+---
+slug: 06-edge-workers-and-esi
+lang: ru
+track: networking
+unit: 07-cdn-edge
+order: 6
+title: "Edge workers и edge-side composition"
+summary: "Как V8-изоляты на edge CDN выполняют кастомную логику за 2–5 мс холодного старта, и как ESI и HTMLRewriter собирают ответы из независимо-кешированных фрагментов."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "07-cdn-edge/03-tiered-cache-and-cache-control"
+  - "07-cdn-edge/05-stale-while-revalidate-and-stampede"
+deepensInto:
+  - "07-cdn-operations-and-observability"
+spiral: ["latency"]
+concepts: ["edge-worker", "v8-isolate", "cloudflare-workers", "lambda-edge", "vercel-fluid", "esi", "edge-side-includes", "html-rewriter", "tls-resumption", "wall-time-budget"]
+sources:
+  - https://developers.cloudflare.com/workers/platform/limits/
+  - https://vercel.com/docs/fluid-compute
+  - https://blog.vercel.com/scale-to-one-how-fluid-solves-cold-starts
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Страница товара требует глобально-кешированного тела (TTL 10 минут), персонализированной цены в реальном времени (без кеша, получается на edge на каждого пользователя) и общего счётчика комментариев (TTL 60 секунд). Если всё три отправлять к origin на каждый запрос — p95 задержка 300 мс. Если собирать страницу на edge из трёх независимо-кешированных фрагментов — она падает до 30 мс. Вот обещание edge-side composition.
+</Hook>
+
+<Crux>Edge workers работают в CDN за 2–5 мс; ESI и HTMLRewriter собирают фрагменты с разными TTL — быстрые страницы с per-user свежестью.</Crux>
+
+<Explanation>
+
+## Edge workers: вычислительная модель
+
+Все крупные CDN теперь запускают пользовательский код на edge — не только статические файлы:
+
+- **Cloudflare Workers**: V8-изоляты. Холодный старт **2–5 мс p99**. Лимит памяти 128 МБ. **50 мс CPU wall-time** на запрос (расширяется с Workers Unbound). Тысячи клиентских функций разделяют один V8-процесс через изоляцию — минимальные накладные расходы на запуск функции.
+- **Fastly Compute@Edge**: WebAssembly. Холодный старт аналогичен Workers.
+- **AWS Lambda@Edge**: полный рантайм Node.js/Python. Холодный старт **400–600 мс** на некоторых региональных POP — штраф 100× против Workers для latency-sensitive путей.
+- **Vercel Fluid Compute (2026)**: V8, персистентные тёплые инстансы, параллельная обработка запросов внутри одного изолята. **99.37% запросов без холодного старта**. В 1.2–5× быстрее Workers для тяжёлого SSR (рендеринг шаблонов, сборка больших страниц). Бюджет wall-time 50 мс.
+
+<NumbersCard
+  id="card-edge-workers"
+  title="Сравнение рантаймов edge workers (2026)"
+  data-lesson-visual
+  stats={[
+    { label: "Холодный старт Cloudflare Workers (p99)", value: "2–5 мс" },
+    { label: "Холодный старт Lambda@Edge (некоторые PoP)", value: "400–600 мс" },
+    { label: "Доля запросов без холодного старта Vercel Fluid", value: "99.37% запросов" },
+    { label: "Бюджет CPU wall-time Workers", value: "50 мс на запрос" },
+    { label: "Лимит памяти Workers", value: "128 МБ" },
+    { label: "Модель изоляции Workers", value: "Тысячи клиентов на один V8-процесс" },
+  ]}
+/>
+
+## Сценарии применения edge workers
+
+Workers стоят в пути запроса и могут делать всё, что прокси — с кодом:
+
+- **Auth на edge**: проверить JWT или session token на edge POP без round-trip к origin. Отклонять невалидные запросы до того, как они достигнут серверов.
+- **A/B-тест маршрутизация**: читать cookie пользователя или experiment ID и переписывать URL запроса в `/variant-a/` или `/variant-b/` на edge.
+- **Гео-редирект**: Workers имеют доступ к коду страны пользователя (заголовок Cloudflare `CF-IPCountry`) — редиректить `/` на `/en/` или `/de/` без участия origin.
+- **Мутация запроса/ответа**: добавлять security-заголовки (`Strict-Transport-Security`, `X-Content-Type-Options`) ко всем ответам без изменения origin.
+- **Динамическая маршрутизация**: обращаться к нескольким микросервисам, объединять ответы, возвращать merged JSON — всё внутри edge POP, не в центральном регионе.
+
+## Бюджет wall-time 50 мс
+
+Workers ограничивают CPU-время до 50 мс на запрос. Это исключает: инференс больших ML-моделей, ресайзинг больших изображений, тяжёлые запросы к базам данных. Допускает: валидацию JWT (~1 мс), переписывание URL (~0.1 мс), KV-lookup (~3 мс), простые HTML-мутации (~5 мс). Проектируйте workers как тонкие слои маршрутизации/auth/мутации, а не вычислительно-тяжёлые бэкенды.
+
+<Inset kind="why" lang="ru">
+**Почему V8-изоляты, а не контейнеры.** Традиционный serverless (Lambda) требует отдельного процесса или контейнера на функцию — запуск занимает 400–600 мс. V8-изоляты — эффективные по памяти песочницы внутри одного V8-процесса: каждый изолят имеет свою кучу, нет разделяемого изменяемого состояния, но разделяют стоимость запуска процесса. Модель Cloudflare: тысячи клиентских функций разделяют один запущенный V8-процесс. Холодный старт нового изолята стоит 2–5 мс, не 400 мс. Гарантия изоляции — криптографическая (V8-сандбокс), а не на уровне OS-процесса — это приемлемо для CDN-нагрузок с недоверенным клиентским кодом.
+</Inset>
+
+## TLS resumption на edge
+
+Новое TLS-соединение стоит 1 RTT (~10 мс локально на edge). Возобновление сессии через TLS 1.3 PSK (pre-shared keys) пропускает хендшейк при переподключении. Современные CDN реплицируют session tickets по всем POP: если пользователь подключился к POP A, затем переподключается через POP B (смена мобильной сети), POP B уже имеет session ticket — нет повторного хендшейка. Важнее всего на мобильных устройствах (частые хэндоверы между вышками).
+
+## Edge-side composition (ESI и HTMLRewriter)
+
+**ESI (Edge Side Includes)**, W3C draft 2001, по-прежнему в production у Akamai. HTML-ответы содержат плейсхолдеры `<esi:include src="/fragment/nav" />`, которые edge заменяет на закешированные фрагменты перед отправкой браузеру. Каждый фрагмент имеет свой cache key и TTL — shared nav кешируется 6 часов; баннер срочных новостей — 30 секунд.
+
+**Современная замена:** Cloudflare Workers + HTMLRewriter API. Worker получает HTML-ответ и использует потоковый HTML-парсер HTMLRewriter для вставки фрагментов в конкретные DOM-позиции — быстрее и гибче ESI.
+
+Объединяющая идея: **собирать страницу на edge из независимо-кешированных частей.** Страница товара:
+- Хром страницы (шапка, подвал, навигация): `max-age=21600` (6 часов)
+- Описание товара: `max-age=600` (10 минут)
+- Цена: получается свежей из регионального pricing-сервиса на каждый запрос (~30 мс)
+- Персонализированный виджет рекомендаций: из KV-хранилища по user-id (~3 мс)
+
+Результат: полная страница собирается на edge за ~35 мс, нет round-trip к origin для 80% байт.
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="06-edge-workers-and-esi"
+  lang="ru"
+  scenario="Страница checkout e-commerce требует обязательных вычисленных на edge ставок налога и доставки. Edge worker получает их из регионального микросервиса при cache miss. Оптимизируйте для cold-load сценариев."
+  steps={[
+    { prompt: "Шаг 1: что является критическим путём от запроса пользователя до ответа?", reveal: "Браузер → TLS к edge (тёплый) ~2 мс → холодный старт edge worker 2–5 мс → fetch регионального сервиса ~50 мс → сборка ответа ~1 мс → итого p50: ~60 мс. Fetch регионального сервиса — длинный полюс." },
+    { prompt: "Шаг 2: ставки налога/доставки не кешируются (зависят от почтового индекса). Но можно параллелизировать. Как?", reveal: "Запустить fetch регионального сервиса немедленно в handler'е worker'а, до любой другой работы. Использовать Promise.race или таймаут: если результат приходит в течение 30 мс — использовать его; иначе отдавать кешированные fallback-ставки из edge KV (stale-while-revalidate). Пользователь видит ответ ~30 мс; свежие ставки обновляются в фоне." },
+    { prompt: "Шаг 3: память edge worker 128 МБ. Все региональные таблицы ставок хранятся в KV, чтобы избежать fetch. Почему это может создать проблемы?", reveal: "KV-чтения занимают ~3–10 мс на обращение (региональные, не локальная память). Последовательный fetch таблиц нескольких регионов медленнее, чем один вызов регионального сервиса. Лучший подход: держать таблицу одного региона в Durable Object или warm-cache binding (настоящая in-memory, ~0.1 мс), откатываться на KV для холодных данных." },
+    { prompt: "Шаг 4: вы оптимизировали worker до 15 мс wall-time. Как убедиться, что пользователи выиграли?", reveal: "Добавить Server-Timing заголовки из worker'а: Server-Timing: edge-worker=15ms; regional-fetch=45ms. Агрегировать по регионам в observability-стеке. Если SEA edge стабильно бьют по таймаутам regional-fetch — добавить там региональный кеш-сервер. Если p99 задержки edge 300 мс — узким местом, вероятно, является DNS или TLS, а не worker." },
+  ]}
+/>
+
+<DebugLog
+  id="sr-debug-1"
+  pieceSlug="06-edge-workers-and-esi"
+  lang="ru"
+  title="Алерт деградации производительности edge worker"
+  output={`$ curl -w "@format.txt" https://api.example.com/checkout
+    time_starttransfer: 450ms
+    time_connect: 12ms
+    time_tls: 2ms
+    time_firstbyte: 428ms
+
+Edge diagnostics via worker:
+  Server-Timing: edge-worker=185ms; regional-service=240ms; kv-lookup=3ms
+
+Worker logs (2026-05-15):
+  handler_start=0ms
+  kv_fetch=3ms
+  regional_service_start=5ms
+  regional_service_timeout=185ms
+  handler_end=188ms
+  total_wall_time=188ms (budget: 50ms × 4 extensions used)`}
+  outputLang="log"
+  question="Edge worker использует 4× бюджет wall-time, пользователи видят 450 мс ответы. В чём узкое место?"
+  hint="Server-Timing показывает regional-service=240 мс, но логи worker'а показывают 185 мс для того же вызова. Чем объясняется разница 55 мс?"
+  answer="Вызов регионального сервиса потратил 55 мс до начала таймера worker'а — TCP connect + TLS хендшейк к региональному сервису. Worker не переиспользует HTTP/2-соединения к сервису (каждый вызов открывает новый TCP+TLS). Исправление: использовать connection-pooling binding или Service Binding (Cloudflare) с переиспользованием соединений. Также внедрить bulkhead: если p99 регионального сервиса >100 мс — немедленно отдавать кешированные fallback-ставки. Использование 4× расширения wall-time говорит о достижении CPU-лимитов; либо сократить логику на запрос, либо направить тяжёлые вычисления в региональные Functions (Lambda или Cloud Run) и вызывать их из edge worker'а асинхронно."
+/>
+
+<TradeoffMatrix
+  id="sr-tradeoff-1"
+  pieceSlug="06-edge-workers-and-esi"
+  lang="ru"
+  prompt="E-commerce сайт должен раздавать страницы товаров глобально с миллисекундной точностью обновления цен. Выберите стратегию кеширования."
+  options={[
+    { name: "Cache-Control: max-age=3600 на страницах товаров", summary: "Стандартный TTL 1 час.", justification: "Обновления цен отстают до 1 часа — неприемлемо. Пользователи видят устаревшие цены; служба поддержки получает звонки. Простой TTL не выполняет требование свежести." },
+    { name: "Cache-Control: no-store на страницах товаров", summary: "Никогда не кешировать.", justification: "Каждый запрос бьёт в origin; задержка доминирует (200–300 мс), стоимость origin взрывается. Требование свежести реально, но no-store перебарщивает, устраняя всё кеширование." },
+    { name: "Edge-side composition: кешировать хром страницы надолго, получать цену как worker-инжектируемый фрагмент на каждый запрос", summary: "Смешанная кешируемость.", correct: true, justification: "Хром (HTML-структура, изображения, шрифты) кешируется на edge часами. Цена — небольшой JSON-фрагмент, получаемый edge worker'ом из регионального pricing-сервиса на каждый запрос (~30 мс). Лучшее из обоих: большая экономия кеша на статических частях, точность цен в реальном времени. Современный стек: Cloudflare Workers + HTMLRewriter, или Vercel RSC на Edge Runtime." },
+    { name: "Полный edge SSR с фоновым обновлением каждые 5 секунд", summary: "Агрессивный edge rendering.", justification: "Требует доступа edge compute к базе данных товаров (нетипично и операционно сложно). 5-секундное устаревание цены может быть всё равно неприемлемым. Более высокие инженерные затраты, чем при composition фрагментов." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Edge workers (V8-изоляты, холодный старт 2–5 мс, wall-time 50 мс) выполняют auth, маршрутизацию, мутацию и fetch фрагментов на CDN POP — экономя round-trip к origin. ESI и HTMLRewriter собирают ответы из независимо-кешированных фрагментов: тяжёлый хром кешируется часами, персонализированные или real-time фрагменты получаются свежими. Холодный старт Lambda@Edge 400–600 мс делает его непригодным для latency-sensitive путей.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-edge-workers-and-esi-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему Cloudflare Workers достигает холодного старта 2–5 мс, а Lambda@Edge — 400–600 мс?", a: "Cloudflare Workers использует V8-изоляты: тысячи клиентских функций разделяют один запущенный V8-процесс. Новый изолят (worker-функция) создаётся внутри этого процесса за 2–5 мс — это лёгкая песочница, не запуск процесса. Lambda@Edge использует полный рантайм Node.js в контейнере; запуск холодного контейнера включает настройку OS, инициализацию Node.js и загрузку функции — 400–600 мс. Trade-off: модель изоляции Workers обеспечивает более слабые гарантии изоляции (V8-сандбокс vs. OS-уровень), но это приемлемо для CDN-нагрузок." },
+    { q: "Опишите edge-side composition для новостной страницы с shared хромом, баннером срочных новостей (свежесть в течение 30 с обязательна) и телом статьи (5 мин устаревания ок).", a: "Раздавать HTML страницы через Cloudflare Worker или ESI-прокси. Три записи кеша: (1) Хром (шапка, навигация, подвал): max-age=21600 (6 часов) — из edge-кеша. (2) Тело статьи: max-age=300, stale-while-revalidate=3600 — из edge-кеша, фоновая ревалидация. (3) Баннер срочных новостей: получается edge worker'ом из глобально-реплицированного KV-хранилища с TTL 30 секунд — один свежий fetch на edge на 30 с, а не на пользователя. Worker собирает три части в один HTML-ответ перед отправкой браузеру. Пользователи видят загрузку страницы ~20 мс; срочные новости распространяются глобально за 30 секунд." },
+    { q: "Что такое бюджет wall-time 50 мс в Cloudflare Workers и что он исключает?", a: "Лимит 50 мс — это совокупное CPU-время на вызов запроса (расширяется до 30 с с Workers Unbound по повышенной цене). Время ожидания I/O не учитывается — пока worker ждёт ответа fetch() от удалённого сервиса, таймер 50 мс приостановлен. Исключает: инференс больших ML-моделей, ресайзинг мегапиксельных изображений, тяжёлые криптографические операции, циклы по большим датасетам. Включает: парсинг и верификацию JWT (~1 мс), переписывание URL (~0.1 мс), KV-чтения (~3 мс), потоковые HTML-мутации (~5 мс). Проектируйте workers как тонкие слои маршрутизации и мутации, не вычислительные бэкенды." },
+  ]}
+/>
+
+<Recap lang="ru">
+Edge workers выполняют кастомный код на CDN POP с использованием V8-изолятов (Cloudflare Workers: холодный старт 2–5 мс p99) или WebAssembly. Они обеспечивают валидацию auth, A/B-маршрутизацию, гео-редирект, мутацию запроса/ответа и real-time fetch фрагментов без round-trip к origin. Бюджет wall-time 50 мс ограничивает вычислительно-тяжёлые задачи — они принадлежат региональным Functions. Edge-side composition (ESI или Workers + HTMLRewriter) собирает ответы из независимо-кешированных фрагментов — хром страницы кешируется часами, персонализированные или real-time данные получаются свежими на запрос — объединяя эффективность кеша статических ассетов с свежестью динамических данных. Холодный старт Lambda@Edge 400–600 мс дисквалифицирует его для latency-sensitive путей; Vercel Fluid Compute достигает 99.37% запросов без холодного старта через тёплые изоляты. Репликация TLS session tickets по POP амортизирует стоимость переподключений на мобильных.
+</Recap>
