@@ -1,0 +1,189 @@
+---
+slug: 04-tcp-options-and-pathologies
+lang: en
+track: networking
+unit: 03-tcp-handshake
+order: 4
+title: "TCP options and common pathologies"
+summary: "The TCP header anatomy, Nagle+delayed-ACK stalls, ECN, keepalive, and the CLOSE-WAIT socket-leak trap every backend engineer eventually hits."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-flow-and-congestion-control"]
+deepensInto: ["05-syn-cookies-and-tfo"]
+spiral: []
+concepts: ["tcp-header", "nagle", "delayed-ack", "tcp-nodelay", "ecn", "keepalive", "psh", "close-wait", "tcp-options-field", "paws", "timestamps"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9293
+  - https://datatracker.ietf.org/doc/html/rfc7323
+  - https://man7.org/linux/man-pages/man7/tcp.7.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+
+<Hook>
+A Redis client call takes 200 ms even though Redis is on the same datacenter host. No load, no timeouts, no errors — just a 200 ms delay on every small request. The cause is two TCP defaults interacting in the worst possible way, and fixing it takes one socket option.
+</Hook>
+
+<Crux>Nagle+delayed-ACK stalls small RPC up to 200 ms; TCP_NODELAY fixes it. CLOSE-WAIT pileup means socket leak. ECN and keepalive remain.</Crux>
+
+<Explanation>
+
+## TCP header anatomy
+
+Every TCP segment carries a 20-byte mandatory header plus optional fields (up to 40 bytes more):
+
+| Field | Size | Purpose |
+|-------|------|---------|
+| Source port | 16 bits | Part of the four-tuple identifying the connection |
+| Destination port | 16 bits | Part of the four-tuple |
+| Sequence number | 32 bits | Position of the first data byte in the stream |
+| Acknowledgement number | 32 bits | Next byte the sender expects from the peer |
+| Data offset | 4 bits | Header length in 32-bit words (varies with options) |
+| Flags | 8 bits | URG, ACK, PSH, RST, SYN, FIN, CWR, ECE |
+| Window | 16 bits | Bytes receiver is willing to accept |
+| Checksum | 16 bits | Covers a pseudo-header from IP plus the TCP segment |
+| Urgent pointer | 16 bits | Almost never used; legacy of old terminal protocols |
+
+The options field (up to 40 bytes) carries MSS, Window Scale, SACK, Timestamps, and TFO cookie. Options are negotiated only in SYN/SYN-ACK — once the connection is established, the option set is fixed.
+
+## TCP options field
+
+Beyond MSS, Window Scale, and SACK:
+
+**Timestamps (RFC 7323):** used for both RTT measurement and PAWS (Protection Against Wrapped Sequence numbers). PAWS prevents old delayed packets from being mistaken for new data on long-lived high-bandwidth connections where sequence numbers wrap around.
+
+**The TFO cookie** also lives in the options field. See the SYN cookies and TFO lesson for details.
+
+<NumbersCard
+  id="card-header"
+  title="TCP header at a glance"
+  data-lesson-visual
+  stats={[
+    { label: "Mandatory header", value: "20 bytes" },
+    { label: "Max options", value: "40 bytes (total header max 60 bytes)" },
+    { label: "Flags byte", value: "URG ACK PSH RST SYN FIN CWR ECE" },
+    { label: "Window field (raw)", value: "16 bits, max 65535 bytes" },
+    { label: "With Window Scale", value: "up to 1 GiB" },
+    { label: "Checksum scope", value: "IP pseudo-header + TCP segment" },
+  ]}
+/>
+
+## Nagle's algorithm and delayed ACK — the 200 ms trap
+
+By default a TCP sender batches small writes via **Nagle's algorithm**: do not send a partial segment if there is unacknowledged data in flight. Independently, the receiver **delays ACKs** up to 40 ms (Linux default) hoping to piggyback the ACK on outgoing application data.
+
+Combined, these two create a deadly interaction on small request-response patterns:
+
+1. Client sends a small request. The request is less than MSS.
+2. Server's TCP stack holds the ACK up to 40 ms hoping to piggyback on an outgoing response.
+3. Client cannot send its next small write because Nagle is holding it (waiting for the ACK of the first write).
+4. Server's application eventually responds and the delayed ACK fires alongside the response.
+
+Result: a **40–200 ms stall** on every small interactive exchange.
+
+The fix: `TCP_NODELAY=1` on the socket disables Nagle. gRPC, Redis clients, HTTP/2 implementations, and any latency-sensitive RPC layer set it by default. `TCP_QUICKACK=1` tells Linux to ACK the next segment immediately (it auto-resets after one packet, so call it after each `read()` in a tight loop).
+
+<TraceScenario
+  id="mid-trace-1"
+  pieceSlug="04-tcp-options-and-pathologies"
+  lang="en"
+  scenario="Trace the Nagle + delayed-ACK 200 ms stall on a Redis client without TCP_NODELAY."
+  steps={[
+    { prompt: "Client sends a 10-byte PING command to Redis. What does Nagle do?", reveal: "Nagle checks: is there unacknowledged data in flight? If yes, it buffers the PING and waits. If no, it sends immediately. For the first command of a connection there is no prior data, so it goes out." },
+    { prompt: "Server's Redis receives the PING. What does the kernel do with the ACK?", reveal: "The kernel starts its 40 ms delayed-ACK timer, waiting to piggyback the ACK on the next outgoing data segment." },
+    { prompt: "Redis processes the command in 0.1 ms and calls write('+PONG\\r\\n'). Does the ACK go now?", reveal: "Yes — the delayed ACK fires when the response goes out, so the ACK + PONG travel in the same segment. The client gets both at once." },
+    { prompt: "Now the client sends a PIPELINE of two commands in quick succession (write(CMD1) then write(CMD2)). What happens with Nagle?", reveal: "CMD1 goes out immediately (nothing in flight). Before CMD1's ACK arrives, Nagle holds CMD2 in the buffer. Redis is delaying the ACK for CMD1. Each side is waiting for the other. The delay is up to 40 ms. This is the classic Nagle + delayed-ACK deadlock." },
+    { prompt: "Fix: set TCP_NODELAY=1. What changes?", reveal: "TCP_NODELAY disables Nagle. CMD2 goes out immediately after CMD1 without waiting for an ACK. The 40 ms stall disappears. p99 latency drops from 200 ms to under 1 ms." },
+  ]}
+/>
+
+## PSH flag
+
+The PSH (push) flag tells the receiver's TCP stack to deliver buffered data to the application immediately rather than waiting for more. Modern stacks pass data up to the application as soon as it arrives, so PSH is more a hint than a mandate. It is set on the last segment of every `write()` that completes a logical message — useful when the kernel's TCP stack coalesces multiple application writes into one segment, ensuring the receiver still delivers the record.
+
+## Explicit Congestion Notification (ECN)
+
+Instead of dropping packets to signal congestion, **ECN-capable routers** mark them with a 2-bit code (CE = Congestion Experienced). The TCP header reserves CWR (Congestion Window Reduced) and ECE (ECN-Echo) flags. ECN negotiation happens in the SYN/SYN-ACK exchange: both sides advertise capability via ECE+CWR flags. When CE-marked packets arrive, the receiver sets ECE to inform the sender; the sender reduces cwnd and sets CWR to confirm.
+
+ECN is enabled by default in Linux and macOS for connections to known-good destinations. Some old middleboxes drop ECN-marked packets — deployments use fallback detection and disable ECN to those destinations.
+
+## Keepalive
+
+By default a TCP connection sends no packets when idle, so a connection through a NAT or firewall may be silently dropped after 5–60 minutes. `SO_KEEPALIVE` sends a probe every `tcp_keepalive_time` seconds (Linux default: 7200 s = 2h — far too long for service-mesh use). For long-lived RPC connections, tune:
+
+- `tcp_keepalive_time`: 60–120 s
+- `tcp_keepalive_intvl`: 10–30 s
+- `tcp_keepalive_probes`: 3–5
+
+This detects dead peers within a minute rather than two hours.
+
+<DebugLog
+  id="mid-debug-1"
+  pieceSlug="04-tcp-options-and-pathologies"
+  lang="en"
+  title="ss output — diagnose the CLOSE-WAIT accumulation"
+  output={`$ ss -tan state established | wc -l
+12384
+$ ss -tan state close-wait | wc -l
+9821
+$ ss -tan state time-wait | wc -l
+1247
+$ ss -s
+Total: 12500
+TCP:   23552 (estab 12384, closed 8920, orphaned 2, timewait 1247)
+$ ps -p 1234 -o pid,stat,rss,vsz,cmd
+  PID STAT  RSS    VSZ CMD
+ 1234 Ssl 8392000 12000000 /usr/bin/app-server`}
+  outputLang="log"
+  question="The service process has 12k ESTABLISHED + 9.8k CLOSE-WAIT sockets and RSS is climbing. What is the bug and what is the fix?"
+  hint="Look at the ratio CLOSE-WAIT vs ESTABLISHED. CLOSE-WAIT means the peer sent FIN but the local application has not called close(). What does that imply about the application's socket lifecycle?"
+  answer="9.8k CLOSE-WAIT means 9.8k sockets where the remote peer has finished sending and sent FIN, but the local application has NOT yet called close() on the socket. The kernel cannot reclaim the socket until close() is called. This is a socket leak: the application is either dropping the file descriptor without closing it (Go: goroutine returns without defer conn.Close(); Java: missing try-with-resources; C: forgotten close() in the error path). Each leaked CLOSE-WAIT pins kernel memory and a file descriptor. The RSS climb confirms the leak. Fix: audit the connection-close path in the application, add defer/try-with-resources, and watch the CLOSE-WAIT count return to near zero."
+/>
+
+<Quiz
+  id="mid-quiz-1"
+  pieceSlug="04-tcp-options-and-pathologies"
+  lang="en"
+  question="Why does the combination of Nagle's algorithm and delayed ACK cause a ~200 ms stall on small RPC traffic?"
+  choices={[
+    { label: "Nagle drops small packets; delayed ACK slows the retransmission", misconception: "Nagle does not drop packets — it buffers them. Delayed ACK delays the acknowledgement." },
+    { label: "Nagle holds the sender's small write waiting for an ACK; delayed ACK on the receiver holds the ACK up to 40 ms — both sides are waiting for the other", correct: true },
+    { label: "Both defaults are misconfigured and should never be used", misconception: "They exist for good reasons (Nagle for throughput, delayed ACK for ACK coalescing) but interact badly on interactive RPC patterns." },
+    { label: "The stall only occurs on lossy networks", misconception: "The stall occurs on perfect networks — it is a default-behaviour interaction, not a loss-related issue." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+**Why PAWS exists.** On a very high-bandwidth, long-lived connection, TCP's 32-bit sequence number space (~4 GiB) can wrap around in hours. Without PAWS, a delayed retransmitted segment from an earlier pass through the sequence space could arrive and look like a valid new segment. RFC 7323 Timestamps enable PAWS: each segment carries a timestamp, and the receiver rejects any segment whose timestamp is older than a recently-seen value on that connection. This makes wrap-around attacks and accidental wrap-around corruption effectively impossible.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Set TCP_NODELAY on every latency-sensitive socket — Nagle+delayed-ACK creates a 40–200 ms deadlock on small writes. CLOSE-WAIT accumulation means the app is leaking sockets (not calling close()). ECN reduces retransmissions; tune SO_KEEPALIVE to detect dead peers in minutes not hours.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-tcp-options-and-pathologies-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the Nagle + delayed-ACK stall: which side causes which delay and what is the standard fix?", a: "Nagle's algorithm (sender side) buffers small writes and waits for an ACK before sending a partial segment when data is already in flight. The delayed-ACK mechanism (receiver side) holds the ACK up to 40 ms hoping to piggyback it on outgoing data. On an interactive RPC pattern, Nagle waits for an ACK that the receiver is delaying — both sides are waiting for the other. The standard fix is TCP_NODELAY=1 on the socket, which disables Nagle and lets small writes go out immediately. gRPC, Redis clients, and HTTP/2 all set it by default." },
+    { q: "What does PAWS protect against and what TCP option enables it?", a: "PAWS (Protection Against Wrapped Sequence numbers) prevents a delayed retransmitted segment from an earlier sequence-space pass from being mistaken for a new segment on a long-lived high-bandwidth connection. It is enabled by the Timestamps option (RFC 7323): each segment carries a timestamp, and the receiver rejects segments with timestamps older than a recent value. This makes sequence-space wrap-around attacks infeasible." },
+    { q: "What does a large CLOSE-WAIT count on a server indicate and how do you find the root cause?", a: "CLOSE-WAIT means the remote peer sent FIN but the local application has not yet called close() on the socket. Large CLOSE-WAIT counts mean the application is leaking file descriptors. To diagnose: find the pid with ss -tpan state close-wait, then check that process for missing close() calls: defer conn.Close() in Go, try-with-resources in Java, explicit close() in C error paths. Each leaked socket consumes a file descriptor and kernel memory, so RSS climbs alongside the count." },
+  ]}
+/>
+
+<Recap lang="en">
+The TCP header is 20 mandatory bytes plus up to 40 bytes of options. Key options (MSS, Window Scale, SACK, Timestamps, TFO cookie) are negotiated in SYN/SYN-ACK and then fixed. Nagle's algorithm and delayed ACK are both default behaviours that interact catastrophically on small-write interactive traffic — the sender holds a write waiting for an ACK the receiver is delaying for 40 ms. TCP_NODELAY disables Nagle and is standard for any RPC client. CLOSE-WAIT accumulation is the canonical socket-leak symptom: the peer sent FIN but the application never called close(). ECN marks congested packets instead of dropping them; SO_KEEPALIVE probes idle connections to detect dead peers before NAT or firewall state expires silently.
+</Recap>
