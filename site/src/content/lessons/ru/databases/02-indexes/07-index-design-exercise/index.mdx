@@ -1,0 +1,230 @@
+---
+slug: 07-index-design-exercise
+lang: ru
+track: databases
+unit: 02-indexes
+order: 7
+title: "Упражнение по проектированию индексов: стратегия полнотекстового поиска"
+summary: "Синтезирующее упражнение: выбор правильной стратегии индексирования для полнотекстового поиска, оценка трейдоффов между GIN tsvector, pg_trgm, Elasticsearch и pgvector HNSW, проектирование индексов для тикет-системы."
+estMin: 20
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["06-production-failures-and-audit"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["full-text-search", "tsvector", "hnsw-pgvector", "pg-trgm", "index-design", "tradeoff-analysis"]
+sources:
+  - https://www.postgresql.org/docs/current/textsearch.html
+  - https://www.postgresql.org/docs/current/pgtrgm.html
+  - https://github.com/pgvector/pgvector
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+
+<Hook>
+Команда выкатывает поисковую строку. Пользователи вводят в неё текст. Запрос: `WHERE title ILIKE '%invoice%'`. На staging с 10k задач всё работает. В продакшне с 50 млн задач — 12 секунд. ILIKE с leading-wildcard не может использовать B-tree. Решение — не «добавить индекс на title». Решение — выбрать правильный тип индекса для конкретного вопроса. Этот выбор зависит от того, нужен пользователям точный поиск по слову, нечёткий поиск или семантический — и этот урок разбирает все три варианта.
+</Hook>
+
+<Crux>GIN tsvector: keyword full-text. pg_trgm: нечёткий/substring. pgvector HNSW: семантический. Разный write overhead. Неверный выбор — потери.</Crux>
+
+<Explanation>
+
+## Почему ILIKE не масштабируется
+
+`WHERE title ILIKE '%term%'` имеет leading-wildcard. B-tree индексы требуют известного префикса; они не могут ответить на вопрос «содержит ли эта строка данный фрагмент где-либо». Необходимо вычислять каждую строку — это всегда O(n).
+
+Три масштабируемые альтернативы:
+
+1. **GIN на tsvector** — инвертированный индекс на уровне слов; отвечает на вопрос «какие документы содержат это слово или фразу»; понимает стемминг и языковые правила.
+2. **pg_trgm GIN** — декомпозиция на триграммы; отвечает на вопрос «какие строки содержат эту подстроку или похожи на неё»; обрабатывает опечатки и частичный ввод.
+3. **pgvector HNSW** — граф-based приближённый поиск ближайших соседей по embedding-векторам; отвечает на вопрос «какие документы семантически похожи на этот запрос»; требует pipeline для инференса модели.
+
+## GIN на tsvector: нативный выбор Postgres
+
+```sql
+-- Добавить generated tsvector-столбец (Postgres 12+)
+ALTER TABLE tasks
+  ADD COLUMN tsv_search TSVECTOR
+  GENERATED ALWAYS AS (
+    to_tsvector('english', coalesce(title, '') || ' ' || coalesce(body, ''))
+  ) STORED;
+
+-- GIN-индекс на generated-столбце
+CREATE INDEX CONCURRENTLY idx_tasks_search
+  ON tasks USING GIN (tsv_search);
+
+-- Запрос
+SELECT id, title, ts_rank(tsv_search, query) AS rank
+FROM tasks, to_tsquery('english', 'invoice & payment') AS query
+WHERE tsv_search @@ query
+ORDER BY rank DESC
+LIMIT 20;
+```
+
+Трейдофф: GIN-индексы в 2–5 раз больше данных столбца. Каждый INSERT обновляет GIN posting-листы для каждой лексемы документа. Для документов из 200 слов каждый INSERT затрагивает ~200 GIN-записей. `fastupdate=on` (по умолчанию) откладывает эти обновления — запись быстрая, но буфер отложенных обновлений рано или поздно сбрасывается, вызывая периодические всплески задержки. Используйте `fastupdate=off` для write-heavy таблиц, где важна постоянная задержка, а не пиковая пропускная способность.
+
+Не обрабатывает: опечатки (`invoce`), поиск по подстрокам внутри слов (`inv`), семантическое сходство.
+
+## pg_trgm: нечёткий поиск и поиск по подстрокам
+
+Расширение `pg_trgm` разбивает строки на триграммы (окна из 3 символов) и строит GIN или GiST индекс на них. Это позволяет:
+- `LIKE '%term%'` и `ILIKE '%term%'` с поддержкой индекса
+- Поиск по сходству (оператор `%`) для толерантности к опечаткам
+- Сортировка по расстоянию сходства `<->`
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX CONCURRENTLY idx_tasks_title_trgm
+  ON tasks USING GIN (title gin_trgm_ops);
+
+-- Теперь используют индекс:
+SELECT * FROM tasks WHERE title ILIKE '%invoice%';
+SELECT * FROM tasks WHERE title % 'invoce';  -- сходство, обрабатывает опечатку
+```
+
+Трейдофф: триграммные индексы большие (сопоставимо с GIN tsvector или больше для коротких строк), и поиск по сходству медленнее, чем точный поиск по GIN. Лучший вариант для коротких строк (логины, SKU, заголовки), где нечёткий поиск — основной use case.
+
+## pgvector HNSW: семантический поиск
+
+Embedding-векторы представляют смысл численно. Два семантически близких документа имеют embedding-векторы, близкие в векторном пространстве. HNSW (Hierarchical Navigable Small World) — граф-based индекс для приближённого поиска ближайших соседей по высокоразмерным векторам.
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+
+ALTER TABLE tasks ADD COLUMN embedding VECTOR(1536);  -- например, OpenAI text-embedding-3-small
+
+CREATE INDEX CONCURRENTLY idx_tasks_embedding_hnsw
+  ON tasks USING HNSW (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+-- Семантический поиск: найти задачи, семантически похожие на query-embedding
+SELECT id, title, 1 - (embedding <=> $1::vector) AS similarity
+FROM tasks
+ORDER BY embedding <=> $1::vector
+LIMIT 20;
+```
+
+Трейдофф: HNSW-индексы большие (размерность вектора × количество строк; embedding размером 1536 измерений на 10 млн строк = ~60 ГБ). Запись медленная — балансировка графа при каждом INSERT. Индекс приближённый: recall@10 обычно 95–99%. Требует pipeline для embedding (инференс модели для каждого документа и каждого запроса).
+
+В продакшн AI/ML системах 2026 года pgvector + HNSW — канонический выбор для семантического поиска при Postgres как основном хранилище. При требованиях, выходящих за возможности pgvector (сотни миллионов векторов, real-time фильтрация), альтернативы — специализированные векторные базы данных (Pinecone, Weaviate, Milvus).
+
+## Гибридный подход: объединение стратегий
+
+Для большинства продуктовых требований к поиску гибридный подход совмещает точное и семантическое соответствие:
+
+```sql
+-- GIN tsvector для точного keyword-ранжирования
+-- HNSW для семантического ранжирования
+-- Слой приложения: объединение и re-ranking результатов
+SELECT id, title, ts_rank(tsv_search, query) AS kw_rank, NULL AS sem_rank
+FROM tasks, to_tsquery('english', $1) AS query
+WHERE tsv_search @@ query
+UNION ALL
+SELECT id, title, NULL AS kw_rank, 1 - (embedding <=> $2::vector) AS sem_rank
+FROM tasks
+ORDER BY embedding <=> $2::vector
+LIMIT 50;
+-- Объединить по id, суммировать ранги, пересортировать, взять top 20
+```
+
+Это сложнее в реализации, но даёт и точный recall, и семантическую релевантность.
+
+<TradeoffMatrix
+  id="07-search-tradeoff-1"
+  lessonSlug="07-index-design-exercise"
+  lang="ru"
+  prompt="Нужен индекс для новой функции полнотекстового поиска на таблице 'documents' (50 млн строк). Выберите правильную стратегию."
+  options={[
+    { name: "GIN на tsvector-столбце (STORED GENERATED) — запросы используют оператор @@ с to_tsquery", summary: "Канонический полнотекстовый поиск Postgres.", correct: true, justification: "GIN на tsvector — продакшн-дефолт для SQL-native полнотекстового поиска. Генерируйте tsvector как STORED GENERATED столбец; создайте GIN-индекс на нём. Запросы используют tsvector @@ to_tsquery с ts_rank для ранжирования по релевантности. Работает для сотен миллионов документов на обычном железе с правильным индексом. Никакой дополнительной инфраструктуры. Для большинства B2B SaaS-масштабов — правильный ответ: простой, поддерживаемый, быстрый." },
+    { name: "GIN-индекс pg_trgm для нечёткого поиска по подстрокам", summary: "Специализированный — нечёткий и substring-поиск.", justification: "pg_trgm поддерживает LIKE-anywhere и similarity-based нечёткий поиск. Другой use case: не понимает слова и стемминг, но обрабатывает опечатки и частичные совпадения. Используйте когда поиск нечёткий и по коротким строкам (логины, SKU), а не при поиске по длинным документам. Можно комбинировать с GIN tsvector: tsvector для точности, trgm для recall." },
+    { name: "Elasticsearch / OpenSearch как отдельный сервис", summary: "Тяжёлая инфраструктура, максимум возможностей.", justification: "Правильный выбор когда нужно продвинутое ранжирование, faceted поиск, комбинация geo + text, или языковой анализ, который Postgres не обеспечит. Неверный дефолт — добавляет целый инфраструктурный компонент, требует синхронизации данных (CDC или репликация), вносит проблемы согласованности. Дефолт — Postgres full-text; тянитесь к ES когда есть конкретные потребности, которые Postgres не покрывает на вашем масштабе." },
+    { name: "pgvector HNSW для семантического поиска на основе embedding", summary: "Современный семантический поиск AI-эпохи.", justification: "Семантический поиск через embedding — это другая модель: находить документы, чей embedding близок к embedding запроса. Требует pipeline для embedding. Сильно для поиска на естественном языке; слабо для точного поиска по терминам. В 2026 году распространённый паттерн — гибрид: GIN tsvector для точного, pgvector для семантического, результаты объединяются. Используйте когда keyword-поиска недостаточно для удовлетворённости пользователей." },
+  ]}
+/>
+
+<RFCQuiz
+  id="07-design-rfc-1"
+  lessonSlug="07-index-design-exercise"
+  lang="ru"
+  question="В какой версии Postgres появился INCLUDE в CREATE INDEX, позволяющий создавать covering-индексы без влияния включённых столбцов на sort key?"
+  choices={[
+    { rfc: "PostgreSQL 11 (октябрь 2018)", title: "Добавлена поддержка INCLUDE-столбцов в B-tree — non-key payload-столбцы хранятся в листовых страницах, позволяя index-only scan для запросов с проекцией дополнительных столбцов помимо sort key", correct: true },
+    { rfc: "PostgreSQL 12", title: "Добавлены generated columns и улучшения партиционирования — не INCLUDE" },
+    { rfc: "PostgreSQL 14", title: "Добавлено bottom-up удаление в индексах и улучшена надёжность CONCURRENTLY — не INCLUDE" },
+    { rfc: "PostgreSQL 16", title: "Добавлены улучшения производительности включая поддержку pgvector-экосистемы — INCLUDE появился раньше" },
+  ]}
+/>
+
+<Quiz
+  id="07-design-quiz-1"
+  lessonSlug="07-index-design-exercise"
+  lang="ru"
+  question="Команда добавляет FK с ON DELETE CASCADE из comments(post_id) в posts(id), НЕ индексируя comments(post_id). Что произойдёт при DELETE FROM posts WHERE id = 42, если в comments 100 млн строк?"
+  choices={[
+    { label: "CASCADE обрабатывается внутренней картой и выполняется за миллисекунды", misconception: "Postgres не поддерживает внутренний обратный индекс; он запрашивает comments по post_id каждый раз." },
+    { label: "Postgres сканирует всю таблицу comments, чтобы найти строки с post_id = 42 — Seq Scan 100 млн строк, удерживая блокировки минутами", correct: true },
+    { label: "DELETE завершается ошибкой из-за отсутствующего индекса", misconception: "Выполнится успешно, только медленно — и всё это время удерживает блокировки." },
+    { label: "Postgres автоматически строит временный индекс для CASCADE", misconception: "Нет, не строит." },
+  ]}
+/>
+
+<DesignPrompt
+  id="07-design-prompt-1"
+  lessonSlug="07-index-design-exercise"
+  lang="ru"
+  prompt="Спроектируйте полный набор индексов для тикет-системы. Таблица: tasks (id BIGSERIAL PK, workspace_id BIGINT, project_id BIGINT, assignee_user_id BIGINT, status TEXT, priority SMALLINT, title TEXT, body TEXT, ticket_id TEXT, created_at TIMESTAMPTZ). Масштаб: 100 млн задач; 80% done (холодные), 15% open (горячие), 5% in_progress (горячие). Бюджет: суммарный размер индексов не более 20% от размера таблицы. Пять горячих запросов ниже."
+  constraints={[
+    "Запрос A: список open/in_progress задач в проекте, отсортированных по priority, затем по created_at.",
+    "Запрос B: список open/in_progress задач, назначенных конкретному пользователю, по всем проектам воркспейса.",
+    "Запрос C: найти задачу по ticket_id (уникален в пределах воркспейса).",
+    "Запрос D: полнотекстовый поиск по заголовкам и телу задач.",
+    "Запрос E: найти задачи, созданные за последние 24 часа в воркспейсе.",
+  ]}
+  canonical="Индекс 1 — idx_tasks_ws_project_open: btree (workspace_id, project_id, priority, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, title, assignee_user_id). Обслуживает запрос A. workspace_id как ведущий столбец — ограничивает по tenant. project_id — сужает до проекта. priority + created_at DESC — обслуживает ORDER BY. Partial WHERE сокращает индекс до 20% таблицы. INCLUDE делает индекс покрывающим для типичной проекции списка. Индекс 2 — idx_tasks_ws_assignee_open: btree (workspace_id, assignee_user_id, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, project_id, title, priority). Обслуживает запрос B. workspace_id как tenant-scope, assignee_user_id для фильтра по пользователю, created_at для сортировки. Partial аналогично. Индекс 3 — idx_tasks_ws_ticket_unique: btree UNIQUE (workspace_id, ticket_id). Обслуживает запрос C. Point lookup за микросекунды. Также обеспечивает уникальность в пределах tenant. Индекс 4 — idx_tasks_search: GIN на stored generated столбце tsv_search = to_tsvector('english', coalesce(title,'') || ' ' || coalesce(body,'')). Обслуживает запрос D. Полнотекстовый поиск по title + body. Индекс 5 — idx_tasks_ws_recent: btree (workspace_id, created_at DESC) INCLUDE (id, title, status, assignee_user_id). Обслуживает запрос E. Без фильтра по status (показывает все статусы в 24h-фиде). Стоимость: индексы 1 и 2 — partial (20% от 100 млн = 20 млн записей каждый), ~600 МБ каждый. Индекс 3 покрывает все 100 млн строк (ticket_id — короткая строка), ~2 ГБ. Индекс 4 GIN ~3–5 ГБ в зависимости от длины документов. Индекс 5 на всех 100 млн строках, ~1,5 ГБ. Итого ~8–10 ГБ при ~40 ГБ таблице — в пределах бюджета 20%. Overhead записи: каждый INSERT затрагивает все 5 индексов; каждое обновление open→done не затрагивает partial-индексы 1 и 2 (они индексируют только open/in_progress). Удалите любой имеющийся одностолбцовый индекс на workspace_id — индексы 1, 2 и 5 покрывают этот префикс."
+  keyPoints={[
+    "Partial WHERE status IN ('open','in_progress') сокращает размер индекса на 80% и удешевляет запись для done-задач.",
+    "INCLUDE-столбцы покрывают типичную проекцию без раздувания sort key.",
+    "UNIQUE-индекс на (workspace_id, ticket_id) одновременно обеспечивает constraint и служит индексом для точечного поиска.",
+    "GIN на STORED GENERATED tsvector — нативный для Postgres ответ на полнотекстовый поиск без дополнительной инфраструктуры.",
+    "Бюджетный учёт: суммируйте размеры индексов; проверяйте, что они не превышают 20% от размера таблицы; проверяйте допустимость write-overhead.",
+    "После проектирования удалите избыточные prefix-индексы, которые теперь покрываются composite-индексами.",
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем Postgres нужно шесть типов индексов, если большинство других баз данных обходятся одним? Потому что фундаментальные структуры данных несовместимы. B-tree требует полного порядка. JSONB-документы не имеют полного порядка. Геометрические фигуры требуют пространственных предикатов. Полнотекстовый поиск требует инвертированных списков на уровне слов. Embedding-сходство требует высокоразмерной навигации по графу. Единая универсальная структура индекса была бы либо астрономически дорогой, либо неспособной выразить правильные операции. Дизайнерский трейдофф — несколько специализированных типов, каждый под свою форму данных — сохраняет практичность производительности запросов в продакшне.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>GIN на STORED GENERATED tsvector-столбце — нативное для Postgres решение полнотекстового поиска: никакой дополнительной инфраструктуры, стемминг, масштабируется до сотен миллионов документов. pg_trgm GIN обрабатывает нечёткий и substring-поиск. pgvector HNSW обрабатывает семантический поиск на embedding-векторах. Для тикет-системы: partial composite-индексы (WHERE status IN ('open','in_progress')) сокращают размер на 80%, INCLUDE делает их покрывающими, UNIQUE composite обеспечивает per-tenant constraint, GIN tsvector — полнотекстовый поиск — итого менее 20% от размера таблицы.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-design-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, почему GIN tsvector является дефолтным выбором для полнотекстового поиска в Postgres, и каковы его ограничения.", a: "GIN tsvector — дефолт по следующим причинам: (1) встроен в Postgres без дополнительной инфраструктуры — никакого Elasticsearch-кластера, никакого sync-pipeline, никаких проблем согласованности; (2) понимает семантику на уровне слов — стемминг (run/running/ran), стоп-слова, языковые правила — обеспечивая ранжирование через ts_rank; (3) масштабируется до сотен миллионов документов на обычном железе при правильном индексе; (4) запросы естественно компонуются с другими SQL-предикатами (AND workspace_id = $1 AND tsv_search @@ query). Ограничения: (1) не обрабатывает опечатки и нечёткие совпадения — 'invoce' не найдёт 'invoice'; (2) не понимает семантического смысла — 'автомобиль' не найдёт 'машину' если стемминг не покрывает; (3) GIN-индекс большой (2–5x данных столбца) и имеет высокие write-накладные расходы для длинных документов (обновление posting-list для каждой лексемы); (4) ранжирование через ts_rank простое (частота терминов) — не такое изощрённое как BM25 или learning-to-rank. Для толерантности к опечаткам: добавьте pg_trgm GIN. Для семантического поиска: добавьте pgvector HNSW с embedding-pipeline. Для продвинутого ранжирования и faceted-поиска при масштабе: Elasticsearch." },
+    { q: "Спроектируйте индекс для запроса: фильтр по workspace_id и status, сортировка по created_at DESC, проекция только id и title. Объясните каждый выбор.", a: "Индекс: CREATE INDEX CONCURRENTLY idx_example ON tasks (workspace_id, created_at DESC) WHERE status IN ('open','in_progress') INCLUDE (id, title). Обоснование — workspace_id как ведущий столбец: всегда присутствующий tenant-фильтр; немедленно сужает индекс до строк одного воркспейса. created_at DESC в sort key: обслуживает ORDER BY created_at DESC напрямую из индекса без дополнительного шага Sort. WHERE status IN ('open','in_progress') partial predicate: запрос интересуется только горячими статусами; сокращает индекс до 20% таблицы и исключает write-overhead для done-строк. INCLUDE (id, title): проекционные столбцы в листовых страницах, не в sort key; обеспечивает index-only scan (без heap-обращений) для запросов, проецирующих только id и title; не засоряет sort key. Ожидаемый план: Index Only Scan с Heap Fetches: 0, шаг Sort отсутствует (сортировка из индекса), время выполнения менее 1 мс для top-50 на таблице 100 млн строк. status не в sort key, потому что все строки этого partial-индекса уже имеют status IN ('open','in_progress') — запросу не нужно сортировать по status или делать range-scan по нему." },
+    { q: "Когда выбрать pgvector HNSW вместо GIN tsvector для поиска, и каковы операционные издержки?", a: "Выбирайте pgvector HNSW когда: (1) пользователи ищут на естественном языке и keyword-поиск даёт плохой recall — 'инструмент командного общения' должен находить задачи о Slack, email и встречах, даже если этих слов нет в запросе; (2) продукт требует семантического сходства ('найти задачи, похожие на эту'); (3) многоязычный поиск, где стемминг tsvector языкоспецифичен, а нужен единый универсальный поиск. Операционные издержки: (1) хранилище — HNSW-индекс для embedding размером 1536 измерений на 10 млн строк составляет примерно 60 ГБ; намного больше GIN tsvector для тех же строк; (2) write-стоимость — каждый INSERT требует перебалансировки графа HNSW, в 10–100 раз медленнее чем GIN-insert; (3) embedding-pipeline — каждый документ и каждый запрос должен проходить через модель (например, OpenAI text-embedding-3-small) для генерации embedding перед вставкой или поиском; добавляет задержку и стоимость; (4) приближённые результаты — HNSW не гарантирует нахождение ближайшего вектора, только приближённо; recall@10 обычно 95–99%, но не 100%. Паттерн в продакшне: используйте оба — GIN tsvector для точного keyword recall, HNSW для семантического recall, объединяйте результаты в слое приложения." },
+  ]}
+/>
+
+<Recap lang="ru">
+`WHERE title ILIKE '%term%'` всегда O(n) — leading-wildcard отключает B-tree. Масштабируемые альтернативы: GIN на STORED GENERATED tsvector-столбце для keyword full-text (стемминг, ts_rank, без дополнительной инфраструктуры); pg_trgm GIN для нечёткого поиска и поиска по подстрокам (толерантность к опечаткам, ILIKE-anywhere); pgvector HNSW для семантического embedding-поиска (естественный язык, требует pipeline инференса модели).
+
+Для тикет-системы на 100 млн строк продуманный набор индексов: два partial composite (WHERE status IN ('open','in_progress')) для горячих 20% данных, покрывающих dashboard-запросы по открытым задачам; UNIQUE composite для per-tenant ticket_id; GIN tsvector для полнотекстового поиска; full-table composite для 24h-фида — итого менее 20% от размера таблицы, в пределах write-overhead бюджета.
+
+Клауза INCLUDE (Postgres 11+) добавляет проекционные столбцы в листья индекса без влияния на sort key, обеспечивая index-only scan для типичных проекций в списочных запросах. Partial-индексы сокращают размер пропорционально селективности WHERE-условия — самый недооцениваемый рычаг производительности в продакшн Postgres-схемах.
+</Recap>
