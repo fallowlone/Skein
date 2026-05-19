@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (12/51 units done — networking pillar COMPLETE 12/12) ← **RESUME HERE: browser/01-event-loop**
+- [ ] **Phase B** — content migration (13/51 units done — networking 12/12, browser 1/8) ← **RESUME HERE: browser/02-render-pipeline**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -306,6 +306,25 @@ The 81 stub pieces carry no real content. Convert each to a unit + one lesson st
 - [ ] **Step 4:** Commit: `git commit -am "docs(open-atlas): migration complete — 3-tier model retired"`
 
 ---
+
+## Phase B cut plans
+
+Recorded per unit before authoring (Phase B procedure step 1).
+
+### browser/02-render-pipeline → 8 lessons
+
+| # | slug | level | source tier / subtopic |
+|---|------|-------|------------------------|
+| 01 | the-six-stages | junior | junior tier — 6 stages, kitchen metaphor, 16.67 ms frame budget; DragOrder, Quiz×2, MetaphorComplete, NumberDrill |
+| 02 | stages-and-threads | middle | middle ¶1-3 — six-stage cost table, renderer process model, main-thread bottleneck |
+| 03 | invalidation-and-cost | middle | middle — invalidation rule, dirty-bit propagation, per-stage cost amplifiers (RU also: fonts FOIT/FOUT, images/CLS) |
+| 04 | compositor-layers | middle | middle — reaching the compositor, implicit layer-promotion rules, overlap, DevTools Layer Borders |
+| 05 | devtools-and-frame-lifecycle | middle | middle — reading the Performance flame strip, contain/content-visibility, frame scheduler order, microtasks vs tasks (RU also: reactive frameworks); DragOrder, TraceScenario |
+| 06 | layout-thrash | senior | senior — forced synchronous layout, read-then-write loop, batch reads/writes; DebugLog, FadedExample |
+| 07 | beginmainframe-and-gpu | senior | senior — BeginMainFrame two-thread handshake, compositor-driven CSS animation, GPU memory cost; TradeoffMatrix, RFCQuiz, Quiz |
+| 08 | observability-and-attack-surface | senior | senior — layer squashing, off-main-thread scroll, display locking, LoAF, INP, reduced-motion, full attack surface (RU also: CI testing, real-hw profiling, Web Workers, Service Worker); DesignPrompt, Quiz |
+
+Note: the RU source twin has extra paragraphs absent from EN (fonts, images, reactive frameworks, CI, Workers, Service Worker). The authoring agent should backfill EN to match or keep RU's extra depth — do not silently drop it.
 
 ## Self-review notes
 
