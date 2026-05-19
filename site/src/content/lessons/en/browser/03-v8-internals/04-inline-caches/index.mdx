@@ -1,0 +1,206 @@
+---
+slug: 04-inline-caches
+lang: en
+track: browser
+unit: 03-v8-internals
+order: 4
+title: "Inline caches, IC states, and deoptimization"
+summary: "How V8's per-call-site inline caches track hidden classes, the monomorphic/polymorphic/megamorphic state machine, deoptimization triggers, and the FadedExample of a hidden-class transition breaking a hot IC."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-what-v8-is", "03-hidden-classes"]
+deepensInto: ["06-turbofan-and-deopt"]
+spiral: ["statefulness"]
+concepts: ["inline cache", "monomorphic", "polymorphic", "megamorphic", "FeedbackVector", "deoptimization", "guard", "IC state machine"]
+sources:
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://v8.dev/blog/maglev
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A single source line — `p.x` — can execute in 1 CPU cycle or in 100 cycles, depending on how many different object shapes have passed through it. The structure that decides this is the inline cache, and its state is the most impactful performance number you cannot see in DevTools by default.
+</Hook>
+
+<Crux>IC state (mono → poly → megamorphic) determines whether V8 hard-codes the offset or falls back to a generic lookup 10–50× slower.</Crux>
+
+<Explanation>
+
+## How inline caches work
+
+Every property access in JS is a polymorphic operation — the object could be any shape. V8 generates a tiny per-call-site cache: the first time a line runs, V8 records the hidden class it saw and the property offset for that class. Next time the same line runs and the object has the same hidden class, V8 reads the property at the recorded offset directly — **5–10 CPU cycles**. No hashtable lookup, no type check, one MOV instruction.
+
+## The IC state machine
+
+The IC state lives in the FeedbackVector slot for that source line. Transitions are one-way towards megamorphic:
+
+| State | Hidden classes seen | Cost | Notes |
+| --- | --- | --- | --- |
+| `uninitialized` | 0 | — | First execution |
+| `monomorphic` | 1 | 5–10 cycles | Fast direct access |
+| `polymorphic` | 2–4 | Linear branch chain | Still fast |
+| `megamorphic` | 5+ | Generic lookup, ~50–100 cycles | 10–50× slower |
+
+A function can have hundreds of IC slots. One megamorphic site does not kill the whole function, but a hot loop containing a megamorphic property access kills its loop body.
+
+<NumbersCard
+  id="card-ic-numbers"
+  title="IC state costs"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic access", value: "5–10 cycles" },
+    { label: "Megamorphic threshold", value: "≥5 shapes per IC slot" },
+    { label: "Megamorphic slowdown", value: "10–50× vs monomorphic" },
+    { label: "IC slot size in FeedbackVector", value: "16 bytes (8B class + 8B handler)" },
+    { label: "Generic lookup cost", value: "50–100 cycles" },
+  ]}
+/>
+
+## Deoptimization
+
+When TurboFan optimises a function, it bakes in assumptions: "this argument is always a smi", "this object's property z is always a number", "this loop never overflows 32-bit indices". A **guard** is inserted at each assumption. If at runtime any guard fails, V8 **deoptimizes**: throws away the compiled code, reconstructs the interpreter state from the optimised frame, and resumes execution in Ignition (or Sparkplug). The function may climb back up later, but the deopt itself costs ~microseconds.
+
+**Common deopt triggers:**
+- Passing a different type to a previously-typed argument
+- Indexing past array bounds
+- Hitting NaN in a numeric operation
+- Accessing a deleted property
+
+Chrome DevTools `--trace-opt --trace-deopt` flags expose deopts. `%OptimizationStatus(fn)` at `--allow-natives-syntax` in d8 shows the current tier.
+
+<FadedExample
+  client:load
+  id="fe-v8-1"
+  pieceSlug="inline-caches"
+  lang="en"
+  title="Trace one hidden-class transition that breaks an IC"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Setup:</strong> A function <code>getX(p) = p.x</code> is called 10000 times in a hot loop. The objects come from various code paths.</p>
+        <p><strong>Step 1: warm-up (first 1000 calls).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>Each call passes a <code>Point</code> object created via <code>new Point(x, y)</code>. All Points share hidden class HC1.</li>
+          <li>Ignition runs, records "IC for line 1: HC1, offset 8" into the FeedbackVector.</li>
+          <li>After 1000 calls, Sparkplug compiles a baseline JIT version. IC still monomorphic.</li>
+        </ul>
+        <p><strong>Step 2: TurboFan promotes (call 5000).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>TurboFan compiles getX with the assumption "p has hidden class HC1, .x is at offset 8". Emits one MOV instruction: <code>mov rax, [rdi+8]</code> — 1 cycle.</li>
+          <li>The function is now at maximum speed.</li>
+        </ul>
+        <p><strong>Step 3: hidden class transition (call 6000).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>Caller does <code>point.z = 5</code> on one of the points after creation. That point transitions to a new hidden class HC2 with .z at offset 16.</li>
+          <li>The modified point is passed into getX. The TurboFan guard checks hidden class against HC1, fails.</li>
+          <li>Deoptimize: TurboFan code thrown away, execution falls back to Sparkplug. IC sees HC2; transitions from monomorphic-HC1 to polymorphic-HC1-HC2.</li>
+          <li>Function runs ~2× slower until re-optimised. If more shapes arrive, IC goes megamorphic and stays slow.</li>
+        </ul>
+      </div>
+    ),
+    semi: {
+      prompt: "If the caller adds .z to ALL points before calling getX, what is the final IC state?",
+      blanks: [
+        { id: "ic_state", expected: "monomorphic", placeholder: "IC state" },
+      ],
+    },
+    blank: {
+      prompt: "If the function takes objects from 8 different constructors (8 hidden classes) what IC state does it reach, and what is the perf cost?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p><strong>Megamorphic.</strong> Once the IC has seen more than 4 hidden classes, V8 stops tracking them individually and marks the site megamorphic. From there, every property access falls back to the generic runtime lookup: traverse the hidden class transition chain, find the property, return its offset — ~50–100 cycles per access instead of 1–2.</p>
+          <p>For a hot loop running this access millions of times per second, going megamorphic turns a 1ms loop into a 30–50ms loop. Fix: unify the shape (one constructor, all properties declared up front) or split the loop into per-shape sub-loops where each can stay monomorphic.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "ic_state:megamorphic": "Megamorphic needs 5+ shapes. If all points share .z, they all transition to HC2 together — still one shape — back to monomorphic.",
+    "ic_state:polymorphic": "Polymorphic is 2-4 shapes. If all points have the same shape (with .z), it is one shape — monomorphic.",
+  }}
+/>
+
+<Misconception id="mc-megamorphic">
+  <p><strong>"Polymorphism is fine."</strong> Up to 4 shapes V8 emits a branch chain. At 5+ (megamorphic) V8 stops trying and falls back to generic lookup — 10–50× slower. One extra shape past the limit crosses the line.</p>
+</Misconception>
+
+<Quiz
+  id="mid-quiz-ic-1"
+  pieceSlug="inline-caches"
+  lang="en"
+  question="A hot loop processes objects from 6 different constructors. What IC state does the property-access site reach?"
+  choices={[
+    { label: "Polymorphic — 6 is still in the manageable range", misconception: "Polymorphic caps at 4 shapes. 6 classes is past the threshold — the site goes megamorphic." },
+    { label: "Megamorphic — 6 classes exceeds the 4-class polymorphic limit", correct: true },
+    { label: "Monomorphic — V8 picks the most common class", misconception: "V8 does not pick a winner — it tracks all observed classes until the cap, then transitions to megamorphic." },
+    { label: "Uninitialized — too many classes to track", misconception: "V8 transitions through uninitialized → monomorphic → polymorphic → megamorphic as more classes are seen." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-ic"
+  pieceSlug="inline-caches"
+  lang="en"
+  prompt="Order the steps of a property access at a TurboFan-compiled monomorphic IC:"
+  items={[
+    "TurboFan-compiled function receives an object pointer in a register",
+    "Load the hidden-class pointer from the object header",
+    "Compare loaded hidden class to the expected class from compile time",
+    "If equal: read the property at the precomputed offset — 1 MOV",
+    "If not equal: deoptimize, fall back to lower tier",
+    "Lower tier records the new hidden class, IC may transition state",
+    "Function may be re-optimised with updated feedback",
+  ]}
+  correctOrder={["0", "1", "2", "3", "4", "5", "6"]}
+/>
+
+<Quiz
+  id="mid-quiz-ic-2"
+  pieceSlug="inline-caches"
+  lang="en"
+  question="A function was TurboFan-compiled and ran at 5µs. After a refactor it now runs at 250µs. What is the most likely V8-level cause?"
+  choices={[
+    { label: "GC increased heap size", misconception: "GC pressure affects pause frequency, not per-call throughput of a specific function." },
+    { label: "Deopt: a guard fired and the function fell back to Ignition, and the ICs are now megamorphic so re-optimisation cannot recover full speed", correct: true },
+    { label: "TurboFan was disabled in this build", misconception: "TurboFan cannot be disabled selectively per function in production builds." },
+    { label: "The file was re-parsed, clearing the FeedbackVector", misconception: "Re-parsing does not happen at runtime; the FeedbackVector persists across calls." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is the megamorphic threshold 5 and not some other number? V8's polymorphic IC handler can embed up to 4 class-check branches inline before the code becomes too large and complex to manage. At 5+, the handler overhead exceeds the benefit of any specialisation, so V8 falls back to a generic runtime lookup that handles all shapes uniformly. The number 4 is an implementation constant tuned for the average JS workload; it is not a fundamental hardware limit.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>IC states transition one-way: mono → poly → mega. Monomorphic is 5–10 cycles; megamorphic is 50–100. Keeping call sites monomorphic is the single highest-leverage V8 performance habit.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="inline-caches-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the IC state machine: what triggers each transition?", a: "Uninitialized → monomorphic: first call, one hidden class observed. Monomorphic → polymorphic: second distinct hidden class seen at the same call site (IC expands to hold 2-4 class/handler pairs). Polymorphic → megamorphic: 5th distinct hidden class — V8 abandons per-class tracking, replaces the IC handler with a generic runtime lookup. Transitions are one-way: V8 never moves a site from megamorphic back to polymorphic." },
+    { q: "What is a deoptimization guard and when does it fire?", a: "TurboFan inserts a guard instruction before each speculative assumption — 'this value is always a smi', 'this object always has hidden class HC1'. If the guard's condition is false at runtime, V8 deoptimizes: discards the compiled code, reconstructs interpreter state from the optimised stack frame, and resumes in Ignition. Cost: ~microseconds for the deopt plus re-compile latency when the function is eventually re-promoted. A deopt once is survivable; a deopt on every call (deopt-loop) is catastrophic." },
+    { q: "A call site has seen 3 hidden classes. How do you bring it back to monomorphic?", a: "You cannot bring an existing IC back from polymorphic — the state is one-way. The fix is upstream: ensure all callers construct objects from the same constructor with the same property order, so the IC sees only one class going forward. Once the function is deoptimised and re-warmed, the new feedback will show one class and V8 will re-optimise with a monomorphic IC. The old polymorphic-IC code is discarded when the function re-promotes." },
+  ]}
+/>
+
+<Recap lang="en">
+An inline cache is a per-call-site stub that records the hidden class V8 saw and the property offset for that class. When the same hidden class arrives again, the property is read at the precomputed offset in 5–10 cycles — no lookup. The IC state machine transitions from uninitialized → monomorphic → polymorphic → megamorphic as more classes are observed. Megamorphic (5+ classes) forces a generic runtime lookup costing 50–100 cycles per access — 10–50× slower than monomorphic. Deoptimization happens when a TurboFan guard fires at runtime; the compiled code is discarded and execution falls back to Ignition. A single deopt is expensive but survivable; a deopt-loop — where TurboFan recompiles the same function only to deopt it on every call — is a catastrophic throughput killer.
+</Recap>
