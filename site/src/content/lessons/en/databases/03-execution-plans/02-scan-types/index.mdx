@@ -1,0 +1,200 @@
+---
+slug: 02-scan-types
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 2
+title: "Scan types: Seq, Index, Bitmap, Index-Only"
+summary: "Postgres picks among four scan types based on selectivity and I/O cost. Reading the cost line tells you what the planner assumed and whether BUFFERS confirms it."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-explain-and-plans"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["seq-scan", "index-scan", "bitmap-heap-scan", "index-only-scan", "cost-model", "random-page-cost", "seq-page-cost", "buffers"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+`EXPLAIN` shows `Seq Scan` on your 10M-row table even though an index exists on the filter column. The planner is not broken — it calculated that a sequential scan is cheaper for this selectivity. Understanding when and why the planner picks each scan type is what separates guessing from diagnosing.
+</Hook>
+
+<Crux>Seq scan wins on low selectivity; Index scan on high; Bitmap in between. The planner chooses based on cost constants and row estimates.</Crux>
+
+<Explanation>
+
+## Reading the cost line
+
+Every plan node prints:
+
+```
+(cost=startup..total rows=N width=B)
+```
+
+- `startup` — cost paid before the first row can be emitted. Zero for Seq Scan; non-zero for Sort (must read everything first).
+- `total` — cost to run the node to completion.
+- `rows` — estimated rows emitted by this node.
+- `width` — average row width in bytes.
+
+Cost is in arbitrary units where `1.0 ≈ one sequential page fetch`. Only ratios matter; the absolute numbers are meaningless without context. With `ANALYZE`, every node also gets `(actual time=startup..total rows=N loops=L)` — real wall time in milliseconds.
+
+**Interpretation rule**: if the node is inside a Nested Loop's inner side, divide `actual time` by `loops` to get per-execution cost.
+
+## The four scan types
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Scan type</th>
+        <th class="border border-border px-3 py-2 text-left">I/O pattern</th>
+        <th class="border border-border px-3 py-2 text-left">Wins when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Seq Scan</td>
+        <td class="border border-border px-3 py-2">Full heap, sequential</td>
+        <td class="border border-border px-3 py-2">Predicate matches many rows, or no usable index</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Index Scan</td>
+        <td class="border border-border px-3 py-2">Index walk + heap fetch per row (random I/O)</td>
+        <td class="border border-border px-3 py-2">Few rows match (&lt;5-15% of table) and rows are not clustered</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Bitmap Heap Scan</td>
+        <td class="border border-border px-3 py-2">Index walk → bitmap of TIDs → sorted heap read</td>
+        <td class="border border-border px-3 py-2">Many scattered rows (hundreds to millions); turns random I/O into sequential</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Index Only Scan</td>
+        <td class="border border-border px-3 py-2">Index leaves only — no heap fetch</td>
+        <td class="border border-border px-3 py-2">All needed columns are in the index AND Visibility Map says pages are all-visible</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Seq Scan
+
+Cost formula: `relpages × seq_page_cost + reltuples × cpu_tuple_cost`. Default `seq_page_cost = 1.0`, `cpu_tuple_cost = 0.01`. For a 5,000-page table: `5000 × 1.0 + 1M × 0.01 = 15,000` units. Optimal when the predicate is unselective (most rows match) — reading the whole heap sequentially is faster than hopping randomly to each matching row.
+
+### Index Scan
+
+Cost grows with `random_page_cost × matching_rows`. Default `random_page_cost = 4.0` (HDD-era). For 100 matching rows: `100 × 4.0 = 400` — much cheaper than the 15,000 Seq Scan. For 100,000 matching rows: `100,000 × 4.0 = 400,000` — Seq Scan wins. The crossover is roughly when the predicate matches 5–15% of the table.
+
+**SSD tuning note**: on NVMe SSDs, random reads are only 1.5–2× slower than sequential — not 4×. Set `random_page_cost = 1.1` in `postgresql.conf` for SSD systems. The planner will then prefer Index Scan for a much larger fraction of queries.
+
+### Bitmap Heap Scan
+
+A two-step process: first a `Bitmap Index Scan` builds an in-memory bitmap of all matching TIDs from the index; then `Bitmap Heap Scan` sorts the TIDs by physical page address and reads the heap in order. This converts scattered random reads into a sequential heap traversal. It wins when many rows match but they are scattered across the heap — the middle ground between Index Scan and Seq Scan.
+
+The bitmap can be OR-ed across multiple indexes (BitmapOr node) — useful when an OR predicate has an index per column.
+
+### Index Only Scan
+
+Reads only the index leaf pages — no heap fetch — when two conditions are both true: (1) all columns needed by the query are stored in the index (either as key columns or via `INCLUDE`), and (2) the Visibility Map confirms the page is "all-visible" (every tuple visible to all transactions). When the VM bit is clear, Postgres must fall back to a heap fetch for that page. In `EXPLAIN ANALYZE` output, `Heap Fetches: N` reveals how often this happened — high N means the VM is stale and VACUUM has not run recently.
+
+## BUFFERS: the I/O picture
+
+`EXPLAIN (ANALYZE, BUFFERS)` adds buffer accounting per node:
+
+```
+Seq Scan on orders  (actual time=0.1..450 rows=1000000 loops=1)
+  Buffers: shared hit=4800 read=200
+```
+
+- `shared hit` — page found in Postgres's `shared_buffers` cache (no disk I/O)
+- `read` — page fetched from OS or disk
+- `dirtied` — page modified by this node
+- `written` — page flushed to disk
+
+High `read` with low `hit` means the working set is larger than `shared_buffers`, or the query is touching cold data. This diagnoses "is this slow because of CPU or I/O": high reads = I/O-bound; low reads but high actual time = CPU-bound (often a poor join or heavy sort).
+
+<NumbersCard
+  id="02-scan-numbers"
+  title="Scan type cost constants (Postgres defaults)"
+  stats={[
+    { label: "seq_page_cost (default)", value: "1.0" },
+    { label: "random_page_cost (default, HDD-tuned)", value: "4.0" },
+    { label: "random_page_cost (SSD-tuned)", value: "1.1" },
+    { label: "cpu_tuple_cost", value: "0.01" },
+    { label: "cpu_index_tuple_cost", value: "0.005" },
+    { label: "Index Scan vs Seq Scan crossover (typical)", value: "~5-15% of table rows" },
+    { label: "Index Only Scan speedup vs Index Scan", value: "~10-100x on hot reads" },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-1"
+  lessonSlug="02-scan-types"
+  lang="en"
+  question="A 1M-row table has an index on `status`. A query `WHERE status = 'active'` returns 400,000 rows (40% of the table). What scan type will the planner most likely choose?"
+  choices={[
+    { label: "Seq Scan — 40% selectivity means most of the table is needed; sequential reads are cheaper than 400,000 random heap fetches", correct: true },
+    { label: "Index Scan — an index exists so the planner always uses it", misconception: "The planner uses cost, not presence. 400,000 random fetches cost more than a sequential scan for this selectivity." },
+    { label: "Index Only Scan — always fastest when an index exists", misconception: "Index Only Scan requires all projected columns in the index AND a current Visibility Map." },
+    { label: "Bitmap Heap Scan — always used for large result sets", misconception: "Bitmap wins when rows are scattered; for this selectivity the planner compares Bitmap vs Seq Scan costs." },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-2"
+  lessonSlug="02-scan-types"
+  lang="en"
+  question="EXPLAIN ANALYZE shows `Index Only Scan ... Heap Fetches: 12000`. What does this mean?"
+  choices={[
+    { label: "The Visibility Map bits are cleared for many pages — VACUUM has not run recently, so Postgres must fetch the heap to confirm row visibility", correct: true },
+    { label: "The index is missing some columns needed by the query", misconception: "If columns were missing, the planner would use Index Scan instead of Index Only Scan." },
+    { label: "12,000 rows were not found in the index", misconception: "Heap Fetches counts pages that needed a visibility check, not missing rows." },
+    { label: "The index is INVALID", misconception: "An INVALID index is not used at all — the plan would show Seq Scan." },
+  ]}
+/>
+
+<Quiz
+  id="02-scan-quiz-3"
+  lessonSlug="02-scan-types"
+  lang="en"
+  question="On an NVMe SSD server you leave `random_page_cost` at the default 4.0. What production effect does this have?"
+  choices={[
+    { label: "The planner systematically underuses indexes and prefers Seq Scans, because it thinks random I/O is 4× more expensive than it actually is on SSD", correct: true },
+    { label: "Nothing — defaults are fine for all hardware", misconception: "Defaults are calibrated for HDDs. On NVMe SSD the random/sequential cost ratio is much smaller (1.5-2×), not 4×." },
+    { label: "Postgres becomes faster because it avoids index lookups", misconception: "It becomes slower: Seq Scans read more pages than selective index lookups." },
+    { label: "Memory usage increases", misconception: "random_page_cost is a cost-model parameter, not a memory setting." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Seq Scan reads the heap sequentially — cheap per page but always full. Index Scan does random I/O per matching row — cheap only when few rows match. Bitmap Heap Scan sorts TIDs before reading, bridging the middle. Index Only Scan skips the heap entirely — fastest when the VM is current. Tune random_page_cost to 1.1 on SSD systems.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-scan-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why the planner picks Seq Scan on a 1M-row table when an index exists on the filter column.", a: "The planner's cost model says Seq Scan wins when the predicate matches a large fraction of the table. Seq Scan cost = relpages × seq_page_cost + reltuples × cpu_tuple_cost. Index Scan cost = matching_rows × random_page_cost. For 1M rows, Seq Scan ≈ 5000 × 1.0 + 1M × 0.01 = 15,000 units. Index Scan for 100,000 matching rows ≈ 100,000 × 4.0 = 400,000 — Seq Scan wins. For 100 matching rows, Index Scan ≈ 400 — Index Scan wins by 40×. The crossover is ~5-15% of the table. This is correct behaviour: sequential reads are genuinely faster than hundreds of thousands of random I/O operations. When Seq Scan is wrong (predicate is actually selective), the cause is a row-estimate error — ANALYZE, extended statistics, or expression indexes fix the estimate and the scan choice follows." },
+    { q: "When does Bitmap Heap Scan win over both Index Scan and Seq Scan?", a: "Bitmap Heap Scan wins when many rows match (hundreds to millions) but they are scattered across the heap. It builds an in-memory bitmap of all matching TIDs from the index, sorts them by physical page address, then reads the heap in page order — converting scattered random reads into a near-sequential heap traversal. Index Scan would need one random I/O per row (expensive for many rows); Seq Scan would read the whole heap (expensive if the matching rows are a small-to-medium fraction). Bitmap sits in the middle. It also handles BitmapOr — OR-ing multiple index scans together when predicates involve separate indexed columns." },
+    { q: "What is the BUFFERS output in EXPLAIN ANALYZE and how do you use it to diagnose I/O vs CPU bottlenecks?", a: "EXPLAIN (ANALYZE, BUFFERS) adds per-node buffer accounting: 'shared hit' (page found in shared_buffers cache, no disk I/O) and 'read' (page fetched from OS/disk). High read count with low hit count means the working set is larger than shared_buffers, or the query touches cold data — the bottleneck is I/O. Low read count but high actual time means the bottleneck is CPU-side: heavy computation, an inefficient join, or a sort on a large dataset. This lets you distinguish 'add more RAM/tuned shared_buffers' (I/O-bound) from 'fix the query plan or add an index' (CPU-bound)." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres picks among four scan types based on cost: Seq Scan reads every heap page sequentially and wins when most rows match; Index Scan walks the B-tree and fetches heap rows individually, winning when the predicate is selective (roughly &lt;10% of rows); Bitmap Heap Scan builds a sorted TID bitmap and reads the heap in order, winning in the middle range of selectivity; Index Only Scan skips the heap entirely when all needed columns are in the index and the Visibility Map is current. The planner uses cost constants — `seq_page_cost`, `random_page_cost`, `cpu_tuple_cost` — to compare options. On NVMe SSD, set `random_page_cost = 1.1` so the planner correctly prefers Index Scan for selective predicates. Use `EXPLAIN (ANALYZE, BUFFERS)` to see whether a query is I/O-bound (high page reads) or CPU-bound (high actual time with few reads).
+</Recap>
