@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (25/51 units done — networking 12/12, browser 8/8, databases 5/8) ← **RESUME HERE: databases/06-migrations**
+- [ ] **Phase B** — content migration (26/51 units done — networking 12/12, browser 8/8, databases 6/8) ← **RESUME HERE: databases/07-sharding**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -254,7 +254,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-transaction-mode-migration (middle)
   - [x] 06-postgres-process-model (senior)
   - [x] 07-pooler-landscape-and-failure-modes (senior)
-- [ ] 06-migrations  - [ ] 07-sharding  - [ ] 08-putting-it-together
+- [x] 06-migrations → 7 lessons, commit `a40c261`
+  - [x] 01-what-a-migration-is (junior)
+  - [x] 02-add-column-safely (junior)
+  - [x] 03-lock-queue-incident (middle)
+  - [x] 04-safe-ddl-patterns (middle)
+  - [x] 05-expand-contract (middle)
+  - [x] 06-advisory-lock-and-tooling (senior)
+  - [x] 07-migration-failure-taxonomy (senior)
+- [ ] 07-sharding  - [ ] 08-putting-it-together
 
 **observability**
 - [ ] 01-three-pillars  - [ ] 02-structured-logging  - [ ] 03-otel  - [ ] 04-red-use
