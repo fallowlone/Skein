@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (3/51 units done) ← **RESUME HERE: networking/04-dns-resolution**
+- [ ] **Phase B** — content migration (4/51 units done) ← **RESUME HERE: networking/05-tls-handshake**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -194,7 +194,7 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 04-tcp-options-and-pathologies (middle) — TCP header anatomy, Nagle+delayed-ACK stall, PSH, ECN, keepalive, CLOSE-WAIT trap
   - [x] 05-syn-cookies-and-tfo (senior) — SYN cookies internals, TCP Fast Open, TIME-WAIT exhaustion, Linux tunables
   - [x] 06-bbr-and-production-ops (senior) — BBR vs CUBIC vs Reno, production observability (ss/tcpdump/nstat), RST semantics, MPTCP, kTLS, QUIC relationship
-- [x] 04-dns-resolution → 5 lessons
+- [x] 04-dns-resolution → 5 lessons, commit `b41167a`
   - [x] 01-dns-what-it-does (junior) — what DNS does, 3-level hierarchy metaphor, resolution dialogue, TTL intro
   - [x] 02-the-resolver-walk (middle) — iterative vs recursive, glue records, EDNS0, record types, zone transfers, stub vs full
   - [x] 03-ttl-and-caching (middle) — TTL semantics, propagation myth, migration SOP, negative caching, SOA, browser cache
