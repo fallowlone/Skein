@@ -179,7 +179,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
 ### Checklist — 5 ready pillars (44 units)
 
 **networking**
-- [x] 01-physical-link → 6 lessons, commit `2a33e06`  - [ ] 02-ip-packet  - [ ] 03-tcp-handshake  - [ ] 04-dns-resolution
+- [x] 01-physical-link → 6 lessons, commit `2a33e06`
+- [ ] 02-ip-packet → 6 lessons planned:
+  - [ ] 01-the-ip-envelope (junior) — what IP does, postal metaphor, hop-by-hop routing, IPv4 vs IPv6 basics
+  - [ ] 02-reading-the-ip-header (middle) — IPv4/IPv6 header fields, TTL, protocol field, checksum, DSCP/ECN
+  - [ ] 03-routing-and-forwarding (middle) — routing table vs FIB, CIDR, BGP basics, ECMP, longest-prefix match
+  - [ ] 04-mtu-and-fragmentation (middle) — MTU, fragmentation, PMTUD black holes, MSS clamping
+  - [ ] 05-nat-and-addressing (middle) — NAT, CGNAT, private RFC 1918, IPv6/SLAAC, anycast, dual-stack
+  - [ ] 06-ip-security-and-operations (senior) — IP spoofing/BCP38, BGP hijacks/RPKI, DDoS, operational tools
+- [ ] 03-tcp-handshake  - [ ] 04-dns-resolution
 - [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
 
