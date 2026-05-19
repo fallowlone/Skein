@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (4/51 units done) ← **RESUME HERE: networking/05-tls-handshake**
+- [ ] **Phase B** — content migration (5/51 units done) ← **RESUME HERE: networking/06-http-versions**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -200,7 +200,7 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 03-ttl-and-caching (middle) — TTL semantics, propagation myth, migration SOP, negative caching, SOA, browser cache
   - [x] 04-dnssec-chain-of-trust (senior) — ZSK/KSK/DS/RRSIG chain, KSK rollover failure mode, NSEC/NSEC3, CA/B Forum 2026
   - [x] 05-encrypted-dns (senior) — DoH/DoT/DoQ, ECS privacy tradeoff, Kaminsky + SAD DNS, anycast resolvers
-- [x] 05-tls-handshake → 5 lessons
+- [x] 05-tls-handshake → 5 lessons, commit `3353335`
   - [x] 01-what-tls-does (junior) — sealed-envelope metaphor, why TLS exists, end-to-end scenario, padlock guarantee
   - [x] 02-the-1rtt-handshake (middle) — 1-RTT ClientHello/ServerHello, key shares, ECDHE math, certificate chain validation, transcript hash + Finished
   - [x] 03-session-resumption-and-0rtt (middle) — PSK NewSessionTicket, warm resumption, 0-RTT early data, replay risk, 425 Too Early
