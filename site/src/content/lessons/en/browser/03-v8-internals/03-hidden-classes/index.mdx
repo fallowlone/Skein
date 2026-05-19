@@ -1,0 +1,175 @@
+---
+slug: 03-hidden-classes
+lang: en
+track: browser
+unit: 03-v8-internals
+order: 3
+title: "Hidden classes, transition trees, and memory layout"
+summary: "How V8 tracks object shapes via hidden classes, why property-addition order matters, in-object vs out-of-object slots, array element kinds, and the dictionary-mode trap."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-what-v8-is"]
+deepensInto: ["06-turbofan-and-deopt"]
+spiral: ["statefulness", "encapsulation"]
+concepts: ["hidden class", "transition tree", "in-object property", "dictionary mode", "array element kinds", "PACKED", "HOLEY", "Smi"]
+sources:
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://v8.dev/blog/maglev
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Two objects have the same properties. One was built with `{x:1, y:2}`, the other with `{y:2, x:1}`. To your code they look identical. To V8 they are different shapes — and whichever one ends up in a hot function first decides whether that function runs fast or slow.
+</Hook>
+
+<Crux>Objects sharing a hidden class share the fast IC path; shape divergence forces branching or a 10–50× slower generic lookup.</Crux>
+
+<Explanation>
+
+## What a hidden class is
+
+JavaScript objects are dynamic — properties can be added, deleted, reordered — but V8 internally represents each object as a pointer to a **hidden class** (called "Map" in V8 source, "Shape" in SpiderMonkey) plus a sequence of property slots. Two objects with the same property names added in the **same order** share one hidden class.
+
+When you add a property to an existing object, V8 transitions to a new hidden class along a "transition tree". Adding "x" then "y" goes to one class; adding "y" then "x" goes to a different one — even though both objects have the same logical contents. The inline cache keys off the hidden class pointer. Stable hidden classes are the foundation of V8 performance.
+
+**Rules:**
+- Construct objects with all properties up front (in constructors or factory functions).
+- Avoid `delete` on object properties — it forces a transition to a dictionary-mode object that is permanently slow.
+
+<NumbersCard
+  id="card-hc-numbers"
+  title="Hidden class and memory layout numbers"
+  data-lesson-visual
+  stats={[
+    { label: "In-object property slots (default)", value: "~8 slots" },
+    { label: "Out-of-object: extra pointer dereference", value: "+1 memory load" },
+    { label: "Dictionary mode threshold (~deletions)", value: "~32+ properties or many deletes" },
+    { label: "Smi range (64-bit)", value: "±2³¹" },
+    { label: "Smi arithmetic cost", value: "1 CPU instruction, no allocation" },
+    { label: "HeapNumber cost", value: "1 heap allocation + dereference" },
+  ]}
+/>
+
+## The transition tree
+
+```
+const p = {}; p.x = 1; p.y = 2;
+// HC path: HC_empty → HC_x → HC_x+y
+
+const q = {}; q.x = 1; q.y = 2;
+// Same path — q ends at same HC as p. ✓ monomorphic
+
+const r = {}; r.y = 2; r.x = 1;
+// HC path: HC_empty → HC_y → HC_y+x
+// Different leaf — different HC from p and q. ✗ polymorphic at shared call site
+```
+
+The transition tree is shared across all objects in the V8 isolate. Pathological code that adds properties in dynamic order (JSON parsers writing properties in arbitrary input order, generated code) creates many leaf nodes — the same shape never repeats, ICs are perpetually polymorphic or megamorphic.
+
+## In-object vs out-of-object properties
+
+V8 stores the first ~8 properties of an object inline in the object's memory block. Subsequent properties go to an out-of-object `PropertyArray` pointed to by the object. Access to in-object properties is a single memory load; out-of-object adds one pointer dereference.
+
+The in-object slot count is fixed at hidden class creation. For perf-critical objects, declare the most-accessed properties first in the constructor so they land in-object.
+
+**Dictionary mode:** objects with too many properties (~32+) or many deletions transition to a HashMap-backed representation where every access goes through the slow generic path. Once in dictionary mode, the object is permanently slow — `%HasFastProperties(obj)` in d8 reports `false`.
+
+## Array element kinds
+
+V8 tracks the "kind" of each array based on what it stores. Transitions are one-way — once you move to a wider kind, you cannot go back:
+
+| Kind | Contents | Speed |
+| --- | --- | --- |
+| `PACKED_SMI_ELEMENTS` | only smi integers, no holes | fastest |
+| `PACKED_DOUBLE_ELEMENTS` | only doubles, no holes | fast |
+| `PACKED_ELEMENTS` | mixed types or objects | normal |
+| `HOLEY_*` variants | sparse array (has holes) | adds hole-check per access |
+
+`new Array(1000)` creates a HOLEY array from the start. `Array.from({length:1000}, () => 0)` creates a PACKED array. Same logical result, 2–3× different access speed.
+
+To keep an array `PACKED_SMI`: pre-allocate with `[]`, add via `push`, never assign at indices above the current length.
+
+## Numeric specialisation: Smi, HeapNumber, double
+
+V8 represents small integers (Smi) inline in a 64-bit pointer slot with the low bit cleared — no allocation, no indirection, arithmetic in one CPU instruction. Numbers outside the Smi range (±2³¹ on 64-bit) become HeapNumbers — boxed in a heap-allocated cell with a double inside. The Smi-to-HeapNumber transition is V8's most common deopt trigger: a TurboFan-compiled loop assumes Smi, the value overflows once, deopt cascade. The fix: bound the integer range, or use `Math.fround` / explicit `Float64Array`.
+
+<Misconception id="mc-delete">
+  <p><strong>"Delete saves memory."</strong> Deleting forces dictionary mode — permanently slow. V8 cannot recover without a new object. Tiny memory saving vs permanent IC slowdown. Assign <code>null</code> instead.</p>
+</Misconception>
+
+<Quiz
+  id="mid-quiz-hc-1"
+  pieceSlug="hidden-classes"
+  lang="en"
+  question="Two objects: `{x:1, y:2}` and `{y:2, x:1}`. A function accesses `.x` on both. What IC state does the access site reach?"
+  choices={[
+    { label: "Monomorphic — both have the same properties", misconception: "V8 uses the hidden class, which encodes property-addition ORDER. Different addition order = different hidden class = different shape at the IC site." },
+    { label: "Polymorphic — two different hidden classes were seen", correct: true },
+    { label: "Megamorphic — any two different objects trigger megamorphic", misconception: "Megamorphic requires 5+ different hidden classes. Two is polymorphic." },
+    { label: "Uninitialized — V8 does not track across two objects", misconception: "V8 tracks the hidden class at every call site across all invocations." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-hc"
+  pieceSlug="hidden-classes"
+  lang="en"
+  prompt="Order the hidden-class transitions for: const o = {}; o.x = 1; o.y = 2; o.z = 3;"
+  items={[
+    "HC_empty (object created with no properties)",
+    "HC_x (property 'x' added)",
+    "HC_x+y (property 'y' added)",
+    "HC_x+y+z (property 'z' added)",
+  ]}
+  correctOrder={["0", "1", "2", "3"]}
+/>
+
+<Quiz
+  id="mid-quiz-hc-2"
+  pieceSlug="hidden-classes"
+  lang="en"
+  question="Why does `new Array(1000)` create a slower array than `[]` followed by 1000 pushes?"
+  choices={[
+    { label: "new Array allocates more memory", misconception: "Both end up with the same backing store size; the issue is element kind." },
+    { label: "new Array(1000) creates a HOLEY array because the 1000 slots are pre-allocated but empty — V8 must check for holes on every access", correct: true },
+    { label: "push is always faster than index assignment", misconception: "push on a PACKED array is fast, but the speed difference comes from the element kind, not the operation itself." },
+    { label: "V8 cannot optimise pre-sized arrays", misconception: "V8 can optimise pre-sized arrays — the problem is the element kind starting as HOLEY." },
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+String interning: V8 maintains an internal pool for small string literals and property names. Two interned strings compare as pointer equality (1 cycle), not char-by-char. Concatenation creates a `ConsString` — a flat tree without copying. Substring creates a `SlicedString` holding a reference to the parent string. This gives O(1) substring/concat, but the parent string stays alive in the heap as long as any slice exists. For memory-sensitive code, `str.slice() + ''` or explicit copy breaks the reference chain, freeing the parent.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Hidden classes encode property layout and addition order. Objects sharing one class share the fast IC path. Stable constructors, no `delete`, consistent property order — these keep ICs monomorphic and avoid the permanent slowdown of dictionary mode.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="hidden-classes-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the 'hidden class transition tree' and why does property order at creation matter?", a: "When you add a property, V8 creates a new hidden class derived from the old one. The shape of this derivation depends on the order properties were added. {a:1,b:2} creates HC_empty → HC_a → HC_a_b. {b:2,a:1} creates HC_empty → HC_b → HC_b_a. Even though both objects have the same final properties, they sit at different nodes — V8 sees them as different shapes. The IC at a call site that accesses .a is monomorphic only if both objects share the same node. Always construct objects in the same property order, or use a constructor/class that guarantees the order." },
+    { q: "What is 'dictionary mode' and how do you trigger it?", a: "Dictionary mode is a fallback where V8 switches from a fixed-offset layout to a HashMap-backed layout for the object's properties. Every access goes through a generic hash lookup (~50-100 cycles) instead of a direct memory load (1 cycle). It is triggered by: adding more than ~32 properties, using 'delete' on properties, or frequent transitions without stabilising on a shape. Once in dictionary mode the object is permanently slow — you cannot recover without creating a new object. Detect with %HasFastProperties(obj) === false in d8." },
+    { q: "Why does the Smi-to-HeapNumber transition cause a deopt in TurboFan?", a: "TurboFan bakes in the assumption that a value is always a Smi (small integer, ±2³¹ on 64-bit). It generates arithmetic using direct integer instructions with no boxing. When a value overflows the Smi range — even once — the guard at that instruction fails, V8 deopts, falls back to Ignition, and must re-optimise. The fix is to design numeric data flows to stay within the Smi range, or to use Float64Array / Math.fround so TurboFan specialises on double from the start." },
+  ]}
+/>
+
+<Recap lang="en">
+Every V8 object carries a pointer to a hidden class that describes exactly which properties exist and at which memory offsets. When you add a property to an object, V8 follows or creates a transition edge in the hidden class transition tree — the path depends on the order of addition, not just the final set of properties. Two objects with the same properties added in different orders sit at different leaf nodes and look like different shapes to any inline cache. In-object properties (first ~8) cost one memory load; out-of-object ones cost two. Dictionary mode — triggered by `delete` or excessive dynamic property addition — replaces the fixed-offset layout with a hashmap and is permanent. Array element kinds follow a one-way widening path: PACKED_SMI is fastest, HOLEY variants require a hole-check on every access. Smi arithmetic is allocation-free; overflowing the Smi range creates a HeapNumber and triggers a TurboFan deopt.
+</Recap>
