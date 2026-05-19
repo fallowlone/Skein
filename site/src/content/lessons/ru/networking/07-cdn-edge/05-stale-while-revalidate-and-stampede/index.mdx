@@ -1,0 +1,182 @@
+---
+slug: 05-stale-while-revalidate-and-stampede
+lang: ru
+track: networking
+unit: 07-cdn-edge
+order: 5
+title: "Stale-while-revalidate и cache stampede"
+summary: "Как stale-while-revalidate побеждает cache stampede, когда stale-if-error спасает при сбое origin, и четыре стратегии предотвращения thundering herd."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "07-cdn-edge/03-tiered-cache-and-cache-control"
+  - "07-cdn-edge/04-vary-header-and-cache-keys"
+deepensInto:
+  - "07-cdn-operations-and-observability"
+spiral: ["latency"]
+concepts: ["stale-while-revalidate", "stale-if-error", "cache-stampede", "thundering-herd", "singleflight", "probabilistic-early-expiration", "origin-shield"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://web.dev/articles/stale-while-revalidate/
+  - https://datatracker.ietf.org/doc/html/rfc7234
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Ровно в T+3600 секунд запись кеша вашей самой популярной статьи истекает на всех edge POP одновременно. Тысяча пользователей запрашивает страницу в следующую секунду. Каждый получает cache miss. Каждый генерирует запрос к origin. Origin видит трафик в 1000× от нормы и начинает таймаутить — а поскольку часть запросов завершилась таймаутом, CDN сохранил 503-ответ как новую запись кеша. Теперь все пользователи видят 503 следующие 3600 секунд.
+</Hook>
+
+<Crux>stale-while-revalidate инвертирует stampede: мгновенно отдаёт stale всем, один фоновый запрос к origin — стадо никогда не достигает origin.</Crux>
+
+<Explanation>
+
+## Проблема cache stampede
+
+**Cache stampede** (он же thundering herd — гремящее стадо) происходит, когда:
+1. Истекает популярный кешированный ответ.
+2. Одновременно приходит много конкурентных запросов после истечения.
+3. Все промахиваются по кешу и независимо обращаются к origin.
+4. Origin перегружен; часть запросов завершается таймаутом.
+5. CDN кеширует ответы с ошибками — ситуация ухудшается.
+
+Без защиты коэффициент усиления равен (запросов/сек в момент истечения) × (время ответа origin). Страница с 500 req/s при 200 мс времени ответа origin может генерировать 100 одновременных запросов к origin — нагрузка в 100× от нормы.
+
+## stale-while-revalidate (SWR)
+
+RFC 5861 определяет `stale-while-revalidate=<seconds>`:
+
+```
+Cache-Control: public, max-age=60, stale-while-revalidate=604800
+```
+
+После истечения `max-age=60` секунд:
+- **Немедленно отдавать устаревший ответ** всем входящим запросам.
+- **Отправить один фоновый запрос ревалидации** к origin.
+- Кеш снова становится свежим после ответа origin.
+- Окно устаревания: `max-age + stale-while-revalidate` = 60 с + 7 дней.
+
+Все 1000 конкурентных пользователей в T+60 по-прежнему получают ответ за ~20 мс (устаревший edge hit), тогда как origin видит ровно **один** запрос ревалидации. Stampede не происходит.
+
+**Trade-off:** пользователи могут видеть контент, устаревший до `stale-while-revalidate` секунд. Для тела статьи (`max-age=300, swr=3600`) это означает, что контент может быть на 1 час устаревшим после истечения max-age. Для тикера срочных новостей неприемлемо — используйте короткий SWR или вообще без SWR.
+
+<NumbersCard
+  id="card-swr-numbers"
+  title="stale-while-revalidate по типу контента"
+  data-lesson-visual
+  stats={[
+    { label: "Тело статьи (допустимое устаревание 1ч)", value: "max-age=300, stale-while-revalidate=3600" },
+    { label: "Листинг товаров (допустимое устаревание 10 мин)", value: "max-age=60, stale-while-revalidate=600" },
+    { label: "Тикер срочных новостей (критична свежесть)", value: "max-age=5, stale-while-revalidate=10" },
+    { label: "Статический ассет (URL с content-hash)", value: "max-age=31536000, immutable — SWR не нужен" },
+    { label: "User-specific данные (баланс счёта)", value: "no-store — кеширование полностью запрещено" },
+  ]}
+/>
+
+## stale-if-error: graceful degradation при сбое origin
+
+RFC 5861 также определяет `stale-if-error=<seconds>`:
+
+```
+Cache-Control: public, max-age=3600, stale-if-error=86400
+```
+
+Когда origin возвращает 5xx или недоступен, кеш отдаёт устаревший ответ до `stale-if-error` секунд (1 день в примере) вместо возврата ошибки пользователям. Это CDN-эквивалент circuit breaker.
+
+**Где применять:** маркетинговые страницы, документация, страницы статей — всё, где версия с задержкой в 1 день лучше, чем 503. **Не применять** для оформления заказа, платежей или любой операции, требующей реального времени.
+
+## Четыре стратегии защиты от stampede
+
+| Стратегия | Как работает | Лучшее применение |
+|-----------|--------------|-------------------|
+| **Origin shield** | Сворачивает все edge-промахи в регионе в один запрос к origin | Все уровни кеша |
+| **stale-while-revalidate** | Немедленно отдаёт устаревшее, один фоновый запрос ревалидации | Изменяемый контент, допустимое устаревание |
+| **Request coalescing (singleflight)** | На уровне приложения: первый промах запускает origin fetch; остальные ждут того же результата | Уровень origin-приложения |
+| **Probabilistic early expiration (PER / XFetch)** | Стохастически обновляет немного до истечения TTL, распределяя нагрузку по времени | Высоконагруженные кеши |
+
+<Inset kind="why" lang="ru">
+**Почему origin shield — первая линия защиты.** Без origin shield у каждого CDN edge POP отдельный кеш. Когда тот же URL истекает на 200 POP в регионе, все 200 независимо запрашивают origin. С origin shield все 200 edge направляют промахи через один shield-узел. Shield имеет собственный кеш (бо́льший, чем у любого отдельного edge); он делает максимум один запрос к origin на URL на регион. SWR добавляет второй слой: даже когда shield промахивается, пользователи по-прежнему видят устаревший ответ, пока один запрос к origin в полёте. Оба слоя вместе означают: истечение популярного URL генерирует ровно один запрос к origin глобально, а не по одному на edge или на конкурентного пользователя.
+</Inset>
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="ru"
+  scenario="Новостной сайт испытывает всплеск трафика 10× из-за вирусной статьи. Срабатывает alarm нагрузки origin несмотря на CDN. Диагностируйте."
+  steps={[
+    { prompt: "Шаг 1: проверить cache hit rate CDN во время всплеска. Показывает 30% вместо обычных 90%. Что это означает?", reveal: "Взрывной рост промахов. Либо статья некорректно кешируется (заголовок Vary фрагментирует кеш, или отсутствует Cache-Control: public), либо её TTL слишком короткий для паттерна всплеска — max-age истёк и все конкурентные пользователи одновременно запросили origin." },
+    { prompt: "Шаг 2: изучить заголовки ответа статьи. Обнаружено: Vary: User-Agent. Почему это катастрофично для cache hit rate?", reveal: "User-Agent имеет тысячи уникальных значений (каждый браузер × версия × ОС). Каждый уникальный User-Agent создаёт отдельную запись кеша. Кеш заполняется записями, которые никогда не переиспользуются; эффективный hit rate падает несмотря на длинный TTL. Это ловушка Vary: User-Agent из предыдущего урока." },
+    { prompt: "Шаг 3: какая немедленная мера защиты пока деплоится исправление?", reveal: "Убрать Vary: User-Agent на edge CDN (большинство CDN позволяют переопределять заголовки ответа в worker-коде или routing rules). Принудительная единая запись кеша на URL устраняет фрагментацию. Hit rate должен вырасти до 90%+ за секунды." },
+    { prompt: "Шаг 4: добавить stale-while-revalidate в Cache-Control статьи. Как изменится поведение при следующем всплеске?", reveal: "С SWR при истечении max-age статьи все конкурентные пользователи по-прежнему получают устаревшую кешированную версию мгновенно (~20 мс), тогда как только один фоновый запрос ревалидации достигает origin. Всплеск 10× больше не транслируется в нагрузку 10× на origin — только в 1 запрос ревалидации." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="ru"
+  question="Почему stale-while-revalidate важен для защиты от cache stampede?"
+  choices={[
+    { label: "Полностью предотвращает истечение кеша", misconception: "SWR не предотвращает истечение — max-age по-прежнему управляет свежестью. SWR определяет, что происходит после истечения." },
+    { label: "Немедленно отдаёт устаревший ответ всем конкурентным пользователям после истечения и отправляет ровно один фоновый запрос ревалидации к origin, предотвращая одновременные запросы к origin", correct: true },
+    { label: "Автоматически увеличивает max-age в зависимости от трафика", misconception: "SWR — статическая директива; не адаптируется к уровням трафика." },
+    { label: "Помогает только когда все edge истекают одновременно", misconception: "SWR помогает при любом истечении, будь то один edge или все сразу." },
+  ]}
+/>
+
+<RFCQuiz
+  id="sr-rfc-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="ru"
+  question="Какой RFC определяет расширения Cache-Control stale-while-revalidate и stale-if-error?"
+  choices={[
+    { rfc: "RFC 7234", title: "HTTP/1.1 Caching" },
+    { rfc: "RFC 5861", title: "HTTP Cache-Control Extensions for Stale Content", correct: true },
+    { rfc: "RFC 9110", title: "HTTP Semantics" },
+    { rfc: "RFC 9111", title: "HTTP Caching" },
+  ]}
+/>
+
+<TraceScenario
+  id="sr-trace-2"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="ru"
+  scenario="Диагностика: пользователи в двух регионах видят разные версии одной страницы через 2 часа после деплоя."
+  steps={[
+    { prompt: "Шаг 1: убедиться, что оба edge получили деплой. Проверить last-modified origin через каждый edge.", reveal: "Edge A сообщает новую временну́ю метку; Edge B — старую. Кеш edge региона B не обновился — по-прежнему раздаёт версию до деплоя." },
+    { prompt: "Шаг 2: как долго до естественного истечения кеша B?", reveal: "Посмотреть max-age оригинального ответа. Если max-age=86400 (1 день) и прошло только 2 часа, B будет раздавать устаревшее ещё 22 часа." },
+    { prompt: "Шаг 3: как принудительно обновить прямо сейчас?", reveal: "Отправить purge-запрос к CDN для затронутых URL или cache-тега. Большинство CDN распространяют purge на все edge за 1–5 секунд." },
+    { prompt: "Шаг 4: как предотвратить это в будущих деплоях?", reveal: "Добавить автоматический CDN purge в деплой-пайплайн, запускаемый после обновления origin. Чистить затронутые URL-паттерны или теги. Теперь каждый деплой немедленно инвалидирует устаревшие edge-кеши." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>stale-while-revalidate (RFC 5861) побеждает cache stampede, немедленно отдавая устаревший ответ всем конкурентным пользователям и отправляя ровно один фоновый запрос ревалидации. stale-if-error обеспечивает graceful degradation при сбоях origin. Оба включаются через Cache-Control — выбирайте окна устаревания соответственно требованиям к актуальности контента.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-stale-while-revalidate-and-stampede-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните проблему cache stampede и почему stale-while-revalidate предотвращает её.", a: "Cache stampede происходит, когда популярная запись кеша истекает и много конкурентных пользователей одновременно промахиваются, каждый независимо запуская запрос к origin. Усиление: (конкурентных пользователей в момент истечения) × (время ответа origin в секундах) = одновременных запросов в полёте. SWR предотвращает это: после истечения max-age отдаёт устаревший ответ всем входящим пользователям немедленно (нет промаха, нет запроса к origin на пользователя), отправляя ровно один фоновый запрос ревалидации к origin. Все видят быстрые ответы; origin видит один запрос вместо тысяч." },
+    { q: "При каких условиях НЕ следует использовать stale-while-revalidate?", a: "Когда корректность ответа критична по времени: реальные цены (биржевые тикеры, checkout e-commerce), балансы счетов, состояние аутентификации, критически важные для здоровья данные или любые данные, где устаревший ответ ведёт к неверным решениям пользователя. Также избегайте SWR для user-specific приватных данных (всё равно должны быть no-store). SWR безопасен для контента, где устаревание до max-age + SWR секунд приемлемо — тела статей, описания товаров, маркетинговые страницы, публичные API-ответы." },
+    { q: "Что делает stale-if-error и как отличается от stale-while-revalidate?", a: "stale-if-error говорит кешу: если origin возвращает 5xx или недоступен во время ревалидации, отдавать кешированный (возможно устаревший) ответ до stale-if-error секунд вместо распространения ошибки пользователям. SWR активируется проактивно после каждого истечения max-age; stale-if-error активируется реактивно только при сбое origin. Вместе они образуют многоуровневую устойчивость: SWR предотвращает stampede при нормальном истечении, stale-if-error сохраняет работоспособность для пользователей при сбоях origin." },
+  ]}
+/>
+
+<Recap lang="ru">
+Проблема cache stampede: популярная запись кеша истекает; много конкурентных пользователей генерируют одновременные запросы к origin; origin перегружен и может начать возвращать ошибки; эти ошибки кешируются. Четыре стратегии защиты: (1) origin shield, сворачивающий все edge-промахи в регионе в один запрос к origin; (2) `stale-while-revalidate`, отдающий устаревший ответ всем пользователям, отправляя один фоновый запрос ревалидации; (3) request coalescing на уровне приложения (singleflight), предотвращающий конкурентные запросы к origin; (4) probabilistic early expiration, распределяющий ревалидации по времени. `stale-if-error` (RFC 5861) добавляет graceful degradation: при сбое origin отдавать последнюю кешированную версию до N секунд вместо распространения ошибок. Выбирайте окна устаревания соответственно требованиям к корректности контента — статья терпит 10 минут устаревания; цена в checkout — не терпит и 10 секунд.
+</Recap>

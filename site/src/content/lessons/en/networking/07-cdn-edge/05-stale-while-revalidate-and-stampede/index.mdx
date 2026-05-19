@@ -1,0 +1,182 @@
+---
+slug: 05-stale-while-revalidate-and-stampede
+lang: en
+track: networking
+unit: 07-cdn-edge
+order: 5
+title: "Stale-while-revalidate and cache stampede"
+summary: "How stale-while-revalidate defeats cache stampedes, when stale-if-error saves you during origin outages, and the four strategies to prevent thundering herds."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "07-cdn-edge/03-tiered-cache-and-cache-control"
+  - "07-cdn-edge/04-vary-header-and-cache-keys"
+deepensInto:
+  - "07-cdn-operations-and-observability"
+spiral: ["latency"]
+concepts: ["stale-while-revalidate", "stale-if-error", "cache-stampede", "thundering-herd", "singleflight", "probabilistic-early-expiration", "origin-shield"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://web.dev/articles/stale-while-revalidate/
+  - https://datatracker.ietf.org/doc/html/rfc7234
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+At exactly T+3600 seconds, your most popular article's cache entry expires across all edge POPs simultaneously. One thousand users request that page in the next second. Every one of them gets a cache miss. Every one triggers an origin fetch. Your origin sees 1000× normal traffic and starts timing out — and because some of those requests timed out, the CDN stored the 503 response as the new cached entry. Now every user sees a 503 for the next 3600 seconds.
+</Hook>
+
+<Crux>stale-while-revalidate inverts the stampede: serve stale instantly to all, send one background revalidation — herd never hits origin.</Crux>
+
+<Explanation>
+
+## The cache stampede problem
+
+A **cache stampede** (also called thundering herd) happens when:
+1. A popular cached response expires.
+2. Many concurrent requests arrive simultaneously after expiry.
+3. All miss the cache and each independently fetches from origin.
+4. Origin is overwhelmed; some requests time out.
+5. The CDN caches the error responses — making things worse.
+
+Without mitigation, the amplification factor is (requests/sec at expiry) × (origin response time). A page receiving 500 req/s with 200 ms origin response time can generate 100 simultaneous in-flight origin requests — 100× normal origin load.
+
+## stale-while-revalidate (SWR)
+
+RFC 5861 defines `stale-while-revalidate=<seconds>`:
+
+```
+Cache-Control: public, max-age=60, stale-while-revalidate=604800
+```
+
+After `max-age=60` seconds expire:
+- **Serve the stale response immediately** to every incoming request.
+- **Send one background revalidation request** to origin.
+- Cache becomes fresh again after origin responds.
+- The staleness window is `max-age + stale-while-revalidate` = 60 s + 7 days.
+
+All 1000 concurrent users at T+60 still get a response in ~20 ms (stale edge hit), while origin sees exactly **one** revalidation request. The stampede never happens.
+
+**The trade-off:** users may see content up to `stale-while-revalidate` seconds out of date. For a news article body (`max-age=300, swr=3600`) this means content can be 1 hour stale after max-age expires. For a breaking-news ticker, this is unacceptable — use a short SWR or no SWR.
+
+<NumbersCard
+  id="card-swr-numbers"
+  title="stale-while-revalidate by content type"
+  data-lesson-visual
+  stats={[
+    { label: "News article body (acceptable staleness 1h)", value: "max-age=300, stale-while-revalidate=3600" },
+    { label: "Product listing (acceptable staleness 10 min)", value: "max-age=60, stale-while-revalidate=600" },
+    { label: "Breaking news ticker (freshness critical)", value: "max-age=5, stale-while-revalidate=10" },
+    { label: "Static asset (content-hashed URL)", value: "max-age=31536000, immutable — no SWR needed" },
+    { label: "User-specific data (bank balance)", value: "no-store — no caching at all" },
+  ]}
+/>
+
+## stale-if-error: graceful degradation on origin failure
+
+RFC 5861 also defines `stale-if-error=<seconds>`:
+
+```
+Cache-Control: public, max-age=3600, stale-if-error=86400
+```
+
+When origin returns a 5xx or is unreachable, serve the stale cached response for up to `stale-if-error` seconds (1 day here) rather than returning an error to users. This is the CDN equivalent of a circuit breaker.
+
+**Use cases:** marketing pages, documentation, article pages — anything where a 1-day-stale version is better than a 503. **Not** for checkout, payment, or any operation that must reflect real-time state.
+
+## The four stampede mitigations
+
+| Strategy | How it works | Best for |
+|----------|--------------|----------|
+| **Origin shield** | Collapses all edge misses in a region to one origin request | All cache tiers |
+| **stale-while-revalidate** | Serves stale immediately, one background revalidation | Mutable content, tolerable staleness |
+| **Request coalescing (singleflight)** | Application-level: first miss starts origin fetch; others wait for the same result | Origin application layer |
+| **Probabilistic early expiration (PER / XFetch)** | Stochastically refresh slightly before TTL, spreading the load over time | High-traffic caches |
+
+<Inset kind="why" lang="en">
+**Why origin shield is the first line of defense.** Without an origin shield, every CDN edge POP has a separate cache. When the same URL expires across 200 POPs in a region, all 200 independently fetch from origin. With an origin shield, all 200 edges route their misses through one shield node. The shield has its own cache (larger than any single edge); it makes at most one origin request per URL per region. SWR adds a second layer: even when the shield misses, users still see the stale response while one origin request is in flight. Both layers together mean a popular URL expiry generates exactly one origin request globally, not one per edge or one per concurrent user.
+</Inset>
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="en"
+  scenario="A news site experiences a 10× traffic spike from a viral article. Origin load alarm fires despite CDN being in front. Diagnose."
+  steps={[
+    { prompt: "Step 1: check CDN cache hit rate during the spike. It shows 30% instead of the usual 90%. What does this indicate?", reveal: "Cache miss rate exploded. Either the article is mis-cached (Vary header fragmenting the cache, or missing Cache-Control: public) or its TTL is too short for the burst pattern — max-age expired and all concurrent users generated simultaneous origin requests." },
+    { prompt: "Step 2: dig into the article response headers. You find: Vary: User-Agent. Why is this catastrophic for cache hit rate?", reveal: "User-Agent has thousands of unique values (every browser × version × OS). Each unique User-Agent creates a separate cache entry. The cache fills with entries that are never reused; effective hit rate plummets despite the TTL being long. This is the Vary: User-Agent footgun from the previous lesson." },
+    { prompt: "Step 3: what is the immediate mitigation while you deploy a fix?", reveal: "Strip Vary: User-Agent at the CDN edge (most CDNs let you override response headers in worker code or routing rules). Forcing a single cache entry per URL collapses the fragmentation. Hit rate should jump to 90%+ within seconds." },
+    { prompt: "Step 4: add stale-while-revalidate to the article's Cache-Control. How does this change the behaviour at the next traffic spike?", reveal: "With SWR, when the article's max-age expires, all concurrent users still get the stale cached version immediately (~20 ms), while only one background revalidation reaches origin. The 10× spike no longer translates to 10× origin load — it translates to exactly 1 revalidation request." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="en"
+  question="Why is stale-while-revalidate important for cache stampede defence?"
+  choices={[
+    { label: "It prevents the cache from expiring at all", misconception: "SWR does not prevent expiry — max-age still controls freshness. SWR controls what happens after expiry." },
+    { label: "It serves the stale response immediately to all concurrent users after expiry and sends exactly one background revalidation to origin, preventing simultaneous origin requests", correct: true },
+    { label: "It increases max-age automatically based on traffic", misconception: "SWR is a static directive; it does not adapt to traffic levels." },
+    { label: "It only helps when all edges expire at the same time", misconception: "SWR helps on any expiry event, whether one edge or all edges expire simultaneously." },
+  ]}
+/>
+
+<RFCQuiz
+  id="sr-rfc-1"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="en"
+  question="Which RFC defines stale-while-revalidate and stale-if-error Cache-Control extensions?"
+  choices={[
+    { rfc: "RFC 7234", title: "HTTP/1.1 Caching" },
+    { rfc: "RFC 5861", title: "HTTP Cache-Control Extensions for Stale Content", correct: true },
+    { rfc: "RFC 9110", title: "HTTP Semantics" },
+    { rfc: "RFC 9111", title: "HTTP Caching" },
+  ]}
+/>
+
+<TraceScenario
+  id="sr-trace-2"
+  pieceSlug="05-stale-while-revalidate-and-stampede"
+  lang="en"
+  scenario="Diagnose: users in two regions see different versions of the same page 2 hours after a deployment."
+  steps={[
+    { prompt: "Step 1: confirm both edges saw the deploy. Check origin last-modified via each edge.", reveal: "Edge A reports the new timestamp; Edge B reports the old. Region B's edge has not refreshed its cache — it is still serving the pre-deploy version." },
+    { prompt: "Step 2: how long until B's cache naturally expires?", reveal: "Look at the original response max-age. If max-age=86400 (1 day) and only 2 hours have passed, B will serve stale for another 22 hours." },
+    { prompt: "Step 3: how do you force-refresh now?", reveal: "Issue a purge request to the CDN for the affected URLs or cache-tag. Most CDNs propagate purges to all edges within 1–5 seconds." },
+    { prompt: "Step 4: how do you prevent this in future deploys?", reveal: "Add an automated CDN purge step to the deploy pipeline, triggered after origin is updated. Purge the affected URL patterns or tags. Now every deploy immediately invalidates stale edge caches." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>stale-while-revalidate (RFC 5861) defeats cache stampedes by serving the stale response immediately to all concurrent users while sending exactly one background origin revalidation. stale-if-error provides graceful degradation during origin outages. Both are opt-in via Cache-Control — choose staleness windows appropriate to content correctness requirements.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-stale-while-revalidate-and-stampede-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the cache stampede problem and why stale-while-revalidate prevents it.", a: "A cache stampede occurs when a popular cached entry expires and many concurrent users simultaneously miss the cache, each independently triggering an origin request. The amplification is (concurrent users at expiry) × (origin response time in seconds) = simultaneous in-flight requests. SWR prevents it by: after max-age expires, serving the stale response to all incoming users immediately (no miss, no origin request per user), while sending exactly one background revalidation to origin. All users see fast responses; origin sees one request instead of thousands." },
+    { q: "Under what conditions should you NOT use stale-while-revalidate?", a: "When response correctness is time-critical: real-time prices (stock tickers, e-commerce checkout), bank balances, authentication state, health-critical data, or any data where a stale answer causes incorrect user decisions. Also avoid SWR for user-specific private data (should be no-store anyway). SWR is safe for content where staleness up to max-age + SWR seconds is acceptable — article bodies, product descriptions, marketing pages, public API responses." },
+    { q: "What does stale-if-error do and how does it differ from stale-while-revalidate?", a: "stale-if-error tells the cache: if the origin returns a 5xx error or is unreachable during revalidation, serve the cached (possibly expired) response for up to stale-if-error seconds instead of propagating the error to users. SWR activates proactively after every max-age expiry; stale-if-error activates reactively only when origin fails. Together they form layered resilience: SWR prevents stampedes on normal expiry, stale-if-error keeps users served during origin outages." },
+  ]}
+/>
+
+<Recap lang="en">
+The cache stampede problem: a popular cache entry expires; many concurrent users generate simultaneous origin requests; origin is overwhelmed and may start returning errors; those errors get cached. The four mitigations are: (1) origin shield, which collapses all edge misses in a region to one origin request; (2) `stale-while-revalidate`, which serves the stale response to all users while sending one background revalidation; (3) application-level request coalescing (singleflight), which prevents concurrent origin requests at the application layer; (4) probabilistic early expiration, which spreads revalidations across time. `stale-if-error` (RFC 5861) adds graceful degradation: on origin failure, serve the last cached version for up to N seconds instead of propagating errors. Match staleness windows to content correctness requirements — a news article can tolerate 10 minutes stale; a checkout price cannot tolerate 10 seconds.
+</Recap>
