@@ -1,0 +1,194 @@
+---
+slug: 03-lock-queue-incident
+lang: en
+track: databases
+unit: 06-migrations
+order: 3
+title: "The lock-queue failure mode: why instant DDL can freeze the database"
+summary: "A waiting ALTER TABLE blocks every subsequent SELECT on the table — a FIFO lock queue turns one slow query into a full-table outage."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/06-migrations/02-add-column-safely"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["AccessExclusiveLock", "lock-queue-FIFO", "lock_timeout", "lock-matrix", "migration-incident"]
+sources:
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://xata.io/blog/migrations-and-exclusive-locks
+  - https://postgres.ai/blog/20210923-zero-downtime-postgres-schema-migrations-lock-timeout-and-retries
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team runs `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'` at 14:00. On PG 16, this statement takes 8 ms. Yet the `users` table is unavailable for 90 seconds, connection pool exhausts, and the site returns 503. The migration itself was instant. So what happened?
+</Hook>
+
+<Crux>Postgres lock queue is FIFO: a waiting ALTER TABLE blocks all new SELECTs. One slow query plus one migration = table freeze.</Crux>
+
+<Explanation>
+
+## The Postgres lock matrix
+
+Every table operation takes a lock. There are eight lock modes from weakest to strongest:
+
+`ACCESS SHARE` → `ROW SHARE` → `ROW EXCLUSIVE` → `SHARE UPDATE EXCLUSIVE` → `SHARE` → `SHARE ROW EXCLUSIVE` → `EXCLUSIVE` → `ACCESS EXCLUSIVE`
+
+Key facts:
+- `SELECT` takes `ACCESS SHARE` (weakest).
+- Most DDL (`ALTER TABLE`, `DROP TABLE`, `TRUNCATE`) takes `ACCESS EXCLUSIVE` (strongest — conflicts with everything).
+- `CREATE INDEX CONCURRENTLY` and `VALIDATE CONSTRAINT` take `SHARE UPDATE EXCLUSIVE` — does not block normal DML.
+
+The lock matrix decides what can run in parallel. `ACCESS EXCLUSIVE` conflicts with **every other lock mode**, including `ACCESS SHARE`. That means any DDL with `ACCESS EXCLUSIVE` must wait for all current readers to finish — and blocks all new readers while it waits.
+
+## The FIFO lock queue — the actual failure mode
+
+Postgres grants locks in arrival order (FIFO per object). This creates the canonical migration incident:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Time</th>
+        <th class="border border-border px-3 py-2 text-left">Event</th>
+        <th class="border border-border px-3 py-2 text-left">Lock state on users</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">T=0s</td>
+        <td class="border border-border px-3 py-2">Slow analytics SELECT starts (expected: 60s)</td>
+        <td class="border border-border px-3 py-2">ACCESS SHARE granted</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">T=10s</td>
+        <td class="border border-border px-3 py-2">Migration runs ALTER TABLE (default lock_timeout = 0)</td>
+        <td class="border border-border px-3 py-2">ACCESS EXCLUSIVE waiting — conflicts with held ACCESS SHARE</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">T=10s+</td>
+        <td class="border border-border px-3 py-2">New SELECTs arrive (API requests, background jobs)</td>
+        <td class="border border-border px-3 py-2">ACCESS SHARE waiting — queued BEHIND the ALTER's ACCESS EXCLUSIVE request</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">T=70s</td>
+        <td class="border border-border px-3 py-2">Slow SELECT finishes</td>
+        <td class="border border-border px-3 py-2">ALTER acquires lock, runs in 8 ms, commits. Queue drains.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Total impact</td>
+        <td class="border border-border px-3 py-2">60s of no-new-queries on users. Connection pool exhausted. 503s.</td>
+        <td class="border border-border px-3 py-2">—</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The critical insight: new SELECTs queue **behind** the waiting ALTER because granting them out of order would starve the ALTER. The ALTER's `ACCESS EXCLUSIVE` request is in the queue; the lock manager refuses to grant lighter locks to later arrivals that conflict with it. The table is frozen for every new query for the full 60 seconds of the slow SELECT — even though the migration itself runs in 8 ms.
+
+## The fix: SET lock_timeout
+
+```sql
+-- At the top of every migration session:
+SET lock_timeout = '2s';
+SET statement_timeout = '30s';
+```
+
+With `lock_timeout = '2s'`:
+- The migration waits at most 2 seconds for the lock.
+- If not acquired, the migration **aborts cleanly** and releases its position in the queue.
+- New SELECTs immediately get their lighter locks — table is unfrozen.
+- The migration tool retries with exponential backoff (1s, 2s, 4s, 8s...).
+- Eventually the slow SELECT finishes or a quiet window opens, and the migration succeeds.
+
+Without `lock_timeout` (Postgres default is 0 — wait forever): one slow query can freeze a table for its entire duration.
+
+<NumbersCard
+  id="card-lock-queue-numbers"
+  title="Lock-queue incident numbers"
+  stats={[
+    { label: "Postgres default lock_timeout", value: "0 (wait forever)" },
+    { label: "Recommended lock_timeout for migrations", value: "1–5 s" },
+    { label: "Recommended statement_timeout for DDL", value: "30–60 s" },
+    { label: "Migration retry attempts", value: "3–5 with exponential backoff" },
+    { label: "Table-freeze duration without lock_timeout", value: "= duration of blocking query" },
+    { label: "Table-freeze with lock_timeout = 2s", value: "2 s, then queue clears" },
+  ]}
+/>
+
+<Misconception id="mc-instant-ddl-safe">
+  <p><strong>"My migration only changes metadata, so it cannot block anything."</strong> Wrong. Even an instant ALTER TABLE needs AccessExclusiveLock for a moment; if a long query holds even an ACCESS SHARE lock, the ALTER waits, and every new query queues behind it. Always SET lock_timeout. Always.</p>
+</Misconception>
+
+<Inset kind="why" lang="en">
+Why doesn't Postgres let lighter locks skip ahead of a waiting ACCESS EXCLUSIVE? Because doing so could starve the DDL statement indefinitely — on a busy table, ACCESS SHARE locks arrive continuously and would never all be released simultaneously. FIFO ensures the DDL eventually gets its turn. The operational consequence is that you must limit how long it waits.
+</Inset>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-1"
+  lessonSlug="03-lock-queue-incident"
+  lang="en"
+  question="A migration runs ALTER TABLE on a busy table. A long SELECT is in progress. What happens to new SELECTs that arrive?"
+  choices={[
+    { label: "They queue behind the ALTER TABLE in the FIFO lock queue and wait until both the long SELECT and the ALTER TABLE finish — effectively, the table is frozen for new queries", correct: true },
+    { label: "They run immediately because they only need ACCESS SHARE", misconception: "The ALTER is ahead of them in the queue with a conflicting request; new ACCESS SHARE requests queue behind it." },
+    { label: "Postgres prioritises short queries over DDL", misconception: "The lock queue is FIFO — arrival order only. No priority for short queries." },
+    { label: "They fail immediately with a lock error", misconception: "They wait, not fail — often until they hit their own statement_timeout." },
+  ]}
+/>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-2"
+  lessonSlug="03-lock-queue-incident"
+  lang="en"
+  question="You set `SET lock_timeout = '2s'` on the migration session. The migration cannot acquire the lock within 2 seconds. What happens?"
+  choices={[
+    { label: "The migration aborts with an error; it releases its queue position; new SELECTs get their locks immediately; the migration tool retries with backoff", correct: true },
+    { label: "The migration waits an additional 2 seconds then forcibly acquires the lock", misconception: "lock_timeout aborts — it never forcibly acquires; it simply gives up and retries." },
+    { label: "Postgres kills the blocking query to let the migration through", misconception: "Postgres never kills other sessions for a migration; lock_timeout only affects the current session." },
+    { label: "The migration session reconnects and tries again automatically", misconception: "The session gets an error; the retry logic is in the migration tool, not Postgres." },
+  ]}
+/>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-3"
+  lessonSlug="03-lock-queue-incident"
+  lang="en"
+  question="Which lock does CREATE INDEX CONCURRENTLY take, and why is it safer for production?"
+  choices={[
+    { label: "SHARE UPDATE EXCLUSIVE — it does not conflict with INSERT, UPDATE, DELETE, or SELECT, so normal traffic continues during the index build", correct: true },
+    { label: "ACCESS SHARE — same as SELECT, fully compatible with everything", misconception: "CREATE INDEX CONCURRENTLY takes SHARE UPDATE EXCLUSIVE, which is lighter than AccessExclusive but not as weak as ACCESS SHARE." },
+    { label: "ACCESS EXCLUSIVE — same as ALTER TABLE, blocks all traffic", misconception: "ACCESS EXCLUSIVE is what regular CREATE INDEX takes; CONCURRENTLY explicitly avoids it by using a lighter lock." },
+    { label: "No lock at all — it builds completely in the background", misconception: "It takes SHARE UPDATE EXCLUSIVE for coordination. Completely lockless index builds are not possible in Postgres." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The Postgres lock queue is FIFO: a waiting ALTER TABLE blocks all new SELECTs behind it. SET lock_timeout = '2s' on every migration session so a failed attempt aborts cleanly and unblocks the queue — then the migration tool retries.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-lock-queue-incident-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through exactly why an instant ALTER TABLE can freeze a production table for 60+ seconds.", a: "At T=0, a slow SELECT acquires ACCESS SHARE on the target table. At T=10s, a migration issues ALTER TABLE, which needs ACCESS EXCLUSIVE — it conflicts with the held ACCESS SHARE and joins the wait queue. Postgres uses FIFO: no later lock request can skip ahead of the waiting ALTER. Every new SELECT that arrives after T=10s also needs ACCESS SHARE, but finds the ALTER's pending ACCESS EXCLUSIVE ahead of it in the queue — they wait too. The table is frozen for all new queries until the slow SELECT releases its ACCESS SHARE at T=70s. Only then does the ALTER get its lock, run in 8 ms, and commit. The queue drains. Total impact: 60 seconds of blocked traffic, connection pool exhaustion, 503 errors — from an 8 ms migration." },
+    { q: "Explain the exact role of lock_timeout in preventing the lock-queue freeze, and what the migration tool does after a timeout.", a: "lock_timeout (default 0 — wait forever) sets the maximum time a session will wait to acquire a lock. With lock_timeout = '2s': if the ALTER TABLE cannot acquire ACCESS EXCLUSIVE within 2 seconds, Postgres aborts the migration transaction and raises a LockNotAvailable error. The migration releases its position in the queue immediately. New SELECTs that were waiting behind it can now get their ACCESS SHARE locks — the table unfreezes after at most 2 seconds instead of 60+. The migration tool catches the error and retries with exponential backoff (1s, 2s, 4s, 8s, 16s). Eventually the slow SELECT finishes or a quiet window opens, the migration acquires the lock in its 2-second window, and succeeds." },
+    { q: "What is the difference between lock_timeout and statement_timeout, and why does a migration session need both?", a: "lock_timeout limits how long a session waits to *acquire* a lock — if the lock queue is backed up, the session gives up after the timeout. statement_timeout limits how long a statement can *run* after it has the lock — if the migration itself (e.g., a data backfill UPDATE) runs longer than expected, it is killed. A migration needs both: lock_timeout prevents the queue-freeze failure mode (abort if you cannot get the lock fast); statement_timeout prevents a runaway migration from holding the lock for an unbounded duration. Together they turn 'migration freezes the database' into 'migration logs an error, retries, and eventually succeeds'." },
+  ]}
+/>
+
+<Recap lang="en">
+The Postgres lock matrix assigns `ACCESS EXCLUSIVE` to most DDL and `ACCESS SHARE` to `SELECT`. These conflict, so a waiting `ALTER TABLE` blocks all new `SELECT` statements on the same table via the FIFO lock queue — even if the migration itself would run in milliseconds. On a busy table with a slow analytical query in flight, this can freeze the table for the entire duration of that query. The mandatory fix is `SET lock_timeout = '2s'` on every migration session: if the lock is not available within 2 seconds, the migration aborts cleanly, the queue unblocks, and the migration tool retries with backoff. `CREATE INDEX CONCURRENTLY` and `VALIDATE CONSTRAINT` take `SHARE UPDATE EXCLUSIVE` instead of `ACCESS EXCLUSIVE` and are therefore DML-safe for production.
+</Recap>

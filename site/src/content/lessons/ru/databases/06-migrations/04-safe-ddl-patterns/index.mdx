@@ -1,0 +1,212 @@
+---
+slug: 04-safe-ddl-patterns
+lang: ru
+track: databases
+unit: 06-migrations
+order: 4
+title: "Безопасные DDL-паттерны: NOT VALID, CONCURRENTLY и исправления небезопасных операций"
+summary: "Для каждой небезопасной DDL-операции существует безопасный многошаговый эквивалент; дисциплина — знать это соответствие и всегда использовать безопасную форму в продакшне."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/06-migrations/03-lock-queue-incident"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["CREATE-INDEX-CONCURRENTLY", "NOT-VALID-constraint", "VALIDATE-CONSTRAINT", "binary-coercible-type-change", "ADD-FOREIGN-KEY-safe"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-altertable.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+  - https://squawkhq.com/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Команда запускает `CREATE INDEX ON orders(user_id)` в 10:00. На таблице с 200 млн строк это удерживает `ACCESS EXCLUSIVE` 20 минут — чтения и записи заблокированы. Тот же индекс, построенный через `CREATE INDEX CONCURRENTLY`, занимает 45 минут, но ничего не блокирует. Один и тот же индекс, одни данные, кардинально разный эффект на продакшн.
+</Hook>
+
+<Crux>Для каждой небезопасной DDL есть безопасный многошаговый эквивалент. Знать соответствие и использовать безопасную форму в продакшне.</Crux>
+
+<Explanation>
+
+## CREATE INDEX CONCURRENTLY
+
+Обычный `CREATE INDEX` удерживает `ACCESS EXCLUSIVE` всё время построения. На больших таблицах это блокирует чтения и записи на минуты.
+
+`CREATE INDEX CONCURRENTLY` строит индекс в два этапа, оба под `SHARE UPDATE EXCLUSIVE` (не блокирует DML):
+
+1. Этап 1: сканирует таблицу и строит черновой индекс, пока продолжается обычный трафик.
+2. Этап 2: нагоняет записи, произошедшие во время этапа 1; помечает индекс валидным.
+
+Компромиссы:
+- Занимает в 2–3 раза дольше, чем не-конкурентный.
+- **Не может выполняться внутри блока транзакции** — если инструмент миграции оборачивает миграции в `BEGIN..COMMIT`, нужно пометить эту миграцию как нетранзакционную.
+- Может дать сбой в середине построения и оставить `INVALID`-индекс (виден в `pg_indexes` где `indisvalid = false`).
+
+**Продакшн-инструкция для конкурентного индекса:**
+1. Всегда используйте `CREATE INDEX CONCURRENTLY` в продакшне.
+2. После миграции проверьте: `SELECT indexname, indisvalid FROM pg_indexes JOIN pg_class ... WHERE indisvalid = false` — должно вернуть ничего.
+3. Если найден INVALID-индекс: `DROP INDEX CONCURRENTLY` (тоже неблокирующий), затем повторите.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Операция</th>
+        <th class="border border-border px-3 py-2 text-left">Блокировка</th>
+        <th class="border border-border px-3 py-2 text-left">Блокирует DML</th>
+        <th class="border border-border px-3 py-2 text-left">В транзакции?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>CREATE INDEX</code></td>
+        <td class="border border-border px-3 py-2">ACCESS EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Да</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>CREATE INDEX CONCURRENTLY</code></td>
+        <td class="border border-border px-3 py-2">SHARE UPDATE EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Нет — должен выполняться вне BEGIN</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>DROP INDEX CONCURRENTLY</code></td>
+        <td class="border border-border px-3 py-2">SHARE UPDATE EXCLUSIVE</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT
+
+Обычное добавление CHECK или FOREIGN KEY constraint получает `ACCESS EXCLUSIVE` и сканирует всю таблицу.
+
+Двухшаговый паттерн:
+
+```sql
+-- Шаг 1: добавить constraint, применять только для НОВЫХ строк (мгновенно, краткий ACCESS EXCLUSIVE)
+ALTER TABLE orders
+  ADD CONSTRAINT orders_status_valid
+  CHECK (status IN ('pending', 'active', 'closed')) NOT VALID;
+
+-- Шаг 2: проверить существующие строки (SHARE UPDATE EXCLUSIVE — не блокирует DML)
+ALTER TABLE orders VALIDATE CONSTRAINT orders_status_valid;
+```
+
+`NOT VALID` означает: применять для новых строк с этого момента; существующие строки не проверяются. `VALIDATE CONSTRAINT` затем сканирует все строки под `SHARE UPDATE EXCLUSIVE`, что не блокирует `INSERT`, `UPDATE` или `DELETE`. Сканирование может выполняться при живом трафике.
+
+Этот паттерн применяется к:
+- `CHECK`-ограничениям
+- `FOREIGN KEY`-ограничениям: `ADD CONSTRAINT ... FOREIGN KEY ... NOT VALID` + `VALIDATE CONSTRAINT`
+- `NOT NULL` через `CHECK (col IS NOT NULL) NOT VALID` (см. урок 02)
+
+## Небезопасные операции и их безопасные эквиваленты
+
+<NumbersCard
+  id="card-safe-ddl-ru"
+  title="Небезопасный DDL → безопасная замена"
+  stats={[
+    { label: "ADD COLUMN с волатильным DEFAULT → ADD без default + бэкфил + SET DEFAULT", value: "Исправление" },
+    { label: "ALTER COLUMN TYPE (не бинарно-совместимый) → новая колонка + dual-write + бэкфил + замена + дроп", value: "Исправление" },
+    { label: "ADD NOT NULL на существующей nullable → NOT VALID + VALIDATE + SET NOT NULL", value: "Исправление" },
+    { label: "ADD FOREIGN KEY → ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT", value: "Исправление" },
+    { label: "CREATE INDEX → CREATE INDEX CONCURRENTLY", value: "Исправление" },
+    { label: "DROP COLUMN (код ещё читает) → сначала деплой кода, дренирование, затем DROP", value: "Исправление" },
+    { label: "RENAME COLUMN → полный expand-contract за несколько дней (урок 05)", value: "Исправление" },
+  ]}
+/>
+
+## ALTER COLUMN TYPE: исключение для бинарно-совместимых типов
+
+Большинство изменений типа перезаписывают таблицу. Исключения — **бинарно-совместимые** типы с одинаковым физическим представлением:
+
+- `varchar(50)` → `varchar(100)` (шире, те же байты)
+- `varchar` → `text` (эквивалентное хранение)
+- `text` → `varchar` (то же)
+
+Postgres обнаруживает их и пропускает перезапись — краткий `ACCESS EXCLUSIVE`, строки не пишутся. Не-совместимые изменения (`int` → `bigint`, `text` → `int`, `json` → `jsonb`) требуют либо полной перезаписи, либо паттерна expand-contract через теневую колонку (урок 05).
+
+<Misconception id="mc-not-valid-production-ru">
+  <p><strong>&quot;NOT VALID + VALIDATE медленнее — два запроса вместо одного.&quot;</strong> Неверно. ADD CONSTRAINT (без NOT VALID) удерживает ACCESS EXCLUSIVE на сканирование. NOT VALID мгновенен; VALIDATE сканирует под SHARE UPDATE EXCLUSIVE, не блокируя DML. При VALIDATE DML продолжается; при обычном ADD CONSTRAINT — стоп.</p>
+</Misconception>
+
+<Inset kind="why" lang="ru">
+Почему VALIDATE CONSTRAINT использует SHARE UPDATE EXCLUSIVE вместо ACCESS EXCLUSIVE? VALIDATE доступен только для чтения — он сканирует строки, чтобы убедиться, что они проходят constraint, но не изменяет ни одну строку. Только DDL-операции, изменяющие структуру таблицы или перезаписывающие строки, нуждаются в ACCESS EXCLUSIVE. Проверка только для чтения нуждается лишь в достаточной изоляции для предотвращения одновременного DDL, меняющего определение constraint в середине сканирования.
+</Inset>
+
+<Quiz
+  id="04-safe-ddl-patterns-quiz-1"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="ru"
+  question="CREATE INDEX CONCURRENTLY даёт сбой на полпути на таблице с 300 млн строк. В каком состоянии находится индекс и каково правильное исправление?"
+  choices={[
+    { label: "INVALID — pg_indexes показывает indisvalid = false; индекс недоступен планировщику. Исправление: DROP INDEX CONCURRENTLY, затем повторить построение.", correct: true },
+    { label: "Индекс удаляется автоматически при неудаче построения", misconception: "Postgres оставляет INVALID-индекс; он не очищается автоматически." },
+    { label: "Индекс частично валиден и используется для некоторых запросов", misconception: "Postgres не будет использовать INVALID-индекс в планах запросов. Он полностью непригоден до пересборки." },
+    { label: "Postgres сам повторяет построение в фоне", misconception: "Повторная попытка — ответственность инструмента миграции или оператора." },
+  ]}
+/>
+
+<Quiz
+  id="04-safe-ddl-patterns-quiz-2"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="ru"
+  question="Какой способ правильно добавить CHECK constraint на таблицу с 100 млн строк без блокировки записей?"
+  choices={[
+    { label: "ADD CONSTRAINT ... NOT VALID (мгновенно), затем VALIDATE CONSTRAINT в отдельном запросе (сканирует под SHARE UPDATE EXCLUSIVE)", correct: true },
+    { label: "ADD CONSTRAINT (без NOT VALID) в нерабочее время", misconception: "Всё равно берёт ACCESS EXCLUSIVE на всё время сканирования — минуты блокировки записей независимо от времени." },
+    { label: "Использовать триггер для применения constraint вместо него", misconception: "Триггеры добавляют накладные расходы на каждую строку и не дают таких же гарантий, как constraints. NOT VALID + VALIDATE — правильный продакшн-путь." },
+    { label: "Выполнить добавление constraint внутри короткой транзакции для ограничения времени блокировки", misconception: "Блокировка удерживается на время сканирования независимо от транзакции. Короткая транзакция не помогает." },
+  ]}
+/>
+
+<DragOrder
+  id="04-safe-ddl-patterns-drag-1"
+  lessonSlug="04-safe-ddl-patterns"
+  lang="ru"
+  prompt="Упорядочите исправления небезопасного DDL от наиболее частых в продакшне до наименее:"
+  items={[
+    { id: "a", label: "ADD COLUMN с волатильным DEFAULT → ADD COLUMN без default + бэкфил пакетами + SET DEFAULT" },
+    { id: "b", label: "ALTER COLUMN TYPE (не-совместимый) → новая колонка + dual-write + бэкфил + замена чтений + дроп старой" },
+    { id: "c", label: "ADD NOT NULL → ADD CHECK NOT VALID + VALIDATE + SET NOT NULL + DROP CHECK" },
+    { id: "d", label: "ADD FOREIGN KEY → ADD CONSTRAINT NOT VALID + VALIDATE CONSTRAINT" },
+    { id: "e", label: "CREATE INDEX → CREATE INDEX CONCURRENTLY (+ проверить indisvalid после)" },
+    { id: "f", label: "DROP COLUMN (код ещё читает) → сначала деплой кода, чтобы прекратить чтение, дренировать старые поды, затем DROP" },
+    { id: "g", label: "RENAME COLUMN → полный expand-contract за несколько дней (урок 05)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CREATE INDEX CONCURRENTLY избегает ACCESS EXCLUSIVE, но не может выполняться в транзакции и может оставлять INVALID-индексы. NOT VALID + VALIDATE разделяет применение constraint: мгновенное добавление для новых строк, затем DML-безопасное сканирование для существующих.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-safe-ddl-patterns-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Каковы два режима сбоя CREATE INDEX CONCURRENTLY и как обрабатывать каждый?", a: "1. Сбой в середине построения (OOM или долгая транзакция, блокирующая этап 2): индекс остаётся в состоянии INVALID (pg_indexes показывает indisvalid = false). Исправление: DROP INDEX CONCURRENTLY (тоже неблокирующий), затем повторить построение. 2. Построение завершено, но indisvalid остаётся false (редко, обычно дублирование): то же исправление. Всегда проверяйте indisvalid после каждой CONCURRENTLY-сборки как часть пост-проверки миграции." },
+    { q: "Почему CREATE INDEX CONCURRENTLY должен выполняться вне блока транзакции и как инструменты миграции это обрабатывают?", a: "CONCURRENTLY строит индекс в два этапа сканирования при продолжающемся трафике. При обёртке в BEGIN..COMMIT Postgres удерживал бы транзакцию открытой через оба этапа, предотвращая видимость изменений других транзакций (изоляция снимка), что нарушает логику нагона фазы 2. Postgres это обеспечивает: выдаёт ошибку при попытке CONCURRENTLY внутри транзакции. Инструменты миграции (Atlas, Prisma, golang-migrate) поддерживают аннотацию нетранзакционного режима для каждого файла миграции (например, `-- atlas:txmode none`, `-- notransaction`). Используйте её для любой CONCURRENT-операции." },
+    { q: "Объясните разницу между ADD CONSTRAINT и ADD CONSTRAINT NOT VALID и почему VALIDATE CONSTRAINT не блокирует DML.", a: "ADD CONSTRAINT (без NOT VALID) получает ACCESS EXCLUSIVE и выполняет полное сканирование таблицы под этой блокировкой — блокирует все чтения и записи на время сканирования. NOT VALID пропускает сканирование: constraint применяется только для строк, вставленных или обновлённых после этого момента; существующие строки не проверяются (они могут нарушать constraint). VALIDATE CONSTRAINT затем выполняет сканирование для проверки существующих строк, но берёт SHARE UPDATE EXCLUSIVE, конфликтующий только с другим DDL и autovacuum — не с INSERT, UPDATE, DELETE или SELECT. Поэтому DML продолжается нормально во время VALIDATE. Двухшаговый паттерн даёт ту же итоговую согласованность, что одношаговый, с безопасным для продакшна поведением." },
+  ]}
+/>
+
+<Recap lang="ru">
+Для каждого небезопасного DDL существует продакшн-безопасный эквивалент. `CREATE INDEX CONCURRENTLY` берёт `SHARE UPDATE EXCLUSIVE` вместо `ACCESS EXCLUSIVE`, оставляя DML незаблокированным во время построения — но не может выполняться в транзакции и оставляет `INVALID`-индексы при сбое (исправление: `DROP INDEX CONCURRENTLY` + повтор). `ADD CONSTRAINT ... NOT VALID` мгновенно применяет constraint для новых строк без сканирования существующих; `VALIDATE CONSTRAINT` затем сканирует под `SHARE UPDATE EXCLUSIVE`, блокируя только параллельный DDL, но не DML. Бинарно-совместимые изменения типа (`varchar(50)` → `varchar(100)`) пропускают перезапись; не-совместимые требуют паттерна expand-contract через теневую колонку. Линтер Squawk обнаруживает небезопасные формы в CI, чтобы команды замечали их до слияния.
+</Recap>
