@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (2/51 units done) ← **RESUME HERE: networking/03-tcp-handshake**
+- [ ] **Phase B** — content migration (3/51 units done) ← **RESUME HERE: networking/04-dns-resolution**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -187,13 +187,13 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 04-mtu-and-fragmentation (middle) — MTU, fragmentation, PMTUD black holes, MSS clamping
   - [x] 05-nat-and-addressing (middle) — NAT, CGNAT, private RFC 1918, IPv6/SLAAC, anycast, dual-stack
   - [x] 06-ip-security-and-operations (senior) — IP spoofing/BCP38, BGP hijacks/RPKI, DDoS, operational tools
-- [ ] 03-tcp-handshake
-  - [ ] 01-the-three-way-handshake (junior) — what TCP does, phone metaphor, SYN/SYN-ACK/ACK dialogue with seq numbers, scenario end-to-end
-  - [ ] 02-sequence-numbers-and-state (middle) — exact seq arithmetic, ISN randomisation, state machine (CLOSED→SYN-SENT→ESTABLISHED), 1-RTT cost, FIN/TIME-WAIT basics
-  - [ ] 03-flow-and-congestion-control (middle) — sliding window, MSS/window-scaling/SACK, slow start + congestion avoidance (Reno/CUBIC), retransmit timer RFC 6298, RACK-TLP
-  - [ ] 04-tcp-options-and-pathologies (middle) — TCP header anatomy, Nagle+delayed-ACK stall, PSH, ECN, keepalive, CLOSE-WAIT trap
-  - [ ] 05-syn-cookies-and-tfo (senior) — SYN cookies internals, TCP Fast Open, TIME-WAIT exhaustion, Linux tunables
-  - [ ] 06-bbr-and-production-ops (senior) — BBR vs CUBIC vs Reno, production observability (ss/tcpdump/nstat), RST semantics, MPTCP, kTLS, QUIC relationship
+- [x] 03-tcp-handshake → 6 lessons, commit `c874633`
+  - [x] 01-the-three-way-handshake (junior) — what TCP does, phone metaphor, SYN/SYN-ACK/ACK dialogue with seq numbers, scenario end-to-end
+  - [x] 02-sequence-numbers-and-state (middle) — exact seq arithmetic, ISN randomisation, state machine (CLOSED→SYN-SENT→ESTABLISHED), 1-RTT cost, FIN/TIME-WAIT basics
+  - [x] 03-flow-and-congestion-control (middle) — sliding window, MSS/window-scaling/SACK, slow start + congestion avoidance (Reno/CUBIC), retransmit timer RFC 6298, RACK-TLP
+  - [x] 04-tcp-options-and-pathologies (middle) — TCP header anatomy, Nagle+delayed-ACK stall, PSH, ECN, keepalive, CLOSE-WAIT trap
+  - [x] 05-syn-cookies-and-tfo (senior) — SYN cookies internals, TCP Fast Open, TIME-WAIT exhaustion, Linux tunables
+  - [x] 06-bbr-and-production-ops (senior) — BBR vs CUBIC vs Reno, production observability (ss/tcpdump/nstat), RST semantics, MPTCP, kTLS, QUIC relationship
 - [ ] 04-dns-resolution
 - [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
