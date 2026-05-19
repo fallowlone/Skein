@@ -14,25 +14,22 @@
 
 ## Progress dashboard
 
-- [ ] **Phase A** — additive infra (A1–A10) — IN PROGRESS
-  - [x] A1 — 16 pillar tracks registered (commit `9437c70`)
-  - [x] A2 — lessons schema gains level/deepensInto/spiral, lessonType topic (commit `3889476`)
-  - [x] A3 — topic skeleton + section sentinels (commit `e6fb26b`)
-  - [ ] A4 — connections-index ← **RESUME HERE**
-  - [ ] A5 — connected-lessons block · A6 — checkTopicLesson · A7 — connection-integrity
-  - [ ] A8 — /infographic rework · A9 — routing · A10 — Phase A gate
-- [ ] **Phase B** — content migration (51 units: 44 ready-pillar + 7 lone ready)
+- [x] **Phase A** — additive infra — COMPLETE (2026-05-19). Build 1977 pages, lint 0/0, 66 migration tests pass.
+  - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
+  - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
+  - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
+- [ ] **Phase B** — content migration (51 units) ← **RESUME HERE: networking/01-physical-link**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
-**Carry-forward facts (discovered during A1–A3):**
-- `tracks.json` lives at `site/src/content/tracks.json` (single JSON file). The `Track`
-  enum is derived from the `TRACKS` constant in `site/src/types/index.ts`, not config.ts.
-- Section sentinel: built HTML carries `data-lesson-section="<kebab>"`. The linter
-  detects sections via regex `/data-lesson-section="([a-z-]+)"/g` — see `sectionIndexes()`
-  in `site/src/lint/rules/lessons.ts`. A6 must use this exact mechanism.
-- `Explanation.astro` (new) emits `data-lesson-section="explanation"`; `Crux.astro` and
-  `KeyTakeaway.astro` now emit `crux` / `key-takeaway`. Scaffold: `site/scaffolds/topic-lesson.mdx`.
+**Carry-forward facts:**
+- Data files: `site/src/content/tracks.json`, `site/src/content/units.json` (NOT under `lessons/`). `Track` enum derived from `TRACKS` in `site/src/types/index.ts`.
+- Section sentinel: `data-lesson-section="<kebab>"`; `topic` sections = `hook,crux,explanation,key-takeaway,recap`. Detector `sectionIndexes()` in `lessons.ts`.
+- Topic scaffold: `site/scaffolds/topic-lesson.mdx`. Lesson layout: `site/src/layouts/Lesson.astro`. Block component: `site/src/components/lesson/ConnectedLessons.astro`.
+- `/infographic <track>/<unit>` authors topic lessons (`.claude/commands/infographic.md`) — the Phase B per-unit pipeline.
+- Connection refs: `<track>/<unit>/<slug>`, or `<unit>/<slug>` (same track), or bare (same unit). Validated by the `connection-integrity` rule.
+- **Phase D / D1 note:** `checkTopicLesson` reuses `EXERCISE_COMPONENTS` from `exercise-counts.ts` — D1 deletes that file, so first move `EXERCISE_COMPONENTS` to a shared module.
+- **Follow-up:** `ConnectedLessons.astro` was built from the spec, not the uncommitted `lesson-preview.astro` prototype — reconcile visuals when previews wire to real data.
 
 Update this dashboard as work lands so any chat can resume.
 
