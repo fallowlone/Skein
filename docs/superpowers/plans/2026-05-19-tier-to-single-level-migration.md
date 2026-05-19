@@ -200,7 +200,13 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 03-ttl-and-caching (middle) — TTL semantics, propagation myth, migration SOP, negative caching, SOA, browser cache
   - [x] 04-dnssec-chain-of-trust (senior) — ZSK/KSK/DS/RRSIG chain, KSK rollover failure mode, NSEC/NSEC3, CA/B Forum 2026
   - [x] 05-encrypted-dns (senior) — DoH/DoT/DoQ, ECS privacy tradeoff, Kaminsky + SAD DNS, anycast resolvers
-- [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
+- [x] 05-tls-handshake → 5 lessons
+  - [x] 01-what-tls-does (junior) — sealed-envelope metaphor, why TLS exists, end-to-end scenario, padlock guarantee
+  - [x] 02-the-1rtt-handshake (middle) — 1-RTT ClientHello/ServerHello, key shares, ECDHE math, certificate chain validation, transcript hash + Finished
+  - [x] 03-session-resumption-and-0rtt (middle) — PSK NewSessionTicket, warm resumption, 0-RTT early data, replay risk, 425 Too Early
+  - [x] 04-key-schedule-and-extensions (senior) — HKDF key schedule tree, SNI/ALPN/HelloRetryRequest, cipher-suite split, OCSP stapling, CRLite, NewSessionTicket lifecycle
+  - [x] 05-0rtt-defenses-and-modern-tls (senior) — production 0-RTT replay defenses, STEK rotation, ECH (RFC 9849), hybrid PQ (X25519MLKEM768), kTLS offload, observability, CVEs
+- [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
 
 **browser**
