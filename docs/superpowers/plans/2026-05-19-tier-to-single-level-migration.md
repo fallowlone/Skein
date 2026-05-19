@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (1/51 units done) ← **RESUME HERE: networking/02-ip-packet**
+- [ ] **Phase B** — content migration (2/51 units done) ← **RESUME HERE: networking/03-tcp-handshake**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -180,13 +180,13 @@ Offload research + authoring + translation to subagents. After each unit, tick i
 
 **networking**
 - [x] 01-physical-link → 6 lessons, commit `2a33e06`
-- [ ] 02-ip-packet → 6 lessons planned:
-  - [ ] 01-the-ip-envelope (junior) — what IP does, postal metaphor, hop-by-hop routing, IPv4 vs IPv6 basics
-  - [ ] 02-reading-the-ip-header (middle) — IPv4/IPv6 header fields, TTL, protocol field, checksum, DSCP/ECN
-  - [ ] 03-routing-and-forwarding (middle) — routing table vs FIB, CIDR, BGP basics, ECMP, longest-prefix match
-  - [ ] 04-mtu-and-fragmentation (middle) — MTU, fragmentation, PMTUD black holes, MSS clamping
-  - [ ] 05-nat-and-addressing (middle) — NAT, CGNAT, private RFC 1918, IPv6/SLAAC, anycast, dual-stack
-  - [ ] 06-ip-security-and-operations (senior) — IP spoofing/BCP38, BGP hijacks/RPKI, DDoS, operational tools
+- [x] 02-ip-packet → 6 lessons, commit `6fdb4c6`
+  - [x] 01-the-ip-envelope (junior) — what IP does, postal metaphor, hop-by-hop routing, IPv4 vs IPv6 basics
+  - [x] 02-reading-the-ip-header (middle) — IPv4/IPv6 header fields, TTL, protocol field, checksum, DSCP/ECN
+  - [x] 03-routing-and-forwarding (middle) — routing table vs FIB, CIDR, BGP basics, ECMP, longest-prefix match
+  - [x] 04-mtu-and-fragmentation (middle) — MTU, fragmentation, PMTUD black holes, MSS clamping
+  - [x] 05-nat-and-addressing (middle) — NAT, CGNAT, private RFC 1918, IPv6/SLAAC, anycast, dual-stack
+  - [x] 06-ip-security-and-operations (senior) — IP spoofing/BCP38, BGP hijacks/RPKI, DDoS, operational tools
 - [ ] 03-tcp-handshake  - [ ] 04-dns-resolution
 - [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
