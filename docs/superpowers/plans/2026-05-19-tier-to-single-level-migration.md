@@ -194,7 +194,12 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 04-tcp-options-and-pathologies (middle) — TCP header anatomy, Nagle+delayed-ACK stall, PSH, ECN, keepalive, CLOSE-WAIT trap
   - [x] 05-syn-cookies-and-tfo (senior) — SYN cookies internals, TCP Fast Open, TIME-WAIT exhaustion, Linux tunables
   - [x] 06-bbr-and-production-ops (senior) — BBR vs CUBIC vs Reno, production observability (ss/tcpdump/nstat), RST semantics, MPTCP, kTLS, QUIC relationship
-- [ ] 04-dns-resolution
+- [x] 04-dns-resolution → 5 lessons
+  - [x] 01-dns-what-it-does (junior) — what DNS does, 3-level hierarchy metaphor, resolution dialogue, TTL intro
+  - [x] 02-the-resolver-walk (middle) — iterative vs recursive, glue records, EDNS0, record types, zone transfers, stub vs full
+  - [x] 03-ttl-and-caching (middle) — TTL semantics, propagation myth, migration SOP, negative caching, SOA, browser cache
+  - [x] 04-dnssec-chain-of-trust (senior) — ZSK/KSK/DS/RRSIG chain, KSK rollover failure mode, NSEC/NSEC3, CA/B Forum 2026
+  - [x] 05-encrypted-dns (senior) — DoH/DoT/DoQ, ECS privacy tradeoff, Kaminsky + SAD DNS, anycast resolvers
 - [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
 
