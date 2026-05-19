@@ -1707,7 +1707,7 @@ Author units in order; within a unit, top to bottom. Each new lesson lists the
 previous lesson (and any cross-unit topic it leans on) in `prereqs`.
 
 ### Unit 01 — Numbers and counting (3 done → 7)
-- [ ] `/teach math/01-numbers/04-the-number-line`
+- [x] `/teach math/01-numbers/04-the-number-line`
 - [ ] `/teach math/01-numbers/05-negative-numbers`
 - [ ] `/teach math/01-numbers/06-integers`
 - [ ] `/teach math/01-numbers/07-rounding-and-estimation`
