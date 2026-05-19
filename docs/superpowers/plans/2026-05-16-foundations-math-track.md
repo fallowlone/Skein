@@ -1688,6 +1688,90 @@ is required — staying within the 5-island lesson cap.
 
 ---
 
+## Phase 2 — Lesson authoring queue
+
+Phase 0 + Phase 1 shipped the infrastructure and proof lesson. Phase 2 authors the
+remaining math lessons — one `/teach` invocation per lesson, one commit per lesson.
+This section enumerates the queue so "continue the plan" is unambiguous.
+
+**Authored so far:** 32 lessons, all `status: ready` (Units 01–10, see `units.json`).
+**Queue below:** 40 lessons → track total **72** (spec target ~70–80, §3).
+
+**Per-lesson flow** (unchanged, from `.claude/commands/teach.md`):
+`/teach math/<NN-unit>/<NN-lesson>` → research → EN MDX (Hook → Goal → Explanation →
+Visual → WorkedExample → Practice → Check → Recap) → RU mirror + glossary → `bun run
+build` clean → `git commit -m "content(math): <unit>/<lesson> EN+RU ready"`. After each
+lesson, append its slug to the unit's `lessons` array in `units.json`.
+
+Author units in order; within a unit, top to bottom. Each new lesson lists the
+previous lesson (and any cross-unit topic it leans on) in `prereqs`.
+
+### Unit 01 — Numbers and counting (3 done → 7)
+- [ ] `/teach math/01-numbers/04-the-number-line`
+- [ ] `/teach math/01-numbers/05-negative-numbers`
+- [ ] `/teach math/01-numbers/06-integers`
+- [ ] `/teach math/01-numbers/07-rounding-and-estimation`
+
+### Unit 02 — Four operations in depth (4 done → 8)
+- [ ] `/teach math/02-operations/05-order-of-operations`
+- [ ] `/teach math/02-operations/06-properties-of-operations`
+- [ ] `/teach math/02-operations/07-remainder-and-divisibility`
+- [ ] `/teach math/02-operations/08-factors-and-primes`
+
+### Unit 03 — Fractions, decimals, percents (5 done → 8)
+- [ ] `/teach math/03-fractions/06-multiplying-fractions`
+- [ ] `/teach math/03-fractions/07-dividing-fractions`
+- [ ] `/teach math/03-fractions/08-ratios-and-proportions`
+
+### Unit 04 — Powers and roots (3 done → 7)
+- [ ] `/teach math/04-powers/04-powers-of-two`
+- [ ] `/teach math/04-powers/05-zero-and-negative-exponents`
+- [ ] `/teach math/04-powers/06-scientific-notation`
+- [ ] `/teach math/04-powers/07-cube-roots-and-beyond`
+
+### Unit 05 — Variables and algebra (4 done → 7)
+- [ ] `/teach math/05-algebra/05-solving-two-step-equations`
+- [ ] `/teach math/05-algebra/06-formulas-and-substitution`
+- [ ] `/teach math/05-algebra/07-word-problems`
+
+### Unit 06 — Functions (3 done → 7)
+- [ ] `/teach math/06-functions/04-slope`
+- [ ] `/teach math/06-functions/05-function-notation`
+- [ ] `/teach math/06-functions/06-domain-and-range`
+- [ ] `/teach math/06-functions/07-nonlinear-functions`
+
+### Unit 07 — Logic and sets (3 done → 7)
+- [ ] `/teach math/07-logic/04-implication`
+- [ ] `/teach math/07-logic/05-venn-diagrams`
+- [ ] `/teach math/07-logic/06-quantifiers`
+- [ ] `/teach math/07-logic/07-truth-tables`
+
+### Unit 08 — Growth and logarithms (2 done → 7)
+- [ ] `/teach math/08-growth/03-logarithm-as-inverse`
+- [ ] `/teach math/08-growth/04-log-rules`
+- [ ] `/teach math/08-growth/05-log-base-two`
+- [ ] `/teach math/08-growth/06-comparing-growth-rates`
+- [ ] `/teach math/08-growth/07-where-logs-appear`
+
+### Unit 09 — Combinatorics (3 done → 7)
+- [ ] `/teach math/09-combinatorics/04-factorials`
+- [ ] `/teach math/09-combinatorics/05-pascals-triangle`
+- [ ] `/teach math/09-combinatorics/06-counting-with-repetition`
+- [ ] `/teach math/09-combinatorics/07-counting-strategies`
+
+### Unit 10 — Probability (2 done → 7)
+- [ ] `/teach math/10-probability/03-independent-events`
+- [ ] `/teach math/10-probability/04-conditional-probability`
+- [ ] `/teach math/10-probability/05-expected-value`
+- [ ] `/teach math/10-probability/06-probability-and-counting`
+- [ ] `/teach math/10-probability/07-common-pitfalls`
+
+**Gate (Phase 2 closed):** all 72 lessons `status: ready` EN+RU, every unit's
+`lessons` array in `units.json` complete, `bun run build` clean, foundations linter
+rules green on every lesson page.
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
@@ -1716,5 +1800,6 @@ in Task 10. Linter markers are consistent: components in Task 6 emit
 Task 3 reads exactly those attribute names.
 
 **Scope check:** Phase 0 + Phase 1 is one coherent implementation plan producing
-working, testable software (a navigable lesson + passing build). Phase 2+ is content
-authoring via an existing command — correctly left un-enumerated.
+working, testable software (a navigable lesson + passing build). Phase 2 is content
+authoring via an existing command (`/teach`), one commit per lesson — its lesson
+queue is now enumerated above (40 remaining lessons → track total 72).
