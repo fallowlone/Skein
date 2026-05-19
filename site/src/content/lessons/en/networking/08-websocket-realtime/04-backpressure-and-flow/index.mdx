@@ -1,0 +1,187 @@
+---
+slug: 04-backpressure-and-flow
+lang: en
+track: networking
+unit: 08-websocket-realtime
+order: 4
+title: "WebSocket backpressure: when clients can't keep up"
+summary: "How slow clients fill TCP windows, bloat application send queues, and crash servers — and the high-water-mark pattern that prevents it."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "08-websocket-realtime/01-upgrade-handshake"
+  - "03-tcp-handshake/03-flow-and-congestion-control"
+deepensInto:
+  - "05-reconnection-strategy"
+  - "06-scaling-and-limits"
+spiral: ["statefulness", "latency"]
+concepts: ["backpressure", "tcp-receive-window", "send-queue", "high-water-mark", "slow-client", "oom", "broadcast-server"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc6455
+  - https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections
+  - https://hpbn.co/websocket/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Your WebSocket broadcast server handles 10,000 clients fine during testing. In production, 100 clients on slow mobile connections start lagging behind. The server's memory climbs. GC pauses lengthen. Then the OOM killer fires and takes down the entire service. This is the canonical WebSocket failure mode — and it has nothing to do with the protocol.
+</Hook>
+
+<Crux>Slow clients fill TCP windows and bloat send queues; without a high-water mark and eviction policy, the server runs out of RAM and crashes.</Crux>
+
+<Explanation>
+
+## The TCP receive window, from the application's view
+
+TCP gives every socket a **receive window** — the number of bytes the receiver can accept before the sender must pause. As the application on the receiving end reads bytes, the window opens; as it falls behind, the window shrinks to zero and the sender stalls.
+
+From the server's perspective:
+1. Server calls `send(socket, message)`.
+2. The kernel copies the message to the socket's **send buffer**.
+3. TCP transmits from the send buffer, subject to the client's advertised receive window.
+4. If the client's window is zero (its read buffer is full), TCP stops transmitting.
+5. The kernel's `send()` call **blocks** if the send buffer is full, or returns EAGAIN in non-blocking mode.
+
+For a broadcast server with thousands of clients, this creates a critical asymmetry: fast clients drain their buffers in milliseconds; slow clients leave the server's bytes sitting in kernel send buffers, and when those buffers fill, the server is stuck.
+
+## The application-level send queue
+
+Production WebSocket servers never block on `send()`. Instead, they maintain an **application-level send queue** per connection. When the server broadcasts a message, it enqueues it for each connection and returns immediately. A background writer drains each queue into the kernel as fast as the client's TCP window allows.
+
+This solves the blocking problem — but creates a new one: **queue unbounded growth**.
+
+Consider this scenario:
+- Server broadcasts a 100 KB message every 10 ms.
+- 100 of 10,000 clients are slow — database queries are blocking their read thread.
+- Each slow client's queue grows by: 100 messages/second × 100 KB = 10 MB/second.
+- After 10 seconds: 100 slow clients × 10 MB × 10 s = **10 GB** of RAM consumed by queues.
+- OOM killer fires.
+
+<NumbersCard
+  id="card-backpressure-numbers"
+  title="Backpressure failure math"
+  data-lesson-visual
+  stats={[
+    { label: "Broadcast rate (example)", value: "100 KB every 10 ms = 10 MB/s per client" },
+    { label: "RAM growth per slow client at this rate", value: "10 MB/s" },
+    { label: "RAM at 100 slow clients after 10 s", value: "10 GB" },
+    { label: "Recommended p95 queue depth target", value: "< 5 messages" },
+    { label: "Recommended slow-client threshold", value: "< 0.1% of connections" },
+    { label: "Recommended total queued bytes ceiling", value: "< 5% of heap" },
+  ]}
+/>
+
+## The high-water mark pattern
+
+The solution is a **high-water mark**: a per-connection queue limit that triggers eviction or backpressure.
+
+When a connection's send queue exceeds the high-water mark (e.g., 100 messages or 10 MB), the server chooses:
+
+**Option A — evict the connection.** Forcibly close the slow client with status code 1013 ("try again later"). The client reconnects when its network clears. Other clients are unaffected. This is the standard choice for broadcast services.
+
+**Option B — drop messages.** For idempotent data (stock prices, game state snapshots) where the latest value supersedes older ones, drop old messages and only keep the newest N entries per connection. The slow client gets the current state on reconnect rather than stale history.
+
+**Option C — pause the producer.** For peer-to-peer streams (video conference, file transfer), signal the sending application to pause until the queue drains below the low-water mark. This is full backpressure propagation.
+
+## The proxy idle timeout failure mode
+
+There is a second common failure mode: a proxy between client and server has a **60-second idle timeout**. If no bytes cross the TCP connection in 60 seconds, the proxy closes the TCP connection — without sending a WebSocket close frame.
+
+Both client and server are unaware until the server tries to send the next message: `send()` returns `EPIPE` or `ECONNRESET`. The client sees a `close` event with code 1006 (abnormal closure). The connection is dead.
+
+**Fix**: the server sends a **ping frame every 25–30 seconds**. The ping resets the proxy's idle timer. The client must reply with a pong within a reasonable window (the server can evict clients that don't pong within 10 seconds as a stale connection cleanup).
+
+<Inset kind="edgecase" lang="en">
+**The 1 MB message, 10k clients, 1% slow example.** The server broadcasts a 1 MB message. For the 9,900 fast clients, TCP buffers and delivers in milliseconds. For the 100 slow clients, the message sits in the application queue. If the server broadcasts 50 such messages before detecting the slow clients, 100 clients × 50 msgs × 1 MB = **5 GB** of memory bloat. Production servers detect slow-client count continuously and evict when the count exceeds 0.5% of connections or total queued bytes exceeds 5% of heap — whichever comes first.
+</Inset>
+
+<TraceScenario
+  id="ws-mid-trace-1"
+  pieceSlug="04-backpressure-and-flow"
+  lang="en"
+  scenario="Trace a backpressure incident on a WebSocket broadcast server."
+  steps={[
+    { prompt: "The server broadcasts a 100 KB message to 10,000 clients. What does the server's TCP stack do for fast clients?", reveal: "For clients whose kernel receive buffer has space, the kernel copies the message to the buffer and returns control to the server immediately. send() does not block." },
+    { prompt: "100 of the 10,000 clients are slow (database query blocking their read thread). Their kernel receive buffers fill. What does the server see when it calls send() for a slow client?", reveal: "If the server calls send() synchronously and the kernel send buffer is full (because the client isn't reading), send() would block the calling thread until the client drains some data, preventing the server from sending to other clients." },
+    { prompt: "In reality, what do production servers do instead of blocking?", reveal: "They queue the message in an application-level buffer (in-memory queue per connection). send() returns immediately. The application monitors queue size; if it grows too large, the server evicts the slow client or stops sending to it." },
+    { prompt: "The server queues 100 KB per message, broadcasts every 10 ms, 100 clients are slow. How much RAM bloats per second?", reveal: "100 clients × (1000ms / 10ms) × 100 KB = 100 clients × 100 messages × 100 KB = 1 GB per second. In seconds the server runs out of RAM and crashes." },
+    { prompt: "What metric should the server monitor to catch this before the crash?", reveal: "The total queued bytes across all slow connections, or the count of connections whose queue depth exceeds a threshold (e.g., > 10 messages pending). When the metric spikes, evict slow clients or pause broadcasts immediately." },
+  ]}
+/>
+
+<DebugLog
+  id="ws-mid-debug-1"
+  pieceSlug="04-backpressure-and-flow"
+  lang="en"
+  title="Application metrics from a WebSocket broadcast service under backpressure"
+  output={`2026-05-15T14:32:00Z broadcast_service[5234]:
+  active_connections: 50234
+  total_queued_bytes: 8589934592  (8 GB)
+  slow_client_count: 127
+  p95_queue_depth: 156 messages
+  p99_queue_depth: 341 messages
+  broadcast_latency_p99: 18432ms
+  memory_usage: 15.2 GB / 16 GB heap
+  gc_pause_time: 1247ms
+
+2026-05-15T14:32:15Z broadcast_service[5234]:
+  active_connections: 49891  (-343 in 15s)
+  total_queued_bytes: 10737418240  (10 GB)
+  slow_client_count: 412
+  p95_queue_depth: 287 messages
+  p99_queue_depth: 502 messages
+  broadcast_latency_p99: 32568ms
+  memory_usage: 15.8 GB / 16 GB heap
+  gc_pause_time: 2100ms
+
+2026-05-15T14:32:30Z broadcast_service[5234]: OOM killer invoked; process killed`}
+  outputLang="log"
+  question="The service broadcasts 1 MB per second to 50k clients. Queue depth is climbing and heap is at 15.8 GB. What is the failure mode and the immediate fix?"
+  hint="Look at the slow-client count trajectory and the queued bytes growth rate. At the current rate, when does the heap hit 16 GB?"
+  answer="Slow-client count jumped from 127 to 412 in 15 seconds — clients are falling behind faster than they are recovering. Total queued bytes grew from 8 GB to 10 GB in 15 seconds; at this rate the heap hits 16 GB in ~30 seconds. The failure mode is backpressure: 412 slow clients are not draining their socket buffers, so application queues are bloating. Immediate fix: evict the 412 slowest clients (queue depth above high-water mark). Queued bytes drop by ~412 MB; remaining 49.5k healthy clients drain at their normal pace. Server memory stabilises. Lasting fix: monitor slow-client count continuously; trigger eviction when it exceeds 0.5%, or implement tiered delivery — send immediately to fast clients, batch or drop stale messages for slow ones."
+/>
+
+<Quiz
+  id="ws-mid-quiz-4"
+  pieceSlug="04-backpressure-and-flow"
+  lang="en"
+  question="A proxy between client and server has a 60-second idle timeout. No messages have been sent for 59 seconds. At 60 seconds the proxy closes the TCP connection without a WebSocket close frame. What close code does the client's WebSocket implementation generate?"
+  choices={[
+    { label: "1000 — normal closure", misconception: "1000 means both sides agreed to close and exchanged close frames. The proxy closed the TCP layer without one." },
+    { label: "1001 — going away", misconception: "1001 is sent by the server when it is shutting down intentionally." },
+    { label: "1006 — abnormal closure (no close frame received)", correct: true },
+    { label: "1011 — unexpected server condition", misconception: "1011 is sent by the server in its close frame. The proxy sent no close frame at all." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Slow clients fill TCP windows, forcing application queues to grow unboundedly. Set a high-water mark per connection and evict or pause slow clients when breached. Send pings every 25–30 s to defeat proxy idle timeouts. Monitor slow-client count and total queued bytes — they are your early warning before OOM.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-backpressure-and-flow-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does an application-level send queue solve the blocking problem but create a new one, and how does the high-water mark address both?", a: "An application-level queue allows send() to return immediately (no thread blocking) — the server can enqueue for all 10k clients in a tight loop. But without a limit, slow clients' queues grow unboundedly: each message that can't be delivered is buffered in RAM until the client catches up or the server runs out of memory. The high-water mark caps the queue at (e.g.) 100 messages or 10 MB per connection; when breached, the server evicts the connection or drops old messages — trading connection stability for server stability." },
+    { q: "What is the correct ping interval to defeat proxy idle timeouts, and what should happen if a client does not pong?", a: "Send a ping every 25–30 seconds (proxy timeouts are commonly 60 seconds; pinging at half the timeout gives two opportunities per window). If the client does not respond with a pong within ~10 seconds, treat the connection as stale and close it with code 1001 or 1006. A silent client is either dead (proxy closed the TCP connection) or CPU-starved; either way eviction is correct." },
+    { q: "Name the three eviction strategies for slow clients, and when to use each.", a: "Option A — evict immediately (close 1013): correct for broadcast services (stock tickers, live feeds) where each slow client is independent and can reconnect. Option B — drop old messages: correct for idempotent data like game-state snapshots where the newest value supersedes older ones. Option C — pause the producer (backpressure propagation): correct for peer-to-peer streams (video, file transfer) where every byte matters and the sender must slow down rather than lose data." },
+  ]}
+/>
+
+<Recap lang="en">
+WebSocket's primary failure mode is backpressure: when clients cannot read data as fast as the server sends it, TCP receive windows shrink to zero, the kernel send buffer fills, and — if the server uses application-level queues to avoid blocking — those queues grow unboundedly until the process runs out of RAM. The fix is a high-water mark per connection that triggers eviction (code 1013), message dropping, or producer pause depending on the application's data semantics. A second failure mode is the proxy idle timeout: proxies with 60-second idle timers close quiet WebSocket connections without a close frame, generating close code 1006. Ping frames every 25–30 seconds defeat this. Key metrics to monitor: slow-client count (target below 0.1% of connections), total queued bytes (target below 5% of heap), and p99 per-connection queue depth (target below 5 messages for interactive apps).
+</Recap>

@@ -1,0 +1,197 @@
+---
+slug: 07-production-architecture
+lang: en
+track: networking
+unit: 08-websocket-realtime
+order: 7
+title: "WebSocket in production: proxies, security, and distributed architecture"
+summary: "How to configure Nginx and ALB for long-lived upgrades, harden against DoS and cache-poisoning, and scale WebSocket clusters with pub/sub and sticky sessions."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "08-websocket-realtime/05-reconnection-strategy"
+  - "08-websocket-realtime/06-scaling-and-limits"
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["proxy-idle-timeout", "nginx-websocket", "aws-alb", "origin-check", "dos-websocket", "sticky-session", "pub-sub", "redis-streams", "observability-websocket"]
+sources:
+  - https://nginx.org/en/docs/http/websocket.html
+  - https://datatracker.ietf.org/doc/html/rfc6455
+  - https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections
+  - https://hpbn.co/websocket/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+You deploy your WebSocket server. Everything works in testing. In production, connections randomly drop after 60 seconds of silence, browsers report 1006s during idle periods, and your load balancer occasionally returns 502 on the upgrade. None of these are bugs in your application. They are proxy misconfigurations that are invisible until you know where to look.
+</Hook>
+
+<Crux>Production WebSocket failures come from proxy idle timeouts and buffering. Fix proxy config, enforce Origin checks, add pub/sub for scale.</Crux>
+
+<Explanation>
+
+## Proxy and load-balancer misconfigurations
+
+Proxies like Nginx, HAProxy, and AWS ALB were designed for HTTP — short-lived request-response conversations measured in milliseconds. A persistent WebSocket connection is alien to them. Common misconfigurations:
+
+**Problem 1 — Idle timeout closes quiet connections.**
+- Nginx default: `proxy_read_timeout 60s` (closes if no data in 60 seconds).
+- AWS ALB default: `idle_timeout.timeout_seconds = 60`.
+- Fix: raise to at least 3,600 seconds (1 hour).
+
+```nginx
+location /ws {
+  proxy_pass http://backend;
+  proxy_http_version 1.1;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "Upgrade";
+  proxy_read_timeout 3600s;
+  proxy_send_timeout 3600s;
+  proxy_buffering off;
+}
+```
+
+**Problem 2 — L7 buffering delays the 101 response.**
+Nginx buffers HTTP responses by default. The `101 Switching Protocols` response is held in the buffer until it is "complete" — but a WebSocket never completes its response. This can delay the upgrade by hundreds of milliseconds. Fix: `proxy_buffering off`.
+
+**Problem 3 — Proxy doesn't understand the Upgrade header.**
+Some proxies strip or ignore `Connection: Upgrade` headers. The backend sees the request without Upgrade headers and returns a regular HTTP response instead of 101. Fix: explicitly set both headers as shown above.
+
+**Problem 4 — HTTP/2 proxy doesn't forward WebSocket upgrades.**
+If the proxy is HTTP/2 but the backend is HTTP/1.1, the proxy may not know to handle WebSocket extended CONNECT. Fix: test WebSocket through the proxy stack explicitly during deployment, not just HTTP traffic.
+
+<NumbersCard
+  id="card-proxy-config"
+  title="Proxy configuration checklist"
+  data-lesson-visual
+  stats={[
+    { label: "Nginx: raise read/send timeout", value: "proxy_read_timeout 3600s" },
+    { label: "AWS ALB: raise idle timeout", value: "idle_timeout.timeout_seconds = 3600" },
+    { label: "Nginx: disable response buffering", value: "proxy_buffering off" },
+    { label: "Server ping interval to defeat proxy idle timers", value: "every 25–30 s" },
+    { label: "ALB sticky session (for stateful WS servers)", value: "Enable target group stickiness" },
+    { label: "Origin header check (server-side)", value: "Mandatory — block unauthorized origins" },
+  ]}
+/>
+
+## Security: Origin checks, DoS, and slow-reader attacks
+
+**Origin check.** The browser always sends an `Origin` header on WebSocket upgrades. The server must validate it:
+
+```
+if request.headers["Origin"] not in ALLOWED_ORIGINS:
+    respond 403 Forbidden
+    return
+```
+
+A WebSocket client outside the browser does not send an Origin header by default — if your server requires it, non-browser clients must add it. This is the primary defense against cross-site WebSocket hijacking (CSWSH), where a malicious page on `attacker.com` opens a WebSocket to `api.yoursite.com` using the victim's cookies.
+
+**Rate limiting at the handshake.** Botnets can exhaust the TCP SYN backlog with connection attempts. Rate-limit at the load balancer: maximum connection attempts per IP per second (typically 5–20). Apply TCP SYN cookies at the OS level (`net.ipv4.tcp_syncookies = 1`).
+
+**Slow-reader (Slow Loris) attack.** A malicious client completes the WebSocket handshake but never reads from its socket. The server's send queue fills for that connection. Mitigation: close connections with no data activity within 30 seconds (no message sent or received, no pong reply to a ping).
+
+**Per-message size limits.** A client sending a 100 MB message forces the server to buffer 100 MB per subscriber. Enforce a maximum message size (typically 64 KB–1 MB) and close the connection with code 1009 ("message too big") if exceeded.
+
+## Horizontal scaling: pub/sub and sticky sessions
+
+A single WebSocket server hits its scale ceiling at 500 k–2 M connections. Beyond that, you need multiple servers with a shared messaging backbone.
+
+**Pub/sub (Redis Streams or RabbitMQ).** Each server subscribes to the relevant channel(s). When the application publishes a message, all subscribed servers broadcast it to their local connected clients:
+
+```
+User A (connected to Server 1) sends a chat message.
+Server 1 publishes { roomId, message, msgId } to Redis stream "room:42".
+Server 2 (also subscribed to "room:42") reads from the stream.
+Server 2 broadcasts to its locally connected users in room 42.
+```
+
+This decouples senders from receivers and allows horizontal scale without requiring all clients to be on the same server.
+
+**Sticky sessions.** When a load balancer routes the same client to the same server across reconnects, in-flight state (unACK'd messages, partial subscriptions) is preserved without requiring full Redis replication. AWS ALB implements this as target group stickiness (1-hour cookie by default). The downside: server failures send all sticky clients to reconnect to other servers simultaneously — a mini thundering herd per failed instance.
+
+<Inset kind="why" lang="en">
+**Why the hardest part is not WebSocket but state management.** The WebSocket protocol is straightforward. The hard engineering problem is: what happens when a user's connection migrates to a different server during a horizontal scale event, a deploy, or a server failure? All the in-flight state — subscriptions, partial uploads, game sync position — must either live in a shared external store (Redis, database) or be re-established from scratch via the reconnect + message-resumption protocol. Discord, Slack, and all chat-scale services spend more engineering time on state replication and consistency under failures than on the WebSocket plumbing.
+</Inset>
+
+## Observability: metrics you must export
+
+A WebSocket service without these metrics will OOM silently:
+
+| Metric | Target |
+|--------|--------|
+| Active connection count | Alert if grows without bound (connection leak) |
+| Per-connection send-queue depth (p95/p99) | Target < 5 messages |
+| Total queued bytes | Target < 5% of heap |
+| Slow-client count | Target < 0.1% of connections |
+| Message latency p99 | Target < 100 ms (end-to-end) |
+| Close-code distribution (1000/1006/1013) | Spike in 1006 = network event |
+| Reconnection rate per minute | Spike = server restart or outage |
+
+Tools: `netstat -an` / `ss -s` for socket state counts, `tcpdump` for packet-level traces, Prometheus for application metrics, eBPF programs for socket buffer sizes and retransmit rates.
+
+<Quiz
+  id="ws-sr-quiz-4"
+  pieceSlug="07-production-architecture"
+  lang="en"
+  question="A financial trading platform needs to push 1000 price updates per second to 50k browsers in different geographies (US, Europe, Asia; RTT 10–300 ms). Which architecture is correct?"
+  choices={[
+    { label: "WebSocket over HTTP/1.1, one connection per client, broadcast from a single origin server", misconception: "A single server with 50k connections hits NIC bandwidth ceiling. No geographic distribution — US clients see 300 ms from an Asia data center. Latency variance is catastrophic for algo trading." },
+    { label: "WebSocket over HTTP/2 via CDN with regional edge servers, Redis Streams pub/sub backend, message ID dedup", correct: true, misconception: "Clients connect to the nearest edge (10–50 ms). Each edge pub/subs to Redis and broadcasts locally. Message IDs prevent duplicates on reconnect. p99 latency < 100 ms globally." },
+    { label: "Long-polling with REST API at 10 Hz", misconception: "50k clients at 10 Hz = 500k HTTP requests/second. Each request carries ~500 bytes of headers. Network overhead is enormous. No algo trader accepts 100 ms polling intervals." },
+    { label: "SSE with native EventSource, no pub/sub", misconception: "SSE is server→client only; traders must send orders (bidirectional). Without pub/sub, edge servers cannot coordinate — global consistency breaks." },
+  ]}
+/>
+
+<DesignPrompt
+  id="ws-sr-design-1"
+  pieceSlug="07-production-architecture"
+  lang="en"
+  prompt="Design a chat application for 1 million concurrent users across US, EU, and APAC. Requirements: message delivery guarantee (at-least-once, no duplicates), reconnection with message history sync, p99 latency < 200 ms for cross-region messages, graceful degradation if one region goes offline. Stack: Redis Streams, PostgreSQL, CDN with edge compute."
+  constraints={[
+    "Latency p99 < 200 ms even for cross-region messages.",
+    "No message loss (at-least-once delivery).",
+    "No duplicates even when clients reconnect.",
+    "Support 1M concurrent connections.",
+    "Graceful degradation if a region goes offline.",
+  ]}
+  canonical="Architecture: (1) Shard chat rooms by geography and room hash. Each region has edge WebSocket servers accepting connections. (2) A message sent in a US room is published to a Redis Stream (persistent, ordered, with message IDs). (3) All edge servers in all regions subscribe to the stream and broadcast locally to their connected clients. (4) Each client ACKs receipt with message ID. (5) On reconnect, the client sends its last-seen message ID; the server catches it up by reading from the stream from that point forward — no replay of the full history. (6) State: room membership and session tokens stored in Redis with regional replication. (7) PostgreSQL stores message history for audit and long-term replay beyond Redis retention. (8) Failures: if the US region goes offline, clients reconnect to EU or APAC with jittered backoff; Redis replication ensures they get message history from any region. Tuning: Redis stream retention = 24 hours or 1 GB (whichever first). High-water mark per connection = 100 messages / 10 MB; slow clients evicted with code 1013. Monitoring: p99 message latency, replication lag, reconnection rate, slow-client count."
+  keyPoints={[
+    "Redis Streams provide persistent ordered message storage with IDs for deduplication.",
+    "Regional edge servers colocate clients with a local WebSocket server — avoiding cross-ocean RTT.",
+    "Message IDs + last-seen tracking enable loss-free reconnection without full history replay.",
+    "Evicting slow clients (queue depth threshold) prevents backpressure cascade.",
+    "Replication lag is the cross-region metric that matters at scale — monitor and alert on it.",
+    "Client library must implement jittered exponential backoff on every reconnect.",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Production WebSocket failures come from proxy idle timeouts (raise to 3600s, disable buffering), missing Origin checks (mandatory for CSWSH defense), and absent observability. Horizontal scale requires pub/sub (Redis Streams) plus sticky sessions; the hardest engineering is state replication under failures, not the WebSocket protocol itself.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-production-architecture-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name three common Nginx misconfigurations that break long-lived WebSocket connections, and the fix for each.", a: "1) proxy_read_timeout 60s (default) closes silent connections after 60 seconds — fix: raise to 3600s. 2) proxy_buffering on (default) holds the 101 response in a buffer that never flushes — fix: proxy_buffering off. 3) Missing proxy_set_header Upgrade / Connection headers — some proxy configs strip Upgrade and the backend never sees the upgrade request — fix: explicitly set both headers." },
+    { q: "What is cross-site WebSocket hijacking (CSWSH) and how does the Origin header check defend against it?", a: "CSWSH: a malicious page on attacker.com opens a WebSocket to api.yoursite.com using the victim's browser cookies. Since the browser sends cookies automatically with WebSocket upgrades (same as HTTP), the server authenticates the connection as the victim. The server must check the Origin header against an allowlist of trusted origins and reject (403) any request from an unauthorized origin. This stops malicious pages on other domains from hijacking authenticated WebSocket connections." },
+    { q: "Why is pub/sub (e.g., Redis Streams) necessary for horizontal WebSocket scaling, and what is the role of sticky sessions alongside it?", a: "With multiple WebSocket servers, a message sent by User A connected to Server 1 must reach User B connected to Server 2. Pub/sub solves this: Server 1 publishes the message to a Redis stream; Server 2 (subscribed to the same channel) reads it and broadcasts to its local clients. Sticky sessions complement this by routing the same client to the same server across reconnects — preserving in-flight unACK'd state and subscription context without requiring full Redis replication of ephemeral per-connection state. Pub/sub handles message fan-out; sticky sessions handle per-connection state locality." },
+  ]}
+/>
+
+<Recap lang="en">
+Production WebSocket deployments fail most often not from the protocol but from proxy misconfigurations: idle timeouts (default 60s) closing quiet connections, response buffering holding the 101 response indefinitely, and missing Upgrade headers being stripped. Fix by raising timeouts to 3600s, disabling buffering, and setting explicit Upgrade headers — and send a server-side ping every 25–30 seconds to reset proxy idle timers. Security requires: Origin header validation (defense against CSWSH), handshake-level rate limiting (botnet defense), per-connection slow-read timeout (Slow Loris defense), and per-message size limits. Horizontal scale beyond a single server requires a pub/sub backbone (Redis Streams, RabbitMQ) so messages from any server reach clients on any other server, plus sticky sessions to preserve per-connection in-flight state. The hardest engineering is state replication and consistency under server failures — not the WebSocket plumbing. Key observability targets: slow-client count below 0.1%, total queued bytes below 5% of heap, p99 message latency below 100 ms.
+</Recap>

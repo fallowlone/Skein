@@ -1,0 +1,265 @@
+---
+slug: 02-frame-format
+lang: en
+track: networking
+unit: 08-websocket-realtime
+order: 2
+title: "WebSocket frame format: opcodes, masking, fragmentation"
+summary: "The 2-byte header that carries every WebSocket message — what FIN, opcode, MASK, and the three-tier length encoding mean, and why client frames must be masked."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "08-websocket-realtime/01-upgrade-handshake"
+deepensInto:
+  - "06-scaling-and-limits"
+spiral: ["statefulness"]
+concepts: ["websocket-frame", "opcode", "fin-bit", "masking", "fragmentation", "ping-pong", "close-frame", "cache-poisoning"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc6455
+  - https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API/Writing_WebSocket_servers
+  - https://hpbn.co/websocket/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+After the WebSocket handshake the HTTP parser is gone. What flows on the wire is a compact binary format that carries every message — text, binary, keepalive pings, and graceful closes — in as few as 2 bytes of overhead. Understanding that format is what separates "it sometimes works" from "I know exactly what broke."
+</Hook>
+
+<Crux>WebSocket frames carry a 2-byte header: type, mask flag, length. Client frames must be masked to prevent cache-poisoning.</Crux>
+
+<Explanation>
+
+## The frame header anatomy
+
+A WebSocket frame starts with 2 mandatory bytes, followed by optional length extension and masking key fields, and then the payload:
+
+```
+ 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-------+-+-------------+-------------------------------+
+|F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+|I|S|S|S|  (4)  |A|     (7)    |             (16/64)           |
+|N|V|V|V|       |S|             |   (if payload len==126/127)   |
+| |1|2|3|       |K|             |                               |
++-+-+-+-+-------+-+-------------+-------------------------------+
+|     Masking-key (if MASK set, 4 bytes)                        |
++---------------------------------------------------------------+
+|                    Payload data                               |
++---------------------------------------------------------------+
+```
+
+**Byte 1 breakdown:**
+- **FIN (bit 7)** — `1` means this is the last (or only) fragment of a message.
+- **RSV1-3 (bits 6-4)** — reserved for extensions (e.g., `permessage-deflate` sets RSV1=1).
+- **Opcode (bits 3-0)** — what kind of data the frame carries:
+
+| Opcode | Meaning |
+|--------|---------|
+| `0x0` | Continuation frame |
+| `0x1` | Text data (UTF-8) |
+| `0x2` | Binary data |
+| `0x8` | Close |
+| `0x9` | Ping |
+| `0xA` | Pong |
+
+**Byte 2 breakdown:**
+- **MASK (bit 7)** — `1` = payload is XOR-masked (client→server always; server→client never).
+- **Payload length (bits 6-0):**
+  - `0–125` — the actual length.
+  - `126` — next 2 bytes (uint16) hold the real length.
+  - `127` — next 8 bytes (uint64) hold the real length.
+
+**Frame overhead totals:**
+- Small server→client frame: **2 bytes** header only.
+- Small client→server frame: **2 bytes** header + **4 bytes** masking key = **6 bytes**.
+
+<NumbersCard
+  id="card-frame-overhead"
+  title="WebSocket frame overhead at a glance"
+  data-lesson-visual
+  stats={[
+    { label: "Minimum frame header (no mask, payload ≤125 bytes)", value: "2 bytes" },
+    { label: "Client→server overhead (mask required)", value: "6 bytes" },
+    { label: "Max payload in 7-bit length field", value: "125 bytes" },
+    { label: "Length extension for 126–65535 byte payloads", value: "+2 bytes (uint16)" },
+    { label: "Length extension for larger payloads", value: "+8 bytes (uint64)" },
+    { label: "Control frames (ping/pong/close) max payload", value: "125 bytes" },
+  ]}
+/>
+
+## Why client frames must be masked
+
+Masking is not encryption — it is a **cache-poisoning defense**. Here is the attack it prevents:
+
+A malicious JavaScript on `site-a.com` opens a WebSocket connection to an intermediate proxy. It then sends bytes that happen to spell out a valid HTTP response. If the proxy is naive and stateless, it treats those bytes as HTTP and reflects them to other clients — poisoning its cache.
+
+With masking, the client XORs every payload byte with a 4-byte random key sent in the frame header:
+
+```
+masked_byte[i] = payload[i] XOR mask_key[i % 4]
+```
+
+The receiver XORs back with the same key to recover the original payload. Because the mask key is random per frame, the JavaScript on the malicious site cannot pre-craft bytes that both look like an HTTP response AND decode correctly under XOR. The attack becomes infeasible.
+
+**Server frames are not masked** because JavaScript on `site-a.com` cannot read raw bytes from a server response on `site-b.com` anyway (same-origin policy blocks it).
+
+## Fragmentation and continuation frames
+
+A large message can be split across multiple frames. Rules:
+
+1. First fragment: real opcode (`0x1` or `0x2`), **FIN=0**.
+2. Middle fragments: opcode `0x0` (continuation), **FIN=0**.
+3. Last fragment: opcode `0x0`, **FIN=1**.
+
+The receiver reassembles in order. **Control frames** (ping, pong, close) cannot be fragmented and are limited to 125 bytes; they can arrive interleaved between data fragments.
+
+## Control frames: ping, pong, close
+
+**Ping (0x9):** a keepalive probe. The receiver must reply with a pong carrying the same payload. Proxies often have idle timeouts (60 seconds is common); sending a ping every 25–30 seconds resets the proxy's timer and keeps the connection alive.
+
+**Pong (0xA):** the mandatory reply to a ping. Can also be sent unsolicited as a unilateral heartbeat.
+
+**Close (0x8):** initiates the closing handshake. The body contains an optional 2-byte status code followed by UTF-8 reason text. Standard codes:
+
+| Code | Meaning |
+|------|---------|
+| 1000 | Normal closure |
+| 1001 | Going away (server shutdown, tab closed) |
+| 1006 | Abnormal closure (no close frame; generated by the implementation) |
+| 1008 | Policy violation |
+| 1011 | Unexpected condition |
+| 1013 | Try again later |
+
+After sending a close frame, each side must wait for the peer's close frame before closing the TCP connection.
+
+<Inset kind="why" lang="en">
+**Why RSV bits matter for extensions.** The `permessage-deflate` extension (RFC 7692) negotiated during the handshake uses RSV1=1 to signal that the payload is DEFLATE-compressed. A server that did not negotiate the extension and sees RSV1=1 must close the connection with code 1002 (protocol error). This strict checking ensures extensions cannot silently corrupt frames.
+</Inset>
+
+<FadedExample
+  client:load
+  id="ws-mid-fade-1"
+  pieceSlug="02-frame-format"
+  lang="en"
+  title="Parsing a small WebSocket frame"
+  steps={{
+    solved: `# Server sends "OK" to client
+# Opcode 0x1 = text, FIN=1, payload = "OK" (2 bytes), no mask
+
+Frame bytes (hex): 81 02 4F 4B
+
+Byte 1: 0x81 = 10000001
+  FIN=1   — complete message, no fragments
+  RSV=000 — no extensions active
+  Opcode=0001 — text data (UTF-8)
+
+Byte 2: 0x02 = 00000010
+  MASK=0  — server never masks (correct)
+  Payload length=2
+
+Bytes 3-4: 0x4F 0x4B
+  "O" (0x4F), "K" (0x4B) = "OK"
+
+Wire: 2 bytes header + 2 bytes payload = 4 bytes total`,
+    semi: `# Server sends "OK" to client
+# Opcode 0x1 = text, FIN=1, payload = "OK" (2 bytes), no mask
+
+Frame bytes (hex): 81 02 [payload]
+
+Byte 1: 0x81
+  FIN=?
+  Opcode=?
+
+Byte 2: 0x02
+  MASK=?
+  Payload length=?
+
+[payload bytes]: ? ?`,
+    blank: `# Server sends "OK" to client
+
+Frame bytes (hex): __ __ __ __
+
+Byte 1:
+  FIN=?
+  RSV=?
+  Opcode=?
+
+Byte 2:
+  MASK=?
+  Payload length=?
+
+Payload: ?`,
+  }}
+  misconceptions={{}}
+/>
+
+<Quiz
+  id="ws-mid-quiz-1"
+  pieceSlug="02-frame-format"
+  lang="en"
+  question="Why does the client's Sec-WebSocket-Key get transformed into Sec-WebSocket-Accept by adding a fixed GUID, hashing it, and base64-encoding it?"
+  choices={[
+    { label: "To encrypt the key so proxies cannot see it", misconception: "The Accept is sent in plain text in the server's response. It is not encryption." },
+    { label: "To prove the server intentionally processed the upgrade request and did not simply cache an old HTTP response", correct: true },
+    { label: "To generate a random number for the connection", misconception: "The randomness comes from the client's key; the GUID is fixed." },
+    { label: "To ensure the client and server computed the same session key", misconception: "Each side computes independently to verify intent, not to establish a shared secret." },
+  ]}
+/>
+
+<Quiz
+  id="ws-mid-quiz-2"
+  pieceSlug="02-frame-format"
+  lang="en"
+  question="Why must client-to-server WebSocket frames be masked, but server-to-client frames must NOT be?"
+  choices={[
+    { label: "The server is always trusted, the client never is", misconception: "Trust is not the issue. The attack vector is specific to the network path." },
+    { label: "To defend against JavaScript on a malicious site crafting bytes that poison an HTTP cache on the path to the server", correct: true },
+    { label: "For encryption", misconception: "Masking is not encryption — it is obfuscation to prevent a specific cache-poisoning attack." },
+    { label: "To save the server's bandwidth (unmasked saves 4 bytes per frame)", misconception: "4 bytes per frame is negligible. The reason is the cache-poisoning threat model." },
+  ]}
+/>
+
+<DragOrder
+  id="ws-mid-drag-1"
+  pieceSlug="02-frame-format"
+  lang="en"
+  prompt="Order the steps of a WebSocket close handshake:"
+  items={[
+    "One side sends a close frame with status code 1000",
+    "The other side receives it and replies with a close frame",
+    "The sender of the second close frame closes the TCP connection",
+    "Both sides are now in the closed state",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>WebSocket frames use a 2-byte header: FIN+opcode in byte 1, MASK+length in byte 2. Client frames XOR the payload with a 4-byte random key to prevent cache poisoning — the server never masks. Control frames (ping/pong/close) are always ≤125 bytes and cannot be fragmented.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-frame-format-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why masking defends against cache-poisoning even though the mask key is sent in plain text inside the frame.", a: "A malicious JavaScript cannot read cross-origin server responses (same-origin policy blocks it), but it CAN open a WebSocket to a proxy and send bytes that look like an HTTP response. With masking, the JavaScript must XOR its payload with the mask key to produce specific bytes — since the mask key is random per frame, it cannot pre-craft a payload that decodes to a targeted HTTP response AND also passes the proxy's HTTP parser. The randomness makes the attack infeasible without actually being encryption." },
+    { q: "A chat server is broadcasting a message to 10,000 connected clients. The broadcast completes in 100 ms. Network RTT is only 5 ms. Where does the other 95 ms come from?", a: "Serialization on the server (~1 ms), kernel copying data to TCP send buffers and coalescing segments for thousands of simultaneous sends (~10 ms), ACK round-trip (5 ms), NIC contention when many threads write to the same interface, and application-loop scheduling delays if single-threaded. The 100 ms is time from the application's send() call to all 10,000 kernel buffers having received the bytes — not the time for clients to render it." },
+    { q: "What is the FIN bit for in a WebSocket frame, and how does it interact with the opcode?", a: "FIN=1 marks the last (or only) fragment of a message; FIN=0 means more fragments follow. The first fragment carries the real opcode (0x1 text or 0x2 binary); all continuation fragments use opcode 0x0. The receiver buffers all fragments until FIN=1, then assembles and delivers the complete message to the application." },
+  ]}
+/>
+
+<Recap lang="en">
+Every WebSocket message rides in one or more frames. The 2-byte header encodes the FIN bit (last fragment flag), opcode (text, binary, ping, pong, close), MASK flag, and payload length. Client-to-server frames must XOR their payload with a random 4-byte masking key to prevent cache-poisoning attacks where malicious JavaScript crafts bytes resembling HTTP responses; server-to-client frames are never masked because the same-origin policy already blocks JavaScript from reading cross-origin raw bytes. Large messages may be fragmented across frames using opcode `0x0` (continuation) with FIN=0 on all but the last. Control frames (ping, pong, close) carry at most 125 bytes and cannot be fragmented. Close frames carry a 2-byte status code; 1000 is normal, 1006 is generated when no close frame was received.
+</Recap>
