@@ -170,14 +170,10 @@ by following a connected path of lessons. Practice is deferred (theory first).
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
    Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
-   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **5/51 units
-   done**:
-   - `01-physical-link` → 6 lessons (`2a33e06`)
-   - `02-ip-packet` → 6 lessons (`6fdb4c6`)
-   - `03-tcp-handshake` → 6 lessons (`c874633`)
-   - `04-dns-resolution` → 5 lessons (`b41167a`)
-   - `05-tls-handshake` → 5 lessons (`3353335`)
-   **RESUME at `networking/06-http-versions`.** A fresh chat resumes from
+   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **12/51 units
+   done — networking pillar COMPLETE (12/12)**. Networking commits `2a33e06` …
+   `4b39a70` (12 units → ~78 lessons EN+RU). Build 2105 pages, lint 0/0.
+   **RESUME at `browser/01-event-loop`** (next pillar: browser, 8 units). A fresh chat resumes from
    CONTINUE-PROMPT.md + the plan's progress dashboard. Per-unit procedure: dispatch a
    sonnet implementer subagent with the full per-unit prompt (plan §"Procedure (per
    unit)"), then tick the plan checklist + bump the dashboard, commit a
