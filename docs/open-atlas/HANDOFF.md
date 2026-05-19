@@ -170,9 +170,10 @@ by following a connected path of lessons. Practice is deferred (theory first).
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
    Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
-   1977 pages, lint 0/0, 66 migration tests pass. Resume at Phase B (content
-   migration), first unit `networking/01-physical-link`. A fresh chat resumes from
-   CONTINUE-PROMPT.md + the plan's progress dashboard.
+   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — 1/51 units:
+   `networking/01-physical-link` → 6 lessons (commit `2a33e06`). Resume at
+   `networking/02-ip-packet`. A fresh chat resumes from CONTINUE-PROMPT.md + the plan's
+   progress dashboard.
 
 ## Open questions
 
@@ -217,3 +218,27 @@ by following a connected path of lessons. Practice is deferred (theory first).
 - Build: `cd site && bun run build` (expect ~484 pages, lint clean).
 - Preview: launch the `atlas-preview` server (Claude Preview); it serves `site/dist`
   on port 4400. Home at `/en/`, lesson shell at `/lesson-preview/`.
+
+## ⚠️ CONCURRENCY COLLISION — 2026-05-19, networking/01-physical-link
+
+A scheduled `proceed-work` run started while another claude-code session was already
+actively authoring `networking/01-physical-link` in this same worktree
+(`interesting-antonelli-002bf7`). Two agents migrated the same unit at once — confirmed
+by lesson files appearing / being overwritten every ~2 min from another process, and
+by this HANDOFF being edited mid-run. **Only ONE session must touch this worktree.**
+
+State of `01-physical-link` as the scheduled run withdrew (NOTHING committed):
+- EN lessons present: `01-bits-on-the-wire`, `02-modulation-and-shannon`,
+  `03-latency-math`, `04-bufferbloat-and-congestion`, `05-datacenter-and-800g`.
+- RU lessons present: `01`, `02`, `03` only — `04` and `05` RU twins MISSING.
+- The scheduled run deleted two of its own orphan lessons (`05-the-datacentre-fabric`,
+  `06-the-physical-frontier`) that duplicated the other agent's cut, and repointed
+  `04`'s `deepensInto` to `05-datacenter-and-800g`. `01`/`02` cruxes trimmed to ≤140.
+- Known build breakage: `03-latency-math` (EN+RU) has `<1 ms` in a Markdown table —
+  MDX parses `<1` as a JSX tag, vite build fails. RU `02` URLLC line has the same
+  `<1` bug. Fix: `&lt;1` or "under 1 ms".
+
+Before resuming this unit, one agent must: reconcile/confirm the cut plan + slugs,
+finish RU twins for `04`+`05`, fix the `<1` MDX bug, add the `units.json` entry,
+`cd site && bun run build` to lint 0/0, delete `book/{en,ru}/networking/01-physical-link/`,
+then commit. Verify each lesson before declaring it `ready`.
