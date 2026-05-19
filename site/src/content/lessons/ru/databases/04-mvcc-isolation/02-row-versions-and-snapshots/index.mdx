@@ -1,0 +1,207 @@
+---
+slug: 02-row-versions-and-snapshots
+lang: ru
+track: databases
+unit: 04-mvcc-isolation
+order: 2
+title: "Заголовок tuple и механика снимков"
+summary: "Каждый tuple хранит 23-байтный заголовок с t_xmin/t_xmax/t_ctid; snapshot закрепляет xmin/xmax/xip; правило видимости применяется построчно без read-блокировок."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/04-mvcc-isolation/01-mvcc-basics"]
+deepensInto: ["databases/04-mvcc-isolation/03-hot-updates-and-isolation-levels", "databases/04-mvcc-isolation/04-vacuum-and-bloat"]
+spiral: ["statefulness"]
+concepts: ["tuple-header", "t-xmin", "t-xmax", "t-ctid", "t-infomask", "snapshot", "visibility-rule"]
+sources:
+  - https://www.postgresql.org/docs/current/storage-page-layout.html
+  - https://boringsql.com/posts/postgresql-mvcc-byte-by-byte/
+  - https://www.sahaj.ai/internals-of-mvcc-in-postgres-hidden-costs-of-updates-vs-inserts/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Postgres читает три числа из заголовка каждой строки, сравнивает их с тремя числами в snapshot транзакции и принимает решение о видимости — без единой read-блокировки. Разберём механику побайтово.
+</Hook>
+
+<Crux>Tuple: 23-байтный заголовок (t_xmin, t_xmax, t_ctid). Snapshot: xmin, xmax, xip. Видимость — чистая функция от этих полей.</Crux>
+
+<Explanation>
+
+## Заголовок tuple
+
+Когда Postgres сохраняет tuple на heap-странице, перед пользовательскими колонками идёт **23-байтный заголовок**:
+
+| Поле | Тип | Назначение |
+|------|-----|------------|
+| `t_xmin` | 32-bit XID | Транзакция, вставившая эту версию |
+| `t_xmax` | 32-bit XID | Транзакция, удалившая/обновившая версию (0 = живая) |
+| `t_cid` | 32-bit | Command id внутри транзакции |
+| `t_ctid` | (block, offset) | Указатель на следующую версию строки |
+| `t_infomask` | 16-bit | Биты статуса: XMIN_COMMITTED, XMAX_INVALID, HOT-флаги и др. |
+| `t_infomask2` | 16-bit | Число атрибутов + флаги HOT |
+
+Именно эти поля решают вопрос видимости на каждой строке, которую Postgres смотрит.
+
+## Как snapshot решает, что читать
+
+Когда транзакция начинается — при первом запросе под `READ COMMITTED`, или на `BEGIN` под `REPEATABLE READ` — Postgres строит snapshot. Это небольшая структура, фиксирующая три числа:
+
+- **`xmin`** — id самой старой ещё работающей транзакции
+- **`xmax`** — id на единицу больше последнего закоммиченного на момент snapshot
+- **`xip`** — список незавершённых транзакций между xmin и xmax
+
+**Правило видимости** (применяется построчно):
+
+Tuple виден, если:
+- его `t_xmin` закоммичен и **не** в списке `xip`, И
+- его `t_xmax` равен нулю, ИЛИ откатан, ИЛИ в списке `xip`
+
+Никаких read-блокировок не задействовано — это и есть весь механизм.
+
+## INSERT, UPDATE, DELETE — что реально происходит на диске
+
+**INSERT** — кладёт свежий tuple с `t_xmin` = id текущей транзакции, `t_xmax` = 0.
+
+**UPDATE** — две операции:
+1. Помечает старый tuple: `t_xmax` = текущая транзакция
+2. Вставляет новый tuple: `t_xmin` = та же транзакция; `t_ctid` старого указывает на адрес нового
+
+**DELETE** — помечает существующий tuple: `t_xmax` = текущая транзакция. Ничего нового не пишет.
+
+Ни одна из операций не удаляет ничего физически. Все логически обратимы до коммита, а после коммита по-прежнему физически на месте, пока VACUUM не решит, что они больше никому не нужны.
+
+## Пример: параллельный UPDATE и SELECT
+
+<FadedExample
+  client:load
+  id="fe-mvcc-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="ru"
+  title="Проследи одну строку через UPDATE и параллельный SELECT"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Сетап:</strong> таблица <code>accounts</code> с одной строкой id=42, balance=100, вставленной давно закоммиченной транзакцией.</p>
+        <p><strong>Соединение A:</strong> <code>BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 42;</code> — без коммита.</p>
+        <p><strong>Соединение B:</strong> <code>BEGIN; SELECT balance FROM accounts WHERE id = 42;</code> в тот же момент.</p>
+        <p><strong>Что видит B:</strong> СТАРЫЙ баланс (100). Почему?</p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>Строка id=42 теперь имеет две версии. v1: balance=100, t_xmin = ранее закоммиченная tx, t_xmax = A. v2: balance=0, t_xmin = A, t_xmax = 0.</li>
+          <li>Snapshot B взят на BEGIN B. A в списке xip snapshot B.</li>
+          <li>Видимость v1: t_xmin закоммичен (нижняя граница пройдена), t_xmax = A (в xip, удаление не видно). <strong>v1 виден.</strong></li>
+          <li>Видимость v2: t_xmin = A (в xip, нижняя граница не пройдена). <strong>v2 невидим.</strong></li>
+          <li>B читает balance=100 из v1. Без блокировок, без ожидания.</li>
+        </ul>
+      </div>
+    ),
+    semi: {
+      prompt: "Тот же сетап, но теперь A коммитит до того, как B закончит. Какой balance видит B на ВТОРОМ SELECT в той же транзакции B под Repeatable Read?",
+      blanks: [
+        { id: "rr_balance", expected: "100", placeholder: "значение balance" },
+      ],
+    },
+    blank: {
+      prompt: "Тот же сетап, но A коммитит до окончания B. Под Read Committed (дефолт Postgres) B делает ВТОРОЙ SELECT после коммита A. Какой balance видит B и почему он отличается от Repeatable Read?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p><strong>B видит НОВЫЙ balance (0).</strong></p>
+          <p>Под Read Committed каждый statement получает СВЕЖИЙ snapshot. Первый SELECT B использовал snapshot, исключавший A; второй SELECT, после коммита A, использует новый snapshot, в котором A в прошлом. v2 теперь виден (t_xmin = A закоммичен, t_xmax = 0). B видит 0.</p>
+          <p>Это каноничный сюрприз Read Committed: два SELECT в одной транзакции могут вернуть разные значения той же строки. Repeatable Read замораживает snapshot на старте транзакции, поэтому второй SELECT увидел бы 100.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "rr_balance:0": "Под Repeatable Read snapshot взят на BEGIN B, ещё до коммита A. Вид B не продвигается. Новый balance невидим, пока B не закоммитит и не начнёт новую транзакцию.",
+  }}
+/>
+
+</Explanation>
+
+## Проверь себя
+
+<TraceScenario
+  id="trace-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="ru"
+  scenario="Проследи MVCC-состояние одной строки под SELECT, потом UPDATE, потом DELETE в трёх разных транзакциях, плюс четвёртая долгая SELECT держит старый snapshot."
+  steps={[
+    { prompt: "T1 вставляет (id=5, balance=100). T1 коммитит. Состояние heap?", reveal: "Один tuple на id=5 с t_xmin = T1, t_xmax = 0. Живой, виден любому последующему snapshot." },
+    { prompt: "T2 начинается, читает id=5 и остаётся открытой без коммита. Тем временем T3 начинается.", reveal: "На диске ничего не изменилось. T2 удерживает snapshot; её backend_xmin закреплён, поэтому VACUUM ничего не может убрать из того, что T2 ещё нужно." },
+    { prompt: "T3 выполняет UPDATE accounts SET balance = 50 WHERE id = 5, потом коммитит.", reveal: "Heap теперь хранит два tuple для id=5. v1: t_xmin = T1, t_xmax = T3 (старый 100, помечен мёртвым T3). v2: t_xmin = T3, t_xmax = 0 (новый 50, живой). Snapshot T2 всё ещё видит v1." },
+    { prompt: "T4 начинается, выполняет DELETE FROM accounts WHERE id = 5, коммитит.", reveal: "v2 получает t_xmax = T4. Теперь v1 и v2 физически на диске — оба мёртвые. Snapshot T2 всё ещё закрепляет v1, поэтому VACUUM не может убрать ни один tuple." },
+    { prompt: "Что показывает pg_stat_all_tables.n_dead_tup для этой таблицы?", reveal: "Оба v1 и v2 мёртвые, n_dead_tup = 2. Но backend_xmin T2 старше момента удаления v1, поэтому autovacuum логирует 'cannot remove tuples deleted by transactions in progress'. Bloat закреплён T2." },
+    { prompt: "T2 наконец-то коммитит. Что произойдёт?", reveal: "Snapshot T2 освобождён; backend_xmin продвигается. Следующий цикл autovacuum освобождает слоты v1 и v2 (помечает их переиспользуемыми внутри heap-страницы). Файл не сокращается, но новые INSERT смогут попасть в эти слоты." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="ru"
+  question="На каком уровне изоляции Postgres обнаруживает lost update и бросает SQLSTATE 40001 вместо тихой перезаписи?"
+  choices={[
+    { label: "Read Uncommitted", misconception: "Postgres трактует Read Uncommitted как Read Committed; ни один из них не бросает 40001 на lost update." },
+    { label: "Read Committed", misconception: "RC перечитывает каждый statement со свежим snapshot. Lost update определяется приложением, не базой." },
+    { label: "Repeatable Read", correct: true, justification: "Postgres RR — это snapshot isolation. Если две транзакции обновляют одну и ту же строку, вторая на коммит получает 40001 вместо тихой перезаписи." },
+    { label: "Только Serializable", misconception: "Serializable тоже ловит lost update, но Repeatable Read его уже ловит. SSI добавляет защиту от write skew, чего RR не ловит." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="ru"
+  question="UPDATE ставит t_xmax строки в id текущей транзакции и вставляет новый tuple. Что происходит со старым tuple сразу после коммита?"
+  choices={[
+    { label: "Физически удаляется из heap-файла", misconception: "Физического удаления на коммите нет. Tuple всё ещё на диске." },
+    { label: "Помечен мёртвым через закоммиченный t_xmax, остаётся на диске пока VACUUM и ни один snapshot его не нуждается", correct: true },
+    { label: "Перемещается в отдельный undo log", misconception: "У Postgres нет отдельного undo log — каждая старая версия в том же heap." },
+    { label: "Сжимается на месте ради экономии", misconception: "Никакого in-place сжатия. Байты старой версии остаются." },
+  ]}
+/>
+
+<KeyTakeaway>Каждый tuple несёт t_xmin (кто вставил) и t_xmax (кто удалил). Snapshot — три числа: xmin, xmax, xip. Правило видимости применяется без read-блокировок. UPDATE — это всегда два tuple в heap; физического удаления нет до прохода VACUUM.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="ru"
+  questions={[
+    {
+      id: "q1",
+      q: "Назови три поля snapshot в Postgres и объясни роль каждого.",
+      a: "xmin — id самой старой ещё работающей транзакции (нижний предел видимости). xmax — id на единицу больше последнего закоммиченного (верхний предел). xip — список незавершённых транзакций между xmin и xmax (их изменения невидимы даже если t_xmin < xmax). Правило: tuple виден если t_xmin закоммичен и не в xip, И t_xmax равен 0 или откатан или в xip.",
+    },
+    {
+      id: "q2",
+      q: "Почему t_ctid важен для операции UPDATE, но не для DELETE?",
+      a: "UPDATE создаёт новую версию tuple; t_ctid старого tuple указывает на физический адрес (номер страницы + смещение) новой версии — это позволяет Postgres пройти цепочку до живой версии. DELETE не создаёт новой версии; просто ставит t_xmax и не нужно никуда идти. После коммита DELETE нет следующей версии для обнаружения.",
+    },
+    {
+      id: "q3",
+      q: "Долгая транзакция T2 стартует, ничего не делает, и держится открытой. T3 делает 10 000 UPDATE на таблице orders и коммитит. Почему VACUUM всё равно не может убрать мёртвые tuple?",
+      a: "VACUUM вычисляет глобально старейший oldest-xmin по всем сессиям. Snapshot T2 был взят до T3, поэтому oldest-xmin равен xmin snapshot T2 — это ниже, чем t_xmax мёртвых tuple T3. VACUUM не может убрать ни один tuple, который может понадобиться хоть одному живому snapshot. T2 живёт — значит весь её snapshot остаётся закреплённым.",
+    },
+  ]}
+/>
+
+<Recap>
+- Заголовок tuple: 23 байта с t_xmin, t_xmax, t_ctid, t_infomask
+- Snapshot: три числа (xmin, xmax, xip); правило видимости применяется построчно без блокировок
+- INSERT: один новый tuple. UPDATE: два tuple (старый с t_xmax, новый с t_xmin). DELETE: один tuple с t_xmax
+- Физического удаления нет; VACUUM помечает мёртвые tuple переиспользуемыми после того как ни один snapshot их не нуждается
+- Под RC snapshot обновляется на каждом statement; под RR — берётся один раз на BEGIN
+</Recap>

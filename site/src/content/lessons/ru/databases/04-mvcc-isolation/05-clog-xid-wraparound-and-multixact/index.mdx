@@ -1,0 +1,198 @@
+---
+slug: 05-clog-xid-wraparound-and-multixact
+lang: ru
+track: databases
+unit: 04-mvcc-isolation
+order: 5
+title: "CLOG, XID wraparound и MultiXact"
+summary: "HeapTupleSatisfiesMVCC ходит в CLOG когда hint-биты не выставлены. XID — 32-битный: заморозка на 200M транзакций, отказ на 2B. MultiXact хранит shared row locks с собственным wraparound счётчиком."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/04-mvcc-isolation/02-row-versions-and-snapshots"]
+deepensInto: ["databases/04-mvcc-isolation/06-ssi-and-production-tuning"]
+spiral: ["statefulness"]
+concepts: ["heapTupleSatisfiesMVCC", "hint-bits", "clog", "pg-xact", "xid-wraparound", "frozen-transaction-id", "multixact", "pg-multixact"]
+sources:
+  - https://www.postgresql.org/docs/current/storage-page-layout.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html#VACUUM-FOR-WRAPAROUND
+  - https://postgrespro.com/blog/pgsql/5967910
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Sentry 2017: autovacuum отстал, 32-битный XID-счётчик приблизился к потолку, Postgres отказался принимать новые соединения и завершился с сообщением «database is not accepting commands to avoid wraparound data loss». Ручная заморозка под огнём. Разберём механику до байта.
+</Hook>
+
+<Crux>XID 32-битный: заморозка на 200M, отказ на 2B. CLOG — 2 бита/XID в pg_xact/; hint-биты кешируют ответы. MultiXact — отдельный счётчик.</Crux>
+
+<Explanation>
+
+## HeapTupleSatisfiesMVCC и hint-биты
+
+Решение видимости на каждом tuple реализовано в `HeapTupleSatisfiesMVCC(HeapTuple, Snapshot, Buffer)` в `heapam_visibility.c`. Функция проходит по дереву решений через биты `t_infomask`:
+
+| Бит | Значение |
+|-----|---------|
+| `HEAP_XMIN_COMMITTED` | t_xmin закоммичен — короткий путь |
+| `HEAP_XMIN_INVALID` | t_xmin откатан или невалиден |
+| `HEAP_XMAX_COMMITTED` | t_xmax закоммичен (строка мёртвая) |
+| `HEAP_XMAX_INVALID` | t_xmax откатан или нулевой (строка живая) |
+
+Когда биты выставлены — прямое решение без CLOG. Когда нет — функция лезет в CLOG, получает ответ и записывает hint-бит обратно на страницу.
+
+**Почему это важно операционно:** SELECT сразу после долгого INSERT может быть медленнее, чем тот же SELECT секундой позже. Первый скан трогает CLOG-запись каждого tuple и пишет hint-биты; второй скан читает биты напрямую.
+
+## CLOG (commit log)
+
+Каждый коммиченный или откатанный XID записывается в `pg_xact/` (раньше `pg_clog/`): **2 бита на transaction id**, упакованные в страницы по 8 КБ. Одна страница покрывает 16 384 транзакции.
+
+CLOG активно кешируется (`clog_buffers`). Hint-биты на tuple избегают CLOG-lookup; но на свежезаписанном tuple первый читатель обязан спросить CLOG.
+
+После коммита транзакции биты в CLOG надёжно на диске благодаря WAL. Именно поэтому `fsync = on` и `synchronous_commit = on` непереговариваемы: коммит, подтверждённый до того как WAL ушёл на диск, может оставить CLOG несогласованным на восстановлении.
+
+## XID wraparound и заморозка
+
+Transaction id в Postgres **32-битные**. На ~2B транзакций счётчик переполнится, и старые xmin/xmax выглядели бы новее, чем они есть — катастрофа корректности.
+
+**Механизм предотвращения:** Как только tuple "достаточно старый" (старше `autovacuum_freeze_max_age`, дефолт 200M транзакций), VACUUM переписывает его `t_xmin` на `FrozenTransactionId` — специальное значение, всегда видимое любому snapshot.
+
+Пороги эксплуатации:
+
+```sql
+SELECT datname, age(datfrozenxid) FROM pg_database;
+```
+
+| Порог | Действие |
+|-------|---------|
+| 1B транзакций | Алерт |
+| 1.5B транзакций | Пейджер |
+| 2B транзакций | Postgres отказывает в соединениях |
+
+VACUUM wraparound-prevention — задача autovacuum **высшего приоритета**: запускается даже когда `autovacuum = off`. На базе, приближающейся к 2B без достаточной заморозки, Postgres отказывает в соединениях с сообщением `database is not accepting commands to avoid wraparound data loss`.
+
+**Sentry 2017**: autovacuum отстал на кластере с интенсивной записью — закончилось ручной заморозкой `VACUUM FREEZE` для восстановления.
+
+<Misconception id="mc-wraparound">
+**"autovacuum = off безопасен для read-only баз"**. Нет. Даже read-only база накапливает XID через транзакции чтения. Anti-wraparound vacuum запускается независимо от настройки autovacuum. Выключить его полностью — поставить таймер под базой.
+</Misconception>
+
+## MultiXact и shared row locks
+
+Когда несколько транзакций хотят держать неэксклюзивную блокировку на одной строке (`SELECT ... FOR SHARE`, `FOR KEY SHARE`), Postgres не может разместить несколько XID в единственное поле `t_xmax`.
+
+Вместо этого выделяется **`MultiXactId`** — 32-битный id, указывающий в `pg_multixact/`, где перечислены участники и их режимы блокировок.
+
+MultiXact имеет **собственный wraparound** (тоже 2B), отслеживается отдельно и замораживается на отдельном расписании.
+
+Нагрузка с интенсивным `SELECT ... FOR KEY SHARE` (неявная блокировка от проверок foreign key) может попасть в MultiXact wraparound **задолго до XID wraparound**.
+
+```sql
+SELECT datname, age(datfrozenxid), age(datminmxid) FROM pg_database;
+```
+
+Симптом MultiXact проблемы: `autovacuum: found xxx nonremovable row versions ... dead row versions cannot be removed yet` с высоким "oldest MultiXact" age.
+
+## Числа
+
+<NumbersCard
+  id="card-clog-numbers"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  title="CLOG, XID, MultiXact: числа"
+  stats={[
+    { label: "Бит на транзакцию в CLOG", value: "2 бита (4 состояния: in-progress, committed, aborted, subtransaction)" },
+    { label: "Транзакций на страницу CLOG (8 КБ)", value: "16 384" },
+    { label: "XID wraparound", value: "~2B транзакций (2^31)" },
+    { label: "Trigger заморозки", value: "autovacuum_freeze_max_age = 200M" },
+    { label: "MultiXact wraparound", value: "2B, отдельный от XID" },
+    { label: "Sentry 2017 recovery", value: "ручная заморозка VACUUM FREEZE" },
+  ]}
+/>
+
+</Explanation>
+
+## Проверь себя
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="ru"
+  question="Зачем HeapTupleSatisfiesMVCC пишет hint-биты обратно на страницу после консультации CLOG?"
+  choices={[
+    { label: "Чтобы ускорить следующий скан — hint-бит закорачивает CLOG-lookup", correct: true },
+    { label: "Чтобы сообщить VACUUM, что tuple можно убирать", misconception: "Hint-биты не связаны с уборкой. VACUUM решает на основе t_xmax и oldest-xmin, не hint-битов." },
+    { label: "Чтобы предотвратить wraparound — установка XMIN_COMMITTED является заморозкой", misconception: "Заморозка — перезапись t_xmin в FrozenTransactionId. Hint-биты — только кеш статуса коммита." },
+    { label: "Чтобы пометить tuple как часть HOT-цепочки", misconception: "HOT-флаги — другие биты (HEAP_HOT_UPDATED, HEAP_ONLY_TUPLE) в t_infomask2, не в hint-bits для статуса коммита." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="ru"
+  question="На каком пороге возраста XID Postgres сам начинает аварийный anti-wraparound vacuum, игнорируя autovacuum = off?"
+  choices={[
+    { label: "На 200M транзакций (autovacuum_freeze_max_age)", misconception: "200M — это порог trigger обычной заморозки. Аварийный vacuum запускается позже, ближе к 1.6B." },
+    { label: "На 1B транзакций", misconception: "1B — рекомендованный порог алерта, не жёсткая граница автоматики." },
+    { label: "Аварийный anti-wraparound vacuum запускается всегда, независимо от настройки autovacuum", correct: true },
+    { label: "Только когда datfrozenxid превышает 1.5B", misconception: "Anti-wraparound — постоянно активная защита, не пороговая. Она может запуститься раньше 1.5B в зависимости от vacuum_freeze_min_age." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-3"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="ru"
+  question="Рабочая нагрузка с интенсивным SELECT ... FOR KEY SHARE может попасть в wraparound задолго до обычного XID wraparound. Почему?"
+  choices={[
+    { label: "FOR KEY SHARE потребляет больше XID, чем обычные транзакции", misconception: "FOR KEY SHARE не потребляет XID быстрее. Проблема в другом счётчике." },
+    { label: "FOR KEY SHARE создаёт MultiXactId для shared locks, у MultiXact свой 32-битный счётчик с независимым wraparound", correct: true },
+    { label: "FOR KEY SHARE отключает freezing для задетых строк", misconception: "Freezing не отключается. MultiXact wraparound — отдельный механизм, не связанный с freezing." },
+    { label: "FOR KEY SHARE создаёт больше CLOG-записей, насыщая pg_xact/", misconception: "CLOG хранит только XID, не MultiXact. Проблема в pg_multixact/, не pg_xact/." },
+  ]}
+/>
+
+<KeyTakeaway>HeapTupleSatisfiesMVCC кеширует CLOG-ответы в hint-битах для скорости. XID — 32-битный: заморозка на 200M, отказ на 2B — это жёсткие инженерные ограничения. MultiXact добавляет второй 32-битный счётчик для shared row locks с независимым wraparound, который может наступить раньше XID-wraparound на нагрузках с интенсивным FOR KEY SHARE.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="ru"
+  questions={[
+    {
+      id: "q1",
+      q: "Объясни, почему SELECT сразу после долгого INSERT может быть медленнее, чем тот же SELECT секундой позже.",
+      a: "Первый скан после INSERT обнаруживает tuple без выставленных hint-битов (HEAP_XMIN_COMMITTED). Для каждого tuple HeapTupleSatisfiesMVCC должна обратиться к CLOG в pg_xact/, получить статус коммита и только потом записать hint-бит на страницу. Это IO-дорожка на каждый свежезаписанный tuple. Второй SELECT выполняется секундой позже: большинство hint-битов уже выставлены (первый скан их записал), поэтому функция использует короткий путь и не обращается к CLOG.",
+    },
+    {
+      id: "q2",
+      q: "Как FrozenTransactionId защищает от XID wraparound?",
+      a: "32-битное пространство XID полуциклично: у каждого XID есть 2^31 транзакций в прошлом и 2^31 в будущем. Если старый t_xmin не заморозить, после 2B новых транзакций он выглядел бы 'в будущем' и стал бы невидимым для всех snapshot — катастрофа. FrozenTransactionId (значение 2) всегда считается 'старше любого XID' по всем сравнениям — таким образом замороженный tuple всегда виден. VACUUM переписывает t_xmin старых tuple в это значение, выводя их из пространства сравнения XID полностью.",
+    },
+    {
+      id: "q3",
+      q: "Назови SQL-запрос для мониторинга расстояния до XID wraparound и MultiXact wraparound одновременно.",
+      a: "SELECT datname, age(datfrozenxid) AS xid_age, age(datminmxid) AS multixact_age FROM pg_database; Значение age() показывает число транзакций с момента последней заморозки. Алерт на 1B по обоим столбцам; пейджер на 1.5B. Оба счётчика независимы — multixact_age может быть намного больше xid_age на нагрузках с интенсивным FOR KEY SHARE.",
+    },
+  ]}
+/>
+
+<Recap>
+- HeapTupleSatisfiesMVCC проверяет hint-биты в t_infomask; при их отсутствии обращается к CLOG и пишет бит обратно
+- CLOG (pg_xact/): 2 бита на XID, 8 КБ на страницу = 16 384 транзакции на страницу
+- XID 32-битный: VACUUM замораживает tuple на 200M (autovacuum_freeze_max_age), Postgres отказывает на 2B
+- FrozenTransactionId = 2, всегда видим для любого snapshot — устраняет tuple из пространства XID-сравнения
+- Anti-wraparound vacuum работает всегда, независимо от autovacuum = off
+- MultiXact: отдельный 32-битный счётчик для shared row locks (FOR SHARE/FOR KEY SHARE), хранится в pg_multixact/; имеет собственный wraparound
+</Recap>

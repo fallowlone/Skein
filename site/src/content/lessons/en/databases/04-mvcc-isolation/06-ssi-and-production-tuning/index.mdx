@@ -1,0 +1,229 @@
+---
+slug: 06-ssi-and-production-tuning
+lang: en
+track: databases
+unit: 04-mvcc-isolation
+order: 6
+title: "SSI internals and production autovacuum tuning"
+summary: "SSI detects write skew via predicate locks and rw-antidependency cycles; production autovacuum needs per-table overrides, cost_delay=0 on NVMe, and a separate replica analytics policy to keep bloat bounded."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/04-mvcc-isolation/03-hot-updates-and-isolation-levels", "databases/04-mvcc-isolation/04-vacuum-and-bloat"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["ssi", "predicate-lock", "rw-antidependency", "autovacuum-tuning", "fillfactor", "pg-stat-progress-vacuum", "observability"]
+sources:
+  - https://www.postgresql.org/docs/current/mvcc-serialization-failure-handling.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/storage-hot.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A production OLTP cluster suddenly logs hundreds of "could not serialize access" errors per minute on the orders table. You have 15 minutes before the on-call engineer escalates. The diagnosis path — isolation level confirmation, predicate-lock count, workload genuineness — is a step-by-step procedure, not guesswork.
+</Hook>
+
+<Crux>SSI catches write skew via rw-antidependency cycles; autovacuum needs per-table overrides; replica analytics with hot_standby_feedback=off.</Crux>
+
+<Explanation>
+
+## Serializable Snapshot Isolation (SSI) internals
+
+Postgres 9.1 introduced SSI per Cahill, Röhm, and Fekete's 2008 paper. The mechanism:
+
+1. Every **read** tracks "predicate locks" — lightweight, in-memory references to "I read this set"
+2. Every **write** tracks rw-antidependencies — "this transaction wrote something my predicate matched after I read"
+3. At commit time, if a transaction is part of a "dangerous structure" — a **cycle of rw-antidependencies** — SSI aborts it with SQLSTATE 40001 `could not serialize access due to read/write dependencies`
+
+The math is conservative: SSI sometimes aborts transactions that would have committed safely (**false positives** are correct but cost throughput), but it **never allows a non-serializable schedule**.
+
+Predicate-lock memory is bounded by `max_pred_locks_per_transaction × max_connections`. Under memory pressure the locks coarsen from row → page → relation, **raising false-positive rate further**.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">False-positive rate</th>
+        <th class="border border-border px-3 py-2 text-left">Likely cause</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">0.1–1%</td>
+        <td class="border border-border px-3 py-2">Normal SSI behavior</td>
+        <td class="border border-border px-3 py-2">No action needed</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">1–5%</td>
+        <td class="border border-border px-3 py-2">Predicate-lock coarsening</td>
+        <td class="border border-border px-3 py-2">Raise max_pred_locks_per_transaction</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">&gt;5%</td>
+        <td class="border border-border px-3 py-2">Genuine workload conflict or memory pressure</td>
+        <td class="border border-border px-3 py-2">App-level partitioning or switch to RC+FOR UPDATE</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TraceScenario
+  id="06-ssi-trace-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="en"
+  scenario="A production OLTP cluster suddenly logs hundreds of 'could not serialize access' errors per minute on the orders table. Trace the diagnosis."
+  steps={[
+    { prompt: "Step 1: What does the error message tell you about the isolation level in use?", reveal: "SQLSTATE 40001 with 'read/write dependencies' wording is SSI under SERIALIZABLE. With Repeatable Read you'd see 'could not serialize access due to concurrent update' instead." },
+    { prompt: "Step 2: How do you confirm the isolation level the application is using?", reveal: "Check pg_stat_statements for the offending queries, or sample pg_stat_activity.query and inspect the connection settings. Also check the application connection-pool config — Hibernate/SQLAlchemy/Django often default to RC, so SERIALIZABLE must be explicitly set." },
+    { prompt: "Step 3: Confirmed SERIALIZABLE. What metric tells you whether this is workload pressure or a config issue?", reveal: "Compare pg_stat_database.xact_commit with the 40001 rate. If 40001 is >5% of commits, predicate locks are over-coarsening (memory pressure) OR the workload has genuine read-write conflicts. Check pg_locks for predicate-lock counts and compare against max_pred_locks_per_transaction × max_connections." },
+    { prompt: "Step 4: pg_locks shows predicate-lock coarsening from row to page. What do you tune?", reveal: "Increase max_pred_locks_per_transaction (default 64) to 128 or 256, or reduce the working-set size of each SERIALIZABLE transaction. If neither helps, the workload itself needs application-level partitioning (process orders for region A only on session 1, region B only on session 2)." },
+    { prompt: "Step 5: After tuning, error rate stays high. What is the next hypothesis?", reveal: "Genuine workload conflict. The application has many transactions that read the same set and write to it (e.g., reserve-inventory). SSI cannot magic this away. Options: switch to optimistic concurrency at the application layer (SELECT FOR UPDATE on the hot row, fall back to RR), or partition the hot row into N hot rows by application-managed bucketing." },
+  ]}
+/>
+
+## Heap fillfactor and HOT chain length
+
+`pg_stat_all_tables.n_tup_hot_upd` divided by `n_tup_upd` gives the HOT ratio. On UPDATE-heavy schemas you want this above 80%. Below 50% means fillfactor is too aggressive or the schema has the wrong index set for the workload.
+
+The `pgstattuple` extension exposes `tuple_count`, `dead_tuple_count`, and `free_space` per table for deeper introspection.
+
+## Production tuning of autovacuum
+
+The default knobs are too lax for any high-write table. Per-table overrides via storage parameters:
+
+```sql
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_vacuum_cost_limit = 2000,
+  autovacuum_vacuum_cost_delay = 2
+);
+```
+
+This turns on autovacuum at 5% dead-tuple ratio (instead of 20%), with higher cost-budget per cycle and shorter delay between IO chunks. On NVMe-backed clusters the `cost_delay` can be zero.
+
+For tables with bursty write patterns, an explicit `VACUUM (PARALLEL 4) orders;` overnight via cron is common in addition to autovacuum.
+
+`autovacuum_max_workers` bumps the worker pool from 3 to 6 or 8 on large hosts.
+
+Watch `pg_stat_progress_vacuum.phase` to see live progress:
+- `scanning heap`
+- `vacuuming indexes`
+- `vacuuming heap`
+- `cleaning up indexes`
+- `truncating heap`
+- `performing final cleanup`
+
+## Observability: the metrics that actually move
+
+Minimum-viable Postgres bloat dashboard:
+
+```sql
+-- Dead tuple ratios
+SELECT relname, n_dead_tup, n_live_tup,
+       n_dead_tup::float / NULLIF(n_live_tup + n_dead_tup, 0) AS dead_ratio
+FROM pg_stat_user_tables ORDER BY dead_ratio DESC LIMIT 20;
+
+-- Snapshot pinners
+SELECT pid, backend_xmin, now() - xact_start AS duration, state, query
+FROM pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY backend_xmin LIMIT 5;
+
+-- Orphan replication slots
+SELECT slot_name, xmin, confirmed_flush_lsn FROM pg_replication_slots WHERE xmin IS NOT NULL;
+
+-- Wraparound ages
+SELECT datname, age(datfrozenxid), age(datminmxid) FROM pg_database;
+```
+
+<TradeoffMatrix
+  id="06-ssi-tradeoff-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="en"
+  prompt="A bank's transfer service moves money between accounts. Pick the isolation strategy that best balances correctness, throughput, and operational complexity."
+  options={[
+    { name: "READ COMMITTED + SELECT ... FOR UPDATE on both accounts", summary: "Pessimistic locking on RC.", correct: true, justification: "Locks acquired in a consistent order avoid deadlocks; FOR UPDATE forces both rows to be read at the latest committed version. Throughput is bounded by lock contention on hot accounts but predictable. Most banks ship this pattern; it composes well with retry on deadlock detection." },
+    { name: "REPEATABLE READ + retry loop on SQLSTATE 40001", summary: "Snapshot isolation, optimistic.", justification: "Works for low-contention paths but pathological on hot accounts: every concurrent transfer to a popular account aborts and retries, throughput collapses. Snapshot isolation also has write-skew risk if the schema includes derived columns like account.balance + transactions.amount_sum." },
+    { name: "SERIALIZABLE with SSI", summary: "Strictest, costliest.", justification: "Correct by construction, but SSI false-positive rate climbs sharply on hot accounts because predicate locks coarsen. Reserve SERIALIZABLE for workloads where correctness > throughput (audit, regulatory)." },
+    { name: "READ COMMITTED with no locking, application checks balance > 0 after UPDATE", summary: "Optimistic at app layer.", justification: "Vulnerable to lost-update if two transfers race: both read balance=100, both subtract 80, both succeed, balance ends up at -60. Catastrophic for a bank. Never ship this." },
+  ]}
+/>
+
+<DesignPrompt
+  id="06-ssi-design-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="en"
+  prompt="Design an autovacuum policy for a high-write OLTP table receiving 5,000 row inserts + updates per second, with a target dead-tuple ratio below 10% and zero impact on customer-facing latency."
+  constraints={[
+    "Table is 200 GB, growing 2-3 GB per day.",
+    "Underlying storage is NVMe, single-tenant.",
+    "Application opens 5-minute analytics transactions intermittently from a replica.",
+    "Customer-facing p99 must stay under 50 ms during autovacuum runs.",
+    "No downtime windows.",
+  ]}
+  canonical="Per-table parameters: autovacuum_vacuum_scale_factor = 0.02 (kick at 2% dead), autovacuum_vacuum_cost_limit = 4000 (high), autovacuum_vacuum_cost_delay = 0 (NVMe), autovacuum_vacuum_insert_scale_factor = 0.05, fillfactor = 80. Cluster: autovacuum_max_workers = 6, maintenance_work_mem = 2GB. Replica analytics: hot_standby_feedback = OFF so primary autovacuum is never held back; the replica accepts its own bloat. Add a nightly cron VACUUM (PARALLEL 4) on the table even though autovacuum keeps up — the explicit cron pass also runs ANALYZE and updates planner stats. Monitor: pg_stat_progress_vacuum.phase + n_dead_tup ratio every 30s; alert if ratio > 8% for 10 minutes. idle_in_transaction_session_timeout = 5min on the primary."
+  keyPoints={[
+    "Per-table scale_factor much lower than the global 0.2 default.",
+    "cost_delay = 0 only because NVMe can absorb the IO; rotational storage needs cost_delay > 0.",
+    "hot_standby_feedback = OFF on the replica is the single most important setting — it decouples analytics from primary bloat.",
+    "Fillfactor 80 preserves room for HOT updates without wasting too much space.",
+    "Explicit nightly VACUUM is belt-and-suspenders but worth it for planner stats.",
+  ]}
+/>
+
+<Quiz
+  id="06-ssi-quiz-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="en"
+  question="Postgres logs 'cannot remove tuples deleted by transactions in progress' during autovacuum on a 200 GB orders table. What is the most likely root cause?"
+  choices={[
+    { label: "autovacuum_vacuum_cost_limit is too low; raise it", misconception: "Cost limit affects autovacuum speed, not what it is allowed to remove. The message says it cannot remove anything." },
+    { label: "A long-running transaction or orphan replication slot is pinning the global oldest xmin", correct: true },
+    { label: "fillfactor on the table is too high", misconception: "Fillfactor affects HOT chain headroom, not the autovacuum oldest-xmin barrier." },
+    { label: "Postgres is approaching XID wraparound", misconception: "Wraparound would trigger emergency anti-wraparound vacuum with a different log line." },
+  ]}
+/>
+
+<Quiz
+  id="06-ssi-quiz-2"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="en"
+  question="A bank insists on SERIALIZABLE isolation for transfers. Throughput at peak is 5x lower than under READ COMMITTED. The DBA proposes READ COMMITTED + SELECT FOR UPDATE. The compliance officer worries about correctness. Who is right and why?"
+  choices={[
+    { label: "The compliance officer is right: SERIALIZABLE is the only safe option for financial transactions", misconception: "For transfer operations that read and modify exactly two rows, READ COMMITTED + SELECT FOR UPDATE on both rows (in consistent order) is functionally equivalent to SERIALIZABLE for that specific access pattern. Write skew requires a transaction to act on rows it does NOT modify." },
+    { label: "The DBA is right: READ COMMITTED + SELECT FOR UPDATE on both rows (in consistent order) is functionally equivalent to SERIALIZABLE for point transfers — write skew has no surface here", correct: true },
+    { label: "Neither: REPEATABLE READ + retry is the correct middle ground", misconception: "RR + retry is pathological on hot accounts and does not add meaningful correctness over RC + FOR UPDATE for the two-row transfer pattern." },
+    { label: "Both are right: use SERIALIZABLE for audit paths and RC + FOR UPDATE for high-frequency transfers", misconception: "This framing is actually the recommended architecture, but the question asks who is right about correctness — the DBA's argument is correct." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>SSI tracks rw-antidependency cycles via predicate locks; false-positive rate of 0.1–1% is normal, above 5% means lock coarsening or genuine workload conflict. Production autovacuum needs per-table scale_factor=0.02–0.05 and cost_delay=0 on NVMe; route replica analytics with hot_standby_feedback=off to decouple primary bloat. Monitor n_dead_tup ratio, backend_xmin age, and 40001 error rate as a triplet.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-ssi-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how SSI detects write skew — what data structure does it use and when does it abort?", a: "SSI maintains in-memory predicate locks for every read (tracking 'I read this set of rows') and rw-antidependencies for every write (tracking 'I wrote something a concurrent reader was watching'). At commit time it looks for a dangerous structure: a cycle of rw-antidependencies between two or more transactions. If T1 read a set that T2 wrote, and T2 read a set that T1 wrote, that is a cycle — one of them is aborted with SQLSTATE 40001. The check is conservative: a cycle is sufficient but not necessary for non-serializability, so SSI has false positives (aborts safe transactions) but never false negatives (allows unsafe ones)." },
+    { q: "Explain how a HOT chain breaks and what observable symptoms tell you it is happening too often.", a: "A HOT chain breaks when either (a) an UPDATE touches an indexed column, forcing a new index entry, or (b) the new version does not fit on the same page because the fillfactor reserve has been exhausted. Once broken, every subsequent UPDATE pays the index-write cost. Symptoms: pg_stat_all_tables.n_tup_hot_upd divided by n_tup_upd drops below 50%; index bloat grows faster than table bloat; WAL volume per UPDATE roughly doubles; p99 write latency on the table climbs. Fix: lower the fillfactor (more headroom), audit indexes (drop redundant ones), and verify no UPDATE touches an indexed column without need." },
+    { q: "Why is hot_standby_feedback = OFF the recommended setting on analytics replicas, and what is the risk of turning it ON?", a: "With hot_standby_feedback = OFF, the replica's long-running analytics queries can be cancelled with 'conflict with recovery' when the primary's autovacuum reclaims something the replica still needs. This is unpleasant but recoverable. With hot_standby_feedback = ON, the replica sends its oldest active xmin to the primary, preventing that cancellation — but now primary autovacuum cannot reclaim any dead tuple the replica's longest query needs. A 6-hour analytics query on the replica pins 6 hours of dead tuples on the primary, causing unbounded bloat growth. Unbounded primary bloat is the worse failure mode — it can fill the disk and crash the primary." },
+  ]}
+/>
+
+<Recap lang="en">
+SSI (Serializable Snapshot Isolation, Postgres 9.1) detects write skew by tracking predicate locks (what I read) and rw-antidependencies (what I wrote that others were watching). A cycle means a dangerous schedule; SSI aborts one participant. False-positive rate of 0.1–1% is normal; above 5% indicates predicate-lock coarsening due to memory pressure or genuine workload conflict. Production autovacuum on high-write tables requires per-table overrides: scale_factor = 0.02–0.05, cost_delay = 0 on NVMe, max_workers = 6–8. Analytics replicas should run with hot_standby_feedback = OFF to decouple primary bloat from replica query duration. The minimum-viable bloat dashboard is dead_tuple ratio + backend_xmin age + 40001 error rate, plus replication slot xmin monitoring.
+</Recap>
