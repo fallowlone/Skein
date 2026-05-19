@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (21/51 units done — networking 12/12, browser 8/8, databases 1/8) ← **RESUME HERE: databases/02-indexes**
+- [ ] **Phase B** — content migration (22/51 units done — networking 12/12, browser 8/8, databases 2/8) ← **RESUME HERE: databases/03-execution-plans**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -222,7 +222,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-heap-and-toast (senior)
   - [x] 06-schema-integrity (senior)
   - [x] 07-relational-vs-alternatives (senior)
-- [ ] 02-indexes  - [ ] 03-execution-plans  - [ ] 04-mvcc-isolation
+- [x] 02-indexes → 7 lessons, commit `e059e4d`
+  - [x] 01-index-anatomy (junior)
+  - [x] 02-leading-column-rule (middle)
+  - [x] 03-partial-expression-covering (middle)
+  - [x] 04-index-types (middle)
+  - [x] 05-index-only-scans-and-visibility (senior)
+  - [x] 06-production-failures-and-audit (senior)
+  - [x] 07-index-design-exercise (senior)
+- [ ] 03-execution-plans  - [ ] 04-mvcc-isolation
 - [ ] 05-pooling  - [ ] 06-migrations  - [ ] 07-sharding  - [ ] 08-putting-it-together
 
 **observability**
