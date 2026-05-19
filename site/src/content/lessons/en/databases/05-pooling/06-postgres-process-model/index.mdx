@@ -1,0 +1,180 @@
+---
+slug: 06-postgres-process-model
+lang: en
+track: databases
+unit: 05-pooling
+order: 6
+title: "The Postgres process model and why raising max_connections degrades throughput"
+summary: "Each Postgres connection forks a backend via the postmaster; throughput peaks at (cores × 2) active processes and drops non-linearly past that — raising max_connections without a pooler is almost always the wrong fix."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/05-pooling/05-transaction-mode-migration"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["postmaster", "proc_array", "PgBouncer", "multiplexing"]
+sources:
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.pgbouncer.org/features.html
+  - https://node-postgres.com/guides/pool-sizing
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team hits pool exhaustion. They raise max_connections from 100 to 1000. P99 gets worse. They raise it to 2000. The database starts OOM-crashing. Raising max_connections is the instinct; understanding why it fails is the skill.
+</Hook>
+
+<Crux>Postgres forks one OS process per connection; proc_array and lock contention degrade past ~200. Cap max_connections and pool.</Crux>
+
+<Explanation>
+
+## The Postgres process model in detail
+
+When a client connects, the **postmaster** (the supervisor process) forks a new backend process. Each backend has:
+
+- **Private memory**: ~5–10 MB resident (per-query work memory, plan cache, libpq buffers). On a 16-core machine with 1,000 backends that is ~5–10 GB of private memory just for backends.
+- **A shared-memory slot**: proc array entry (snapshot acquisition scans this), lock table entry, predicate-lock metadata. These structures are pre-allocated at startup, sized to `max_connections`. Doubling max_connections doubles the fixed shared-memory footprint.
+- **A kernel process** with its own stack, file descriptor table, and scheduler entry.
+
+Connection startup costs ~5 ms on the Postgres side (fork + initialization) plus TLS and auth on the network side.
+
+**Why processes and not threads?** Postgres predates reliable pthreads on most Unix variants. The process model gives crash isolation (one backend OOM does not corrupt shared memory), simple private heap management, and easy parallel-query worker forking. The cost is irreducible per-connection overhead — which pooling absorbs.
+
+## Why raising max_connections degrades throughput
+
+Naive teams raise `max_connections` from 100 to 1,000 when they see pool exhaustion. Four things go wrong:
+
+1. **Shared-memory scaling**: `max_connections = 1000` pre-allocates ~500 MB+ of fixed shared memory just for proc array, lock hash, and predicate-lock structures — measurable on small instances.
+
+2. **Context-switch overhead**: at 1,000 active backends with load, kernel scheduling time becomes a measurable fraction of CPU. Each OS process competes for the scheduler.
+
+3. **Lock-manager contention**: proc array iteration during snapshot acquisition is O(active_backends). At 1,000 active backends, every `BEGIN` scans 1,000 entries. Lock table scans and MultiXact buffer contention scale similarly.
+
+4. **Postmaster fork queue**: connection establishment requires the postmaster to fork a new process; at high connection rates this serialises. PgBouncer's ~2 KB per client connection vs Postgres's ~10 MB per backend is the core asymmetry.
+
+The throughput curve is non-linear: a 16-core Postgres peaks around 32–48 active backends and **degrades past that**. Adding backends past the peak means each backend gets a smaller share of CPU while paying more contention overhead.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Active backends</th>
+        <th class="border border-border px-3 py-2 text-left">Behaviour (16-core Postgres)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1–32</td>
+        <td class="border border-border px-3 py-2">Linear throughput increase; CPU utilisation growing</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">32–50</td>
+        <td class="border border-border px-3 py-2">Throughput plateau; context-switch and lock overhead starts showing</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">50–200</td>
+        <td class="border border-border px-3 py-2">Throughput flat or declining; shared-memory contention visible</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">200–1000</td>
+        <td class="border border-border px-3 py-2">Throughput drops; per-backend throughput may halve</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">1000+</td>
+        <td class="border border-border px-3 py-2">Likely OOM or kernel proc-table exhaustion</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The practical max_connections cap
+
+The Postgres community guidance (unchanged for 25+ years): cap `max_connections` at a few hundred. The practical range for production OLTP is 200–500 — enough for admin connections, replicas, and some headroom above the pooler's `pool_size`.
+
+`max_connections` budget allocation:
+- PgBouncer `pool_size` (primary) + `reserve_pool_size` — the real OLTP backends
+- Replica connections (streaming replication)
+- `superuser_reserved_connections` (default 3) — kept for emergency access
+- Admin and monitoring connections
+- PgBouncer pools for read replicas if any
+
+Example: 8-core primary, pool_size = 24, reserve = 6, 2 replicas each with pool_size = 20, superuser_reserved = 3, admin/monitoring = 10. Total: 24 + 6 + 40 + 3 + 10 = 83. `max_connections = 100` is fine; `max_connections = 1000` is wasteful and harmful.
+
+<Inset kind="why" lang="en">
+What happens if max_connections is set too low? Postgres returns "FATAL: remaining connection slots are reserved for non-replication superuser connections" when the last `superuser_reserved_connections` slots fill up — application workers start failing before the hard cap. Always leave headroom above pool_size + reserve_pool_size to absorb admin access during incidents.
+</Inset>
+
+<NumbersCard
+  id="card-process-model"
+  title="Postgres process model production numbers"
+  stats={[
+    { label: "Backend private memory", value: "~5–10 MB" },
+    { label: "max_connections default", value: "100" },
+    { label: "Practical max_connections cap", value: "200–500" },
+    { label: "Optimal active backends (16-core, NVMe)", value: "32–48" },
+    { label: "PgBouncer memory per client conn", value: "~2 KB" },
+    { label: "Backend startup cost", value: "~5 ms (fork + init)" },
+    { label: "Shared memory: proc array at 1000 backends", value: "~500 MB+" },
+  ]}
+/>
+
+<Misconception id="mc-raise-max-connections">
+  <p><strong>"Hit pool exhaustion? Raise max_connections."</strong> Wrong tool. max_connections pre-allocates shared memory per process; it is not a throughput knob. Raising past 500 degrades throughput via context-switch and shared-memory contention. Use a pooler to multiplex clients onto the backend count that saturates the CPU.</p>
+</Misconception>
+
+<Quiz
+  id="06-postgres-process-model-quiz-1"
+  lessonSlug="06-postgres-process-model"
+  lang="en"
+  question="A Postgres instance with max_connections=200 starts rejecting connections at ~150 active backends. Why might this happen below the cap?"
+  choices={[
+    { label: "superuser_reserved_connections + reserved_connections eat into the budget; the effective usable cap is below max_connections", correct: true },
+    { label: "max_connections is a soft suggestion that Postgres ignores when busy", misconception: "max_connections is a hard cap; connections beyond it are rejected with a FATAL error." },
+    { label: "Postgres rounds down to the nearest 50", misconception: "No rounding occurs; the rejection happens exactly at the cap minus reserved slots." },
+    { label: "NAT or firewall is dropping SYN packets before they reach Postgres", misconception: "NAT interference would cause connection timeouts, not the 'too many clients' message." },
+  ]}
+/>
+
+<Quiz
+  id="06-postgres-process-model-quiz-2"
+  lessonSlug="06-postgres-process-model"
+  lang="en"
+  question="Why does Postgres use a process-per-connection model instead of threads?"
+  choices={[
+    { label: "Historical: Postgres predates reliable pthreads on most Unix variants; the process model provides crash isolation and simpler private-memory management", correct: true },
+    { label: "Threads are not supported on any OS that Postgres targets", misconception: "Postgres runs on Linux, macOS, Windows — all support threads. The process model is a design choice, not a limitation." },
+    { label: "Processes allow Postgres to use more cores than threads do", misconception: "Both models allow multi-core usage. The distinction is crash isolation and memory model, not core utilisation." },
+    { label: "Thread-per-connection would require kernel support that Postgres has not implemented", misconception: "Thread support is a user-space decision in Postgres's architecture, not a kernel gap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Each Postgres connection forks an OS process costing ~10 MB RAM and a shared-memory slot. Throughput peaks at (cores × 2) active backends and degrades past that due to context-switch and proc-array contention. Cap max_connections at 200–500; multiplex above that with PgBouncer — not with a higher cap.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-postgres-process-model-retrieval"
+  lang="en"
+  questions={[
+    { q: "What shared-memory structures scale with max_connections and why does raising it hurt throughput?", a: "Three structures scale with max_connections: (1) the proc array — a fixed-size shared-memory array holding an entry per possible backend; every BEGIN scans it O(active_backends) to build a snapshot; (2) the lock hash table — pre-allocated slot count scales with max_connections; (3) predicate-lock metadata — similarly. At max_connections = 1000, these structures consume hundreds of MB of fixed shared memory pre-allocated at startup. At high active-backend counts, proc array iteration on every snapshot acquisition becomes a serialisation point — 1000 active backends means 1000 proc array entries scanned per BEGIN, while at 32 active backends it is 32 scans. Context-switch overhead adds linearly with active-backend count. The combined effect is that Postgres throughput peaks at a small multiple of the core count and degrades past that — raising max_connections without reducing active-backend count does not help and actively harms throughput." },
+    { q: "How should a senior engineer allocate a max_connections budget on a primary Postgres instance?", a: "Enumerate the consumers: (1) Primary OLTP pool: PgBouncer pool_size + reserve_pool_size (e.g., 24 + 6 = 30). (2) Replica replication slots: each replica needs a walsender backend (e.g., 2 replicas = 2). (3) Read-replica PgBouncer pool(s): if read queries are pooled separately, their pool_size (e.g., 20 each × 2 = 40). (4) superuser_reserved_connections (default 3) — kept for emergency admin access; never reduce to 0. (5) Monitoring and admin connections: typically 5–15. Sum = 30 + 2 + 40 + 3 + 10 = 85. Set max_connections = 100–150 for comfortable headroom. The goal is enough for all expected consumers plus emergency headroom; 200–500 is the typical range for production. 1000+ is almost always a sign of missing a pooler, not a sign of legitimate backend need." },
+    { q: "Why is the throughput degradation past (cores × 2) non-linear rather than linear?", a: "The degradation has multiple compounding sources. Context switches: the kernel scheduler round-robins N active processes across C cores; N > C means processes spend time preempted and in scheduling queues. Lock contention: the PostgreSQL lock manager uses spinlocks over shared memory structures; contention on these rises super-linearly with active-backend count because each lock hold causes other spinners to burn CPU busy-waiting. Proc array iteration: every snapshot acquisition is O(active_backends); doubling active backends doubles snapshot cost. Memory pressure: with 1000 backends each using 10 MB private memory, working-set competition with shared_buffers begins; cache hit rates drop. Each factor multiplies against the others, producing a throughput curve that falls steeply past the optimum rather than gently." },
+  ]}
+/>
+
+<Recap lang="en">
+Every Postgres connection forks a backend via the postmaster: ~10 MB private memory, a proc array slot, a lock table entry. Connection startup costs ~5 ms. Shared-memory structures are pre-allocated to `max_connections` at startup — doubling it doubles fixed overhead. Past `(cores × 2)` active backends, context-switch and proc-array scan overhead causes throughput to degrade non-linearly. The Postgres community's guidance for 25 years: cap `max_connections` at 200–500; multiplex above that with a pooler. Raising `max_connections` to 1,000 without a pooler is almost always the wrong response to pool exhaustion — it moves the symptom while worsening the underlying throughput profile.
+</Recap>

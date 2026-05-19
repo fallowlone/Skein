@@ -1,0 +1,250 @@
+---
+slug: 03-pool-sizing-math
+lang: en
+track: databases
+unit: 05-pooling
+order: 3
+title: "Pool sizing: the (cores × 2) + spindles formula and the two-layer stack"
+summary: "Postgres throughput peaks at (cores × 2) + spindle-count active backends; client-pool size per worker follows concurrent-requests × db-calls × avg-ms / budget-ms; the layered math keeps both in bounds."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/05-pooling/02-pgbouncer-modes"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["pool-sizing", "PgBouncer", "connection-pool", "multiplexing"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://node-postgres.com/guides/pool-sizing
+  - https://www.pgbouncer.org/config.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A team adds PgBouncer and sets pool_size = 200 — matching the application's total client count. P99 rises instead of falling. Adding more backends to Postgres made things slower. The formula for sizing a pool is not "one connection per client".
+</Hook>
+
+<Crux>Postgres peaks at (cores × 2) + spindles backends — not client count. A per-worker formula handles the client-pool side.</Crux>
+
+<Explanation>
+
+## Why more Postgres backends does not mean more throughput
+
+Each Postgres backend is an OS process. Past a small multiple of the CPU core count, additional active backends stop adding throughput and start costing it: more context switches, more contention on shared-memory structures (proc array during snapshot acquisition, lock table), more kernel scheduling overhead.
+
+The **HikariCP-popularised formula** for the optimal active backend count on the Postgres side:
+
+```
+pool_size = (CPU cores × 2) + effective_spindle_count
+```
+
+- `cores × 2` covers CPU-bound parallelism plus some hyper-threading benefit
+- `effective_spindle_count` adds budget for I/O parallelism when storage can absorb multiple outstanding reads
+
+On modern NVMe with a well-cached working set, spindle count is effectively 0 — the formula reduces to `cores × 2`. On a **16-core Postgres server with data in RAM: pool_size ≈ 32**, not 200.
+
+This is the PgBouncer `pool_size` (or `default_pool_size`), not the number of application workers.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Scenario</th>
+        <th class="border border-border px-3 py-2 text-left">Formula result</th>
+        <th class="border border-border px-3 py-2 text-left">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">8-core, NVMe, data in RAM</td>
+        <td class="border border-border px-3 py-2">(8 × 2) + 0 = 16</td>
+        <td class="border border-border px-3 py-2">+50% headroom → pool_size = 24</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">16-core, NVMe, data in RAM</td>
+        <td class="border border-border px-3 py-2">(16 × 2) + 0 = 32</td>
+        <td class="border border-border px-3 py-2">+50% headroom → pool_size = 48</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">8-core, HDD RAID, cold data</td>
+        <td class="border border-border px-3 py-2">(8 × 2) + 6 = 22</td>
+        <td class="border border-border px-3 py-2">+50% → pool_size = 33</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Naive "match client count"</td>
+        <td class="border border-border px-3 py-2">200–1000</td>
+        <td class="border border-border px-3 py-2">Postgres throughput degrades; do not do this</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Client-pool sizing per worker
+
+The client-side pool (node-postgres, HikariCP, asyncpg) is sized differently — it is about in-worker concurrency, not Postgres core count:
+
+```
+worker_pool_size ≈ concurrent_requests × db_calls_per_request × avg_query_ms / request_budget_ms
+```
+
+Example: 100 concurrent requests per worker, 2 DB calls each at 5 ms, 50 ms total request budget:
+
+```
+= 100 × 2 × 5 / 50 = 20 connections
+```
+
+With 10 workers: **200 total client connections to PgBouncer** — cheap (PgBouncer uses ~2 KB per client connection). PgBouncer multiplexes them onto the ~24-backend pool.
+
+## A concrete sizing worked example
+
+<FadedExample
+  client:load
+  id="fe-pool-sizing"
+  lessonSlug="03-pool-sizing-math"
+  lang="en"
+  title="Size a pool for a Node.js API behind PgBouncer in transaction mode"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Inputs:</strong> 10 Node.js workers, each handles 200 concurrent HTTP requests, each request makes 3 DB calls averaging 4 ms, request budget 100 ms, Postgres has 8 cores (NVMe SSD, data in RAM), max_connections = 100.</p>
+        <p><strong>Step 1 — Client pool per worker:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`worker_pool ≈ concurrent_reqs × db_calls × avg_query_ms / request_budget_ms
+            = 200 × 3 × 4 / 100
+            = 24 connections per worker`}</code></pre>
+        <p><strong>Step 2 — Total client connections to PgBouncer:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`24 × 10 workers = 240 client connections
+(PgBouncer handles thousands cheaply — fine)`}</code></pre>
+        <p><strong>Step 3 — PgBouncer backend pool (Postgres side):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`pool_size = (8 cores × 2) + 0 spindles = 16
++50% headroom = 24 backends
+(well below max_connections = 100)`}</code></pre>
+        <p><strong>Node-postgres config (per worker):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`new Pool({
+  host: 'pgbouncer.internal',
+  max: 24,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 2_000,
+})`}</code></pre>
+        <p><strong>PgBouncer config:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`[pgbouncer]
+pool_mode = transaction
+default_pool_size = 24
+max_client_conn = 1000
+reserve_pool_size = 6
+reserve_pool_timeout = 3
+server_idle_timeout = 600
+server_lifetime = 3600
+max_prepared_statements = 1000`}</code></pre>
+      </div>
+    ),
+    semi: {
+      prompt: "If you switch from transaction to session mode with the same client pool, will 240 client connections cause any problems?",
+      blanks: [
+        { id: "answer", expected: "yes", placeholder: "yes or no" },
+      ],
+    },
+    blank: {
+      prompt: "Why is the answer to pool exhaustion under sudden load rarely 'raise pool_size'?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>Pool exhaustion under load is almost always caused by per-request connection-hold time spiking — a slow query, an external API called inside a transaction, an idle-in-transaction bug. Raising the pool buys more in-flight connections at the same hold time, but the root cause propagates downstream: more backends fighting for the same locks, more shared-memory pressure. Postgres throughput per active backend drops. Fix the hold first: index the slow query, move API calls outside the transaction, add idle_in_transaction_session_timeout. Once the hold is short, the same pool serves more traffic. Raise pool_size only after confirming all checkouts are short and the bottleneck is genuine concurrency.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "answer:no": "Session mode is 1:1 between client and backend. 240 client connections = 240 backend connections — far over max_connections = 100. Postgres would reject the excess.",
+  }}
+/>
+
+## Key PgBouncer knobs
+
+**`pool_size`** (per-database backend pool target, default 20) — set this to `(cores × 2) + spindles + ~50% headroom`. This is the ceiling of real Postgres backends PgBouncer will maintain.
+
+**`reserve_pool_size`** — extra backends PgBouncer can spin up under burst load (default 0; set ~25% of pool_size).
+
+**`max_client_conn`** — total inbound client connections PgBouncer will accept (default 100; set to thousands — client connections are cheap).
+
+**`server_reset_query = DISCARD ALL`** — SQL run against a backend before returning it to the pool; clears leaked session state.
+
+**`query_wait_timeout`** — how long a client can wait for a backend before PgBouncer rejects it (default 120 s; production: 10–30 s for fast fail).
+
+<Inset kind="why" lang="en">
+Why does the formula use cores × 2 rather than cores × 1? One CPU core can handle slightly more than one active backend because Postgres backends spend some time waiting on I/O or locks rather than consuming CPU continuously. The ×2 factor is a practical average across mixed CPU + I/O workloads; for purely CPU-bound queries (complex aggregations, JIT) the multiplier should be closer to 1.
+</Inset>
+
+<NumbersCard
+  id="card-sizing-numbers"
+  title="Pool sizing reference numbers"
+  stats={[
+    { label: "Formula: optimal backend count", value: "(cores × 2) + spindles" },
+    { label: "Typical production pool_size (8-core)", value: "24 (16 + 50% headroom)" },
+    { label: "Client-pool per worker formula", value: "concurrent × calls × avg_ms / budget_ms" },
+    { label: "PgBouncer memory per client conn", value: "~2 KB" },
+    { label: "Postgres backend memory", value: "~5–10 MB" },
+    { label: "reserve_pool_size recommendation", value: "~25% of pool_size" },
+    { label: "max_client_conn typical", value: "1,000–10,000" },
+  ]}
+/>
+
+<Misconception id="mc-more-connections">
+  <p><strong>"More backends = more Postgres throughput."</strong> False past the (cores × 2) point. Every additional active backend adds context-switch overhead and contention on shared-memory structures. Throughput often peaks at a low backend count and drops past that. Measure, then set pool_size; do not just raise it.</p>
+</Misconception>
+
+<Quiz
+  id="03-pool-sizing-quiz-1"
+  lessonSlug="03-pool-sizing-math"
+  lang="en"
+  question="A Postgres server has 16 cores and all data fits in RAM (NVMe). What is the correct starting point for PgBouncer pool_size?"
+  choices={[
+    { label: "(16 × 2) + 0 = 32, plus ~50% headroom = ~48", correct: true },
+    { label: "Match the total number of application workers, e.g. 200", misconception: "Matching client count creates 200 active Postgres backends, well past the throughput peak for 16 cores." },
+    { label: "max_connections / 2 = 50 if max_connections = 100", misconception: "This is not a formula; max_connections is a hard cap unrelated to throughput-optimal sizing." },
+    { label: "1 connection per vCPU = 16", misconception: "The ×2 factor accounts for I/O waits and mixed workloads; pure ×1 undersizes for typical OLTP." },
+  ]}
+/>
+
+<Quiz
+  id="03-pool-sizing-quiz-2"
+  lessonSlug="03-pool-sizing-math"
+  lang="en"
+  question="A Node.js worker handles 100 concurrent requests, each making 2 DB calls at 5 ms average, with a 50 ms request budget. What is the correct client pool max?"
+  choices={[
+    { label: "100 × 2 × 5 / 50 = 20 connections", correct: true },
+    { label: "100 — one connection per concurrent request", misconception: "Each request makes 2 sequential DB calls, so concurrency overlap means more than 1 connection per request is needed." },
+    { label: "10 — each connection serves 10 requests", misconception: "Pool connections are exclusive — only one query per connection at a time." },
+    { label: "200 — one per DB call", misconception: "Not all 200 DB calls are in flight at the same moment; the formula accounts for timing overlap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Set PgBouncer pool_size to (cores × 2) + spindles + 50% headroom — not to client count. Size each worker's client pool as concurrent_requests × db_calls × avg_ms / budget_ms. The two-layer stack multiplexes thousands of clients onto a backend count sized for the CPU, not the traffic.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-pool-sizing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is `(cores × 2) + spindles` a formula for Postgres-side active backends rather than for client count?", a: "The formula models the throughput-optimal number of active concurrent backends on the Postgres side. Postgres backends are OS processes; past a small multiple of the core count, adding more active processes consumes CPU in context switches and contention on shared-memory structures (proc array, lock table) faster than it adds useful parallelism. The formula is about Postgres concurrency, not how many application workers or clients exist. With PgBouncer in transaction mode, thousands of clients multiplex onto the small backend pool; the clients do not need a 1:1 backend." },
+    { q: "What PgBouncer config values control the backend pool and the client-side cap, and how should each be set?", a: "`pool_size` (or `default_pool_size`) sets the ceiling of real Postgres backend connections per database; set to (cores × 2) + spindles + ~50% headroom. `reserve_pool_size` adds extra backends for burst spikes — set ~25% of pool_size with `reserve_pool_timeout` at 3–5 s. `max_client_conn` caps inbound clients — PgBouncer client connections are cheap (~2 KB each) so set to thousands. `query_wait_timeout` caps how long a client waits for a backend before being rejected — set to 10–30 s for fast failure in production." },
+    { q: "When would the (cores × 2) formula need upward adjustment, and when downward?", a: "Upward: when queries are dominantly I/O-bound (large cold-cache scans) rather than CPU-bound, add the number of independent physical spindles (or effective NVMe queue depth) to budget for I/O parallelism. Downward: when queries are purely CPU-intensive (complex aggregations, Postgres JIT), each backend pins a full core; reduce the multiplier toward ×1. Also downward when parallel_workers_per_gather is high — a single backend can consume multiple CPU cores via parallel query workers, making the effective single-backend CPU share higher. The formula is a starting point; validate with a load test at 2× target traffic and watch for pool exhaustion vs idle backends." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres throughput peaks at around `(cores × 2) + spindle_count` active backends. Beyond that, context switches and shared-memory contention degrade throughput per backend. Set PgBouncer `pool_size` to this target plus ~50% burst headroom — on a typical 8-core NVMe server, that is 24 backends, not 200. Each application worker's client pool is sized separately from a concurrency formula: `concurrent_requests × db_calls × avg_ms / budget_ms`. The two-layer stack (client pool per worker → PgBouncer transaction-mode pool → Postgres) multiplexes thousands of clients onto the small backend count that actually saturates the CPU without overloading it.
+</Recap>

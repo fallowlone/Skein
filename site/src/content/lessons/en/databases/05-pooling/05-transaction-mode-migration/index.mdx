@@ -1,0 +1,173 @@
+---
+slug: 05-transaction-mode-migration
+lang: en
+track: databases
+unit: 05-pooling
+order: 5
+title: "Migrating to transaction mode: rollout playbook and PgBouncer 1.21 prepared statements"
+summary: "A five-step transaction-mode rollout — audit, size, tune GUCs, canary, observe — plus the 2024 PgBouncer 1.21 breakthrough that unblocked prepared statements in transaction mode."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/05-pooling/04-pool-exhaustion-and-idle-in-transaction"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["PgBouncer", "transaction-mode_pool", "multiplexing", "idle-in-transaction"]
+sources:
+  - https://www.pgbouncer.org/config.html
+  - https://www.crunchydata.com/blog/prepared-statements-in-transaction-mode-for-pgbouncer
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://www.pgbouncer.org/faq.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team has PgBouncer in session mode. They want transaction mode — 10× multiplexing — but are afraid of breakage. The audit-and-canary rollout takes one week, not a year; the prepared-statement concern was real before March 2024 and is solved now.
+</Hook>
+
+<Crux>Migrate to transaction mode: audit SET/LISTEN/PREPARE/locks, size pool, tune GUCs, canary deploy. PgBouncer 1.21+ fixes prepared statements.</Crux>
+
+<Explanation>
+
+## The five-step rollout
+
+<TraceScenario
+  id="05-tx-mode-migration-trace-1"
+  lessonSlug="05-transaction-mode-migration"
+  lang="en"
+  scenario="Deploy PgBouncer in transaction mode for the first time. Walk the rollout."
+  steps={[
+    { prompt: "Step 1: audit the application for session-state usage.", reveal: "Search the codebase for: (a) SET (not SET LOCAL) — any bare SET outside a transaction block. (b) LISTEN / NOTIFY — any channel subscriptions. (c) Classic SQL PREPARE name AS ... — any text-level prepared statements. (d) pg_advisory_lock() — session-level advisory locks. For each: map to its transaction-mode-safe equivalent: SET → ALTER ROLE or SET LOCAL inside transactions; LISTEN → dedicated session-mode connection; PREPARE → driver protocol-level prepared statements; advisory locks → pg_advisory_xact_lock. Document findings in an ADR." },
+    { prompt: "Step 2: size the backend pool.", reveal: "PgBouncer pool_size = (cores × 2) + spindles + ~50% headroom. On a 16-core all-RAM Postgres: pool_size = 32 + 50% = 48, well below max_connections. PgBouncer max_client_conn = 1000–10000 (client connections are cheap). Application client pool per worker: concurrent_requests × db_calls × avg_ms / budget_ms. PgBouncer reserve_pool_size = ~25% of pool_size for burst capacity." },
+    { prompt: "Step 3: tune the GUCs and timeouts.", reveal: "Postgres: idle_in_transaction_session_timeout = 60s (kills runaway transactions). PgBouncer: query_wait_timeout = 30s (reject clients waiting longer than this), server_idle_timeout = 600s (recycle idle backends), server_lifetime = 3600s (recycle long-lived backends), server_reset_query = DISCARD ALL (clear state between leases), max_prepared_statements = 1000 (PgBouncer 1.21+), ignore_startup_parameters = extra_float_digits." },
+    { prompt: "Step 4: canary rollout.", reveal: "Point one worker at PgBouncer in transaction mode; leave the rest pointing direct to Postgres or to a session-mode PgBouncer. Monitor for 24 hours: connection counts in pg_stat_activity, PgBouncer SHOW POOLS counters (cl_active, cl_waiting, sv_active, sv_idle), query P50/P99 latency from the canary vs the others, application errors. After 24 h with no regressions, ramp 10%, 50%, 100%. Have the rollback ready: feature-flag flip back to direct Postgres takes seconds." },
+    { prompt: "Step 5: set up ongoing monitoring.", reveal: "Alerts: (1) PgBouncer cl_waiting > 0 sustained 60 s → page (pool exhaustion imminent). (2) pg_stat_activity count of state='idle in transaction' WHERE now()-xact_start > 30s → page (stuck transaction). (3) Postgres max_connections used > 80% → warn; > 90% → page. Dashboards: PgBouncer pool stats per database; Postgres backend states (active/idle/idle in tx); query latency histograms by DB role (primary vs replica)." },
+  ]}
+/>
+
+## PgBouncer 1.21 and the prepared-statement breakthrough
+
+Until March 2024, the operational trade-off was: **transaction mode** (10–100× multiplexing) OR **prepared statements** (10–30% throughput on repeated queries) — not both.
+
+**Why they clashed**: prepared statements over the Postgres wire protocol bind a named statement to a specific backend session (`PrepareStatement`/`PQprepare` → slot on that backend). PgBouncer transaction mode routes the next `EXECUTE` to whatever backend is free — if it is a different backend, that statement is unknown there. Drivers returned `prepared statement does not exist` errors at random. The workaround: disable prepared statements at the driver — losing the performance benefit.
+
+**What PgBouncer 1.21 (March 2024) fixed**: protocol-level prepared statement tracking. PgBouncer intercepts Parse/Bind/Execute wire messages, maintains a global registry per logical client, and **re-prepares on whichever backend is assigned**. The application sees consistent prepared-statement behaviour across pool checkouts.
+
+Requires `max_prepared_statements > 0` (typical: 1000) in pgbouncer.ini.
+
+**PostgreSQL 17 (September 2024)** added protocol-level DEALLOCATE, allowing PgBouncer to cleanly close prepared statements on a backend when a client disconnects — closing the resource-leak gap.
+
+**In 2026**, the production default is: PgBouncer 1.21+ + `max_prepared_statements = 1000` + driver-managed prepared statements + transaction mode. All three wins simultaneously. Teams still on PgBouncer 1.20 or earlier should upgrade in the next maintenance window.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Era</th>
+        <th class="border border-border px-3 py-2 text-left">Transaction mode</th>
+        <th class="border border-border px-3 py-2 text-left">Prepared statements</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Before PgBouncer 1.21 (pre-2024)</td>
+        <td class="border border-border px-3 py-2">Works</td>
+        <td class="border border-border px-3 py-2">Must disable at driver — lose 10–30% throughput</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">PgBouncer 1.21+ (2024+)</td>
+        <td class="border border-border px-3 py-2">Works</td>
+        <td class="border border-border px-3 py-2">Works — PgBouncer re-prepares transparently</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">PgBouncer 1.21+ + Postgres 17</td>
+        <td class="border border-border px-3 py-2">Works</td>
+        <td class="border border-border px-3 py-2">Works + clean deallocation via protocol</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Verifying your stack
+
+A team adopting transaction mode + prepared statements in 2026 should verify:
+
+1. **PgBouncer version**: 1.21.0 or later. Check with `pgbouncer -V` or `SHOW VERSION` on the admin console.
+2. **max_prepared_statements**: set to a non-zero value in pgbouncer.ini (typical: 1000). Verify with `SHOW CONFIG`.
+3. **Postgres version**: 14+ for stable behaviour; 17+ for protocol-level DEALLOCATE.
+4. **Driver behaviour**: confirm it uses protocol-level prepared statements (JDBC `prepareThreshold > 0`, node-postgres `name:` argument, pgx Prepare, asyncpg — all default to prepared).
+5. **Load test**: hammer with prepared queries for 30 minutes; check PgBouncer logs for "prepared statement does not exist" errors.
+
+<Inset kind="why" lang="en">
+Why did this limitation exist for so long? PgBouncer is a lightweight C proxy that deliberately avoids parsing SQL. Protocol-level prepared statements required PgBouncer to intercept and understand specific wire protocol messages (Parse, Bind, Execute, Close) — a meaningful change to a codebase designed to be minimal. The feature was requested for years before the 1.21 implementation landed.
+</Inset>
+
+<NumbersCard
+  id="card-rollout-checklist"
+  title="Transaction-mode rollout checklist"
+  stats={[
+    { label: "Audit: SET without LOCAL", value: "→ ALTER ROLE" },
+    { label: "Audit: LISTEN/NOTIFY", value: "→ dedicated session conn" },
+    { label: "Audit: SQL PREPARE", value: "→ protocol-level (driver)" },
+    { label: "Audit: pg_advisory_lock", value: "→ pg_advisory_xact_lock" },
+    { label: "idle_in_transaction_session_timeout", value: "60 s" },
+    { label: "max_prepared_statements", value: "1000 (PgBouncer 1.21+)" },
+    { label: "Canary duration before ramp", value: "24 h" },
+  ]}
+/>
+
+<Quiz
+  id="05-tx-mode-migration-quiz-1"
+  lessonSlug="05-transaction-mode-migration"
+  lang="en"
+  question="Before PgBouncer 1.21, why did driver-managed prepared statements cause errors in transaction mode?"
+  choices={[
+    { label: "PgBouncer routed Execute messages to a different backend than the one that had received the original Parse — 'prepared statement does not exist' on the new backend", correct: true },
+    { label: "Postgres removed prepared statement support in recent versions", misconception: "Postgres fully supports prepared statements; the issue was the pooler routing them to different backends." },
+    { label: "Drivers incorrectly send Statement-level PREPARE as SQL text in transaction mode", misconception: "The issue is wire-protocol routing in the pooler, not how drivers encode their messages." },
+    { label: "PgBouncer 1.21 added support for a new Postgres wire protocol version", misconception: "PgBouncer 1.21 added statement tracking within the existing protocol, not a new protocol version." },
+  ]}
+/>
+
+<Quiz
+  id="05-tx-mode-migration-quiz-2"
+  lessonSlug="05-transaction-mode-migration"
+  lang="en"
+  question="Which PgBouncer config option enables protocol-level prepared statement support in transaction mode?"
+  choices={[
+    { label: "max_prepared_statements = 1000 (must be > 0, requires PgBouncer 1.21+)", correct: true },
+    { label: "pool_mode = prepared_statements", misconception: "There is no such mode; the option is max_prepared_statements within transaction mode." },
+    { label: "server_reset_query = PREPARE ALLOWED", misconception: "server_reset_query is a SQL command run between client leases for state cleanup, not a prepared-statement permission." },
+    { label: "ignore_startup_parameters = prepared_statements", misconception: "ignore_startup_parameters tells PgBouncer to ignore unknown client startup params, not related to prepared statement support." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Migrate to transaction mode in five steps: audit session-state usage, size the pool, tune GUCs (idle_in_transaction_session_timeout, query_wait_timeout), canary-rollout for 24 h, add monitoring. PgBouncer 1.21+ with max_prepared_statements = 1000 gives transaction-mode multiplexing AND protocol-level prepared statements simultaneously — the historic trade-off is gone.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-tx-mode-migration-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the correct order of a transaction-mode migration rollout and why does the canary step matter?", a: "Step 1: audit — grep for SET, LISTEN, SQL PREPARE, pg_advisory_lock and map each to its transaction-mode equivalent before touching the pooler config. Step 2: size — compute pool_size = (cores × 2) + spindles + 50% headroom; compute client-pool sizes per worker. Step 3: tune GUCs — idle_in_transaction_session_timeout, statement_timeout, lock_timeout in Postgres; query_wait_timeout, server_reset_query, max_prepared_statements in PgBouncer. Step 4: canary — point one worker at transaction-mode PgBouncer, keep the rest on the old path; run for 24 h and compare latency, errors, pg_stat_activity, SHOW POOLS. Step 5: monitor and ramp. The canary matters because transaction-mode breakage (missed SET, a LISTEN that silently fails, a prepared statement error) often only appears under production traffic patterns, not in staging." },
+    { q: "What did PgBouncer 1.21 add and why does it matter for production performance?", a: "PgBouncer 1.21 (March 2024) added protocol-level prepared statement tracking: when a client sends a Parse message (creating a named prepared statement), PgBouncer records the statement SQL and parameter types in a per-client registry. When the client later sends Execute for that statement, PgBouncer checks whether the currently-assigned backend already has it prepared; if not, it transparently re-sends Parse to that backend first, then Execute. This resolves the pre-2024 problem where Execute would land on a backend that had never seen the Parse, returning 'prepared statement does not exist'. Before 1.21, teams had to disable driver-level prepared statements (e.g., prepareThreshold=0 in JDBC) to avoid the error — losing 10–30% throughput from the cached query plans. After 1.21, transaction mode and prepared statements are both on by default, giving multiplexing and plan caching simultaneously." },
+    { q: "What does server_reset_query = DISCARD ALL do and when is it necessary?", a: "server_reset_query is a SQL command PgBouncer runs against a backend before returning it to the idle pool between client leases. DISCARD ALL resets all session state: SET overrides, temp tables, cursors, role changes, and prepared statements. It is necessary when any session state could leak from one client to the next — for example if the application or a library calls bare SET (not SET LOCAL) that was not caught in the audit, or if there are role-switching patterns. Without server_reset_query, client A's SET search_path could be visible to client B on the same backend. In a fully-audited application using ALTER ROLE for defaults and SET LOCAL for per-transaction overrides, server_reset_query can be empty or lighter; but during a migration and as a default it is the safe choice." },
+  ]}
+/>
+
+<Recap lang="en">
+Migrating from session to transaction mode requires a codebase audit first: find and replace `SET` with `ALTER ROLE`, isolate `LISTEN` on a dedicated session connection, switch SQL-level `PREPARE` to driver protocol-level prepared statements, replace `pg_advisory_lock` with `pg_advisory_xact_lock`. Then size the pool `(cores × 2) + spindles`, tune safety GUCs (`idle_in_transaction_session_timeout = 60s`, `query_wait_timeout = 30s`), and canary-rollout for 24 hours before full ramp. The pre-2024 concern about prepared statements is resolved: PgBouncer 1.21+ with `max_prepared_statements = 1000` tracks prepared statements per logical client and re-prepares transparently on whichever backend is assigned — transaction mode and full prepared-statement performance are now compatible by default.
+</Recap>
