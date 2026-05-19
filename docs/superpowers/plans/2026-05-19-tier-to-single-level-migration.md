@@ -187,7 +187,14 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 04-mtu-and-fragmentation (middle) — MTU, fragmentation, PMTUD black holes, MSS clamping
   - [x] 05-nat-and-addressing (middle) — NAT, CGNAT, private RFC 1918, IPv6/SLAAC, anycast, dual-stack
   - [x] 06-ip-security-and-operations (senior) — IP spoofing/BCP38, BGP hijacks/RPKI, DDoS, operational tools
-- [ ] 03-tcp-handshake  - [ ] 04-dns-resolution
+- [ ] 03-tcp-handshake
+  - [ ] 01-the-three-way-handshake (junior) — what TCP does, phone metaphor, SYN/SYN-ACK/ACK dialogue with seq numbers, scenario end-to-end
+  - [ ] 02-sequence-numbers-and-state (middle) — exact seq arithmetic, ISN randomisation, state machine (CLOSED→SYN-SENT→ESTABLISHED), 1-RTT cost, FIN/TIME-WAIT basics
+  - [ ] 03-flow-and-congestion-control (middle) — sliding window, MSS/window-scaling/SACK, slow start + congestion avoidance (Reno/CUBIC), retransmit timer RFC 6298, RACK-TLP
+  - [ ] 04-tcp-options-and-pathologies (middle) — TCP header anatomy, Nagle+delayed-ACK stall, PSH, ECN, keepalive, CLOSE-WAIT trap
+  - [ ] 05-syn-cookies-and-tfo (senior) — SYN cookies internals, TCP Fast Open, TIME-WAIT exhaustion, Linux tunables
+  - [ ] 06-bbr-and-production-ops (senior) — BBR vs CUBIC vs Reno, production observability (ss/tcpdump/nstat), RST semantics, MPTCP, kTLS, QUIC relationship
+- [ ] 04-dns-resolution
 - [ ] 05-tls-handshake  - [ ] 06-http-versions  - [ ] 07-cdn-edge  - [ ] 08-websocket-realtime
 - [ ] 09-proxy-load-balancing  - [ ] 10-quic-internals  - [ ] 11-network-security  - [ ] 12-putting-it-together
 
