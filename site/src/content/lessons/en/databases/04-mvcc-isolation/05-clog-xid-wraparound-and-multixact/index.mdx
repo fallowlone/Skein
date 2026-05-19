@@ -1,0 +1,201 @@
+---
+slug: 05-clog-xid-wraparound-and-multixact
+lang: en
+track: databases
+unit: 04-mvcc-isolation
+order: 5
+title: "CLOG, XID wraparound, and MultiXact: deep visibility internals"
+summary: "HeapTupleSatisfiesMVCC walks infomask bits before touching CLOG; 32-bit XIDs wrap at 2 billion and freeze at 200 million; shared row locks use a separate MultiXactId with its own wraparound clock."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/04-mvcc-isolation/02-row-versions-and-snapshots"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["clog", "hint-bits", "xid-wraparound", "freezing", "frozen-transaction-id", "multixact", "heaptuplesatisfiesmvcc"]
+sources:
+  - https://www.postgresql.org/docs/current/mvcc.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://boringsql.com/posts/postgresql-mvcc-byte-by-byte/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Postgres has 32-bit transaction ids. At 2 billion, they wrap — and old xmin values would suddenly appear newer than they are, making every old row invisible. Postgres solves this with freezing, autovacuum's highest-priority task. Sentry hit this in 2017 and had to freeze tables manually under fire.
+</Hook>
+
+<Crux>CLOG: 2 bits/xid; hint bits cache lookups on tuples; 32-bit XIDs must be frozen before wraparound; shared locks use MultiXactIds.</Crux>
+
+<Explanation>
+
+## Snapshot visibility, bit by bit
+
+The visibility decision Postgres makes on every tuple it scans is implemented in `src/backend/utils/time/snapmgr.c` and `src/backend/access/heap/heapam_visibility.c`. The key function is `HeapTupleSatisfiesMVCC(HeapTuple tuple, Snapshot snapshot, Buffer buffer)`.
+
+It walks a decision tree across `t_infomask` bits:
+- `HEAP_XMIN_COMMITTED` / `HEAP_XMIN_INVALID`
+- `HEAP_XMAX_COMMITTED` / `HEAP_XMAX_INVALID`
+
+These **hint bits** short-circuit the common cases without touching the commit log. When the bits are not set (the row was committed but the hint bit has not yet been written by a later scan), the function consults the **CLOG** (commit log) to determine commit status, then **writes back the hint bit** so the next visit is fast.
+
+**Hint-bit propagation effect:** a SELECT immediately after a long INSERT can be slower than the same SELECT a second later. The first scan touches every tuple's CLOG entry and writes hint bits; the second scan reads the bits directly. This is not a bug — it is a one-time cost per new tuple.
+
+Two different transactions cannot disagree on visibility because the rule is a pure function of the tuple's xmin/xmax and the reader's snapshot.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">What happens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. Check HEAP_XMIN_COMMITTED hint bit</td>
+        <td class="border border-border px-3 py-2">If set: xmin is definitely committed, skip CLOG</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. If hint bit not set: consult CLOG</td>
+        <td class="border border-border px-3 py-2">Read 2-bit commit status from pg_xact/ pages</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Write hint bit back</td>
+        <td class="border border-border px-3 py-2">Future scans skip CLOG for this tuple</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4. Apply snapshot rule</td>
+        <td class="border border-border px-3 py-2">Is xmin committed and not in xip? Is xmax absent/rolled-back/in xip?</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The CLOG (commit log)
+
+Each committed-or-aborted transaction's outcome is recorded in `pg_xact/` (formerly `pg_clog/`): **two bits per transaction id**, packed into 8 KB pages. At 2 bits per transaction, one page covers 16,384 transactions.
+
+The CLOG is heavily cached (the `clog_buffers` setting controls how many pages live in shared buffers). After a transaction commits, its CLOG bits are durable on disk thanks to WAL — the `COMMIT` record on disk is what makes the transaction's effect visible to future readers.
+
+This is why `fsync = on` and `synchronous_commit = on` are non-negotiable for durability: a commit acknowledged before the WAL hit disk could leave CLOG inconsistent on recovery.
+
+## Transaction id wraparound and freezing
+
+Postgres transaction ids are **32-bit**. At roughly 2 billion active transactions the counter would wrap, and old xmin/xmax values would suddenly appear newer than they are — a correctness disaster.
+
+Postgres prevents this by **freezing**: once a tuple is old enough (older than `autovacuum_freeze_max_age`, default 200 million transactions), VACUUM rewrites its `t_xmin` to the special `FrozenTransactionId` value, which is **always visible to any snapshot**.
+
+Wraparound prevention vacuum is the **highest-priority autovacuum task** — it runs even when `autovacuum = off`. On a database that approaches 2 billion transactions without enough freezing, Postgres refuses new connections and shuts down with:
+
+```
+database is not accepting commands to avoid wraparound data loss
+```
+
+**Operations monitoring:**
+```sql
+SELECT datname, age(datfrozenxid) FROM pg_database;
+```
+- Alert at 1 billion (age = 1,000,000,000)
+- Page at 1.5 billion
+
+Real outage: Sentry 2017 — autovacuum fell behind on a cluster; they ended up doing manual freezing under fire to recover.
+
+<Misconception id="mc-snapshot-too-old">
+  <p><strong>"Postgres has snapshot-too-old like Oracle."</strong> No — real operational gap. Oracle's bounded UNDO throws ORA-01555 on stale snapshots. Postgres has no such timeout; an 8-hour query just pins backend_xmin and accumulates bloat. Workaround: <code>statement_timeout</code> + alerts on <code>backend_xmin</code> age.</p>
+</Misconception>
+
+## MultiXact and shared row locks
+
+When more than one transaction wants to hold a non-exclusive lock on the same row (e.g., two transactions both running `SELECT ... FOR SHARE`), Postgres cannot fit multiple xids into a tuple's single `t_xmax` field. It instead allocates a **MultiXactId** — a 32-bit id pointing into `pg_multixact/` that lists the participating transactions and their lock modes.
+
+MultiXacts have their own wraparound (also 2 billion), tracked separately and frozen on a separate cadence. A workload that uses heavy `SELECT ... FOR KEY SHARE` (the implicit lock from foreign-key checks) can hit MultiXact wraparound long before XID wraparound.
+
+```sql
+SELECT datname, age(datfrozenxid), age(datminmxid) FROM pg_database;
+```
+
+Both ages need monitoring; the lower of the two determines your effective safety margin.
+
+<NumbersCard
+  id="card-mvcc-numbers"
+  title="Senior-tier MVCC numbers"
+  stats={[
+    { label: "HOT chain length (typical)", value: "4–8 versions before break" },
+    { label: "Default fillfactor", value: "100 (tables), 90 (indexes)" },
+    { label: "MultiXact wraparound", value: "2B, separate from XID" },
+    { label: "Freeze trigger", value: "autovacuum_freeze_max_age 200M" },
+    { label: "SSI false-positive rate", value: "0.1–1% healthy; &gt;5% tune" },
+    { label: "pg_repack online cost", value: "transient 2x disk" },
+    { label: "idle_in_transaction_session_timeout", value: "5–15 min recommended" },
+    { label: "Logical slot lag risk", value: "orphan slot pins xmin" },
+  ]}
+/>
+
+<Quiz
+  id="05-clog-quiz-1"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="en"
+  question="A SELECT immediately after a long INSERT runs slower than the same SELECT one second later. What is the most likely cause?"
+  choices={[
+    { label: "Buffer cache is cold on the first SELECT", misconception: "Cold buffer cache would affect both equally if the data is the same. The timing difference is specific to the first post-INSERT scan." },
+    { label: "The first SELECT writes CLOG hint bits on every newly inserted tuple; the second SELECT reads those bits directly without CLOG lookups", correct: true },
+    { label: "Autovacuum ran between the two SELECTs and freed up buffer space", misconception: "Autovacuum does not make SELECT faster. The effect described is hint-bit propagation." },
+    { label: "The first SELECT uses a different execution plan", misconception: "The plan would be the same. The difference is CLOG lookups vs hint-bit reads." },
+  ]}
+/>
+
+<Quiz
+  id="05-clog-quiz-2"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="en"
+  question="Why does Postgres refuse connections when the transaction id age approaches 2 billion?"
+  choices={[
+    { label: "To prevent memory overflow from too many concurrent transactions", misconception: "Connection refusal is not about memory. It is specifically about transaction id wraparound correctness." },
+    { label: "Because 32-bit xids would wrap around, making old rows appear newer than they are and corrupting visibility decisions", correct: true },
+    { label: "Because the CLOG fills up and there is no room for new commit records", misconception: "CLOG pages are allocated as needed and old pages can be trimmed. The issue is the 32-bit counter space." },
+    { label: "It is a configurable safety limit; the database does not actually stop", misconception: "Postgres does actually refuse connections and shut down in emergency freeze mode. This is a hard correctness constraint, not a configurable limit." },
+  ]}
+/>
+
+<Quiz
+  id="05-clog-quiz-3"
+  lessonSlug="05-clog-xid-wraparound-and-multixact"
+  lang="en"
+  question="A workload with heavy SELECT ... FOR KEY SHARE (implicit foreign-key check locks) hits an unexpected autovacuum wraparound warning. What counter is most likely approaching its limit?"
+  choices={[
+    { label: "Transaction id (XID) counter", misconception: "XID wraparound is possible but FOR KEY SHARE creates MultiXactIds, not regular XIDs. A FOR KEY SHARE-heavy workload specifically stresses the MultiXact counter." },
+    { label: "MultiXactId counter — separate from XID, also 32-bit, with its own wraparound clock", correct: true },
+    { label: "CLOG pages — the commit log is running out of storage", misconception: "CLOG pages are trimmed as old transactions are frozen. Running out is not the typical failure mode." },
+    { label: "Connection counter — too many concurrent shared locks", misconception: "Connection count and MultiXactId count are separate. FOR KEY SHARE creates MultiXactIds regardless of connection count." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>HeapTupleSatisfiesMVCC walks t_infomask hint bits before touching CLOG — hint bits are written lazily on first scan. 32-bit XIDs wrap at ~2 billion; VACUUM freezes old tuples (rewrites t_xmin to FrozenTransactionId) as the highest-priority maintenance task. MultiXactIds handle shared row locks in a separate 32-bit space with its own wraparound clock — monitor both age(datfrozenxid) and age(datminmxid).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-clog-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are hint bits, where do they live, and why do they exist?", a: "Hint bits are two pairs of flags in a tuple's t_infomask field: HEAP_XMIN_COMMITTED/HEAP_XMIN_INVALID and HEAP_XMAX_COMMITTED/HEAP_XMAX_INVALID. They cache the result of a CLOG lookup. When HeapTupleSatisfiesMVCC sees a committed bit set, it skips the CLOG entirely for that tuple. When the bits are missing (freshly written tuple), it consults CLOG and writes the hint bit back for future readers. They exist because CLOG lookups involve shared-memory access and potential I/O, while hint-bit reads are purely in-buffer. The cost is one extra buffer dirtying per tuple per first-read, amortized over all subsequent reads." },
+    { q: "What is XID freezing and why is it the highest-priority autovacuum task?", a: "XID freezing is when VACUUM rewrites a tuple's t_xmin to the special FrozenTransactionId value (older than all real XIDs), making the tuple permanently visible to any snapshot. This is necessary because Postgres uses 32-bit transaction ids. At roughly 2 billion transactions the counter wraps around, and without freezing old tuples their t_xmin values would suddenly appear newer than they are — corrupting every visibility decision. Autovacuum treats anti-wraparound freeze runs as highest priority: they run even when autovacuum = off and cannot be deferred by any setting." },
+    { q: "What is a MultiXactId and when does Postgres allocate one?", a: "A MultiXactId is a 32-bit id stored in t_xmax that points into pg_multixact/ and represents a set of transactions sharing a non-exclusive lock on the same row. Postgres allocates one when two or more transactions hold FOR SHARE or FOR KEY SHARE locks on the same row simultaneously, because the single t_xmax field cannot hold multiple xids directly. MultiXacts have their own 32-bit wraparound counter, tracked separately from XID wraparound. Heavy foreign-key workloads (every INSERT/UPDATE/DELETE on a child table creates a FOR KEY SHARE on the parent) are the main source of MultiXact growth." },
+  ]}
+/>
+
+<Recap lang="en">
+`HeapTupleSatisfiesMVCC` walks `t_infomask` hint bits before consulting CLOG (two bits per xid in `pg_xact/`). Hint bits are written lazily on first read, creating a one-time per-tuple CLOG lookup cost. Postgres transaction ids are 32-bit and approach wraparound at ~2 billion; VACUUM freezes old tuples by writing `FrozenTransactionId` into `t_xmin`, making them permanently visible. This is autovacuum's highest-priority task — Sentry 2017 is the canonical production incident where skipping it led to emergency shutdown. Shared row locks (`SELECT FOR SHARE`/`FOR KEY SHARE`) use MultiXactIds, a separate 32-bit counter with its own wraparound deadline; monitor both `age(datfrozenxid)` and `age(datminmxid)`.
+</Recap>
