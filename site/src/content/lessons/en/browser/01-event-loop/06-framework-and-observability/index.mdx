@@ -1,0 +1,167 @@
+---
+slug: 06-framework-and-observability
+lang: en
+track: browser
+unit: 01-event-loop
+order: 6
+title: "React, Vue, and INP observability in production"
+summary: "How React 18's concurrent scheduler and Vue 3's microtask batcher map onto the event loop, and how to build an INP root-cause pipeline from LoAF telemetry to deploy."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["01-loop-model", "02-queues-and-scheduling", "04-microtask-starvation"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["React-concurrent-scheduler", "MessageChannel-yield", "useTransition", "Vue-nextTick", "LoAF-pipeline", "INP-CI-gate", "sourcemap"]
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/API/PerformanceLongAnimationFrameTiming
+  - https://web.dev/articles/inp
+  - https://react.dev/blog/2022/03/29/react-v18
+  - https://jakearchibald.com/2015/tasks-microtasks-queues-and-schedules/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Users report the search bar "feels slow" on your React dashboard. INP reports 380 ms p75. You deploy a fix and INP drops to 90 ms. You do not get paged three weeks later when another engineer's PR reverses the improvement — because you never wired LoAF telemetry to your CI pipeline.
+</Hook>
+
+<Crux>Frameworks layer cooperative schedulers on the event loop; LoAF-to-sourcemap pipelines turn INP from a number into a deployable fix.</Crux>
+
+<Explanation>
+
+## How React 18 schedules work
+
+React's scheduler runs reconciliation in cooperative chunks of 5 ms. After each chunk, it yields to the browser using `MessageChannel.postMessage` — the only cross-browser mechanism that queues a task without the 4 ms clamp of `setTimeout`. The browser's loop gets to run input, render, and other tasks; React resumes on the next task to do the next 5 ms chunk.
+
+This is the implementation of "concurrent React": a single render is split across many tasks, none of which exceeds the 50 ms long-task threshold. `useTransition` marks a state update as low-priority, allowing input updates to interrupt it. Understand the loop and React's scheduler stops being mysterious.
+
+<NumbersCard
+  id="card-react-scheduler"
+  title="React 18 concurrent scheduler details"
+  data-lesson-visual
+  stats={[
+    { label: "Work chunk size", value: "5 ms" },
+    { label: "Yield mechanism", value: "MessageChannel.postMessage (no 4 ms clamp)" },
+    { label: "useTransition", value: "marks update as interruptible by input" },
+    { label: "Max task duration", value: "< 50 ms (long-task safe)" },
+    { label: "Resumption", value: "next task on the event loop" },
+  ]}
+/>
+
+## Vue 3's scheduler
+
+Vue 3 batches reactive updates within a microtask: a write to a ref schedules a microtask that flushes all pending updates at the end of the current task. This means many writes in one task collapse into one update — but it also means the flush is a microtask and can prolong starvation if it triggers more reactive writes.
+
+Vue exposes `nextTick(callback)` for code that wants to run after the flush; underneath, this is just another microtask scheduled after the flush microtask.
+
+<Quiz
+  id="sr-fw-quiz-1"
+  pieceSlug="06-framework-and-observability"
+  lang="en"
+  question="React 18 uses `MessageChannel.postMessage` to yield between reconciliation chunks instead of `setTimeout(fn, 0)`. Why?"
+  choices={[
+    { label: "MessageChannel queues a task with no clamping — setTimeout(0) gets a 4 ms minimum after 5 nesting levels, adding 400 ms+ to a 100-iteration render", correct: true },
+    { label: "MessageChannel is faster because it bypasses the OS timer queue", misconception: "Both go through the event loop. The key difference is the absence of the 4 ms nesting clamp, not OS-level bypassing." },
+    { label: "setTimeout(0) runs as a microtask, which would block rendering between chunks", misconception: "setTimeout always queues a task, never a microtask. The problem with setTimeout for React is the 4 ms clamp, not queue type." },
+    { label: "MessageChannel allows priority inheritance from the calling task", misconception: "MessageChannel does not inherit priority. Priority in the Scheduler API comes from scheduler.postTask(). MessageChannel's advantage is purely the absence of the 4 ms clamp." },
+  ]}
+/>
+
+<Quiz
+  id="sr-fw-quiz-2"
+  pieceSlug="06-framework-and-observability"
+  lang="en"
+  question="A Vue 3 component writes to three refs in one synchronous block. How many DOM updates result?"
+  choices={[
+    { label: "One — Vue batches all reactive updates into a single microtask flush at the end of the current task", correct: true },
+    { label: "Three — each ref write triggers an immediate synchronous update", misconception: "Vue 3's scheduler queues a single flush microtask when the first write happens. All subsequent writes in the same task join the same batch." },
+    { label: "Zero — Vue defers all updates to the next animation frame", misconception: "Vue flushes via a microtask, not via rAF. Updates are visible before any rendering — just batched to one flush per task." },
+    { label: "It depends on whether the writes happen inside a computed getter", misconception: "Batching applies to all reactive writes to refs, regardless of whether they happen inside or outside computed getters." },
+  ]}
+/>
+
+## Production INP root-cause pipeline
+
+**Recipe for INP root-cause in production:**
+
+Subscribe to LoAF entries with `PerformanceObserver`. For each entry, record the `firstUIEventTimestamp`, the entry's `renderStart`, and the array of `scripts` with attribution. When INP fires for a slow interaction (also via PerformanceObserver), correlate by interaction id: find the LoAF that overlapped the input, attribute the time to the heaviest script, send to telemetry with the script URL and function name (resolved via sourcemap server-side). This pipeline turns "users are complaining about lag" into "deploy 3a4f1c regressed search input by adding a 320 ms reducer call."
+
+```javascript
+const observer = new PerformanceObserver((list) => {
+  for (const entry of list.getEntries()) {
+    if (entry.entryType === 'long-animation-frame') {
+      const heaviest = entry.scripts
+        .sort((a, b) => b.duration - a.duration)[0];
+      sendToTelemetry({
+        frameStart: entry.startTime,
+        frameDuration: entry.duration,
+        scriptUrl: heaviest?.sourceURL,
+        functionName: heaviest?.sourceFunctionName,
+        charPosition: heaviest?.sourceCharPosition,
+      });
+    }
+  }
+});
+observer.observe({ type: 'long-animation-frame', buffered: true });
+```
+
+**INP as CI gate.** Production telemetry catches regressions after they reach users. A realistic gate: a synthetic Playwright/Puppeteer test in headless Chrome reproduces the critical interaction (type a query in search, open a menu, switch a tab), measures INP via the same `PerformanceObserver` code as in prod, and blocks merge if p75 crosses the budget. Key detail: headless Chrome on a CI runner is typically faster than a mid-range phone, so without `--cpu-throttling-rate=4` (or CDP equivalent) the test passes locally and fails in prod. Bundle-size budgets add a second layer: JS size converts directly to parse+compile time, which converts to long tasks at load. Without all three layers — synthetic INP gate, bundle budget, and production LoAF alerts — a regression slips in silently and lives until the next manual profile.
+
+<Quiz
+  id="sr-fw-quiz-3"
+  pieceSlug="06-framework-and-observability"
+  lang="en"
+  question="A LoAF entry's `scripts` array shows a 280 ms duration attributed to `reducerRootReducer` in `bundle.js:1:94821`. What is the next step to get a file:line in the original source?"
+  choices={[
+    { label: "Resolve the sourceCharPosition (94821) through the production sourcemap using a sourcemap server or sentry-level mapping — returns the original file:line", correct: true },
+    { label: "The sourceURL already gives you the file:line", misconception: "In production, sourceURL points to the minified bundle. The original file:line is only accessible through the sourcemap." },
+    { label: "Search the codebase for 'reducerRootReducer' — the function name is preserved even in production", misconception: "Production builds minify and mangle names. The function name in LoAF may itself be mangled; even if readable, the line number refers to the bundle, not the source." },
+    { label: "Reproduce locally with DevTools to get the real source location", misconception: "Local reproduction may not reproduce production behavior if the payload size, timing, or device throttling differs. Sourcemap resolution is the correct path for production attribution." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+The three-layer observability stack — synthetic CI gate, bundle budget, production LoAF alerts — is the engineering analog of the three-layer throttling stack for timers. Both problems have compounding factors that no single instrument catches. A synthetic test catches regressions before users see them but misses device diversity; production LoAF alerts catch what synthesis missed but arrive after real users are hurt; bundle budgets prevent the problem before it exists in code. Without all three, you are optimizing one layer while the others leak.
+</Inset>
+
+<Quiz
+  id="sr-fw-quiz-4"
+  pieceSlug="06-framework-and-observability"
+  lang="en"
+  question="Your CI synthetic INP test passes at p75 = 120 ms. Real-user p75 INP is 480 ms. What is the most likely explanation?"
+  choices={[
+    { label: "The CI runner has no CPU throttling — it is faster than the median user's device; apply --cpu-throttling-rate=4 or equivalent to simulate a mid-range phone", correct: true },
+    { label: "The PerformanceObserver in the test is buffered incorrectly and misses entries", misconception: "Buffered: true would catch entries from before the observer was attached. Buffering issues cause under-counting, not a 4x gap. The gap is almost always device-class difference." },
+    { label: "Synthetic tests cannot measure INP because they have no real user input", misconception: "Playwright and Puppeteer can dispatch synthetic clicks and keystrokes that the browser treats as real user input for the purposes of INP measurement." },
+    { label: "The test uses the wrong PerformanceObserver entry type", misconception: "Both INP and long-animation-frame are valid PerformanceObserver entry types. A wrong type would give zero entries, not a wrong number." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>React 18 slices reconciliation into 5 ms chunks yielded via MessageChannel; Vue 3 batches reactive flushes into one microtask per task. In production, wire LoAF to telemetry, resolve script attribution through sourcemaps, and gate merges on a throttled synthetic INP test — observability without all three layers leaves regressions invisible until users complain.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-framework-and-observability-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how React 18 concurrent rendering keeps individual tasks under the 50 ms long-task threshold.", a: "React's scheduler splits reconciliation into 5 ms work chunks. After each chunk it calls MessageChannel.postMessage, which queues a task (no 4 ms clamp unlike setTimeout). The browser event loop runs between tasks — it can process input, render a frame, and handle other callbacks. React resumes reconciliation on the next task. This means a 500 ms full tree reconcile becomes ~100 tasks of ~5 ms each, none of which registers as a long task, and useTransition updates can be interrupted mid-reconcile by higher-priority input updates." },
+    { q: "Describe the three-layer INP observability stack and why all three are needed.", a: "1. Synthetic CI gate: a Playwright test with CPU throttling (--cpu-throttling-rate=4) reproduces the interaction and measures INP — catches regressions before production. 2. Bundle size budget: JS parse+compile time converts to long tasks at load; a bundle budget gates the source of load-time regressions. 3. Production LoAF alerts: PerformanceObserver on long-animation-frame in real browsers, correlated with INP by interaction id, attributed to specific scripts via sourcemaps — catches what synthesis missed and enables actionable attribution. Without all three: synthetic misses device diversity, bundle budget misses runtime regressions, production-only catches problems after users are hurt." },
+    { q: "A Vue 3 component writes to 10 refs in a loop. Will there be 10 microtask flushes or 1? What happens if the flush triggers more reactive writes?", a: "One flush. The first write schedules a microtask; all subsequent writes in the same synchronous block join the same pending flush. The flush microtask drains at the next microtask checkpoint and updates the DOM once. If the flush triggers more reactive writes (e.g., a watcher modifies another ref), those writes schedule another flush microtask — which drains at the next microtask checkpoint. If that flush triggers yet more writes, you get a chain of microtask flushes, each blocking the render step until the chain terminates. In the worst case (circular reactivity) this is microtask starvation — Vue will throw a warning and break the cycle after a depth limit." },
+  ]}
+/>
+
+<Recap lang="en">
+React 18's concurrent scheduler uses `MessageChannel.postMessage` to yield between 5 ms reconciliation chunks — a task-level yield with no 4 ms clamp, interleaving React work with browser input and render steps. `useTransition` marks updates as interruptible, allowing urgent input to cut in front of a slow reconcile. Vue 3 batches reactive updates into a single microtask flush per synchronous block via `nextTick`, which is efficient but can produce microtask chains if flush callbacks trigger more reactive writes. In production, INP root-cause requires three instruments working together: a LoAF `PerformanceObserver` that records per-script attribution; a sourcemap server that resolves script URLs and character positions to original file:line; and a CI-gated synthetic INP test with CPU throttling that enforces the budget before regressions reach real users. Without the CPU throttling, CI runners are too fast to catch regressions that only appear on mid-range phones.
+</Recap>

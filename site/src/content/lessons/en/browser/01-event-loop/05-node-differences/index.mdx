@@ -1,0 +1,178 @@
+---
+slug: 05-node-differences
+lang: en
+track: browser
+unit: 01-event-loop
+order: 5
+title: "Node.js event loop: phases, nextTick, and loop lag"
+summary: "How Node's libuv-driven six-phase loop differs from the browser loop — process.nextTick priority, setImmediate vs setTimeout(0), blocking the Node loop, and measuring event-loop lag."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["01-loop-model", "02-queues-and-scheduling"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["libuv", "node-phases", "process-nextTick", "setImmediate", "event-loop-lag", "worker-threads", "monitorEventLoopDelay"]
+sources:
+  - https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick
+  - https://nodejs.org/api/perf_hooks.html#performancemonitoreventloopdelay
+  - https://nodejs.org/api/worker_threads.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Your Node service handles 1000 req/s fine in staging. In production it occasionally spikes to 500 ms tail latency. DevTools is useless — Node has no frames, no INP. You need the equivalent diagnostic for a headless loop: event-loop lag.
+</Hook>
+
+<Crux>Node's loop has six phases — process.nextTick fires before microtasks, and any blocking call delays every concurrent request.</Crux>
+
+<Explanation>
+
+## Node's libuv loop: six phases
+
+Node's libuv-driven loop runs through six phases per iteration:
+
+| Phase | What runs |
+| --- | --- |
+| timers | Expired `setTimeout` / `setInterval` callbacks |
+| pending callbacks | Deferred I/O error callbacks |
+| idle / prepare | Internal libuv use |
+| poll | Block on I/O (new socket data, file reads) |
+| check | `setImmediate` callbacks |
+| close | `close` events (e.g., `socket.destroy()`) |
+
+Between **every** phase, two queues drain: the `process.nextTick` queue (Node-specific, fires **before** microtasks) and the standard microtask queue (Promise.then, queueMicrotask).
+
+<NumbersCard
+  id="card-node-phases"
+  title="Node loop queue priority"
+  data-lesson-visual
+  stats={[
+    { label: "1st — synchronous code", value: "runs to completion" },
+    { label: "2nd — process.nextTick", value: "empties between every phase" },
+    { label: "3rd — microtasks (Promise.then)", value: "empties between every phase" },
+    { label: "4th — timers phase", value: "setTimeout / setInterval" },
+    { label: "5th — check phase", value: "setImmediate" },
+    { label: "6th — close phase", value: "close events" },
+  ]}
+/>
+
+## process.nextTick — highest-priority callback in Node
+
+`process.nextTick` is the highest-priority callback short of synchronous code. It fires before microtasks — before `Promise.then`. Misuse causes the same starvation pattern as runaway microtasks in the browser, but at one priority level higher:
+
+```javascript
+function tick() {
+  process.nextTick(tick); // starvation at nextTick level
+}
+tick(); // I/O callbacks, setImmediate, timers never run
+```
+
+If you need "run after this synchronous block," prefer `queueMicrotask` or `Promise.resolve().then` in Node — they have correct priority relative to I/O.
+
+## setImmediate vs setTimeout(0) in Node
+
+Despite the names, `setImmediate` does not run immediately and `setTimeout(0)` does not run at zero delay.
+
+- `setImmediate` runs in the **check phase** (after I/O for this iteration).
+- `setTimeout(0)` runs in the **timers phase** of the **next** iteration.
+
+Inside an I/O callback (file read, socket read), `setImmediate` always wins — it fires this iteration's check phase before the next iteration's timers phase. Outside I/O callbacks, the order is **non-deterministic** by spec. Code that relies on either ordering between the two is brittle; if you need a guaranteed ordering, use `queueMicrotask` (always before either) or stack them with explicit dependencies.
+
+<Quiz
+  id="sr-node-quiz-1"
+  pieceSlug="05-node-differences"
+  lang="en"
+  question="Inside an I/O callback, which fires first — `setImmediate(fn)` or `setTimeout(fn, 0)` scheduled from that callback?"
+  choices={[
+    { label: "setImmediate — it runs in the check phase of the current iteration, before the next iteration's timers phase", correct: true },
+    { label: "setTimeout(0) — it has a zero delay, so it fires immediately", misconception: "setTimeout(0) runs in the timers phase of the next loop iteration, not the current one. Inside an I/O callback, setImmediate consistently wins." },
+    { label: "The order is non-deterministic", misconception: "Outside I/O callbacks the order is non-deterministic, but inside an I/O callback setImmediate consistently fires before setTimeout(0) because of the phase ordering." },
+    { label: "Neither — both wait for the poll phase to complete first", misconception: "The poll phase is what delivered the I/O callback. Once that callback returns, the loop moves to the check phase (setImmediate), then back to timers on the next iteration." },
+  ]}
+/>
+
+<Quiz
+  id="sr-node-quiz-2"
+  pieceSlug="05-node-differences"
+  lang="en"
+  question="A Node request handler does synchronous `JSON.parse` of a 3 MB body. What is the impact on other requests?"
+  choices={[
+    { label: "Every other request queued on this process is blocked for the full JSON.parse duration — typically 60–120 ms for 3 MB on a standard server", correct: true },
+    { label: "Only the requests waiting for the same file descriptor are blocked", misconception: "Node is single-threaded. Any synchronous work on the main thread blocks all tasks, not just those sharing a file descriptor." },
+    { label: "Node distributes the parse across available CPU cores automatically", misconception: "Node's event loop is single-threaded. Distributing CPU work requires Worker threads (node:worker_threads) or child processes — it does not happen automatically." },
+    { label: "The impact is negligible because JSON.parse runs in native code", misconception: "Native code is still synchronous on the main thread. 3 MB at ~30 MB/s parse throughput is ~100 ms of blocking time regardless of the language implementing it." },
+  ]}
+/>
+
+## Why blocking the Node loop matters
+
+Node has no concept of frames or input — but it is single-threaded just like the browser. A 500 ms `JSON.parse` on a request handler blocks every other request on the same process for 500 ms. There is no rendering safety net. Mitigation:
+
+- Offload CPU-bound work to a Worker thread (`node:worker_threads`).
+- Keep request handlers async-first.
+- Use streaming parsers (`JSONStream`, `oboe.js`) for large payloads.
+
+The same "shorter tasks" discipline that fixes browser INP fixes Node tail latency.
+
+## Measuring event-loop lag in Node
+
+The browser has INP and LoAF. Node has **event-loop lag** — the equivalent diagnostic for a headless loop. The idea: schedule a timer for T ms and measure how late it actually fired; the excess over T is time the loop was blocked by synchronous work.
+
+`perf_hooks.monitorEventLoopDelay()` gives a histogram of this lag with percentiles. A healthy process holds p99 lag in single-digit ms; p99 in hundreds of ms means some handler regularly monopolises the thread, and every request that hits that window gets tail latency.
+
+```javascript
+const { monitorEventLoopDelay } = require('perf_hooks');
+const h = monitorEventLoopDelay({ resolution: 10 });
+h.enable();
+// … later:
+console.log(`p99 lag: ${h.percentile(99)}ms`);
+```
+
+This is the same measurement as INP in the browser — "how long did one task hold the only execution thread" — just expressed as lag instead of interaction delay.
+
+<Quiz
+  id="sr-node-quiz-3"
+  pieceSlug="05-node-differences"
+  lang="en"
+  question="In Node, `process.nextTick(fn)` runs before `Promise.resolve().then(fn)`. Why does this ordering matter?"
+  choices={[
+    { label: "nextTick can starve microtasks the same way microtasks can starve rendering in the browser — a recursive nextTick prevents I/O and all downstream work from running", correct: true },
+    { label: "It means nextTick callbacks are more reliable for ordering work after I/O", misconception: "nextTick's higher priority is a footgun, not a feature. For ordering work after I/O, use queueMicrotask or a resolved Promise — they are less aggressive and leave room for actual I/O callbacks." },
+    { label: "The ordering only matters inside async functions — outside them both behave identically", misconception: "The ordering applies everywhere in Node, not only inside async functions. process.nextTick fires before microtasks in all contexts." },
+    { label: "It is an implementation detail; the spec requires them to be equivalent", misconception: "process.nextTick is a Node-specific API that intentionally fires before the standard microtask queue. ECMA-262 does not define it; it is a Node design decision with real ordering consequences." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Browser-vs-Node timing differences cause production bugs. A module tested only in Node may rely on `process.nextTick` firing before `Promise.then`. The same code in a browser (where nextTick does not exist) may use a polyfill that maps it to queueMicrotask — which has the same priority as `Promise.then`. Code that chains nextTick and Promise.then expecting a specific interleaving will produce different results in each environment. Test async ordering assumptions in both environments, not just one.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Node's loop has six phases and process.nextTick fires before microtasks — misuse starves the entire loop. Blocking the Node thread blocks all concurrent requests; use Worker threads or streaming parsers. Measure health with monitorEventLoopDelay() p99.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-node-differences-retrieval"
+  lang="en"
+  questions={[
+    { q: "List Node's six event-loop phases in order.", a: "1. timers — expired setTimeout/setInterval callbacks. 2. pending callbacks — deferred I/O error callbacks. 3. idle/prepare — internal libuv. 4. poll — block on I/O (new data). 5. check — setImmediate callbacks. 6. close — close events. Between every phase: process.nextTick queue drains, then microtask queue drains." },
+    { q: "Why is process.nextTick(fn) a footgun compared to queueMicrotask(fn)?", a: "process.nextTick fires before microtasks — it is the highest-priority async callback in Node. A recursive nextTick creates the same starvation pattern as a recursive microtask in the browser, but at higher priority: it prevents microtasks, I/O callbacks, and all phase callbacks from running until the nextTick chain breaks. queueMicrotask fires after nextTick and does not override I/O priority the same way. Use nextTick only when you explicitly need to run before microtasks — which is rare." },
+    { q: "A Node service's p99 event-loop lag climbs from 5 ms to 200 ms after a new release. What is the likely cause, and how do you find it?", a: "A new synchronous operation was added to a hot request handler — likely JSON.parse/stringify of a large payload, a synchronous crypto operation, or a filter/sort over a large in-memory dataset. To find it: use clinic.js or node --prof to get a CPU profile of the process under load, find the synchronous functions dominating the flame chart, measure their call-site duration with performance.now(). Fix: move the work to a Worker thread (node:worker_threads), switch to a streaming parser, or reduce payload size server-side." },
+  ]}
+/>
+
+<Recap lang="en">
+Node's event loop is driven by libuv through six ordered phases: timers, pending callbacks, idle/prepare, poll, check (setImmediate), and close. Between every phase, `process.nextTick` callbacks drain first (before microtasks), making it the highest-priority async primitive in Node and a starvation risk if used recursively. `setImmediate` fires in the check phase of the current iteration; `setTimeout(0)` fires in the timers phase of the next iteration — inside I/O callbacks, setImmediate always wins; outside, the order is non-deterministic. Because Node has no rendering step or input events, the equivalent of browser INP is event-loop lag, measurable with `perf_hooks.monitorEventLoopDelay()`. A p99 lag spike means a handler is holding the single main thread — blocking every concurrent request — and the fix is identical to the browser: shorter tasks, streaming parsers, or Worker threads for CPU-bound work.
+</Recap>
