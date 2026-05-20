@@ -1,0 +1,212 @@
+---
+slug: 05-simd-and-data-layout
+lang: ru
+track: performance
+unit: 03-cache-vs-bigo
+order: 5
+title: "SIMD и data layout: AoS vs SoA и разница в 4–8x"
+summary: "AVX2 обрабатывает 8 float за один цикл — но только если данные лежат правильно. AoS (array of structs) требует gather, SoA (struct of arrays) грузит 8 элементов за один aligned load. Layout решает, работает ли SIMD."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["performance/03-cache-vs-bigo/03-cache-lines-and-false-sharing"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["simd", "aos", "soa", "avx2", "avx512", "neon", "vectorization", "memory-bandwidth", "numa"]
+sources:
+  - https://en.wikipedia.org/wiki/CPU_cache
+  - https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec25-locality/lec25.html
+  - https://ivoroshilin.wordpress.com/2013/02/06/know-your-locality-of-reference-some-techniques-for-keeping-data-in-the-cpu-cache/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Hot ML inference loop в 5 раз медленнее reference C++ implementation, несмотря на идентичный алгоритм. Разница: reference хранит `xs[], ys[], zs[]`. Медленная версия хранит `{x, y, z}[]`. Изменение layout — не алгоритма — приносит 5x speedup.
+</Hook>
+
+<Crux>AVX2: 256 бит = 8 float за load. AoS заставляет SIMD делать gather — в 10x дороже. SoA: один aligned load = полный SIMD lane. Layout решает.</Crux>
+
+<Explanation>
+
+## SIMD register widths
+
+Современные CPU имеют wide vector registers для параллельной обработки:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">ISA</th>
+        <th class="border border-border px-3 py-2 text-left">Register width</th>
+        <th class="border border-border px-3 py-2 text-left">Float32 per op</th>
+        <th class="border border-border px-3 py-2 text-left">Платформа</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">SSE4.2</td>
+        <td class="border border-border px-3 py-2">128 бит</td>
+        <td class="border border-border px-3 py-2">4</td>
+        <td class="border border-border px-3 py-2">x86 (всё)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">AVX2</td>
+        <td class="border border-border px-3 py-2">256 бит</td>
+        <td class="border border-border px-3 py-2">8</td>
+        <td class="border border-border px-3 py-2">x86 (2013+)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">AVX-512</td>
+        <td class="border border-border px-3 py-2">512 бит</td>
+        <td class="border border-border px-3 py-2">16</td>
+        <td class="border border-border px-3 py-2">x86 server (Skylake-SP+)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">NEON</td>
+        <td class="border border-border px-3 py-2">128 бит</td>
+        <td class="border border-border px-3 py-2">4</td>
+        <td class="border border-border px-3 py-2">ARM (Apple Silicon, Android)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">SVE2 / SME</td>
+        <td class="border border-border px-3 py-2">128–2048 бит</td>
+        <td class="border border-border px-3 py-2">4–64</td>
+        <td class="border border-border px-3 py-2">ARM (Apple M4, server)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Одна AVX2 инструкция multiply 8 float за **1 цикл** — в 8x больше throughput, чем scalar. Но это работает только если 8 float лежат **contiguous** в памяти.
+
+## AoS vs SoA
+
+**Array of Structures (AoS)** — интуитивный layout:
+
+```cpp
+struct Point { float x, y, z; };
+Point points[N];  // points[0].x, points[0].y, points[0].z, points[1].x, ...
+```
+
+Нужно сложить все `x` компоненты. AVX2 должен загрузить 8 `x` значений. Они находятся на адресах 0, 12, 24, 36, 48, 60, 72, 84 (stride 12 байт). Один vector load захватывает `x0, y0, z0, x1, y1...` — не то, что нужно. Нужен **gather** — 8 separate loads из несмежных адресов. Gather в 4–8x медленнее, чем aligned load.
+
+**Structure of Arrays (SoA)**:
+
+```cpp
+float xs[N], ys[N], zs[N];  // xs[0], xs[1], xs[2], ... (contiguous)
+```
+
+Сложить все `x`: один AVX2 `vmovups` грузит `xs[0..7]` за один цикл. 8 float, один load. Prefetcher тоже счастлив — sequential access.
+
+```cpp
+// AoS: 8 separate loads из случайных stride адресов
+// SoA: один aligned load
+__m256 vx = _mm256_loadu_ps(&xs[i]);  // грузит xs[i..i+7]
+__m256 vy = _mm256_loadu_ps(&ys[i]);  // грузит ys[i..i+7]
+__m256 result = _mm256_add_ps(vx, vy);  // 8 сложений за 1 цикл
+```
+
+## Auto-vectorisation
+
+Компиляторы auto-vectorise простые циклы в SIMD instructions при `-O2`/`-O3`, когда:
+- Нет pointer aliasing (используй `restrict` в C, Rust handles this automatically).
+- Loop trip count известен или предсказуем.
+- Нет data-dependent inner branches.
+- Data layout allows contiguous access.
+
+Проверить, что компилятор emit-ил SIMD: `-fopt-info-vec` (GCC) или `-Rpass=loop-vectorize` (Clang).
+
+Когда auto-vec fails: manual SIMD intrinsics (AVX2, NEON) или portable libraries (Highway, simd-everywhere).
+
+## Memory bandwidth как отдельный constraint
+
+Cache hit rate — одна ось. Memory bandwidth — другая. Workload, streaming через 100 GB данных, bound RAM bandwidth (~50–100 GB/s на DDR5) независимо от cache locality.
+
+**Bandwidth-bound фикс:** не locality, а снижение data volume:
+- Более компактные типы (float16 вместо float32 если precision позволяет).
+- On-the-fly computation вместо materialised tables.
+- Compression.
+
+`perf stat cache-misses` vs `mem-loads-retired.l3-miss` разделяет: первый показывает locality-bound проблему, второй — bandwidth-bound.
+
+## NUMA
+
+Servers с 2+ CPU sockets — **Non-Uniform Memory Access**: каждый socket имеет local RAM на ~70 нс, remote (other socket) RAM на ~120–150 нс.
+
+Thread, аллоцирующий на socket 0, но работающий на socket 1, платит remote-access tax на каждой load. Митигации: pin threads на sockets (`taskset`, `hwloc`), аллоцируй на local NUMA node (`numactl`). Mis-configured 2-socket box может работать медленнее 1-socket для memory-bound workloads.
+
+<NumbersCard
+  id="05-numbers"
+  title="SIMD и memory bandwidth числа"
+  stats={[
+    { label: "AVX2 float throughput", value: "8 float / цикл" },
+    { label: "AVX-512 float throughput", value: "16 float / цикл" },
+    { label: "Gather vs aligned load", value: "4–8x медленнее" },
+    { label: "DDR5-6000 bandwidth", value: "~50 GB/s per channel" },
+    { label: "NUMA local vs remote RAM", value: "70 нс vs 120–150 нс" },
+    { label: "AVX2 alignment", value: "32-byte aligned load быстрее" },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+SIMD-friendly data alignment важен: AVX-512 требует 64-byte alignment для самых быстрых load инструкций; AVX2 — 32-byte; NEON — 16-byte. Misaligned access работает, но медленнее (split-load penalty). Для structs нужны атрибуты: `alignas(64)` в C++, `#[repr(align(64))]` в Rust. Для allocation: `posix_memalign`, `std::aligned_alloc`. Mismatch alignment — частая причина «SIMD не дал ожидаемого speedup». Verify alignment через `(uintptr_t)ptr % 64 == 0` assertion перед SIMD load.
+</Inset>
+
+<Misconception id="05-mc-simd">
+  <p><strong>«SIMD speedup — просто добавь intrinsics.»</strong> SIMD требует: (1) contiguous однотипные данные, (2) aligned addresses, (3) нет data-dependent branches. Intrinsics на AoS дают gather — медленнее scalar. Сначала SoA layout, потом SIMD.</p>
+</Misconception>
+
+<Quiz
+  id="05-quiz-1"
+  lessonSlug="05-simd-and-data-layout"
+  lang="ru"
+  question="Hot ML inference loop хранит activations как array of (x,y,z,w) структур (AoS). Reference хранит xs[], ys[], zs[], ws[] (SoA). Почему SoA в 4–8x быстрее для vector operations?"
+  choices={[
+    { label: "AoS layout: SIMD op, желающий 4 xs, должен gather их с 4 разных cache lines (stride 16 байт). SoA layout: 4 xs — xs[0..3] — один aligned load. Тот же алгоритм, разные bytes-fetched-per-op.", correct: true },
+    { label: "SoA использует меньше памяти", misconception: "SoA и AoS занимают одинаково памяти; разница — в порядке байт, не в объёме." },
+    { label: "AoS несовместим с SIMD инструкциями", misconception: "AoS совместим, но требует gather — significantly медленнее, чем aligned load." },
+    { label: "SoA позволяет компилятору использовать более новый ISA", misconception: "ISA availability не зависит от layout; AVX2 работает с обоими, но AoS требует gather." },
+  ]}
+/>
+
+<Quiz
+  id="05-quiz-2"
+  lessonSlug="05-simd-and-data-layout"
+  lang="ru"
+  question="Компания переходит с DDR4 на DDR5 (вдвое больше bandwidth) но streaming workload ускорился лишь на 15%, не на 100%. Почему?"
+  choices={[
+    { label: "Workload был cache-bound, не bandwidth-bound: hot data влезало в L3, bandwidth RAM не был bottleneck. DDR5 помогает только bandwidth-bound workloads.", correct: true },
+    { label: "DDR5 несовместим с существующим кодом", misconception: "DDR5 полностью обратно совместим; проблема — не совместимость." },
+    { label: "Streaming workloads не used RAM", misconception: "Streaming по определению идёт через RAM; вопрос — был ли RAM bottleneck до улучшения." },
+    { label: "Нужно перекомпилировать с DDR5 флагами", misconception: "Нет таких флагов; bandwidth — hardware-уровень, прозрачный для кода." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>AVX2 обрабатывает 8 float за 1 цикл — но только если они лежат contiguous (SoA). AoS требует gather: 4–8x медленнее. Auto-vectorisation работает при правильном layout, отсутствии aliasing, predictable trip count. Memory bandwidth и cache locality — отдельные constraints: bandwidth-bound фиксится компактными типами, не locality. NUMA: thread должен работать рядом с данными, которые он аллоцировал.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему AoS layout defeat-ит SIMD, а SoA layout его enables?", a: "AVX2 vector load (`vmovups`) грузит 8 последовательных float за один цикл — требует контигуальные данные одного типа. В AoS (array of structs) поля одного типа интерлив-нуты: struct Point {x, y, z} — в памяти x0, y0, z0, x1, y1, z1... Чтобы загрузить 8 xs — нужен gather с 8 адресов (stride 12 байт) — 4–8x медленнее aligned load. В SoA (struct of arrays) xs хранятся как xs[0], xs[1], xs[2], ..., xs[7] — contiguous. Один `vmovups(&xs[i])` грузит 8 xs. Prefetcher тоже счастлив. Правило: если inner loop трогает одно поле всех N элементов — SoA. Если inner loop трогает все поля одного элемента — AoS (entity-style processing, rare)." },
+    { q: "Как отличить cache-bound workload от bandwidth-bound?", a: "Cache-bound: working set влезает в L3 или меньше; увеличение RAM bandwidth не помогает; проблема — miss rate (locality). Bandwidth-bound: working set не влезает в L3, приложение streaming-ит через гигабайты RAM; увеличение bandwidth помогает; проблема — объём данных. Диагностика через perf stat: cache-bound показывает высокий `cache-misses/cache-references` (L3 miss rate), bandwidth-bound показывает высокий `mem-bandwidth` utilization и saturated memory controller. Фикс cache-bound: улучшить locality (SoA, struct splitting, working set reduction). Фикс bandwidth-bound: снизить data volume (компактные типы, compression, on-the-fly computation)." },
+  ]}
+/>
+
+<Recap lang="ru">
+SIMD registers (AVX2: 256 бит = 8 float) требуют contiguous однотипные данные. AoS интерлив-ит поля — SIMD вынужден gather (4–8x медленнее aligned load). SoA хранит каждое поле в dense array — один load, полный SIMD lane. Auto-vectorisation компилятором требует правильного layout, отсутствия aliasing, predictable trip count. Memory bandwidth и cache locality — разные constraints с разными фиксами: bandwidth-bound снижает data volume; cache-bound улучшает locality. NUMA добавляет latency 70% к remote socket: pin threads и аллоцируй на local node. SIMD alignment критичен: misaligned access работает, но с split-load penalty.
+</Recap>
