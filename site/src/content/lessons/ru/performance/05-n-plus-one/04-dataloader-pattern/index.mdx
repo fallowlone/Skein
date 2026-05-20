@@ -1,0 +1,215 @@
+---
+slug: 04-dataloader-pattern
+lang: ru
+track: performance
+unit: 05-n-plus-one
+order: 4
+title: "DataLoader: батчинг по дереву резолверов"
+summary: "DataLoader накапливает ID-шники из всего запроса и выполняет один батч-запрос на тип при следующем тике event loop — канонический фикс для N+1 в GraphQL и multi-source fan-out."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+deepensInto: []
+spiral: ["latency"]
+concepts: ["dataloader", "event-loop-batching", "graphql-nplus1", "request-scope-cache", "batch-function"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://shopify.engineering/improving-graphql-performance
+  - https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+GraphQL-запрос `me { posts { author { name } } }` для 50 постов запускает 1 + 50 запросов к авторам. Подход с ORM eager load здесь не помогает — потребность в данных разбросана по 50 независимым вызовам резолвера, не сконцентрирована в одном месте запроса. DataLoader — структурный фикс.
+</Hook>
+
+<Crux>DataLoader батчит все ID из очереди запроса в один запрос на тип на следующем тике event loop — не в каждом месте вызова.</Crux>
+
+<Explanation>
+
+## Почему ORM eager loading недостаточен для GraphQL
+
+ORM eager loading (`includes`, `select_related`, `joinedload`) работает путём объявления связей в точке построения запроса. Вы пишете один запрос со связями, объявленными заранее. В GraphQL-сервере нет одной точки построения запроса — каждый резолвер запускается независимо для каждого родительского объекта. Нет естественного места сказать "кстати, мне также понадобится автор для всех этих постов."
+
+Когда 50 резолверов постов каждый вызывает `db.user.findUnique({ where: { id: authorId } })`, ORM не знает, что все они запрашивают один и тот же тип данных. Он выполняет 50 запросов.
+
+DataLoader решает это, перенося батчинг в scope запроса, а не области запроса к БД.
+
+## Как работает DataLoader
+
+Facebook открыл исходники DataLoader в 2015 году вместе с GraphQL.js. Механизм:
+
+1. Экземпляр DataLoader создаётся один раз на запрос (не на вызов).
+2. Любой код в запросе вызывает `loader.load(id)`, который возвращает Promise и **ставит id в очередь внутри** — он не выполняет запрос.
+3. Когда текущая синхронная работа заканчивается и event loop достигает следующего тика, loader выполняет один батч-запрос: `SELECT * FROM users WHERE id IN (все поставленные в очередь id)`.
+4. Loader распределяет результаты каждому ждущему Promise по порядку.
+
+```javascript
+// Создаётся один раз на запрос (например, в GraphQL context)
+const userLoader = new DataLoader(async (ids) => {
+  // ids — это батч: все ID, поставленные в очередь с последнего тика
+  const users = await db.user.findMany({
+    where: { id: { in: ids } },
+  });
+  // Должен вернуть результаты в том же порядке, что и ids
+  return ids.map(id => users.find(u => u.id === id) ?? null);
+});
+
+// В резолвере Post — вызывается 50 раз для 50 постов
+const resolveAuthor = async (post) => {
+  return userLoader.load(post.authorId);
+  // НЕ запрашивает сразу — ставит ID в очередь
+};
+// После того как все 50 резолверов поставили свои ID в очередь,
+// DataLoader выполняет один запрос:
+// SELECT * FROM users WHERE id IN (1, 2, ..., 50)
+```
+
+Три свойства, которые даёт DataLoader:
+
+1. **Автоматический батчинг** — множество вызовов `load(id)` в одном тике event loop становятся одним запросом.
+2. **Автоматическое кэширование** — `load(id)`, вызванный дважды в одном запросе, возвращает кэшированный результат без второго запроса.
+3. **Request scope** — кэш ограничен объектом запроса, поэтому устаревшие данные не утекают между запросами.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Шаг</th>
+        <th class="border border-border px-3 py-2 text-left">Что происходит</th>
+        <th class="border border-border px-3 py-2 text-left">Запросов выполнено</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Резолвер вызывает load(1)</td>
+        <td class="border border-border px-3 py-2">ID 1 в очереди; возвращён Promise</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Резолвер вызывает load(2) ... load(50)</td>
+        <td class="border border-border px-3 py-2">ID 2–50 в очереди</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Event loop тикает</td>
+        <td class="border border-border px-3 py-2">Loader выполняет батч-запрос</td>
+        <td class="border border-border px-3 py-2">1</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Результаты приходят</td>
+        <td class="border border-border px-3 py-2">Каждый Promise резолвится со своей строкой</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## GraphQL четырёхуровневый N+1
+
+Форма умножается с глубиной вложенности. Для запроса `me { teams { projects { members { name } } } }`:
+
+- резолвер teams: 1 запрос
+- резолвер projects (на каждую team): N запросов
+- резолвер members (на каждый project): N×M запросов
+- name: включено в members, нет лишних запросов
+
+Итого без DataLoader: 1 + N + (N×M) запросов. С DataLoader на тип: 4 запроса всего — один на тип на запрос.
+
+```javascript
+// Каждый loader батчит один тип
+const teamLoader = new DataLoader(ids => batchLoadTeams(ids));
+const projectLoader = new DataLoader(ids => batchLoadProjects(ids));
+const memberLoader = new DataLoader(ids => batchLoadMembers(ids));
+
+// Каждый резолвер просто вызывает loader:
+const resolveTeams = (user) => teamLoader.load(user.id);
+const resolveProjects = (team) => projectLoader.load(team.id);
+const resolveMembers = (project) => memberLoader.load(project.id);
+```
+
+Эффект: количество запросов падает в 100–1000 раз в зависимости от глубины fan-out. p99 падает с 1.4 с до ~150 мс для типичного четырёхуровневого запроса.
+
+## DataLoader vs ORM eager loading: когда использовать каждый
+
+DataLoader более мощный и более сложный, чем ORM eager loading. Выбирайте по тому, откуда возникают потребности в данных:
+
+- **Известная форма в точке запроса** → ORM eager loading. Одно объявление, ORM справляется.
+- **Потребности в данных разбросаны по многим путям кода** → DataLoader. Батчит по деревьям резолверов или границам модулей.
+
+Решающий вопрос: "знаю ли я в одном месте кода, что нужны все данные?" Если да — eager load. Если нет — DataLoader.
+
+<Inset kind="why" lang="ru">
+DataLoader фундаментально связан с async / promise-based runtime, поскольку зависит от тиков event loop для запуска батчинга. Синхронные кодовые базы требуют явной batch-координации: собрать ID в первом проходе, запросить один раз, распределить во втором проходе. Многие языки теперь имеют порты DataLoader: graphql-java/dataloader (Java), aiodataloader (Python asyncio), DataLoader.NET (C#), graphql-dataloader (Go).
+</Inset>
+
+<Quiz
+  id="04-dataloader-pattern-quiz-1"
+  lessonSlug="04-dataloader-pattern"
+  lang="ru"
+  question="GraphQL-резолвер вызывает userLoader.load(post.authorId) 50 раз для 50 постов. Сколько запросов к базе данных выполняет DataLoader?"
+  choices={[
+    { label: "Один — DataLoader ставит все 50 ID в очередь и выполняет один SELECT WHERE id IN (...) при тике event loop.", correct: true },
+    { label: "50 — по одному на каждый вызов load()", misconception: "load() ставит ID в очередь и возвращает Promise. Реальный запрос выполняется позже в одном батче." },
+    { label: "Два — один для первого вызова, один для остальных", misconception: "DataLoader выполняет один батч, содержащий все ID, поставленные в очередь до тика event loop." },
+    { label: "Ноль — DataLoader кэширует всё из предыдущего запроса", misconception: "Кэш DataLoader ограничен запросом. Первый запрос этих ID в данном request выполнит запрос." },
+  ]}
+/>
+
+<Quiz
+  id="04-dataloader-pattern-quiz-2"
+  lessonSlug="04-dataloader-pattern"
+  lang="ru"
+  question="Команда строит REST API endpoint, собирающий данные из трёх таблиц базы данных через ID-поиски, разбросанные по трём вспомогательным модулям. Какой инструмент подходит лучше всего?"
+  choices={[
+    { label: "DataLoader — батчит поиски из всех трёх модулей в один запрос на таблицу на request, с request-scope кэшированием.", correct: true },
+    { label: "ORM eager loading (.includes)", misconception: ".includes объявляет связи в точке построения запроса. При поисках, разбросанных по трём модулям, нет одной точки построения для их объявления." },
+    { label: "Добавить индексы на все три таблицы", misconception: "Индексы ускоряют отдельные запросы. Проблема — в количестве запросов по трём модулям, а не в скорости отдельного запроса." },
+    { label: "Использовать GraphQL вместо REST", misconception: "DataLoader работает с любой request-response системой, не только с GraphQL." },
+  ]}
+/>
+
+<DragOrder
+  id="04-dataloader-pattern-drag-1"
+  lessonSlug="04-dataloader-pattern"
+  lang="ru"
+  prompt="Упорядочите события в цикле батчинга DataLoader от первого вызова до резолвленных promises:"
+  items={[
+    { id: "a", label: "Резолвер вызывает loader.load(id) — возвращён Promise, ID поставлен в очередь" },
+    { id: "b", label: "Ещё вызовы load() от других резолверов — ID накапливаются в батче" },
+    { id: "c", label: "Текущая синхронная работа завершается; event loop тикает" },
+    { id: "d", label: "DataLoader выполняет: SELECT * WHERE id IN (все поставленные в очередь ID)" },
+    { id: "e", label: "Результаты приходят; каждый Promise резолвится со своей соответствующей строкой" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>DataLoader батчит ID-поиски из всего запроса в один запрос на тип, выполняемый при тике event loop. Он даёт автоматический батчинг, request-scope кэширование и работает по любым путям кода — что делает его каноническим фиксом для N+1 в GraphQL-резолверах и multi-source fan-out, где ORM eager loading не помогает.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-dataloader-pattern-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, чем DataLoader отличается от ORM eager loading, и когда каждый является правильным инструментом.", a: "ORM eager loading декларативен в рамках запроса: вы говорите ORM, какие связи загрузить через .includes, select_related, joinedload или аналоги. ORM выбирает JOIN или IN и выполняет запросы заранее в одной точке входа. Работает, когда вы знаете в точке построения запроса, что потребуется потребляющему коду. DataLoader — батчинг в рамках request: код вызывает loader.load(id) везде, где нужна запись; loader накапливает ID по всему запросу; выполняет один батч-запрос при тике event loop; кэширует результаты в рамках запроса. Работает, когда потребности в данных разбросаны по многим путям кода без одной точки входа. Решающий вопрос: 'знаю ли я заранее, какие данные потребуются этому запросу?' Если да — eager load. Если потребности разбросаны — DataLoader. DataLoader добавляет async-сложность, batch-window latency менее 1 мс и request-scope кэширующий слой, который должен аккуратно обрабатывать мутации." },
+    { q: "GraphQL-запрос имеет четыре уровня вложенности: me { teams { projects { members } } }. Объясните, как DataLoader снижает количество запросов.", a: "Без DataLoader каждый резолвер запускается независимо для каждого родителя. Резолвер teams: 1 запрос. Резолвер projects запускается для каждой team: N запросов. Резолвер members запускается для каждого project: N умножить на M запросов. Итого: 1 + N + (N*M). С DataLoader один loader создаётся на тип на request. Каждый резолвер вызывает loader.load(id), что ставит ID в очередь и возвращает Promise. Когда все резолверы на одном уровне поставили свои ID в очередь, event loop тикает и DataLoader выполняет один батч-запрос для этого типа. Итого: один запрос для teams, один для projects (WHERE team_id IN все team ID), один для members (WHERE project_id IN все project ID). С 1 + N + N*M запросов до 3–4 независимо от глубины fan-out." },
+  ]}
+/>
+
+<Recap lang="ru">
+DataLoader батчит ID-поиски из всего запроса в один запрос на тип, выполняемый при тике event loop. В отличие от ORM eager loading, который должен быть объявлен в одном месте запроса, DataLoader работает по разбросанным путям кода — что делает его каноническим фиксом для N+1 в GraphQL-резолверах, где каждый резолвер независимо запрашивает связанные данные. Он даёт три гарантии: автоматический батчинг, request-scope кэширование и отсутствие утечки устаревших данных между запросами. Паттерн DataLoader ориентирован на async; синхронным кодовым базам нужна явная двухпроходная координация collect-then-query вместо него.
+</Recap>

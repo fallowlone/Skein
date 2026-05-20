@@ -1,0 +1,246 @@
+---
+slug: 03-detecting-nplus1
+lang: en
+track: performance
+unit: 05-n-plus-one
+order: 3
+title: "Detecting N+1: query logs, APM traces, and CI gates"
+summary: "N+1 hides from CPU profilers because the cost is off-CPU wait time, not compute. Query logs, APM waterfalls, and per-request counters surface it — and a CI gate prevents regressions."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+deepensInto: []
+spiral: ["latency"]
+concepts: ["query-log", "apm-tracing", "off-cpu-profiling", "ci-gate", "strict-loading"]
+sources:
+  - https://docs.djangoproject.com/en/5.0/ref/models/querysets/
+  - https://guides.rubyonrails.org/active_record_querying.html
+  - https://hibernate.org/orm/documentation/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+The page is 1.2 seconds. The CPU flame graph is flat. Your colleague insists the profiler must be wrong. The profiler is not wrong — you are looking at the wrong instrument. N+1 lives in the off-CPU wait time between queries, not in any function.
+</Hook>
+
+<Crux>N+1 is invisible to CPU profilers. The right instruments are query logs, APM waterfall traces, and per-request query counters.</Crux>
+
+<Explanation>
+
+## Why CPU profiles miss N+1
+
+A CPU profiler samples stack traces of running threads. The N+1 problem does not burn CPU in any single location. Each query dispatches in microseconds; the program then waits for the database (off-CPU); the response returns fast; the next query dispatches. The wait is the bottleneck, but the wait is off-CPU.
+
+The profiler sees fast blips with nothing wide. The cumulative cost is spread across many fast call sites — not concentrated in one slow function. A CPU flame graph will look healthy while the page takes 1.2 seconds.
+
+## The right instruments
+
+### 1. Database query log
+
+The most direct instrument. Every major database can log every query with its duration and a timestamp.
+
+```
+# Postgres — log everything in development
+log_min_duration_statement = 0
+
+# MySQL slow query log
+slow_query_log = 1
+long_query_time = 0
+
+# ORM-level logging
+# Rails: config.log_level = :debug (ActiveRecord logger prints each query)
+# Django: LOGGING = { 'loggers': { 'django.db.backends': { 'level': 'DEBUG' } } }
+# SQLAlchemy: echo=True
+```
+
+The N+1 signature is unmistakable: dozens to hundreds of similar queries for one request, often the same SELECT differing only in the WHERE `id = ?` parameter.
+
+### 2. APM tracing — the waterfall view
+
+Application performance monitoring tools (Datadog APM, Grafana Tempo, New Relic, Honeycomb with auto-instrumentation) capture database spans inline with code execution spans.
+
+The N+1 waterfall looks like a tall column of short parallel bars — 50 or 100 short database spans all within the same request's trace. One glance at the trace view makes the pattern obvious in a way that logs alone do not.
+
+Alert when per-endpoint p95 span count grows more than 30% week-over-week.
+
+### 3. Per-request query counter
+
+Custom middleware that counts queries per request and either logs or alerts on excess:
+
+```ruby
+# Rails — middleware counts queries per request
+ActiveSupport::Notifications.subscribe('sql.active_record') do
+  RequestStore[:query_count] ||= 0
+  RequestStore[:query_count] += 1
+end
+
+after_action do
+  if RequestStore[:query_count] > 20
+    Rails.logger.warn "QUERY_COUNT #{params[:controller]}##{params[:action]}: #{RequestStore[:query_count]}"
+  end
+end
+```
+
+Expose as a Prometheus histogram by endpoint. Alert when endpoint p99 exceeds 20 or grows more than 50% week-over-week.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Instrument</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+        <th class="border border-border px-3 py-2 text-left">Signature</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">CPU profiler</td>
+        <td class="border border-border px-3 py-2">Compute hotspots</td>
+        <td class="border border-border px-3 py-2">Wrong tool — misses N+1</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Query log</td>
+        <td class="border border-border px-3 py-2">Confirm N+1, find call site</td>
+        <td class="border border-border px-3 py-2">Many similar SELECTs per request</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">APM trace</td>
+        <td class="border border-border px-3 py-2">Visual waterfall, production</td>
+        <td class="border border-border px-3 py-2">Tall column of short DB spans</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Query counter</td>
+        <td class="border border-border px-3 py-2">Alerting, per-endpoint trends</td>
+        <td class="border border-border px-3 py-2">queries_per_request p99 &gt; 20</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The CI gate — catch at PR time
+
+The most leveraged anti-N+1 mechanism is catching regressions at PR time instead of in production. Teams running this gate report 70–90% reduction in N+1 incidents reaching production. Initial setup: 1–2 weeks. Ongoing maintenance: trivial — the gate runs in CI.
+
+**Rails:** the `bullet` gem raises on any lazy-loaded relation accessed during request render. A controller test that triggers N+1 fails.
+
+```ruby
+# spec/spec_helper.rb
+Bullet.enable = true
+Bullet.raise = true  # turns N+1 into a test failure
+```
+
+**Django:** `assertNumQueries(N)` in the test framework counts exact queries per view:
+
+```python
+def test_orders_page(self):
+    with self.assertNumQueries(2):  # fails if N+1 sneaks in
+        response = self.client.get('/orders/')
+```
+
+**SQLAlchemy / Hibernate:** enable query count statistics and assert per-test:
+
+```python
+# SQLAlchemy — assert query count via events
+# Hibernate — assert via Statistics.getPrepareStatementCount()
+```
+
+The pattern across all of them: PR triggers tests, tests fire requests, query counter exceeds the per-endpoint threshold, test fails, PR cannot merge.
+
+<Inset kind="why" lang="en">
+Off-CPU profiling (eBPF off-CPU profiles, Java async-profiler in wall-clock mode, JFR socket-wait events) is a fourth option. It shows the application spending most wall-time waiting on the database socket, not running code. Off-CPU profiling is the definitive instrument for the class of problem where "program is slow but CPU profile is healthy" — which is the N+1 signature.
+</Inset>
+
+## Walking a real query log
+
+```
+# tail -f log/development.log | grep -E "SELECT|Loading"
+
+Started GET "/dashboard"
+User Load (0.4ms)    SELECT "users".* FROM "users" WHERE "users"."id" = 42
+Project Load (0.6ms) SELECT "projects".* FROM "projects" WHERE "projects"."user_id" = 42 LIMIT 50
+Task Load (0.3ms)    SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 1
+Task Load (0.3ms)    SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 2
+Task Load (0.4ms)    SELECT "tasks".* FROM "tasks" WHERE "tasks"."project_id" = 3
+... (47 more Task Load lines)
+Comment Load (0.2ms) SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 1
+Comment Load (0.2ms) SELECT "comments".* FROM "comments" WHERE "comments"."task_id" = 2
+... (243 more Comment Load lines)
+
+Completed 200 OK in 980ms (Views: 250.3ms | ActiveRecord: 689.4ms)
+```
+
+Reading this: 980 ms total, 689 ms of which is ActiveRecord across 300+ queries. Two N+1 levels:
+- Level 2 (projects → tasks): 50 separate Task Load queries, one per project.
+- Level 3 (tasks → comments): 200–300 separate Comment Load queries, one per task.
+
+Fix: `projects.includes(tasks: :comments).limit(50)` in Rails (or the equivalent in your ORM). From 300 queries to 4 — one for user, one for projects, one for tasks (IN), one for comments (IN). ActiveRecord time: 689 ms → ~15 ms.
+
+<Quiz
+  id="03-detecting-nplus1-quiz-1"
+  lessonSlug="03-detecting-nplus1"
+  lang="en"
+  question="An APM trace shows 142 database spans per request on the /dashboard endpoint, while p99 is 1.8 s. The spans are short (1–3 ms each). What is the diagnosis?"
+  choices={[
+    { label: "Classic N+1 — many short queries add up to large serial wall-clock time. 142 spans at 2 ms each is 284 ms minimum in serial; the rest is overhead and result handling.", correct: true },
+    { label: "The database is under-indexed", misconception: "Under-indexing makes individual queries slow. These spans are already short (1–3 ms). The issue is count, not per-query speed." },
+    { label: "The connection pool is too small", misconception: "A small pool causes queue wait, not many fast queries. The symptom here is query count, not pool exhaustion." },
+    { label: "The APM tool is double-counting queries", misconception: "APM auto-instrumentation correctly captures one span per query. 142 spans means 142 queries." },
+  ]}
+/>
+
+<Quiz
+  id="03-detecting-nplus1-quiz-2"
+  lessonSlug="03-detecting-nplus1"
+  lang="en"
+  question="A PR adds a new serializer that accesses order.customer.name for each order in a list. Tests pass. What CI mechanism would have caught this N+1 before it shipped?"
+  choices={[
+    { label: "Rails bullet gem configured to raise on lazy-loaded relations in test mode, or Django assertNumQueries in the serializer's test.", correct: true },
+    { label: "A linter checking for bad variable names", misconception: "A linter does not understand runtime query behavior." },
+    { label: "A memory profiler", misconception: "Memory profilers catch allocation growth, not query count growth." },
+    { label: "Code review noting the loop", misconception: "Code review helps but relies on the reviewer recognizing the pattern. An automated gate catches it every time." },
+  ]}
+/>
+
+<DragOrder
+  id="03-detecting-nplus1-drag-1"
+  lessonSlug="03-detecting-nplus1"
+  lang="en"
+  prompt="Order the layers of N+1 detection, from cheapest to find to hardest to find:"
+  items={[
+    { id: "a", label: "Development query log — enable ORM logger, count lines per request" },
+    { id: "b", label: "CI gate — bullet/assertNumQueries fails PR before it ships" },
+    { id: "c", label: "APM trace in staging — waterfall shows DB span columns" },
+    { id: "d", label: "Production alert — queries_per_request p99 spikes on a live endpoint" },
+  ]}
+  correctOrder={["b", "a", "c", "d"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>N+1 hides from CPU profilers because the cost is off-CPU wait time. Diagnose it with query logs (look for repeated similar SELECTs), APM waterfall traces (a tall column of short DB spans), and per-request query counters. Prevent it with a CI gate — bullet or assertNumQueries — that catches lazy-load regressions at PR time.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-detecting-nplus1-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a CPU profile miss N+1, and what three instruments surface it correctly?", a: "A CPU profiler samples stack traces of running threads. The N+1 problem does not burn CPU in any single location. Each query dispatches in microseconds; the program waits for the database off-CPU; the response comes fast; the next query dispatches. The wait is the bottleneck but it is off-CPU; the profiler sees fast blips and nothing wide. Three instruments that surface N+1 correctly: (1) Database query log — Postgres log_min_duration_statement=0, MySQL slow query log, ORM logging. Signature: dozens of similar SELECTs differing only in the WHERE id = ? parameter for one request. (2) APM tracing — Datadog, Tempo, Honeycomb, New Relic with auto-instrumentation. The trace waterfall shows a tall column of short DB spans for the request. (3) Per-request query counter — middleware that counts queries and exposes as a histogram by endpoint. Alert when p99 exceeds 20." },
+    { q: "Describe the CI gate pattern for preventing N+1 regressions from shipping.", a: "The CI gate runs during tests on every PR. In Rails, the bullet gem is configured to raise on any lazy-loaded relation accessed during request render: a controller test that triggers N+1 fails the PR. In Django, assertNumQueries(N) wraps the view call and fails if the query count exceeds the declared budget. In SQLAlchemy or Hibernate, query count statistics can be asserted per test. The pattern: tests fire requests, the query counter or ORM strict-mode detects the lazy load, the test fails, the PR cannot merge. Teams running this gate report 70–90% reduction in N+1 incidents reaching production. Initial setup is 1–2 weeks for instrumentation and baseline cleanup; ongoing maintenance is trivial because the gate runs automatically in CI." },
+  ]}
+/>
+
+<Recap lang="en">
+N+1 is off-CPU: the program waits between queries, not inside any function. That is why CPU profiles look healthy while the page is slow. The right instruments are the query log (repeated similar SELECTs), APM traces (tall column of short DB spans), and per-request query counters (alert at p99 &gt; 20). The most leveraged prevention is a CI gate — Rails bullet or Django assertNumQueries — that fails PRs introducing lazy-load regressions before they reach production. Query count is the metric that matters; p99 latency is the result.
+</Recap>

@@ -1,0 +1,207 @@
+---
+slug: 05-fan-out-and-redis
+lang: ru
+track: performance
+unit: 05-n-plus-one
+order: 5
+title: "Кросс-протокольный N+1: HTTP fan-out и Redis MGET"
+summary: "Форма N+1 появляется в HTTP microservice fan-out, Redis key lookups и gRPC streaming — семейство фиксов то же самое: собрать, батчить, отправить один раз."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+deepensInto: []
+spiral: ["latency"]
+concepts: ["http-fanout", "mget", "parallel-dispatch", "promise-all", "serial-vs-parallel"]
+sources:
+  - https://redis.io/docs/latest/commands/mget/
+  - https://shopify.engineering/improving-graphql-performance
+  - https://blog.cloudflare.com/scaling-up-or-out/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+REST endpoint собирает профиль пользователя, вызывая 8 downstream микросервисов — один для preferences, один для posts, один для notifications, один для billing и ещё четыре. Каждый вызов занимает 30 мс. Итоговая latency: 240 мс. Ни один вызов не медленный. Проблема в том, что все они серийные.
+</Hook>
+
+<Crux>N+1 — не только SQL. HTTP fan-out, Redis per-key GET и gRPC per-row — все платят N round-trip'ов. Батчите или параллельте.</Crux>
+
+<Explanation>
+
+## Форма появляется в каждом протоколе
+
+Паттерн N+1 — не проблема только для баз данных. Везде, где программа делает множество небольших round-trip'ов вместо одной более крупной операции, применяется тот же множитель стоимости.
+
+Overhead на round-trip различается по протоколу и расстоянию: Postgres на localhost ~0.5 мс, Redis на том же хосте ~0.1 мс, HTTP intra-DC ~2 мс, HTTP cross-region ~50 мс. Но математика та же: N вызовов × overhead на вызов = серийное wall-clock доминирует.
+
+## HTTP fan-out: вызывать сервисы параллельно
+
+Profile aggregator, вызывающий 8 сервисов серийно:
+
+```javascript
+// Серийно — платит 8 × RTT последовательно:
+const user = await userService.get(userId);
+const posts = await postsService.get(userId);
+const notifs = await notifService.get(userId);
+// ... ещё 5 вызовов
+// Итого: ~240 мс при 30 мс на вызов
+```
+
+```javascript
+// Параллельно — wall-clock = max(latencies):
+const [user, posts, notifs, ...rest] = await Promise.all([
+  userService.get(userId),
+  postsService.get(userId),
+  notifService.get(userId),
+  // ... ещё 5
+]);
+// Итого: ~35 мс (самый медленный вызов + небольшой coordination overhead)
+```
+
+`Promise.all` (Node/JS), `errgroup.Wait` (Go), `CompletableFuture.allOf` (Java), `asyncio.gather` (Python) — паттерн идентичен во всех runtime.
+
+**Wall-clock меняется с sum(latencies) до max(latencies).**
+
+Для 8 вызовов по 30 мс: 240 мс серийно против 35 мс параллельно — улучшение в 7 раз с одним структурным изменением.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Протокол</th>
+        <th class="border border-border px-3 py-2 text-left">Паттерн N+1</th>
+        <th class="border border-border px-3 py-2 text-left">Батч-фикс</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">SQL / ORM</td>
+        <td class="border border-border px-3 py-2">Lazy load на строку</td>
+        <td class="border border-border px-3 py-2">JOIN / IN / preload / DataLoader</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">HTTP микросервисы</td>
+        <td class="border border-border px-3 py-2">Серийные вызовы сервисов</td>
+        <td class="border border-border px-3 py-2">Promise.all / errgroup / gather</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Redis</td>
+        <td class="border border-border px-3 py-2">GET в цикле</td>
+        <td class="border border-border px-3 py-2">MGET / pipeline</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">gRPC</td>
+        <td class="border border-border px-3 py-2">Unary вызов на строку</td>
+        <td class="border border-border px-3 py-2">Batch RPC / server streaming</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">File I/O</td>
+        <td class="border border-border px-3 py-2">open/read/close на файл</td>
+        <td class="border border-border px-3 py-2">io_uring batched submission</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Redis: MGET вместо GET в цикле
+
+Кэш-слой, получающий 100 элементов по одному:
+
+```ruby
+# 100 round-trip'ов — GET в цикле:
+items = keys.map { |k| redis.get(k) }
+
+# Один round-trip — MGET:
+items = redis.mget(*keys)
+
+# Или pipeline для условной логики на элемент:
+results = redis.pipelined { keys.each { |k| redis.get(k) } }
+```
+
+Redis RTT на том же хосте обычно 0.1–0.5 мс. Цикл из 100 GET'ов стоит 10–50 мс. Один MGET стоит 0.5–2 мс. Фикс — одна команда.
+
+Для условной логики (когда нужно действовать по каждому результату перед следующим получением), используйте pipelining вместо MGET: отправить все команды сразу, получить все ответы сразу.
+
+## Зависимости вызовов сервисов — DAG-dispatch
+
+Некоторые вызовы сервисов зависят от других. Цепочку зависимостей нельзя полностью распараллелить:
+
+```javascript
+// Последовательная зависимость: посты нужны userId сначала
+const userId = await authService.resolveToken(token);
+// Затем эти можно запустить параллельно:
+const [posts, notifs, billing] = await Promise.all([
+  postsService.get(userId),
+  notifService.get(userId),
+  billingService.get(userId),
+]);
+```
+
+Структура — DAG (directed acyclic graph). Сервисы без зависимостей стартуют сразу; сервисы, зависящие от более ранних результатов, ждут только своих прямых родителей. Большинство fan-out API имеют мелкие DAG'и (1–2 уровня зависимостей). Полностью серийные цепочки вызовов обычно случайны и могут быть разобраны трассировкой реальных зависимостей.
+
+<Inset kind="why" lang="ru">
+LinkedIn feed-aggregator incident 2023: сервис вызывал 8 downstream микросервисов серийно, ~60 мс каждый. p99 был 480 мс. После распараллеливания с errgroup, p99 упал до ~80 мс — самый медленный одиночный вызов плюс coordination overhead. Это тот же класс фикса, что добавление `.includes` к ORM-запросу, применённый на один уровень протокола выше.
+</Inset>
+
+## Governance: предотвращение возврата серийного fan-out
+
+Статический анализ может поймать паттерн до выкатки:
+
+- **JavaScript/Node:** правило линтера, отклоняющее `await` внутри `for`-цикла над вызовами сервисов.
+- **Пункт code review checklist:** "вызывает ли эта функция удалённый сервис N раз в цикле? Если да — сигнализировать."
+- **Observability:** панель дашборда по сервису, показывающая "fan-out factor" (downstream вызовов на входящий запрос). Алерт при росте.
+- **Load-test assertions:** trace assertions в нагрузочных тестах могут провалить PR'ы, увеличивающие fan-out сверх порога.
+
+<Quiz
+  id="05-fan-out-and-redis-quiz-1"
+  lessonSlug="05-fan-out-and-redis"
+  lang="ru"
+  question="REST endpoint вызывает 8 downstream микросервисов серийно, каждый занимает 30 мс. Итоговый p99 — 240 мс. Какой наиболее прямой структурный фикс?"
+  choices={[
+    { label: "Распараллелить downstream вызовы с Promise.all / errgroup / asyncio.gather. Итого становится max(latencies) — примерно 35 мс вместо 240 мс.", correct: true },
+    { label: "Переключиться на более быстрый RPC-протокол", misconception: "Смена протокола даёт инкрементальный выигрыш. Распараллеливание даёт структурный фикс: от 8x серийной стоимости до 1x параллельной." },
+    { label: "Кэшировать downstream ответы", misconception: "Кэширование помогает, если данные переиспользуются между запросами. Немедленный фикс для серийного fan-out — параллельный dispatch." },
+    { label: "Уменьшить количество микросервисов", misconception: "Консолидация сервисов — допустимый архитектурный выбор, но тяжёлая работа. Распараллеливание — per-request фикс, доступный сейчас." },
+  ]}
+/>
+
+<Quiz
+  id="05-fan-out-and-redis-quiz-2"
+  lessonSlug="05-fan-out-and-redis"
+  lang="ru"
+  question="В цикле вызывается redis.get(key) для каждого из 100 элементов. Какой нативный Redis фикс на один trip?"
+  choices={[
+    { label: "MGET — одна команда, получающая несколько ключей за один round-trip. Или pipelining для условной логики на элемент.", correct: true },
+    { label: "Переключиться на disk-backed Redis", misconception: "Режим хранения не влияет на количество round-trip'ов. Вы платите за 100 round-trip'ов независимо от хранилища." },
+    { label: "Использовать Lua scripting", misconception: "Lua scripts хороши для атомарных многошаговых операций. MGET — более простое решение для батч-чтения." },
+    { label: "Добавить Redis index", misconception: "У Redis нет SQL-стиля индексов. Фикс — уменьшение количества round-trip'ов." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Форма N+1 повторяется в HTTP fan-out (серийные вызовы сервисов), Redis (GET в цикле) и gRPC (unary вызов на строку). Семейство фиксов всегда одно: собрать, батчировать, отправить один раз, распределить результаты. Для HTTP: Promise.all / errgroup. Для Redis: MGET. Для gRPC: server streaming или batch RPC. Протокол меняется; паттерн — нет.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-fan-out-and-redis-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, почему Promise.all снижает latency HTTP fan-out, и опишите изменение wall-clock.", a: "Серийные вызовы сервисов платят latency каждого вызова последовательно: вызов 1 ждёт, затем вызов 2 ждёт, затем вызов 3 ждёт. Итоговый wall-clock — sum(latencies). С Promise.all все вызовы диспатчатся одновременно. Каждый ждёт свой ответ параллельно. Wall-clock становится max(latencies) плюс небольшой coordination overhead. Для 8 вызовов по 30 мс: 240 мс серийно против ~35 мс параллельно. То же структурное изменение, что снижает SQL N+1 с N round-trip'ов до 1, снижает HTTP fan-out с sum до max." },
+    { q: "Что является Redis-эквивалентом SQL eager loading, и когда вместо него использовать pipelining?", a: "MGET — Redis-эквивалент: одна команда, получающая несколько ключей за один round-trip, так же как SQL IN clause получает несколько строк в одном запросе. Используйте MGET, когда нужны все значения и не нужно принимать решения на основе промежуточных результатов. Используйте pipelining, когда нужна условная логика на элемент: pipeline отправляет все команды сразу, но вы получаете ответы на каждый независимо и можете действовать по ним. Pipelining не экономит сетевые round-trip'ы как MGET — он снижает overhead цикла request-response для каждой команды в pipeline, но не общее количество round-trip'ов." },
+  ]}
+/>
+
+<Recap lang="ru">
+N+1 — протокол-агностичный паттерн: серийные HTTP вызовы микросервисов, Redis GET в цикле и gRPC unary вызов на строку — все платят overhead round-trip N раз. Для HTTP fan-out, Promise.all и его эквиваленты меняют серийный sum(latencies) на параллельный max(latencies). Для Redis, MGET получает несколько ключей одной командой. Для gRPC, server streaming или batch RPC заменяет per-row unary вызовы. Семейство фиксов всегда одно: определить серийные round-trip'ы, собрать ID или вызовы, отправить один раз, распределить результаты. Протокол меняется; форма и семейство фиксов — нет.
+</Recap>
