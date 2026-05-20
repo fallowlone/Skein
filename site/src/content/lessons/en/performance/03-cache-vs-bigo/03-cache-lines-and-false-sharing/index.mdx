@@ -1,0 +1,227 @@
+---
+slug: 03-cache-lines-and-false-sharing
+lang: en
+track: performance
+unit: 03-cache-vs-bigo
+order: 3
+title: "Cache lines, struct layout, and false sharing"
+summary: "A 64-byte cache line is the atom of memory transfer — misaligned structs, over-packed fields, and threads sharing a line all pay the same 100x penalty despite appearing unrelated."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["performance/03-cache-vs-bigo/01-memory-hierarchy"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["cache-line", "struct-layout", "false-sharing", "mesi", "cache-line-padding", "struct-splitting"]
+sources:
+  - https://en.wikipedia.org/wiki/CPU_cache
+  - https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-2/cpu-microarchitecture-analysis.html
+  - https://ivoroshilin.wordpress.com/2013/02/06/know-your-locality-of-reference-some-techniques-for-keeping-data-in-the-cpu-cache/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team makes a counter array lock-free with atomic operations. Under load, it is slower than the locked version was. Nobody modified the algorithm. The problem is that eight counters share two cache lines — and every atomic write on any of them invalidates the others.
+</Hook>
+
+<Crux>One write to any byte locks the whole 64-byte line for all other CPUs. Struct layout decides if your code pays 1 cycle or 300.</Crux>
+
+<Explanation>
+
+## Cache lines as ownership units
+
+The CPU cache stores data in 64-byte lines (128 bytes on some Apple Silicon and ARM server cores). When one CPU core modifies any byte in a cache line, it must acquire exclusive ownership of that line. The MESI protocol (Modified / Exclusive / Shared / Invalid) coordinates this:
+
+- **Modified**: this core owns the line and has written to it; all other cores' copies are Invalid.
+- **Shared**: multiple cores have a read-only copy.
+- **Invalid**: this core's copy is stale; it must re-fetch before reading.
+
+Every write sends a coherency message to every other core that holds a copy. Those cores mark their copy Invalid. The next read by any other core triggers a re-fetch from L3 or RAM — costing 30–100+ cycles.
+
+## Struct size and field packing
+
+How many structs fit on one cache line determines how many loads you need per iteration. Consider a struct with 6 fields totalling 48 bytes:
+
+```
+struct Item { uint64 a; uint64 b; uint64 c; uint32 d; uint32 e; uint32 f; }
+// Total: 3×8 + 3×4 = 36 bytes without padding, 40 bytes with typical alignment
+```
+
+With proper alignment, one 64-byte cache line holds one struct (with 16–24 bytes of space). A hot loop that touches only field `a` still loads all 48 bytes into L1 for every iteration. If the hot-path fields are the first in the struct, the first access per element is the only miss. If the hot-path field is the last, it might straddle two cache lines.
+
+**Struct splitting** addresses this: separate the hot fields (accessed in the tight loop) from cold fields (accessed rarely) into two parallel arrays.
+
+```
+// Before: AoS with hot+cold mixed
+struct Node { uint64 hot_key; uint64 hot_val; char[200] cold_metadata; }
+Node nodes[1M];
+
+// After: SoA or struct split
+uint64 hot_keys[1M];
+uint64 hot_vals[1M];
+char cold_metadata[1M][200]; // accessed separately
+```
+
+Hot-field access now loads 8 keys per cache line instead of loading 200+ bytes per element. Working set in L1 shrinks by 12x.
+
+<NumbersCard
+  id="card-cache-cost"
+  title="Cache vs big-O: numbers that matter"
+  stats={[
+    { label: "L1 latency", value: "~1 ns (3–5 cycles)" },
+    { label: "L2 latency", value: "~3 ns (10–15 cycles)" },
+    { label: "L3 latency", value: "~10 ns (30–50 cycles)" },
+    { label: "RAM latency (DDR5)", value: "~70–100 ns" },
+    { label: "Cache line size", value: "64 B (x86, most ARM)" },
+    { label: "Array vs linked-list iter", value: "~17x slowdown" },
+    { label: "Row-major vs column-major", value: "~9x slowdown" },
+  ]}
+/>
+
+## False sharing in multithreaded code
+
+False sharing is the most common "invisible" cache performance bug. Two threads write to different variables that happen to share the same 64-byte cache line. From each thread's perspective, it is working on independent data. From MESI's perspective, every write by one thread invalidates the other thread's copy of the entire line.
+
+The result: the line ping-pongs between CPU cores at L3 latency (~30–50 cycles per bounce). IPC collapses to 0.3–0.6. Lock-free code performs worse than locked code.
+
+**Example:**
+
+```go
+// 16 counters, each 8 bytes = 128 bytes total = 2 cache lines
+// counters[0..7] share one line; counters[8..15] share another
+var counters [16]uint64
+
+// Each goroutine writes to its own counter, but 8 goroutines share a line
+// → every write invalidates the other 7's L1 copies
+func worker(idx int) {
+    atomic.AddUint64(&counters[idx], 1)
+}
+```
+
+**Fix: pad to a cache line boundary**
+
+```go
+type paddedCounter struct {
+    value uint64
+    _     [56]byte // pad to 64 bytes total
+}
+var counters [16]paddedCounter
+// Now each counter occupies its own cache line
+// → goroutines on different lines no longer interfere
+```
+
+In Java, `@Contended` (from `jdk.internal.vm.annotation`) inserts padding automatically. In Rust, `crossbeam::CachePadded` wraps values. In C++, `alignas(64)` on a struct field achieves the same.
+
+<Inset kind="why" lang="en">
+The Linux kernel scheduler's per-CPU run queues, Java's Disruptor ring buffer, and DPDK's per-core packet queues all carry explicit cache-line padding as a first-class design invariant. Code review for any struct whose fields are written by multiple CPUs simultaneously should flag tight packing as a defect.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Observation</th>
+        <th class="border border-border px-3 py-2 text-left">False sharing suspect</th>
+        <th class="border border-border px-3 py-2 text-left">Normal lock contention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">CPU profile width</td>
+        <td class="border border-border px-3 py-2">Wide (CPU stalled on memory)</td>
+        <td class="border border-border px-3 py-2">Narrow in CPU, wide in off-CPU</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">IPC</td>
+        <td class="border border-border px-3 py-2">0.3–0.6 (memory-stalled)</td>
+        <td class="border border-border px-3 py-2">Near 0 (thread not running)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Scales with thread count</td>
+        <td class="border border-border px-3 py-2">Gets worse</td>
+        <td class="border border-border px-3 py-2">Gets worse</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Cache-miss rate</td>
+        <td class="border border-border px-3 py-2">Very high (60–80%)</td>
+        <td class="border border-border px-3 py-2">Normal</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Misconception id="mc-false-sharing-lock-free">
+  <p><strong>"Lock-free means cache-friendly."</strong> Lock-free eliminates mutex syscalls; it says nothing about cache-line sharing. Adjacent atomic writes on the same cache line cause MESI coherency bounces — the hardware serialises them as if locked. The CPU profile shows memory-bound (low IPC, high miss rate), not lock-bound.</p>
+</Misconception>
+
+<Quiz
+  id="03-cache-lines-quiz-1"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="en"
+  question="A tight loop scans an array of 1M structs, each containing 6 fields totalling 48 bytes. Cache lines are 64 bytes. How many structs fit per cache line?"
+  choices={[
+    { label: "1 (with 16 bytes of unused space, or 1.33 structs if they cross line boundaries)", correct: true },
+    { label: "1 — each struct takes one full line", misconception: "48 bytes is less than 64; one struct does not fill a line, leaving 16 bytes unused." },
+    { label: "6 — each field occupies one line", misconception: "Fields share lines; 6 fields totalling 48 bytes fit in one line." },
+    { label: "Depends on the OS page size", misconception: "Cache line size is hardware-determined (64 B on x86); the OS page size (4 KB) is unrelated." },
+  ]}
+/>
+
+<Quiz
+  id="03-cache-lines-quiz-2"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="en"
+  question="A lock-free counter array shows IPC 0.4 and 72% cache-miss rate as thread count rises. The most likely cause is:"
+  choices={[
+    { label: "False sharing. Multiple threads write to different counters on the same cache line; each write forces a full MESI line-invalidation across all other cores. Fix: pad each counter to 64 bytes.", correct: true },
+    { label: "Lock contention. The atomics are effectively a spinlock.", misconception: "Atomics are not locks. The symptom (high CPU IPC collapse + high cache-miss rate in a CPU profile) distinguishes false sharing from lock contention — lock contention shows up as off-CPU wait time, not CPU stalls." },
+    { label: "The array is too large for L3 cache.", misconception: "16 uint64 values = 128 bytes — trivially in L1. The issue is multiple CPUs writing to the same 64-byte line, not capacity." },
+    { label: "The CPU's branch predictor is misfiring.", misconception: "Branch prediction affects IPC via pipeline flushes, but produces high branch-miss counters, not high cache-miss counters. The symptom here points to memory." },
+  ]}
+/>
+
+<DragOrder
+  id="03-cache-lines-drag-1"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="en"
+  prompt="Order the steps to diagnose and fix a false-sharing regression:"
+  items={[
+    { id: "a", label: "Observe: IPC &lt;1, high cache-miss rate, performance worsens with thread count" },
+    { id: "b", label: "Run perf stat with cache-misses and XSNP_HITM (Intel) to confirm cache-line bouncing" },
+    { id: "c", label: "Identify which struct fields are written by multiple threads simultaneously" },
+    { id: "d", label: "Calculate how many fields share one 64-byte line" },
+    { id: "e", label: "Pad each independently-written field to its own 64-byte cache line" },
+    { id: "f", label: "Re-run perf stat: IPC should rise, cache-miss rate should drop, throughput increase" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache lines are 64-byte ownership atoms: one write from any CPU invalidates the whole line in all other cores. Pack hot struct fields together and separate per-thread write fields to different lines. False sharing is the "lock-free but slower than locked" bug — detect it via low IPC + high cache-miss rate, fix it with padding.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-cache-lines-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how cache coherency (MESI) creates false sharing as a multithreaded performance bug, and how to detect and fix it.", a: "MESI is the cache coherency protocol: each cache line is in one of four states — Modified (this core's exclusive write), Exclusive (this core only, unwritten), Shared (multiple cores read-only), Invalid. When core A writes to a line, all other cores' copies become Invalid; they must re-fetch on the next access. False sharing happens when two threads write to different variables that happen to share one cache line. From each thread's perspective, they work on independent data; from MESI's perspective, every write by one thread invalidates the other thread's cache. The line ping-pongs between cores at 30–50 cycles per bounce. Detection: perf c2c on Linux reports cache-line contention. Symptom: parallel workload that scales much worse than expected — high LLC-loads, low IPC, performance degrades with more threads. Fix: align hot per-thread variables to separate cache lines using padding (typical: 64-byte alignment + 56 bytes of padding for an 8-byte field) or alignas(64) in C++. Real examples: Linux kernel scheduler's per-CPU stats hit this in 2017 (fix: cacheline_aligned attribute); Go's sync.WaitGroup struct had it (fixed with padding in Go 1.13)." },
+    { q: "What is struct splitting, and when should you apply it?", a: "Struct splitting separates hot fields (read/written in every iteration of a tight loop) from cold fields (read rarely, e.g. metadata, error info) into distinct data structures, typically parallel arrays. Without splitting, iterating over N elements loads all fields of each element into L1 even if only 1 of 10 fields is used — wasting 90% of every cache line fetch and evicting other useful data. With splitting, the hot array has only the fields needed in the loop; L1 can hold many more elements at once. Apply when: (1) a struct has both frequently- and infrequently-accessed fields, (2) the loop touches only a subset of fields, (3) profiling shows high cache-miss rate or a working set much larger than expected. Not worth it for structs where all fields are accessed together — splitting adds pointer indirection for cold access, which is a cache miss too." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache lines are the 64-byte units of hardware ownership. The MESI protocol ensures that any core writing to a cache line invalidates copies in all other cores, costing 30–100 cycles per bounce. False sharing — two threads writing to different variables on the same line — causes lock-free code to perform worse than locked code: IPC collapses and cache-miss rate spikes while threads never actually wait on each other. Detect it via perf c2c or XSNP_HITM hardware counters; fix it by padding per-thread fields to 64-byte boundaries. The same principle applies to struct layout: separate hot fields from cold ones to keep L1's working set small and dense.
+</Recap>

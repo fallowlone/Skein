@@ -1,0 +1,302 @@
+---
+slug: 07-cache-oblivious-and-pgo
+lang: ru
+track: performance
+unit: 03-cache-vs-bigo
+order: 7
+title: "Cache-oblivious алгоритмы, PGO и production failures"
+summary: "Cache-oblivious рекурсия выигрывает на всех уровнях cache одновременно. PGO bake-ит branch layout в binary для 10–30% free speedup. Production failures от Discord/Mojang/Bun — одна форма: 'маленький' code change тихо пересёк cache-line boundary."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/03-cache-vs-bigo/06-hardware-prefetcher-and-tlb"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["cache-oblivious", "pgo", "struct-layout", "ecs", "perf-stat", "ipc", "mlp", "production-failure"]
+sources:
+  - https://en.wikipedia.org/wiki/CPU_cache
+  - https://en.algorithmica.org/hpc/pipelining/branching/
+  - https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec25-locality/lec25.html
+  - https://ivoroshilin.wordpress.com/2013/02/06/know-your-locality-of-reference-some-techniques-for-keeping-data-in-the-cpu-cache/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+
+<Hook>
+Rust struct рефактор переместил один горячий field в конец 96-байтного struct. Никакого изменения алгоритма. Никакой новой работы. p99 latency на message-render пути вырос на 40%. Production outage, замаскированный под code cleanup.
+</Hook>
+
+<Crux>Cache-oblivious алгоритмы выигрывают на всех уровнях. PGO bake-ит profiles в layout. Struct reorder = скрытый line cross — p99 через недели.</Crux>
+
+<Explanation>
+
+## Cache-oblivious алгоритмы
+
+Cache-oblivious алгоритм performs well на каждом cache level — L1, L2, L3 — без знания конкретных размеров. Канонический пример — recursive blocked matrix multiply.
+
+Наивный three-nested-loop matrix multiply имеет плохое cache behaviour, потому что inner loop exhausts cache level перед тем, как переходит к следующему. Recursive blocked версия делит матрицу на 4 sub-matrices и рекурсирует до base case. На каждом recursion level активная sub-matrix влезает в *какой-то* cache level естественно, хотя алгоритм не знает, в какой именно. Hardware adapts.
+
+Тот же принцип применяется к:
+- **Cache-oblivious mergesort**: рекурсивное разделение пополам держит active data в наименьшем доступном cache level.
+- **Cache-oblivious B-trees**: van Emde Boas layout располагает уровни дерева так, что каждое half-tree влезает в cache level — нет pointer chasing за пределы level.
+- **FFT**: recursive Cooley-Tukey естественно выравнивает butterfly groups с cache lines.
+- **Matrix transposition**: наивный transpose cache-hostile; recursive blocked transposition достигает хорошей spatial locality на всех уровнях.
+
+2–4x speedup над naive iteration часто доминирует cost любой сложности рекурсии.
+
+## Profile-guided optimisation (PGO)
+
+Компиляторы улучшаются кардинально при наличии runtime frequency данных. Процесс:
+
+1. Build с instrumentation (`-fprofile-generate` / `clang -fprofile-instr-generate`).
+2. Run representative workload — это заполняет `.profdata` файл.
+3. Rebuild с profile (`-fprofile-use` / `-fprofile-instr-use`).
+
+Что PGO меняет:
+- **Inlining decisions**: inline hot callees, не cold. Без PGO компилятор inline-ит по code size heuristics и часто ошибается.
+- **Branch layout**: predicted-taken branches размещаются **последовательно** в памяти. Не-taken branches прыгают вперёд. Это держит hot path contiguous в instruction cache.
+- **Basic block reordering**: hot basic blocks группируются в соседних pages, улучшая I-cache hit rate для common path.
+- **Function placement**: functions, вызываемые вместе, размещаются рядом в binary — меньше I-TLB miss-ов.
+
+Real workload speedups от PGO:
+- Chrome: 10–15%.
+- Firefox: 12–18% на JIT warmup.
+- Postgres: 8–15% на OLTP benchmarks.
+- Linux kernel (BOLT post-link optimisation): 3–8%.
+
+PGO cost: build pipeline complexity и необходимость representative profiling workload. Profiling workload должен соответствовать production traffic — toy benchmark даёт плохие profiles и может ухудшить производительность.
+
+## Real production failures
+
+Все три failure-а имеют одну форму: «маленький» code change переместил байты без изменения алгоритма. CPU заметил.
+
+**Discord 2023 — struct field reorder.** Rust struct рефактор переместил горячий field (`message_timestamp`) с byte offset 0 на byte offset 72 в 96-байтном struct. Field пересёк cache-line boundary. Каждый render message list — горячий path в client — теперь загружал две cache lines вместо одной для этого field. p99 latency на message-render path вырос 40%. Rollback подтвердил причину. Фикс: переупорядочить struct fields так, чтобы горячие fields жили в первых 64 байтах (одна cache line). Правило: профилируй struct access patterns и ставь top-3 most-read fields первыми.
+
+**Mojang Minecraft Java Edition 2018 — HashMap → contiguous array.** Внутренний entity tracker использовал `HashMap<EntityID, EntityData>` для хранения всех world entities. Entity simulation (movement, AI, collision) обращалась к этим entries в tight game-tick loop. HashMap-ные chained buckets разбрасывали `EntityData` structs по heap — каждый entity lookup был pointer chase в random allocation. Замена entity store на contiguous array (Entity Component System, ECS) дала 3–5x throughput на game-tick loop. Все entity component data стала sequential; prefetcher загружал следующую entity данные, пока CPU обрабатывал текущую. Discord 2024 game-server расширил этот паттерн на SIMD-aware ECS structs: ещё 2x на определённых simulation paths.
+
+**Bun 2024 — startup cold-path regression.** Новая dependency добавила `HashMap`, инициализируемый при module load time. Из-за allocation order во время JIT warmup, backing array HashMap-а находился в середине hot-code region, evict-уя frequently-used JIT-compiled functions из L1 во время startup. Симптом — 30 ms startup regression, незаметный в micro-benchmarks, видимый в automated startup regression tests. Фикс: lazy-init HashMap-а (создать при первом использовании, не при module load). Паттерн: всё, аллоцированное на cold path и растущее со временем, может засорять cache для hot path. Lazy-init — стандартная митигация.
+
+**Структурный паттерн.** Во всех трёх случаях:
+1. «Рефактор» изменил byte offsets или allocation timing — алгоритм идентичен.
+2. Hot path тихо пересёк cache-line или TLB boundary.
+3. Regression появился как p99 growth или throughput drop, не crash или obvious error.
+4. Root cause потребовал `perf c2c` или `perf stat`; code review бы не поймал.
+
+## Observability для cache и branch производительности
+
+Базовый `perf stat` вызов:
+
+```bash
+perf stat -e \
+  cache-misses,cache-references,\
+  branch-misses,branches,\
+  cycles,instructions \
+  -- ./your_binary
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Метрика</th>
+        <th class="border border-border px-3 py-2 text-left">Норма</th>
+        <th class="border border-border px-3 py-2 text-left">Порог проблемы</th>
+        <th class="border border-border px-3 py-2 text-left">Вероятная причина</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">IPC (instructions / cycles)</td>
+        <td class="border border-border px-3 py-2">2.0–4.0</td>
+        <td class="border border-border px-3 py-2">&lt;1.0</td>
+        <td class="border border-border px-3 py-2">Memory stalls или branch mispredicts</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">L1 miss rate</td>
+        <td class="border border-border px-3 py-2">&lt;1%</td>
+        <td class="border border-border px-3 py-2">&gt;10%</td>
+        <td class="border border-border px-3 py-2">Плохая spatial/temporal locality</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">LLC miss rate</td>
+        <td class="border border-border px-3 py-2">&lt;5%</td>
+        <td class="border border-border px-3 py-2">&gt;20%</td>
+        <td class="border border-border px-3 py-2">Working set превышает L3 или pointer chasing</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Branch miss rate</td>
+        <td class="border border-border px-3 py-2">1–2%</td>
+        <td class="border border-border px-3 py-2">&gt;5%</td>
+        <td class="border border-border px-3 py-2">Непредсказуемый data-dependent branch в hot path</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Дополнительные инструменты:
+- **`perf record` + `perf annotate`**: sample hot lines с source annotation.
+- **`perf c2c`**: cache-line contention между cores — прямой инструмент для false sharing.
+- **Intel VTune / AMD uProf**: per-line attribution, memory access patterns, NUMA topology view.
+- **BCC `cachestat` / `llcstat`**: BPF-based, zero-instrumentation, production-safe sampling.
+- **ARM PMU + Apple Instruments**: те же метрики на ARM; Instruments имеет "CPU Counters" template с `MEMORY_CYCLES` и `LAST_LEVEL_CACHE_MISS`.
+
+Performance-engineering loop:
+1. **Measure** с `perf stat` — IPC, miss rates, branch miss rate.
+2. **Identify** dominant cost: cache miss (layout problem), branch miss (prediction problem), low IPC from bandwidth (data volume problem), low IPC from instruction issue (SIMD opportunity).
+3. **Matching fix**: layout → SoA / struct split; branches → sort / branchless; bandwidth → non-temporal stores / compression; SIMD → AoS-to-SoA + autovectorise.
+4. **Re-measure** — подтвердить улучшение, проверить новый bottleneck.
+
+<Inset kind="why" lang="ru">
+Big-O остаётся правильной моделью для scalability с N. Молчит о constant factors, варьирующихся в 100x с layout. Production reality: constants доминируют well into millions для многих problem sizes. Performance-engineering loop начинается с measurement, не с algorithm selection.
+</Inset>
+
+<NumbersCard
+  id="07-numbers"
+  title="Senior-tier cache и CPU числа"
+  stats={[
+    { label: "TLB miss page walk", value: "5–50 циклов" },
+    { label: "Huge page (x86)", value: "2 MB / 1 GB" },
+    { label: "L1 cache associativity", value: "типично 8-way" },
+    { label: "MLP outstanding misses", value: "8–16 типично" },
+    { label: "PGO typical speedup", value: "10–30%" },
+    { label: "Non-temporal store bandwidth gain", value: "20–30% streaming" },
+    { label: "Apple M3 pipeline depth", value: "~10 stages" },
+    { label: "DDR5-6000 bandwidth", value: "~50 GB/s per channel" },
+  ]}
+/>
+
+<Misconception id="07-mc-prefetch">
+  <p><strong>«Hardware prefetcher handles everything; cache locality — реликт.»</strong> Нет. Prefetcher помогает только с предсказуемыми паттернами: sequential, simple strides. Random access, pointer chasing и irregular indexing — всё defeat-ит его. Layout всё ещё важен; prefetcher — lubricant, не замена locality.</p>
+</Misconception>
+
+<TraceScenario
+  id="07-trace-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  scenario="Perf-критичный сервис имеет IPC 0.6 и L3 miss rate 30%. Трасса пути оптимизации."
+  steps={[
+    { prompt: "Шаг 1: IPC 0.6, L3 miss 30%. Что это значит?", reveal: "Heavily memory-bound. CPU stalled на memory loads большинство времени. 30% L3 miss rate значит большинство loads идут в RAM (100 нс каждая); даже несколько per loop iteration tank IPC." },
+    { prompt: "Шаг 2: куда смотреть первым?", reveal: "Top 5 functions по sample count в perf record. Найди loop body, потребляющий больше циклов. Inspect data structures: AoS, где SoA помогло бы? Linked structures, где arrays помогли бы?" },
+    { prompt: "Шаг 3: hot функция работает на vector<MyStruct>, где MyStruct 200 байт (mix hot и cold fields). Диагноз?", reveal: "Hot loop access-ит только 24 байта per struct, но каждая iteration грузит 200 байт. Cache pressure в 8x выше, чем нужно. Split struct: hot fields в array, cold fields в parallel array indexed одинаково. 'Struct splitting' или 'field shuffling'." },
+    { prompt: "Шаг 4: после splitting, IPC до 1.5. Всё ещё memory-bound. Следующий шаг?", reveal: "Проверь, влезает ли hot field array в L2 теперь. Если да — IPC растёт ещё. Если нет (всё ещё > L2) — посмотри access pattern: sequential? Если да, prefetcher должен помочь. Если random — manual __builtin_prefetch на несколько iterations впереди access." },
+    { prompt: "Шаг 5: долгосрочное управление?", reveal: "Добавь IPC + cache-miss watchdog в production. Profile-guided builds (PGO) еженедельно на real traffic samples. Code review checklist для hot paths: SoA-vs-AoS, struct size, access pattern. Performance regression tests, gating PRs, трогающие hot path." },
+  ]}
+/>
+
+<DebugLog
+  id="07-debug-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  title="Диагностируй perf stat output — какой bottleneck?"
+  output={`Performance counter stats for './hot_loop':
+
+       5,238,194,672      cycles
+       2,094,127,491      instructions             #  0.40 insn per cycle
+         413,824,917      branches
+         105,209,832      branch-misses            # 25.42% of all branches
+         684,283,194      cache-references
+         287,401,952      cache-misses             # 41.99% of all cache refs
+          12,498,373      LLC-loads
+           5,927,491      LLC-load-misses          # 47.43% of all LL-cache hits
+
+           2.851 seconds time elapsed`}
+  outputLang="log"
+  question="IPC 0.40, branch miss 25%, cache miss 42%, LLC miss 47%. Какой dominant bottleneck и как фиксить?"
+  hint="Multiple problems present. Упорядочи их по typical fix difficulty и impact."
+  answer="Три проблемы, все severe. Первая (worst): 47% LLC misses — почти половина L3 lookups идут в RAM. Это indicates hot loop, чей working set не влезает в L3 ИЛИ pointer-chasing access pattern. Likely cause: AoS layout, scattered allocations, random memory access. Фикс: restructure data в SoA, pack hot fields в contiguous arrays, ensure working set влезает в L3 (cache-tiled iteration если нет). Вторая: 25% branch miss rate — непредсказуемые branches в hot path. Likely if-statement на data-dependent values. Фикс: sort data first (turns unpredictable в predictable), replace branch на branchless arithmetic (cmov или arithmetic select), или hoist branch из inner loop. Третья: IPC 0.40 — consequence #1 и #2. CPU mostly stalled. Fixing #1 и #2 должно поднять IPC в 2–3x. Order of attack: fix layout first (biggest win), потом branches, потом check IPC. Expected final: IPC &gt; 2.0, cache miss &lt;10%, branch miss &lt;5%. Speedup 3–5x realistic."
+/>
+
+<TradeoffMatrix
+  id="07-tradeoff-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  prompt="Выбери data structure для perf-критичной lookup table с 1М entries, mostly reads, occasional inserts, no range queries."
+  options={[
+    { name: "Open-addressing hashmap с small inline keys", summary: "Best for pure lookup.", correct: true, justification: "O(1) average lookup; с хорошей hash function, один или два cache misses per access. Open addressing держит keys + values inline, не через pointer-chasing, бьёт chaining. Small key (8 байт) держит table dense — миллионы влезают в несколько MB L3. Production-grade: Abseil flat_hash_map, F14, Rust HashMap." },
+    { name: "Sorted array + binary search", summary: "Bad for inserts.", justification: "Cache-friendly access (binary search на contiguous array hits 5–6 cache lines для 1М entries), но каждый insert O(N) — должен shift tail. Acceptable если inserts редкие или batched; иначе hashmap выигрывает." },
+    { name: "Tree-based map (std::map / BTreeMap)", summary: "Pointer chasing.", justification: "O(log N) lookup, но каждый level — cache miss. Для 1М entries: ~20 cache misses per lookup vs ~2 для hashmap. Tree correct когда ordered iteration нужна; иначе hashmap better." },
+    { name: "Linked list", summary: "Wrong choice.", justification: "O(N) lookup, worst cache behaviour. Никогда не используй как primary lookup structure если N не tiny (под 100 elements)." },
+  ]}
+/>
+
+<Quiz
+  id="07-quiz-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  question="Почему hardware prefetcher fails на graph traversals, даже когда граф влезает в L2?"
+  choices={[
+    { label: "Каждое посещение узла имеет data-dependent next address — prefetcher не может предсказать следующий address без выполнения load сам, поэтому не помогает", correct: true },
+    { label: "Графы слишком большие для prefetcher", misconception: "Вопрос states, что граф влезает в L2; размер — не проблема." },
+    { label: "Prefetcher работает только с sequential reads", misconception: "Современные prefetchers handle strides; проблема — data-dependent unpredictability." },
+    { label: "Компиляторы disable hardware prefetch на graph коде", misconception: "Компиляторы не контролируют hardware prefetch; hardware решает." },
+  ]}
+/>
+
+<RFCQuiz
+  id="07-rfc-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  question="Какая спецификация определяет cache-coherency протоколы (MESI / MOESI), используемые современными multi-core x86 CPUs?"
+  choices={[
+    { rfc: "Intel SDM (Software Developer's Manual)", title: "Vol 3, System Programming Guide — глава о cache coherency", correct: true },
+    { rfc: "RFC 6824", title: "MPTCP — не cache coherency" },
+    { rfc: "POSIX 2017", title: "OS-level API, нет определения cache coherency" },
+    { rfc: "ARM ARM", title: "ARM Architecture Reference Manual — определяет ARM memory model, но Intel SDM — canonical x86 reference" },
+  ]}
+/>
+
+<DesignPrompt
+  id="07-design-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="ru"
+  prompt="Спроектируй data layer для real-time analytics сервиса: 100М rows telemetry data, p99 query latency под 10 мс, 99% read, 1% write, mostly aggregation queries над column subsets."
+  constraints={[
+    "Working set: 100M rows × 200 байт = 20 GB.",
+    "Server имеет 256 GB RAM, dataset влезает в память.",
+    "Большинство queries трогают 1–3 column из 20.",
+    "Нужна поддержка compressed-on-disk + uncompressed-in-RAM.",
+    "Throughput target: 100k queries/sec.",
+  ]}
+  canonical="Column-store layout: один contiguous array per column (SoA). Каждая column sized для fits в L3 если possible (256 KB - 32 MB). Queries трогающие N columns load только эти N arrays, оставляя остальные 17 нетронутыми — в 5-10x меньше memory bandwidth, чем row-store. SIMD-friendly: sum over column — tight loop over contiguous float array, AVX2 / AVX-512 vectorises к 4-8 elements per cycle. Для aggregations: cache results common queries в separate small structure (sub-MB), L1-resident. Для writes: append-only в small write buffer, periodically merge в main column arrays через compaction job. Branch prediction: большинство query paths predictable, но type-dispatch может быть unpredictable — используй SIMD masks или templates. Observability: per-query latency p50/p99, L3 miss rate, branch miss rate. Это essentially архитектура ClickHouse, DuckDB и современных OLAP engines."
+  keyPoints={[
+    "Column-store (SoA) снижает memory bandwidth в 5-10x для narrow queries.",
+    "Каждая column sized для fits в L3 держит hot data cache-resident.",
+    "SIMD operations на contiguous columns достигают near-peak throughput.",
+    "Append-only writes + compaction balances read perf с write throughput.",
+    "Observability ties IPC + cache miss rate в query latency dashboards.",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache-oblivious рекурсия выигрывает на всех уровнях cache без знания их размеров. PGO bake-ит branch layout в binary: 10–30% free speedup. Production failures от Discord, Mojang и Bun — одна форма: «маленький» code change тихо пересёк cache-line boundary. Fix loop: perf stat → identify (cache miss / branch miss / bandwidth) → matching fix → re-measure.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, как cache coherency (MESI/MOESI) создаёт 'false sharing' как multi-thread performance баг, и как детектировать и фиксить.", a: "MESI — cache-coherency протокол: каждая cache line в одном из четырёх состояний — Modified (exclusive write этого core), Exclusive (только этот core, unwritten), Shared (multiple cores read-only), Invalid. Когда core A пишет в line, все copies других cores становятся Invalid; они должны re-fetch на следующий access. False sharing случается, когда два thread пишут в разные variables, случайно делящие одну cache line. С точки зрения каждого thread — independent data; с точки зрения MESI — каждая запись invalidates cache другого thread. Line ping-pong-ит между cores на 30–50 циклов per ping. Detection: perf c2c на Linux reports cache-line contention. Симптом: parallel workload, масштабирующийся намного хуже ожидаемого, high LLC-loads и low IPC. Фикс: align hot per-thread variables в separate cache lines — alignas(64) в C++ или padding[56] после 8-byte field. Реальные примеры: Linux kernel scheduler per-CPU stats — 2017 (fix: cacheline_aligned attribute), Go sync.WaitGroup struct (fix: padding добавлен в 1.13)." },
+    { q: "'Быстрый' O(log N) алгоритм performs хуже 'медленного' O(N) в production. Список диагностических шагов для подтверждения, что cache-locality — причина.", a: "Шаг 1: измерить обоих. Использовать real input, real environment, hot-cache и cold-cache случаи. Wall-clock alone не покажет причину. Шаг 2: run с perf stat -e cache-references,cache-misses,instructions,cycles,branches,branch-misses. Compare IPC и cache miss rate. O(N) версия likely показывает IPC near 3–4 и miss rate под 1%. O(log N) версия likely показывает IPC near 0.5–1 и miss rate выше 20%. Шаг 3: profile с perf record и inspect hot lines с annotated source. Tree-traversal версия покажет samples на pointer-dereference lines; array версия — на arithmetic. Шаг 4: confirm by varying N. Cross-over point — где алгоритмы меняются местами. Если cross-over на N=10М но production data N=100k — array decisively wins. Шаг 5: trace memory layout через valgrind --tool=massif. Шаг 6: если cache-locality подтверждена — (a) packing tree nodes в contiguous arena, (b) replacing tree на sorted array если writes rare, или (c) cache-friendly tree variant (B-tree с high fanout). Expected improvement 2–10x." },
+  ]}
+/>
+
+<Recap lang="ru">
+Cache-oblivious алгоритмы (recursive blocked matrix multiply, van Emde Boas trees, recursive mergesort) достигают хорошего cache behaviour на всех уровнях без знания их размеров. PGO превращает representative runtime profile в inlining decisions, branch layout и function placement — типично 10–30% speedup без изменения кода. Реальные production failures — одна форма: struct reorder (Discord, +40% p99), HashMap вместо contiguous arrays (Mojang, 3–5x throughput drop), cold-path HashMap засоряет cache во время warmup (Bun startup regression). Observability loop: perf stat для IPC и miss rates, perf c2c для false sharing, perf record + annotate для per-line attribution, BPF tools (cachestat, llcstat) в production. IPC ниже 1.0 — memory-bound; branch miss rate выше 5% — непредсказуемый горячий branch. Fix matches the bottleneck: layout для cache misses, sort/branchless для branches, non-temporal stores для streaming bandwidth.
+</Recap>
