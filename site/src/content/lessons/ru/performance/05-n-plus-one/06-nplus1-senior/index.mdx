@@ -1,0 +1,237 @@
+---
+slug: 06-nplus1-senior
+lang: ru
+track: performance
+unit: 05-n-plus-one
+order: 6
+title: "N+1 в масштабе: исчерпание пула, изменения планов и денормализация"
+summary: "Как N+1 каскадирует в исчерпание connection pool, почему стратегии фикса неожиданно меняют query plan'ы, как N+1 пути становятся DoS-векторами и когда денормализация — правильный ответ."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+  - performance/05-n-plus-one/03-detecting-nplus1
+deepensInto: []
+spiral: ["latency"]
+concepts: ["connection-pool-exhaustion", "query-plan-instability", "query-amplification-dos", "denormalisation", "cqrs-read-model", "prepared-statements"]
+sources:
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://hibernate.org/orm/documentation/
+  - https://shopify.engineering/improving-graphql-performance
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Сервис с 50 запросами на request и connection pool размером 25 начинает возвращать 503 при нагрузке. Отдельные запросы быстрые. База данных здорова. Пул насыщен — каждый request удерживает соединение на протяжении 50 серийных запросов, и пул не успевает ротироваться достаточно быстро для обслуживания трафика.
+</Hook>
+
+<Crux>N+1 не просто замедляет запросы — он держит DB-коннекшены дольше ротации пула, истощает пул и открывает DoS-амплификацию.</Crux>
+
+<Explanation>
+
+## Исчерпание connection pool
+
+Endpoint с N+1 удерживает соединение с базой данных на протяжении многих серийных запросов. При размере connection pool 25 и 50 запросах на request по ~2 мс каждый, каждый request удерживает соединение ~100 мс.
+
+Пропускная способность на соединение: ~10 requests/s. Общая пропускная способность пула: 250 requests/s. Когда нагрузка превышает 250 requests/s, новые запросы встают в очередь ожидания соединения. Очередь добавляет latency; хвосты latency раскручиваются; в итоге 503.
+
+**Диагностическая сигнатура:** метрика насыщения connection pool высокая, latency отдельных запросов стабильная, очередь запросов растёт. Первопричина — не база данных, а приложение, удерживающее соединения слишком долго.
+
+```
+# pgbouncer метрики — опережающий индикатор
+cl_waiting > 0 более нескольких секунд → вероятен N+1
+server_active / max_server_connections > 80% устойчиво → давление на пул
+```
+
+Фикс — это фикс N+1: уменьшить запросы на request с 50 до 2–3. Каждый request теперь удерживает соединение ~10 мс вместо 100 мс. Пропускная способность пула возрастает с 250 до 2 500 requests/s — облегчение в 10× при том же размере пула.
+
+Та же форма применима к HTTP client pools, gRPC connection pools, Redis pools: любой pooled resource, где hold-time вызывает исчерпание.
+
+## Изменения query plan после фиксов N+1
+
+Фиксы N+1 меняют форму запросов, что меняет query plan'ы. Запрос, который был `WHERE id = 1`, теперь `WHERE id IN (1, 2, ..., 1000)`. Postgres может переключиться с index scan на bitmap scan или sequential scan в зависимости от оценок selectivity и размера списка.
+
+```sql
+-- До: быстрый index scan
+EXPLAIN SELECT * FROM tasks WHERE project_id = 1;
+-- Index Scan using tasks_project_id_idx (cost=0.43..8.45 rows=10 width=80)
+
+-- После фикса: большой IN-список, план может измениться
+EXPLAIN SELECT * FROM tasks WHERE project_id IN (1, 2, ..., 500);
+-- Bitmap Heap Scan on tasks (cost=12.55..350.00 rows=5000 width=80)
+```
+
+**Senior production дисциплина:** после фикса N+1 запустите `EXPLAIN ANALYZE` на новом запросе на репрезентативных размерах продакшн-данных. Убедитесь, что план не деградирует для edge-кейсов (очень маленькие наборы родителей, очень большие наборы родителей, специальные значения параметров). Фикс, работающий на 50 строках, может изменить план на 5 000.
+
+```
+# Postgres инструменты для мониторинга планов
+pg_stat_statements   — отслеживать количество и длительность выполнения запросов
+auto_explain         — логировать планы для запросов, превышающих порог
+```
+
+Стратегия Hibernate `subselect` loading генерирует `SELECT * FROM child WHERE parent_id IN (SELECT id FROM parent WHERE ...)` — коррелированный подзапрос, который может давать очень разные планы по сравнению с основным запросом к родителю. После применения batch-size или subselect loading в Hibernate проверьте стабильность плана.
+
+## Безопасность: query amplification как DoS
+
+N+1 путь кода может быть вектором атаки. Если публичный endpoint позволяет пользователю запрашивать N элементов, а обработчик выполняет N+1 запросов на элемент, атакующий может насытить базу данных одним большим запросом.
+
+Реальные инциденты: Strapi 2021 (CVE-2021-32820) — глубоко вложенный фильтр мог амплифицировать запросы в 1 000 раз. Разные GraphQL-провайдеры — цикличные запросы вызывают экспоненциальное расширение резолверов. Ранние версии Hasura — permission filters без ограничений.
+
+**Меры защиты:**
+
+```javascript
+// GraphQL — ограничения глубины и сложности
+import depthLimit from 'graphql-depth-limit';
+import { createComplexityRule } from 'graphql-query-complexity';
+
+const server = new ApolloServer({
+  validationRules: [
+    depthLimit(5),
+    createComplexityRule({ maxComplexity: 200 }),
+  ],
+});
+```
+
+Per-request query budget, применяемый на уровне фреймворка: Rails strict_loading + max-queries middleware. Hasura automatic complexity analysis. Любой user-controlled параметр, умножающий количество запросов — вектор DoS. Senior code review для кода с ORM включает: "может ли это позволить query amplification при hostile input?"
+
+## Prepared statements снижают overhead даже при сохранении N+1
+
+Когда N+1 неизбежен (legacy код, exploratory запросы), prepared statements снижают overhead на запрос. Каждый параметризованный запрос `WHERE id = ?` парсится и планируется один раз; последующие выполнения пропускают parse и plan.
+
+```sql
+-- Postgres явно:
+PREPARE get_task AS SELECT * FROM tasks WHERE id = $1;
+EXECUTE get_task(42);
+
+-- ORM'ы используют prepared statements по умолчанию для параметризованных запросов.
+-- Синтаксис ? или $1 параметра ORM И ЕСТЬ протокол prepared statement.
+```
+
+Экономия: ~30–50% на повторный запрос на Postgres. Для сервиса, выполняющего тысячи повторных запросов в секунду, prepared statements сами по себе могут снизить CPU БД на 10–30%.
+
+**Tradeoff:** аффинность connection pool. Prepared statements ограничены соединением в некоторых настройках. pgbouncer transaction mode отключает server-side prepared statements (используйте PgBouncer statement-level pooling или `pgbouncer_params` prepared statement passthrough если нужно и то, и другое).
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Метрика</th>
+        <th class="border border-border px-3 py-2 text-left">N+1 baseline</th>
+        <th class="border border-border px-3 py-2 text-left">После фикса</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Запросов на request</td>
+        <td class="border border-border px-3 py-2">51</td>
+        <td class="border border-border px-3 py-2">2</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Connection hold time</td>
+        <td class="border border-border px-3 py-2">~100 мс</td>
+        <td class="border border-border px-3 py-2">~4 мс</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Пропускная способность пула (pool=25)</td>
+        <td class="border border-border px-3 py-2">~250 req/s</td>
+        <td class="border border-border px-3 py-2">~6 000 req/s</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">p99 latency (intra-DC)</td>
+        <td class="border border-border px-3 py-2">~800 мс</td>
+        <td class="border border-border px-3 py-2">~40 мс</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Когда денормализация — правильный ответ
+
+Для путей с экстремальными latency SLO — HFT, real-time bidding, sub-50 мс p99 на тяжёлых join'ах — даже 2–3 запроса слишком много.
+
+**Counter cache:** хранит производные данные у родителя. Вместо `count(*)` на request — один SELECT поля.
+
+```ruby
+# Rails counter_cache
+belongs_to :project, counter_cache: true
+# project.tasks_count поддерживается автоматически при create/destroy
+```
+
+**Materialised view (Postgres):** предвычисляет сложный join + агрегацию. Страница получает данные одним запросом к полностью готовому view.
+
+```sql
+CREATE MATERIALIZED VIEW product_summary AS
+SELECT p.id, p.name, c.name AS category,
+       COUNT(r.id) AS review_count,
+       AVG(r.score) AS avg_score
+FROM products p
+JOIN categories c ON p.category_id = c.id
+LEFT JOIN reviews r ON r.product_id = p.id
+GROUP BY p.id, p.name, c.name;
+
+REFRESH MATERIALIZED VIEW CONCURRENTLY product_summary;
+```
+
+**CQRS read model:** write side обновляет нормализованную схему; event handler записывает в read-оптимизированную таблицу с предварительно соединёнными данными. Read path получает данные одним запросом.
+
+**Tradeoff'ы:** staleness (read view отстаёт от writes на миллисекунды до секунд), дублирование хранилища, стоимость поддержки (логика derivation должна оставаться корректной при эволюции схемы).
+
+**Когда применять:** read p99 SLO &lt; 50 мс на тяжёлых join'ах И read нагрузка в 1 000 раз или более превышает write нагрузку. Для сбалансированных нагрузок ORM eager loading проще и достаточен. Денормализация — правильный ответ только когда измерение показывает, что eager loading не может удовлетворить SLO.
+
+<Inset kind="why" lang="ru">
+Продакшн-инциденты, связанные с N+1: Shopify 2016 — страница checkout регрессировала к N+1 на расчётах доставки; outage. Slack 2018 — поиск сообщений попал в глубоко вложенный join, который взорвался при fan-out результатов поиска. Discord 2020 — GraphQL N+1 заставил per-channel резолверы разворачиваться до сервиса прав доступа; DataLoader retrofit снизил нагрузку на БД на 40%. GitHub 2021 — страница настроек repo загружала 200+ запросов на рендер после рефакторинга, введшего lazy loading. LinkedIn 2023 — feed aggregator выполнял 8-way серийный RPC fan-out; после распараллеливания p99 упал в 6 раз. У каждой крупной инженерной организации есть ретроспектива по N+1. Запись в runbook существует в каждой зрелой команде: "страница медленная → сначала проверить количество запросов."
+</Inset>
+
+<Quiz
+  id="06-nplus1-senior-quiz-1"
+  lessonSlug="06-nplus1-senior"
+  lang="ru"
+  question="Команда применяет .includes для фикса N+1. Количество запросов падает с 50 до 2, но p99 ухудшается на 30%. Что является наиболее вероятным объяснением?"
+  choices={[
+    { label: "JOIN раздувает result set: колонки родителя дублируются на каждую строку потомка. Стоимость сети и парсинга ORM перекрывает экономию на round-trip. Переключитесь с joinedload на selectinload (IN-based) чтобы избежать дублирования.", correct: true },
+    { label: "Eager loading всегда медленнее lazy loading", misconception: "Eager loading почти всегда быстрее за счёт снижения количества round-trip'ов. Проблема здесь — стратегия JOIN vs IN для данной кардинальности." },
+    { label: "База данных не поддерживает eager-load запрос", misconception: "Все крупные базы данных поддерживают JOIN и IN. Проблема — размер payload и стоимость query plan." },
+    { label: "На дочерней таблице отсутствуют индексы", misconception: "Индексы влияют на скорость отдельного запроса. Симптом здесь — стоимость размера payload от JOIN-дублирования, а не скорость запроса." },
+  ]}
+/>
+
+<Quiz
+  id="06-nplus1-senior-quiz-2"
+  lessonSlug="06-nplus1-senior"
+  lang="ru"
+  question="Сервис видит насыщение connection pool: активные соединения близки к 100%, очередь запросов растёт, но latency отдельных запросов стабильная. Что является наиболее вероятной первопричиной и фиксом?"
+  choices={[
+    { label: "N+1 запросы удерживают соединения дольше, чем пул успевает ротироваться. Фикс: уменьшить запросы на request, чтобы каждый request освобождал соединение быстрее.", correct: true },
+    { label: "Connection pool сконфигурирован слишком маленьким", misconception: "Увеличение размера пула помогает временно, но не устраняет первопричину: каждый request удерживает соединение слишком долго из-за N+1." },
+    { label: "База данных под нагрузкой из-за слишком большого количества concurrent соединений", misconception: "Latency отдельных запросов стабильна, что предполагает, что база данных не является узким местом. Узкое место — в приложении, удерживающем соединения через множество серийных запросов." },
+    { label: "Пул утёк — соединения не освобождаются", misconception: "Утечка соединений заставляет активное количество расти без восстановления. Здесь соединения освобождаются — просто медленно, потому что каждый request выполняет 50 серийных запросов." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>В масштабе N+1 каскадирует: 50 запросов на request × 2 мс hold time × pool размер 25 = потолок пропускной способности 250 req/s. Исправьте N+1 — потолок пула вырастет в 10 раз. Следите за изменениями query plan после фикса. Защищайтесь от DoS-амплификации на публичных endpoint'ах. Используйте денормализацию только когда измерение показывает, что eager loading не может удовлетворить latency SLO.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-nplus1-senior-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опишите, как проблема N+1 каскадирует в инцидент исчерпания connection pool, и какие observability сигналы использовать для алертинга.", a: "Endpoint с N+1 удерживает соединение с базой данных через множество серийных запросов. При размере пула 25 и 50 запросах на request по 2 мс каждый, каждый request удерживает соединение 100 мс. Пропускная способность пула ограничена hold-time × размер пула: 25 / 0.1 с = 250 requests/s. При превышении этого порога запросы встают в очередь ожидания соединений. Время ожидания добавляется к latency; очередь растёт; хвосты раскручиваются; некоторые запросы тайм-аутятся с 503. Каскад: высокая latency → health checks провалены → поды удалены из ротации → оставшиеся поды видят больше нагрузки → хуже. Проксимальный фикс: устранить N+1 для снижения hold-time с 100 мс до 4 мс, подняв пропускную способность пула с 250 до 6 000 requests/s. Observability сигналы: (1) насыщение connection pool (active/max) выше 80% устойчиво — опережающий индикатор; (2) connection wait time выше 10 мс — pgbouncer cl_waiting, Rails ActiveRecord pool stats; (3) per-endpoint p99 количество запросов выше 20; (4) per-endpoint p99 latency растёт при стабильной latency отдельных запросов." },
+    { q: "Объясните, когда денормализация (counter cache, materialised view, CQRS read model) является правильным фиксом для N+1, а когда — преждевременной.", a: "Денормализация правильна когда: read p99 SLO ниже 50 мс на тяжёлых join'ах И read нагрузка в 1 000 раз или более превышает write нагрузку И измерение показывает, что ORM eager loading не может удовлетворить SLO. Counter cache'и работают для скалярных агрегаций (counts, sums). Materialised views работают для сложных join'ов и агрегаций, читаемых много раз. CQRS read models работают для полной сборки данных, где write и read формы кардинально отличаются. Каждый вариант добавляет сложность write side, риск staleness и текущие затраты на поддержку. Денормализация преждевременна когда: latency SLO 100+ мс (eager loading удовлетворит его); write нагрузка не драматически ниже read нагрузки (staleness и стоимость поддержки быстро накапливаются); команда ещё не измерила и не подтвердила, что eager loading является узким местом. Наиболее распространённая ошибка — введение CQRS при соотношении read к write 10× когда одна директива .includes решила бы это за 30 минут." },
+  ]}
+/>
+
+<Recap lang="ru">
+В продакшн-масштабе N+1 имеет три second-order эффекта помимо медленных загрузок страниц. Первый: исчерпание connection pool — каждый request, удерживающий соединение на протяжении 50 серийных запросов, насыщает пул намного быстрее, чем запросы из 2 запросов. Исправьте N+1 — пропускная способность пула вырастет в 10 раз. Второй: нестабильность query plan — IN-списки и батч-запросы могут перевернуть с index scan на bitmap scan или sequential scan; всегда выполняйте EXPLAIN ANALYZE на новом запросе после фикса. Третий: DoS-амплификация — любой user-controlled параметр, умножающий количество запросов — вектор атаки; добавьте ограничения глубины, анализ сложности и per-request query budget'ы для публичных endpoint'ов. Денормализация (counter cache'и, materialised view'ы, CQRS read models) — правильный ответ только когда измерение подтверждает, что eager loading не может удовлетворить экстремальный latency SLO.
+</Recap>
