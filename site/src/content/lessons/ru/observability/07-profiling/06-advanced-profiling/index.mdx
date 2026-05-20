@@ -1,0 +1,182 @@
+---
+slug: 06-advanced-profiling
+lang: ru
+track: observability
+unit: 07-profiling
+order: 6
+title: "Linux perf, внутренности eBPF, PGO и ограничения sampling'а"
+summary: "perf_event_open — это ядро ядра под каждым profiler'ом; BPF-программы фильтруют и агрегируют данные прямо в ядре; PGO возвращает профили компилятору для ускорения на 2-7%; а у sampling'а есть слепые пятна, которые инженер обязан знать."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/07-profiling/05-reading-flame-graphs"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["perf-event-open", "ebpf-profiling", "jit-stack-unwinding", "profile-guided-optimization", "sampling-bias", "off-cpu-depth"]
+sources:
+  - https://docs.kernel.org/admin-guide/perf-security.html
+  - https://www.brendangregg.com/offcpuanalysis.html
+  - https://www.brendangregg.com/flamegraphs.html
+  - https://queue.acm.org/detail.cfm?id=2927301
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Flame graph показывает 8% общего CPU флота в коде прохода по стеку самого стороннего profiler'а. Profiler профилирует себя. Это не баг — это симптом глубоких стеков и некорректно настроенного разрешения символов, два senior-уровневых edge case, которые production profiling регулярно обнажает.
+</Hook>
+
+<Crux>Каждый profiler лежит на perf_event_open + BPF. Ядерная основа объясняет edge case'ы — JIT-фреймы, NUMA-перекос, PGO feedback loops.</Crux>
+
+<Explanation>
+
+## Linux perf: ядерная основа
+
+Подсистема Linux `perf` — это основа под большинством profiler'ов. Ядро предоставляет `perf_event_open(2)`, позволяющий user space запрашивать сэмплирование по CPU циклам, hardware events, cache miss'ам или software events. Когда срабатывает настроенное количество событий, ядро захватывает текущий PID, указатель на стек user space и записывает их в ring buffer. User space читает буфер и реконструирует стеки.
+
+Стоимость на стороне ядра: &#126;1-5 микросекунд на сэмпл, включая проход по стеку. Современный Linux (5.x+) поддерживает BPF-программы, прикреплённые к perf events, позволяя user space настраивать, что захватывается — фильтровать по PID, прикреплять метаданные, делать статистическую обработку в ядре. Это движок под Pyroscope eBPF, Parca, `profile.bt` BCC и любым eBPF-based continuous profiler'ом.
+
+Импликация для безопасности: `perf_event_open` требует capabilities (`CAP_PERFMON` в новых ядрах, или root исторически). Production-деплойменты используют cgroup-разрешения на стороне ядра, чтобы ограничить, что каждый контейнер может наблюдать.
+
+## eBPF и нюансы обхода JIT-стеков
+
+Ядро легко обходит user-space стеки для скомпилированных бинарников (Go, Rust, C++) — frame pointer'ы или DWARF unwind info в стеке. Для JIT-рантаймов (V8, JVM, .NET CLR) стек содержит адреса JIT-скомпилированного кода, не соответствующие стабильным символам.
+
+Profiler'ы справляются с этим через **perf map'ы**: JIT'ы выводят файлы `/tmp/perf-PID.map`, отображающие диапазоны адресов в имена функций, которые profiler загружает. JVM async-profiler обходит это, подключаясь к `AsyncGetCallTrace` — JVM API, возвращающему Java-фреймы стека напрямую. V8 поддерживает флаги `--perf-prof` / `--perf-basic-prof`.
+
+Проблемы:
+- Map'ы могут отставать от рекомпиляций — горячие функции перекомпилируются JIT, и старая запись map'а устарела.
+- Обход стека может дать сбой через определённые JIT-фреймы, оставляя пробелы.
+- Production profiler'ы корректно обрабатывают 90-95% стеков; остальное отображается как `[unknown]`.
+
+Загадочные пробелы `[unknown]` в flame graph почти всегда указывают на проблему обхода JIT-фреймов, а не на баг в коде приложения.
+
+## Off-CPU profiling: хук планировщика
+
+Работа Брендана Грегга 2013 года по off-CPU-анализу выявила пробел, который оставляют CPU-профили. eBPF сделал off-CPU profiling дешёвым, подключившись к switch events планировщика ядра (tracepoint `sched_switch`). Когда планировщик снимает поток с CPU (он блокируется на I/O, ждёт в sleep, ожидает блокировку), BPF-программа ядра захватывает стек потока и записывает метку времени. Когда поток возвращается на CPU, прошедшее время атрибутируется захваченному стеку.
+
+Production-использование: off-CPU profiling необходим для I/O-bound сервисов (БД, сетевые шлюзы), где CPU-профили показывают &#126;5% времени, а реальная работа происходит в ожидании. Стоимость: сравнима с CPU-profiling'ом (&#126;2-5%) при сэмплировании; несэмплированный вариант (каждый switch планировщика) может быть дорогим на рабочих нагрузках с частыми переключениями. Production-деплойменты ограничивают до &#126;99 Hz для off-CPU тоже.
+
+## Profile-guided optimisation (PGO)
+
+Profiler'ы не только диагностируют — они возвращают данные в компилятор. Рабочий процесс PGO:
+
+1. Компилируешь бинарник с инструментацией (или используешь sampling-профили от CPU profiler'а).
+2. Запускаешь бинарник под репрезентативной нагрузкой для сбора профиля.
+3. Перекомпилируешь с профилем как входом для компилятора.
+
+Компилятор теперь знает, какие ветви горячие, а какие холодные; какие функции инлайнить агрессивно; как размещать basic blocks для cache locality CPU. Реальные улучшения от PGO: Go 1.21+ PGO даёт 2-7% ускорения на типичных рабочих нагрузках (CPU pprof-профиль Go напрямую потребляется как PGO-вход). Chrome получил 10%+ от PGO + LTO. Бенчмарки PostgreSQL 5-15%.
+
+Continuous profiling бэкенды всё активнее поддерживают экспорт профилей в PGO-совместимые форматы, позволяя автоматические пайплайны «profile → recompile → validate» в CI.
+
+## Смещения и слепые пятна sampling'а
+
+У sampling'а есть ограничения, которые старший инженер обязан знать:
+
+**Короткие горячие пути**: функции, всё время выполнения которых меньше интервала сэмпла (10 мс при 100 Hz), могут быть пропущены. Функция, вызванная 1 миллион раз по 5 микросекунд каждый раз (5 с суммарного CPU), может никогда не попасть в сэмпл — каждый вызов завершается до срабатывания таймера. Решение: более длинные окна профилирования, более высокие частоты сэмплирования или инструментация для конкретного пути.
+
+**NUMA / асимметрия multi-CPU**: profiler'ы обычно сэмплируют равномерно по CPU. При неравномерном распределении нагрузки (типично для NUMA-систем или при неправильно настроенной привязке потоков) bottleneck горячего CPU доминирует, и профиль выглядит перекошенным. Используй per-CPU виды профиля, чтобы увидеть дисбаланс.
+
+**Статистическая точность при малом числе сэмплов**: при 100 Hz за 10 секунд получается 1 000 сэмплов. Функция, использующая 1% CPU, появляется в &#126;10 сэмплах — достаточно, чтобы заметить, недостаточно для точных оценок. Стандартная ошибка &#126;30% для функций ниже 10% CPU. Для регрессий ниже 1% требуется более длинный захват (60-300 с) или дифференциальный профиль.
+
+<NumbersCard
+  id="card-advanced-numbers"
+  title="Advanced profiling: числа ядра и компилятора"
+  stats={[
+    { label: "Статья о flame graph", value: "Брендан Грегг, ACM Queue 2016" },
+    { label: "Стоимость perf_event_open в ядре", value: "&#126;1-5 мкс / сэмпл" },
+    { label: "Ускорение Go PGO (реальные нагрузки)", value: "2-7%" },
+    { label: "Успешность обхода JIT-стека", value: "&#126;90-95% типично" },
+    { label: "Ограничение off-CPU sampling в production", value: "&#126;99 Hz" },
+    { label: "Релиз Pyroscope 2.0", value: "Апрель 2026" },
+    { label: "Статус OTel profile signal", value: "Beta с 2026" },
+  ]}
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Edge case</th>
+        <th class="border border-border px-3 py-2 text-left">Симптом</th>
+        <th class="border border-border px-3 py-2 text-left">Решение</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Очень короткие горячие функции</td>
+        <td class="border border-border px-3 py-2">Функция никогда не попадает в сэмплы</td>
+        <td class="border border-border px-3 py-2">Более длинный захват, выше rate, или инструментация</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Сбой обхода JIT-фреймов</td>
+        <td class="border border-border px-3 py-2">Фреймы [unknown] в flame graph</td>
+        <td class="border border-border px-3 py-2">Включить JIT perf map'ы или использовать нативный profiler</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Глубокие middleware-стеки</td>
+        <td class="border border-border px-3 py-2">Overhead profiler'а в 3-4x выше заявленного</td>
+        <td class="border border-border px-3 py-2">Ограничить max-depth до 64; уменьшить middleware chain</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">NUMA-дисбаланс CPU</td>
+        <td class="border border-border px-3 py-2">Hotspot на одной NUMA-ноде невидим в среднем по флоту</td>
+        <td class="border border-border px-3 py-2">Использовать per-CPU виды профиля</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="06-advanced-profiling-quiz-1"
+  lessonSlug="06-advanced-profiling"
+  lang="ru"
+  question="Go-сервис с интенсивным использованием cgo (C-байндинги) показывает неожиданно высокий overhead profiler'а при стандартной частоте сэмплирования. Какова вероятная причина?"
+  choices={[
+    { label: "cgo-интенсивные пути требуют, чтобы profiler обходил одновременно и C, и Go-фреймы стека на каждом сэмпле, примерно удваивая стоимость прохода по стеку за сэмпл", correct: true },
+    { label: "cgo отключает pprof", misconception: "cgo не отключает pprof; он усложняет обход стека." },
+    { label: "У profiler'а есть баг с cgo", misconception: "Это ожидаемое поведение, не баг — cgo создаёт смешанные Go/C стеки." },
+    { label: "cgo всегда добавляет 10% overhead независимо от profiling'а", misconception: "Overhead cgo существует, но дополнительная стоимость profiler'а происходит конкретно от обхода смешанных стеков." },
+  ]}
+/>
+
+<Quiz
+  id="06-advanced-profiling-quiz-2"
+  lessonSlug="06-advanced-profiling"
+  lang="ru"
+  question="Функция вызывается 1 миллион раз в секунду по 5 мкс каждый раз (5 CPU-секунд в секунду). При сэмплировании 100 Hz насколько надёжно она появится в профиле?"
+  choices={[
+    { label: "Плохо — каждый вызов завершается за 5 мкс, что намного меньше интервала сэмпла 10 мс, поэтому большинство вызовов заканчиваются до срабатывания любого сэмпла. Решение: значительно более длинное окно захвата или значительно более высокая частота сэмплирования.", correct: true },
+    { label: "Очень надёжно, потому что она использует много CPU", misconception: "Sampling-based profiling ловит выполнение в момент сэмпла; если каждый отдельный вызов короче интервала, многие не попадают в сэмплы." },
+    { label: "Ровно так же надёжно, как любая другая функция", misconception: "Короткоживущие горячие функции — известное слепое пятно sampling profiler'ов; они могут систематически недопредставляться." },
+    { label: "Появится в 50% сэмплов, потому что использует 50% CPU", misconception: "Статистическое свойство справедливо в среднем, но требует достаточно сэмплов в момент выполнения функции. При 5-мкс вызовах вероятность попадания любого отдельного сэмпла в функцию мала." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Каждый profiler лежит на perf_event_open + BPF. JIT-рантаймам нужны perf map'ы или нативные хуки для точных символов; глубокие стеки раздувают overhead; очень короткие горячие функции могут уклоняться от sampling'а. PGO возвращает CPU-профили компилятору для ускорения на 2-7%. Знай слепые пятна, прежде чем воспринимать отсутствие пика в flame graph как отсутствие bottleneck'а.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-advanced-profiling-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Как механически работает perf_event_open и почему требует специальных capabilities?", a: "perf_event_open(2) — системный вызов ядра, запрашивающий сэмплирование на hardware или software событии — как правило, CPU циклах. Когда срабатывает настроенное количество событий, ядро захватывает PID текущего потока и указатель на стек user space, записывая их в ring buffer, который читает user space. Современный Linux прикрепляет BPF-программы в точке сэмпла, позволяя фильтрацию и агрегацию в ядре до попадания данных в user space. Capabilities требуются (CAP_PERFMON в 5.8+, или CAP_SYS_ADMIN исторически), потому что perf может наблюдать любой процесс в системе, включая процессы других пользователей или внутренности ядра — это чувствительная с точки зрения безопасности возможность. Production-деплойменты ограничивают её через cgroup-разрешения, чтобы агент profiler'а контейнера видел только стеки этого контейнера." },
+    { q: "Объясни, как работает PGO и почему он применим только к определённым нагрузкам.", a: "Profile-Guided Optimisation передаёт CPU-профиль из репрезентативного production-запуска обратно в компилятор как карту горячих путей. Компилятор использует его для: агрессивного инлайнинга на горячих call site'ах, которые обычно превышают бюджет инлайнинга; перегруппировки basic blocks, чтобы горячий код был cache-смежным; пометки холодных ветвей как unlikely для подсказок предсказателю ветвей. Go 1.21+ принимает pprof CPU-профили напрямую с -pgo=cpu.pprof. Ускорение 2-7% применимо к нагрузкам, где умолчания компилятора неверны — например, глубоко рекурсивные горячие пути, большие switch-конструкции с неравномерным распределением случаев, или горячие функции, которые инлайнер обычно пропускает. PGO неэффективен для уже оптимизированных tight loops (компилятор и так их хорошо обрабатывает) или для I/O-bound сервисов, где CPU не bottleneck. Стоимость рабочего процесса: требует сбора репрезентативного профиля, автоматизации перекомпиляции и валидации результата." },
+    { q: "Flame graph показывает [unknown] фреймы в середине цепочки вызовов Java-сервиса. Пройди диагностику и исправление.", a: "Вероятная причина: JIT-компилятор JVM скомпилировал код, чей диапазон адресов отсутствует в таблице символов profiler'а. Profiler захватывает фреймы стека как адреса и разрешает их в имена функций через JVM AsyncGetCallTrace API (async-profiler) или файлы /tmp/perf-PID.map (для perf-based profiler'ов). Фреймы [unknown] появляются, когда: JIT скомпилировал или перекомпилировал функцию после загрузки map'а; сервис был запущен без флагов вывода JIT map; или profiler — eBPF-only инструмент, не понимающий JVM. Диагностика: проверь, подключён ли async-profiler (наиболее надёжно для JVM — он подключается к AsyncGetCallTrace нативно). Если используется только eBPF: добавь -agentlib:async-profiler в JVM флаги и используй его вывод flame graph, или включи вывод JIT perf map JVM с -XX:+PrintAssembly или -Xss. Решение всегда — использовать JVM-aware profiler (async-profiler) или включить вывод символов JIT. [unknown] в Go отличается: обычно срезанный DWARF; исправить с GOFLAGS=-ldflags=-w=0 для сохранения debug info." },
+  ]}
+/>
+
+<Recap lang="ru">
+Все profiler'ы лежат на интерфейсе ядра Linux `perf_event_open`, с BPF-программами, делающими in-kernel агрегацию и фильтрацию. JIT-рантаймы (JVM, V8, .NET) требуют дополнительной поддержки — perf map'ы или нативные хуки вроде `AsyncGetCallTrace` — потому что адреса их кода не статически привязаны к именам функций; без этого стеки отображаются как `[unknown]`. Off-CPU profiling использует хук ядра `sched_switch` для захвата стеков в момент снятия потока с CPU, атрибутируя время ожидания call site'у блокировки. PGO возвращает CPU-профили компилятору для ускорения на 2-7%. Слепые пятна sampling'а включают очень короткоживущие горячие функции (короче интервала сэмпла), NUMA-дисбаланс и глубокие middleware-цепочки, раздувающие overhead на сэмпл. Знание этих ограничений отличает старшего инженера, доверяющего flame graph, от того, кто знает, когда ему не доверять.
+</Recap>
