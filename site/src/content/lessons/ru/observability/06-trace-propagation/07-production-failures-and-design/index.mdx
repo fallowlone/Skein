@@ -1,0 +1,240 @@
+---
+slug: 07-production-failures-and-design
+lang: ru
+track: observability
+unit: 06-trace-propagation
+order: 7
+title: "Production-сбои propagation, span links и платформенный дизайн"
+summary: "Баги propagation молчат: Uber, GitHub, Slack, Datadog — дашборды показывали трейсы, просто не те. Span-links решают fan-in и async follow-ups. Orphan rate и invalid-traceparent count — мета-слой, ловящий регрессии до пользователей."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/06-trace-propagation/06-async-context-and-mesh"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["span-links", "orphan-span-rate", "propagation-observability", "long-running-traces", "platform-design"]
+sources:
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+  - https://opentelemetry.io/docs/specs/otel/baggage/api/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+GitHub держал регрессию propagation целый квартал, когда 50% внутренних трейсов были orphan-спанами. Дашборды показывали трейсы всё это время. Никто не заметил, пока инженер не проверил orphan-span rate в рутинном ревью.
+</Hook>
+
+<Crux>Баги propagation молчат: показывают трейсы, просто не связанные. Orphan rate + invalid-traceparent — иначе регрессии скрыты кварталами.</Crux>
+
+<Explanation>
+
+## Реальные production-сбои propagation
+
+**Uber 2019:** частичный rollout OTel привёл к тому, что 30% трейсов обрывались на границе между инструментированными и неинструментированными сервисами. Постмортем обязал добавить gate «ни один сервис не выходит в prod без W3C propagation», проверяемый в CI. Паттерн: инструментированные сервисы отдают идеальные спаны; неинструментированные отдают orphan-спаны; обе группы показывают разную глубину трейсов на дашбордах, но автоматических алертов на граничный сбой нет.
+
+**GitHub 2022:** кастомная обёртка HTTP-клиента обходила хуки OTel и молча дропала `traceparent` у половины внутренних сервисов целый квартал — пока кто-то не заметил, что orphan-span rate вырос с 1% до 50%. Фикс — одна строка: обернуть клиент в OTel-aware версию. Урок: кастомные обёртки — самый частый пробел propagation в зрелых сервисах. Фикс всегда однострочный; найти его занимает квартал.
+
+**Slack 2023:** tail-sampling Collector'ы упали по OOM и снесли pipeline трейсинга во время крупного инцидента — именно тогда, когда трейсинг был нужнее всего. Постмортем добавил лимиты `num_traces` и отдельный always-keep-тир для высокоприоритетных трейсов. Пробел мониторинга: health-метрики OTel Collector не были ни на одном SLO-дашборде.
+
+**Datadog 2024 (customer report):** крупная Java-нагрузка использовала thread pool, который не переносил контекст через submitted tasks, поэтому 80% трейсов background-задач были orphan-спанами. Фикс: переключиться на executor с поддержкой `CurrentTraceContext`. Баг существовал месяцами; обнаружен в ходе квартального ревью orphan-rate.
+
+**Общий паттерн:** баги propagation молчат. Дашборды продолжают показывать трейсы. Единственный механизм обнаружения — метрика orphan-span rate, и эта метрика должна быть на дашборде и желательно на алерте — OTel defaults её не выставляет автоматически.
+
+## Observability для самой propagation
+
+Ключевые health-метрики propagation:
+
+| Метрика | Норма | Сигнал когда |
+|---|---|---|
+| `orphan_span_rate` по `service.name` | &lt;1% (только entry-points) | Внутренний сервис &gt;5% → регрессия propagation |
+| `invalid_traceparent_received` count | ~0 | Любой sustained rate → сломанный upstream |
+| `trace_id_per_second` | Пропорционально RPS × sample_rate | Резкий рост → свежие trace-id (propagation потеряна) |
+| `broken_parent_count` | &lt;0.5% | Спаны, чей parent-id не встречается ни в одном другом спане того же трейса |
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Здоровое состояние</th>
+        <th class="border border-border px-3 py-2 text-left">Порог</th>
+        <th class="border border-border px-3 py-2 text-left">Действие по алерту</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Orphan-спаны для внутренних сервисов</td>
+        <td class="border border-border px-3 py-2">&lt;1%</td>
+        <td class="border border-border px-3 py-2">Page если &gt;5% в течение 10 мин для конкретного сервиса</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">invalid_traceparent_received</td>
+        <td class="border border-border px-3 py-2">&lt;0,01%</td>
+        <td class="border border-border px-3 py-2">Тикет если ненулевой rate держится &gt;5 мин</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">broken_parent_count</td>
+        <td class="border border-border px-3 py-2">&lt;0,5%</td>
+        <td class="border border-border px-3 py-2">Тикет если &gt;2% в течение 10 мин</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Span links: когда дерево родитель-потомок ломается
+
+Модель родитель-потомок предполагает линейную причинность: A вызывает B, B вызывает C. Это ломается в трёх сценариях:
+
+1. **Batch-обработка:** consumer вытягивает 1 000 сообщений из Kafka и обрабатывает их в одном батче. Нет единственного осмысленного «родителя» — 1 000 входящих trace-контекстов питают один batch-спан.
+2. **Fan-in:** несколько параллельных подзадач сходятся в точке join. Каждая подзадача — потомок собственной ветви; у точки join несколько причинных участников.
+3. **Async follow-ups:** исходящий запрос завершается и возвращает ответ пользователю, но порождает follow-up, который выполняется спустя часы. Контекст исходного запроса закрыт; follow-up'ам нужна причинная связь без того, чтобы быть потомками «мёртвого» спана.
+
+Span-links в OTel решают всё это: спан объявляет дополнительные ссылки на `SpanContext`, с которыми он причинно связан, но от которых не наследуется. Tracing-бэкенды визуализируют links как пунктирные линии рядом с деревом родитель-потомок.
+
+**Senior-паттерн:** любой трейс длиннее 30 секунд или шире 100 спанов — кандидат на рефакторинг с span-links. Разбейте длинный workflow на sub-трейсы, каждый из которых умещается в окно принятия решения tail-sampler'а, и используйте links для сохранения причинной цепочки. Трейсы остаются небольшими, sampler'у хорошо, следственная связь сохраняется.
+
+## Long-running трейсы и проблема 30 минут
+
+Tail-sampler'ы имеют окна принятия решения 30 с–5 мин. Batch-задача, работающая 30 минут, отдаёт спаны уже после закрытия окна; поздние спаны выглядят для sampler'а как orphan-спаны.
+
+**Два production-паттерна:**
+1. **Разбить работу:** разделить длинные workflows на sub-трейсы, связанные span-links, каждый умещается в окно принятия решения. Чистая архитектура, корректная по построению.
+2. **Поддержка поздних спанов бэкендом:** Tempo, Honeycomb и Datadog поддерживают поздно прибывшие спаны до 24 ч после старта трейса. Для long-running трейсов пропустить tail-sampling; использовать head sampling на 100% для batch-нагрузок. Практический retrofit для legacy batch-задач.
+
+Окно принятия решения — это рычаг, который нужно настраивать, когда batch-нагрузки ломают tail-sampling. Увеличение его вверх увеличивает RAM Collector'а; правильный ответ чаще всего — разбить работу.
+
+<TraceScenario
+  id="07-production-trace-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="ru"
+  scenario="Обнаружен orphan rate 0,5% для внутреннего сервиса. Найдите первопричину."
+  steps={[
+    { prompt: "Шаг 1: orphan rate 0,5% — норма или сигнал?", reveal: "Если healthy production показывает ≤1%, 0,5% в норме только если эти orphan-спаны соответствуют легитимным entry-point сервисам (API gateway, публичные обработчики). Если они соответствуют внутренним сервисам (auth, inventory, payment), orphan-спаны — это сбои propagation. Отфильтруйте по service.name для разграничения." },
+    { prompt: "Шаг 2: фильтр orphan-спанов по service.name. Какой паттерн?", reveal: "Сгруппируйте по сервису. Если 80% orphan-спанов — один конкретный сервис, у него баг propagation. Если они рассредоточены по всем сервисам на уровне 0,5%, проблема на upstream — какой-то конкретный upstream caller дропает traceparent для части трафика." },
+    { prompt: "Шаг 3: один конкретный сервис — источник. Что искать во входящем трафике?", reveal: "Захватите HTTP-заголовки входящих запросов (логи mesh sidecar или debug endpoint). Искать: присутствует ли traceparent? Корректный ли формат? Если отсутствует — смотрите на upstream caller. Если присутствует, но невалидный — смотрите конфиг upstream: неправильный propagator? B3 у upstream, а вы извлекаете только W3C?" },
+    { prompt: "Шаг 4: traceparent отсутствует в запросах от одного upstream client'а. Почему?", reveal: "Скорее всего upstream использует кастомный HTTP-клиент (обёртка над curl, библиотека без OTel auto-instrument или инструментация инициализирована после первого запроса). Проверьте порядок регистрации OTel у upstream и версии библиотек." },
+    { prompt: "Шаг 5: долгосрочный фикс?", reveal: "Добавьте OTel-инструментированную обёртку клиента как единственный разрешённый outbound client (lint-правило блокирует прямые http.get / fetch в коде приложения). Добавьте CI integration test: отправить запрос через 3 сервиса, утверждать 3 спана с 1 trace-id. Production-алерт: если orphan-span rate отношение для конкретного сервиса >5× от baseline." },
+  ]}
+/>
+
+<DebugLog
+  id="07-production-debug-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="ru"
+  title="Диагностика сломанного трейса по выводу tracing-бэкенда"
+  output={`# Запрос: trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+# Результат: 7 спанов
+
+#  сервис             span_id           parent_id           длительность   статус
+1  api-gateway       1a2b3c4d5e6f7890  -                   18ms           OK
+2  auth              7890abcdef123456  1a2b3c4d5e6f7890    14ms           OK
+3  inventory         abcdef1234567890  1a2b3c4d5e6f7890    1200ms         OK
+4  payment           fedcba0987654321  -                   80ms           OK    # ORPHAN
+5  postgres-client   1111222233334444  fedcba0987654321    55ms           OK
+6  email-job         5555666677778888  -                   240ms          OK    # ORPHAN
+7  audit-log         9999aaaabbbbcccc  -                   12ms           OK    # ORPHAN
+
+# Также отдельные orphan-трейсы с одним спаном:
+# trace_id 9981a... сервис payment, 78ms
+# trace_id ab32c... сервис email-job, 280ms
+# trace_id ff8e1... сервис audit-log, 14ms`}
+  outputLang="log"
+  question="Трейс содержит 7 спанов, но 3 из них — orphan (нет parent_id), и существуют 3 отдельных трейса с одним спаном от тех же сервисов. Что происходит?"
+  hint="Orphan-сервисы, вероятно, одни и те же процессы, которые продуцируют как orphan-спаны внутри этого трейса, так и отдельные single-span orphan-трейсы."
+  answer="Диагноз: propagation сломана на трёх конкретных сервисах — payment, email-job, audit-log. Строки 'orphan span внутри трейса' (4, 6, 7) говорят о том, что эти сервисы получили корректный входящий traceparent (они появляются под тем же trace_id), но их auto-instrumentation не регистрирует извлечённый контекст — у них должен быть parent_id, указывающий на api-gateway или inventory, но его нет. Тем временем отдельные single-span orphan-трейсы от тех же сервисов говорят о том, что для других запросов traceparent теряется ещё на входе и генерируется свежий trace-id. Два режима сбоя на тех же сервисах. Root cause: у payment, вероятно, кастомная HTTP-обёртка в обход OTel. email-job — Kafka consumer, где extract на стороне consumer не реализован — consumer видит trace-id, но не связывает его как parent. audit-log — fire-and-forget writer, работающий в async-контексте, не привязанном к запросу. Путь фикса: (a) для payment — заменить кастомный HTTP-клиент на OTel-инструментированный; (b) для email-job — добавить Kafka consumer instrumentation, чтобы consumer извлекал traceparent из заголовков сообщений; (c) для audit-log — использовать context.bind вокруг audit-вызова. Добавить CI-тест: end-to-end запрос через gateway → inventory → payment → email-job → audit, утверждать 5 спанов с 1 trace-id и связанной цепочкой parent_id."
+/>
+
+<DesignPrompt
+  id="07-production-design-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="ru"
+  prompt="Спроектируйте end-to-end trace propagation для новой платформы с 30 микросервисами, браузерным frontend, Kafka backbone, service mesh и tier tail-sampling collector."
+  constraints={[
+    "Polyglot: 12 сервисов Node.js, 10 Java, 5 Go, 3 Python.",
+    "Браузерный frontend (React) делает fetch-вызовы к API gateway.",
+    "Kafka используется для async-обмена между 8 сервисами.",
+    "Service mesh: Linkerd (Linux) для east-west HTTP и gRPC.",
+    "Sampling: 100% ошибок, 100% медленных (>2 с), 1% baseline.",
+    "On-call должен видеть любой пользовательский запрос как единый трейс в течение 30 с после завершения.",
+  ]}
+  canonical="Слой 1 — стандарт propagator. Везде мандировать OpenTelemetry SDK; propagator по умолчанию — составной W3C TraceContext + Baggage. Убрать B3 из исходящих; принимать B3 на входящих в течение 90-дневного deprecation. SDK по языку: opentelemetry-js (Node и браузер), opentelemetry-java (Java), opentelemetry-go (Go), opentelemetry-python (Python). Браузер: opentelemetry-js-browser SDK с fetch instrumentation; ограничить propagation same-origin и явным allowlist CORS-origins, чтобы traceparent не утекал к третьим сторонам. Слой 2 — HTTP propagation. Auto-instrumentation на каждом сервисе: регистрировать OTel до старта app-кода (Node: флаг -r; Java: javaagent; Go: явный init; Python: opentelemetry-instrument). Service mesh (Linkerd) прозрачно проксирует заголовки и отдаёт собственные mesh-hop спаны для полной видимости сети. Слой 3 — Kafka propagation. Продюсер: OTel Kafka instrumentation инжектирует traceparent в заголовки record. Consumer: извлекает traceparent при poll, стартует новый спан с parent = span-id продюсера. Span-links, а не direct parent-child, когда consumer батчит 100 сообщений. Слой 4 — async-boundary дисциплина. Checklsit код-ревью: любой callback, setTimeout, setImmediate, queueMicrotask, worker dispatch или Promise chain через логическую границу должны быть обёрнуты context.bind или аналогом. Кастомные thread pool'ы должны использовать OTel context-aware executors. Lint-правило флагирует raw setTimeout в scope HTTP-handler'а. Слой 5 — collector tier. OTel Collector как stateless agent layer (1 на node, DaemonSet) + stateful tail-sampling tier (5 реплик) за load-balancing exporter (хэш по trace-id). Окно принятия решения 30 с. Memory budget на tail-sampler: 4 GB при ожидаемых 10k req/s aggregate. Политики: хранить все ошибки, все трейсы >2 с end-to-end, 1% probabilistic для всего остального. Слой 6 — бэкенд. Tracing backend (Tempo, Honeycomb, Datadog, Jaeger) принимает sampled спаны; retention 7 дней fine-grained, 30 дней sampled summary; long-term архив в object storage. Слой 7 — observability propagation. Метрики: orphan_span_rate по сервису, invalid_traceparent_count, broken_parent_count, trace_id_per_second. Алерт когда orphan rate конкретного внутреннего сервиса превышает 5% в течение 10 минут. Dashboard panel показывает propagation health рядом с RED + USE. Слой 8 — CI-тесты. End-to-end propagation test: цепочка из 5 сервисов, отправить запрос, утверждать >4 спанов связанных одним trace-id. Запускать на каждый PR, затрагивающий HTTP, Kafka или worker-код."
+  keyPoints={[
+    "W3C TraceContext + Baggage по умолчанию везде; B3 только для legacy interop, deprecated.",
+    "OTel SDK регистрируется до старта приложения в каждом сервисе; CI gate это проверяет.",
+    "Kafka, gRPC, mesh автоматически несут traceparent через auto-instrumentation.",
+    "Async-границы (setTimeout, workers, callbacks) требуют явной дисциплины context.bind.",
+    "Tail-sampling collector с load-balancing exporter для консистентности по trace-id.",
+    "Правила sampling: 100% ошибок + 100% медленных + 1% baseline.",
+    "Propagation имеет собственный observability-слой (orphan-span rate, invalid-traceparent count).",
+  ]}
+/>
+
+<NumbersCard
+  id="07-production-numbers"
+  title="Пороги health propagation"
+  stats={[
+    { label: "Здоровый orphan-span rate (внутренние сервисы)", value: "≤1% от всех спанов" },
+    { label: "Здоровый invalid_traceparent rate", value: "≤0,01%" },
+    { label: "Здоровый broken-parent rate", value: "≤0,5%" },
+    { label: "Порог алерта: orphan rate внутреннего сервиса", value: ">5% в течение 10 мин" },
+    { label: "GitHub 2022: orphan rate в момент обнаружения регрессии", value: "50% (от baseline 1%)" },
+    { label: "Время обнаружения регрессии GitHub без алертинга", value: ">1 квартала" },
+  ]}
+/>
+
+<Quiz
+  id="07-production-quiz-1"
+  lessonSlug="07-production-failures-and-design"
+  lang="ru"
+  question="Batch-процессор вытягивает 1 000 сообщений из Kafka и обрабатывает их в одной транзакции. Инженер моделирует это как один родительский спан с 1 000 дочерних спанов, по одному на сообщение. После деплоя tail-sampling Collector падает по OOM. Каков архитектурный фикс?"
+  choices={[
+    { label: "Использовать span-links вместо родитель-потомок: создать один batch-спан, который ссылается на все 1 000 входящих message-контекстов, но не имеет их в качестве потомков, сохраняя трейс небольшим", correct: true },
+    { label: "Увеличить num_traces лимит Collector'а для обработки батча", misconception: "Увеличение лимита откладывает OOM, но не устраняет root cause: 1 000 дочерних спанов на batch-спан могут накопиться в десятки тысяч спанов в окне принятия решения. Архитектурный фикс — span-links." },
+    { label: "Использовать head sampling 0% для batch-сервиса", misconception: "Отключение sampling для batch-сервиса убирает batch-трейсы полностью — а команда хочет сохранять трейсы ошибок и медленные batch-трейсы." },
+    { label: "Разбить батч на 10 транзакций по 100 сообщений каждая", misconception: "Хотя это сокращает спаны на трейс в 10 раз, трейсы всё равно будут широкими. Span-links — идиоматическое решение для fan-in сценариев." },
+  ]}
+/>
+
+<Quiz
+  id="07-production-quiz-2"
+  lessonSlug="07-production-failures-and-design"
+  lang="ru"
+  question="Production-команда добавляет алертинг на orphan-span rate. Алерт срабатывает для 'email-job' на уровне 6% (baseline 0,5%). Каков первый диагностический шаг?"
+  choices={[
+    { label: "Отфильтровать orphan-спаны по service.name=email-job и проверить, присутствует ли traceparent во входящих заголовках сообщений — если отсутствует, Kafka producer не инжектирует; если присутствует, но игнорируется, consumer не извлекает", correct: true },
+    { label: "Перезапустить сервис email-job для сброса метрики", misconception: "Перезапуск может временно очистить метрику при транзиентном startup-сбое, но не диагностирует и не устраняет root cause. Orphan rate вернётся, если баг propagation сохранится." },
+    { label: "Увеличить polling timeout Kafka consumer", misconception: "Polling timeout влияет на задержку сообщений, а не на propagation. Orphan rate вызван отсутствующим шагом inject или extract, а не конфигурацией polling." },
+    { label: "Переключить email-job на head sampling 100%, чтобы гарантировать отдачу спанов", misconception: "Sampling влияет на то, экспортируются ли спаны, а не на то, есть ли у них корректные parent-id. Orphan-спаны — это экспортированные спаны с отсутствующим parent_id; проблема в propagation, а не в sampling." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Баги propagation молчат — дашборды показывают трейсы, просто не связанные. Для observability health propagation нужны собственные метрики: orphan-span rate по сервису, invalid-traceparent count, broken-parent count. Span-links решают fan-in, batch и async follow-up паттерны, где дерево родитель-потомок ломается. Воспринимайте tracing Collector как production-инфраструктуру с собственным SLO.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-production-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, зачем существуют span-links, и когда senior-инженер выбирает их вместо отношений родитель-потомок.", a: "Родитель-потомок — это дерево: у каждого спана ровно один родитель. Это работает для синхронных request flow — A вызывает B, B вызывает C — но ломается, когда причинность является «многие к одному» или «один ко многим» через async-границы. Примеры: batch-процессор вытягивает 100 сообщений из Kafka и обрабатывает их в одной транзакции (100 входящих контекстов питают один batch-спан — один parent не имеет смысла); fan-out workflow запускает 50 подзадач и ждёт завершения всех; long-running workflow, чей исходный запрос завершился и вернул ответ пользователю, но породил async follow-up'ы спустя часы. Span-links решают всё это: спан объявляет ноль или более дополнительных SpanContext, с которыми он причинно связан, но от которых не наследуется. Бэкенды визуализируют links как пунктирные линии, а не сплошное дерево. Senior-инженеры выбирают span-links когда: (a) batch-обработка тянет несколько message-контекстов в одну операцию, (b) async-работа переживает исходный запрос, (c) workflow объединяет много параллельных ветвей, (d) любой случай, когда дерево родитель-потомок вынуждало бы произвольно выбирать 'главный parent', не отражающий реальную причинность." },
+    { q: "Опишите три health-метрики propagation, которые должен мониторить каждый production tracing-деплой, и пороги алертов.", a: "1. orphan_span_rate по service.name: доля спанов без parent_id для каждого сервиса. Entry-point сервисы (API gateway, публичные обработчики) легитимно продуцируют orphan-спаны как trace root'ы; внутренние сервисы должны быть близки к нулю. Алерт когда orphan rate конкретного внутреннего сервиса превышает 5% в течение 10 минут — это признак регрессии propagation. Здоровый baseline: ≤1% для всех спанов. 2. invalid_traceparent_received: количество спанов, отданных с атрибутом invalid_traceparent_received=true (выставляется SDK при провале валидации). Ловит сломанных upstream callers, отдающих некорректные заголовки. Здоровый baseline: ≤0,01%. Алерт на любой sustained ненулевой rate. 3. broken_parent_count: спаны, чей parent_id не совпадает ни с одним span_id другого спана в том же trace-id в разумном временном окне. Ловит частичную propagation — parent-id синтаксически валиден, но указывает на спан, который так и не был записан. Здоровый baseline: ≤0,5%. Алерт при >2% в течение 10 минут." },
+    { q: "Опишите 8-уровневый платформенный дизайн end-to-end propagation для polyglot-системы с 30 сервисами, Kafka, service mesh и tail sampling.", a: "Слой 1 — стандарт propagator: W3C TraceContext + Baggage везде; B3 только на входящих в течение 90-дневного deprecation. Слой 2 — HTTP propagation: auto-instrumentation регистрируется до старта приложения в каждом сервисе; service mesh (Linkerd/Envoy) проксирует заголовки и отдаёт mesh-hop спаны. Слой 3 — Kafka: producer инжектирует traceparent в заголовки record; consumer извлекает при poll; span-links для batch-consumers. Слой 4 — async-boundary дисциплина: context.bind для in-process callbacks; lint-правило флагирует raw setTimeout в scope handler'а; context-aware executors для thread pool'ов. Слой 5 — collector tier: stateless agent layer (DaemonSet) + stateful tail-sampling tier (5 реплик) за load-balancing exporter (хэш по trace-id); окно принятия решения 30 с; лимит num_traces; политики: 100% ошибок, 100% >2 с, 1% baseline. Слой 6 — tracing backend: индексируется по trace-id; 7 дней fine-grained retention + 30 дней sampled summary + object storage архив. Слой 7 — observability propagation: orphan_span_rate, invalid_traceparent_count, broken_parent_count, trace_id_per_second; алерты на первые три; панель propagation health рядом с RED + USE. Слой 8 — CI gates: end-to-end test утверждает >4 спанов с 1 trace-id для цепочки из 5 сервисов; запускается на каждый PR, затрагивающий HTTP, Kafka или worker-код." },
+  ]}
+/>
+
+<Recap lang="ru">
+Production-сбои propagation молчат: Uber (30% сломанных трейсов месяцами), GitHub (50% orphan rate целый квартал), Slack (Collector OOM во время инцидента) и клиенты Datadog (80% orphan-спанов у background-задач) — все сбоили именно так. Общий паттерн: дашборды показывали трейсы, просто не связанные, и ни одна метрика не алертила на разрыв. Фикс — наблюдать health propagation через собственные RED-эквивалентные метрики: orphan-span rate по сервису, invalid-traceparent count, broken-parent rate — и алертить по ним. Span-links решают случаи, когда дерево родитель-потомок не работает: batch fan-in, async follow-ups, workflows шире, чем окно принятия решения. Long-running трейсы необходимо разбивать на sub-трейсы, связанные span-links, умещающиеся в окно Collector'а. Propagation — невидимый фундамент, от которого зависит каждая другая observability-фича; воспринимайте её health как первоклассную production-метрику.
+</Recap>
