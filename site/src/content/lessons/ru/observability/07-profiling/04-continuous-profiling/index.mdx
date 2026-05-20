@@ -1,0 +1,178 @@
+---
+slug: 04-continuous-profiling
+lang: ru
+track: observability
+unit: 07-profiling
+order: 4
+title: "Continuous profiling: always-on flame graphs с eBPF и корреляцией trace-id"
+summary: "Continuous profiling работает always-on при 2-5% overhead — когда горит SLO, flame graph уже сохранён. eBPF захватывает стеки polyglot-сервисов без языковых хуков; корреляция trace-id сводит любой медленный span к конкретной функции за 30 секунд."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/07-profiling/03-profile-types"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["continuous-profiling", "ebpf", "pyroscope", "parca", "trace-profile-correlation", "profile-storage"]
+sources:
+  - https://github.com/grafana/pyroscope
+  - https://github.com/parca-dev/parca
+  - https://opentelemetry.io/docs/specs/otel/profiles/
+  - https://www.brendangregg.com/flamegraphs.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+SLO горит в 2:14 ночи. Пейджер будит on-call. Традиционный profiling требует SSH, воспроизведения проблемы под нагрузкой, захвата профиля и его разбора — в 2:14 ночи, под давлением. Continuous profiling уже хранит flame graph за 2:14 на дашборде.
+</Hook>
+
+<Crux>Continuous profiling сохраняет профили каждого момента. Когда инцидент начинается, flame graph уже там — без воспроизведения.</Crux>
+
+<Explanation>
+
+## Традиционный vs continuous profiling
+
+**Традиционный (on-demand) profiling**: SSH, запуск `perf record` или обращение к `/debug/pprof/profile`, сбор данных, анализ, выход. Стоимость: только во время захвата. Ограничение: нужно присутствие и активное проявление проблемы. Для нерегулярных инцидентов или тех, что самоустраняются, доказательство теряется.
+
+**Continuous profiling**: агент работает на каждом хосте или контейнере, сэмплируя 100 раз в секунду непрерывно, пакетирует и отправляет сжатые профили каждые 10-15 секунд на бэкенд. Бэкенд хранит их с индексацией по сервису, хосту и временному диапазону. Хранилище: &#126;50-200 МБ/сутки на сервис, &#126;1.5-6 ГБ/месяц. Overhead: 2-5% CPU. Главный выигрыш: когда горит SLO, профиль горящих минут уже сохранён.
+
+## eBPF: language-agnostic profiling
+
+Традиционные language profiler'ы (Go pprof, JFR, async-profiler, py-spy) требуют языковой поддержки — рантайм должен предоставлять API для обхода стека. Для Python, Ruby и старых интерпретаторов PHP требуются хуки от команды рантайма.
+
+eBPF-profiler'ы (Pyroscope eBPF mode, Parca) читают стеки со стороны ядра: системный вызов ядра `perf_event_open` плюс BPF-прикреплённый probe захватывает user-space стеки в момент сэмпла. Это означает:
+
+- Работает для любого языка, любого бинарника, без изменений в коде приложения.
+- Один агент покрывает все сервисы на хосте — Go, Java, Node, Python.
+- Ловит overhead сторонних библиотек, который language-specific profiler'ы могут пропустить.
+
+Проблема: разрешение символов. Ядро видит адреса памяти; profiler отображает их в имена функций по debug info (DWARF, BTF, JIT-emitted symbol files для V8 или JVM). Большинство production eBPF-profiler'ов справляется с этим; иногда появляются фреймы `[unknown]`, когда DWARF срезан или JIT-код слишком волатилен.
+
+## Покрытие profiler'ов по языкам
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Язык</th>
+        <th class="border border-border px-3 py-2 text-left">Нативный profiler</th>
+        <th class="border border-border px-3 py-2 text-left">Покрытие eBPF</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2">pprof (встроен)</td>
+        <td class="border border-border px-3 py-2">Полное — frame pointer стандартный</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Java</td>
+        <td class="border border-border px-3 py-2">JFR, async-profiler</td>
+        <td class="border border-border px-3 py-2">Частичное — нужны JIT symbol map'ы</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Python</td>
+        <td class="border border-border px-3 py-2">py-spy, cProfile</td>
+        <td class="border border-border px-3 py-2">Ограниченное — фреймы интерпретатора непрозрачны</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Node.js</td>
+        <td class="border border-border px-3 py-2">--prof, clinic.js, 0x</td>
+        <td class="border border-border px-3 py-2">Частичное — V8 требует флаг --perf-prof</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Rust / C / C++</td>
+        <td class="border border-border px-3 py-2">perf, pprof-rs</td>
+        <td class="border border-border px-3 py-2">Полное — скомпилировано с frame pointer'ами</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Корреляция trace-id: от медленного span к flame graph за 30 секунд
+
+Каждый сэмпл профиля может содержать trace-id запроса, обрабатываемого в момент сэмпла — хранится в thread-local контексте. Когда в trace view появляется медленный trace, соответствующие сэмплы профиля (только те, что содержат этот trace-id) фильтруются и рендерятся как flame graph конкретно для этого запроса.
+
+Это мост между «куда ушло время в запросе» (trace span) и «какой код съел CPU» (profile). Рабочий процесс:
+
+1. Срабатывает SLO alert — p99 latency выходит за бюджет.
+2. Открываешь trace view — находишь медленные span'ы, записываешь trace-id.
+3. Открываешь profile view с фильтром по trace-id — появляется flame graph для этого конкретного запроса.
+4. Самый широкий фрейм — функция, которую надо починить.
+5. Готово — меньше чем за 60 секунд.
+
+OTel profile signal (стабилизируется в 2025-2026) стандартизирует эту связку. Production-grade observability платформы (Datadog, Grafana с Pyroscope, Honeycomb) поставляют этот drilldown из коробки.
+
+## Экономика хранения профилей
+
+<NumbersCard
+  id="card-profile-storage"
+  title="Continuous profiling: стоимость и хранение"
+  stats={[
+    { label: "Размер профиля за 30-секундный захват", value: "&#126;50-500 КБ сжатых" },
+    { label: "Профилей в час (интервал 15 с)", value: "240" },
+    { label: "Хранилище на сервис в сутки", value: "&#126;50-200 МБ" },
+    { label: "Хранилище на сервис в месяц", value: "&#126;1.5-6 ГБ" },
+    { label: "Флот 200 сервисов", value: "300 ГБ - 1.2 ТБ/месяц" },
+    { label: "Стоимость object storage", value: "&#126;$0.02/ГБ ≈ $25/месяц" },
+    { label: "Улучшение хранилища Pyroscope 2.0", value: "&#126;3x vs v1 за счёт дедупликации символов" },
+  ]}
+/>
+
+Pyroscope 2.0 (выпущен в апреле 2026) сократил объём хранения в 3 раза за счёт дедупликации символов из профилей одного бинарника — имена функций и пути к источникам хранятся в общей таблице символов вместо повторения в каждом профиле.
+
+**Стратегия хранения**: 7 дней полное разрешение для активной отладки, 30 дней с downsampling'ом (один профиль на 5 минут), 90 дней для анализа долгосрочных трендов. Команды с ограниченным бюджетом ограничиваются 14 днями fine + 60 днями coarse.
+
+<Quiz
+  id="04-continuous-profiling-quiz-1"
+  lessonSlug="04-continuous-profiling"
+  lang="ru"
+  question="eBPF-profiler показывает много фреймов '[unknown]' для Python-сервиса. В чём причина?"
+  choices={[
+    { label: "CPython использует цикл интерпретатора; eBPF-profiler ядра видит C-уровневые фреймы, но не может сопоставить их с именами Python-функций без поддержки, специфичной для CPython", correct: true },
+    { label: "Python слишком медленный для eBPF-profiling'а", misconception: "Скорость не причина; проблема в разрешении символов через фреймы интерпретатора." },
+    { label: "eBPF-profiler сломан", misconception: "Фреймы [unknown] ожидаемы для интерпретируемых рантаймов без явной поддержки — переключись на py-spy или CPython-aware eBPF-profiler." },
+    { label: "Python использует JIT-компиляцию, которая путает eBPF", misconception: "CPython — интерпретатор, не JIT. У JVM и V8 есть JIT с отдельными проблемами символов." },
+  ]}
+/>
+
+<Quiz
+  id="04-continuous-profiling-quiz-2"
+  lessonSlug="04-continuous-profiling"
+  lang="ru"
+  question="Что даёт корреляция trace-id в continuous profiling в отличие от обычного CPU-профиля?"
+  choices={[
+    { label: "Flame graph, отфильтрованный по конкретным медленным запросам — изолирует code path одного пользователя с 1.5-секундным запросом от фонового шума флота", correct: true },
+    { label: "Более высокую частоту сэмплирования", misconception: "Корреляция trace-id — про фильтрацию, не про частоту сэмплирования." },
+    { label: "Поддержку off-CPU profiling'а", misconception: "Off-CPU profiling — отдельная возможность; корреляция trace-id работает и для CPU-профилей." },
+    { label: "Автоматическое исправление багов", misconception: "Profiling локализует баг; исправление по-прежнему требует суждения человека." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Continuous profiling хранит always-on flame graphs при overhead 2-5% — профиль любого момента инцидента сохранён заранее. eBPF-агенты покрывают все языки со стороны ядра — один агент на хост. Корреляция trace-id превращает любой медленный span в отфильтрованный flame graph конкретного запроса за менее чем 30 секунд.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-continuous-profiling-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какое главное операционное преимущество continuous profiling перед on-demand profiling во время инцидентов?", a: "С on-demand profiling'ом нужно присутствовать в момент проблемы, воспроизводить её под нагрузкой и захватывать данные в окне воспроизведения. Многие production-проблемы нерегулярны — они устраняются до того, как успеешь зайти по SSH. Continuous profiling хранит профили каждого момента при overhead 2-5%, поэтому когда SLO горит в 2 ночи, flame graph за эти горящие минуты уже в бэкенде. Воспроизведение не нужно. On-call открывает дашборд, фильтрует по временному окну сбоя и сразу видит профиль. Разница между 5-минутной идентификацией root cause и многочасовым расследованием, которое может не завершиться." },
+    { q: "Почему eBPF-profiler работает для Go и Rust, но показывает [unknown] фреймы для Python?", a: "Go и Rust компилируются в нативный код с frame pointer'ами или DWARF unwind info в бинарнике — обходчик стека ядра может следовать цепочке фреймов и сопоставлять адреса с именами функций в debug info. CPython — интерпретатор: пользовательский Python-код компилируется в байткод, который выполняется внутри C-цикла интерпретатора CPython (PyEval_EvalFrameDefault). Адреса, которые захватывает eBPF-profiler, указывают в этот C-цикл, а не в Python-код. Без специфичной для CPython поддержки profiler показывает C-фреймы интерпретатора как [unknown]. Решение: использовать Python-aware profiler (py-spy, или eBPF-profiler с поддержкой CPython), или запускать py-spy как sidecar рядом с универсальным eBPF-агентом." },
+    { q: "Как механически работает корреляция trace-id?", a: "Каждый сэмпл профиля может нести метки — произвольные key-value пары, прикреплённые в момент сэмпла. OTel SDK языка хранит текущий trace-id и span-id в thread-local контексте. Агент profiler'а читает их при каждом тике сэмплирования и прикрепляет как метки к захваченному стеку. Бэкенд профилей хранит все сэмплы с их метками. При фильтрации по trace-id в UI бэкенд извлекает только сэмплы с этим trace-id и рендерит из них flame graph. Результат — CPU-профиль именно тех запросов, которые совпали: весь остальной параллельный трафик отфильтрован, остаётся чистый сигнал для конкретного медленного пути." },
+  ]}
+/>
+
+<Recap lang="ru">
+Агенты continuous profiling работают на каждом хосте, сэмплируют стеки 100 раз в секунду и отправляют сжатые профили каждые 10-15 секунд на бэкенд — Pyroscope или Parca. При overhead 2-5% это достаточно дёшево, чтобы держать always-on. eBPF-агенты захватывают стеки со стороны ядра без языковых хуков — один агент на хост покрывает Go, Java, Node и Python, хотя интерпретируемые рантаймы требуют дополнительной поддержки для точного разрешения символов. Метки trace-id на каждом сэмпле дают flame graph с фильтром по одному конкретному запросу за менее чем 30 секунд. Дедупликация символов в Pyroscope 2.0 сократила расходы на хранение в 3 раза, снизив месячное хранилище для одного сервиса ниже 10 ГБ. Рабочий процесс SLO → trace → profile сокращает MTTR для любого CPU-bound инцидента до менее чем 90 секунд.
+</Recap>
