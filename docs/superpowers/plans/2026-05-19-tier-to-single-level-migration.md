@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (33/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 5/8) ← **RESUME HERE: observability/06-trace-propagation**
+- [ ] **Phase B** — content migration (34/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 6/8) ← **RESUME HERE: observability/07-profiling**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -318,7 +318,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 06-low-traffic-burn-math (senior)
   - [x] 07-iceberg-sli-composite-math-sla (senior)
   - [x] 08-production-failures-and-design (senior)
-- [ ] 06-trace-propagation  - [ ] 07-profiling  - [ ] 08-putting-it-together
+- [x] 06-trace-propagation → 7 lessons, commit `afb6869`
+  - [x] 01-what-is-propagation (junior)
+  - [x] 02-traceparent-and-tracestate (middle)
+  - [x] 03-baggage-and-async-boundaries (middle)
+  - [x] 04-head-and-tail-sampling (middle)
+  - [x] 05-sampling-consistency-and-collector (senior)
+  - [x] 06-async-context-and-mesh (senior)
+  - [x] 07-production-failures-and-design (senior)
+- [ ] 07-profiling  - [ ] 08-putting-it-together
 
 **performance**
 - [ ] 01-profile-first  - [ ] 02-hot-paths  - [ ] 03-cache-vs-bigo  - [ ] 04-gc
