@@ -1,0 +1,240 @@
+---
+slug: 07-production-failures-and-design
+lang: en
+track: observability
+unit: 06-trace-propagation
+order: 7
+title: "Production propagation failures, span links, and platform design"
+summary: "Propagation bugs are silent: Uber, GitHub, Slack, Datadog all had dashboards showing traces, just not the right ones. Span links solve fan-in and async follow-ups. Orphan rate and invalid-traceparent count are the meta-layer that catches regressions before customers notice."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/06-trace-propagation/06-async-context-and-mesh"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["span-links", "orphan-span-rate", "propagation-observability", "long-running-traces", "platform-design"]
+sources:
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+  - https://opentelemetry.io/docs/specs/otel/baggage/api/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+GitHub ran a propagation regression for a quarter where 50% of internal traces were orphans. The tracing dashboards showed traces the whole time. Nobody noticed until an engineer spot-checked the orphan-span rate in a routine review.
+</Hook>
+
+<Crux>Propagation bugs are silent — dashboards show traces, just not connected. No orphan-rate alert means regressions hide for quarters.</Crux>
+
+<Explanation>
+
+## Real production propagation failures
+
+**Uber 2019:** a partial OTel rollout caused 30% of traces to break at the boundary between instrumented and uninstrumented services. Postmortem mandated a "no service ships without W3C propagation" gate enforced in CI. The pattern: instrumented services emit perfect spans; uninstrumented services emit orphans; the two groups show different trace depths in dashboards, but there is no automated alert on the boundary failure.
+
+**GitHub 2022:** a custom HTTP client wrapper bypassed OTel's hooks and silently dropped `traceparent` across half their internal services for a quarter before someone noticed the orphan-span rate had risen from 1% to 50%. The fix was a single line to wrap the client in the OTel-aware version. The lesson: custom wrappers are the most common propagation gap in mature services. The fix is always a one-liner; finding it takes a quarter.
+
+**Slack 2023:** tail-sampling Collectors OOMed and took down their tracing pipeline during a major incident — precisely when tracing was most needed. Postmortem added `num_traces` caps and a separate always-keep tier for high-priority traces. A monitoring gap: OTel Collector health metrics were not on any SLO dashboard.
+
+**Datadog 2024 customer report:** a large Java workload had a thread pool that didn't carry context across submitted tasks, so 80% of background-task traces were orphans. Fix: switch to a `CurrentTraceContext`-aware executor. The bug was present for months; it was discovered during a quarterly orphan-rate review.
+
+**The shared pattern:** propagation bugs are silent. The dashboards keep showing traces. The only detection mechanism is a metric on orphan-span rate, and that metric must be on a dashboard and ideally on an alert — it is never surfaced automatically by OTel defaults.
+
+## Observability for propagation itself
+
+The essential propagation health metrics:
+
+| Metric | Normal | Signal when |
+|---|---|---|
+| `orphan_span_rate` by `service.name` | &lt;1% (entry-points only) | Internal service &gt;5% → propagation regression |
+| `invalid_traceparent_received` count | ~0 | Any sustained rate → broken upstream |
+| `trace_id_per_second` | Proportional to RPS × sample_rate | Sudden spike → fresh trace-ids (propagation lost) |
+| `broken_parent_count` | &lt;0.5% | Spans whose parent-id exists in no other span in the same trace |
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Healthy state</th>
+        <th class="border border-border px-3 py-2 text-left">Threshold</th>
+        <th class="border border-border px-3 py-2 text-left">Alert action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Orphan spans for internal services</td>
+        <td class="border border-border px-3 py-2">&lt;1%</td>
+        <td class="border border-border px-3 py-2">Page if &gt;5% for 10 min for specific service</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">invalid_traceparent_received</td>
+        <td class="border border-border px-3 py-2">&lt;0.01%</td>
+        <td class="border border-border px-3 py-2">Ticket if non-zero rate sustained &gt;5 min</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">broken_parent_count</td>
+        <td class="border border-border px-3 py-2">&lt;0.5%</td>
+        <td class="border border-border px-3 py-2">Ticket if &gt;2% for 10 min</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Span links: when the parent-child tree breaks down
+
+The parent-child model assumes linear causality: A calls B, B calls C. This breaks in three scenarios:
+
+1. **Batch processing:** a consumer pulls 1,000 messages from Kafka and processes them in one batch. There is no single meaningful "parent" — 1,000 incoming trace contexts feed one batch span.
+2. **Fan-in:** multiple parallel sub-jobs converge at a join point. Each sub-job is a child of its own branch; the join point has multiple causal contributors.
+3. **Async follow-ups:** the originating request finishes and returns to the user, but spawns follow-ups that execute hours later. The original request's context is closed; the follow-ups need a causal link without being children of a dead span.
+
+OTel's span-links solve all of these: a span declares additional `SpanContext` references it is causally related to but does not descend from. Tracing backends visualise links as dotted lines alongside the solid parent-child tree.
+
+**The senior pattern:** any trace longer than 30 seconds or wider than 100 spans is a candidate for span-link refactoring. Split the long workflow into sub-traces where each sub-trace fits within the tail-sampling decision window, and use links to preserve causal lineage. This keeps traces small, keeps the sampler happy, and preserves the investigation chain.
+
+## Long-running traces and the 30-minute problem
+
+Tail samplers have decision windows of 30s–5min. A batch job running for 30 minutes emits spans long after the decision window closes; the late spans look like orphans to the sampler.
+
+**Two production patterns:**
+1. **Break the work:** split long workflows into sub-traces linked via span-links, each fitting in the decision window. Clean architecture, correct by construction.
+2. **Backend late-span support:** Tempo, Honeycomb, and Datadog all support late-arriving spans up to 24h after trace start. Skip tail sampling for long traces; use head sampling at 100% for batch workloads. Practical retrofit for legacy batch jobs.
+
+The decision window is the lever to adjust when batch workloads break tail sampling. Tuning it upward increases Collector RAM; the right answer is usually to break the work.
+
+<TraceScenario
+  id="07-production-trace-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="en"
+  scenario="A 0.5% orphan rate is detected for an internal service. Trace the root cause."
+  steps={[
+    { prompt: "Step 1: 0.5% orphan rate — is this normal or a signal?", reveal: "If healthy production sees ≤1%, 0.5% is in-band only if those orphans correspond to legitimate entry-point services (API gateways, public-facing handlers). If they correspond to internal services (auth, inventory, payment), orphans are propagation failures. Filter by service.name to distinguish." },
+    { prompt: "Step 2: filter orphans by service.name. What's the pattern?", reveal: "Cluster by service. If orphans are 80% one specific service, that service has a propagation bug. If they're scattered across all services at 0.5%, the issue is upstream — some specific upstream caller is dropping traceparent for some traffic." },
+    { prompt: "Step 3: one specific service is the source. Inspect inbound traffic — what to look for?", reveal: "Capture HTTP headers on inbound requests (mesh sidecar logs, or a debug endpoint). Look for: is traceparent present? Is it valid format? If absent, look at the upstream caller. If present but invalid, look at upstream config — wrong propagator? B3 in use upstream while you only extract W3C?" },
+    { prompt: "Step 4: traceparent is absent on requests from one upstream client. Why?", reveal: "Likely the upstream is using a custom HTTP client (curl wrapper, library not covered by OTel auto-instrument, or instrumentation initialised after first request). Confirm by checking that upstream's OTel registration order and library versions." },
+    { prompt: "Step 5: durable fix?", reveal: "Add an OTel-instrumented client wrapper as the only sanctioned outbound client (lint rule blocks direct http.get / fetch in app code). Add CI integration test: send a request through 3 services, assert 3 spans with 1 trace-id. Production alert: if orphan-span rate ratio for a specific service >5x baseline." },
+  ]}
+/>
+
+<DebugLog
+  id="07-production-debug-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="en"
+  title="Diagnose a broken trace from tracing-backend output"
+  output={`# Query: trace_id == "4bf92f3577b34da6a3ce929d0e0e4736"
+# Result: 7 spans total
+
+#  service           span_id           parent_id           duration   status
+1  api-gateway       1a2b3c4d5e6f7890  -                   18ms       OK
+2  auth              7890abcdef123456  1a2b3c4d5e6f7890    14ms       OK
+3  inventory         abcdef1234567890  1a2b3c4d5e6f7890    1200ms     OK
+4  payment           fedcba0987654321  -                   80ms       OK    # ORPHAN
+5  postgres-client   1111222233334444  fedcba0987654321    55ms       OK
+6  email-job         5555666677778888  -                   240ms      OK    # ORPHAN
+7  audit-log         9999aaaabbbbcccc  -                   12ms       OK    # ORPHAN
+
+# Also separate orphan traces with single spans:
+# trace_id 9981a... payment service, 78ms
+# trace_id ab32c... email-job service, 280ms
+# trace_id ff8e1... audit-log service, 14ms`}
+  outputLang="log"
+  question="The trace contains 7 spans but 3 are orphans (no parent_id) and 3 single-span orphan traces with the same service names exist. What's happening?"
+  hint="The orphan services are likely the same processes producing both the orphan spans inside this trace and the separate single-span orphan traces."
+  answer="Diagnosis: trace propagation is broken at three specific services — payment, email-job, audit-log. The 'orphan span within the trace' rows (4, 6, 7) suggest these services received the correct incoming traceparent (they appear under the same trace_id) but their auto-instrumentation is not registering the extracted context — they should have parent_id pointing at api-gateway or inventory but show none. Meanwhile, the separate single-span orphan traces from the same services suggest that for other requests, traceparent is being lost entirely on the inbound side and a fresh trace-id is generated. Two failure modes at the same services. Root cause: payment likely has a custom HTTP wrapper bypassing OTel. email-job is a Kafka consumer where the consumer-side propagation extract isn't implemented — the consumer sees the trace-id but doesn't link it as parent. audit-log is a fire-and-forget writer that runs in an async context unbound from the request. Fix path: (a) for payment, replace the custom HTTP client with the OTel-instrumented one; (b) for email-job, add Kafka consumer instrumentation so the consumer extracts traceparent from message headers; (c) for audit-log, use context.bind around the audit call. Add CI test: end-to-end request through gateway → inventory → payment → email-job → audit, assert 5 spans with 1 trace-id and connected parent_id chain."
+/>
+
+<DesignPrompt
+  id="07-production-design-1"
+  pieceSlug="07-production-failures-and-design"
+  lang="en"
+  prompt="Design end-to-end trace propagation for a new platform with 30 microservices, browser frontend, Kafka backbone, a service mesh, and a tail-sampling collector tier."
+  constraints={[
+    "Polyglot: 12 services Node.js, 10 Java, 5 Go, 3 Python.",
+    "Browser frontend (React) issues fetch calls to the API gateway.",
+    "Kafka used for async messaging between 8 of the services.",
+    "Service mesh: Linkerd (Linux), used for HTTP and gRPC east-west.",
+    "Sampling: 100% errors, 100% slow (>2s), 1% baseline.",
+    "On-call must be able to view any user request as a single trace within 30s of completion.",
+  ]}
+  canonical="Layer 1 — propagator standardisation. Mandate OpenTelemetry SDKs everywhere; default propagator is the W3C TraceContext + Baggage composite. Drop B3 for outbound; accept B3 on inbound during a 90-day deprecation. Per-language SDK choice: opentelemetry-js (Node and browser), opentelemetry-java (Java services), opentelemetry-go (Go), opentelemetry-python (Python). Browser: use opentelemetry-js-browser SDK with fetch instrumentation; restrict propagation to same-origin and explicit-allowlist CORS origins so traceparent doesn't leak to third parties. Layer 2 — HTTP propagation. Auto-instrumentation on every service: register OTel before app code starts (Node: -r flag; Java: javaagent; Go: explicit init; Python: opentelemetry-instrument). Service mesh (Linkerd) propagates headers transparently and emits its own mesh-hop spans for full network visibility. Layer 3 — Kafka propagation. Producer side: OTel Kafka instrumentation injects traceparent into record headers. Consumer side: extracts traceparent on poll, starts a new span with parent = producer's span-id. Use span-links rather than direct parent-child when one consumer batches 100 messages — link to all incoming contexts, create one batch-span. Layer 4 — async-boundary discipline. Code review checklist: any callback, setTimeout, setImmediate, queueMicrotask, worker dispatch, or Promise chain crossing a logical boundary must be wrapped with context.bind or equivalent. Custom thread pools must use OTel context-aware executors. Linter rule flags raw setTimeout in HTTP-handler scope. Layer 5 — collector tier. OpenTelemetry Collector deployed as a stateless agent layer (1 per node, DaemonSet) plus a stateful tail-sampling tier (5 replicas) behind a load-balancing exporter (trace-id hash). Decision window 30s. Memory budget per tail-sampler: 4 GB at expected 10k req/s aggregate. Policies: keep all errors, keep all traces >2s end-to-end, 1% probabilistic for everything else. Layer 6 — backend. Tracing backend (Tempo, Honeycomb, Datadog, Jaeger) ingests sampled spans; retention 7 days fine-grained, 30 days sampled summary; long-term archival to object storage. Layer 7 — observability of propagation. Metrics: orphan_span_rate by service, invalid_traceparent_count, broken_parent_count, trace_id_per_second. Alert when orphan rate for a specific internal service exceeds 5% for 10 minutes. Dashboard panel shows propagation health alongside RED + USE. Layer 8 — CI tests. End-to-end propagation test: chain of 5 services, send a request, assert >4 spans linked by one trace-id. Run on every PR touching HTTP, Kafka, or worker code."
+  keyPoints={[
+    "W3C TraceContext + Baggage default everywhere; B3 only for legacy interop, deprecated.",
+    "OTel SDK registered before app startup in every service; CI gate verifies this.",
+    "Kafka, gRPC, mesh all carry traceparent automatically via auto-instrumentation.",
+    "Async boundaries (setTimeout, workers, callbacks) require explicit context.bind discipline.",
+    "Tail-sampling collector with load-balancing exporter for trace-id consistency.",
+    "Sampling rules: 100% errors + 100% slow + 1% baseline.",
+    "Propagation has its own observability layer (orphan-span rate, invalid-traceparent count).",
+  ]}
+/>
+
+<NumbersCard
+  id="07-production-numbers"
+  title="Propagation health thresholds"
+  stats={[
+    { label: "Healthy orphan-span rate (internal services)", value: "≤1% of all spans" },
+    { label: "Healthy invalid_traceparent rate", value: "≤0.01%" },
+    { label: "Healthy broken-parent rate", value: "≤0.5%" },
+    { label: "Alert threshold: internal service orphan rate", value: ">5% for 10 min" },
+    { label: "GitHub 2022: orphan rate when regression discovered", value: "50% (from 1% baseline)" },
+    { label: "Time to detect GitHub regression without alerting", value: ">1 quarter" },
+  ]}
+/>
+
+<Quiz
+  id="07-production-quiz-1"
+  lessonSlug="07-production-failures-and-design"
+  lang="en"
+  question="A batch processor pulls 1,000 messages from Kafka and processes them in one transaction. The engineer models this as one parent span with 1,000 child spans, one per message. After deploying, the tail-sampling Collector OOMs. What is the architectural fix?"
+  choices={[
+    { label: "Use span-links instead of parent-child: create one batch-span that links to all 1,000 incoming message contexts but does not have them as children, keeping the trace small", correct: true },
+    { label: "Increase the Collector's num_traces cap to accommodate the batch", misconception: "Increasing the cap defers the OOM but doesn't address the root cause: 1,000 child spans per batch-span can accumulate into tens of thousands of spans in the decision window. The architectural fix is span-links." },
+    { label: "Use head sampling at 0% for the batch service", misconception: "Disabling sampling for the batch service removes batch traces entirely, which is not what the team wants — they want to keep error and slow batch traces." },
+    { label: "Split the batch into 10 transactions of 100 messages each", misconception: "While this reduces spans per trace by 10x, it still produces wide traces. Span-links are the idiomatic solution for fan-in scenarios." },
+  ]}
+/>
+
+<Quiz
+  id="07-production-quiz-2"
+  lessonSlug="07-production-failures-and-design"
+  lang="en"
+  question="A production team adds orphan-span-rate alerting. The alert fires for 'email-job' at 6% (baseline 0.5%). What is the first diagnostic step?"
+  choices={[
+    { label: "Filter the orphan spans by service.name=email-job and check whether traceparent is present in the inbound message headers — if absent, the Kafka producer is not injecting; if present but ignored, the consumer is not extracting", correct: true },
+    { label: "Restart the email-job service to clear the metric", misconception: "Restarting may temporarily clear the metric if it was a transient startup issue, but it does not diagnose or fix the root cause. The orphan rate will return if the propagation bug persists." },
+    { label: "Increase the Kafka consumer's polling timeout", misconception: "Polling timeout affects message latency, not propagation. The orphan rate is caused by a missing inject or extract step, not by polling configuration." },
+    { label: "Switch email-job to head sampling at 100% to ensure spans are emitted", misconception: "Sampling affects whether spans are exported, not whether they have correct parent-ids. Orphan spans are exported spans with missing parent_id — the issue is propagation, not sampling." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Propagation bugs are silent — dashboards show traces, just not the connected ones. Observing propagation health requires its own metrics: orphan-span rate by service, invalid-traceparent count, broken-parent count. Span-links solve fan-in, batch, and async follow-up patterns where parent-child breaks down. Treat the tracing Collector as production infra with its own SLO.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-production-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why span-links exist and when a senior engineer reaches for them instead of parent-child relationships.", a: "Parent-child is a tree: every span has exactly one parent. This works for synchronous request flows — A calls B, B calls C — but breaks whenever causality is many-to-one or one-to-many across asynchronous boundaries. Examples: a batch processor pulls 100 messages from Kafka and processes them in one transaction (100 incoming contexts feed one batch-span — no single parent makes sense); a fan-out workflow dispatches 50 sub-jobs and waits for all to complete; a long-running workflow whose initial request finishes returning to the user but spawns asynchronous follow-ups hours later. Span-links solve all of these: a span declares zero or more additional SpanContexts it is causally related to but does not descend from. Backends visualise links as dotted lines rather than the solid tree. Senior engineers reach for span-links when: (a) batch processing pulls multiple message contexts into one operation, (b) async work outlives the originating request, (c) a workflow joins many parallel branches, (d) any case where the parent-child tree would force an arbitrary choice of 'main parent' that misrepresents the actual causality." },
+    { q: "Describe three propagation health metrics that every production tracing deployment should monitor and the alert thresholds.", a: "1. orphan_span_rate by service.name: the fraction of spans with no parent_id for each service. Entry-point services (API gateways, public handlers) legitimately produce orphan spans as trace roots; internal services should be near 0%. Alert when a specific internal service's orphan rate exceeds 5% for 10 minutes — this indicates a propagation regression. Healthy baseline: ≤1% for all spans. 2. invalid_traceparent_received: count of spans emitted with the invalid_traceparent_received=true attribute (set by the SDK when validation fails). This catches broken upstream callers who emit malformed headers. Healthy baseline: ≤0.01%. Alert on any sustained non-zero rate. 3. broken_parent_count: spans whose parent_id does not match any other span's span_id within the same trace-id and reasonable time window. This catches partial propagation — the parent-id is syntactically valid but points to a span that was never recorded. Healthy baseline: ≤0.5%. Alert at >2% for 10 minutes." },
+    { q: "Outline the 8-layer platform design for end-to-end propagation in a polyglot 30-service system with Kafka, service mesh, and tail sampling.", a: "Layer 1 — propagator standard: W3C TraceContext + Baggage composite at every service; B3 on inbound only during 90-day deprecation. Layer 2 — HTTP propagation: auto-instrumentation registered before app startup in every service; service mesh (Linkerd/Envoy) propagates headers and emits mesh-hop spans. Layer 3 — Kafka: producer injects traceparent into record headers; consumer extracts on poll; span-links for batch consumers. Layer 4 — async-boundary discipline: context.bind for in-process callbacks; linter rule flags raw setTimeout in handler scope; context-aware executors for thread pools. Layer 5 — collector tier: stateless agent layer (DaemonSet) + stateful tail-sampling tier (5 replicas) behind load-balancing exporter (trace-id hash); decision window 30s; num_traces cap; policies: 100% errors, 100% >2s, 1% baseline. Layer 6 — tracing backend: indexed by trace-id; 7-day fine-grained retention + 30-day sampled summary + object storage archival. Layer 7 — propagation observability: orphan_span_rate, invalid_traceparent_count, broken_parent_count, trace_id_per_second; alerts on the first three; propagation health panel alongside RED + USE. Layer 8 — CI gates: end-to-end test asserts >4 spans with 1 trace-id for a 5-service chain; runs on every PR touching HTTP, Kafka, or worker code." },
+  ]}
+/>
+
+<Recap lang="en">
+Production propagation failures are silent: Uber (30% broken traces for months), GitHub (50% orphan rate for a quarter), Slack (Collector OOM during an incident), and Datadog customers (80% background-task orphans) all failed this way. The shared pattern: dashboards show traces, just not connected ones, and no metric was alerting on the disconnection. The fix is to observe propagation health with its own RED-equivalent metrics — orphan-span rate by service, invalid-traceparent count, broken-parent rate — and alert on them. Span-links solve the cases the parent-child tree cannot: batch fan-in, async follow-ups, workflows wider than the decision window. Long-running traces must be broken into span-linked sub-traces that fit the Collector's decision window. Propagation is the invisible foundation every other observability feature depends on; treat its health as a first-class production metric.
+</Recap>
