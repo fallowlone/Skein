@@ -1,0 +1,201 @@
+---
+slug: 07-resharding-and-operations
+lang: en
+track: databases
+unit: 07-sharding
+order: 7
+title: "Online resharding, 2PC, and the operational cost of sharding"
+summary: "Citus 11.1+ online rebalancing uses logical replication for sub-second shard-move pauses. Two-phase commit is necessary for cross-shard transactions but carries stuck-transaction risk. Every operational task multiplies by shard count."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/07-sharding/06-schema-based-and-alternatives"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["online-resharding", "logical-replication", "2pc", "distributed-transactions", "operational-multiplier", "shard-rebalancing"]
+sources:
+  - https://www.citusdata.com/blog/2022/09/19/citus-11-1-shards-postgres-tables-without-interruption/
+  - https://www.postgresql.org/docs/current/ddl-partitioning.html
+  - https://wiki.postgresql.org/wiki/Scaleout_Design
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Citus cluster needs to add a worker node to handle capacity growth. The old approach required a maintenance window: halt writes, copy data, restart. Citus 11.1 changed this with an online rebalancer that moves shards while the cluster stays fully operational, using the same logical replication mechanism that Postgres uses for upgrades.
+</Hook>
+
+<Crux>Online resharding via logical replication gives sub-second write pauses; 2PC handles cross-shard writes but risks stuck transactions.</Crux>
+
+<Explanation>
+
+## Online resharding: how it works
+
+Citus 11.1 (September 2022) introduced non-disruptive online resharding. The mechanism:
+
+```
+1. Start rebalancer: SELECT citus_rebalance_start();
+2. Planner picks: which shards move from worker A to worker B for balance
+3. For each shard being moved:
+   a. Create the shard on the target worker (empty)
+   b. Start logical replication slot on source for that shard's rows
+   c. Logical replication copies existing rows to target, then streams changes
+   d. Once lag is near zero: pause writes to shard (~sub-second)
+   e. Atomically update shard-map metadata: shard now lives on target
+   f. Drop the source shard
+   g. Resume writes — now routed to target
+4. Next shard begins (pipeline of moves in parallel, configurable concurrency)
+```
+
+Performance profile:
+- Per-shard write pause: under 1 second
+- Total rebalance time: scales with data volume (~10–100 MB/s network throughput)
+- Application impact: brief connection stall during the per-shard pause; retried transparently by the coordinator
+
+The rebalancer is idempotent and resumable — if it crashes mid-move, the next `citus_rebalance_start()` picks up from where it left off using `pg_stat_subscription` state.
+
+Senior teams **rehearse the rebalancer in staging** before running in production. The first execution should not be an emergency.
+
+## Distributed transactions and 2PC
+
+A transaction touching rows on multiple shards requires two-phase commit (2PC):
+
+```sql
+-- Single-shard: safe, normal Postgres transaction
+BEGIN;
+UPDATE orders SET status = 'shipped' WHERE tenant_id = 42 AND order_id = 99;
+UPDATE inventory SET qty = qty - 1 WHERE tenant_id = 42 AND sku = 'ABC';
+COMMIT;
+-- Both tables are co-located on the same shard → single-node transaction
+
+-- Cross-shard: requires 2PC
+BEGIN;
+UPDATE orders  SET status = 'refunded' WHERE tenant_id = 42 AND order_id = 99;
+UPDATE ledger  SET balance = balance + 100 WHERE account_id = 999;  -- NOT tenant-scoped
+COMMIT;
+-- Citus uses PREPARE TRANSACTION + COMMIT PREPARED across both shards
+```
+
+2PC cost:
+- **Latency**: minimum 2 round-trips (prepare phase + commit phase); often more with clock skew handling.
+- **Throughput**: each shard holds its connection open during the prepare phase — contention under high concurrency.
+- **In-doubt transactions**: if the coordinator crashes between `PREPARE TRANSACTION` and `COMMIT PREPARED`, the prepared transactions sit in `pg_prepared_xacts` holding locks until manually resolved. This is the failure mode to monitor and have a runbook for.
+
+Best practices:
+1. Design transactions to be single-shard: co-located tables make this natural for tenant-scoped operations.
+2. Prefer eventual consistency (outbox pattern, saga) where the business logic permits rather than distributed 2PC.
+3. Monitor `pg_prepared_xacts` on every worker; alert on any row older than 5 minutes; have a recovery runbook (`COMMIT PREPARED` / `ROLLBACK PREPARED`).
+
+## The N× operational multiplier
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Operation</th>
+        <th class="border border-border px-3 py-2 text-left">Single Postgres</th>
+        <th class="border border-border px-3 py-2 text-left">Sharded (N shards)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Schema migration</td>
+        <td class="border border-border px-3 py-2">Run once</td>
+        <td class="border border-border px-3 py-2">Citus auto-propagates DDL from coordinator to workers; verify schema consistency post-migration across all workers</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Backups</td>
+        <td class="border border-border px-3 py-2">One pg_basebackup</td>
+        <td class="border border-border px-3 py-2">N coordinated backups; all must target the same logical point-in-time for consistent restore</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Minor version upgrade</td>
+        <td class="border border-border px-3 py-2">One rolling update</td>
+        <td class="border border-border px-3 py-2">N rolling updates, coordinated; Citus version must be compatible across coordinator and all workers</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">VACUUM / bloat</td>
+        <td class="border border-border px-3 py-2">One autovacuum config</td>
+        <td class="border border-border px-3 py-2">N separate autovacuum processes; each shard accumulates dead tuples independently</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Monitoring</td>
+        <td class="border border-border px-3 py-2">One dashboard</td>
+        <td class="border border-border px-3 py-2">Per-shard metrics + cluster-wide aggregates; shard skew visible in heatmap</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Senior teams automate everything via per-shard orchestration — Ansible with a loop over worker hosts, Terraform `for_each`, Kubernetes operators — before going live. Without automation, ops staff scales linearly with shard count, which is the operational tax of sharding made concrete.
+
+## Resharding the key: the expensive case
+
+Sometimes the original shard key turns out wrong (sharded by `user_id` but 90% of queries need `org_id`). Re-sharding by a different key requires rewriting every row to its new location:
+
+1. **Dual-write + backfill**: app writes to both old and new sharding schemes; backfill historical data; cut over reads; drop old. Months of work.
+2. **New parallel cluster**: stand up a new cluster with the correct key, replicate via CDC, cut over. Most flexible; most operational work.
+3. **Accept the cost**: in practice, teams endure the wrong shard key rather than pay the migration cost — a strong argument for choosing carefully from the start.
+
+The senior takeaway: **shard-key change is among the most expensive operations in databases**. The design decision made at scale-out time is lived with for years.
+
+<Inset kind="why" lang="en">
+Why does online resharding use logical replication rather than physical replication? Physical replication (pg_basebackup, streaming) copies entire data pages — you would get every tenant's data on the source shard, not just the one being moved. Logical replication copies row-level changes (INSERT/UPDATE/DELETE), filtered by the rows you care about. For shard moves, logical replication can copy exactly the rows in the shard being moved and stream only their changes until cut-over — far more efficient and flexible than physical copy.
+</Inset>
+
+<Quiz
+  id="07-resharding-and-operations-quiz-1"
+  lessonSlug="07-resharding-and-operations"
+  lang="en"
+  question="A Citus rebalancer is running and the coordinator crashes mid-shard-move. What happens to the cluster?"
+  choices={[
+    { label: "The rebalancer is idempotent and resumable — restart it and it picks up from where it left off using pg_stat_subscription state; data is not lost", correct: true },
+    { label: "The shard being moved is permanently corrupted and must be restored from backup", misconception: "Logical replication is transactional — the source shard is still intact and the target has only partially-replicated data. The rebalancer can resume by inspecting pg_stat_subscription." },
+    { label: "The cluster enters read-only mode until manual intervention completes the move", misconception: "Citus's rebalancer is designed for online operation — the cluster continues serving traffic. The in-progress shard move is suspended but other shards are unaffected." },
+    { label: "The coordinator restart automatically rolls back the shard move and removes the target shard", misconception: "Postgres does not automatically clean up in-progress rebalancer moves. The rebalancer must be manually restarted; it will inspect replication slot state and continue from the last consistent point." },
+  ]}
+/>
+
+<DragOrder
+  id="07-resharding-and-operations-drag-1"
+  lessonSlug="07-resharding-and-operations"
+  lang="en"
+  prompt="Order the steps of a Citus online shard-move (from source worker to target worker):"
+  items={[
+    { id: "a", label: "Create empty shard on target worker" },
+    { id: "b", label: "Start logical replication slot on source; copy existing rows to target" },
+    { id: "c", label: "Stream ongoing changes from source to target until lag is near zero" },
+    { id: "d", label: "Pause writes to this shard (sub-second)" },
+    { id: "e", label: "Atomically update shard-map metadata: shard now points to target worker" },
+    { id: "f", label: "Resume writes — now routed to target; drop source shard" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Online resharding via logical replication gives sub-second per-shard write pauses — rehearse it in staging before needing it in production. 2PC for cross-shard transactions adds ~2× latency and in-doubt-transaction risk; design single-shard transactions via co-location. Every operational task multiplies by shard count; automate before going live.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-resharding-and-operations-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the per-shard write pause during Citus online rebalancing: how long is it and why is it sub-second?", a: "The write pause occurs only at the cut-over moment: after logical replication has copied all existing rows and caught up streaming changes to near-zero lag, the rebalancer pauses writes to that shard (blocking new writes for under 1 second), atomically updates the shard-map metadata to point to the new worker, then resumes. The pause is sub-second because it only needs to drain the very last in-flight changes — the bulk of the data transfer happened during streaming replication before the pause. Total time for the full rebalance scales with data volume (~10-100 MB/s), but each individual shard's write pause is always sub-second." },
+    { q: "What is the in-doubt transaction risk in Citus 2PC and how do you monitor and recover from it?", a: "In 2PC, Citus sends PREPARE TRANSACTION to all participating shards (they are now in 'prepared' state, holding locks). If the coordinator then crashes before sending COMMIT PREPARED, those transactions sit in pg_prepared_xacts on each worker, holding locks indefinitely. Monitor: query pg_prepared_xacts on every worker and alert if any row is older than 5 minutes. Recovery: after confirming the coordinator is up and the transaction outcome, manually issue COMMIT PREPARED or ROLLBACK PREPARED on each worker with the transaction ID from pg_prepared_xacts. Have this runbook documented and drilled — a stuck prepared transaction can block VACUUM on affected tables." },
+    { q: "Why is sharding described as a 'one-way door' and what operational consequences follow from that?", a: "Once an application and schema are built for a sharded architecture, every access pattern assumes tenant_id in every query, every migration tooling run assumes N shards, and every operational procedure (backup, restore, upgrade) assumes a multi-node cluster. Reversing to single-Postgres means rewriting access patterns, consolidating N databases into one, and rebuilding operational tooling. Changing the shard key requires a months-long dual-write + backfill + cut-over project. The operational consequences: migrations must reach every shard (Citus auto-propagates DDL, but verify post-migration); backups must be coordinated to a consistent point-in-time across all shards; monitoring must cover per-shard metrics plus cluster-wide aggregates; Postgres version upgrades must run on every worker with Citus version compatibility maintained. Teams that underestimate this multiplier discover it at the worst moments." },
+  ]}
+/>
+
+<Recap lang="en">
+Citus 11.1+ online rebalancing uses logical replication to move shards between workers with a sub-second per-shard write pause — rehearse it in staging before running in production. Cross-shard transactions require two-phase commit, which adds ~2× latency, reduces throughput under concurrency, and creates in-doubt-transaction risk on coordinator crash; monitor pg_prepared_xacts and maintain a recovery runbook. The N× operational multiplier means migrations, backups, upgrades, and VACUUM must all be automated across every shard before going live — without automation, ops staff scales linearly with shard count. Changing the shard key after launch is a months-long project; the design choice made at scale-out time is lived with for years. Sharding is the right answer when single-Postgres limits are measured and proven — entered deliberately, with automation, runbooks, and rehearsed operational procedures.
+</Recap>

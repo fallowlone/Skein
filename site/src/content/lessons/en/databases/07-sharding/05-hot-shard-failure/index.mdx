@@ -1,0 +1,166 @@
+---
+slug: 05-hot-shard-failure
+lang: en
+track: databases
+unit: 07-sharding
+order: 5
+title: "The hot-shard failure mode: detection, isolation, and durable policy"
+summary: "Hash sharding produces hot shards on skewed key distributions. Citus's isolate_tenant_to_new_shard() is the production mitigation; skew monitoring and a tenant-tier policy are the durable fix."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/07-sharding/04-colocation-and-citus"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["hot-shard", "shard-skew", "tenant-isolation", "citus-rebalancer", "shard-monitoring"]
+sources:
+  - https://docs.citusdata.com/en/stable/get_started/concepts.html
+  - https://www.citusdata.com/blog/2022/09/19/citus-11-1-shards-postgres-tables-without-interruption/
+  - https://www.crunchydata.com/blog/designing-your-postgres-database-for-multi-tenancy
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Citus cluster has 32 shards across 4 workers. Skew alert fires: shard 102008 is at 94% CPU, the other 31 shards average 18%. Customer support is fielding latency complaints from one enterprise account. The entire cluster is running at the capacity of one shard.
+</Hook>
+
+<Crux>Hot shard is the canonical sharding failure: one shard saturates due to power-law tenant distribution. Fix: isolation.</Crux>
+
+<Explanation>
+
+## Why hash sharding does not prevent hot shards
+
+Hash sharding (shard = hash(tenant_id) mod N) distributes evenly when keys are uniformly distributed. Real-world tenants are **power-law distributed**: one or two customers generate 60–80% of traffic; the long tail generates the rest.
+
+Hash routing assigns each tenant to exactly one shard. A tenant generating 60% of traffic means their shard runs at 60% of cluster capacity while every other shard sits near-idle. The cluster is effectively a single-shard cluster for that customer's workload.
+
+The problem is structural, not a bug: hash sharding was the right choice (uniform distribution across the tail), but the design is incomplete without an outlier-isolation policy.
+
+## Detection: what to monitor
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Signal</th>
+        <th class="border border-border px-3 py-2 text-left">How to measure</th>
+        <th class="border border-border px-3 py-2 text-left">Alert threshold</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Shard size skew</td>
+        <td class="border border-border px-3 py-2">SELECT shardid, table_size FROM citus_shards ORDER BY table_size DESC</td>
+        <td class="border border-border px-3 py-2">max/median &gt; 1.5×</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Per-shard CPU</td>
+        <td class="border border-border px-3 py-2">Postgres exporter per worker + Prometheus</td>
+        <td class="border border-border px-3 py-2">any worker &gt; 70% sustained 5 min</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Per-tenant query load</td>
+        <td class="border border-border px-3 py-2">pg_stat_statements on coordinator, aggregated by tenant_id label</td>
+        <td class="border border-border px-3 py-2">single tenant &gt; 5% of cluster total_exec_time</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Customer P99 latency</td>
+        <td class="border border-border px-3 py-2">APM per tenant endpoint</td>
+        <td class="border border-border px-3 py-2">P99 &gt; 3× cluster median</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The leading indicators are **shard size skew** and **per-tenant query rate growth** — both visible weeks before the CPU alert fires. Teams that monitor weekly trends pre-empt hot-shard incidents; teams that only monitor CPU react to them.
+
+## Immediate mitigation: Citus tenant isolation
+
+When one tenant is the culprit, move them to a dedicated shard:
+
+```sql
+-- Move tenant 9821 to its own shard (online, no downtime)
+SELECT isolate_tenant_to_new_shard('orders', 9821, 'CASCADE');
+```
+
+What Citus does:
+1. Creates a new shard.
+2. Sets up logical replication from the old shard to the new one, copying only tenant 9821's rows.
+3. Once caught up, briefly pauses writes to tenant 9821 (sub-second), switches the metadata pointer.
+4. Resumes. The old shard no longer contains tenant 9821's data.
+
+Total time: minutes to hours depending on tenant data volume (~10–100 MB/s throughput). The write pause is sub-second. The original shard's CPU immediately drops to cluster median after cut-over.
+
+For app-level sharding without Citus: the equivalent is a directory-remap — update the shard map for that tenant to point at a new Postgres, dual-write during the transition, cut over reads. This requires pre-built tooling; teams without it spend days on the emergency.
+
+## Durable policy: automation, not reaction
+
+A single hot-shard incident is acceptable. Two is a process failure. The durable fix is a tiered policy:
+
+1. **Alert** on skew (max/median &gt; 1.5×) and per-tenant load (&gt; 5% of cluster). These are leading indicators.
+2. **Automate isolation** for tenants crossing the 5% threshold: a background job invokes `isolate_tenant_to_new_shard`. No human required for routine cases.
+3. **Escalate** tenants above 20% to a dedicated worker; above 50% to a dedicated cluster + customer conversation.
+4. **Pre-isolate** new enterprise accounts above a size threshold during onboarding — do not wait for a traffic spike.
+5. **Drill the runbook** quarterly in staging so on-call engineers can isolate a tenant in under 15 minutes.
+
+<Inset kind="why" lang="en">
+Why does Citus use logical replication for tenant isolation instead of a physical copy? Logical replication copies row-level changes (INSERT/UPDATE/DELETE) from source to destination selectively — it can filter to copy only rows where tenant_id = 9821. Physical replication copies every page of the source shard, including rows from other tenants. For per-tenant isolation, logical replication is the only practical option: it moves exactly the right data without duplicating the other tenants' rows, and it stays in sync until the cut-over moment with no read-only window.
+</Inset>
+
+<Quiz
+  id="05-hot-shard-failure-quiz-1"
+  lessonSlug="05-hot-shard-failure"
+  lang="en"
+  question="One shard in a Citus cluster is at 94% CPU while all others average 18%. pg_stat_statements shows one tenant generating 62% of all query time on that shard. What is the correct immediate action?"
+  choices={[
+    { label: "Run SELECT isolate_tenant_to_new_shard('orders', tenant_id, 'CASCADE') to move that tenant to a dedicated shard online with a sub-second write pause", correct: true },
+    { label: "Run citus_rebalance_start() to redistribute all shards across workers", misconception: "The rebalancer redistributes shards across workers but does not split one tenant off their shared shard. The hot tenant would still coexist with others on its new worker." },
+    { label: "Add more workers to the cluster to share the load", misconception: "Adding workers lets the rebalancer move shards, but the hot tenant's shard stays together on one worker. The hot tenant still saturates its worker after the move." },
+    { label: "Kill the tenant's connections to relieve pressure", misconception: "Killing connections gives momentary relief but does not move data. The next request from that tenant returns to the same hot shard." },
+  ]}
+/>
+
+<DragOrder
+  id="05-hot-shard-failure-drag-1"
+  lessonSlug="05-hot-shard-failure"
+  lang="en"
+  prompt="Order the hot-shard response steps from detection to durable fix:"
+  items={[
+    { id: "a", label: "Alert fires: shard CPU > 70% sustained or max/median skew > 1.5×" },
+    { id: "b", label: "Identify the dominant tenant on the hot shard via pg_stat_statements aggregated by tenant_id" },
+    { id: "c", label: "Invoke isolate_tenant_to_new_shard for that tenant; monitor replication lag until cut-over" },
+    { id: "d", label: "Confirm the original shard CPU drops to cluster median after cut-over" },
+    { id: "e", label: "Post-mortem: was this tenant growing for weeks? Update monitoring thresholds" },
+    { id: "f", label: "Update the isolation policy to auto-isolate tenants above 5% cluster load before the next incident" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Hot shards are predictable on skewed-key distributions — not bugs, expected consequences. Monitor skew (max/median shard size) and per-tenant load weekly. Isolate outlier tenants with Citus's tenant-isolation primitive before they cause incidents. The durable fix is a tiered policy with automation, not reactive human response.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-hot-shard-failure-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does hash sharding not prevent hot shards in a multi-tenant B2B SaaS?", a: "Hash sharding distributes evenly when keys are uniformly distributed. Real-world tenants follow a power-law distribution: one or two accounts generate 60–80% of traffic. Hash still routes each tenant to exactly one shard — so the dominant tenant saturates their shard while others sit idle. Hash sharding is correct on average; it requires an outlier-isolation policy to handle the tail." },
+    { q: "Walk through what Citus's isolate_tenant_to_new_shard does and what its downtime profile is.", a: "Citus creates a new shard, starts logical replication from the source shard to the new one filtering to only that tenant's rows, waits until the replication lag is near zero, briefly pauses writes to that tenant (sub-second), atomically switches the shard-map metadata to point the tenant at the new shard, and resumes. Total time: minutes to hours depending on data volume at ~10-100 MB/s. Write pause: sub-second. The original shard's CPU drops as soon as the cut-over completes because the hot tenant's rows no longer live there." },
+    { q: "What are the three monitoring signals that catch hot-shard skew before it causes customer-visible latency?", a: "(1) Shard size skew: SELECT shardid, table_size FROM citus_shards — max/median ratio > 1.5× is a warning; > 2× is an action item. (2) Per-tenant query load from pg_stat_statements aggregated by tenant_id — any tenant above 5% of cluster total_exec_time should be pre-emptively isolated. (3) Per-shard CPU from the Postgres exporter — any worker above 70% sustained for 5 minutes while others are at median. Leading indicators are (1) and (2); (3) is usually the lagging signal that arrives after customer-visible latency has started." },
+  ]}
+/>
+
+<Recap lang="en">
+The hot-shard failure mode is a structural consequence of power-law tenant distribution on hash sharding: one tenant's shard saturates while others sit idle. Detection requires proactive monitoring of shard size skew (max/median ratio) and per-tenant query load — both visible weeks before the CPU alert fires. The immediate mitigation is Citus's `isolate_tenant_to_new_shard`, which moves the outlier tenant's data to a dedicated shard via logical replication with a sub-second write pause. The durable fix is a tiered automation policy: alert on skew thresholds, automatically isolate tenants above 5% cluster load, escalate very large tenants to dedicated workers or clusters. Hot-shard incidents that surprise a team are an ops process failure; teams with the policy treat them as routine scheduled isolations.
+</Recap>

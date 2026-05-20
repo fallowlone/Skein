@@ -1,0 +1,177 @@
+---
+slug: 04-colocation-and-citus
+lang: en
+track: databases
+unit: 07-sharding
+order: 4
+title: "Co-location and Citus: the invariant that makes sharding usable"
+summary: "Co-location — same shard key means same worker — keeps tenant-scoped joins single-node. Citus's table types (distributed, reference, local) and query planner make the difference between single-shard and fan-out queries explicit."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/07-sharding/03-partitioning-vs-sharding"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["colocation", "citus", "distributed-table", "reference-table", "cross-shard-query", "citus-coordinator"]
+sources:
+  - https://docs.citusdata.com/en/stable/get_started/concepts.html
+  - https://www.citusdata.com/blog/2023/08/04/understanding-partitioning-and-sharding-in-postgres-and-citus/
+  - https://www.crunchydata.com/blog/designing-your-postgres-database-for-multi-tenancy
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A team migrates to Citus and is thrilled that queries for individual tenants are as fast as before. Then they add a new table without the tenant_id column, and a new join query takes 500ms instead of 5ms. The schema review catches why: one table was not co-located.
+</Hook>
+
+<Crux>Co-location keeps 99% of tenant queries single-node by aligning shards of related tables on the same worker.</Crux>
+
+<Explanation>
+
+## Citus architecture
+
+Citus is a Postgres extension that turns a cluster of Postgres instances into one logical sharded database:
+
+- **Coordinator**: one node that holds the cluster metadata (shard map, table distribution info), parses queries, plans the distributed execution, and routes results back to the client.
+- **Workers**: N nodes that hold the actual data (shards). Workers execute Postgres queries locally and return results to the coordinator.
+- **Client**: connects to the coordinator as if it were a normal Postgres. No driver changes required.
+
+```
+Client → Coordinator (holds metadata, plans, routes)
+              ↓               ↓               ↓
+          Worker 0        Worker 1        Worker 2
+        (shards 0-10)  (shards 11-21)  (shards 22-31)
+```
+
+## Three table types
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Type</th>
+        <th class="border border-border px-3 py-2 text-left">Lives on</th>
+        <th class="border border-border px-3 py-2 text-left">Use for</th>
+        <th class="border border-border px-3 py-2 text-left">Join cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Distributed</td>
+        <td class="border border-border px-3 py-2">Workers, split by shard key</td>
+        <td class="border border-border px-3 py-2">All tenant-scoped tables (orders, users, projects, …)</td>
+        <td class="border border-border px-3 py-2">Single-node if co-located; fan-out if not</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Reference</td>
+        <td class="border border-border px-3 py-2">Full copy on every worker</td>
+        <td class="border border-border px-3 py-2">Small mostly-read lookup tables (plans, feature_flags, countries)</td>
+        <td class="border border-border px-3 py-2">Always local; write via 2PC (slow)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Local</td>
+        <td class="border border-border px-3 py-2">Coordinator only</td>
+        <td class="border border-border px-3 py-2">Admin/control plane tables (tenants list, workers_meta)</td>
+        <td class="border border-border px-3 py-2">Cannot join with worker tables in a single query</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+```sql
+-- Distribute tenant-scoped tables by tenant_id
+SELECT create_distributed_table('users',       'tenant_id');
+SELECT create_distributed_table('projects',    'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('tasks',       'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('comments',    'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('attachments', 'tenant_id', colocate_with => 'users');
+
+-- Replicate small lookup tables to every worker
+SELECT create_reference_table('plans');
+SELECT create_reference_table('feature_flags');
+SELECT create_reference_table('countries');
+
+-- tenants table stays local on coordinator (control plane)
+```
+
+## Co-location: the central invariant
+
+**Co-location** means that tables distributed by the same key have their corresponding shards on the same physical worker. If `orders` and `payments` are both distributed by `tenant_id`, then all of tenant 42's orders and all of tenant 42's payments live on Worker 1.
+
+A query joining orders and payments filtered by `tenant_id = 42`:
+- **With co-location**: the planner pushes the join to Worker 1, which executes it like a normal Postgres join — one machine, full index use, single-digit milliseconds.
+- **Without co-location** (e.g., payments distributed by `payment_id` instead): the coordinator must gather partial results from all workers and merge them. P99 latency = slowest worker. Every worker participates. 10–100× slower.
+
+Co-location is not a performance optimization — it is the design contract that makes a sharded system behave like a single Postgres for the 99% case.
+
+## Cross-shard queries and their mitigation
+
+Queries without a shard key filter fan out to all shards. Examples:
+- "List all users with email ending in @enterprise.com" (no tenant_id)
+- "Count total orders today across all tenants" (cross-tenant analytics)
+- "Find a user by their email for login" (email, not tenant_id)
+
+For OLTP:
+1. **Redesign the API**: almost all OLTP queries should carry tenant_id. Login lookups by email need a separate index or a small lookup service that resolves email → tenant_id first.
+2. **CDC to OLAP**: cross-tenant analytics should run on a separate analytical store (ClickHouse, BigQuery) fed by Change Data Capture. Never run global aggregates on the OLTP cluster.
+3. **Rate-limit fan-out endpoints**: for the rare legitimate cross-shard operation, rate-limit and document its cost.
+
+The senior metric: cross-shard queries should be &lt; 1–2% of OLTP traffic. Above that, the schema has drifted from co-location and needs review.
+
+<Inset kind="why" lang="en">
+Why does Citus default to 32 shards per table even on a 4-worker cluster? Shards are the unit of rebalancing — more shards means finer-grained rebalancing and a smoother distribution when you add workers. With 32 shards on 4 workers, each worker gets 8 shards; adding a 5th worker lets the rebalancer move some shards without cutting any shard in half. Teams often raise this to 64 or 128 when planning for larger clusters. The default of 32 is a starting point, not a mandate.
+</Inset>
+
+<Quiz
+  id="04-colocation-and-citus-quiz-1"
+  lessonSlug="04-colocation-and-citus"
+  lang="en"
+  question="What is the benefit of marking a table as a Citus reference table instead of a distributed table?"
+  choices={[
+    { label: "Full copy on every worker — joins from any distributed table to a reference table stay local with no network fan-out; ideal for small, mostly-read tables like plans, countries, or feature_flags", correct: true },
+    { label: "Faster writes because writes only go to one worker instead of all", misconception: "Reference table writes are slower, not faster — they use 2PC to update every worker simultaneously to keep all copies consistent." },
+    { label: "Smaller total storage because the table is only stored once", misconception: "Reference tables are stored on every worker — N× the storage of a single copy. The tradeoff is storage cost for local-join performance." },
+    { label: "Automatic resharding when the reference table grows large", misconception: "Reference tables are replicated, not sharded. They have no automatic resharding. They should stay small and mostly-read." },
+  ]}
+/>
+
+<Quiz
+  id="04-colocation-and-citus-quiz-2"
+  lessonSlug="04-colocation-and-citus"
+  lang="en"
+  question="A new engineer adds table 'audit_log' distributed by 'id' (not tenant_id) to a tenant-sharded Citus cluster. What breaks?"
+  choices={[
+    { label: "Any join between audit_log and a tenant-scoped table becomes a cross-shard query — the coordinator gathers partial joins from all N workers, latency rises 10-100×, and every worker participates in every such query", correct: true },
+    { label: "Nothing breaks — Citus handles cross-key joins automatically and efficiently", misconception: "Citus does execute the join, but it must gather data from every worker because audit_log and the tenant tables have different shard keys. This is the fan-out path — expensive, not efficient." },
+    { label: "The INSERT to audit_log fails because Citus rejects non-tenant-keyed inserts", misconception: "Citus accepts inserts to any distributed table regardless of key choice. The problem emerges at query time when joining with co-located tenant tables." },
+    { label: "audit_log rows get distributed to the same shards as the corresponding tenant automatically", misconception: "Citus uses the declared distribution key, not a heuristic. audit_log rows go to shards based on id, not tenant_id — no automatic alignment." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Co-location — all tenant-scoped tables distributed by the same key, so matching shards land on the same worker — keeps 99% of OLTP joins single-node. Reference tables (full copy per worker) keep lookup joins local. Cross-shard queries should be &lt;2% of OLTP; analytics go to a separate OLAP store via CDC.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-colocation-and-citus-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain what co-location means in Citus and what happens to query performance when it is violated.", a: "Co-location: tables distributed by the same key have their corresponding shards on the same physical worker. For tenant_id-based sharding with 32 shards, shard 0 of 'orders' and shard 0 of 'payments' live on Worker 0; shard 1 of both on Worker 1; etc. A query joining orders and payments for one tenant runs entirely on one worker — same as single Postgres. When violated (e.g., payments distributed by payment_id), the coordinator must pull partial joins from all 32 workers and merge — P99 equals the slowest worker latency, every worker is involved, latency rises 10–100×." },
+    { q: "What are the three Citus table types and which use case does each serve?", a: "Distributed: rows split across workers by shard key — all tenant-scoped tables; gives N× throughput and storage. Reference: full copy on every worker, read-locally, write via 2PC — small, mostly-read lookup tables (plans, countries, feature_flags) that need to join with many distributed tables without network hop. Local: only on coordinator — admin/control plane tables (the tenants list itself, worker metadata). Only local tables should be things never joined with worker tables in OLTP queries." },
+    { q: "How should a cross-tenant query like 'count all orders today' be handled in a tenant-sharded Citus cluster?", a: "Do not run it on the OLTP cluster. That query fans out to all shards, hits every worker, runs at P99 = slowest shard, and competes with tenant-scoped OLTP queries for resources. Instead: replicate data to a separate analytical store (ClickHouse, BigQuery, Redshift) via CDC (Debezium, pglogical). Run cross-tenant analytics there. The OLTP cluster stays tenant-scoped and fast. For dashboards needing per-tenant aggregates, precompute and store per-tenant results." },
+  ]}
+/>
+
+<Recap lang="en">
+Citus adds a coordinator (metadata, planning, routing) and N workers (shard storage and execution) to a Postgres cluster, making it look like a single database. Tables are classified as distributed (sharded by key, on workers), reference (full copy on every worker for local joins), or local (coordinator only for control-plane data). Co-location — every tenant-scoped table distributed by the same key so matching shards land on the same worker — is the invariant that keeps tenant-scoped joins single-node and fast. Breaking co-location (distributing a table by a different key) turns every join involving that table into a cross-shard fan-out: N× the work, P99 = slowest worker. Cross-shard analytics should be offloaded to a dedicated OLAP store via CDC, never run on the OLTP cluster.
+</Recap>
