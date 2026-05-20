@@ -1,0 +1,185 @@
+---
+slug: 04-jit-deopt-and-fix-verify
+lang: ru
+track: performance
+unit: 02-hot-paths
+order: 4
+title: "JIT deopt, цикл fix-and-verify и PR-time профилирование"
+summary: "JIT deopt-петли тихо умножают цену hot path'а в 10–100 раз. Цикл fix-and-verify — дисциплина, доказывающая, что правка приземлилась. PR-time профилирование ловит регрессии до production."
+estMin: 18
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["performance/02-hot-paths/03-reading-parent-and-child-chains"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["JIT-deoptimisation", "hidden-class", "fix-verify-loop", "PR-time-profiling", "amdahl", "microbenchmark-vs-production"]
+sources:
+  - https://www.brendangregg.com/Articles/Netflix_Tech_Blog_Performance.pdf
+  - https://github.com/golang/go/wiki/CompilerOptimizations
+  - https://github.com/google/pprof/blob/main/doc/README.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Node-сервис имеет широкий leaf, который flame graph показывает как интерпретатор V8 (InterpreterCallStub), а не TurboFan. Функция горячая. JIT её не оптимизирует. Каждый вызов платит накладные расходы интерпретатора. Переключение на более быстрый алгоритм ничего не даст, пока не исправлен deopt. Понять, почему JIT вышел из игры, — это и есть диагноз.
+</Hook>
+
+<Crux>JIT-рантаймы деоптимизируют горячий код при нарушении типовых предположений. Правка — стабилизация типов; доказывай diff'ом профиля.</Crux>
+
+<Explanation>
+
+## JIT деоптимизация: шестая форма
+
+JIT-рантаймы (V8, JVM HotSpot, .NET, PyPy) компилируют горячий код в нативный машинный код под типовые предположения. Если предположения нарушаются — функция получает неожиданный тип, происходит переход скрытого класса, megamorphic call-site разветвляется — JIT уходит в интерпретатор или в более медленный уровень компиляции.
+
+**Сигнатура во flame graph:** функция показывает широкий, но широкий фрейм — это интерпретатор (`Interpreter::execute`, `InterpreterCallStub`) или baseline JIT-фрейм (V8 Sparkplug), а не фрейм оптимизирующего компилятора (V8 TurboFan, HotSpot C2).
+
+**Цена:** один deopt — микросекунды. Deopt-петля (deopt → recompile → deopt) может тихо умножить per-call цену в 10–100 раз. Латентные всплески без корреляции с трафиком, периодические паузы без работы GC и baseline-tier фреймы, периодически доминирующие во flame graph — всё это симптомы deopt-петли.
+
+**Правка:** стабилизировать типы.
+- V8: держать hot object shapes не более ≤4 hidden classes; не добавлять поздние свойства в JS внутри горячих циклов.
+- HotSpot: мониторить `-XX:+PrintCompilation` на повторные deopt'ы; избегать boxing в горячем коде.
+- PyPy: следить за `jit-summary` на guard failures; писать type-stable циклы.
+
+**Верификация:** пере-профилировать и убедиться, что фрейм оптимизирующего компилятора (TurboFan, C2) вернулся в горячий стек.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Рантайм</th>
+        <th class="border border-border px-3 py-2 text-left">Сигнал deopt в профиле</th>
+        <th class="border border-border px-3 py-2 text-left">Инструмент диагностики</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">V8 (Node.js)</td>
+        <td class="border border-border px-3 py-2">Sparkplug / Interpreter фреймы вместо TurboFan</td>
+        <td class="border border-border px-3 py-2"><code>--trace-deopt</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM HotSpot</td>
+        <td class="border border-border px-3 py-2">Фреймы C1 вместо C2</td>
+        <td class="border border-border px-3 py-2"><code>-XX:+PrintCompilation -XX:+TraceDeoptimization</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">.NET RyuJIT</td>
+        <td class="border border-border px-3 py-2">Interpreter / tier-0 фреймы</td>
+        <td class="border border-border px-3 py-2">PerfView с Tiered JIT counters</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">PyPy</td>
+        <td class="border border-border px-3 py-2">Interpreter фреймы; guard failures в jit-summary</td>
+        <td class="border border-border px-3 py-2"><code>--jit-summary</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Цикл fix-and-verify
+
+У каждой performance-правки пять обязательных шагов:
+
+1. **Назвать hotspot и классифицировать его** (одна из шести форм, включая JIT deopt).
+2. **Выбрать категориальное семейство правок**, соответствующее классификации.
+3. **Написать правку без scope creep** — только то изменение, которое предсказано на шаге 2.
+4. **Снять профиль под той же нагрузкой** и сравнить с baseline.
+5. **Верифицировать оба условия:** локальный фрейм сжался **И** headline-метрика улучшилась (p99, throughput, CPU%, что именует SLO).
+
+**Если фрейм сжался, а метрика не сдвинулась:** посмотри, куда ушло время — часто открывается вторая bottleneck, маскированная первой. Это не провал; это следующая итерация.
+
+**Если метрика сдвинулась, а фрейм не сжался:** правка сработала через side effect, который ты не предсказывал. Разбирайся; возможно, задели что-то ортогональное. Оба исхода требуют доказательств и определяют следующий шаг.
+
+Цикл — сеньорная performance-привычка: исправил одно, доказал, что приземлилось, нашёл следующее.
+
+## Микробенчмарк-driven vs production-profile-driven правки
+
+Микробенчмарк в изоляции может сказать, что новый алгоритм в 5 раз быстрее. Production-профиль может показать, что алгоритм теперь 8% общего времени вместо 15%, но другие пути замедлились, потому что новый алгоритм больше аллоцирует и поднял GC-pressure.
+
+Цикл fix-and-verify ловит это: захват production-профиля после изменения говорит о whole-system эффекте, не только о локальном. Микробенчмарк-утверждения — предсказания; production-profile diff — приговор.
+
+Production-grade команды требуют оба: микробенчмарк, показывающий, что локальное изменение делает заявленное, И production-profile diff, показывающий, что system-wide эффект положителен. PR'ы с одним из двух релизуют регрессии, выглядящие как победы.
+
+## PR-time vs incident-time профилирование
+
+Два режима применения hot-path методологии:
+
+**Incident-time:** сервис горит, on-call ловит hotspot за минуты, чинит, верифицирует, релизит. Реактивный режим — методология та же, но clock тикает.
+
+**PR-time:** до релиза CI снимает профиль PR против baseline main и флагает регрессии до того, как они попадают в production. Проактивный режим — методология та же, без давления.
+
+Сеньорные команды инвестируют в оба: incident-time runbook'и для on-call, PR-time CI гейты для предотвращения. Каждая incident retro добавляет одно правило в PR-time гейт: если ровно эта регрессия могла быть поймана в CI, добавляем сигнатуру. Со временем PR-time гейт ловит большую часть регрессий до релиза; incident-time runbook'и ловят остаток.
+
+<Inset kind="why" lang="ru">
+Cross-pollination между incident-time и PR-time — это механизм, делающий performance-дисциплину самоусиливающейся. Каждая incident retro, кодирующая CI-правило, снижает будущую on-call нагрузку на один класс регрессий. Зрелый признак: perf-инциденты в квартале идут на спад, не стагнируют. Команды без cross-pollination остаются на стадии «героического on-call» бессрочно.
+</Inset>
+
+<DragOrder
+  id="04-jit-deopt-and-fix-verify-drag-1"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="ru"
+  prompt="Расставь пять шагов цикла fix-and-verify по порядку:"
+  items={[
+    { id: "a", label: "Назвать hotspot и классифицировать его (CPU, аллокации, кэш, лок, syscall или JIT deopt)" },
+    { id: "b", label: "Выбрать категориальное семейство правок, соответствующее классификации" },
+    { id: "c", label: "Написать только предсказанное изменение — без scope creep" },
+    { id: "d", label: "Снять новый профиль под той же нагрузкой и сравнить с baseline" },
+    { id: "e", label: "Верифицировать: локальный фрейм сжался И headline-метрика улучшилась — оба условия обязательны" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Quiz
+  id="04-jit-deopt-and-fix-verify-quiz-1"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="ru"
+  question="Во flame graph Node-сервиса фреймы InterpreterCallStub доминируют в горячей функции. Какова наиболее вероятная причина и правка?"
+  choices={[
+    { label: "JIT деоптимизация: функция была оптимизирована TurboFan, типовое предположение нарушилось, и V8 откатился к интерпретатору. Правка: стабилизировать hot object shapes, чтобы предотвратить deopt.", correct: true },
+    { label: "Функция CPU-bound — переписать с лучшим алгоритмом.", misconception: "CPU-bound показывает фреймы оптимизирующего компилятора (TurboFan), не интерпретатора. Фреймы интерпретатора сигнализируют о проблеме JIT." },
+    { label: "Функция allocation-bound — использовать пулинг.", misconception: "Allocation-bound показывало бы GC-фреймы, не фреймы интерпретатора. Deopt-фрейм — диагностический сигнал здесь." },
+    { label: "Профайлер сэмплирует с частотой слишком высокой для этой функции.", misconception: "Частота сэмплирования влияет на все функции одинаково; она не производит избирательно interpreter-фреймы для одной функции." },
+  ]}
+/>
+
+<Quiz
+  id="04-jit-deopt-and-fix-verify-quiz-2"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="ru"
+  question="Микробенчмарк показывает новый алгоритм в 5 раз быстрее локально. Production-profile diff показывает, что функция упала с 15% до 8% CPU, но общий CPU% не изменился и p99 стал хуже. Наиболее вероятное объяснение?"
+  choices={[
+    { label: "Новый алгоритм аллоцирует больше, подняв GC-pressure. Локальный выигрыш реальный, но появился новый hotspot. Production-profile diff — это приговор; system-wide эффект отрицательный.", correct: true },
+    { label: "Микробенчмарк был неверным", misconception: "Микробенчмарк может быть правильным локально; system-wide эффект, раскрытый production diff'ом, — это отличающиеся данные." },
+    { label: "Трафик production изменился во время измерения", misconception: "Возможно, но диагноз продолжается проверкой того, что ещё выросло в профиле — GC-фреймы или другая более широкая функция." },
+    { label: "Алгоритм медленнее в production из-за JIT", misconception: "JIT показывал бы interpreter-фреймы; сценарий описывает новый hotspot от GC-pressure, не deopt." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>JIT deopt-петли выглядят как CPU-bound код, но требуют стабилизации типов, не алгоритмической переработки. Цикл fix-and-verify — классифицировать, написать одно целевое изменение, снять diff профиля, проверить и локальное сжатие, и headline — это дисциплина, отделяющая performance-инженерию от угадывания. Микробенчи — предсказания; production-diff — приговор.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-jit-deopt-and-fix-verify-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Каковы характерные признаки JIT deopt-петли во flame graph и какова правка для V8 конкретно?", a: "JIT deopt-петля показывает interpreter-фреймы (Interpreter::execute, InterpreterCallStub) или baseline-JIT фреймы (V8 Sparkplug) там, где должны быть фреймы оптимизирующего компилятора (TurboFan в V8, C2 в HotSpot). Функция широкая, но работа происходит в медленном уровне. Другие симптомы: латентные всплески без корреляции с трафиком, периодические паузы без работы GC. Для V8 конкретно: использовать --trace-deopt, чтобы найти, какие функции деоптимизируются и почему, затем стабилизировать object shapes. Держать hot objects не более ≤4 hidden classes. Избегать позднего добавления свойств (добавления новых свойств к объектам после конструирования в горячем коде). Добавить type assertions или обёртки там, где V8 не может вывести стабильность типов. Верификация: пере-профилировать и убедиться, что TurboFan-фреймы вернулись в горячий стек." },
+    { q: "Почему цикл fix-and-verify должен проверять И локальный фрейм, И headline-метрику, и что означает каждый из режимов провала?", a: "Проверять только локальный фрейм — доказательство, что конкретная функция была исправлена, но не то, что система выиграла; другая bottleneck могла маскироваться первой. Проверять только headline-метрику — доказательство, что что-то улучшилось, но не что и почему; нельзя сказать, повезло ли, приземлилось ли ортогональное изменение или правка является причинно ответственной. Проверка локального фрейма — механическое доказательство, что правка сработала на уровне функции; проверка headline-метрики — системное доказательство, что user-facing поведение улучшилось. Если фрейм сжался, но метрика не сдвинулась: вторая bottleneck маскировалась первой; сними новый профиль и найди её. Если метрика сдвинулась, но фрейм не сжался: правка сработала через неожиданный side effect; разбирайся, чтобы понять реальный механизм до отправки в production." },
+  ]}
+/>
+
+<Recap lang="ru">
+JIT деоптимизация — шестая форма hotspot'а: flame graph показывает interpreter или baseline-JIT фреймы там, где должен быть вывод оптимизирующего компилятора. Правка — стабилизация типов, не алгоритмическая переработка. Цикл fix-and-verify применяется ко всем шести формам: классифицировать, написать одно целевое изменение, снять diff профиля под той же нагрузкой, верифицировать и локальное сжатие, и улучшение headline. Микробенчи — предсказания; production diff — приговор. PR-time CI гейты, кодирующие уроки из incident retro, превращают реактивную performance-работу в проактивное предотвращение.
+</Recap>
