@@ -1,0 +1,213 @@
+---
+slug: 07-failure-modes-and-practice
+lang: en
+track: observability
+unit: 01-three-pillars
+order: 7
+title: "Failure modes and engineering practice: cardinality budgets, PII, and sampling"
+summary: "Real production failure modes per signal, cardinality budgets as engineering culture, PII leaks on metric and log surfaces, and OTel sampling configuration in practice."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/01-three-pillars/06-observability-2-0"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["cardinality-budget", "pii-risk", "head-based-sampling", "tail-based-sampling", "otel-sampler", "otel-collector", "tailsamplingprocessor", "prometheus-oom", "metric-relabel-configs", "mimirtool"]
+sources:
+  - https://opentelemetry.io/docs/concepts/sampling/
+  - https://prometheus.io/docs/practices/instrumentation/
+  - https://grafana.com/blog/how-to-manage-high-cardinality-metrics-in-prometheus-and-kubernetes/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+At 14:00 a developer added `customer_email` as a label to `http_requests_total`. By 14:03 Prometheus had OOM-killed itself: 9.24 million series, 14.3 GB of RAM, restart count 1. The WAL replay lagged 73 seconds; every alert fired stale or not at all. One label, three minutes, regional monitoring down.
+</Hook>
+
+<Crux>Every 1.0 signal has a failure mode that takes it offline or leaks data. Build guardrails before 03:00, not during.</Crux>
+
+<Explanation>
+
+## Production failure modes per signal
+
+Each signal type has a characteristic way of failing. Knowing the failure mode tells you where to put the guardrails.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Signal</th>
+        <th class="border border-border px-3 py-2 text-left">Failure mode</th>
+        <th class="border border-border px-3 py-2 text-left">Detection metric</th>
+        <th class="border border-border px-3 py-2 text-left">Mitigation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border border-border px-3 py-2">Metrics</td><td class="border border-border px-3 py-2">Cardinality bomb — one unbounded label OOMs the TSDB</td><td class="border border-border px-3 py-2"><code>prometheus_tsdb_head_series</code> rate spike</td><td class="border border-border px-3 py-2"><code>metric_relabel_configs</code> labeldrop, then remove from code</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">Logs</td><td class="border border-border px-3 py-2">Ingestion runaway — one chatty service 10x the daily bill</td><td class="border border-border px-3 py-2">Ingest GB/day per service in vendor dashboard</td><td class="border border-border px-3 py-2">Raise log level or route to sampled tier; durable: emit one summary per operation</td></tr>
+      <tr><td class="border border-border px-3 py-2">Logs</td><td class="border border-border px-3 py-2">Silent PII leak — user data in indexed log fields</td><td class="border border-border px-3 py-2">Audit dashboard scanning high-cardinality string fields</td><td class="border border-border px-3 py-2">Allow-list enforced at pipeline; regex redactor in Fluent Bit or Vector</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">Traces</td><td class="border border-border px-3 py-2">Sampling gap — the interesting trace was dropped</td><td class="border border-border px-3 py-2"><code>refused_spans_total</code> in collector; 0% error traces after incident</td><td class="border border-border px-3 py-2">Tail-based policy: always keep ERROR + latency &gt; SLO</td></tr>
+      <tr><td class="border border-border px-3 py-2">Traces</td><td class="border border-border px-3 py-2">Span explosion — loop emits 10k spans per request</td><td class="border border-border px-3 py-2">Spans per trace histogram spike</td><td class="border border-border px-3 py-2">Wrap loop body in one parent span; suppress child spans above threshold</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">Traces</td><td class="border border-border px-3 py-2">Orphaned spans — context not propagated across async boundary</td><td class="border border-border px-3 py-2">Traces with single-service spans only; no parent_span_id set</td><td class="border border-border px-3 py-2">Pass W3C <code>traceparent</code> in message headers (Kafka, SQS, etc.)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+Each failure mode has a detection metric. Senior teams monitor the monitoring tier as carefully as the product tier.
+
+## Cardinality budgets as engineering practice
+
+In any 1.0 metrics stack, cardinality discipline is an engineering practice, not a one-time choice at instrumentation time.
+
+The Cloudflare 2022 pattern: every team owns a cardinality budget (e.g. 100k active series across all services in the team's namespace). CI checks flag any PR that introduces a new label name exceeding the threshold. The budget is reviewed quarterly, resized based on actual usage. The tool suite: Grafana's `mimirtool`, Datadog's Custom Metrics Usage view, Prometheus's `prometheus_tsdb_head_series` and `count by (__name__) ({__name__=~".+"})`.
+
+The cultural payoff is that engineers think about label cardinality at write time — not after the OOM at 03:00.
+
+**The Prometheus OOM case study.** At 14:02 `prometheus_tsdb_head_series` jumped from 824k to 9.24M in two minutes — 11x growth. At ~3 KB per active series, the head block needed ~27 GB; the server had 16 GB. Memory hit 14.3 GB (89% of limit) and the kernel OOM-killed Prometheus. On restart, the WAL replay was 412 segments, lagging 73 seconds behind scrape time.
+
+Immediate mitigation (under 5 minutes, no deploy required): add `metric_relabel_configs` with `action: labeldrop` and `regex: customer_email` to the Prometheus scrape config of the affected service. Confirm `prometheus_tsdb_head_series_created_total` rate falls back toward baseline within one scrape interval. Memory does not reclaim until the next 2-hour block compaction; restart Prometheus only if memory continues to climb.
+
+Durable fix: (a) remove `customer_email` from the metric; (b) replace with a bounded `customer_segment` label (free/pro/enterprise = 3 values); (c) use exemplars to attach a sampled `trace_id` so per-customer drill-through still works without paying the cardinality cost; (d) add a CI check (`cardinality-lint.ts`) that fails builds when new label names match a deny-list regex (`email`, `user_id`, `request_id`, `session_id`, `customer_id`); (e) add a Prometheus alert: `rate(prometheus_tsdb_head_series_created_total[5m]) > 1000` pages on-call before OOM.
+
+## PII risk on metric and log surfaces
+
+Both metric labels and log fields can leak PII into a less-audited datastore than the source database.
+
+Real incidents:
+
+- A payments company in 2021 leaked customer phone numbers as a metric label (`failed_phone="+1..."`). Prometheus scraped the metric to all environments including dev; the phone numbers were visible in dashboards to the whole engineering org.
+- A SaaS company in 2023 ingested raw request bodies into logs (including session tokens) for two months before a customer noticed in a support thread. The logging pipeline had no PII filter.
+- A marketplace in 2024 emitted user search queries as a `query` span attribute, exposing demographic-segment information to the BI team who had Jaeger access but not production DB access.
+
+Mitigations:
+
+1. **Allow-list for labels and span attributes.** Deny by default. Every new metric label or span attribute requires explicit approval in a reviewed config file checked in alongside the code.
+2. **Redaction in the logging pipeline.** Vector and Fluent Bit both ship with regex redactors for common PII patterns. The pattern list (`email`, `phone`, `ssn`, `token`, `password`, `session_id`) should be maintained in a security-reviewed repo alongside the cardinality deny-list.
+3. **Audit dashboards.** A dashboard that shows high-cardinality string fields per signal — sorted by distinct-value count — catches leaks before they reach a customer's awareness.
+
+Treat label review and field review as a security gate, not a performance gate.
+
+<Misconception id="mc-pii-not-my-problem">
+  <p><strong>"Observability data is internal-only so PII rules don't apply."</strong> No. Observability backends are accessible to more engineers than the production DB, and dashboards appear in all-hands slides. A leaked phone number or session token is a GDPR/CCPA breach regardless of &quot;internal&quot; designation.</p>
+</Misconception>
+
+## OTel sampling configuration in practice
+
+The OTel Sampler API provides head-based decisions at the SDK and tail-based at the collector.
+
+**SDK-level samplers:**
+
+- `AlwaysOn` — 100% sampling. Use only in dev/test or for very low-volume critical paths.
+- `AlwaysOff` — 0% sampling. Useful for internal health-check routes where traces add no signal.
+- `TraceIdRatioBased(p)` — samples `p` fraction of root traces. Generates a random decision correlated with the `trace_id`; must be uncorrelated with request properties (see below).
+- `ParentBased(root_sampler)` — honours the parent's sampling decision from the incoming `traceparent` header. Downstream services follow the root's decision automatically via the W3C `sampled` flag.
+
+**Collector-level tail sampling (`TailSamplingProcessor`):**
+
+Policies applied after the trace completes. Common production layout:
+
+```yaml
+policies:
+  - name: errors-policy
+    type: status_code
+    status_code: {status_codes: [ERROR]}
+  - name: slow-traces-policy
+    type: latency
+    latency: {threshold_ms: 1000}
+  - name: baseline-policy
+    type: probabilistic
+    probabilistic: {sampling_percentage: 2}
+```
+
+The `errors-policy` and `slow-traces-policy` keep 100% of interesting traces. The `baseline-policy` keeps 2% of the rest, giving low-traffic services coverage when there are no errors.
+
+**The Elastic 2024 post-mortem on head sampling.** Naive head sampling under-represents errors and slow tails because the sampling decision is made before the trace has any outcome. The post-mortem also flagged a subtler problem: `TraceIdRatioBased` generates a random decision from the `trace_id`. If the `trace_id` is not truly random (e.g., derived from a hash of the request path), the sampling decision correlates with request properties — slow endpoints may always be sampled or always dropped as a cohort. Production rule: use `ParentBased(TraceIdRatioBased(0.2))` at the edge with a cryptographically random `trace_id`, and layer tail policies at the collector for the interesting cases.
+
+<DragOrder
+  id="07-failure-modes-drag-1"
+  lessonSlug="07-failure-modes-and-practice"
+  lang="en"
+  prompt="Prometheus OOM: order the response steps from first to last:"
+  items={[
+    { id: "a", label: "Check prometheus_tsdb_head_series rate — confirm 11x jump in 2 min" },
+    { id: "b", label: "Identify the new label: scan recent metric_relabel diff or git log on instrumentation code" },
+    { id: "c", label: "Add metric_relabel_configs labeldrop for the offending label — no deploy needed" },
+    { id: "d", label: "Confirm head_series_created_total rate falls back to baseline within one scrape interval" },
+    { id: "e", label: "Remove the label from application code and replace with bounded alternative" },
+    { id: "f", label: "Add CI cardinality-lint check and Prometheus alert on series creation rate" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="07-failure-modes-quiz-1"
+  lessonSlug="07-failure-modes-and-practice"
+  lang="en"
+  question="A team adds customer_email to http_requests_total. Prometheus OOMs in 3 minutes. What is the correct immediate mitigation that requires no application redeploy?"
+  choices={[
+    { label: "Restart Prometheus with more RAM", misconception: "More RAM delays the OOM but does not remove the series; the metric will re-OOM on the next scrape cycle." },
+    { label: "Add metric_relabel_configs with action: labeldrop and regex: customer_email in the Prometheus scrape config — stops new series being created at scrape time, effective within one interval", correct: true },
+    { label: "Delete the Prometheus WAL", misconception: "Deleting the WAL loses recent data and does not affect the series being actively scraped." },
+    { label: "Reduce the scrape interval to 60s", misconception: "Reducing scrape frequency reduces write rate but does not reduce the number of active series in the head block." },
+  ]}
+/>
+
+<Quiz
+  id="07-failure-modes-quiz-2"
+  lessonSlug="07-failure-modes-and-practice"
+  lang="en"
+  question="The Elastic 2024 post-mortem flagged that TraceIdRatioBased sampling can silently under-represent a specific endpoint. What is the root cause?"
+  choices={[
+    { label: "TraceIdRatioBased samples based on the trace_id; if trace_id is derived from request properties (e.g., a hash of the path), the sampling decision correlates with those properties — certain endpoints always sampled or always dropped as a cohort", correct: true },
+    { label: "TraceIdRatioBased does not propagate the sampled flag downstream", misconception: "TraceIdRatioBased does set the sampled flag; the post-mortem was specifically about the correlation of the random seed with request properties." },
+    { label: "The tail sampling processor overrides TraceIdRatioBased at the collector", misconception: "Tail policies at the collector are additive; they can keep traces that head sampling would drop, but they do not cause the correlation issue." },
+    { label: "ParentBased sampler ignores the parent traceparent flag on incoming requests", misconception: "ParentBased explicitly honours the incoming traceparent sampled flag; that is its purpose." },
+  ]}
+/>
+
+<NumbersCard
+  id="07-failure-modes-numbers"
+  title="Failure mode numbers"
+  stats={[
+    { label: "Prometheus head series at OOM incident start", value: "824k" },
+    { label: "Prometheus head series after customer_email label (2 min)", value: "9.24M (11x)" },
+    { label: "RAM required at 9.24M series × 3KB/series", value: "~27 GB" },
+    { label: "Server RAM limit in incident", value: "16 GB" },
+    { label: "WAL segments on restart", value: "412 (73s lag)" },
+    { label: "Cardinality budget per team (typical 1.0 stack)", value: "50k–500k active series" },
+    { label: "Tail-sampling buffer window", value: "30–60 s per trace" },
+    { label: "Production baseline sampling: successful traces", value: "0.5–5%" },
+    { label: "Production baseline sampling: error traces", value: "100%" },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cardinality bombs, ingestion runaway, silent PII leaks, sampling gaps, and span explosions each have a detection metric and a mitigation playbook. Senior discipline is building those guardrails — CI deny-lists, pipeline redactors, tail-sampling policies, series-rate alerts — before the incident, not after.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-failure-modes-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the five production failure modes (one per signal category) and state the detection metric for each.", a: "Metrics — cardinality bomb: one unbounded label OOMs the TSDB; detection: rate(prometheus_tsdb_head_series_created_total[5m]). Logs — ingestion runaway: one chatty service multiplies the daily bill; detection: GB/day per service in the vendor ingest dashboard. Logs — silent PII leak: user data in indexed fields; detection: audit dashboard scanning high-cardinality string fields per signal. Traces — sampling gap: interesting trace dropped; detection: refused_spans_total in collector + 0% error traces in backend after incident. Traces — span explosion: loop emits 10k spans per request; detection: spans_per_trace histogram spike in collector self-metrics." },
+    { q: "Describe the Prometheus OOM incident response sequence: immediate mitigation (no deploy) and durable fix.", a: "Immediate (under 5 min, no deploy): add metric_relabel_configs with action: labeldrop targeting the offending label in the Prometheus scrape config. Confirm prometheus_tsdb_head_series_created_total rate drops within one scrape interval. Do not restart Prometheus unless memory continues to climb — WAL replay adds latency. Durable fix: (a) remove the unbounded label from application code; (b) replace with a bounded bounded alternative (e.g. customer_segment with 3 values); (c) use exemplars for per-customer drill-through; (d) add a CI cardinality-lint check blocking new labels matching a deny-list regex; (e) add a Prometheus alert on prometheus_tsdb_head_series_created_total rate > threshold." },
+    { q: "Explain why ParentBased(TraceIdRatioBased) is the recommended SDK sampler in production and what the Elastic 2024 post-mortem adds to this recommendation.", a: "ParentBased ensures downstream services honour the root's sampling decision via the W3C traceparent sampled flag — so if the root drops a trace, no downstream SDK emits spans, keeping collector load proportional to the sampling rate. TraceIdRatioBased at the root provides a uniform random baseline. The Elastic 2024 post-mortem adds: the trace_id used as the random seed must be cryptographically random and uncorrelated with request properties. If trace_id is derived from a path hash or other request data, certain endpoints will always or never be sampled as a cohort, creating systematic blind spots. Combined recommendation: ParentBased(TraceIdRatioBased) at the SDK with a random trace_id, plus TailSamplingProcessor at the collector with ERROR and latency policies to keep 100% of interesting traces." },
+  ]}
+/>
+
+<Recap lang="en">
+Each observability signal has a characteristic failure mode: metrics face cardinality bombs (one unbounded label OOMs the TSDB in minutes), logs face ingestion runaway and silent PII leaks, traces face sampling gaps and span explosions. The detection metric for each failure mode should be monitored as carefully as the product tier. Cardinality budgets are an engineering practice enforced via CI deny-lists and quarterly reviews, not a one-time choice. PII leaks on metric labels and span attributes are a security breach regardless of access controls — allow-lists and pipeline redactors are mandatory. OTel sampling in production uses ParentBased(TraceIdRatioBased) at the SDK to propagate head decisions via the W3C traceparent flag, and TailSamplingProcessor at the collector to keep 100% of ERROR and slow-tail traces — with the Elastic 2024 caveat that the trace_id seed must be cryptographically random and uncorrelated with request properties.
+</Recap>
