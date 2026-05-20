@@ -170,10 +170,10 @@ by following a connected path of lessons. Practice is deferred (theory first).
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
    Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
-   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **40/51 units
+   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **41/51 units
    done — networking (12/12) + browser (8/8) + databases (8/8) + observability (8/8)
-   COMPLETE; performance (4/8) IN PROGRESS**. Build 2401+ pages, lint 0/0.
-   **RESUME at `performance/05-n-plus-one`** (next: performance 05-08, then 7 lone
+   COMPLETE; performance (5/8) IN PROGRESS**. Build 2433 pages, lint 0/0.
+   **RESUME at `performance/06-batching`** (next: performance 06-08, then 7 lone
    ready pieces: apis/06-graphql-n-plus-one, backend/05-idempotency-retries,
    caching/03-stampede, distributed/02-raft-outline, frontend/02-data-fetching,
    queues/01-delivery-guarantees, security/02-oauth-oidc). A fresh chat resumes from
