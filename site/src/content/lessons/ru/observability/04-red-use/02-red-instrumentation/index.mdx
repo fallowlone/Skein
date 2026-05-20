@@ -1,0 +1,224 @@
+---
+slug: 02-red-instrumentation
+lang: ru
+track: observability
+unit: 04-red-use
+order: 2
+title: "Инструментация RED в Prometheus: счётчики, гистограммы и дисциплина cardinality"
+summary: "Три канонические Prometheus-метрики для RED, почему Duration обязана быть гистограммой (никаких среднего), как работает histogram_quantile и железная дисциплина label, которая удерживает cardinality под контролем."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/01-red-and-use-overview"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["prometheus-histogram", "histogram-quantile", "red-metrics", "cardinality", "label-discipline"]
+sources:
+  - https://prometheus.io/docs/practices/histograms/
+  - https://prometheus.io/docs/practices/naming/
+  - https://grafana.com/blog/the-red-method-how-to-instrument-your-services/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Команда настраивает алерт на среднюю задержку запросов. Фикс бага поднимает p99 с 200 мс до 800 мс — но среднее почти не двигается. On-call пропускает инцидент на 40 минут. На SLO-ревью выясняется, что алерт на среднее никогда не срабатывал при реальном impact на пользователей. Гистограммы сработали бы за 2 минуты.
+</Hook>
+
+<Crux>RED в Prometheus: счётчик Rate, счётчик Errors, гистограмма Duration. Бакеты гистограммы определяют, читаем ли твой p99.</Crux>
+
+<Explanation>
+
+## Три канонические RED-метрики
+
+Каждый HTTP-сервис должен эмитировать ровно три группы метрик с консистентными именами:
+
+```
+http_requests_total        # counter — Rate
+http_request_errors_total  # counter — Errors (5xx или label status)
+http_request_duration_seconds  # histogram — Duration
+```
+
+PromQL в Prometheus даёт все три измерения RED:
+
+- **Rate**: `rate(http_requests_total[5m])`
+- **Error rate**: `rate(http_request_errors_total[5m]) / rate(http_requests_total[5m])`
+- **Duration p99**: `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))`
+
+## Почему Duration обязана быть гистограммой
+
+Среднее прячет всё, что замечают пользователи. Сервис, где 99% запросов выполняются за 50 мс, а 1% — за 5000 мс, имеет ту же среднюю задержку (~100 мс), что сервис, где все запросы по 100 мс. Первый убивает пользователей на ретраях; второй — нет.
+
+`histogram_quantile(q, buckets)` в Prometheus читает накопленные счётчики бакетов за временное окно и оценивает q-й перцентиль линейной интерполяцией между соседними бакетами. Точность целиком зависит от плотности бакетов у нужного перцентиля.
+
+**Требование `by (le)`.** Правильная форма всегда такая:
+
+```promql
+histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
+Если пропустить `by (le)`, суммирование сворачивает все label-измерения включая `le` (label границы бакета), оставляя `histogram_quantile` одну точку вместо распределения — результат NaN или мусор. Это реальная, частая ошибка, которая молча выдаёт неверные значения.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Сигнал задержки</th>
+        <th class="border border-border px-3 py-2 text-left">Что он прячет</th>
+        <th class="border border-border px-3 py-2 text-left">Применение</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Среднее (sum/count)</td>
+        <td class="border border-border px-3 py-2">Поведение медленного хвоста, которое замечают пользователи</td>
+        <td class="border border-border px-3 py-2">Никогда для SLO-алертов</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Prometheus summary</td>
+        <td class="border border-border px-3 py-2">Нельзя агрегировать по репликам</td>
+        <td class="border border-border px-3 py-2">Только когда одна реплика владеет данными</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Prometheus histogram</td>
+        <td class="border border-border px-3 py-2">Точность зависит от плотности бакетов</td>
+        <td class="border border-border px-3 py-2">Fleet-wide p99-алерты</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Стратегия бакетов
+
+Стандартные бакеты Prometheus-клиента — `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` секунд — неправильны для большинства сервисов. Для checkout-API с SLO 200 мс большая часть трафика попадает в диапазон 50–250 мс. Один бакет покрывает весь этот диапазон (100–250 мс), поэтому p99 может быть где угодно внутри него — нечитаемо.
+
+Продакшн-правило: 10–15 бакетов, наибольшая плотность вокруг SLO-цели. Для SLO 200 мс:
+
+```
+[0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 10]
+```
+
+Три бакета ниже 200 мс (100, 25, 50 мс дают разрешение), три выше (400, 800, 1600 мс), жёсткий cap на таймаут сервиса (10 с). Соседние бакеты отличаются не более чем в 2× вблизи SLO.
+
+## Дисциплина label — железное правило
+
+Каждая уникальная комбинация значений label на Prometheus-метрике создаёт отдельный временной ряд. Наивная инструментация RED с label `user_id` в сервисе с 100к активных пользователей вырастает с нескольких сотен рядов до сотен тысяч за часы.
+
+**Что допустимо в label:**
+
+- `route` — шаблон URL (`/cart`, не `/cart?u=12345`)
+- `method` — HTTP-метод (GET / POST / ...)
+- `status_class` — 2xx / 4xx / 5xx (не точный код)
+- `service` — инжектируется deployment как мета-label
+
+**Запрещено в label:** user ID, request ID, email, session token, query string, код страны (если не ограничен и невелик). Всё это — неограниченная cardinality.
+
+**Математика экономии:** сворачивание 200/201/204 в `2xx` сокращает 60 уникальных статус-кодов до 4 классов. При 20 роутах × 4 методах: 60 × 20 × 4 = 4800 рядов → 4 × 20 × 4 = 320 рядов, снижение в 15× без потери полезной alerting-мощности.
+
+<Inset kind="why" lang="ru">
+Если действительно нужен алерт на конкретный статус-код на конкретном роуте — строй его из логов, не из метрики с высоко-кардинальным label. Логи — естественный дом для high-cardinality данных (каждое событие — одна запись). Метрики — дом для агрегированных счётчиков временных рядов (каждый ряд — отдельный in-memory счётчик). Это архитектурное разделение, а не предпочтение.
+</Inset>
+
+## Node.js RED middleware
+
+```js
+const client = require('prom-client');
+const reqs = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status_class'],
+});
+const errs = new client.Counter({
+  name: 'http_request_errors_total',
+  help: 'Failed HTTP requests (5xx)',
+  labelNames: ['method', 'route'],
+});
+const dur = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Request duration',
+  labelNames: ['method', 'route', 'status_class'],
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 10],
+});
+
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+    const sclass = `${Math.floor(res.statusCode / 100)}xx`;
+    const route = req.route?.path || 'unknown';
+    reqs.inc({ method: req.method, route, status_class: sclass });
+    dur.observe({ method: req.method, route, status_class: sclass }, seconds);
+    if (res.statusCode >= 500) errs.inc({ method: req.method, route });
+  });
+  next();
+});
+```
+
+`req.route.path` даёт совпавший шаблон (`/cart`), а не `req.url` с query string. Эта одна строка предотвращает cardinality explosion.
+
+<Quiz
+  id="02-red-instrumentation-quiz-1"
+  lessonSlug="02-red-instrumentation"
+  lang="ru"
+  question="Команда настраивает алерт на СРЕДНЮЮ задержку запросов по всем репликам. Почему это опасно?"
+  choices={[
+    { label: "Вычисление среднего требует больших ресурсов", misconception: "Среднее дёшево; проблема в том, что оно прячет." },
+    { label: "Среднее сглаживает медленный хвост, который замечают пользователи. p99 может вырасти в 10× при почти неизменном среднем.", correct: true },
+    { label: "Среднее занимает больше места в хранилище, чем гистограммы", misconception: "Среднее меньше гистограммы; дело не в хранилище." },
+    { label: "В Prometheus нельзя построить алерт на среднее", misconception: "Можно; проблема в том, что алерт сработает слишком поздно." },
+  ]}
+/>
+
+<Quiz
+  id="02-red-instrumentation-quiz-2"
+  lessonSlug="02-red-instrumentation"
+  lang="ru"
+  question="Сервис эмитирует счётчик Errors с label по точному тексту error_message. После багованного релиза, бросающего уникальные stack trace, счёт в hosted-бэкенде утраивается за ночь. Почему?"
+  choices={[
+    { label: "Больше ошибок — больше инкрементов счётчика — больше биллинга", misconception: "Инкременты счётчика практически бесплатны; убивает количество уникальных значений label, а не число инкрементов." },
+    { label: "Каждое уникальное значение error_message создаёт новый временной ряд; hosted-бэкенды биллят за активные ряды. Stack trace с номерами строк — фактически неограниченные.", correct: true },
+    { label: "Счёт вырос, потому что сервис обработал больше запросов", misconception: "Биллинг коррелирует с числом рядов, а не запросов, в Prometheus-стиле." },
+    { label: "Ошибка снизила интервал скрейпинга метрик", misconception: "Интервал скрейпинга настраивается явно, а не зависит от ошибок." },
+  ]}
+/>
+
+<Quiz
+  id="02-red-instrumentation-quiz-3"
+  lessonSlug="02-red-instrumentation"
+  lang="ru"
+  question="Senior-инженер утверждает, что histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m]))) без 'by (le)' даёт fleet-wide p99. Почему это неверно?"
+  choices={[
+    { label: "Всё верно — sum сворачивает реплики, именно это и нужно", misconception: "sum без by (le) сворачивает все label-измерения включая le, оставляя histogram_quantile единственное значение, которое она не умеет интерпретировать." },
+    { label: "histogram_quantile требует сохранения label le для чтения счётчиков бакетов. Правильная форма: sum by (le) (rate(...)). Без by (le) — молча NaN или мусор.", correct: true },
+    { label: "Окно 5 минут слишком короткое для p99", misconception: "Размер окна — отдельный вопрос; 5m — норма. Баг — отсутствующий by (le)." },
+    { label: "Агрегировать гистограммы по репликам невозможно", misconception: "Агрегировать — именно то, для чего созданы гистограммы, при группировке по le." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RED Duration обязана быть гистограммой — никогда средним. Бакеты должны охватывать SLO с ≥3 точками с каждой стороны. Label должны быть ограниченными: шаблон роута, HTTP-метод, класс статуса — никаких user ID или точных URL. Cardinality — это налог, который масштабируется с плохим выбором label.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-red-instrumentation-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему RED Duration обязана быть гистограммой, а не sum/count (средним)?", a: "Счётчик, делённый на счётчик, даёт среднюю задержку — которая маскирует поведение медленного хвоста. Сервис с 1% запросов по 10 с и 99% по 100 мс имеет то же среднее, что сервис с 199 мс на всех запросах; пользователи первого сталкиваются с ретраями и таймаутами, второго — нет. Перцентили — единственный способ видеть хвост. Счётчики бакетов гистограммы можно агрегировать по репликам и запрашивать любой перцентиль во время чтения." },
+    { q: "Что делает клауза 'by (le)' в запросе histogram_quantile и что происходит без неё?", a: "'by (le)' сохраняет label le (граница бакета) при суммировании, чтобы histogram_quantile получала вектор per-bucket rate для интерполяции. Без неё sum сворачивает все label-измерения включая le, оставляя единственный скаляр — histogram_quantile не может оценить перцентиль из одной точки и возвращает NaN или мусор." },
+    { q: "Назови три значения label, запрещённые на RED-метриках, и одно всегда разрешённое.", a: "Запрещены: user_id (неограниченная cardinality), request_id (уникален для каждого запроса), error_message (stack trace неограничены). Всегда разрешено: шаблон роута (ограничен количеством URL-паттернов, например /cart, а не /cart?u=12345)." },
+  ]}
+/>
+
+<Recap lang="ru">
+RED в Prometheus — три группы метрик: `http_requests_total` (счётчик для Rate), `http_request_errors_total` (счётчик для Errors) и `http_request_duration_seconds` (гистограмма для Duration). Duration обязана быть гистограммой, потому что среднее маскирует хвостовое поведение, которое ощущают пользователи — `histogram_quantile` читает per-bucket счётчики и интерполирует перцентиль, но только когда `sum by (le)` сохраняет label границы бакета. Выбор бакетов определяет точность p99: выбирай 10–15 бакетов с наибольшей плотностью вокруг SLO-цели, соседние отличаются не более чем в 2× вблизи SLO. Дисциплина label — вторая половина: используй шаблоны роутов, HTTP-метод и класс статуса — никаких user ID, request ID или точных текстов ошибок. Каждая уникальная комбинация label — отдельный временной ряд, биллируемый отдельно и хранимый в RAM на Prometheus-сервере.
+</Recap>

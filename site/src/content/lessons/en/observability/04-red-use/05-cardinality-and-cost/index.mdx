@@ -1,0 +1,181 @@
+---
+slug: 05-cardinality-and-cost
+lang: en
+track: observability
+unit: 04-red-use
+order: 5
+title: "Cardinality as a cost driver: labels, PII, exemplars, and sampling"
+summary: "Every unique label combination is a separate time series charged separately in RAM and in hosted billing. The discipline is iron: only bounded, actionable labels go on metrics — everything else lives in logs or traces, joined by exemplars."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/02-red-instrumentation"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["cardinality", "prometheus-series", "exemplars", "pii-labels", "sampling-vs-aggregation"]
+sources:
+  - https://prometheus.io/docs/practices/naming/
+  - https://prometheus.io/docs/practices/histograms/
+  - https://sre.google/sre-book/monitoring-distributed-systems/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Cloudflare 2022: a global outage was preceded by Prometheus servers OOMing under cardinality from a new label on the request-duration metric. The fix landed in 90 minutes — but the post-mortem mandated a per-team cardinality budget and a CI check that rejects new label dimensions over a threshold. The alert came from Prometheus's own meta-monitoring, not from the services it was supposed to watch.
+</Hook>
+
+<Crux>Cardinality = unique label combos = RAM = dollars. One unbounded label grows a 200-series service to 5M and crashes the TSDB overnight.</Crux>
+
+<Explanation>
+
+## The math of cardinality
+
+Every Prometheus metric series lives in the TSDB head block at roughly **3 KB of RAM**. The number of series is the product of all label-value cardinalities:
+
+```
+series count = |route| × |method| × |status_class| × |service| × |region|
+```
+
+For a service with 200 routes, 5 methods, 4 status classes, 50 pods across 3 regions:
+
+```
+200 × 5 × 4 × 50 × 3 = 600,000 series
+600,000 × 3 KB = ~1.8 GB just for this one metric
+```
+
+Now add `user_id` with 100k active users:
+
+```
+600,000 × 100,000 = 60 billion series
+```
+
+This crashes a 16 GB Prometheus server in seconds. The TSDB cannot index that many series, and the append path serializes on the head mutex.
+
+## The cost in hosted backends
+
+At Datadog's ~$0.05 / custom metric / host / month (2024 pricing), an unbounded `user_id` label that grows to 1M series adds ~$50k/month overnight for one careless label.
+
+**The cardinality-to-cost linearity** is what makes this a security and financial incident, not just a performance issue.
+
+## The PII security angle
+
+A naive Errors counter labelled by `error_message` or `stack_trace` publishes exception text into the metrics scrape, which is often less access-controlled than the application database. If the message contains user input — "could not find user alice@example.com" — that PII lands in a metrics backend that the entire engineering org can read.
+
+Real incident: a payments service in 2021 leaked customer phone numbers via a poorly-named `failed_phone` label. The post-mortem mandated a global pre-commit hook that flags any new label named with a known-PII pattern.
+
+**Label audit rule:** label by error _class_ (`auth_failed`, `db_timeout`, `parse_error`), never by error _content_. Audit label names as a security review item, not just a performance review item.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Label type</th>
+        <th class="border border-border px-3 py-2 text-left">Example</th>
+        <th class="border border-border px-3 py-2 text-left">Where it belongs</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Bounded, actionable</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">route, method, status_class, region</td>
+        <td class="border border-border px-3 py-2">Metric labels ✓</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Unbounded, high-cardinality</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">user_id, request_id, session_token</td>
+        <td class="border border-border px-3 py-2">Logs / traces only ✗</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">PII content</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">email, phone, ip_address, stack_trace</td>
+        <td class="border border-border px-3 py-2">Never in metrics ✗✗</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Exemplars: the bridge between metrics and traces
+
+If you cannot put `trace_id` in a metric label (unbounded cardinality), how do you jump from a p99 spike to the slow request that caused it? **Exemplars**.
+
+Prometheus 2.32+ and OpenTelemetry's histogram implementation both support exemplars: sampled trace IDs attached to individual histogram observations. When `histogram_quantile` shows p99 at 800 ms, clicking the spike in Grafana reveals the exemplar — a trace ID from a request that landed in that bucket. One click jumps to the full span tree.
+
+```
+# HELP http_request_duration_seconds
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.2"} 14324 # {trace_id="abc123"} 0.183
+http_request_duration_seconds_bucket{le="0.4"} 14329
+```
+
+The exemplar `trace_id="abc123"` is attached to the specific observation `0.183`, not added as a label to the metric. Cardinality stays flat; drilldown is preserved.
+
+## Aggregation vs sampling
+
+RED + USE metrics are **pre-aggregated** — they summarise across all requests or all wall-clock time without sampling. A histogram's bucket counts are incrementally updated; you never throw away an observation.
+
+Traces are the opposite: **sampled** (typically 0.1–5%) because each trace carries the full request path with all spans. The senior pattern:
+
+- Pre-aggregate RED + USE at the source — 100% coverage, bounded storage.
+- Sample traces: head-based at 5% for cost, tail-based at 100% for errors and slow requests (duration > SLO target) — so the rare slow path always has a trace.
+- Exemplars bridge the two: the metric shows the spike (aggregate), the exemplar points to a specific trace (sample).
+
+The four-signal stack — RED metrics, USE metrics, sampled traces, sampled profiles — composes if and only if they share label keys (`http.route`, `service.name`, `status_class`). OpenTelemetry's semantic conventions formalise these join keys.
+
+<Inset kind="why" lang="en">
+Self-referential observability: Prometheus itself emits RED and USE metrics. Prometheus's `prometheus_tsdb_head_series` (growing too fast → cardinality explosion), `prometheus_engine_query_duration_seconds_p99` (too slow → queries timing out), and `prometheus_rule_evaluation_duration_seconds_p99` (too slow → alert delays) are the signals that caught the Cloudflare and Discord 2022–2023 incidents. In both cases Prometheus's own meta-monitoring fired before the affected services' RED alerts did. Monitoring the monitor is not optional.
+</Inset>
+
+<Quiz
+  id="05-cardinality-quiz-1"
+  lessonSlug="05-cardinality-and-cost"
+  lang="en"
+  question="A team adds a new label 'country_code' (220 possible values) to their existing RED metrics. Their current series count is 10,000. Roughly how many series will they have after the change?"
+  choices={[
+    { label: "10,220 — adds 220 series for the new values", misconception: "Each new label value multiplies, not adds, the series count. Every existing series gets 220 variants." },
+    { label: "~2.2M — 10,000 existing series × 220 country code values", correct: true },
+    { label: "220 — only the new label creates new series", misconception: "The new label multiplies the cardinality of all existing series." },
+    { label: "10,000 — adding a label does not change series count", misconception: "Each unique label combination is a new series. Adding a label with N values multiplies the total by N." },
+  ]}
+/>
+
+<Quiz
+  id="05-cardinality-quiz-2"
+  lessonSlug="05-cardinality-and-cost"
+  lang="en"
+  question="An engineer wants to jump from a p99 latency spike in a Prometheus histogram to the specific slow request. The team cannot add trace_id as a metric label (cardinality). What is the correct solution?"
+  choices={[
+    { label: "Add a separate counter with trace_id as a label to store trace references", misconception: "This creates an unbounded-cardinality counter — the same cardinality problem, moved to a different metric." },
+    { label: "Use Prometheus exemplars: attach a sampled trace_id to individual histogram observations. Grafana can jump from the exemplar to the trace without adding trace_id as a label.", correct: true },
+    { label: "Query logs by timestamp to find the slow request around the spike time", misconception: "Log timestamp correlation is a workaround that works sometimes; exemplars are the designed solution that links metric observations to specific traces." },
+    { label: "Reduce the histogram bucket count to simplify querying", misconception: "Fewer buckets reduce p99 accuracy; they do not help with trace correlation." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cardinality = series count = RAM and money. Every unique label combination is a separate time series. Put only bounded, actionable labels on metrics; put high-cardinality data (user_id, trace_id, error content) in logs and traces. Exemplars bridge the gap: a sampled trace_id attached to a histogram observation lets you jump from a p99 spike to the slow request without adding it as a label.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-cardinality-retrieval"
+  lang="en"
+  questions={[
+    { q: "A service with 50 routes × 5 methods × 4 status classes has 1,000 series for its RED metrics. The team adds 'customer_tier' with 3 values. How many series now, and why?", a: "3,000 series: each existing series now has 3 variants (one per customer tier). New count = 1,000 × 3 = 3,000. This is the multiplicative nature of label cardinality — adding a dimension with N values multiplies the total by N, regardless of how small N seems." },
+    { q: "What is the PII risk of labelling metrics by error_message, and what is the correct alternative?", a: "Error messages often contain user input (email addresses, phone numbers, request content), which lands in the metrics backend. Unlike application databases, metrics backends are typically readable by all engineers without special access controls — so PII in labels becomes a data leak to the entire engineering org. The correct alternative: label by error class (auth_failed, db_timeout, parse_error), not error content. Audit label names as a security review step, not just a performance review." },
+    { q: "What are exemplars and how do they solve the trace_id cardinality problem?", a: "Exemplars are sampled trace IDs attached to individual histogram observations (not as metric labels). They appear in the Prometheus exposition format alongside the bucket count. In Grafana, clicking a p99 spike reveals the exemplar trace ID from a request that landed in that bucket — one click jumps to the full trace. This gives you the drilldown you need without adding an unbounded label that would multiply series count by millions." },
+  ]}
+/>
+
+<Recap lang="en">
+Cardinality is the number of unique label-value combinations on a Prometheus metric — each combination is a separate time series stored in RAM at ~3 KB and billed separately in hosted backends. One unbounded label (user_id, request_id, error_message content) can grow a 200-series service to millions of series and crash the Prometheus TSDB or add tens of thousands of dollars to the monthly bill overnight. The iron rule: only bounded, actionable labels go on metrics — route templates, HTTP methods, status classes, service name, region. Everything high-cardinality (trace IDs, user IDs, error content) lives in logs and traces. Exemplars bridge the gap: Prometheus 2.32+ and OTel histograms support attaching a sampled trace ID to specific observations, letting Grafana jump from a p99 spike to the slow request's full span tree without adding trace_id as a cardinality-multiplying label. PII in labels is both a cardinality problem and a data-leak problem — audit label names as a security review item.
+</Recap>

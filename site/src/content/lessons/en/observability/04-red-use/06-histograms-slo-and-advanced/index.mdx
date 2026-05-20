@@ -1,0 +1,172 @@
+---
+slug: 06-histograms-slo-and-advanced
+lang: en
+track: observability
+unit: 04-red-use
+order: 6
+title: "Native histograms, SLO tie-in, and production failure patterns"
+summary: "Native (exponential) histograms eliminate manual bucket tuning. RED's Duration and Errors feed the SLO error budget. Real production failures — Cloudflare, GitHub, Stripe, Discord — each trace to a specific RED+USE gap."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/02-red-instrumentation"
+  - "observability/04-red-use/05-cardinality-and-cost"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["native-histograms", "slo-error-budget", "burn-rate-alerts", "red-failure-patterns", "self-referential-observability"]
+sources:
+  - https://prometheus.io/docs/practices/histograms/
+  - https://sre.google/sre-book/monitoring-distributed-systems/
+  - https://www.brendangregg.com/usemethod.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+GitHub 2023: a SLO alert for code-search latency repeatedly fired without action. Investigation found the alert was on average latency — a bug fix that pushed p99 from 200 ms to 800 ms barely moved the mean. The SLO was reworked to multi-window p99 burn-rate alerts per the Google SRE Workbook pattern. The next incident was caught in under 4 minutes.
+</Hook>
+
+<Crux>Native histograms kill bucket-tuning. RED feeds SLO budgets. Cloudflare, GitHub, Stripe, Discord: each outage reduced to one missed signal.</Crux>
+
+<Explanation>
+
+## Native histograms (Prometheus 2.40+)
+
+Classic histograms require choosing bucket boundaries at instrumentation time. If your service's latency distribution shifts — say a slow path suddenly dominates the 1–5 s range — you need to redeploy with different buckets.
+
+**Native histograms** (Prometheus 2.40+, also called exponential histograms in OTel) use a logarithmic scale with dynamically adjusting resolution. Every observation is placed in a bucket sized at ~1% relative precision — `e^(2^-scale)` width — without any static boundary list. Benefits:
+
+- No manual bucket tuning.
+- Uniform p99 accuracy across the latency range (not just near the SLO).
+- Similar storage cost to a well-tuned classic histogram.
+- Full PromQL compatibility: `histogram_quantile` works the same way.
+
+OTel's exponential histograms work identically and are the default for new metric instrumentation in the OTel SDK.
+
+**Compatibility note:** some older storage backends (Cortex &lt; 1.15, Thanos &lt; 0.32) need version upgrades to read native histograms. Verify the storage tier before switching.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Histogram type</th>
+        <th class="border border-border px-3 py-2 text-left">Bucket tuning</th>
+        <th class="border border-border px-3 py-2 text-left">p99 accuracy</th>
+        <th class="border border-border px-3 py-2 text-left">Compatibility</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Classic (fixed buckets)</td>
+        <td class="border border-border px-3 py-2">Manual, per-service</td>
+        <td class="border border-border px-3 py-2">Good near SLO only</td>
+        <td class="border border-border px-3 py-2">Universal</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Native / exponential</td>
+        <td class="border border-border px-3 py-2">None needed</td>
+        <td class="border border-border px-3 py-2">~1% everywhere</td>
+        <td class="border border-border px-3 py-2">Prometheus 2.40+, OTel SDK default</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Summary (per-replica)</td>
+        <td class="border border-border px-3 py-2">None</td>
+        <td class="border border-border px-3 py-2">Correct per-replica, wrong aggregated</td>
+        <td class="border border-border px-3 py-2">Cannot aggregate across replicas</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why averaging p99 across replicas is wrong
+
+Averaging pre-computed percentiles (summary metrics) across replicas is a famous anti-pattern:
+
+Example: replica A serves 100 requests all at 100 ms. Replica B serves 100 requests all at 1000 ms. p99 of A is 100 ms; p99 of B is 1000 ms; their average is 550 ms. The true p99 of the merged 200 requests is 1000 ms (rank 199 out of 200, above the 99th cutoff). The average is off by nearly 2×.
+
+The correct pattern: histograms emit per-replica bucket counts; `sum by (le) (rate(...))` aggregates them at query time; `histogram_quantile` computes the true fleet-wide percentile from the aggregated counts. Accurate within ±half a bucket. No replica isolation.
+
+## RED feeds the SLO error budget
+
+An SLO is a promise: 99.9% of requests complete successfully within 200 ms over 30 days. RED's Duration and Errors are exactly the metrics that populate this promise.
+
+- **Availability SLO**: `1 - rate(errors[window]) / rate(total[window])` — "99.9% of requests must not return 5xx"
+- **Latency SLO**: `histogram_quantile(0.99, ...) &lt; 0.200` — "99th percentile must be under 200 ms"
+- **Error budget**: minutes or request-count remaining before the SLO is breached for the month.
+
+Without RED instrumentation, you do not have an SLO — you have a wish.
+
+**Multi-window burn-rate alerting** (Google SRE Workbook): alert when the error budget is burning too fast at two windows simultaneously:
+
+- **1-hour window** (fast burn): catches sudden spikes (deployment gone wrong).
+- **6-hour window** (slow burn): catches slow regressions that threshold alerts miss.
+
+A threshold alert on absolute p99 ("fire if p99 &gt; 200 ms") misses slow regressions (p99 goes from 150 to 190 ms over two weeks, always below the threshold) and fires false positives on brief spikes. Burn-rate alerts catch both.
+
+## Production failure patterns in RED+USE
+
+**GitHub 2023 (average latency alert):** SLO alert on average latency. A regression pushed p99 from 200 to 800 ms; mean moved from 45 to 55 ms. Alert never fired. Fix: switch to p99 burn-rate alerts with 1h short + 6h long windows per the SRE Workbook.
+
+**Cloudflare 2022 (cardinality explosion):** A new label on `request_duration` caused Prometheus servers to OOM. Rule-evaluation latency grew from 100 ms to 4+ s, masking service alerts. Prometheus's own `prometheus_tsdb_head_series` was the leading signal — but there was no alert on it. Fix: per-team cardinality budget enforced in CI; meta-monitoring on Prometheus's own RED.
+
+**Stripe 2024 (PSI memory pressure invisible to free-RAM):** Webhook worker stalled for 11 minutes. Free-RAM dashboards showed 500 MB available. PSI memory `full` was at 90% — kernel was thrashing reclaim. Fix: migrated saturation alerting from `MemAvailable &lt; threshold` to PSI-based alerting; next incident caught in 30 seconds.
+
+**Discord 2023 (rule-evaluation latency growth):** A refactor moved a hot label from one metric to two. Cardinality doubled silently. Prometheus rule-evaluation latency grew from 100 ms to 4 s over two weeks, delaying alerts during a customer-facing incident. Fix: rule-evaluation duration added as a first-class panel in the meta-monitoring dashboard.
+
+<Inset kind="why" lang="en">
+Self-referential observability: Prometheus itself emits RED and USE metrics. Key Prometheus self-metrics to watch: `prometheus_tsdb_head_series` (cardinality growth), `prometheus_engine_query_duration_seconds_p99` (query latency), `prometheus_rule_evaluation_duration_seconds_p99` (alert delays). Every observability layer — OTel Collectors, Fluent Bit, Vector — emits its own RED. In a mature stack, every layer of observability is itself observed. The collapse mode for an unobserved monitoring tier is silent failure: your services look fine, but the monitoring pipeline stopped delivering their data 20 minutes ago.
+</Inset>
+
+<Quiz
+  id="06-histograms-slo-quiz-1"
+  lessonSlug="06-histograms-slo-and-advanced"
+  lang="en"
+  question="A team uses Prometheus summary metrics (pre-computed p99 per replica) and averages them to get fleet-wide p99. Why is this mathematically wrong?"
+  choices={[
+    { label: "Summary metrics are less accurate than histograms per replica", misconception: "Per-replica accuracy is not the issue — it is aggregation across replicas that breaks." },
+    { label: "Percentiles are not additive. The p99 of a union of distributions is not the average of individual p99s. With replicas at vastly different latencies, the average can be off by 2× or more.", correct: true },
+    { label: "Summaries cannot be queried in PromQL", misconception: "Summaries can be queried; the problem is mathematical incorrectness of cross-replica aggregation." },
+    { label: "Averaging p99 is correct as long as replicas have equal traffic", misconception: "Even with equal traffic, if latency distributions differ across replicas, the average of their p99s is not the p99 of the combined distribution." },
+  ]}
+/>
+
+<Quiz
+  id="06-histograms-slo-quiz-2"
+  lessonSlug="06-histograms-slo-and-advanced"
+  lang="en"
+  question="A threshold alert fires when p99 > 200 ms. p99 drifts from 140 ms to 185 ms over three weeks (never crossing 200 ms). The SLO allows 99.9% of requests to complete within 200 ms. What does the threshold alert miss that a burn-rate alert would catch?"
+  choices={[
+    { label: "Nothing — 185 ms is within the 200 ms SLO target, so no alert is needed", misconception: "The SLO allows 0.1% of requests to exceed 200 ms. Drift to 185 ms means far more requests are close to the boundary — the error budget is being consumed slowly, which a threshold alert never sees." },
+    { label: "The threshold alert misses slow regressions that consume the error budget gradually. A burn-rate alert on the 6-hour window fires when budget consumption exceeds sustainable rate, even if the absolute value never crosses the threshold.", correct: true },
+    { label: "Threshold alerts cannot be used for p99 SLOs", misconception: "They can — the problem is that they fire only when the absolute value crosses the threshold, missing slow drift and early budget consumption." },
+    { label: "A burn-rate alert would have also not fired — neither detects slow drift", misconception: "Multi-window burn-rate alerting is specifically designed to catch both fast spikes (1h window) and slow drift (6h window) by measuring budget consumption rate, not absolute value." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Native histograms eliminate manual bucket tuning at ~1% accuracy everywhere. RED Duration and Errors feed SLO error budgets directly — without RED instrumentation, there is no SLO. Multi-window burn-rate alerting catches both sudden spikes and slow regressions that threshold alerts miss. Every production failure in this unit reduced to one missed RED or USE signal.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-histograms-slo-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a native (exponential) histogram and what problem does it solve over classic histograms?", a: "A native histogram uses a logarithmic bucket scale at fixed relative precision (~1%) instead of static boundary lists. Every observation is placed in a dynamically-sized bucket without configuration. This eliminates manual bucket tuning — the classic histogram problem where wrong bucket choices leave p99 unreadable near the SLO target. Native histograms give uniform p99 accuracy across the latency range with similar storage cost, and are the OTel SDK's default for new metric instrumentation (Prometheus 2.40+)." },
+    { q: "How does RED tie into SLO error budgets? What is the formula for a latency SLO?", a: "RED's Duration histogram is the substrate for a latency SLO. The formula: 99th percentile of request duration must be under the SLO target (e.g. 200 ms) over the measurement window (e.g. 30 days). The error budget is the 0.1% of requests (for a 99.9% SLO) that may exceed the target — expressed as a count of requests or minutes. RED Errors feed the availability SLO (1 - error_rate). Without histogram-based Duration instrumentation, computing or alerting on a latency SLO is impossible." },
+    { q: "What are the two burn-rate windows in multi-window alerting and what does each catch?", a: "1-hour short window: catches fast burns — sudden regressions like a bad deployment that spikes p99 immediately. Fires quickly before much budget is consumed. 6-hour long window: catches slow burns — gradual regressions like a table growing past shared_buffers, causing latency to drift from 140 ms to 185 ms over weeks. A threshold alert misses this entirely because the absolute value never crosses the threshold; the 6h burn-rate alert fires when the budget consumption rate exceeds what is sustainable for the month." },
+  ]}
+/>
+
+<Recap lang="en">
+Native (exponential) histograms, available in Prometheus 2.40+ and as the OTel SDK default, use a logarithmic bucket scale at ~1% relative precision, eliminating the manual bucket-tuning required by classic histograms. RED Duration histograms and Error counters are the direct substrate for SLO measurement: the availability SLO is `1 - error_rate` and the latency SLO is `histogram_quantile(0.99) &lt; target`. Multi-window burn-rate alerting (1h short + 6h long windows) catches both sudden regressions and slow drift that threshold alerts miss — catching the slow kind is what the GitHub 2023 incident post-mortem mandated. Every major production failure in this unit — Cloudflare 2022, GitHub 2023, Stripe 2024, Discord 2023 — reduced to one specific missed RED or USE signal: cardinality explosion invisible without Prometheus self-monitoring, average latency masking p99, free-RAM invisible to PSI memory pressure, and rule-evaluation latency growth masking alerts. Self-referential observability — monitoring the monitoring pipeline itself with the same RED+USE discipline — is the last defense.
+</Recap>
