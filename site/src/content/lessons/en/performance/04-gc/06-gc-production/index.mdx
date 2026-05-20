@@ -1,0 +1,246 @@
+---
+slug: 06-gc-production
+lang: en
+track: performance
+unit: 04-gc
+order: 6
+title: "GC in production: observability, security, edge cases, and fleet governance"
+summary: "GC pressure shows up in production as SLO burns before it shows up as OOMs. Building alloc-rate dashboards, finalizer-safe code, and a one-page runbook accessible to on-call SREs is what separates teams that chase GC fires from teams that prevent them."
+estMin: 20
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/04-gc/04-gc-tuning
+  - performance/04-gc/05-gc-internals
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["gc-observability", "finalizer-storm", "pinned-objects", "allocation-dos", "gc-runbook", "gctrace"]
+sources:
+  - https://go.dev/doc/gc-guide
+  - https://shipilev.net/jvm/anatomy-quarks/
+  - https://discord.com/blog/why-discord-is-switching-from-go-to-rust
+  - https://engineering.linkedin.com/garbage-collection/garbage-collection-optimization-high-throughput-and-low-latency-java-applications
+  - https://netflixtechblog.com/application-data-caching-using-ssds-5bf3995e1cf3
+  - https://owasp.org/www-community/attacks/Denial_of_Service
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Go service starts the day at 1% GC CPU. By minute 60, gctrace shows 39% of every CPU cycle spent in the collector. Concurrent mark time grew from 1.3 ms to 361 ms. The service is in a GC death-spiral — and it will OOM before on-call finishes reading the alert.
+</Hook>
+
+<Crux>GC pressure shows as SLO burns before OOMs. Alloc-rate dashboards and a one-page runbook turn reactive fires into proactive signals.</Crux>
+
+<Explanation>
+
+## Reading gctrace: the Go death-spiral
+
+`GODEBUG=gctrace=1` writes one line per GC cycle:
+
+```
+gc N @Ts X%: Apre+Aconc+Apost ms clock, ... ms cpu, Bpre->Bduring->Bafter MB, goal MB, P
+```
+
+Key fields:
+- `X%` — fraction of CPU spent in GC since program start.
+- `Aconc ms` — time of the concurrent marking phase.
+- `Bpre->Bduring->Bafter` — heap size before, during, and after the cycle.
+- `goal MB` — the heap size the pacer is targeting.
+
+A death-spiral signature:
+
+```
+gc 1   @0.012s  1%: 0.011+1.3+0.018 ms ...  4->4->1 MB,  5 MB goal
+gc 2   @0.045s  3%: 0.024+5.8+0.032 ms ...  5->8->4 MB,  7 MB goal
+...
+gc 487 @61.2s  38%: 0.45+340+1.2 ms  ... 1820->2890->1450 MB, 1900 MB goal
+gc 488 @62.1s  39%: 0.41+352+1.1 ms  ... 1900->2980->1490 MB, 1990 MB goal
+```
+
+Concurrent mark growing from 1.3 ms → 352 ms while GC% rises from 1% to 39% means the pacer cannot finish each cycle before the next allocation wave arrives. The collector falls behind; the pacer responds by scheduling GC more aggressively, which steals CPU, which reduces application throughput, which makes allocation pressure worse relative to available CPU. Left unchecked, this ends in OOM.
+
+**Fix priorities:**
+1. Immediate — find the allocation hotspot via `/debug/pprof/allocs`; reduce allocation rate. Even a 50% cut should drop GC CPU below 15%.
+2. Short-term — set `GOMEMLIMIT` to ~90% of the container's memory limit; the pacer will defend the bound.
+3. Tuning — `GOGC=200` defers GC to when the heap doubles-doubles (trades memory for lower cycle frequency). Only after allocation reduction; it masks, not fixes.
+4. Architecture — if the workload genuinely needs lots of live data, consider off-heap stores (Redis, mmap'd files) instead of in-heap caches.
+
+## Production observability per runtime
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Runtime</th>
+        <th class="border border-border px-3 py-2 text-left">Alloc-rate metric</th>
+        <th class="border border-border px-3 py-2 text-left">Pause metric</th>
+        <th class="border border-border px-3 py-2 text-left">GC CPU metric</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2"><code>runtime/metrics: /gc/heap/allocs:bytes</code></td>
+        <td class="border border-border px-3 py-2"><code>PauseTotalNs</code> rate</td>
+        <td class="border border-border px-3 py-2"><code>gctrace X%</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM</td>
+        <td class="border border-border px-3 py-2">Micrometer <code>gc_memory_allocated_bytes_total</code></td>
+        <td class="border border-border px-3 py-2"><code>gc_pause_seconds</code> histogram</td>
+        <td class="border border-border px-3 py-2">JFR GCCPUTime events</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Node</td>
+        <td class="border border-border px-3 py-2"><code>v8.getHeapStatistics()</code> delta</td>
+        <td class="border border-border px-3 py-2"><code>PerformanceObserver 'gc'</code></td>
+        <td class="border border-border px-3 py-2">No built-in; derive from pause total</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">.NET</td>
+        <td class="border border-border px-3 py-2"><code>dotnet-counters</code> <code>alloc-rate</code></td>
+        <td class="border border-border px-3 py-2">EventCounters <code>gc-pause-time-percent</code></td>
+        <td class="border border-border px-3 py-2"><code>gc-pause-time-percent</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The **senior dashboard pattern** — four panels per service:
+1. Allocation rate (bytes/s) over time.
+2. GC pause distribution (p50/p99/max histogram).
+3. GC CPU share (%).
+4. Heap size vs live-set trend.
+
+Tie to SLO burns: GC pause regressions are a leading indicator for tail-latency SLO violations. Alert on alloc rate crossing a per-service threshold (default 300–500 MB/s/core) for more than 5 minutes; alert on p99 pause above 100 ms (G1) / 5 ms (ZGC) / 50 ms (Go); alert on GC CPU > 10%.
+
+## Security: allocation-driven DoS
+
+An attacker who can cause the server to allocate large objects can drive it to OOM or crippling GC overhead. Heap exhaustion is in the OWASP Top 10 server-side DoS vectors.
+
+**Attack vectors:**
+- Oversized request bodies: parse a 100 MB JSON to discover one bad field.
+- Unbounded query results: return all rows when pagination was expected.
+- Regex bombs: backtracking allocates intermediate matching state.
+- Zip-bomb decompression: small input → huge expansion.
+- Deep JSON nesting: recursive parsers allocate call-stack-equivalent objects.
+
+**Mitigations:**
+- Enforce request body size limits at the gateway (default 1 MB; larger on specific endpoints with explicit auth).
+- Cap query result sizes server-side; never `SELECT *` without a `LIMIT`.
+- Use RE2-based regex engines (no backtracking; linear time).
+- Validate compression ratios before decompressing.
+- Set per-request memory tracking with hard limits and explicit overflow handling.
+
+<Inset kind="why" lang="en">
+Every allocation site that scales with attacker-controlled input needs an explicit bound. The Linux kernel uses kmem_cache limits and cgroup memory caps; application code should mirror this discipline. A single unguarded endpoint that accepts multi-MB payloads can bring down a service by triggering GC pressure that propagates to every request.
+</Inset>
+
+## Edge cases
+
+**Finalizer storms:** registering many objects with finalizers (`Object.finalize` in Java, `runtime.SetFinalizer` in Go, `FinalizationRegistry` in JS) requires the GC to queue them for a separate finalizer thread. A burst of finalisable objects in a tight loop can stall the collector while the finalizer queue drains. File handles, sockets, and native memory held by finalizers remain open until the queue clears.
+
+Fix: avoid finalizers entirely. Use explicit `close()` / `Closeable` / `defer` patterns. In Java, `java.lang.ref.Cleaner` (JDK 9+) is a safer backstop than `finalize()`. In Go, prefer `defer` over `SetFinalizer`.
+
+**Pinned objects:** objects that cannot move (DMA buffers, JNI-pinned arrays, V8 typed-array external memory) prevent the collector from compacting around them. A sustained leak of pinned objects fragments the heap and causes OOM at low utilisation.
+
+Fix: explicit lifecycle for pinning; audit all JNI/native interop for unpinned paths. Alert on heap fragmentation metrics (Go: `HeapInUse - HeapAlloc`; JVM: `HeapUsed - LiveSet`).
+
+**Reference loops with finalizers:** mutual strong references between objects that also have finalizers can prevent reclamation even with a cycle collector, because finalizers must run in a defined order the GC cannot always determine. Fix: WeakRef where appropriate; never combine finalizers with circular strong references.
+
+## History: 1960 to 2024
+
+Five steps in 64 years:
+
+1. **1960** — McCarthy's Lisp introduces mark-sweep. First software GC, batch and slow.
+2. **1970** — Cheney's copying collector. Splits heap, copies live, bump-pointer allocation. Still influences V8's Scavenger.
+3. **1984** — Ungar's generational hypothesis (Berkeley Smalltalk). Most objects die young; exploit it.
+4. **1990s** — Incremental and concurrent GCs (Baker, Yuasa, Dijkstra abstract framework). Pauses drop from seconds to tens of ms.
+5. **2010s–2020s** — Low-pause concurrent collectors (G1, ZGC, Shenandoah, Go's tri-color, V8 Orinoco). Sub-ms pauses on multi-GB heaps. Closed-loop pacers, generational ZGC, energy-aware tuning for cloud workloads.
+
+Each generation lowered pause cost by an order of magnitude. Senior engineers know enough of this lineage to read modern collector documentation and recognise which generation's tradeoffs the docs describe.
+
+## Production stories
+
+**Discord 2020:** chat service tail latency was dominated by GC pauses. Switching to Go 1.14's improved pacer dropped p99 by 40%.
+
+**LinkedIn 2018:** migrated a large Kafka cluster from CMS to G1. p99 latency dropped 25–50% and operator burden fell.
+
+**Netflix 2022:** deployed ZGC across the Cassandra fleet. p99 read latency improved 5–10x with no application code changes.
+
+**Twitter 2019:** a finalizer storm caused OOM in a JVM service. Replaced with explicit `Closeable`.
+
+**Stripe 2023:** a Go service hit `GOMEMLIMIT` during a traffic spike. The pacer kept memory bounded but throughput dropped 15% — diagnosed and fixed by reducing allocations in the hot path.
+
+Pattern: every large production service has a GC story. Senior engineers operate on the assumption that GC will be a question; the goal is to know when it's an answer.
+
+<Quiz
+  id="06-gc-production-quiz-1"
+  lessonSlug="06-gc-production"
+  lang="en"
+  question="A Java service uses Object.finalize() on resources that hold file handles. Under load, open file-handle counts spike unpredictably. Most likely cause?"
+  choices={[
+    { label: "Finalizers run on a separate GC-driven thread with no guaranteed timing. Under load, many finalisable objects accumulate before the finalizer thread processes them, holding their file handles open. Fix: replace with explicit close() / try-with-resources.", correct: true },
+    { label: "GC is broken in this JVM version", misconception: "GC works; finalizers are documented as non-deterministic and explicitly not intended for resource management." },
+    { label: "The OS is leaking file handles", misconception: "The OS assigns handles correctly; the application's non-deterministic release via finalizer timing is the proximate cause." },
+    { label: "The heap needs to be smaller", misconception: "Heap size doesn't influence finalizer timing. The issue is design — finalizers are the wrong mechanism for resource lifecycle." },
+  ]}
+/>
+
+<Quiz
+  id="06-gc-production-quiz-2"
+  lessonSlug="06-gc-production"
+  lang="en"
+  question="An API endpoint accepts a JSON body with no size limit. How does this create an allocation-driven DoS vector?"
+  choices={[
+    { label: "A large or deeply nested JSON body causes the parser to allocate a proportional amount of heap memory per request. Under a burst of oversized requests, allocation rate spikes, GC cycles pile up, and the service's p99 latency degrades for all users — not just the attacker's requests.", correct: true },
+    { label: "JSON parsing is always O(1) memory", misconception: "JSON parsing allocates memory proportional to the input size and nesting depth. Unbounded input = unbounded allocation." },
+    { label: "Only authenticated requests can cause OOM", misconception: "Unauthenticated endpoints accepting large payloads are a classic DoS vector. Authentication check happens after parsing in many frameworks, by which point the allocation has already occurred." },
+    { label: "Rate limiting prevents this attack completely", misconception: "Rate limiting reduces the request rate but a single large-enough request at the limit can still cause severe GC pressure. Body size limits are the correct mitigation layer." },
+  ]}
+/>
+
+<DragOrder
+  id="06-gc-production-drag-1"
+  lessonSlug="06-gc-production"
+  lang="en"
+  prompt="Order the steps in diagnosing a Go GC death-spiral from first symptom to verified fix:"
+  items={[
+    { id: "a", label: "p99 latency alert fires — SLO burn rate elevated" },
+    { id: "b", label: "Check gctrace or Prometheus GC CPU share — confirm GC% is rising" },
+    { id: "c", label: "Capture allocation profile via /debug/pprof/allocs" },
+    { id: "d", label: "Identify the top-N allocation hotspots by cumulative bytes" },
+    { id: "e", label: "Apply targeted fix (pre-size slice, add sync.Pool, defer JSON encode)" },
+    { id: "f", label: "Re-profile to confirm allocation rate dropped ≥50%" },
+    { id: "g", label: "Confirm GC CPU% and p99 returned to baseline" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>GC pause = symptom; allocation pressure = cause. Build alloc-rate dashboards, set GOMEMLIMIT, avoid finalizers for resource management, bound every allocation site that scales with user input, and have a one-page runbook before the first incident.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-gc-production-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through diagnosing and resolving a finalizer storm in a production Java service — metrics, structural fix, and how to prevent recurrence.", a: "A finalizer storm occurs when many objects with finalize() methods become unreachable in a short period; the JVM's finalizer thread cannot keep up, and the finalisable objects (and their file handles, sockets, or native memory) remain pinned. Symptoms: open file-handle count growing without explanation; sudden OOMs at low heap utilisation (objects can't be reclaimed until their finalizers run); GC logs showing the references-pending phase growing; occasional 5–30 second STW pauses during finalizer-queue processing. Detection: monitor java.lang.management.MemoryMXBean.getObjectPendingFinalizationCount(); alert if it crosses ~10,000. Track file-handle counts via lsof or /proc/PID/fd/. Diagnosis: take a heap snapshot; filter by classes with a finalize() override; identify the dominant class. Often a third-party library wraps a native resource with a finalizer for safety; the safety net becomes a liability under churn. Structural fix: replace finalization with explicit lifecycle. Three options in modern Java: (1) AutoCloseable + try-with-resources — the language enforces close() at scope exit; correct for nearly all resource-holding objects. (2) java.lang.ref.Cleaner (JDK 9+) — more efficient than finalize(), runs on a dedicated thread, but still not for primary lifecycle management. (3) Phantom references with a reference queue — for framework-level tracking without finalisation costs. Migration: audit finalize() overrides (usually 1–3 classes); replace with AutoCloseable + ensure all call sites use try-with-resources; add a static-analysis lint rule rejecting new finalize() implementations. Verification: confirm file-handle counts stabilise, OOM rate drops to zero, references-pending metric stays near zero post-deploy." },
+    { q: "Design a GC observability programme for a 20-service polyglot fleet (Go + JVM + Node). What metrics, alerts, and runbook structure gives on-call SREs the signal to diagnose and fix a GC regression within one hour?", a: "Layer 1 — telemetry. Every service publishes language-specific GC metrics to Prometheus. Go: runtime/metrics scraper publishing /gc/heap/allocs:bytes rate, /sched/pauses/total/gc:seconds rate, HeapAlloc, HeapLive. JVM: Micrometer GC binder (gc_pause_seconds histogram, gc_memory_allocated_bytes_total rate, gc_live_data_size gauge). Node: process.memoryUsage().heapUsed + v8.getHeapStatistics() scraped every 15 s; PerformanceObserver for 'gc' events to capture individual pauses. Layer 2 — four Grafana panels per service: (a) allocation rate over time; (b) GC pause histogram (p50/p99/max); (c) GC CPU share; (d) heap size vs live-set trend. Each has an alert: alloc rate > service-specific threshold (default 500 MB/s/core); p99 pause > 100 ms (G1) / 5 ms (ZGC) / 50 ms (Go); GC CPU > 10%; heap > 90% of container limit. Layer 3 — correlation with SLO. Trace samples include GC pause windows in span metadata; queries linking latency outliers to GC cycles surface automatically on SLO burn. Layer 4 — PR-time gate. Critical-path services run a 5-minute load test on canary; CI captures allocation profile and diffs against main baseline; PR is flagged if any function's alloc share grows > 20%. Layer 5 — one-page runbook, four sections: (a) Quick triage — check the four dashboard panels; alloc rate spike → allocation regression; GC CPU rising → death-spiral candidate; pause p99 widening → collector tuning needed; heap creeping without traffic → memory leak. (b) Common causes per language (Go: zero-cap slice + append, missing sync.Pool, fmt.Sprintf on hot path; Java: String concat, autoboxing, unbounded ArrayList; Node: large array reuse, JSON.parse on big payloads). (c) Fix priority — eliminate > pool > escape-analyse > shrink > defer > tune > switch. (d) Verification checklist — re-profile, confirm alloc rate drop, confirm pause drop, confirm headline SLO metric recovered. Quarterly: top-10 services by alloc rate get a 30-minute deep-dive; patterns added to runbook." },
+  ]}
+/>
+
+<Recap lang="en">
+GC death-spirals appear in gctrace as rising GC% and growing concurrent-mark time; the fix is always allocation reduction first, GOMEMLIMIT second, tuning third. Production observability requires four panels per service: alloc rate, pause histogram, GC CPU share, heap vs live-set — wired to Prometheus, alerting before SLO burns. Finalizers are not for resource management: use explicit close() / try-with-resources / defer instead; finalizer storms cause OOM at low heap utilisation. Every allocation site that scales with attacker-controlled input is a DoS vector; enforce body size limits at the gateway and result-size limits at the query layer. Pinned objects fragment the heap; audit JNI and native interop. The one-page runbook — quick triage, common causes per language, fix priority, verification checklist — is what separates teams that prevent GC fires from teams that chase them.
+</Recap>

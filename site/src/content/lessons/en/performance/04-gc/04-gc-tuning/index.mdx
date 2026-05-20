@@ -1,0 +1,188 @@
+---
+slug: 04-gc-tuning
+lang: en
+track: performance
+unit: 04-gc
+order: 4
+title: "GC tuning: pacing, heap shape, and allocation observability"
+summary: "Pacing controls when the GC fires, heap shape distinguishes live data from overhead, and allocation-rate dashboards are the leading indicator every on-call needs. Know the knobs before you touch them."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/04-gc/03-gc-tradeoffs
+deepensInto: []
+spiral: ["latency"]
+concepts: ["gc-pacing", "gomemlimit", "live-set", "heap-shape", "allocation-observability", "object-pooling"]
+sources:
+  - https://go.dev/doc/gc-guide
+  - https://tip.golang.org/doc/gc-guide#GOMEMLIMIT
+  - https://www.oracle.com/technical-resources/articles/java/g1gc.html
+  - https://v8.dev/blog/free-garbage-collection
+  - https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/latency
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Go service is containerised with a 4 GB limit. GOGC is left at the default 100. Under traffic the heap grows to 3.8 GB, the pacer triggers frantic GC cycles, and the pod OOMs. Adding GOMEMLIMIT=3600MiB stops the OOM — no code change, no collector swap.
+</Hook>
+
+<Crux>Pacing controls when GC fires; GOMEMLIMIT caps the ceiling. Live-set drives cycle cost, not RSS. Profile allocation rate before tuning.</Crux>
+
+<Explanation>
+
+## Pacing and the soft memory limit
+
+Modern collectors pace themselves: they predict when the next GC cycle needs to start so it finishes before the heap is exhausted. Go's pacer (redesigned in 1.18, refined in 1.19 with GOMEMLIMIT) blends two signals — heap-growth rate and GC CPU share — into a closed-loop controller. JVM G1's pause-time goal directs its pacer toward keeping pauses under a target.
+
+**Go knobs:**
+- `GOGC=100` (default) — run GC when live bytes double since the last cycle. Increase to defer GC (use more memory, cycle less often); decrease to cycle more often (use less memory, more CPU).
+- `GOMEMLIMIT` — soft cap on total memory the runtime should use. The pacer becomes more aggressive as the process approaches the limit, trading throughput for memory-bound compliance. For containerised services, set to ~90% of the container's memory limit.
+
+**JVM knobs:**
+- `-Xmx` — hard heap ceiling.
+- `-XX:MaxGCPauseMillis=N` — G1 targets N ms pauses by adjusting region sizes and collection frequency. Set too low and G1 over-collects, hurting throughput. Set too high and you get the occasional 200 ms spike.
+
+<Inset kind="why" lang="en">
+In containerised Go services, OOM kills from heap overrun are common when GOMEMLIMIT is unset. The pacer doesn't know about the cgroup limit. Setting GOMEMLIMIT to ~90% of the container limit is the first tuning knob. Only reach for GOGC after that.
+</Inset>
+
+## Heap shape and the live-set distinction
+
+Total heap (RSS) is not the same as live set — the bytes that are actually reachable. A 4 GB RSS may have only 800 MB live; the remaining 3.2 GB is garbage pending the next cycle, or fragmentation, or runtime-reserved arenas.
+
+Marking time is proportional to **live bytes**, not total RSS. GC cycle frequency is proportional to **allocation rate**. Sizing the heap to ~1.5–2x the live set is the canonical tuning target: smaller ratios trigger excessively frequent GC; larger ratios waste memory without a proportional latency win.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Runtime</th>
+        <th class="border border-border px-3 py-2 text-left">Live-set metric</th>
+        <th class="border border-border px-3 py-2 text-left">How to read it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2"><code>runtime.MemStats.HeapLive</code></td>
+        <td class="border border-border px-3 py-2">Bytes marked live after last GC cycle</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM</td>
+        <td class="border border-border px-3 py-2"><code>MemoryUsage.getUsed()</code> post-GC</td>
+        <td class="border border-border px-3 py-2">Old-gen used bytes after a full GC</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">V8 / Node</td>
+        <td class="border border-border px-3 py-2"><code>v8.getHeapStatistics().used_heap_size</code></td>
+        <td class="border border-border px-3 py-2">After forcing GC with <code>--expose-gc</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">.NET</td>
+        <td class="border border-border px-3 py-2"><code>GC.GetTotalMemory(true)</code></td>
+        <td class="border border-border px-3 py-2">Forces collection, returns live bytes</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Workloads with large fluctuating live sets (in-memory caches, large aggregations) need a higher ratio. Small, steady-state services run fine at the lower end.
+
+## Allocation observability per runtime
+
+Without per-runtime instrumentation you diagnose blind.
+
+**Go:** `runtime/metrics` package + `/debug/pprof/allocs` scrape every 30 s. Wire `alloc_bytes_total` and `alloc_objects_total` rate into Prometheus. `GODEBUG=gctrace=1` logs every cycle to stderr — useful in dev, noisy in prod.
+
+**JVM:** `-Xlog:gc*:file=gc.log:time,uptime,level,tags` for rotation-ready GC logs. JFR `ObjectAllocationInNewTLAB` events for allocation profiling. Micrometer exposes `gc_pause_seconds` histogram and `gc_memory_allocated_bytes_total` rate to Prometheus.
+
+**V8 / Node:** `process.memoryUsage().heapUsed` polled every 15 s; `v8.getHeapStatistics()` for a richer view. `perf_hooks.PerformanceObserver` with `'gc'` type captures every pause event programmatically.
+
+**.NET:** `GC.GetTotalAllocatedBytes()` rate + `dotnet-counters monitor` for live readout of `gen-0-gc-count`, `gen-1-gc-count`, `gen-2-gc-count`, and `alloc-rate`.
+
+The cross-runtime alert pattern: **alloc rate trending above the service-specific threshold (typical 300–500 MB/s/core) for more than 5 minutes** triggers investigation. Pair alloc rate with p99 on one chart — when they diverge, GC is the suspect.
+
+## Object pooling: when it works and when it doesn't
+
+Pooling reuses allocations to reduce GC pressure. Works well for objects that are expensive to create, used briefly on hot paths: `bytes.Buffer`, JSON encoders, regexp objects, scratch slices.
+
+**Pooling fails when:**
+- Objects are cheap to create (pool overhead exceeds savings).
+- Objects are long-lived (pool holds memory without freeing).
+- Thread-coordination cost exceeds allocation cost.
+
+Go's `sync.Pool` has an advantage: the GC can drain the pool between cycles, so memory is not locked forever. JVM and .NET object pools hold memory until explicit release — audit their max-pool-size.
+
+The senior rule: **pool only what the profile flags as a hot allocation site**. Don't pool preemptively.
+
+<Quiz
+  id="04-gc-tuning-quiz-1"
+  lessonSlug="04-gc-tuning"
+  lang="en"
+  question="A containerised Go service OOMs sporadically under traffic spikes. The heap is allowed to grow by GOGC=100 (default). What is the first knob to set?"
+  choices={[
+    { label: "GOMEMLIMIT set to ~90% of the container's memory limit. The pacer will defend the bound, accepting higher GC CPU rather than allowing the process to exceed the limit and get OOM-killed.", correct: true },
+    { label: "GOGC=50 to halve the heap growth target", misconception: "GOGC=50 makes the pacer trigger GC more often at lower heap size but doesn't enforce an upper bound — under load the heap still grows beyond what the container allows." },
+    { label: "Add more memory to the container", misconception: "Treats the symptom. GOMEMLIMIT makes the runtime respect the existing container limit without code changes." },
+    { label: "Switch to ZGC", misconception: "ZGC is a JVM collector; this is a Go service. And the root cause is a missing soft limit, not the collector algorithm." },
+  ]}
+/>
+
+<Quiz
+  id="04-gc-tuning-quiz-2"
+  lessonSlug="04-gc-tuning"
+  lang="en"
+  question="A JVM service's GC log shows a 4 GB RSS but a 600 MB live set after each full GC. The heap max is set to 4 GB. What does this tell you about tuning?"
+  choices={[
+    { label: "The heap is sized ~6.7x the live set — far above the 1.5–2x canonical target. Shrinking max-heap to ~1.2 GB would reduce memory cost and probably GC cycle time without hurting pause frequency meaningfully.", correct: true },
+    { label: "The service has a memory leak", misconception: "A stable live set that stays at 600 MB after each GC is not a leak; it's just an oversized heap allocation. A leak would show the post-GC live set growing over time." },
+    { label: "The heap needs to be increased to avoid OOM", misconception: "With 600 MB live and 4 GB max, OOM is not the risk. Reducing the max is appropriate." },
+    { label: "RSS and live set are the same thing", misconception: "RSS includes garbage waiting for the next cycle, fragmentation, and runtime arenas. Live set is only reachable bytes — often a fraction of RSS." },
+  ]}
+/>
+
+<DragOrder
+  id="04-gc-tuning-drag-1"
+  lessonSlug="04-gc-tuning"
+  lang="en"
+  prompt="Order the GC pressure fix levers from highest leverage to lowest:"
+  items={[
+    { id: "a", label: "Eliminate the allocation (in-place mutation, struct-of-arrays, primitives)" },
+    { id: "b", label: "Pool / reuse the allocation (sync.Pool, ObjectPool, bytes.Buffer reset)" },
+    { id: "c", label: "Let escape analysis stack-allocate (smaller object, scope-local)" },
+    { id: "d", label: "Shrink the allocation (smaller struct, smaller buffer, pre-sized container)" },
+    { id: "e", label: "Move allocation off the hot path (cache the result, compute once)" },
+    { id: "f", label: "Tune collector knobs (GOGC, MaxGCPauseMillis, max-old-space-size)" },
+    { id: "g", label: "Switch the collector algorithm (ParallelGC → G1 → ZGC)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Set GOMEMLIMIT (Go) or max-heap (JVM) to the actual workload bound first. Target heap ~1.5–2x live set. Wire alloc-rate dashboards before touching any other knob — tuning without a profile is guessing.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-gc-tuning-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why should heap max-size target ~1.5–2x the live set, and what happens at the extremes?", a: "Live set is the bytes actually reachable after a GC cycle. The heap must be larger than the live set — GC needs room for new allocations between cycles. A ratio of 1.5–2x is empirically where GC-cycle frequency and marking cost balance: frequent enough that garbage doesn't pile up, infrequent enough that per-cycle overhead is acceptable. Below 1.5x: GC runs almost continuously; marking overhead dominates and throughput collapses. Above 3x: memory is wasted, GC is infrequent but each cycle takes longer because there may be more live data to mark, and in containerised environments the excess memory is charged per-second. Workloads with volatile live sets (caches, aggregations that swell on spikes) need headroom at the upper end. Steady-state services with stable live sets run lean at 1.5x. Monitor live-set post-GC (HeapLive in Go, getUsed post-GC in JVM) to know where you are." },
+    { q: "When does object pooling help GC pressure and when does it hurt?", a: "Pooling amortises allocation cost by reusing objects instead of allocating new ones. It helps when the pooled object is expensive to create (e.g. a bytes.Buffer grown to 64 KB, a regexp.Regexp compiled from a pattern, a JSON encoder with an internal scratch buffer) and is used briefly in a hot path — the allocations would otherwise fill the young generation and trigger frequent minor GCs. Pooling hurts in three cases: (1) cheap objects — the pool's mutex or atomic operations cost more than a fresh allocation, so GC pressure rises relative to just allocating. (2) Long-lived objects — pool holds large buffers in memory even when traffic is low; the GC can't reclaim them, raising RSS without reducing pause frequency. (3) Incorrect pool hygiene — pool objects returned with stale state (e.g. a bytes.Buffer not Reset'd) cause subtle data corruption bugs. Go's sync.Pool has the advantage that the GC drains it between cycles, so memory eventually returns to the allocator; JVM and .NET pools hold memory until explicit maxIdle/maxTotal limits are reached. Diagnosis: profile allocations first; pool only the top-N allocation hotspots; verify the alloc rate drop before declaring victory." },
+  ]}
+/>
+
+<Recap lang="en">
+GC pacing uses runtime signals to decide when the next cycle fires. In Go, GOMEMLIMIT is the first knob for containerised services — it keeps the process within its memory budget without code changes. In JVM, MaxGCPauseMillis directs G1 toward a pause target. The heap should be sized to ~1.5–2x the live set: below that, GC runs constantly; above that, memory is wasted. Allocation observability — per-runtime rate dashboards wired to Prometheus — is the leading indicator that catches GC regressions before they become SLO burns. Object pooling reduces GC pressure on hot allocation paths but hurts when objects are cheap or long-lived. Profile allocation rate first; tune collector knobs second; switch algorithms last.
+</Recap>
