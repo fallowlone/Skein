@@ -1,0 +1,167 @@
+---
+slug: 01-the-seven-acts
+lang: ru
+track: databases
+unit: 08-putting-it-together
+order: 1
+title: "Семь актов: от CREATE TABLE до Citus"
+summary: "Один продукт проходит путь от однотабличного MVP до кластера Citus на миллиард строк через семь моментов отказа базы — каждый называет триггер, симптом и рычаг, который его решает."
+estMin: 12
+status: ready
+lessonType: topic
+level: junior
+prereqs:
+  - databases/01-relational-model/01-what-a-relation-is
+  - databases/02-indexes/01-index-anatomy
+  - databases/03-execution-plans/01-explain-and-plans
+  - databases/04-mvcc-isolation/04-vacuum-and-bloat
+  - databases/05-pooling/01-why-pools-exist
+  - databases/06-migrations/01-what-a-migration-is
+  - databases/07-sharding/01-why-sharding-exists
+deepensInto:
+  - databases/08-putting-it-together/02-schema-indexes-plans
+spiral: ["statefulness", "latency"]
+concepts: ["seven-acts", "growth-story", "lever-order", "capstone-synthesis"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://wiki.postgresql.org/wiki/Don't_Do_This
+  - https://github.blog/2021-08-31-partitioning-githubs-relational-databases-scale/
+  - https://docs.citusdata.com/en/stable/
+  - https://www.cybertec-postgresql.com/en/postgresql-vacuum-and-bloat/
+  - https://www.pgmustard.com/blog/postgres-row-estimates-misleading
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+День 0 в SaaS-стартапе. PM просит «поиск пользователей по email». Один инженер, один Postgres, одна таблица. Три года спустя: миллиард строк, шесть шардов Citus и runbook размером с учебник. Между этими двумя точками — семь моментов, когда база ломалась, а команда училась.
+</Hook>
+
+<Crux>Семь прошлых пьес — семь раз, когда продукт обогнал свою базу, начиная с CREATE TABLE. Порядок не опциональный.</Crux>
+
+<Explanation>
+
+Семь пьес этой главы отображаются один к одному на семь актов роста продукта. У каждого акта есть триггер, симптом и рычаг. Пропусти рычаг — следующий акт обойдётся дороже.
+
+**Акт 1 — День 0, проектирование схемы.** «users(email, name, org_id).» Должен ли `email` быть `UNIQUE`? Должен ли `org_id` быть foreign key? Должен ли `prefs` быть отдельной таблицей или `JSONB`? Решения: `email` — это `UNIQUE NOT NULL CITEXT`. `org_id` — это `BIGINT REFERENCES orgs(id) ON DELETE CASCADE`. `prefs` — это `JSONB` с GIN-индексом, когда поиск потребует. Суррогатный `id BIGSERIAL` изолирует от изменений email. Нарушай правило только под давлением throughput, никогда по умолчанию.
+
+**Акт 2 — Неделя 1, 10K строк, первый медленный запрос.** Email-search endpoint p95 растёт с 30 мс до 800 мс. Планировщик делает sequential scan. `CREATE INDEX users_email_idx ON users(email)`. Правило leading-column у B-tree означает `WHERE email = ?` разрешается двумя page reads. p95 падает до 4 мс.
+
+**Акт 3 — Месяц 1, 100K строк, планировщик врёт.** Половина запросов быстрые, половина — 600 мс. `EXPLAIN ANALYZE` показывает: планировщик иногда выбирает seq-scan несмотря на индекс. Row estimate ошибается на 30×: stale statistics. `ANALYZE users;` перестраивает гистограммы. Планировщик выбирает планы из статистики, не из данных; поддержка статистики — это операционная дисциплина.
+
+**Акт 4 — Месяц 6, тихий bloat.** Nightly report runner держит одну транзакцию открытой четыре часа. `VACUUM` не может вернуть мёртвые tuples ниже `xmin`-горизонта. Таблица `users` вздулась с 200 MB до 80 GB. Исправление: убить long transaction, установить `idle_in_transaction_session_timeout = 60s`, запустить `pg_repack` для возврата диска. Постоянное исправление: реплицировать на read replica для отчётов.
+
+**Акт 5 — Год 1, 1M пользователей + 50 app pods, connection storm.** Каждый pod открывает свой Postgres backend на cold-start. На pod-rollout кластер видит 1000 concurrent backends; kernel scheduler трасится; запросы по 4 мс занимают 4 с. PgBouncer в transaction-mode: 100 server-side backends, 10000 client connections мультиплексированы. Правило размера: `pool_size = active_concurrent_transactions × safety_factor`, не `max_app_workers`.
+
+**Акт 6 — Год 2, миграция, которая заморозила prod.** День мультитенантности. `ALTER TABLE users ADD COLUMN tenant_id BIGINT NOT NULL DEFAULT 0` берёт `AccessExclusiveLock` и триггерит полную перезапись таблицы. Prod замерзает на восемь минут. Рецепт expand-contract: добавить nullable column, backfill батчами, add `CHECK ... NOT VALID`, `VALIDATE CONSTRAINT`, `SET NOT NULL`, drop check.
+
+**Акт 7 — Год 3, 1B строк, hot shard.** Citus развёрнут, shard key — `tenant_id`. Tenant `Acme` даёт 40% всех запросов. Шард Acme насыщен, остальные простаивают. Исправление: co-location связанных таблиц на том же shard key; онлайн-решардинг через `citus_rebalance_table_shards`.
+
+<NumbersCard
+  id="card-seven-acts"
+  title="Семь актов — триггер и рычаг"
+  stats={[
+    { label: "Акт 1 — День 0", value: "Схема: суррогатные ключи, FK, ограничения" },
+    { label: "Акт 2 — Неделя 1, 10K строк", value: "Индекс на фильтруемую колонку" },
+    { label: "Акт 3 — Месяц 1, 100K строк", value: "ANALYZE для обновления статистики" },
+    { label: "Акт 4 — Месяц 6, 200 MB → 80 GB", value: "Убить long tx, pg_repack, timeout" },
+    { label: "Акт 5 — Год 1, 50 pods", value: "PgBouncer в transaction-mode" },
+    { label: "Акт 6 — Год 2, мультитенантность", value: "Рецепт expand-contract" },
+    { label: "Акт 7 — Год 3, 1B строк", value: "Шардирование Citus с co-location" },
+  ]}
+  data-lesson-visual
+/>
+
+**Почему порядок важен.**
+
+База под растущим продуктом — это как растущий город. Схема — зонирование. Индексы — карта улиц. Execution plans — диспетчер трафика. MVCC — несколько полос, чтобы машины проезжали без столкновений. Connection pool — парковка. Миграции — строительные бригады, которые не должны закрывать все дороги сразу. Шардирование — присоединение новых районов, когда один квартал не справляется с трафиком. Пропущенный урок означает: город растёт, но не тот слой перегружен.
+
+Каждый акт открывает следующий только если предыдущий пройден правильно. Пропусти Акт 1 (схема) — Акты 2–7 воюют с неэффективными join-ами. Пропусти Акт 2 (индексы) — решения Акта 3 принимаются вслепую. Пропусти Акт 3 (статистика) — единственный рычаг Акта 4 это vacuum. Пропусти Акт 4 (bloat) — потоки пула Акта 5 видят замедляющиеся table scans. Пропусти Акт 5 (пул) — миграции Акта 6 задыхаются от connection storms. Пропусти Акт 6 (lock safety) — шардирование Акта 7 невозможно. Порядок — это ограничение, наложенное физикой и внутренностями Postgres.
+
+<Inset kind="why" lang="ru">
+Цена позднего исправления экспоненциальна: ошибки Акта 1 стоят дней, ошибки Акта 7 — месяцев решардинга. Команды, пропускающие ранние акты, платят катастрофические цены позже. Команды, чрезмерно инженерящие ранние акты (шардинг 10 GB датасета), тратят ресурсы на несуществующие проблемы. Искусство — знать свою траекторию роста и выбирать момент для каждого акта так, чтобы он срабатывал прямо перед тем, как failure modes предыдущего акта становятся болью в production.
+</Inset>
+
+<Quiz
+  id="01-the-seven-acts-quiz-1"
+  lessonSlug="01-the-seven-acts"
+  lang="ru"
+  question="На 10K строк email-search endpoint вдруг медленный. Самый дешёвый первый рычаг?"
+  choices={[
+    { label: "Добавить PgBouncer pool", misconception: "Connection pooling помогает при высоком числе pods, но не при малом объёме данных с отсутствующим индексом." },
+    { label: "Создать индекс на фильтруемую колонку", correct: true },
+    { label: "Сделать шардинг таблицы по tenant_id", misconception: "Шардинг — рычаг года 3, а не недели 1." },
+    { label: "Запустить VACUUM FULL", misconception: "VACUUM помогает с bloat, а не с запросом, у которого нет индекса." },
+  ]}
+/>
+
+<Quiz
+  id="01-the-seven-acts-quiz-2"
+  lessonSlug="01-the-seven-acts"
+  lang="ru"
+  question="Диск заполнен, но количество строк не изменилось. Наиболее вероятная причина?"
+  choices={[
+    { label: "Отсутствующий индекс", misconception: "Индексы используют диск, но редко вызывают внезапный рост без изменения строк." },
+    { label: "Bloat из-за long-running транзакции, блокирующей VACUUM", correct: true },
+    { label: "Query planner сломан", misconception: "Выбор планов не влияет на использование диска." },
+    { label: "Миграция запустилась дважды", misconception: "Migration replays редки; bloat из заблокированного VACUUM — распространённая причина." },
+  ]}
+/>
+
+<Quiz
+  id="01-the-seven-acts-quiz-3"
+  lessonSlug="01-the-seven-acts"
+  lang="ru"
+  question="Почему шардинг — рычаг года 3, а не года 1?"
+  choices={[
+    { label: "Шардинг сложнее индексов и в основном необратим, как только tenants разбросаны по шардам", correct: true },
+    { label: "Шардинг не работает ниже 1B строк", misconception: "Шардинг работает на любом масштабе; операционная сложность — вот что стоит." },
+    { label: "Postgres не поддерживает шардинг", misconception: "Citus, Vitess и declarative partitioning существуют." },
+    { label: "Данные должны быть мигрированы до начала шардинга", misconception: "Причина — операционные издержки и необратимость, а не требования к миграции данных." },
+  ]}
+/>
+
+<DragOrder
+  id="01-the-seven-acts-drag-1"
+  lessonSlug="01-the-seven-acts"
+  lang="ru"
+  prompt="Упорядочи семь scale-tier рычагов от самого раннего (День 0) до самого позднего (Год 3):"
+  items={[
+    { id: "a", label: "Спроектировать реляционную схему (таблицы, ключи, ограничения)" },
+    { id: "b", label: "Добавить правильный индекс для запроса" },
+    { id: "c", label: "Убедиться, что execution plan использует индекс; запустить ANALYZE" },
+    { id: "d", label: "Найти long transaction, блокирующую VACUUM" },
+    { id: "e", label: "Поставить connection pooler перед Postgres" },
+    { id: "f", label: "Мигрировать схему безопасно с expand-contract" },
+    { id: "g", label: "Сделать шардинг самой большой таблицы через узлы" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Семь актов, семь рычагов — схема, индекс, статистика, bloat, пул, миграция, шард. Каждый пропущенный рычаг умножает стоимость следующего уровня. Порядок — ограничение, а не рекомендация; ошибки Акта 1 стоят дней, ошибки Акта 7 — месяцев.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-the-seven-acts-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Назови семь рычагов по порядку и дай один симптом, который сигнализирует о каждом уровне.", a: "Схема (давление greenfield-дизайна). Индекс (одноколоночный запрос медленный — sequential scan при малых данных). Статистика (индекс есть, но seq-scan выбирается половину времени). Bloat (диск полон, количество строк не изменилось, vacuum логирует ноль возвращённого пространства). Пул (cold-start connection storm — 4 мс запросы занимают 4 с). Миграция (ALTER блокирует prod — очередь AccessExclusiveLock). Шардинг (один tenant доминирует по нагрузке — шард насыщен, остальные простаивают)." },
+    { q: "Почему порядок актов важен — почему нельзя 'добавить индексы позже'?", a: "Каждое решение акта предполагает, что предыдущие акты в порядке. Отсутствующий индекс на 10K строк — это однострочный fix; на 1B строк — concurrent build, добавляющий часы write overhead. Важнее: Акт 3 (статистика) полезен только если индексы существуют для выбора планировщиком; потоки пула Акта 5 испытывают table-scan latency как worst case при отсутствии индексов; Акт 7 распределяет уже медленный запрос по шардам и делает его ещё медленнее. Порядок — ограничение, наложенное внутренностями Postgres." },
+    { q: "Проследи городскую метафору: сопоставь каждый слой (схема, индекс, планы, MVCC, пул, миграции, шардинг) с элементом города.", a: "Схема = зонирование (решения об использовании земли, принятые в день 0, которые дорого менять). Индекс = карта улиц (как найти строку). Планы/статистика = диспетчер трафика (выбирает дороги на основе последних данных о трафике). MVCC = несколько полос (машины проезжают без столкновений). Пул = парковка (ограниченные места, мультиплексированные среди водителей). Миграции = строительные бригады (нельзя закрывать все дороги сразу; expand-contract — рецепт одной полосы за раз). Шардинг = присоединение новых районов (когда один квартал не справляется с нагрузкой)." },
+  ]}
+/>
+
+<Recap lang="ru">
+База продукта проходит через семь уровней роста, каждый со своим триггером и единственным правильным рычагом. Решения схемы, принятые в День 0, компонуются в каждый последующий акт — суррогатный ключ и правильные FK-ограничения это дешёвые greenfield-решения, которые становятся дорогостоящими ретрофитами на масштабе. Индексы исправляют запросы при 10K строк; отсутствие индекса при 1B строк — это многочасовой concurrent build под трафиком. Устаревшая статистика заставляет планировщик игнорировать существующие индексы; ANALYZE — это операционная дисциплина. Bloat от долгой транзакции может вырастить таблицу 200 MB до 80 GB за дни; рычаг — убить long transaction, а не добавлять диск. Connection storms при pod-rollout требуют connection pooler, а не больше backends. Миграции схемы с AccessExclusiveLock ставят в очередь каждый запрос; expand-contract избегает заморозки. Шардинг распределяет нагрузку, но умножает каждую операционную задачу — это последнее средство, применяемое намеренно после всех предыдущих рычагов. Порядок — ограничение, наложенное внутренностями Postgres: пропусти один акт и каждый последующий обходится экспоненциально дороже.
+</Recap>

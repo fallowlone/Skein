@@ -1,0 +1,167 @@
+---
+slug: 02-schema-indexes-plans
+lang: en
+track: databases
+unit: 08-putting-it-together
+order: 2
+title: "Acts 1–3 in depth: schema, indexes, and planner statistics"
+summary: "The first three acts compound irreversibly — a wrong type is a multi-day migration at 100M rows, the leading-column rule is the most violated principle in the wild, and stale statistics make the planner choose the wrong plan 1000× slower."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/01-the-seven-acts
+  - databases/01-relational-model/06-schema-integrity
+  - databases/02-indexes/02-leading-column-rule
+  - databases/03-execution-plans/04-statistics-and-analyze
+deepensInto:
+  - databases/08-putting-it-together/03-mvcc-pool-migrations
+spiral: ["statefulness", "latency"]
+concepts: ["schema-irreversibility", "leading-column-rule", "stale-statistics", "compound-cost"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://wiki.postgresql.org/wiki/Don't_Do_This
+  - https://www.pgmustard.com/blog/postgres-row-estimates-misleading
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A team adds a `TEXT` column for email instead of `CITEXT` on Day 0. Six months and 100M rows later, a case-sensitivity bug requires a full-table type change. The original schema decision — made in five seconds — costs three days and a maintenance window. Schema is the only act where the cost of being wrong is irreversible.
+</Hook>
+
+<Crux>Schema decisions are irreversible at scale; indexes are cheap to add but costly wrong; stale statistics can make the planner 1000× slower.</Crux>
+
+<Explanation>
+
+## Act 1 — Schema: the one irreversible decision
+
+A wrong type (`TEXT` vs `CITEXT` for email) becomes a multi-day migration at 100M rows. A wrong key choice (composite natural key vs surrogate `BIGSERIAL`) makes every join expensive forever. The relational model rewards strictness up front:
+
+- **`NOT NULL` by default** — nullable columns invite application-level null checks that should be database constraints.
+- **FK constraints unless you have measured throughput pressure** — referential integrity prevents orphaned child rows that produce wrong query results at scale.
+- **`CHECK` constraints for business invariants** — a direct SQL update can create invalid state without them.
+- **Surrogate keys for external references** — `id BIGSERIAL` insulates from email changes; retrofitting surrogate keys at 1B rows requires a full table rewrite.
+
+Schema mistakes and their escape hatches:
+
+- A composite natural key (user_id, organization_id, email) as the PK means every join carries three columns; every FK replicates three columns. Fix: surrogate `id` is cheaper, but retrofitting requires a migration that rewrites the table.
+- A missing FK on a child table means no referential integrity; the data decays over time. Fix: add the FK retroactively — but first fix orphaned child rows.
+- A missing `CHECK` constraint on a domain-specific column (status must be one of ACTIVE, PENDING, ARCHIVED) means the application is the only guard. Fix: add the constraint, quarantine invalid existing rows.
+
+Bend the rules only with evidence — disable FK on the highest-write child tables if the FK trigger cost exceeds the write budget, never as a stylistic preference.
+
+## Act 2 — Indexes: pay back cost only on the right columns
+
+A B-tree on `email` resolves `WHERE email = ?` in O(log N) page reads. A B-tree on `(org_id, created_at DESC)` resolves "the 50 latest events for an org" in two page reads. A GIN index on `prefs jsonb` makes `WHERE prefs @> '{"theme":"dark"}'` a 2 ms lookup instead of a 4 s seq-scan.
+
+**The forgotten cost:** every insert and update writes to every index. The leading-column rule is the most-violated principle in the wild.
+
+Index selection failures:
+
+- A B-tree index on a low-cardinality column (gender with 2 values, status with 5 values) is almost always a waste — the planner chooses seq-scan and the index eats write throughput.
+- An index on `(a, b)` does **not** help queries that filter only by `b`. A `(user_id, created_at)` index built for "events for a user" does not help "recent events by anyone." A separate `(created_at, user_id)` index satisfies both and the planner picks it based on the query.
+- JSONB indexes (GIN or GIST) are powerful but expensive on writes — 100K inserts/second can halve write throughput if the JSONB column is indexed naively.
+- **Partial indexes** solve the write-throughput problem for dimension tables: `CREATE INDEX ... WHERE status != 'ARCHIVED'` covers the 5% of active rows at a fraction of the cost.
+
+The cost of being wrong here is permanent: legacy apps inherit the bad column order, and any attempt to drop the index for remediation risks query regressions in undocumented code paths.
+
+## Act 3 — Statistics: the planner picks plans from histograms
+
+Postgres samples the table during `ANALYZE` and builds a histogram per column. The planner uses histograms to estimate row counts; the cost model ranks plans. When statistics are stale, estimates are wrong.
+
+A 1000× off estimate produces a 1000× slower plan: the planner picks a nested loop expecting 10 rows; the real cardinality is 10000 rows; the loop scans 10M index entries instead of one hash join over a 10K-row build side.
+
+Defence:
+- `autovacuum_analyze_scale_factor = 0.05` (or smaller, 0.01) on busy tables — at the default 0.1, a table that grows by 1M rows per day has stale stats within hours.
+- `CREATE STATISTICS (dependencies) ON user_id, created_at FROM events` teaches the planner column correlations (new users tend to appear in recent data; the planner assumes independence by default).
+- `pg_stat_statements` to find the offending plans by total execution time.
+- `auto_explain.log_min_duration = '500ms'` for tail-latency triage.
+
+The trap at scale: a single bad estimate cascades. The planner caches plan IDs (`pg_stat_statements.plan_id`); a human has to find and force a replan by dropping and re-creating the query's prepared statement, or by running `DISCARD PLANS`.
+
+<NumbersCard
+  id="card-acts-1-3-numbers"
+  title="Acts 1–3 cost and fix times"
+  stats={[
+    { label: "Schema: fix wrong type at 1M rows", value: "hours" },
+    { label: "Schema: fix wrong type at 100M rows", value: "days + maintenance window" },
+    { label: "Index lookup in shared_buffers (L3 cache)", value: "5–50 µs" },
+    { label: "Index lookup from SSD", value: "5–10 ms" },
+    { label: "Seq-scan of 1 GB table on SSD", value: "1–3 s" },
+    { label: "autovacuum analyze on default 0.1 factor", value: "triggers after 100K new rows" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="en">
+A `work_mem` limit (default 4 MB) affects sorts and hash joins. If the planner's estimates are wrong and the actual data requires more `work_mem` than available, the query spills to disk and becomes very slow. Re-analyzing solves the estimate problem; increasing `work_mem` solves the hash-build problem; neither is a long-term substitute for correct statistics.
+</Inset>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-1"
+  lessonSlug="02-schema-indexes-plans"
+  lang="en"
+  question="An index exists on (user_id, created_at). A query filters only by created_at. What happens?"
+  choices={[
+    { label: "The planner cannot use this index for a created_at-only filter — the leading column is user_id — and may do a seq-scan", correct: true },
+    { label: "The planner uses the index because created_at is the second column", misconception: "A B-tree index on (a, b) can be used for queries filtering on a alone, or (a, b) together, but not on b alone. The leading-column rule is the most violated principle in the wild." },
+    { label: "Postgres automatically creates an index on created_at when user_id is indexed", misconception: "Postgres does not automatically create secondary indexes. You must create them explicitly." },
+    { label: "The index will be used if created_at has low cardinality", misconception: "Low cardinality makes an index less useful, not more. And the leading-column rule applies regardless of cardinality." },
+  ]}
+/>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-2"
+  lessonSlug="02-schema-indexes-plans"
+  lang="en"
+  question="autovacuum_analyze_scale_factor = 0.1 (the default). A table grows by 1M rows per day. How often does ANALYZE run?"
+  choices={[
+    { label: "After 10% of the table changes — at 10M rows, only after 1M changes; statistics may be stale for hours", correct: true },
+    { label: "ANALYZE runs every night regardless of row count", misconception: "autovacuum_analyze fires based on the analyze_scale_factor threshold — a fraction of table size — not on a clock schedule." },
+    { label: "ANALYZE runs after every INSERT", misconception: "That would be far too expensive. ANALYZE runs when the fraction of changed rows exceeds autovacuum_analyze_scale_factor × total rows." },
+    { label: "The scale factor does not affect analyze frequency, only vacuum frequency", misconception: "autovacuum_analyze_scale_factor specifically controls ANALYZE triggering. autovacuum_vacuum_scale_factor controls vacuum." },
+  ]}
+/>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-3"
+  lessonSlug="02-schema-indexes-plans"
+  lang="en"
+  question="You add a surrogate BIGSERIAL id to a table that already uses email as the natural key. What is the primary benefit at year-3 scale?"
+  choices={[
+    { label: "The surrogate id insulates every FK reference from email changes — altering the email column does not cascade to child tables or require index rebuilds across the schema", correct: true },
+    { label: "The surrogate id makes queries faster because integers are smaller than text", misconception: "Query speed is a secondary benefit. The primary benefit is schema stability — the id is a stable, opaque handle that decouples business data from structural references." },
+    { label: "BIGSERIAL generates globally unique ids across shards", misconception: "BIGSERIAL is a per-sequence incrementor, not globally unique across shards. For distributed unique ids you need UUID or a sequence-per-shard approach." },
+    { label: "The surrogate id removes the need for foreign keys", misconception: "Surrogate ids make FKs cheaper and more stable, but they do not replace the referential integrity that FKs enforce." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Schema is irreversible — wrong types and missing surrogate keys compound into multi-day migrations at scale. The leading-column rule is the most-violated index principle: an index on (a, b) does not help b-only queries. Stale statistics cause the planner to choose plans 1000× slower; set autovacuum_analyze_scale_factor = 0.01 on high-growth tables and use CREATE STATISTICS for correlated columns.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-schema-indexes-plans-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is schema described as the 'one irreversible decision' and what does that mean operationally?", a: "Schema changes at scale require locking or rewriting rows — operations that are seconds on a 1K-row table and days on a 100M-row table. A wrong type (TEXT vs CITEXT) must change every stored value. A missing surrogate key means every FK must reference a potentially-mutable natural key. A composite natural key PK means every child table carries those N columns as a FK. These cannot be fixed in place; they require migrations that either block writes (AccessExclusiveLock) or use expand-contract (5+ steps). The earlier the fix, the cheaper. At 1B rows, any schema change is a multi-week project." },
+    { q: "Explain the leading-column rule and give an example of how violating it causes a production incident.", a: "A B-tree index on (a, b) supports queries filtering on a, or on (a, b), but not on b alone. The planner cannot start an index scan from an arbitrary position in the second column. Example: a team creates (user_id, created_at) to support 'events for user X'. Later the dashboard queries 'recent events by anyone, regardless of user', filtering only by created_at. The planner does a seq-scan; the dashboard is slow. The fix is a separate index on created_at or (created_at, user_id). If the bad index was created years ago on a large table, dropping it risks regressions in code paths that use it for the (user_id, created_at) filter — you cannot safely drop it without auditing all query paths." },
+    { q: "What is the cascade failure when statistics are stale and how do autovacuum_analyze_scale_factor and CREATE STATISTICS fix it?", a: "Stale statistics cause the planner to estimate the wrong row count. A 1000× off estimate forces a nested loop instead of a hash join, turning a 5 ms query into a 5 s query. autovacuum_analyze_scale_factor = 0.01 triggers ANALYZE after 1% of rows change, not 10% — keeping statistics fresh on high-growth tables. CREATE STATISTICS teaches the planner column correlations (e.g., user_id and created_at are correlated — new users appear in recent rows) that the default histogram assumes are independent. Without this, the planner underestimates rows for multi-column predicates and picks nested loops over hash joins." },
+  ]}
+/>
+
+<Recap lang="en">
+Acts 1–3 are the foundation that every later act builds on. Schema is irreversible — wrong types and missing surrogate keys become multi-day migrations at 100M rows; the rule is `NOT NULL` by default, FK unless you have measured throughput pressure, and surrogate keys for external references. The leading-column rule governs every B-tree index: an index on (a, b) does not help b-alone queries, and getting this wrong permanently slows the queries that need b — the fix is a new index, but the old bad index cannot be safely dropped without an audit. Statistics decay as the table grows faster than autovacuum's default threshold; the defence is a lower `autovacuum_analyze_scale_factor` on high-growth tables and `CREATE STATISTICS` for correlated columns. All three acts share a theme: the cost of the right decision at Day 0 is near zero; the cost of retrofitting the wrong decision at Year 3 is exponential.
+</Recap>
