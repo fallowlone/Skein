@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (29/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 1/8) ← **RESUME HERE: observability/02-structured-logging**
+- [ ] **Phase B** — content migration (30/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 2/8) ← **RESUME HERE: observability/03-otel**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -286,7 +286,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-join-keys-and-exemplars (middle)
   - [x] 06-observability-2-0 (senior)
   - [x] 07-failure-modes-and-practice (senior)
-- [ ] 02-structured-logging  - [ ] 03-otel  - [ ] 04-red-use
+- [x] 02-structured-logging → 7 lessons, commit `0b87822` (reconcile after subagent timeout)
+  - [x] 01-why-structured-logs (junior)
+  - [x] 02-log-schema (middle)
+  - [x] 03-levels-and-routing (middle)
+  - [x] 04-sampling-and-cost (middle)
+  - [x] 05-pii-redaction (senior)
+  - [x] 06-trace-context-in-logs (senior)
+  - [x] 07-otel-model-and-audit (senior)
+- [ ] 03-otel  - [ ] 04-red-use
 - [ ] 05-slo-budgets  - [ ] 06-trace-propagation  - [ ] 07-profiling  - [ ] 08-putting-it-together
 
 **performance**
