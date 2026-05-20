@@ -1,0 +1,187 @@
+---
+slug: 02-gc-algorithms
+lang: ru
+track: performance
+unit: 04-gc
+order: 2
+title: "Алгоритмы GC: поколенческая гипотеза, concurrent marking и write barrier"
+summary: "Большинство объектов умирают молодыми — generational коллекторы используют это. Concurrent marking делает работу параллельно с приложением, но требует write barriers. Go, JVM, V8 и .NET реализуют эти идеи по-разному."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/04-gc/01-gc-basics
+deepensInto: []
+spiral: ["latency"]
+concepts: ["generational-gc", "concurrent-marking", "write-barrier", "minor-gc", "major-gc"]
+sources:
+  - https://v8.dev/blog/trash-talk
+  - https://go.dev/blog/ismmkeynote
+  - https://openjdk.org/jeps/333
+  - https://devblogs.microsoft.com/dotnet/server-gc-2/
+  - https://docs.python.org/3/c-api/refcounting.html
+  - https://dl.acm.org/doi/10.1145/800017.800444
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+JVM-сервис имеет кучу 8 ГБ. 95% объектов живут менее 200 мс. Классический stop-the-world коллектор должен сканировать все 8 ГБ при каждом цикле. Generational коллектор сканирует только 256 МБ молодого поколения — и возвращает 95% мусора за ту же цену.
+</Hook>
+
+<Crux>Большинство объектов умирают молодыми. Generational GC собирает молодое поколение часто и дёшево. Concurrent marking скрывает паузу.</Crux>
+
+<Explanation>
+
+## Mark-and-sweep: фундамент
+
+Любой tracing GC следует одной схеме. Кратко паузит приложение, собирает корни GC: активные регистры CPU, стек каждого потока, глобальные переменные, JNI-дескрипторы. От корней обходит граф ссылок — каждый достижимый объект «живой»; всё недостижимое — «мусор». Маркирует живые объекты (переключает бит в заголовке или в побочной таблице). После маркировки выполняет sweep: проходит кучу, возвращает память немаркированных объектов в free-list.
+
+Варианты компактизируют (перемещают живые объекты, устраняя фрагментацию) и могут использовать bump-pointer allocation для быстрых последующих аллокаций.
+
+Наивный алгоритм — stop-the-world mark-and-sweep: пауза на всё, маркировка, очистка, возобновление. Полное время паузы растёт с размером кучи. Для кучи 32 ГБ это могут быть секунды — неприемлемо для latency-sensitive сервиса. Каждый современный GC — вариант, сокращающий эту паузу.
+
+## Поколенческая гипотеза
+
+Самое важное эмпирическое наблюдение в исследованиях GC: **большинство объектов умирают молодыми**. Приходит запрос, аллоцирует кучу временных объектов (распарсенное тело, промежуточные строки, билдеры ответа), обслуживает ответ, отбрасывает всё. Выжившие — долгоживущие (кэши, конфигурация, пулы соединений).
+
+Generational коллекторы делят кучу на молодое поколение (small, собирается часто) и старое поколение (большое, собирается редко). Аллокации идут в молодое; выжившие «продвигаются» в старое после нескольких циклов.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Поколение</th>
+        <th class="border border-border px-3 py-2 text-left">Размер</th>
+        <th class="border border-border px-3 py-2 text-left">Частота сборки</th>
+        <th class="border border-border px-3 py-2 text-left">Тип цикла</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Молодое (Young / Gen 0)</td>
+        <td class="border border-border px-3 py-2">256 МБ – 2 ГБ</td>
+        <td class="border border-border px-3 py-2">Часто (ms до секунды)</td>
+        <td class="border border-border px-3 py-2">Minor GC</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Старое (Old / Gen 2)</td>
+        <td class="border border-border px-3 py-2">ГБ – десятки ГБ</td>
+        <td class="border border-border px-3 py-2">Редко (секунды – минуты)</td>
+        <td class="border border-border px-3 py-2">Major / Full GC</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Математика: если 95% объектов умирают в молодом поколении, minor GC возвращает 95% аллоцированных байт, пройдя только по (меньшей) молодой куче. Исключение: concurrent GC Go непоколенческий — единая куча, tri-color маркировка. Аргумент команды Go: простота рантайма и равномерный профиль пауз важнее выигрыша в throughput от поколенческого подхода.
+
+## Concurrent marking и write barriers
+
+Чтобы добиться пауз ниже 10 мс на кучах в несколько ГБ, маркировка должна происходить **пока приложение работает**. Это concurrent marking: GC работает как параллельный поток, обходя граф объектов вместе с mutator-потоками (потоками приложения).
+
+Проблема: приложение может изменять ссылки во время маркировки. Поэтому нужен write barrier — небольшой код, выполняемый при каждой записи ссылки в приложении, информирующий GC о новой ссылке, чтобы ничего не было пропущено.
+
+Два подхода:
+- **Snapshot-at-the-beginning (SATB):** барьер маркирует *старую* ссылку, которую вот-вот перезапишут, обеспечивая её выживание в текущем цикле. Используется в G1, Shenandoah, ZGC, Go.
+- **Incremental-update:** барьер маркирует *новую* ссылку, записанную в поле черного объекта. Используется в CMS, классическом V8 mark-compact.
+
+Стоимость: ~2–10% CPU на каждой записи ссылки — цена concurrent маркировки.
+
+## Обзор рантаймов
+
+**Go:** concurrent tri-color непоколенческий mark-sweep без компактизации. Запускается по rate аллокаций; pacer удерживает STW-паузы ниже 1 мс. `GOGC` управляет целевым ростом кучи (по умолчанию 100% = удвоение); `GOMEMLIMIT` (добавлен в 1.19) — мягкий лимит памяти.
+
+**JVM:** G1 — по умолчанию для большинства серверов, region-based, generational с concurrent marking, паузы 10–50 мс типично. ZGC (JEP 333 + 377) — субмиллисекундные паузы на кучах до 16 ТБ, colored pointers + load barriers. Shenandoah (Red Hat) — схожие цели с Brooks pointers.
+
+**V8:** generational Scavenger для молодого (semi-space copying), Mark-Compact для старого. Проект Orinoco добавил concurrent marking + parallel compaction (с 2017 г.). Куча ограничена на изолят (~1,5 ГБ по умолчанию в Node, настраивается через `--max-old-space-size`).
+
+**.NET:** workstation/server GC, generational (gen 0/1/2 + LOH), background concurrent marking; настраивается через `GCSettings.LatencyMode`.
+
+**CPython:** reference counting (объект освобождается при refcount=0, без больших пауз) + cycle collector для ссылочных циклов через трассировку; GIL сериализует мутацию, но подсчёт ссылок стоит ~10–20% throughput.
+
+<Inset kind="why" lang="ru">
+Go непоколенческий, потому что escape analysis переносит большую часть аллокаций в стек, а не в кучу. Короткоживущие локальные объекты часто не попадают в кучу вообще — поколенческий коллектор не помог бы там, где мусора нет. Всё, что попадает в кучу, Go обрабатывает единым concurrent mark-sweep.
+</Inset>
+
+<Quiz
+  id="02-gc-algorithms-quiz-1"
+  lessonSlug="02-gc-algorithms"
+  lang="ru"
+  question="Почему generational GC собирает только молодое поколение в большинстве циклов?"
+  choices={[
+    { label: "Поколенческая гипотеза: большинство объектов умирают молодыми. Собирая только маленькое молодое поколение, коллектор возвращает ~95% мусора за малую долю стоимости полной сборки.", correct: true },
+    { label: "Старые объекты не могут быть мусором", misconception: "Старые объекты тоже могут стать мусором — именно для этого и нужны major GC. Они просто реже становятся мусором, поэтому major GC запускается реже." },
+    { label: "Minor GC быстрее из-за меньшего числа потоков", misconception: "Скорость minor GC определяется размером молодого поколения и поколенческой гипотезой, а не числом потоков." },
+    { label: "JVM не может сканировать старое поколение", misconception: "JVM сканирует старое поколение при major/full GC. Generational подход — оптимизация, а не ограничение." },
+  ]}
+/>
+
+<Quiz
+  id="02-gc-algorithms-quiz-2"
+  lessonSlug="02-gc-algorithms"
+  lang="ru"
+  question="Для чего нужен write barrier при concurrent маркировке?"
+  choices={[
+    { label: "Concurrent маркировка выполняется параллельно с мутаторными потоками. Мутатор может изменить ссылку после сканирования объекта. Без барьера изменённая ссылка будет пропущена, и живой объект будет собран. Барьер перехватывает каждую запись ссылки и информирует GC.", correct: true },
+    { label: "Write barrier ускоряет маркировку за счёт параллелизма", misconception: "Write barrier не ускоряет маркировку — он добавляет накладные расходы (~2-10% CPU). Его цель — корректность, а не скорость." },
+    { label: "Write barrier нужен только при stop-the-world GC", misconception: "Stop-the-world GC не нуждается в write barriers, потому что мутаторы остановлены. Write barriers нужны именно при concurrent маркировке." },
+    { label: "Write barrier предотвращает утечки памяти", misconception: "Write barriers обеспечивают корректность маркировки, а не управляют утечками памяти." },
+  ]}
+/>
+
+<Quiz
+  id="02-gc-algorithms-quiz-3"
+  lessonSlug="02-gc-algorithms"
+  lang="ru"
+  question="Python-сервис однопоточный из-за GIL, но всё равно имеет GC-накладные расходы. Какова их основная причина?"
+  choices={[
+    { label: "Reference counting на каждом присваивании PyObject — каждое связывание переменной, каждый вызов функции, каждая операция с атрибутом инкрементирует или декрементирует счётчик. Cycle collector — небольшие дополнительные расходы поверх.", correct: true },
+    { label: "Tracing mark-sweep", misconception: "Основной механизм CPython — reference counting; трассировка используется только для циклов." },
+    { label: "Stop-the-world паузы", misconception: "CPython не имеет больших STW-пауз как JVM/Go; расходы на подсчёт ссылок инкрементальные." },
+    { label: "GC-потоки", misconception: "Сборка циклов однопоточная, но редкая." },
+  ]}
+/>
+
+<DragOrder
+  id="02-gc-algorithms-drag-1"
+  lessonSlug="02-gc-algorithms"
+  lang="ru"
+  prompt="Расставьте фазы concurrent GC цикла — от запуска до возобновления:"
+  items={[
+    { id: "a", label: "Начальная STW-пауза: сканирование корней (регистры, стеки)" },
+    { id: "b", label: "Concurrent маркировка: GC-поток обходит граф объектов параллельно с приложением" },
+    { id: "c", label: "Write barriers перехватывают изменения ссылок во время маркировки" },
+    { id: "d", label: "Финальная STW-пауза: remark — фиксация изменений, сделанных во время concurrent фазы" },
+    { id: "e", label: "Concurrent очистка: возврат памяти немаркированных объектов" },
+    { id: "f", label: "Возобновление на полной скорости" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Большинство объектов умирают молодыми: generational GC использует это, собирая маленькое молодое поколение часто и дёшево. Concurrent marking скрывает работу ценой write barriers (~2-10% CPU). Go сознательно непоколенческий; JVM, V8 и .NET поколенческие. Зная архитектуру рантайма, лучше понимаешь, почему определённые паттерны аллокаций дорогие.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-gc-algorithms-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните поколенческую гипотезу и почему она определяет большинство production GC. Приведите один контрпример.", a: "Поколенческая гипотеза — эмпирическое наблюдение: большинство аллоцированных объектов умирают молодыми. Типичный обработчик запросов аллоцирует много короткоживущих объектов (распарсенные входные данные, промежуточные строки, билдеры ответа) и очень мало долгоживущих (кэши, конфиги, пулы). Generational коллекторы используют это, разделяя кучу на молодое поколение (маленькое, собирается часто) и старое (большое, собирается редко). Аллокации идут в молодое. Minor GC обходит только молодую кучу, эвакуирует выживших в старое и возвращает всё остальное. Математика: если 95% объектов умирают в молодом поколении, minor GC возвращает 95% аллоцированных байт, пройдя только по маленькой молодой куче. Контрпример: GC Go непоколенческий — единая куча, concurrent tri-color mark. Аргумент команды Go: простота рантайма и равномерный профиль пауз важнее выигрыша в throughput. Escape analysis Go снижает давление на кучу настолько, что поколенческая сложность того не стоит. Go с sub-ms паузами на большинстве workloads подтвердил этот выбор." },
+    { q: "Почему сокращение rate аллокаций — более долгосрочное решение, чем настройка параметров GC? Как измерить rate аллокаций в production?", a: "Настройка параметров GC (размер кучи, цель по паузам, соотношения поколений) оптимизирует стоимость работы, которую GC должен выполнить; сокращение аллокаций устраняет саму работу. Настройка ограничена — паузу 200 мс можно сократить до 50 мс, но не до 0; с тем же rate аллокаций коллектор всё равно запускается и паузит. Сокращение аллокаций принципиально неограничено: каждый байт, который не аллоцируется, — байт, которым GC не надо управлять. Измерение в production: Go: runtime.MemStats.Mallocs (счётчик аллокаций) и TotalAlloc (накопленные байты), rate изменения — это rate аллокаций. JVM: jstat -gcutil или JFR ObjectAllocationInNewTLAB, или async-profiler -e alloc. V8: --trace-gc + дельта heap-snapshot. .NET: PerfView alloc events или dotnet-counters. Паттерн алерта: rate аллокаций > порог сервиса (обычно 300-500 МБ/с) в течение >5 минут." },
+  ]}
+/>
+
+<Recap lang="ru">
+Любой tracing GC следует схеме mark-sweep: паузит для сбора корней, маркирует достижимое, возвращает остальное. Generational коллекторы используют поколенческую гипотезу (большинство объектов умирают молодыми), собирая маленькое молодое поколение часто и дёшево. Concurrent marking выполняет большую часть маркировки параллельно с приложением; write barriers (~2-10% CPU) поддерживают корректность маркировки при изменении ссылок. Go непоколенческий по дизайну; JVM (G1/ZGC/Shenandoah), V8 (Orinoco), .NET и многие другие поколенческие. Зная архитектуру рантайма, понимаешь, почему определённые паттерны аллокаций дорогие и как их исправить.
+</Recap>
