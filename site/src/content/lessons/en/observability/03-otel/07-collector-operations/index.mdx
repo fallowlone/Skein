@@ -1,0 +1,209 @@
+---
+slug: 07-collector-operations
+lang: en
+track: observability
+unit: 03-otel
+order: 7
+title: "Operating the OTel Collector: reliability, version skew, failure modes, and governance"
+summary: "The Collector is critical-path observability infrastructure. HA gateway (3+ replicas), persistent queue, meta-monitoring, conservative version upgrades, and Semantic Convention governance — these are the disciplines that prevent silent telemetry loss."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/03-otel/06-vendor-neutrality-and-advanced"]
+deepensInto: []
+spiral: ["latency", "encapsulation"]
+concepts: ["collector-reliability", "persistent-queue", "version-skew", "semantic-convention-governance", "collector-self-monitoring", "failure-modes", "cardinality-leak"]
+sources:
+  - https://opentelemetry.io/docs/collector/
+  - https://opentelemetry.io/docs/collector/deployment/gateway/
+  - https://opentelemetry.io/docs/specs/otel/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+The Collector fails. Application errors spike but no alerts fire, no traces appear in the backend. The on-call engineer checks dashboards — all green, because the dashboards depend on the same Collector that just failed. OTel self-monitoring is not optional.
+</Hook>
+
+<Crux>The Collector is critical-path infra: when it fails, visibility fails. HA, persistent queue, and self-monitoring are non-negotiable.</Crux>
+
+<Explanation>
+
+## Reliability patterns
+
+**HA gateway — minimum 3 replicas**: A single gateway pod failure loses all in-flight spans buffered in that pod. Three replicas mean one-pod failure is survivable with client retries. Behind a Kubernetes Service or cloud load balancer; the loadbalancing exporter on agents uses the service endpoint so scale-up/down is transparent to agents.
+
+**Persistent queue** — the `file_storage` extension provides a disk-backed buffer that survives Collector restarts. Configure it on the gateway's export pipelines to absorb 5-15 minutes of backend slowdown without dropping spans:
+
+```yaml
+extensions:
+  file_storage:
+    directory: /var/otel/queue
+
+exporters:
+  otlp/primary:
+    endpoint: backend:4317
+    sending_queue:
+      storage: file_storage
+      queue_size: 10000
+```
+
+**Health checks** — liveness and readiness probes against the `health_check` extension on port 13133. Do not let a slow or overloaded Collector be considered ready; it will continue receiving spans it cannot process.
+
+**Self-monitoring** — scrape the Collector's `/metrics` endpoint (port 8888) and alert on:
+- `otelcol_processor_dropped_spans` rate &gt; 0 — memory_limiter engaging; warn immediately
+- `otelcol_receiver_refused_spans` rate &gt; 0 — back-pressure at the receiver; correlates with memory_limiter
+- `otelcol_exporter_send_failed_spans` rate &gt; 0 — backend connectivity problem
+- `otelcol_exporter_queue_size` / queue capacity &gt; 80% — exporter backlog building; backend slow
+- `otelcol_processor_tail_sampling_count_traces_on_memory` vs `num_traces` — buffer exhaustion approaching
+- `process_resident_memory_bytes` vs configured limit — approaching OOM
+
+**Resource sizing** — a commodity gateway pod (4 CPU, 8 GB RAM) handles ~100-200k spans/sec with tail sampling. Size for peak + 2× headroom. Set CPU requests low and RAM requests/limits tight (memory_limiter should engage before Linux OOM killer).
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Reliability concern</th>
+        <th class="border border-border px-3 py-2 text-left">Solution</th>
+        <th class="border border-border px-3 py-2 text-left">Alert</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Pod crash</td>
+        <td class="border border-border px-3 py-2">3+ replicas behind Service</td>
+        <td class="border border-border px-3 py-2">PodRestartCount &gt; 1/hr</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Backend slowdown</td>
+        <td class="border border-border px-3 py-2">Persistent queue (5-15 min)</td>
+        <td class="border border-border px-3 py-2">queue_size &gt; 80% capacity</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Memory spike</td>
+        <td class="border border-border px-3 py-2">memory_limiter drops before OOM</td>
+        <td class="border border-border px-3 py-2">dropped_spans rate &gt; 0</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Pipeline lag</td>
+        <td class="border border-border px-3 py-2">Monitor (ObservedTimestamp - Timestamp) p99</td>
+        <td class="border border-border px-3 py-2">p99 lag &gt; 60s</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Version skew and stability strategy
+
+OTel is many independently versioned components: the spec (v1.x), each language SDK (varies), each Collector binary (v0.x with rapid releases), each Semantic Convention domain (HTTP 1.x, DB 1.x, etc.).
+
+**Compatibility**: SDKs are forward-compatible with newer Collectors across multiple minor versions; OTLP is stable. The Collector has a notion of stable and beta components — production setups stick to stable receivers, processors, exporters.
+
+**Strategy**:
+1. Pin SDK and Collector versions in deployment manifests
+2. Upgrade quarterly with a canary before fleet-wide rollout
+3. Track Semantic Convention versions per service so dashboards know what attribute names to expect
+4. Use the OTel Operator for Collector upgrades: CRD update triggers a rolling restart, zero downtime
+
+## Production failure modes
+
+**(a) Collector OOM under tail sampling**: Gateway buffer grows past memory limit because `decision_wait` is too long or trace volume spiked. Mitigation: `memory_limiter` before `tail_sampling`; alert on `dropped_spans`; right-size `num_traces` for peak rate × `decision_wait` × 2.
+
+**(b) Tail-sample re-routing on scale events**: Gateway pool scales up, loadbalancing exporter's hash ring re-shuffles, in-flight traces lose some spans. Mitigation: pre-warm new pods, scale conservatively, use longer convergence windows on the loadbalancing exporter.
+
+**(c) OTLP version mismatch**: A Collector upgraded ahead of SDKs encounters an unknown field in a newer OTLP proto; may silently drop attributes or the whole record. Mitigation: SDK and Collector compatibility matrix; staged upgrades; never upgrade Collector ahead of the SDKs it receives from.
+
+**(d) Auto-instrumentation footprint regression**: A new minor version of the OTel Java Agent adds an instrumentation that slows a critical library. Mitigation: canary the agent upgrade; monitor p99 latency on the affected service; use per-instrumentation opt-out flags (`OTEL_INSTRUMENTATION_X_ENABLED=false`).
+
+**(e) Cardinality leak via auto-instrumentation**: Auto-instrumented HTTP client adds `url.full` (the raw URL with query parameters) as an attribute, exploding cardinality at the metrics backend. Mitigation: configure the instrumentation to use `http.route` (templated) instead of `url.full`; strip query strings via an `attributes` processor at the Collector.
+
+## Semantic Convention governance
+
+Semantic Conventions are how every team's telemetry composes at fleet scale. Governance failures are expensive:
+- Team-A names a field `route`
+- Team-B names it `http_route`
+- Team-C names it `http.route` (the correct Semantic Convention name)
+- Cross-team dashboards use `http.route` — teams A and B are invisible
+
+**Pattern**: platform team publishes a per-language wrapper that pre-configures Semantic Convention attribute extraction. New services import the wrapper; CI lint rejects raw SDK usage in new code. The wrapper handles:
+- HTTP route extraction (matched template, not raw URL)
+- DB system tagging (`db.system=postgresql`, not "psql")
+- Redaction deny-lists
+- Trace-context mixins for logs
+
+Quarterly audit: check top-10 most-used attribute names per service for Semantic Convention drift. The audit output is the platform team's backlog.
+
+<Inset kind="why" lang="en">
+Why is the Collector's release cadence (~monthly) faster than the spec's? The spec defines stable contracts (OTLP, signal data models, Semantic Conventions) that must evolve slowly for backward compatibility. The Collector is an implementation detail — it can add processors, receivers, and exporters in minor versions without breaking the spec. This means the Collector frequently ships new functionality (a new receiver, a new processor, a new OTTL capability) while the underlying spec contract stays stable. Production teams pin the Collector version and upgrade quarterly — not monthly — because even stable Collector releases occasionally change default behaviour in processors.
+</Inset>
+
+<Quiz
+  id="07-ops-quiz-1"
+  lessonSlug="07-collector-operations"
+  lang="en"
+  question="A Collector gateway pod's resident memory is at 1.92 GB of a 2 GB limit. otelcol_processor_dropped_spans is non-zero and otelcol_processor_tail_sampling_count_traces_on_memory is at 62,400 (num_traces configured as 50,000). What is the root cause and durable fix?"
+  choices={[
+    { label: "The OTLP receiver is accepting too many connections — add rate limits at the receiver", misconception: "Rate-limiting at the receiver drops spans at ingestion; it does not fix the root cause of under-sized tail sampling buffer." },
+    { label: "The tail_sampling buffer (num_traces=50,000) is under-sized for the current trace rate — the gateway is holding more traces in memory than its buffer allows, exhausting RAM. Fix: resize num_traces for peak_rate × decision_wait × safety_factor, and upgrade gateway pod RAM proportionally", correct: true },
+    { label: "The persistent queue on the exporter is full — increase queue_size", misconception: "Exporter queue saturation is a backend-slowdown symptom, not a tail-sampling buffer sizing problem." },
+    { label: "The memory_limiter threshold is too low — raise limit_percentage to 95%", misconception: "Raising the memory_limiter threshold reduces safety margin; the root cause is tail_sampling buffer over-sizing relative to available RAM." },
+  ]}
+/>
+
+<Quiz
+  id="07-ops-quiz-2"
+  lessonSlug="07-collector-operations"
+  lang="en"
+  question="A new minor version of the OTel Java Agent adds an instrumentation for the company's internal RPC library. After upgrading, p99 latency on the order service rises 8%. What is the investigation and mitigation?"
+  choices={[
+    { label: "Roll back the Java Agent version fleet-wide immediately", misconception: "Rolling back fleet-wide before isolating the cause is premature; canary isolation is more precise." },
+    { label: "Canary the agent version on one low-traffic service, confirm the regression is isolated to the internal RPC instrumentation via OTEL_INSTRUMENTATION_X_ENABLED=false, fix the root cause (instrumentation overhead), then re-canary", correct: true },
+    { label: "Disable OTel entirely on the order service until the agent is patched", misconception: "Disabling OTel loses all visibility on the critical order service precisely when you need to diagnose the regression." },
+    { label: "Increase Collector batch size to reduce agent overhead", misconception: "Collector batch size does not affect per-span overhead in the application SDK or the auto-instrumentation overhead in the library itself." },
+  ]}
+/>
+
+<DragOrder
+  id="07-ops-drag-1"
+  lessonSlug="07-collector-operations"
+  lang="en"
+  prompt="Order the operational steps for a safe OTel Collector version upgrade:"
+  items={[
+    { id: "a", label: "Check the Collector changelog for default-behaviour changes in processors used in production" },
+    { id: "b", label: "Update the Collector version in the OTel Operator CRD for a canary gateway replica" },
+    { id: "c", label: "Monitor canary for 24h: dropped_spans, refused_spans, exporter latency, tail_sampling buffer size" },
+    { id: "d", label: "If canary is clean, apply the CRD update to remaining gateway replicas (rolling restart)" },
+    { id: "e", label: "Update the pinned Collector version in the deployment manifests / GitOps repo" },
+    { id: "f", label: "Add the upgrade to the quarterly SDK + Collector version audit" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The Collector is critical-path observability infrastructure — when it fails, visibility fails. Production requirements: 3+ gateway replicas, persistent queue (5-15 min absorb), self-monitoring with alerts on dropped_spans and queue saturation, pinned versions upgraded quarterly via canary. Semantic Convention governance (per-language SDK wrapper + CI lint) prevents silent dashboard breakage at fleet scale. The two highest-frequency failure modes are Collector OOM under tail sampling (fix: resize num_traces) and cardinality leak from auto-instrumented url.full (fix: switch to http.route).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-ops-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name five Collector self-monitoring metrics and what each indicates.", a: "otelcol_processor_dropped_spans: memory_limiter engaged and dropping records — warn immediately, indicates under-sized gateway or traffic spike. otelcol_receiver_refused_spans: receiver applying backpressure (often because the processor chain is backed up) — correlates with memory pressure. otelcol_exporter_send_failed_spans: backend connectivity or authentication failure — backend is rejecting exports. otelcol_exporter_queue_size vs queue capacity: exporter backlog building because the backend is slow — alert at 80% capacity before queue fills and new spans are dropped. otelcol_processor_tail_sampling_count_traces_on_memory vs num_traces: tail sampling buffer filling — alert at 80% to prevent OOM before it happens." },
+    { q: "What is a cardinality leak in the context of OTel auto-instrumentation, and how do you detect and fix it?", a: "A cardinality leak occurs when an auto-instrumented attribute has unbounded values — most commonly url.full (raw URL including query parameters and path variables like user IDs) or peer.address (raw IP:port). Each unique value becomes a unique time series in the metrics backend; at scale this explodes storage and query cost. Detection: the backend's cardinality explorer shows a metric with exponentially growing series count; the offending attribute is typically a high-cardinality identifier. Fix: configure the instrumentation to use http.route (the matched template, e.g., /users/{id}) instead of url.full, or use an attributes processor at the Collector to redact or hash the high-cardinality field before export. Prevention: the platform wrapper should disable url.full and peer.address from auto-instrumented HTTP clients by default." },
+    { q: "Why does the OTel Collector version (v0.x) upgrade more frequently than the OTel spec, and what does this mean for production upgrade strategy?", a: "The spec defines stable contracts (OTLP wire format, signal data models, Semantic Convention domains) that must evolve slowly for backward compatibility. The Collector is an implementation that adds processors, receivers, exporters, and bug fixes in monthly minor releases without breaking spec contracts. However, minor Collector releases occasionally change default processor behaviour (e.g., a new default value for batch timeout, a new metric name in self-monitoring). Production strategy: pin the Collector version in the OTel Operator CRD and deployment manifests; upgrade quarterly (not monthly); run a 24-hour canary on one gateway replica before fleet-wide rollout; read the changelog before each upgrade for processor default-behaviour changes. The quarterly cadence balances getting security fixes and new processor features with stability." },
+  ]}
+/>
+
+<Recap lang="en">
+The OTel Collector is critical-path observability infrastructure: if it fails, the observability stack fails silently. Production reliability requires three or more gateway replicas behind a load balancer, a persistent disk-backed queue (5-15 minutes of absorb capacity for backend slowdowns), health-check probes via the health_check extension, and self-monitoring — alert on dropped_spans, refused_spans, exporter failures, queue saturation, and tail_sampling buffer exhaustion. Version skew between SDKs and Collectors is managed by pinning versions and upgrading quarterly via canary. Common failure modes: OOM under tail sampling (fix: resize num_traces for peak_rate × decision_wait × 2); tail-sample re-routing during scale events (fix: pre-warm pods, scale conservatively); OTLP version mismatch (fix: staged upgrades); auto-instrumentation latency regression (fix: opt-out per instrumentation); cardinality leak from url.full (fix: switch to http.route). Semantic Convention governance — per-language SDK wrapper + CI lint — is the highest-leverage platform investment for preventing cross-team dashboard breakage.
+</Recap>
