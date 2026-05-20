@@ -1,0 +1,144 @@
+---
+slug: 06-backpressure-production
+lang: ru
+track: performance
+unit: 06-batching
+order: 6
+title: "Backpressure и устойчивое batching в продакшене"
+summary: "Когда система не успевает обрабатывать пакеты, возникает обратное давление (backpressure). Паттерны block/drop/spill-to-disk защищают систему от перегрузки и каскадных сбоев."
+estMin: 25
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/01-profile-first", "performance/02-hot-paths"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: []
+sources:
+  - https://kafka.apache.org/documentation/#producerconfigs_linger.ms
+  - https://man.archlinux.org/man/io_uring.7.en
+  - https://lwn.net/Articles/776703/
+  - https://www.postgresql.org/docs/current/populate.html
+  - https://redis.io/docs/manual/pipelining/
+  - https://aws.amazon.com/blogs/database/amazon-aurora-postgresql-write-amplification/
+  - https://www.usenix.org/conference/atc23/presentation/yang-juncheng
+  - https://engineering.fb.com/2014/08/14/data-infrastructure/scribe/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import PersonaTag from "~/components/pedagogy/PersonaTag.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+
+<Hook>
+Представьте, что вы работаете на конвейерной фабрике. Если следующая станция перегружена, продукты начинают скапливаться перед ней. Не остановив подачу с предыдущей станции, вы рискуете переполнить весь цех. То же самое происходит в программных системах: когда потребитель не успевает обрабатывать пакеты быстрее, чем производитель их создаёт, нужно применить backpressure — механизмы, которые сигнализируют производителю уменьшить скорость или сбрасывать избыток.
+</Hook>
+
+<Crux>Backpressure защищает систему от перегрузки через блокировку, отбрасывание или запись на диск когда потребитель отстаёт.</Crux>
+
+<Explanation>
+<strong>Проблема без backpressure</strong>
+Когда производитель генерирует данные быстрее, чем потребитель может их обработать, буфер в памяти начинает расти без ограничений. Это приводит к исчерпанию памяти (OOM), замедлению всей системы и каскадным сбоям. В системах batching это особенно критично, поскольку большие пакеты требуют ещё больше памяти и времени на обработку.
+
+<strong>Три паттерна backpressure</strong>
+Production-системы реализуют backpressure через три основных подхода:
+
+1. **Блокировка (block)**: Производитель приостанавливает отправку новых данных, пока буфер не освободит место. Это применяет обратное давление к upstream-компоненту. Паттерн используется в Reactive Streams, Akka Streams и RxJava. Подходит для интерактивных путей, где потеря данных unacceptable, но небольшая задержка допустима.
+
+2. **Отбрасывание (drop)**: При переполнении буфера самые старые или новые элементы отбрасываются, увеличивая счётчик dropped elements. Метрики-агенты обычно используют этот подход — потеря некоторых метрик предпочтительнее полного краша системы. Критически важно мониторить счётчик dropped, чтобы вовремя обнаруживать проблемы.
+
+3. **Запись на диск (spill-to-disk)**: Производитель перемещает самые старые элементы буфера в disk-backed очередь (например, в файл или LSM-дерево). Используется Fluentd, Vector, Filebeat для транспортировки логов — гарантируетdurability за счёт потенциально увеличенной латентности. Выбор зависит от SLO: интерактивные сервисы склоняются к block, телеметрия к drop, audit логи к spill-to-disk.
+
+<strong>Почему это важно для batching</strong>
+Batching усиливает эффект backpressure, поскольку:
+- Большие пакеты требуют пропорционально больше памяти и CPU для обработки
+- Задержка в обработке одного большого пакета блокирует весь следующий поток
+- Без ограничения размера буфера один скачок нагрузки может привести к OOM
+
+<strong>Примеры из production</strong>
+- **Kafka producers**: При невозможности отправить данные из-за ограничений на запись в broker, производитель увеличивает local.buffer.memory и начинает блокировать или выбрасывать сообщения в зависимости от настроек block.on.buffer.full
+- **Postgres COPY**: При нарушении ограничений Constraints вся пакетная транзакция откатывается, что требует pre-validation и стратегии split-and-retry для изоляции плохих строк
+- **io_uring applications**: При переполнении submission queue приложение должно либо ждать (block), либо возвращать ошибку EAGAIN (drop), либо реализовывать собственную очередь ожидания
+</Explanation>
+
+<KeyTakeaway>Без backpressure batching-система не выдержит пиковую нагрузку. Выбирайте block для интерактивных путей, drop для телеметрии, spill-to-disk для логов, где важна耐久性.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-backpressure-production-retrieval"
+  lang="ru"
+  questions={[
+    {
+      q: "Объясните три паттерна backpressure (block, drop, spill-to-disk) и приведите пример использования каждого в продакшене.",
+      a: "Block: производитель приостанавливает отправку когда буфер полон (Reactive Streams, подходит для API где latency лучше, чем ошибки). Drop: производитель отбрасывает избыток при переполнении буфера, увеличивая счётчик dropped (метрики-агенты предпочитают потеря данных крашу). Spill-to-disk: производитель записывает старые элементы в disk-backed очередь (Fluentd для логов, гарантирует доставку ценой задержки)."
+    }
+  ]}
+/>
+
+<Quiz
+  id="bp-quiz-1"
+  pieceSlug="06-batching"
+  lang="ru"
+  question="Ваш метрики-агент использует batching с буфером в памяти. При пиковой нагрузке buffer depth достигает 95% от capacity. Какая action должна сработать первой согласно production-best practices?"
+  choices={[
+    { label: "Увеличить размер буфера в 2 раза", correct: false },
+    { label: "Начать отправлять алерт о приближении к полному буферу", correct: true },
+    { label: "Отключить batching совсем", correct: false },
+    { label: "Уменьшить время ожидания в окне до 1 мс", correct: false }
+  ]}
+/>
+
+<Quiz
+  id="bp-quiz-2"
+  pieceSlug="06-batching"
+  lang="ru"
+  question="В системе логирования nagy объём логов приводит к переполнению памяти. Какой паттерн backpressure наиболее подходит и почему?"
+  choices={[
+    { label: "Block — лучше потерять логи, чем замедлить приложение", correct: false },
+    { label: "Drop — логи менее важны, чем доступность системы", correct: false },
+    { label: "Spill-to-disk — логи должны быть доставлены даже ценой задержки", correct: true },
+    { label: "Никакой backpressure не нужен, логи записываются синхронно", correct: false }
+  ]}
+/>
+
+<DragOrder
+  id="bp-drag-1"
+  pieceSlug="06-batching"
+  lang="ru"
+  prompt="Упорядочьте последствия отсутствия backpressure в batching-системе от первых признаков к критическому сбою:"
+  items={[
+    "Buffer depth начинает расти выше обычного уровня",
+    "Доступная память начинает уменьшаться стабильно",
+    "GC frequency увеличивается, вызывая паузы в работе",
+    "Система начинает свопить в подкачку",
+    "Происходит OOM kill процесса",
+    "Перезапуск службы приводит к повторному циклу без устранения根本 причины"
+  ]}
+/>
+
+<MetaphorComplete
+  id="bp-metaphor-1"
+  pieceSlug="06-batching"
+  lang="ru"
+  setup="Вы управляете парковкой с автоматическими шлагбаумами. Машины въезжают со скоростью 100 в час, но выезд возможен только со скоростью 60 в час из-за одного оператора. Что произойдёт через 2 часа без какого-либо управления потоком?"
+  accepted={[
+    "Очередь машин вырастет до 80 машин, ожидание увеличится",
+    "Первые машины въехали и выехали, новые ждут на въезде",
+    "Система достигнет равновесия при 60 въезде/час при условии ограничения въезда",
+    "Охрана начнёт штрафовать нарушителей правил парковки"
+  ]}
+  canonical="Очередь машин вырастет до 80 машин, ожидание увеличится"
+  explanation="Это точно backpressure в batching-системе: производитель (въезд) превышает возможности потребителя (выезд). Без ограничения размера очереди (парковочных мест) или информирования производителя о необходимости снизить скорость, система неизбежно перегрузится. В batching терминах: buffer depth растёт без границ → исчерпание памяти → OOM. Паттерны backpressure (block = шлагбаум на въезде, drop = пропуск некоторых машин, spill-to-disk = временная парковка на ближайшей улице) защищают систему."
+  explanation="Во всех системах с queueing принципы одинаковы: когда входной поток превышает выходную пропускную способность, необходимо либо уменьшить вход, либо увеличить выход, либо обеспечить временное хранение избытка. Batching просто усиливает эффект, поскольку каждый элемент очереди представляет собой пакет с дополнительными издержками."
+/>
+
+<Recap lang="ru">
+Backpressure критически важен для устойчивой работы batching-систем под нагрузкой. Три производственных паттерна — block (остановка производителя), drop (отбрасывание избытка) и spill-to-disk (запись на диск) — защищают систему от исчерпания памяти и каскадных сбоев. Выбор паттерна зависит от SLO и типа данных: интерактивные сервисы используют block, телеметрия — drop, а audit логи часто требуют spill-to-disk для гарантии доставки.
+</Recap>
