@@ -47,11 +47,11 @@ atomic lock. At run start, before reading or authoring:
 
 - Phase A (additive infra) COMPLETE — A1-A10, 8 commits `9437c70`..`bf07038`,
   build 1977 pages, lint 0/0, 66 migration tests pass.
-- Phase B (content migration) IN PROGRESS — **40/51 units done**. Pillars complete:
+- Phase B (content migration) IN PROGRESS — **41/51 units done**. Pillars complete:
   networking (12/12), browser (8/8), databases (8/8), observability (8/8).
-  performance (4/8) IN PROGRESS. Build 2401+ pages, lint 0/0.
+  performance (5/8) IN PROGRESS. Build 2433 pages, lint 0/0.
 - **RESUME at the unit named in the plan dashboard's `RESUME HERE` line** (current:
-  `performance/05-n-plus-one`). The dashboard is authoritative — always read it first.
+  `performance/06-batching`). The dashboard is authoritative — always read it first.
 - Brainstorming + spec + writing-plans are COMPLETE. Do NOT re-run the
   `brainstorming` skill. The spec is the agreed design.
 
@@ -136,5 +136,5 @@ commit. Reference reconcile commits: `9b312c6` (07-sharding), `0b87822`
 
 `cd` to the worktree, acquire the lock, read the three files above, then dispatch
 the implementer subagent for the unit named by the plan dashboard's `RESUME HERE`
-line (currently `performance/05-n-plus-one`). Continue unit by unit through Phase B
+line (currently `performance/06-batching`). Continue unit by unit through Phase B
 → C → D until the migration is complete.
