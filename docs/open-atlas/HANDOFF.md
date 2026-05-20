@@ -170,16 +170,37 @@ by following a connected path of lessons. Practice is deferred (theory first).
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
    Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
-   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **20/51 units
-   done — networking (12/12) + browser (8/8) pillars COMPLETE**. Build 2189 pages,
-   lint 0/0.
-   **RESUME at `databases/01-relational-model`** (next pillar: databases, 8 units). A fresh chat resumes from
+   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **40/51 units
+   done — networking (12/12) + browser (8/8) + databases (8/8) + observability (8/8)
+   COMPLETE; performance (4/8) IN PROGRESS**. Build 2401+ pages, lint 0/0.
+   **RESUME at `performance/05-n-plus-one`** (next: performance 05-08, then 7 lone
+   ready pieces: apis/06-graphql-n-plus-one, backend/05-idempotency-retries,
+   caching/03-stampede, distributed/02-raft-outline, frontend/02-data-fetching,
+   queues/01-delivery-guarantees, security/02-oauth-oidc). A fresh chat resumes from
    CONTINUE-PROMPT.md + the plan's progress dashboard. Per-unit procedure: dispatch a
    sonnet implementer subagent with the full per-unit prompt (plan §"Procedure (per
    unit)"), then tick the plan checklist + bump the dashboard, commit a
    `docs(open-atlas): Phase B progress` line. Build gate every unit: `cd site && bun
-   run build`, lint must end 0/0. Watch the KeyTakeaway length norm (EN ≤~240, RU
-   ≤~440 chars) and the `<1`/`<2` MDX-tag build trap.
+   run build`, lint must end 0/0.
+   **Traps learned during Phase B (encode into every subagent prompt):**
+   - MDX parses `<1`, `<2`, `<5` etc as JSX → build fails. Use `&lt;1` or "under 1".
+   - Bare `>` in prose → `&gt;`.
+   - `\"` backslash escapes inside JSX string attrs → use `&quot;`.
+   - Curly-brace runs like `{trace_id}` outside JSX attrs → wrap as `{"{trace_id}"}`.
+   - `~` chars inside HTML table cells → `&#126;` (markdown strikethrough parse).
+   - `MetaphorComplete` widget props are `pieceSlug`/`setup`/`accepted`/`canonical`/
+     `explanation` — NOT `lessonSlug`/`pairs`/`prompt`.
+   - Length norms (linter measures rendered stripped text — converge by trim iterations):
+     Crux ≤140, KeyTakeaway EN ≤~240 RU ≤~440, Misconception body ≤310 raw (renders ≤320
+     after "heads-up" prefix), summary ≤~280.
+   - All component imports via `~/` alias — never `..` relative segments.
+   **Subagent timeout pattern (2026-05-20):** sonnet implementer occasionally hits "API
+   Error: Stream idle timeout" after ~17-20 min while authoring ~14 lesson files.
+   Observed twice this session (07-sharding, 02-structured-logging). Recovery: do NOT
+   redo from scratch — dispatch a focused reconcile subagent that takes existing
+   EN/RU orphan files as the starting point and finishes missing files + units.json
+   entry + build gate + git rm source + commit. Both reconciles completed cleanly
+   (commits `9b312c6`, `0b87822`).
 
 ## Open questions
 
@@ -248,3 +269,16 @@ Before resuming this unit, one agent must: reconcile/confirm the cut plan + slug
 finish RU twins for `04`+`05`, fix the `<1` MDX bug, add the `units.json` entry,
 `cd site && bun run build` to lint 0/0, delete `book/{en,ru}/networking/01-physical-link/`,
 then commit. Verify each lesson before declaring it `ready`.
+
+## ⚠️ CONCURRENCY COLLISION — 2026-05-20, mid-session lock loss
+
+During an autonomous Phase B run (this session, databases + observability + perf 01-04
+on 2026-05-20), another claude session committed `59cdb76`
+(`docs(open-atlas): refresh CONTINUE-PROMPT to 26/51 + add POST-MIGRATION-PROMPT`) and
+silently removed `docs/open-atlas/.migration-lock/` while the primary session held it.
+The concurrent commit was docs-only (`CONTINUE-PROMPT.md` + `POST-MIGRATION-PROMPT.md`)
+— not a content collision. The primary session reacquired the lock and continued. No
+content corruption resulted. Going forward: the lock dir is the ONLY coordination
+signal; do not bypass it. If the concurrent process is your own scheduled-run
+refresher, gate it behind a lock check too — it must NOT `rm -rf` a lock it does not
+own.
