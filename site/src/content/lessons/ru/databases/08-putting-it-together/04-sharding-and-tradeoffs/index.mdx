@@ -1,0 +1,165 @@
+---
+slug: 04-sharding-and-tradeoffs
+lang: ru
+track: databases
+unit: 08-putting-it-together
+order: 4
+title: "Акт 7 в глубину: шардинг, co-location и семиуровневый каскад трейдоффов"
+summary: "Шардинг — последнее средство, выбираемое когда пределы одного Postgres измерены и доказаны. Shard key необратим, co-location определяет какие join-ы остаются локальными, а каскад трейдоффов показывает почему пропуск любого раннего акта делает шардинг дороже."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/03-mvcc-pool-migrations
+  - databases/07-sharding/02-shard-key-selection
+  - databases/07-sharding/04-colocation-and-citus
+  - databases/07-sharding/07-resharding-and-operations
+deepensInto:
+  - databases/08-putting-it-together/05-observability-and-triage
+spiral: ["statefulness", "latency", "multiplexing"]
+concepts: ["shard-key-irreversibility", "colocation", "tradeoff-cascade", "federation-tax"]
+sources:
+  - https://docs.citusdata.com/en/stable/
+  - https://www.citusdata.com/blog/2022/09/19/citus-11-1-shards-postgres-tables-without-interruption/
+  - https://github.blog/2021-08-31-partitioning-githubs-relational-databases-scale/
+  - https://www.postgresql.org/docs/current/ddl-partitioning.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Citus развёрнут. Shard key — tenant_id. Большинство tenants быстры. Tenant Acme — 40% всех запросов — насыщает свой шард, пока пять других простаивают. Кластер фактически одношардовый для Acme. Сбой hot shard был не вызван шардингом; он был спроектирован в день выбора shard key.
+</Hook>
+
+<Crux>Шардинг распределяет нагрузку по узлам — shard key необратим и определяет, какие запросы остаются локальными, а какие платят federation tax.</Crux>
+
+<Explanation>
+
+## Акт 7 — Три независимых решения шардинга
+
+Шардинг в год 3 включает три независимых решения:
+
+**Решение 1: Shard key.** Shard key определяет распределение данных и локальность запросов. Для B2B multi-tenant SaaS `tenant_id` — естественный выбор: все запросы для одного tenant остаются на одном шарде. Для B2C — `user_id`. Для time-series — time bucket. Ключ должен иметь высокую кардинальность (для равномерного распределения нагрузки), равномерные паттерны доступа (чтобы ни один шард не был горячим) и быть дешёвым в вычислении (чтобы routing overhead был минимальным).
+
+**Решение 2: Метод распределения.**
+- **Hash**: строки хешируются на шарды — равномерное распределение, range queries веером расходятся по всем шардам.
+- **Range**: строки в диапазоне ключей идут на конкретный шард — range queries остаются локальными, но горячий диапазон создаёт горячий шард.
+- **List**: ручное назначение — гибко, высокие операционные издержки.
+- **Directory**: lookup table маппит значения ключей на шарды — максимальная гибкость, максимальные операционные издержки.
+
+**Решение 3: Co-location.** Таблицы, участвующие в join-ах, должны быть размещены на одном shard key, чтобы cross-shard join-ы оставались локальными. В Citus: `users`, `orgs`, `events`, `audit_log` — все шардированные по `tenant_id` — co-located. Join между `users` и `events` для tenant 42 попадает на один шард и возвращается с локальной латентностью. Без co-location тот же join веером идёт по всем шардам, собирает результаты на coordinator и мёрджит.
+
+## Federation tax
+
+После шардирования запросы, охватывающие несколько шардов, должны быть federated: отправить запрос на каждый шард, собрать результаты и смёрджить на стороне приложения или на Citus coordinator.
+
+Наивный outer join через два шарда становится двумя inner queries (по одному на шард) и client-side join. `GROUP BY`, затрагивающий шарды, становится `GROUP BY` на каждом шарде, затем второй `GROUP BY` по агрегатам. Каждый cross-shard запрос имеет latency = max(latency по шарду) + merge time; хвостовая латентность доминирует.
+
+Citus обрабатывает federation с distributed query planning, но только для co-located таблиц (с одинаковым shard key). **Reference tables** (реплицированные на каждый worker-узел) бесплатны — маленькая dimension table типа `countries` или `currencies` может быть реплицирована один раз и join-иться локально везде.
+
+## Исправление hot shard
+
+Когда Acme даёт 40% всех запросов на tenant_id-шардированном кластере:
+
+- **Вариант A — логическое разбиение:** Направить запросы Acme на выделенный набор логических шардов. Tenant-aware router мультиплексирует Acme по shard ID, маппящимся на выделенный физический worker. Остальные tenants делят оставшиеся workers.
+- **Вариант B — физический кластер:** Переместить Acme на свой собственный Postgres кластер. Запросы к Acme маршрутизируются туда; общий кластер обрабатывает все остальные tenants.
+
+Оба варианта требуют онлайн-решардинга (`citus_rebalance_table_shards`), использующего логическую репликацию для суб-секундных пауз записи на шард. Планируй окно — догоняющая репликация добавляет нагрузку.
+
+## Семиуровневый каскад трейдоффов
+
+Каждый акт открывает следующий, но только если предыдущий в порядке:
+
+- Пропусти Акт 1 (схема) → Акты 2–7 воюют с неэффективными join-ами и изменяемыми натуральными ключами.
+- Пропусти Акт 2 (индексы) → решения планирования Акта 3 принимаются вслепую; статистика бесполезна, если планировщику нечего выбирать.
+- Пропусти Акт 3 (статистика) → vacuum Акта 4 единственный рычаг; таблицы раздуваются пока ты угадываешь мощность.
+- Пропусти Акт 4 (bloat) → потоки пула Акта 5 видят table scans, замедленные мёртвыми tuples в heap pages.
+- Пропусти Акт 5 (размер пула) → миграции Акта 6 задыхаются от connection storms; backlog handshakes соединений мешает миграции получить блокировки вовремя.
+- Пропусти Акт 6 (lock safety) → шардинг Акта 7 невозможен без downtime; каждый shard rebalance требует эксклюзивной блокировки если миграции не были разработаны для онлайн-работы.
+- Пропусти Акт 7 (когда нужен) → один tenant доминирует в кластере, и остальные ждут в очереди.
+
+Порядок — ограничение, наложенное физикой и внутренностями Postgres, а не рекомендация.
+
+<NumbersCard
+  id="card-act-7-numbers"
+  title="Акт 7: референсные числа шардинга"
+  stats={[
+    { label: "Single-node ceiling, write-heavy OLTP (железо 2026)", value: "10–50K writes/с sustained" },
+    { label: "Полный скан таблицы 1B строк на SSD", value: "5–10 мин" },
+    { label: "Онлайн-перемещение шарда, пауза записи (Citus 11.1+)", value: "менее 1 секунды на шард" },
+    { label: "Schema-based sharding: практический лимит tenants на кластер", value: "1000–3000 tenants" },
+    { label: "Проект изменения shard key", value: "месяцы (dual-write + backfill + cutover)" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="ru">
+Schema-based multi-tenancy («одна схема на tenant») хорошо работает при малом числе tenants: чистая изоляция, простое резервное копирование, простой экспорт данных. Но catalog-таблицы Postgres (`pg_class`, `pg_attribute`, `pg_constraint`) растут линейно с числом схем × таблиц на схему. При 10000 схем × 50 таблиц в `pg_class` полмиллиона строк; время обхода планировщика в запросах, затрагивающих несколько схем, вырастает до секунд. Практический потолок — 1000–3000 tenants на кластер при schema-based sharding. После этого row-level multi-tenancy (колонка `tenant_id` в каждой таблице) с Citus shard distribution масштабируется дальше.
+</Inset>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-1"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="ru"
+  question="Кластер Citus шардирован по tenant_id. Запрос join-ит users и events для одного tenant. Заплатит ли этот запрос federation tax?"
+  choices={[
+    { label: "Нет — если users и events co-located по tenant_id, join остаётся на одном шарде с локальной латентностью", correct: true },
+    { label: "Да — любой join в шардированном кластере federated", misconception: "Federation применяется только к cross-shard запросам. Если обе таблицы co-located по одному shard key и запрос включает shard key в WHERE, Citus coordinator отправляет запрос на один шард." },
+    { label: "Нет — Citus кеширует результаты join, чтобы избежать повторной federation", misconception: "Citus не кеширует результаты join. Co-location — механизм избегания federation." },
+    { label: "Да — Citus всегда рассылает запросы на все шарды для join-ов", misconception: "Citus рассылает только когда запрос не может быть направлен на один шард, что случается при отсутствии shard key в предикате или при отсутствии co-location таблиц." },
+  ]}
+/>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-2"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="ru"
+  question="Команда пропустила Акт 6 (паттерны безопасных миграций). Теперь нужно добавить колонку в шардированную таблицу на 1B строк. Каково последствие?"
+  choices={[
+    { label: "Каждая миграция шарда должна получить AccessExclusiveLock; без дисциплины expand-contract каждый shard rebalance и миграция — это downtime event для tenants этого шарда", correct: true },
+    { label: "Шардинг устраняет необходимость в expand-contract, потому что шарды меньше", misconception: "Миграция каждого шарда всё равно это Postgres DDL, берущий AccessExclusiveLock. Меньшие шарды уменьшают длительность блокировки, но не число окон блокировки (по одному на шард, возможно конкурентно)." },
+    { label: "Citus автоматически параллелизирует миграции по шардам без блокировок", misconception: "Citus распространяет DDL с coordinator на workers — но DDL всё равно берёт те же блокировки на каждом worker, что и на одиночном Postgres." },
+    { label: "Миграцию нужно запустить только один раз на coordinator", misconception: "Citus распространяет DDL на все workers. Миграция запускается на каждом шарде, и каждое окно блокировки — потенциальный инцидент для tenants на том шарде." },
+  ]}
+/>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-3"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="ru"
+  question="Почему изменение shard key после запуска описывается как 'одна из самых дорогих операций в базах данных'?"
+  choices={[
+    { label: "Каждая строка должна быть перехеширована и перемещена на новый шард, требуя месяцев dual-write + backfill + cutover с сохранением корректности в обеих схемах одновременно", correct: true },
+    { label: "Citus предотвращает изменения shard key для защиты целостности данных", misconception: "Технического запрета нет. Стоимость операционная: поддержание двух схем шардинга одновременно, backfill исторических данных, и cutover reads и writes без потери данных." },
+    { label: "Изменение shard key требует перестройки всех индексов по всем шардам", misconception: "Перестройка индексов — часть работы, но доминирующая стоимость — сама миграция данных: каждая строка хешируется на другой шард, требуя нового кластера и периода dual-write." },
+    { label: "Изменения shard key дороги только для крупных tenants типа Acme", misconception: "Стоимость пропорциональна общему объёму данных, а не доле любого одного tenant. Каждая строка в каждой таблице, шардированной по старому ключу, должна быть перемещена." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Три решения шардинга — shard key (необратимый), метод распределения (hash/range/list), co-location (локальность join-ов) — компонуются. Неверный shard key — это многомесячный проект решардинга. Каскад трейдоффов означает: каждый пропущенный ранний акт увеличивает стоимость шардинга: нет безопасных миграций = каждый shard rebalance это downtime event.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-sharding-and-tradeoffs-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Назови три независимых решения шардинга и объясни почему shard key наиболее значим.", a: "Решение 1: Shard key — какие колонки хешировать/range/list для определения размещения строк. Решение 2: Метод распределения — hash (равномерное распределение, range queries веером), range (range queries локальны, риск горячего диапазона), list (ручной), directory (максимальная гибкость, максимальные операционные издержки). Решение 3: Co-location — какие таблицы разделяют один shard key, чтобы join-ы оставались локальными. Shard key наиболее значим потому что в основном необратим: как только приложение и схема построены для шардинга по tenant_id, каждый запрос предполагает эту колонку, каждая таблица её несёт, и изменение требует месяцев dual-write + backfill + cutover — самой дорогой database операции кроме полного переписывания." },
+    { q: "Что такое federation tax и когда co-location его устраняет?", a: "Federation tax — это латентность и сложность запросов, охватывающих несколько шардов: каждый участвующий шард выполняет sub-query, результаты собираются на coordinator, и merge step производит финальный результат. Latency = max(латентность на шард) + merge time; хвостовая латентность доминирует. Co-location устраняет tax, когда две таблицы с одним shard key join-ятся по этому ключу в single-tenant запросе — coordinator направляет весь запрос на один шард, который выполняет его как локальный Postgres join. Co-location требует явного проектирования: Citus нужно сказать co-locate таблицы, и shard key должен присутствовать в join predicate для срабатывания routing." },
+    { q: "Проследи каскад трейдоффов: выбери Акты 1 и 6, опиши как их пропуск делает Акт 7 дороже.", a: "Пропусти Акт 1 (схема): используй email как натуральный ключ. При Акте 7 шардинг по email непригоден — email это свойство одной сущности, не tenant; co-location через users/events/orgs становится невозможным. Команда должна ретрофитить колонку tenant_id (миграция Акта 6), затем перешардировать. Ошибка схемы превращает deployment decision в многомесячную реархитектуру. Пропусти Акт 6 (безопасные миграции): команда использует наивный ALTER TABLE с AccessExclusiveLock. При Акте 7 каждое окно обслуживания шарда (rebalance, добавление колонки, build индекса) требует downtime — один AccessExclusiveLock на шард, потенциально чередующийся, но каждый production риск. С expand-contract каждый шаг lock-cheap; без него каждая операция шардинга — downtime event, умноженный на число шардов." },
+  ]}
+/>
+
+<Recap lang="ru">
+Акт 7 включает три решения: shard key (в основном необратимый — определяет распределение данных и локальность join-ов), метод распределения (hash для равномерного распределения, range для локальности range-запросов, list/directory для ручного управления) и co-location (таблицы, join-ящиеся вместе, должны разделять shard key, чтобы избежать federation tax). Failure mode hot shard — один tenant насыщает шард — исправляется логическим разбиением tenant или физической изоляцией кластера, оба через онлайн-решардинг. Каскад трейдоффов доказывает: акты компонуются — пропусти Акт 1 и выбор shard key отравлен неверной схемой; пропусти Акт 6 и каждая операция шарда — downtime event. Прагматичный дефолт 2026 для Postgres-шопа, масштабирующегося за один узел: declarative partitioning сначала, Citus когда пределы одного узла измерены и доказаны, Aurora DSQL или Spanner только когда глобальные writes — реальное product requirement.
+</Recap>
