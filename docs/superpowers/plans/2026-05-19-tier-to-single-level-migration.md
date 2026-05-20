@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (38/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 8/8, performance 2/8) ← **RESUME HERE: performance/03-cache-vs-bigo**
+- [ ] **Phase B** — content migration (39/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 8/8, performance 3/8) ← **RESUME HERE: performance/04-gc**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -359,7 +359,15 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-hardware-counters-and-tma (senior)
   - [x] 06-false-sharing-and-native-bridge (senior)
   - [x] 07-security-and-production-practice (senior)
-- [ ] 03-cache-vs-bigo  - [ ] 04-gc
+- [x] 03-cache-vs-bigo → 7 lessons, commit `9d1326c`
+  - [x] 01-memory-hierarchy (junior)
+  - [x] 02-row-major-vs-column-major (junior)
+  - [x] 03-cache-lines-and-false-sharing (middle)
+  - [x] 04-branch-prediction (middle)
+  - [x] 05-simd-and-data-layout (middle)
+  - [x] 06-hardware-prefetcher-and-tlb (senior)
+  - [x] 07-cache-oblivious-and-pgo (senior)
+- [ ] 04-gc
 - [ ] 05-n-plus-one  - [ ] 06-batching  - [ ] 07-bundle-budgets  - [ ] 08-putting-it-together
 
 ### Checklist — 7 lone ready pieces
