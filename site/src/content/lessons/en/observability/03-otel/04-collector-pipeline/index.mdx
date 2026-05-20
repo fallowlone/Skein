@@ -1,0 +1,217 @@
+---
+slug: 04-collector-pipeline
+lang: en
+track: observability
+unit: 03-otel
+order: 4
+title: "The OTel Collector: receivers, processors, exporters, and deployment patterns"
+summary: "The Collector is a YAML-configured pipeline — receivers accept telemetry, processors transform it in-flight, exporters ship it to backends. Three deployment patterns dominate: agent, gateway, and agent-to-gateway."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/03-otel/03-auto-and-manual-instrumentation"]
+deepensInto: []
+spiral: ["latency", "encapsulation"]
+concepts: ["otel-collector", "collector-receivers", "collector-processors", "collector-exporters", "daemonset-agent", "agent-to-gateway", "k8sattributes"]
+sources:
+  - https://opentelemetry.io/docs/collector/
+  - https://opentelemetry.io/docs/collector/deployment/gateway/
+  - https://opentelemetry.io/docs/platforms/kubernetes/operator/automatic/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A new backend requirement lands: route traces to vendor-A, logs to vendor-B, and redact PII from both, starting next Monday. Without a Collector, that is three separate application deploys across 50 teams. With a Collector, it is one YAML change and one Collector restart.
+</Hook>
+
+<Crux>The Collector is the policy plane: receivers, processors, exporters in YAML outside the app, updatable without a code deploy.</Crux>
+
+<Explanation>
+
+## Receivers, processors, exporters
+
+The Collector is a YAML-configured pipeline with three stages:
+
+**Receivers** accept incoming telemetry:
+- `otlp` — gRPC (port 4317) and HTTP (port 4318), the primary receiver for OTel-instrumented services
+- `filelog` — tails log files from the filesystem (useful for legacy apps that write to stdout/files)
+- `prometheus` — scrapes `/metrics` endpoints (bridges Prometheus exporters into OTel)
+- `kafka` — reads telemetry from Kafka topics
+- Vendor-specific receivers for non-OTel data
+
+**Processors** transform records in-flight:
+- `memory_limiter` — drops new records when the Collector is above a RAM threshold; prevents OOM by design
+- `batch` — groups records into efficient batches (fewer network round trips to exporters)
+- `resource` — adds service.name and other Resource attributes (e.g., inject `deployment.environment=production`)
+- `attributes` — redacts, renames, adds fields; used for PII scrubbing and Semantic Convention enforcement
+- `tail_sampling` — keeps/drops traces based on the full trace context (errors, latency, business criteria) — covered in the next lesson
+- `transform` — general-purpose transformations via OTTL (OpenTelemetry Transformation Language)
+- `k8sattributes` — enriches spans/logs with Kubernetes pod, namespace, node, and deployment metadata
+
+**Exporters** ship records to backends:
+- `otlp` — to another OTel-aware backend (another Collector, Grafana Tempo, Jaeger, etc.)
+- `datadog` — vendor-specific
+- `prometheusremotewrite` — to Prometheus or Grafana Mimir
+- `loki` — to Grafana Loki for logs
+- Vendor-specific exporters for New Relic, Honeycomb, Splunk, Elastic, etc.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+A minimal production-grade Collector YAML — one pipeline for traces:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+  attributes:
+    actions:
+      - key: user.email
+        action: delete
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, attributes]
+      exporters: [otlp/tempo]
+```
+
+This accepts OTLP on 4317/4318, caps Collector RAM at 80% (drops new records before OOM), batches spans (10 s max wait, 512 max batch), redacts `user.email` from every span, and exports OTLP to a Tempo backend.
+</div>
+
+## Three deployment patterns
+
+**Agent** — a Collector runs as a sidecar (one per pod) or DaemonSet (one per node). Receives telemetry from the local application, does minimal processing (resource enrichment, batching), exports directly to the backend. Cheapest in network hops, hardest to run tail sampling (each agent sees only one node's traffic).
+
+**Gateway** — applications export directly to a central pool of Collector replicas that does heavy processing (tail sampling, redaction, multi-backend routing). Easier to scale processing centrally, but every span crosses the network from the app to the gateway.
+
+**Agent-to-gateway** (the production-canonical pattern) — a DaemonSet agent on every node does minimal local processing and forwards via OTLP to a centralised gateway pool that handles tail sampling, redaction, and routing. The agent adds Kubernetes metadata (pod, namespace, node) via the `k8sattributes` processor before forwarding.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Pattern</th>
+        <th class="border border-border px-3 py-2 text-left">Agent location</th>
+        <th class="border border-border px-3 py-2 text-left">Tail sampling possible?</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Agent only</td>
+        <td class="border border-border px-3 py-2">DaemonSet per node</td>
+        <td class="border border-border px-3 py-2">No — each agent sees only one node</td>
+        <td class="border border-border px-3 py-2">Simple setups, head sampling only</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Gateway only</td>
+        <td class="border border-border px-3 py-2">Central pool</td>
+        <td class="border border-border px-3 py-2">Yes — sees all traffic</td>
+        <td class="border border-border px-3 py-2">Small fleets, simple topologies</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Agent-to-gateway</td>
+        <td class="border border-border px-3 py-2">DaemonSet + central gateway</td>
+        <td class="border border-border px-3 py-2">Yes — gateway sees full traces via sticky routing</td>
+        <td class="border border-border px-3 py-2">Production Kubernetes, all sizes</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+In the agent-to-gateway pattern, the agent's loadbalancing exporter routes by `trace_id` hash to ensure all spans of a trace land on the same gateway replica — necessary for tail sampling, covered in the next lesson.
+
+<Inset kind="why" lang="en">
+Why does the Collector deserve to be a separate process from the application, even though the SDK could export to backends directly? Three reasons. (1) Buffering: when the backend slows or fails, the Collector buffers (in memory and on disk) so the application is not blocked. A direct SDK export would either drop telemetry (data loss) or back up into the application's request handler (latency regression). (2) Policy: tail sampling, redaction, multi-backend routing belong outside application code — platform engineers update YAML without coordinating a redeploy across 50 teams. (3) Heterogeneous fleet: different services run different languages and SDK versions. The Collector normalises everything to OTLP and applies uniform policy regardless of upstream.
+</Inset>
+
+<Quiz
+  id="04-collector-quiz-1"
+  lessonSlug="04-collector-pipeline"
+  lang="en"
+  question="A team's OTel Collector is dropping spans during a traffic spike (otelcol_processor_dropped_spans is non-zero). Which processor is most likely engaging the drop?"
+  choices={[
+    { label: "batch — too many spans per batch", misconception: "batch does not drop; it groups records for efficient export." },
+    { label: "memory_limiter — at the configured RAM threshold, drops are how it avoids OOM", correct: true },
+    { label: "tail_sampling — keeps too few", misconception: "tail_sampling drops by policy — that is its intended behaviour, not a memory fault." },
+    { label: "attributes — failed to redact a field", misconception: "attributes is a transformation processor; it does not drop records." },
+  ]}
+/>
+
+<Quiz
+  id="04-collector-quiz-2"
+  lessonSlug="04-collector-pipeline"
+  lang="en"
+  question="Why is the agent-to-gateway pattern the production-canonical deployment for Kubernetes?"
+  choices={[
+    { label: "It costs less compute than either agent or gateway alone", misconception: "It costs more compute than either alone — that is the price of its capability." },
+    { label: "The DaemonSet agent adds Kubernetes metadata and forwards via sticky trace_id routing to a gateway that can run tail sampling on full traces, combining local efficiency with centralised policy", correct: true },
+    { label: "Kubernetes requires DaemonSets for all sidecar processes", misconception: "Kubernetes has no such requirement; DaemonSets are chosen for the agent tier because they give one agent per node." },
+    { label: "The gateway pattern alone does not support OTLP", misconception: "A gateway-only pattern fully supports OTLP; the agent-to-gateway advantage is tail sampling and local Kubernetes metadata enrichment." },
+  ]}
+/>
+
+<DragOrder
+  id="04-collector-drag-1"
+  lessonSlug="04-collector-pipeline"
+  lang="en"
+  prompt="Order the Collector pipeline stages a span passes through in a standard trace pipeline:"
+  items={[
+    { id: "a", label: "OTLP receiver accepts the span batch from the application SDK" },
+    { id: "b", label: "memory_limiter checks current RAM and drops if over threshold" },
+    { id: "c", label: "k8sattributes adds pod, namespace, and node metadata" },
+    { id: "d", label: "batch groups spans for efficient export" },
+    { id: "e", label: "attributes redacts PII fields" },
+    { id: "f", label: "OTLP exporter sends the batch to the backend" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The Collector is a composable YAML pipeline: receivers accept OTLP, processors (memory_limiter, batch, attributes, k8sattributes, tail_sampling) transform in-flight, exporters ship to backends. The agent-to-gateway pattern (DaemonSet + central gateway pool) is the production-canonical Kubernetes deployment — it enables tail sampling, Kubernetes metadata enrichment, and multi-backend routing without touching application code.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-collector-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does the memory_limiter processor do and why must it come before other processors in the pipeline?", a: "memory_limiter checks the Collector's current resident memory on every check_interval (typically 1s). When memory exceeds limit_percentage of the configured limit, it starts refusing new records — effectively dropping inbound telemetry. It must come first in the processor chain because dropping before the more expensive processors (tail_sampling, transform, attributes) means CPU is not wasted on records that will be dropped anyway. Without memory_limiter, a traffic spike can OOM the Collector process, which drops all in-flight buffered records at once — worse than the steady drop that memory_limiter provides." },
+    { q: "Why does the agent-to-gateway pattern use a loadbalancing exporter on the agent tier instead of a simple round-robin?", a: "Tail sampling at the gateway requires that every span of a trace land on the same gateway replica — the sampler needs the full trace context (all spans, final status, total latency) to make the keep/drop decision. Round-robin distributes spans randomly across replicas, so one trace ends up split across two or three replicas and no single replica sees the full trace. The loadbalancing exporter hashes by trace_id and routes deterministically: all spans with the same trace_id go to the same gateway pod, so tail sampling works correctly." },
+    { q: "Name three processors and explain the production order they should appear in a traces pipeline.", a: "memory_limiter first — drops records cheaply before expensive processing when under memory pressure. Then batch — groups records for efficient network exports (fewer round trips). Then tail_sampling (or attributes/k8sattributes) — these are expensive; only run on records the memory_limiter allowed through. The memory_limiter must be first because its purpose is to protect the Collector from OOM before other processors consume more memory. batch must come before tail_sampling because tail_sampling needs to collect spans across a 30-60s window and batch them internally." },
+  ]}
+/>
+
+<Recap lang="en">
+The OTel Collector is a YAML-configured pipeline with three stages: receivers (otlp, filelog, prometheus, kafka) that accept incoming telemetry; processors (memory_limiter, batch, resource, attributes, k8sattributes, tail_sampling, transform) that transform records in-flight; and exporters (otlp, datadog, prometheusremotewrite, loki) that ship records to backends. memory_limiter must come first — it drops records cheaply before expensive processing when the Collector is under memory pressure. Three deployment patterns: agent (DaemonSet per node, simple, no tail sampling), gateway (central pool, tail sampling possible), and agent-to-gateway (the production-canonical Kubernetes pattern — DaemonSet agents enrich with Kubernetes metadata and forward via trace_id-hashed routing to a central gateway that runs tail sampling and multi-backend routing). The Collector's value is decoupling policy (redaction, routing, sampling) from instrumentation (application code) — update YAML, not code.
+</Recap>

@@ -1,0 +1,209 @@
+---
+slug: 07-collector-operations
+lang: ru
+track: observability
+unit: 03-otel
+order: 7
+title: "Эксплуатация OTel Collector: надёжность, version skew, режимы отказа и управление"
+summary: "Collector — критически важная инфраструктура наблюдаемости. HA-шлюз (3+ реплики), persistent queue, мета-мониторинг, консервативные обновления версий и управление Semantic Conventions — это дисциплины, предотвращающие незаметную потерю телеметрии."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/03-otel/06-vendor-neutrality-and-advanced"]
+deepensInto: []
+spiral: ["latency", "encapsulation"]
+concepts: ["collector-reliability", "persistent-queue", "version-skew", "semantic-convention-governance", "collector-self-monitoring", "failure-modes", "cardinality-leak"]
+sources:
+  - https://opentelemetry.io/docs/collector/
+  - https://opentelemetry.io/docs/collector/deployment/gateway/
+  - https://opentelemetry.io/docs/specs/otel/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Collector падает. Ошибки приложения растут, но алерты не срабатывают, трассировки не появляются в бэкенде. Дежурный инженер проверяет дашборды — всё зелёное, потому что дашборды зависят от того же Collector, который только что упал. Самомониторинг OTel — не опция.
+</Hook>
+
+<Crux>Collector — критический путь: при отказе видимость теряется. HA, persistent queue и самомониторинг — обязательные production-требования.</Crux>
+
+<Explanation>
+
+## Паттерны надёжности
+
+**HA-шлюз — минимум 3 реплики**: отказ одного gateway pod теряет все буферизованные в нём спаны в полёте. Три реплики означают, что отказ одного pod переживаем при повторных попытках клиента. За Kubernetes Service или облачным балансировщиком нагрузки; loadbalancing exporter на агентах использует эндпоинт сервиса, поэтому масштабирование прозрачно для агентов.
+
+**Persistent queue** — расширение `file_storage` предоставляет буфер на диске, переживающий перезапуски Collector. Конфигурируйте его на экспортных пайплайнах шлюза для поглощения 5-15 минут замедления бэкенда без потери спанов:
+
+```yaml
+extensions:
+  file_storage:
+    directory: /var/otel/queue
+
+exporters:
+  otlp/primary:
+    endpoint: backend:4317
+    sending_queue:
+      storage: file_storage
+      queue_size: 10000
+```
+
+**Health checks** — liveness и readiness-пробы против расширения `health_check` на порту 13133. Не позволяйте медленному или перегруженному Collector считаться готовым — он продолжит получать спаны, которые не может обработать.
+
+**Самомониторинг** — скрейпить эндпоинт `/metrics` Collector (порт 8888) и алертить на:
+- `otelcol_processor_dropped_spans` rate &gt; 0 — memory_limiter срабатывает; предупреждать немедленно
+- `otelcol_receiver_refused_spans` rate &gt; 0 — backpressure на receiver; коррелирует с давлением памяти
+- `otelcol_exporter_send_failed_spans` rate &gt; 0 — проблема с подключением к бэкенду
+- `otelcol_exporter_queue_size` / ёмкость очереди &gt; 80% — накопление бэклога экспортёра; бэкенд медленный
+- `otelcol_processor_tail_sampling_count_traces_on_memory` vs `num_traces` — приближение к исчерпанию буфера
+- `process_resident_memory_bytes` vs настроенный лимит — приближение к OOM
+
+**Размер ресурсов** — обычный gateway pod (4 CPU, 8 ГБ RAM) обрабатывает ~100-200к спанов/с с tail sampling. Размер для пика + 2x headroom. Устанавливайте низкие CPU requests и жёсткие limits/requests RAM (memory_limiter должен срабатывать раньше Linux OOM killer).
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Проблема надёжности</th>
+        <th class="border border-border px-3 py-2 text-left">Решение</th>
+        <th class="border border-border px-3 py-2 text-left">Алерт</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Краш pod</td>
+        <td class="border border-border px-3 py-2">3+ реплики за Service</td>
+        <td class="border border-border px-3 py-2">PodRestartCount &gt; 1/час</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Замедление бэкенда</td>
+        <td class="border border-border px-3 py-2">Persistent queue (5-15 мин)</td>
+        <td class="border border-border px-3 py-2">queue_size &gt; 80% ёмкости</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Скачок памяти</td>
+        <td class="border border-border px-3 py-2">memory_limiter сбрасывает до OOM</td>
+        <td class="border border-border px-3 py-2">dropped_spans rate &gt; 0</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Лаг пайплайна</td>
+        <td class="border border-border px-3 py-2">Мониторить p99 (ObservedTimestamp - Timestamp)</td>
+        <td class="border border-border px-3 py-2">p99 лаг &gt; 60с</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Version skew и стратегия стабильности
+
+OTel — это множество независимо версионированных компонентов: спецификация (v1.x), каждый языковой SDK (по-разному), каждый бинарник Collector (v0.x с частыми релизами), каждый домен Semantic Conventions (HTTP 1.x, DB 1.x и др.).
+
+**Совместимость**: SDK прямо совместимы с более новыми Collector в нескольких минорных версиях; OTLP стабилен. Collector имеет понятие стабильных и бета-компонентов — production-конфигурации придерживаются стабильных receivers, processors, exporters.
+
+**Стратегия**:
+1. Фиксировать версии SDK и Collector в манифестах развёртывания
+2. Обновлять ежеквартально с канарейкой перед fleet-wide rollout
+3. Отслеживать версии Semantic Conventions по сервисам, чтобы дашборды знали, какие имена атрибутов ожидать
+4. Использовать OTel Operator для обновлений Collector: обновление CRD запускает rolling restart, нулевое время простоя
+
+## Production-режимы отказа
+
+**(a) OOM Collector при tail sampling**: буфер шлюза растёт выше лимита памяти из-за слишком длинного `decision_wait` или всплеска объёма трассировок. Меры защиты: `memory_limiter` перед `tail_sampling`; алерт на `dropped_spans`; правильный размер `num_traces` для пиковой скорости × `decision_wait` × 2.
+
+**(b) Перераспределение tail-sample при масштабировании**: пул шлюзов масштабируется вверх, кольцо хэшей loadbalancing exporter перетасовывается, трассировки в полёте теряют часть спанов. Меры защиты: предварительный прогрев новых podов, консервативное масштабирование, использование более длинных окон конвергенции на loadbalancing exporter.
+
+**(c) Несовпадение версий OTLP**: Collector, обновлённый раньше SDK, встречает неизвестное поле в более новом OTLP proto; может незаметно удалять атрибуты или всю запись. Меры защиты: матрица совместимости SDK и Collector; поэтапные обновления; никогда не обновлять Collector раньше SDK, от которых он принимает данные.
+
+**(d) Регрессия из-за авто-инструментирования**: новая минорная версия OTel Java Agent добавляет инструментирование, замедляющее критичную библиотеку. Меры защиты: канарейка обновления агента; мониторинг p99 задержки затронутого сервиса; использование per-instrumentation флагов отключения (`OTEL_INSTRUMENTATION_X_ENABLED=false`).
+
+**(e) Утечка кардинальности через авто-инструментирование**: авто-инструментированный HTTP-клиент добавляет `url.full` (raw URL с параметрами запроса) как атрибут, взрывая кардинальность в бэкенде метрик. Меры защиты: конфигурировать инструментирование использовать `http.route` (шаблонный) вместо `url.full`; удалять строки запроса через процессор `attributes` на Collector.
+
+## Управление Semantic Conventions
+
+Semantic Conventions — то, как телеметрия всех команд компонируется в масштабе флота. Сбои управления дорогостоящи:
+- Команда-A называет поле `route`
+- Команда-B называет его `http_route`
+- Команда-C называет его `http.route` (правильное имя Semantic Convention)
+- Кросс-командные дашборды используют `http.route` — команды A и B невидимы
+
+**Паттерн**: платформенная команда публикует языково-специфичную обёртку, предварительно конфигурирующую извлечение атрибутов Semantic Conventions. Новые сервисы импортируют обёртку; CI-линтер отклоняет прямое использование SDK в новом коде. Обёртка обрабатывает:
+- Извлечение HTTP-маршрута (совпавший шаблон, а не raw URL)
+- Тегирование системы БД (`db.system=postgresql`, не "psql")
+- Deny-листы редактирования
+- Примешивание trace-context к логам
+
+Ежеквартальный аудит: проверять 10 наиболее часто используемых имён атрибутов по сервисам на дрейф от Semantic Conventions. Результат аудита — бэклог платформенной команды.
+
+<Inset kind="why" lang="ru">
+Почему частота релизов Collector (~ежемесячно) выше, чем у спецификации? Спецификация определяет стабильные контракты (OTLP, модели данных сигналов, Semantic Conventions), которые должны развиваться медленно для обратной совместимости. Collector — деталь реализации: он может добавлять процессоры, receivers и exporters в минорных версиях без нарушения спецификации. Это означает, что Collector часто поставляет новую функциональность (новый receiver, новый процессор, новую возможность OTTL), пока контракт спецификации остаётся стабильным. Production-команды фиксируют версию Collector и обновляют ежеквартально — не ежемесячно — потому что даже стабильные релизы Collector иногда меняют поведение по умолчанию в процессорах.
+</Inset>
+
+<Quiz
+  id="07-ops-quiz-1"
+  lessonSlug="07-collector-operations"
+  lang="ru"
+  question="Резидентная память gateway pod Collector на 1.92 ГБ из лимита 2 ГБ. otelcol_processor_dropped_spans ненулевой, otelcol_processor_tail_sampling_count_traces_on_memory равен 62 400 (num_traces настроен как 50 000). Какова первопричина и устойчивое исправление?"
+  choices={[
+    { label: "OTLP receiver принимает слишком много соединений — добавить rate limits на receiver", misconception: "Rate-limiting на receiver сбрасывает спаны при приёме; он не устраняет первопричину — неправильно размещённый буфер tail sampling." },
+    { label: "Буфер tail_sampling (num_traces=50 000) недостаточного размера для текущей скорости трассировок — шлюз хранит больше трассировок в памяти, чем позволяет его буфер, исчерпывая RAM. Исправление: изменить размер num_traces = пиковая_скорость × decision_wait × защитный_коэффициент, и пропорционально увеличить RAM gateway pod", correct: true },
+    { label: "Persistent queue на экспортёре полон — увеличить queue_size", misconception: "Насыщение очереди экспортёра — симптом замедления бэкенда, а не проблема размера буфера tail sampling." },
+    { label: "Порог memory_limiter слишком низкий — поднять limit_percentage до 95%", misconception: "Повышение порога memory_limiter снижает запас безопасности; первопричина — превышение размера буфера tail_sampling относительно доступной RAM." },
+  ]}
+/>
+
+<Quiz
+  id="07-ops-quiz-2"
+  lessonSlug="07-collector-operations"
+  lang="ru"
+  question="Новая минорная версия OTel Java Agent добавляет инструментирование для внутренней RPC-библиотеки компании. После обновления p99 задержки сервиса заказов вырастает на 8%. Каковы исследование и меры защиты?"
+  choices={[
+    { label: "Откатить версию Java Agent fleet-wide немедленно", misconception: "Откат fleet-wide до изоляции причины преждевременен; изоляция канарейки более точна." },
+    { label: "Запустить канарейку версии агента на одном сервисе с малым трафиком, подтвердить, что регрессия изолирована в инструментировании внутреннего RPC через OTEL_INSTRUMENTATION_X_ENABLED=false, устранить первопричину (накладные расходы инструментирования), затем повторить канарейку", correct: true },
+    { label: "Полностью отключить OTel на сервисе заказов до патча агента", misconception: "Отключение OTel теряет всю видимость критичного сервиса заказов именно тогда, когда она нужна для диагностики регрессии." },
+    { label: "Увеличить размер батча Collector для снижения накладных расходов агента", misconception: "Размер батча Collector не влияет на накладные расходы на спан в SDK приложения или накладные расходы авто-инструментирования в библиотеке." },
+  ]}
+/>
+
+<DragOrder
+  id="07-ops-drag-1"
+  lessonSlug="07-collector-operations"
+  lang="ru"
+  prompt="Упорядочите операционные шаги безопасного обновления версии OTel Collector:"
+  items={[
+    { id: "a", label: "Проверить changelog Collector на изменения поведения по умолчанию в используемых в production процессорах" },
+    { id: "b", label: "Обновить версию Collector в CRD OTel Operator для канарейной реплики шлюза" },
+    { id: "c", label: "Мониторить канарейку 24 ч: dropped_spans, refused_spans, задержка экспортёра, размер буфера tail_sampling" },
+    { id: "d", label: "Если канарейка чистая — применить обновление CRD к оставшимся репликам шлюза (rolling restart)" },
+    { id: "e", label: "Обновить зафиксированную версию Collector в манифестах развёртывания / GitOps-репозитории" },
+    { id: "f", label: "Добавить обновление в ежеквартальный аудит версий SDK + Collector" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Collector — критически важная инфраструктура наблюдаемости: при его отказе видимость теряется. Production-требования: 3+ реплики шлюза, persistent queue (поглощение 5-15 мин), самомониторинг с алертами на dropped_spans и насыщение очереди, зафиксированные версии обновляемые ежеквартально через канарейку. Управление Semantic Conventions (SDK-обёртка по языкам + CI-линтер) предотвращает незаметное нарушение дашбордов в масштабе флота. Два наиболее частых режима отказа: OOM Collector при tail sampling (исправление: изменить размер num_traces) и утечка кардинальности из auto-инструментированного url.full (исправление: переключиться на http.route).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-ops-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Назовите пять метрик самомониторинга Collector и что каждая из них означает.", a: "otelcol_processor_dropped_spans: memory_limiter срабатывает и сбрасывает записи — предупреждать немедленно, указывает на недостаточно размещённый шлюз или всплеск трафика. otelcol_receiver_refused_spans: receiver применяет backpressure (часто из-за резервной цепочки процессоров) — коррелирует с давлением памяти. otelcol_exporter_send_failed_spans: сбой подключения к бэкенду или аутентификации — бэкенд отклоняет экспорты. otelcol_exporter_queue_size vs ёмкость очереди: накопление бэклога экспортёра из-за медленного бэкенда — алертить при 80% ёмкости до заполнения очереди и потери новых спанов. otelcol_processor_tail_sampling_count_traces_on_memory vs num_traces: заполнение буфера tail sampling — алертить при 80% для предотвращения OOM заблаговременно." },
+    { q: "Что такое утечка кардинальности в контексте OTel авто-инструментирования, и как её обнаружить и исправить?", a: "Утечка кардинальности возникает, когда авто-инструментированный атрибут имеет неограниченные значения — чаще всего url.full (raw URL включая параметры запроса и переменные пути типа user ID) или peer.address (raw IP:port). Каждое уникальное значение становится уникальным временным рядом в бэкенде метрик; в масштабе это взрывает хранилище и стоимость запросов. Обнаружение: explorer кардинальности бэкенда показывает метрику с экспоненциально растущим числом рядов; обидчивый атрибут обычно — высококардинальный идентификатор. Исправление: настроить инструментирование использовать http.route (совпавший шаблон, например /users/{id}) вместо url.full, или использовать процессор attributes на Collector для редактирования или хэширования высококардинального поля перед экспортом. Профилактика: SDK-обёртка должна отключать url.full и peer.address из авто-инструментированных HTTP-клиентов по умолчанию." },
+    { q: "Почему версия OTel Collector (v0.x) обновляется чаще спецификации OTel, и что это означает для стратегии обновления в production?", a: "Спецификация определяет стабильные контракты (проводной формат OTLP, модели данных сигналов, домены Semantic Conventions), которые должны развиваться медленно для обратной совместимости. Collector — это реализация, добавляющая процессоры, receivers, exporters и исправления ошибок в ежемесячных минорных релизах без нарушения контрактов спецификации. Однако минорные релизы Collector иногда меняют поведение процессора по умолчанию (например, новое значение по умолчанию для batch timeout, новое имя метрики в самомониторинге). Production-стратегия: фиксировать версию Collector в CRD OTel Operator и манифестах развёртывания; обновлять ежеквартально (не ежемесячно); запускать 24-часовую канарейку на одной реплике шлюза перед fleet-wide rollout; читать changelog перед каждым обновлением на изменения поведения по умолчанию в процессорах. Ежеквартальный темп балансирует получение исправлений безопасности и новых возможностей процессоров со стабильностью." },
+  ]}
+/>
+
+<Recap lang="ru">
+OTel Collector — критически важная инфраструктура наблюдаемости: при его отказе стек наблюдаемости отказывает незаметно. Production-надёжность требует трёх или более реплик шлюза за балансировщиком нагрузки, буфера на диске (persistent queue, ёмкость поглощения 5-15 минут замедления бэкенда), health-check проб через расширение health_check и самомониторинга — алертить на dropped_spans, refused_spans, сбои экспортёра, насыщение очереди и исчерпание буфера tail_sampling. Version skew между SDK и Collector управляется фиксацией версий и ежеквартальными обновлениями через канарейку. Частые режимы отказа: OOM при tail sampling (исправление: изменить размер num_traces = пиковая_скорость × decision_wait × 2); перераспределение tail-sample при масштабировании (исправление: предварительный прогрев podов, консервативное масштабирование); несовпадение версий OTLP (исправление: поэтапные обновления); регрессия задержки авто-инструментирования (исправление: отключение по инструментированию); утечка кардинальности из url.full (исправление: переключиться на http.route). Управление Semantic Conventions — SDK-обёртка по языкам + CI-линтер — наиболее высокоуровневая инвестиция платформы для предотвращения нарушения кросс-командных дашбордов.
+</Recap>
