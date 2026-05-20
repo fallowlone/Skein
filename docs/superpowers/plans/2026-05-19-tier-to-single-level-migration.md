@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [ ] **Phase B** — content migration (35/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 7/8) ← **RESUME HERE: observability/08-putting-it-together**
+- [ ] **Phase B** — content migration (36/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 8/8) ← **RESUME HERE: performance/01-profile-first**
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -334,7 +334,12 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-reading-flame-graphs (middle)
   - [x] 06-advanced-profiling (senior)
   - [x] 07-profiling-in-production (senior)
-- [ ] 08-putting-it-together
+- [x] 08-putting-it-together → 5 lessons, commit `51cab6c`
+  - [x] 01-the-debugging-funnel (junior)
+  - [x] 02-otel-architecture-four-signals (middle)
+  - [x] 03-cost-discipline-and-sampling (middle)
+  - [x] 04-incident-loop-and-culture (middle)
+  - [x] 05-scale-security-and-roi (senior)
 
 **performance**
 - [ ] 01-profile-first  - [ ] 02-hot-paths  - [ ] 03-cache-vs-bigo  - [ ] 04-gc
