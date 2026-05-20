@@ -1,0 +1,224 @@
+---
+slug: 02-red-instrumentation
+lang: en
+track: observability
+unit: 04-red-use
+order: 2
+title: "Instrumenting RED in Prometheus: counters, histograms, and cardinality discipline"
+summary: "The three canonical Prometheus metrics for RED, why Duration must be a histogram (never an average), how histogram_quantile works, and the iron label discipline that keeps cardinality under control."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/01-red-and-use-overview"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["prometheus-histogram", "histogram-quantile", "red-metrics", "cardinality", "label-discipline"]
+sources:
+  - https://prometheus.io/docs/practices/histograms/
+  - https://prometheus.io/docs/practices/naming/
+  - https://grafana.com/blog/the-red-method-how-to-instrument-your-services/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A team alerts on average request latency. A bug fix pushes p99 from 200 ms to 800 ms — but barely moves the mean. The on-call misses the incident for 40 minutes. The SLO review finds the average-latency alert has never fired on a real user impact. Histograms would have fired in 2 minutes.
+</Hook>
+
+<Crux>RED in Prometheus: counter for Rate, counter for Errors, histogram for Duration. Bucket choices decide whether your p99 is readable.</Crux>
+
+<Explanation>
+
+## The three canonical RED metrics
+
+Every HTTP service should emit exactly three metric groups, named consistently:
+
+```
+http_requests_total        # counter — Rate
+http_request_errors_total  # counter — Errors (5xx only, or a status label)
+http_request_duration_seconds  # histogram — Duration
+```
+
+Prometheus PromQL then gives you all three RED dimensions:
+
+- **Rate**: `rate(http_requests_total[5m])`
+- **Error rate**: `rate(http_request_errors_total[5m]) / rate(http_requests_total[5m])`
+- **Duration p99**: `histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))`
+
+## Why Duration must be a histogram
+
+The average hides everything users notice. A service with 99% of requests at 50 ms and 1% at 5000 ms has the same mean latency (~100 ms) as one with all requests at 100 ms. The first kills users on retries; the second does not.
+
+Prometheus's `histogram_quantile(q, buckets)` reads per-bucket counts accumulated over a time window and estimates the q-th percentile by linear interpolation between adjacent buckets. Accuracy depends entirely on bucket density near the percentile you care about.
+
+**The `by (le)` requirement.** The correct form is always:
+
+```promql
+histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket[5m])))
+```
+
+Dropping `by (le)` collapses all label dimensions including `le` (the bucket boundary label), leaving `histogram_quantile` with a single point rather than a distribution — the result is NaN or garbage. This is a real, common mistake that silently produces wrong values.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Latency signal</th>
+        <th class="border border-border px-3 py-2 text-left">What it hides</th>
+        <th class="border border-border px-3 py-2 text-left">Use it for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Average (sum/count)</td>
+        <td class="border border-border px-3 py-2">Slow-tail behavior that users notice</td>
+        <td class="border border-border px-3 py-2">Never for SLO alerts</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Prometheus summary</td>
+        <td class="border border-border px-3 py-2">Cannot aggregate across replicas</td>
+        <td class="border border-border px-3 py-2">Single-replica-owns-data only</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Prometheus histogram</td>
+        <td class="border border-border px-3 py-2">Accuracy depends on bucket density</td>
+        <td class="border border-border px-3 py-2">Fleet-wide p99 alerts</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Bucket strategy
+
+Default Prometheus client buckets — `[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]` seconds — are wrong for most services. For a checkout API with a 200 ms SLO, most traffic falls between 50 ms and 250 ms. One bucket covers that entire range (100 ms to 250 ms), so p99 could be anywhere in it — unreadable.
+
+Production rule: 10–15 buckets, densest around the SLO target. For a 200 ms SLO:
+
+```
+[0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 10]
+```
+
+Three buckets below 200 ms (100, 25, 50 ms boundaries give resolution), three above (400, 800, 1600 ms), hard cap at the service timeout (10 s). Adjacent buckets differ by ≤2× near the SLO.
+
+## Label discipline — the iron rule
+
+Every unique combination of label values on a Prometheus metric creates a separate time series. A naive RED instrumentation labelled by `user_id` in a service with 100k active users grows from a few hundred series to hundreds of thousands within hours.
+
+**What belongs in labels:**
+
+- `route` — the URL template (`/cart`, not `/cart?u=12345`)
+- `method` — HTTP verb (GET / POST / ...)
+- `status_class` — 2xx / 4xx / 5xx (not the exact code)
+- `service` — injected by the deployment as a meta-label
+
+**Forbidden in labels:** user IDs, request IDs, customer email, session tokens, query strings, country code unless small and bounded. All of these have unbounded cardinality.
+
+**The cost math:** collapsing 200/201/204 into `2xx` cuts 60 unique status codes down to 4 classes. For 20 routes × 4 methods: 60 × 20 × 4 = 4,800 series → 4 × 20 × 4 = 320 series, a 15× reduction with no loss of useful alerting power.
+
+<Inset kind="why" lang="en">
+If you genuinely need to alert on a specific status code on a specific route, build that alert from logs — not from a metric with a high-cardinality label. Logs are the natural home of high-cardinality data (each event is one record). Metrics are the home of aggregated, time-series counts (each series is a separate in-memory counter). The split is architectural, not preference.
+</Inset>
+
+## A Node.js RED middleware
+
+```js
+const client = require('prom-client');
+const reqs = new client.Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status_class'],
+});
+const errs = new client.Counter({
+  name: 'http_request_errors_total',
+  help: 'Failed HTTP requests (5xx)',
+  labelNames: ['method', 'route'],
+});
+const dur = new client.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Request duration',
+  labelNames: ['method', 'route', 'status_class'],
+  buckets: [0.01, 0.025, 0.05, 0.1, 0.2, 0.4, 0.8, 1.6, 3.2, 10],
+});
+
+app.use((req, res, next) => {
+  const start = process.hrtime.bigint();
+  res.on('finish', () => {
+    const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+    const sclass = `${Math.floor(res.statusCode / 100)}xx`;
+    const route = req.route?.path || 'unknown';
+    reqs.inc({ method: req.method, route, status_class: sclass });
+    dur.observe({ method: req.method, route, status_class: sclass }, seconds);
+    if (res.statusCode >= 500) errs.inc({ method: req.method, route });
+  });
+  next();
+});
+```
+
+`req.route.path` gives the matched template (`/cart`), not `req.url` which includes query strings. That one line prevents cardinality explosion.
+
+<Quiz
+  id="02-red-instrumentation-quiz-1"
+  lessonSlug="02-red-instrumentation"
+  lang="en"
+  question="A team alerts on the AVERAGE request latency across all replicas. Why is this dangerous?"
+  choices={[
+    { label: "Averages are computationally expensive", misconception: "Averages are cheap; the issue is what they hide." },
+    { label: "Averages smooth out the slow-tail behaviour that users notice. p99 can move 10x while the average barely changes.", correct: true },
+    { label: "Averages require more storage than histograms", misconception: "Averages are smaller than histograms; storage is not the issue." },
+    { label: "Averages cannot be alerted on in Prometheus", misconception: "They can be alerted on; the problem is they alert too late." },
+  ]}
+/>
+
+<Quiz
+  id="02-red-instrumentation-quiz-2"
+  lessonSlug="02-red-instrumentation"
+  lang="en"
+  question="A service emits an Errors counter labelled by exact error_message string. After a buggy release that throws unique stack traces, the metrics backend bill triples overnight. Why?"
+  choices={[
+    { label: "More errors generate more counter increments — increments are billed", misconception: "Counter increments are essentially free; the kill is unique label values, not increment count." },
+    { label: "Each unique error_message value creates a new time series; hosted backends bill per active series. Stack traces with line numbers are effectively unbounded.", correct: true },
+    { label: "The bill went up because the service emitted more requests", misconception: "Bill correlates with series count, not request count, on Prometheus-style billing." },
+    { label: "The error caused the metrics scrape interval to drop", misconception: "Scrape interval is configured, not a function of errors." },
+  ]}
+/>
+
+<Quiz
+  id="02-red-instrumentation-quiz-3"
+  lessonSlug="02-red-instrumentation"
+  lang="en"
+  question="A senior engineer claims histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m]))) (no 'by (le)') gives the fleet-wide p99. Why is this wrong?"
+  choices={[
+    { label: "It is correct — sum collapses replicas which is the point", misconception: "Sum without by (le) collapses all label dimensions including le, leaving histogram_quantile with a single value it cannot interpret." },
+    { label: "histogram_quantile requires the le label to be preserved so it can read per-bucket counts. The correct form is sum by (le) (rate(...)). Dropping by (le) silently produces NaN or garbage.", correct: true },
+    { label: "Five-minute rate windows are too short for p99", misconception: "Window size is a separate concern; 5m is normal. The bug is the missing by (le)." },
+    { label: "Aggregating histograms across replicas is impossible", misconception: "Aggregating is exactly what histograms are designed for, when grouped by le." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RED Duration must be a histogram — never an average. Buckets must bracket the SLO with ≥3 points on each side. Labels must be bounded: route template, method, status class — never user IDs or exact URLs. Cardinality is the tax that scales with bad label choices.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-red-instrumentation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must RED Duration be a histogram rather than sum/count (average)?", a: "A counter divided by a counter gives the average latency — which masks slow-tail behaviour. A service with 1% of requests at 10 s and 99% at 100 ms has the same mean as a service with all requests at 199 ms; users on the first hit retries and timeouts, users on the second do not. Percentiles are the only way to see the tail. Histogram bucket counts can be aggregated across replicas and queried for any percentile at read time." },
+    { q: "What does the 'by (le)' clause do in a histogram_quantile query, and what happens without it?", a: "'by (le)' preserves the le label (bucket boundary) in the sum aggregation so histogram_quantile receives a vector of per-bucket rates to interpolate across. Without it, sum collapses all label dimensions including le, leaving a single scalar — histogram_quantile cannot estimate a percentile from a single point and returns NaN or garbage." },
+    { q: "Name three label values forbidden on RED metrics and one label value that is always allowed.", a: "Forbidden: user_id (unbounded cardinality), request_id (unique per request), error_message (stack traces are unbounded). Always allowed: route template (bounded by number of URL patterns, e.g. /cart not /cart?u=12345)." },
+  ]}
+/>
+
+<Recap lang="en">
+RED in Prometheus is three metric groups: `http_requests_total` (counter for Rate), `http_request_errors_total` (counter for Errors), and `http_request_duration_seconds` (histogram for Duration). Duration must be a histogram because the average masks tail behavior that users feel — `histogram_quantile` reads per-bucket counts and interpolates the percentile, but only when `sum by (le)` preserves the bucket-boundary label. Bucket selection decides p99 accuracy: choose 10–15 buckets densest around the SLO target with adjacent buckets differing by ≤2× near the SLO. Label discipline is the other half: use route templates, HTTP method, and status class — never user IDs, request IDs, or exact error messages. Each unique label combination is a separate time series, billed separately, and stored in RAM on the Prometheus server.
+</Recap>
