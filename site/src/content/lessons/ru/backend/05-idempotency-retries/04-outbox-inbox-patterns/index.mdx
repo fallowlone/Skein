@@ -1,0 +1,194 @@
+---
+slug: 04-outbox-inbox-patterns
+lang: ru
+track: backend
+unit: 05-idempotency-retries
+order: 4
+title: "Outbox и inbox: effectively-once через dual-write границу"
+summary: "Прямой dual-write в БД + Kafka ломается в любом порядке. Outbox пишет событие внутри транзакции БД; inbox дедуплицирует на стороне консумера. Вместе дают effectively-once доставку."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/05-idempotency-retries/01-why-idempotency
+deepensInto:
+  - backend/05-idempotency-retries/06-idempotency-senior
+spiral: ["statefulness"]
+concepts: ["dual-write", "outbox-pattern", "inbox-pattern", "CDC", "debezium", "dead-letter-queue", "effectively-once"]
+sources:
+  - https://event-driven.io/en/outbox_inbox_patterns_and_delivery_guarantees_explained/
+  - https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html
+  - https://stripe.com/blog/idempotency
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Order service записывает заказ в Postgres, потом публикует событие "order.created" в Kafka. Между коммитом и публикацией pod падает. Заказ есть в базе. Downstream сервис инвентаря никогда не увидит событие. Заказ завис.
+</Hook>
+
+<Crux>Exactly-once невозможна. Production: outbox (событие в транзакции БД) + relay at-least-once + inbox (дедуп на консумере) = effectively-once.</Crux>
+
+<Explanation>
+
+## Почему dual-write всегда ломается
+
+Любая последовательность "записать в базу, потом опубликовать в брокер" имеет crash-окно между двумя операциями:
+
+| Последовательность | Crash точка | Результат |
+|---|---|---|
+| Запись в БД → публикация в Kafka | После БД, до Kafka | БД обновлена, Kafka молчит — консумеры пропускают событие |
+| Публикация в Kafka → запись в БД | После Kafka, до БД | Фантомное событие в Kafka — консумеры видят запись, которой нет |
+
+Обе последовательности сломаны. Не существует версии "два отдельных write", которая атомарна.
+
+## Outbox-паттерн: используем базу как брокер
+
+**Ключевой инсайт:** пиши событие *в базу данных*, внутри той же транзакции что бизнес-запись. База становится единственным источником правды.
+
+```sql
+BEGIN;
+  -- Бизнес-запись
+  INSERT INTO orders (id, customer_id, total) VALUES ($1, $2, $3);
+
+  -- Outbox-запись (та же транзакция)
+  INSERT INTO outbox (id, event_type, payload, published)
+  VALUES (gen_random_uuid(), 'order.created', $payload, false);
+COMMIT;
+-- Публикация в Kafka происходит ПОСЛЕ коммита транзакции
+```
+
+Отдельный **outbox-relay процесс** опрашивает таблицу `outbox` (или хвостит Write-Ahead Log через Debezium) и публикует неопубликованные строки в Kafka, помечая их published после broker ACK.
+
+**Crash-сценарии теперь безопасны:**
+- Crash до COMMIT → транзакция откатывается. Ни заказа, ни outbox-строки. Фантомного события нет.
+- Crash после COMMIT, до публикации relay → заказ существует, outbox-строка с `published=false`. Relay подберёт при следующем опросе.
+- Kafka недоступна → relay ретраит. Outbox накапливается. Заказ цел в БД.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Подход | Crash-safe? | Kafka обязательна? | Паттерн |
+|---|---|---|---|
+| БД потом Kafka | Нет — тихая потеря события | Да | Антипаттерн |
+| Kafka потом БД | Нет — фантомное событие | Да | Антипаттерн |
+| Outbox (только БД) | Да | Нет (async relay) | Правильный |
+
+</div>
+
+## Реализации relay
+
+**Poll-based relay:** запрашивает `WHERE published = false ORDER BY id LIMIT 1000` каждые несколько секунд. Просто, добавляет latency равную интервалу опроса (обычно 1–5 с).
+
+**Debezium (CDC relay):** хвостит Postgres Write-Ahead Log через logical replication. Публикует сразу после коммита строки. Sub-second lag. Без overhead опроса. Production-стандарт для высоконагруженных сервисов.
+
+**AWS SAM вариант:** DynamoDB Streams → Lambda → EventBridge — managed CDC без запуска relay процесса.
+
+## Inbox-паттерн: дедупликация на консумере
+
+Relay доставляет at-least-once (может опубликовать дважды, если перезапустился после публикации, но до пометки строки). Консумер должен быть идемпотентным.
+
+**Inbox-паттерн:** перед применением бизнес-эффекта события запиши его `id` в таблицу `processed_events` внутри той же транзакции что бизнес-запись.
+
+```sql
+BEGIN;
+  -- Проверяем, не обрабатывали ли уже
+  INSERT INTO processed_events (event_id) VALUES ($1)
+    ON CONFLICT (event_id) DO NOTHING;
+
+  -- Если 0 строк затронуто, событие уже обработано — пропускаем
+  IF found THEN
+    UPDATE inventory SET reserved = reserved - $qty WHERE sku = $sku;
+  END IF;
+COMMIT;
+```
+
+Если событие придёт второй раз, вторая попытка упрётся в UNIQUE constraint на `event_id` и бизнес-запись пропускается. Effectively-once поведение с точки зрения консумера.
+
+**Обслуживание inbox-таблицы:** партиционируй по `event_timestamp` и удаляй партиции старше retention window брокера (7–14 дней). Без очистки inbox растёт бесконечно.
+
+## Dead-letter queue: обработка невосстановимых сбоев
+
+Не каждый сбой восстановим retry. Некорректные данные, нарушение схемы, невыполнимые бизнес-инварианты — это **poison messages** — никакое количество retry их не починит.
+
+После N попыток обработки (обычно 3–5) перемести сообщение в **dead-letter queue (DLQ)**. Основной конвейер продолжает работу; люди разбирают DLQ.
+
+```
+Основная очередь → [N попыток retry] → DLQ → human review
+                                             → ручной replay (после фикса)
+                                             → формальный reject (бизнес-правило)
+```
+
+Production-настройки: N = 3–5 попыток, DLQ retention 7–30 дней, алерт на рост DLQ depth. Растущий DLQ — compliance-обязательство: каждая запись — это операция с потенциальными частичными эффектами.
+
+<Inset kind="why" lang="ru">
+Почему at-least-once доставка от outbox-relay приемлема даже для платёжных событий? Потому что консумер запускает inbox-паттерн — дедупликацию по event ID до применения любого бизнес-эффекта. Комбинация: атомарность Postgres (гарантирует существование outbox-строки тогда и только тогда, когда бизнес-запись закоммичена) + at-least-once relay + идемпотентный консумер = effectively-once. Ни один компонент не должен быть exactly-once; гарантия возникает из композиции.
+</Inset>
+
+<Quiz
+  id="outbox-q1"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="ru"
+  question="Зачем нужен outbox-паттерн, если приложение может публиковать в Kafka напрямую из API-обработчика?"
+  choices={[
+    { label: "Kafka не принимает синхронные записи", misconception: "Kafka producer синхронен с точки зрения вызывающего. Паттерн не про транспорт." },
+    { label: "Он делает транзакцию БД и публикацию сообщения атомарными, сериализуя их через одно durable medium", correct: true },
+    { label: "Это требование стандарта AMQP", misconception: "AMQP — отдельный протокол. Outbox — паттерн, а не предписание протокола." },
+    { label: "Он шифрует события end-to-end", misconception: "Шифрование не при чём. Outbox решает атомарность dual-write." },
+  ]}
+/>
+
+<DragOrder
+  id="outbox-drag1"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="ru"
+  prompt="Поставь шаги outbox-публикации в правильном порядке:"
+  items={[
+    "Приложение открывает транзакцию базы",
+    "Приложение делает бизнес-запись (например, вставляет строку заказа)",
+    "Та же транзакция вставляет outbox-строку с событием к публикации",
+    "Приложение коммитит — бизнес-запись и outbox-строка атомарно видны",
+    "Outbox-relay сканирует неопубликованные строки и публикует в Kafka",
+    "Relay помечает строку published после получения broker ACK",
+  ]}
+/>
+
+<Quiz
+  id="outbox-q2"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="ru"
+  question="Outbox relay падает после публикации в Kafka, но до пометки outbox-строки как published. Что происходит при перезапуске relay?"
+  choices={[
+    { label: "Событие потеряно — Kafka уже получила его, но outbox-строка завила", misconception: "Kafka уже имеет событие. Relay опубликует его снова — at-least-once это фича, а не баг, потому что inbox-паттерн консумера дедуплицирует." },
+    { label: "Relay повторно публикует событие; inbox консумера дедуплицирует и применяет бизнес-эффект только один раз", correct: true },
+    { label: "Relay обнаружит дубликат через Kafka message ID и пропустит", misconception: "Relay не запрашивает Kafka на предмет существующих сообщений. Он доверяет флагу published в outbox-строке." },
+    { label: "Транзакция откатывается и строка заказа тоже удаляется", misconception: "Транзакция уже закоммичена. Откат после коммита невозможен." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Outbox: пиши событие внутри транзакции БД — crash-safety забота Postgres. Relay доставляет at-least-once. Inbox: дедуплицируй по event ID внутри транзакции консумера. Вместе: effectively-once без exactly-once доставки.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="outbox-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Команда хочет exactly-once доставки в Kafka из записи Postgres. Варианты: (a) запись Postgres потом публикация, (b) публикация потом запись, (c) outbox. Почему (c) правильный?", a: "(a) Crash между записью и публикацией — Postgres обновлён, Kafka молчит, консумеры пропускают событие. (b) Crash между публикацией и записью — фантомное событие в Kafka, консумеры видят запись, которой нет. (c) Outbox пишет событие в outbox-таблицу Postgres В ТОЙ ЖЕ транзакции — атомарность теперь забота Postgres. Relay публикует at-least-once; inbox консумера дедуплицирует. Комбинация атомарности Postgres + at-least-once relay + идемпотентный консумер = effectively-once." },
+    { q: "Что такое inbox-паттерн и от чего он защищает?", a: "Inbox-паттерн пишет event ID в таблицу processed_events внутри той же транзакции что бизнес-запись консумера. Если событие придёт второй раз (relay перепубликовал после crash), INSERT ON CONFLICT DO NOTHING возвращает 0 строк и бизнес-запись пропускается. Это делает обработку консумера effectively-once без координации с брокером. Inbox-таблицу нужно партиционировать и удалять старые партиции, иначе она растёт вечно." },
+    { q: "Когда сообщение должно идти в dead-letter queue вместо retry?", a: "Когда сбой не transient — некорректный payload, нарушение схемы или бизнес-инвариант, который никогда не выполнится (например, резервирование инвентаря для удалённого продукта). После N попыток (3–5) сообщение переезжает в DLQ. Основной конвейер продолжает. Люди разбирают DLQ, фиксируют upstream причину и делают replay или формальный reject. Рост DLQ depth — сигнал алерта: накапливаются постоянные сбои." },
+  ]}
+/>
+
+<Recap lang="ru">
+Dual-write проблему — атомарную запись в две системы — нельзя решить последовательностью записей. Outbox-паттерн решает её, записывая событие в базу как outbox-строку в той же транзакции что бизнес-запись — атомарность становится ответственностью базы. Relay (poll-based или Debezium CDC) доставляет события в Kafka at-least-once. Консумер использует inbox-паттерн — дедупликацию по event ID внутри своей транзакции — для effectively-once обработки. Poison messages, которые не могут быть обработаны, идут в dead-letter queue после N попыток; основной конвейер продолжает работу.
+</Recap>
