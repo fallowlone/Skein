@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [x] **Phase B** — content migration (49/51 units done — 5 ready pillars + lones apis/06, backend/05, caching/03, distributed/02, frontend/02). RESUME at `queues/01-delivery-guarantees`.
+- [x] **Phase B** — content migration (50/51 units done — 5 ready pillars + lones apis/06, backend/05, caching/03, distributed/02, frontend/02, queues/01). RESUME at `security/02-oauth-oidc`.
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
@@ -404,7 +404,7 @@ Offload research + authoring + translation to subagents. After each unit, tick i
 - [x] caching/03-stampede → 6 lessons, commit `d2c9cc6`
 - [x] distributed/02-raft-outline → 6 lessons, commit `c850410`
 - [x] frontend/02-data-fetching → 6 lessons, commit `fc631b6`
-- [ ] queues/01-delivery-guarantees
+- [x] queues/01-delivery-guarantees → 6 lessons, commit `45d9acc`
 - [ ] security/02-oauth-oidc
 
 ---
