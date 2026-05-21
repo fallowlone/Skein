@@ -18,7 +18,7 @@
   - [x] A1 16 tracks `9437c70` · A2 lessons schema `3889476` · A3 topic skeleton `e6fb26b`
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
-- [x] **Phase B** — content migration (43/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 8/8, performance 7/8). RESUME at `performance/08-putting-it-together`.
+- [x] **Phase B** — content migration (44/51 units done — networking 12/12, browser 8/8, databases 8/8, observability 8/8, performance 8/8). RESUME at lone ready piece `apis/06-graphql-n-plus-one`.
 - [ ] **Phase C** — stub conversion (81 stub units)
 - [ ] **Phase D** — teardown
 
