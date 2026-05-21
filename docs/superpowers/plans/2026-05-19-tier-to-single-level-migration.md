@@ -20,7 +20,11 @@
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
 - [x] **Phase B** — content migration COMPLETE (51/51). 5 ready pillars + 7 lone pieces. Next: Phase C (81 stub units → lesson stubs).
 - [x] **Phase C** — stub conversion COMPLETE (81/81 across 11 pillars). Commits: `bfda814` ai-llm, `944d8d5` data-engineering, `a94c7d5` deployment, `4d850f4` engineering-practice, `432fd8f` apis, `389a87d` backend, `0ec500f` caching, `232e42a` distributed, `5a0eaa5` frontend, `b240a74` queues, `2f2ef86` security. `book/` collection now empty.
-- [ ] **Phase D** — teardown
+- [x] **Phase D** — teardown COMPLETE 2026-05-21. Commits: `01add9f` D1 (piece-only lint rules dropped), `f5d9c46` D2 (piece routes removed, Chapter.astro deleted, Topic.astro kept), `2cac861` D3 (book/pillars/chapters collections + data files retired, orphan nav components cleaned), `e1f4520` D4 (TierAccordion + 3-tier scaffold + tier-persist e2e deleted), `378f43e` D5 (final cleanup of orphan piece-era components + dead CSS, gate passed). Final build: 2359 pages, lint 0/0.
+
+## Migration result
+
+3-tier `book/` model is fully retired. All 16 pillars now expose single-level connected lessons (open-atlas Model A). Track count = 19 (3 foundations + 16 fullstack pillars). Ready content: 5 pillars + 7 lone units = 51 ready units. Stub content: 81 units. Total 132 units, ~470+ lesson files EN + RU (Phase B authored ~370 files; Phase C added 162 stub files). Build: 2359 static pages, lint 0/0.
 
 **Carry-forward facts:**
 - Data files: `site/src/content/tracks.json`, `site/src/content/units.json` (NOT under `lessons/`). `Track` enum derived from `TRACKS` in `site/src/types/index.ts`.
