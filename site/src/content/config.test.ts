@@ -1,61 +1,58 @@
 import { describe, expect, test } from "vitest";
 import { z } from "astro/zod";
-import { PILLARS } from "../types";
+import { TRACKS } from "../types";
 
 // Mirror the actual schemas from config.ts
-const Pillar = z.enum(PILLARS as [string, ...string[]]);
+const Track = z.enum(TRACKS as [string, ...string[]]);
 const Bi = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 
-const pillarsSchema = z.object({
-  slug: Pillar,
+const tracksSchema = z.object({
+  slug: Track,
   order: z.number().int().positive(),
   title: Bi,
   blurb: Bi,
   color: z.enum(["lilac", "mint", "peach", "sky", "rose"]),
-  prereqs: z.array(Pillar).default([]),
 });
 
-const chaptersSchema = z.object({
+const unitsSchema = z.object({
   slug: z.string().regex(/^\d{2}-[a-z0-9-]+$/),
-  pillar: Pillar,
+  track: Track,
   order: z.number().int().positive(),
   title: Bi,
   crux: Bi,
-  pieces: z.array(z.string().regex(/^\d{2}-[a-z0-9-]+$/)),
+  lessons: z.array(z.string().regex(/^\d{2}-[a-z0-9-]+$/)),
 });
 
 describe("content collections", () => {
-  test("pillars schema accepts a valid pillar entry", () => {
+  test("tracks schema accepts a valid track entry", () => {
     const valid = {
-      slug: "networking",
+      slug: "math",
       order: 1,
-      title: { en: "Networking & Protocols", ru: "Сети и протоколы" },
+      title: { en: "Mathematics", ru: "Математика" },
       blurb: { en: "...", ru: "..." },
       color: "lilac",
-      prereqs: [],
     };
-    expect(() => pillarsSchema.parse(valid)).not.toThrow();
+    expect(() => tracksSchema.parse(valid)).not.toThrow();
   });
 
-  test("pillars schema rejects unknown slug", () => {
-    expect(() => pillarsSchema.parse({
+  test("tracks schema rejects unknown slug", () => {
+    expect(() => tracksSchema.parse({
       slug: "garbage",
       order: 1,
       title: { en: "x", ru: "x" },
       blurb: { en: "x", ru: "x" },
       color: "lilac",
-      prereqs: [],
     })).toThrow();
   });
 
-  test("chapters schema accepts a valid chapter entry", () => {
-    expect(() => chaptersSchema.parse({
-      slug: "01-networking",
-      pillar: "networking",
+  test("units schema accepts a valid unit entry", () => {
+    expect(() => unitsSchema.parse({
+      slug: "01-numbers",
+      track: "math",
       order: 1,
-      title: { en: "How the internet works", ru: "Как работает интернет" },
+      title: { en: "Numbers", ru: "Числа" },
       crux: { en: "?", ru: "?" },
-      pieces: ["01-physical-link", "02-ip-packet"],
+      lessons: ["01-counting", "02-zero"],
     })).not.toThrow();
   });
 });
