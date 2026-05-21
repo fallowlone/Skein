@@ -27,7 +27,7 @@ export async function checkI18nParity(siteSrc: string): Promise<string[]> {
     const lang = body.match(/^lang:\s*(en|ru)/m)?.[1];
     const status = body.match(/^status:\s*(stub|draft|ready)/m)?.[1];
     if (!lang || status !== "ready") continue;
-    // Extract slug from path: .../book/<lang>/<pillar>/<slug>/index.mdx
+    // Extract slug from path: .../book/<lang>/<pillar>/<slug>/index.mdx (legacy — book/ dir now empty)
     const parts = f.split("/");
     const idx = parts.findIndex((p) => p === "book");
     const slug = parts[idx + 3]; // pillar dir is parts[idx+2], piece slug is parts[idx+3]
