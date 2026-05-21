@@ -1,0 +1,252 @@
+---
+slug: 05-index-only-scans-and-visibility
+lang: en
+track: databases
+unit: 02-indexes
+order: 5
+title: "Index-only scans, the Visibility Map, and INCLUDE"
+summary: "Index-only scans return data straight from the index without touching the heap — but only when the Visibility Map confirms row visibility. This lesson covers the VM, VACUUM, autovacuum tuning, and the INCLUDE clause for covering indexes."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-index-types"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["index-only-scan", "visibility-map", "vacuum", "autovacuum", "covering-index", "include-clause", "heap-fetch", "dead-tuples"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+`EXPLAIN ANALYZE` shows "Index Only Scan" on one query and "Index Scan" on another — identical index, different tables. The difference is not the index. It is the Visibility Map. One table was VACUUMed yesterday; the other has 12% dead tuples. Understanding why this matters is the difference between a 1 ms query and a 10 ms query on the same data.
+</Hook>
+
+<Crux>Index-only scan skips the heap when the VM marks the page all-visible. VACUUM keeps VM current. INCLUDE adds projections to leaf pages.</Crux>
+
+<Explanation>
+
+## What an index scan vs index-only scan costs
+
+A regular **index scan** for a query like `SELECT id, status FROM orders WHERE user_id = 42`:
+
+1. Walk the B-tree to the matching leaf entries — O(log n), a few page reads.
+2. For each matching TID, fetch the heap row to get `id` and `status` — one heap page read per row if the rows are scattered.
+
+Step 2 is the bottleneck at scale. For 10,000 matching rows across 10,000 scattered heap pages, that is 10,000 random I/O operations.
+
+An **index-only scan** eliminates step 2 entirely. If the index contains all columns the query needs, Postgres reads only the index leaf pages. For dense ranges (1,000 rows on 10 index leaf pages), the I/O drops from thousands to tens.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Scan type</th>
+        <th class="border border-border px-3 py-2 text-left">I/O pattern</th>
+        <th class="border border-border px-3 py-2 text-left">When used</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Index scan</td>
+        <td class="border border-border px-3 py-2">Index walk + heap fetch per row</td>
+        <td class="border border-border px-3 py-2">Columns not all in index</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Bitmap heap scan</td>
+        <td class="border border-border px-3 py-2">Index walk + sorted heap read (batched)</td>
+        <td class="border border-border px-3 py-2">Many rows; reduces random I/O</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Index only scan</td>
+        <td class="border border-border px-3 py-2">Index leaves only — no heap</td>
+        <td class="border border-border px-3 py-2">All needed columns in index AND VM bits set</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Sequential scan</td>
+        <td class="border border-border px-3 py-2">Full heap read</td>
+        <td class="border border-border px-3 py-2">No usable index, or low selectivity</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The Visibility Map: why index-only scans need it
+
+Postgres uses MVCC — each row may have multiple versions (old and new tuples from concurrent updates). To know whether a row is visible to the current transaction, Postgres normally reads the row's system columns (`xmin`, `xmax`, transaction status bits). These columns are in the heap, not the index.
+
+An index-only scan does not read the heap. So how does it know if a row is visible?
+
+The **Visibility Map (VM)** is a per-table bitmap with one bit per heap page. The bit is set to 1 ("all visible") when every tuple on that page is visible to every current and future transaction — meaning no concurrent updates or deletes are pending. VACUUM sets these bits after cleaning dead tuples. Any write that touches the page clears the bit.
+
+When Postgres executes an index-only scan and encounters a matching TID:
+- If the VM bit for that page is set: the row is known-visible without reading the heap. No heap fetch.
+- If the VM bit is clear: Postgres must fetch the heap page to check visibility. This heap fetch is counted in `EXPLAIN ANALYZE` as "Heap Fetches: N".
+
+A high "Heap Fetches" count in an index-only scan means the VM is not current — the "index-only" scan is actually doing heap fetches for most rows.
+
+## VACUUM keeps the VM current
+
+VACUUM reclaims dead tuples and sets VM bits. Autovacuum runs it automatically (triggered when dead tuples exceed `autovacuum_vacuum_scale_factor` × table size, default 20%). For tables that depend on index-only scans:
+
+- 20% dead tuples is far too tolerant. Set `autovacuum_vacuum_scale_factor = 0.05` and `autovacuum_analyze_scale_factor = 0.02`.
+- Long-running transactions prevent VACUUM from reclaiming tuples — a single transaction open for hours can block VM updates for that entire duration.
+- Monitor `pg_stat_user_tables.n_dead_tup` as the leading indicator of VM freshness.
+
+```sql
+-- Tune autovacuum per-table on hot OLTP tables
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+```
+
+## The INCLUDE clause: covering indexes
+
+Postgres 11+ supports `CREATE INDEX ... INCLUDE (cols)` — the INCLUDE columns are stored in the index leaf pages but are not part of the sort key. The result: the index is "covering" for queries that need those extra columns in the SELECT projection.
+
+Without INCLUDE, to make a query covering you would have to add the projection columns to the key — which changes the sort order and may harm other queries that rely on that index's sort for ORDER BY.
+
+```sql
+-- Key columns: workspace_id, created_at DESC (sort key for ORDER BY)
+-- INCLUDE: id, total_cents (payload for the projection — not in sort key)
+CREATE INDEX CONCURRENTLY idx_orders_ws_recent_covering
+  ON orders (workspace_id, created_at DESC)
+  INCLUDE (id, total_cents);
+```
+
+Query `SELECT id, total_cents FROM orders WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 50` now hits only the index. No heap fetch. 50 leaf entries read in order.
+
+The trade: INCLUDE columns increase index size (they are stored in every leaf entry). Large INCLUDE payloads can make the index approach table size. Keep INCLUDE columns to the projection columns actually needed by the hot query, not everything.
+
+## When index-only scans work — and when they do not
+
+**Works well**: insert-only or append-mostly tables (events, logs, audit trails). VM bits stay set because there are no updates clearing them. VACUUM rarely needed for visibility purposes.
+
+**Degrades**: heavily-updated tables. Every update clears the VM bit for the updated page. Until VACUUM runs and sets the bit again, every index-only scan for that page must do a heap fetch. On a table with 50,000 updates/second, VM bits are cleared faster than autovacuum can set them — the "index-only scan" becomes an "index scan with extra steps."
+
+**Diagnosis**: `EXPLAIN (ANALYZE, BUFFERS)` on the query. Look for:
+- `Index Only Scan` with `Heap Fetches: 0` — ideal.
+- `Index Only Scan` with `Heap Fetches: N` (high N) — VM not current, tune autovacuum.
+- `Index Scan` instead of `Index Only Scan` — columns not all in the index; add INCLUDE.
+
+## Concurrency and index build timing
+
+`CREATE INDEX CONCURRENTLY` on a 100M-row table takes 10-30 minutes. During the build:
+1. Postgres scans the table twice.
+2. Between phases, it waits for all current transactions to finish (to ensure the index is consistent with all recent writes).
+3. The index is replicated to standbys via WAL.
+
+Implications:
+- Long-running analytic queries on the same table can stall the build for hours (the build waits for them).
+- Multiple concurrent builds on the same database compete for I/O — schedule large index builds in low-traffic windows.
+- After the build, check `pg_indexes.indisvalid` — a failed build leaves an INVALID index that is invisible to the planner but still uses storage.
+
+```sql
+-- Check for invalid indexes after a CONCURRENTLY build
+SELECT indexrelid::regclass, indisvalid
+FROM pg_index
+WHERE NOT indisvalid;
+```
+
+Recovery from INVALID: `DROP INDEX CONCURRENTLY idx_name;` then retry.
+
+<NumbersCard
+  id="05-visibility-numbers"
+  title="Index-only scan and VACUUM numbers"
+  stats={[
+    { label: "Index-only scan benefit vs index scan", value: "10-100x on hot reads" },
+    { label: "Heap Fetches: 0 in EXPLAIN ANALYZE", value: "ideal — VM is current" },
+    { label: "autovacuum_vacuum_scale_factor default", value: "20% dead tuples" },
+    { label: "Recommended scale_factor for IOS-dependent tables", value: "5%" },
+    { label: "INCLUDE supported since", value: "Postgres 11 (2018)" },
+    { label: "Long-running transaction impact on VM", value: "blocks VM bit-setting for pages it touched" },
+    { label: "CREATE INDEX CONCURRENTLY on 100M rows", value: "~10-30 min" },
+    { label: "INVALID index after failed CONCURRENTLY build", value: "invisible to planner; still uses storage" },
+    { label: "Monitor: n_dead_tup in pg_stat_user_tables", value: "leading indicator of VM freshness" },
+  ]}
+/>
+
+<Misconception id="05-ios-mc-1">
+<strong>"Index Only Scan in EXPLAIN means no heap reads."</strong> Wrong. It still reads the heap for pages whose Visibility Map bit is clear. On a stale-VM table, "Heap Fetches: 4,000" makes the plan slower than a bitmap heap scan.
+</Misconception>
+
+<TraceScenario
+  id="05-ios-trace-1"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="en"
+  scenario="An analytics query on an orders table shows Index Only Scan but Heap Fetches: 12,000. Diagnose and fix."
+  steps={[
+    { prompt: "Step 1: what does Heap Fetches: 12,000 mean?", reveal: "For 12,000 of the matching TIDs, the Visibility Map bit was clear — Postgres could not confirm visibility from the VM alone and had to fetch the heap page. This turns what should be index-leaf-only I/O into heap I/O, negating most of the index-only scan benefit. The root cause is a stale VM." },
+    { prompt: "Step 2: how do you check VM health?", reveal: "SELECT n_dead_tup, last_autovacuum, last_autoanalyze, n_live_tup FROM pg_stat_user_tables WHERE relname = 'orders'. If n_dead_tup is large (more than 5-10% of n_live_tup) or last_autovacuum is old (days), autovacuum is not keeping up. Also check for long-running transactions: SELECT pid, now() - pg_stat_activity.query_start AS duration, query FROM pg_stat_activity WHERE state = 'active' ORDER BY duration DESC — a transaction open for hours blocks VACUUM." },
+    { prompt: "Step 3: what is the fix?", reveal: "Immediate: run VACUUM orders manually (this sets VM bits and reclaims dead tuples). Then re-run EXPLAIN ANALYZE — Heap Fetches should drop to 0 or near-0. Durable: tune autovacuum for this table: ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02). This makes autovacuum trigger after 5% dead tuples instead of 20%. If long-running transactions are the blocker, identify and shorten them or set statement_timeout / idle_in_transaction_session_timeout." },
+    { prompt: "Step 4: how do you verify the fix is durable?", reveal: "Monitor pg_stat_user_tables.n_dead_tup over time — it should now stay under 5% of live rows. Run EXPLAIN (ANALYZE, BUFFERS) on the query again: 'Index Only Scan' with 'Heap Fetches: 0' and low 'Buffers: shared hit'. Check pg_stat_user_tables.last_autovacuum — should show runs within the last few minutes on a busy table. If the table is extremely write-heavy and autovacuum cannot keep up, consider a CLUSTER or periodic manual VACUUM ANALYZE as part of maintenance." },
+  ]}
+/>
+
+<Quiz
+  id="05-ios-quiz-1"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="en"
+  question="A query is showing 'Index Only Scan' but Heap Fetches: 8,000 in EXPLAIN ANALYZE. What is the most likely cause?"
+  choices={[
+    { label: "The index does not have all columns the query needs", misconception: "If columns were missing, the plan would show 'Index Scan', not 'Index Only Scan'." },
+    { label: "The Visibility Map bits are cleared for many pages because VACUUM has not run recently", correct: true },
+    { label: "The index is INVALID", misconception: "An INVALID index is not used by the planner at all — the plan would show Seq Scan." },
+    { label: "The query has too many result rows for index-only scan", misconception: "The row count does not determine whether an index-only scan does heap fetches — the VM state does." },
+  ]}
+/>
+
+<Quiz
+  id="05-ios-quiz-2"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="en"
+  question="What is the purpose of the INCLUDE clause in CREATE INDEX?"
+  choices={[
+    { label: "It adds extra filter conditions to the index", misconception: "Filter conditions are added with WHERE (partial index), not INCLUDE." },
+    { label: "It stores extra columns in the index leaf pages without making them part of the sort key, enabling index-only scans for queries that need those columns in the projection", correct: true },
+    { label: "It includes the index in query planning even when statistics are stale", misconception: "INCLUDE is about column storage in the index, not planner hints." },
+    { label: "It forces the planner to use this index", misconception: "Postgres does not have index hints; INCLUDE is about covering extra projection columns." },
+  ]}
+/>
+
+<Inset kind="warning" lang="en">
+The EXPLAIN plan label "Index Only Scan" is misleading when Heap Fetches is high. The plan node name reflects the intended scan type — the actual behaviour depends on VM state at runtime. Always check `Heap Fetches` in `EXPLAIN ANALYZE` output, not just the scan type label. A query that "works perfectly in staging" can degrade in production if the production table has a worse autovacuum schedule.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Index-only scans skip the heap and return data directly from index leaf pages — but only when the Visibility Map confirms each row is visible without a heap fetch. VACUUM sets VM bits; stale VM causes index-only scans to degrade into heap-fetching scans. Use INCLUDE to add projection columns to the index leaves without making them sort-key columns. Tune autovacuum_vacuum_scale_factor to 0.05 on tables that depend on index-only scans. After any CREATE INDEX CONCURRENTLY build, check pg_index.indisvalid.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-ios-retrieval"
+  lang="en"
+  questions={[
+    { q: "Articulate why index-only scans need the Visibility Map and what operational discipline keeps them firing correctly.", a: "An index entry contains the indexed column values and a TID (physical row address). To confirm a row is visible to the current transaction, Postgres normally reads the row's system columns from the heap (xmin, xmax, transaction IDs that created and deleted it). An index-only scan skips the heap — but still needs to confirm visibility. It uses the Visibility Map instead: a per-table bitmap where a set bit means 'every tuple on this page is visible to every transaction'. VACUUM sets bits after cleaning dead tuples; any write to a page clears the bit. When the VM bit is set, index-only scan skips the heap entirely (Heap Fetches: 0). When the bit is clear, it must fetch the heap page — a Heap Fetch. Operational discipline: (1) tune autovacuum_vacuum_scale_factor to 0.05 on tables where IOS is critical; (2) monitor pg_stat_user_tables.n_dead_tup — keep under 5% of live rows; (3) kill or shorten long-running transactions that block VACUUM from reclaiming tuples; (4) after any bulk write, run VACUUM manually; (5) verify with EXPLAIN (ANALYZE, BUFFERS) that Heap Fetches is near 0." },
+    { q: "When should you use INCLUDE vs adding columns to the sort key in a composite index?", a: "Add a column to the sort key when: queries filter or sort by that column (e.g., ORDER BY that column, range predicates on it). The column being a key column means the index is sorted by it, which accelerates those operations. Use INCLUDE instead when: the column is only needed in the SELECT projection, not for filtering or sorting. INCLUDE stores the column in leaf pages only — it does not affect the sort order. This enables index-only scans for projections without changing which queries the index serves for filtering and sorting. The practical rule: key columns = filtering/sorting columns; INCLUDE columns = projection-only columns. Example: index (workspace_id, created_at DESC) INCLUDE (id, total_cents). The key serves WHERE workspace_id = $1 ORDER BY created_at DESC. The INCLUDE serves SELECT id, total_cents. If you added id and total_cents as key columns, the sort order would become workspace_id → created_at → id → total_cents, which is larger and serves no additional filtering query. Caveat: INCLUDE increases index leaf size — add only the columns the hot query actually projects." },
+    { q: "What happens when CREATE INDEX CONCURRENTLY fails, and how do you recover?", a: "CREATE INDEX CONCURRENTLY uses a multi-phase build: it scans the table twice and waits for all in-flight transactions between phases. If any phase fails — for example, a unique-index build encounters a duplicate, the process is killed, or disk space is exhausted — the index is left in an INVALID state. In pg_index, indisvalid = false. The planner treats the index as nonexistent (queries do not use it). However, the index structure still occupies storage and still incurs write overhead — writes that touch indexed columns still update the INVALID index. Recovery steps: (1) confirm the INVALID index: SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid; (2) drop it: DROP INDEX CONCURRENTLY idx_name — use CONCURRENTLY to avoid locking the table; (3) retry: CREATE INDEX CONCURRENTLY with the original definition. Before retrying, investigate the failure cause: check for duplicate values (unique index), disk space (df -h), long-running blocking transactions (pg_stat_activity). Production runbook: always check for INVALID indexes after a migration that includes CREATE INDEX CONCURRENTLY." },
+  ]}
+/>
+
+<Recap lang="en">
+An index-only scan reads column values directly from the index leaves, skipping the heap entirely — cutting I/O by 10-100x for queries that access only indexed columns. The Visibility Map enables this: a per-table bitmap where a set bit means all tuples on that page are visible without a heap check. VACUUM sets VM bits; writes clear them. Stale VM causes index-only scans to degrade: "Index Only Scan" with high Heap Fetches is a symptom of insufficient vacuuming.
+
+Use the INCLUDE clause to add projection columns to index leaves without making them part of the sort key. This creates a "covering index" that answers queries entirely from the index when combined with current VM bits.
+
+Operational rules: tune autovacuum_vacuum_scale_factor to 0.05 on tables that depend on index-only scans; monitor n_dead_tup in pg_stat_user_tables; kill long-running transactions that block VACUUM. After CREATE INDEX CONCURRENTLY, verify indisvalid = true in pg_index before considering the migration complete.
+</Recap>

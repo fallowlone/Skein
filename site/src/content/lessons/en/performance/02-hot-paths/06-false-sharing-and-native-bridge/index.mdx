@@ -1,0 +1,301 @@
+---
+slug: 06-false-sharing-and-native-bridge
+lang: en
+track: performance
+unit: 02-hot-paths
+order: 6
+title: "False sharing and native-bridge hot paths"
+summary: "Two classes of hot path that defeat naive fixes: false sharing (lock-free code that performs worse than locked) and native-bridge overhead (stub wider than the native function it calls). Both need hardware counters or cross-language profilers to see."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/02-hot-paths/05-hardware-counters-and-tma"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["false-sharing", "mesi", "cache-line-padding", "ffi-overhead", "native-bridge", "n-api", "jni", "cgo", "cross-language-flame-graph"]
+sources:
+  - https://www.brendangregg.com/usemethod.html
+  - https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-2/cpu-microarchitecture-analysis.html
+  - https://github.com/LMAX-Exchange/disruptor/wiki/Introduction
+  - https://pkg.go.dev/runtime/pprof
+  - https://nodejs.org/api/n-api.html
+  - https://github.com/google/pprof/blob/main/doc/README.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import PersonaTag from "~/components/pedagogy/PersonaTag.astro";
+
+<Hook>
+The team spent a week making a counter array lock-free with atomic operations. Under load, it's slower than the locked version was. The flame graph shows `updateCounter` wide, IPC 0.42. Meanwhile, a Rust crypto library is idle 92% of the time. The Node service calls it 10,000 times per second — and 40% of CPU is in the N-API stub, not the crypto code.
+</Hook>
+
+<Crux>False sharing makes lock-free pay MESI cost as if locked; native-bridge stubs can dominate their callee. Both need hardware counters.</Crux>
+
+<Explanation>
+
+## False sharing: when "lock-free" is slower than locked
+
+False sharing happens when multiple threads write to different fields that happen to share the same cache line. The hardware's MESI coherency protocol treats a cache line as the atomic unit of ownership. When one CPU writes to any byte in a 64-byte line, it acquires exclusive ownership and invalidates the line in every other CPU's cache. Every other CPU that subsequently reads or writes any byte in that line must re-fetch it through the coherency fabric — at L3 or DRAM latency (~150–300 cycles), not L1 (~5 cycles).
+
+The result: atomic operations that appear non-contending at the code level contend heavily at the hardware level because their data lives on the same cache line.
+
+### Signature in profiles
+
+False sharing does not look like lock contention in a standard CPU profile. There is no visible mutex, no blocked thread. Instead:
+
+- IPC collapses (typically 0.3–0.6 on affected code, compared to 2–4 for compute-bound code).
+- Cache-miss rate is extreme (60–80%), even though the data is small and "should" be hot.
+- The hot function is innocent-looking — an atomic increment, a simple field write.
+- Performance degrades as thread count increases, not improves.
+
+### Hardware counters that expose it
+
+The hardware event `MEM_LOAD_L3_HIT_RETIRED.XSNP_HITM` (Intel) counts loads that were satisfied by a modified copy in another CPU's cache — a direct false-sharing signal. On Linux, `perf stat -e cache-references,cache-misses,instructions` paired with scaling the thread count exposes it indirectly.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Observation</th>
+        <th class="border border-border px-3 py-2 text-left">False sharing suspect</th>
+        <th class="border border-border px-3 py-2 text-left">Lock contention suspect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">CPU profile width</td>
+        <td class="border border-border px-3 py-2">Wide (CPU is stalled on memory)</td>
+        <td class="border border-border px-3 py-2">Narrow in CPU, wide in off-CPU</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">IPC</td>
+        <td class="border border-border px-3 py-2">0.3–0.6 (memory-stalled)</td>
+        <td class="border border-border px-3 py-2">Near 0 (thread not running)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Off-CPU profile</td>
+        <td class="border border-border px-3 py-2">Narrow (not waiting on lock)</td>
+        <td class="border border-border px-3 py-2">Wide (futex wait / monitor wait)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Scales with threads</td>
+        <td class="border border-border px-3 py-2">Gets worse (more writers, more bounces)</td>
+        <td class="border border-border px-3 py-2">Gets worse (more waiters)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">XSNP_HITM counter</td>
+        <td class="border border-border px-3 py-2">Very high</td>
+        <td class="border border-border px-3 py-2">Low</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Fix: cache-line padding
+
+The fix is to ensure each independently-written field occupies its own cache line. On x86, a cache line is 64 bytes; on ARM, 64 or 128 bytes.
+
+```go
+// BEFORE: 16 uint64 counters share 2 cache lines (8 per line)
+var counters [16]uint64
+
+// AFTER: each counter on its own 64-byte line
+type paddedCounter struct {
+    value uint64
+    _     [56]byte // pad to 64 bytes
+}
+var counters [16]paddedCounter
+```
+
+In Java, `@Contended` (from `sun.misc.Contended`, or `jdk.internal.vm.annotation.Contended`) inserts padding automatically. In Rust, `crossbeam::CachePadded` wraps values. In C++, `alignas(64)` on struct fields. The Disruptor (Java) and DPDK (C) bake explicit cache-line padding into their core data structures as a non-negotiable invariant.
+
+<DebugLog
+  id="06-debug-1"
+  pieceSlug="06-false-sharing-and-native-bridge"
+  lang="en"
+  title="Diagnose a false-sharing regression from perf counter output"
+  output={`# perf stat -e cache-references,cache-misses,L1-dcache-load-misses,instructions ./service
+
+   1,250,000,000      cache-references
+     950,000,000      cache-misses           # 76% miss rate — extreme
+   1,200,000,000      L1-dcache-load-misses  # nearly every L1 access misses
+   3,000,000,000      instructions
+                      IPC = 0.42             # CPU stalled 58% of the time
+
+# Profile shows hot leaf:
+#   updateCounter(idx int):
+#     atomic.AddUint64(&counters[idx], 1)   # supposed lock-free fast path
+
+# counters[] is a flat array of 16 uint64 values, accessed by 16 worker
+# goroutines (each goroutine increments its own index).
+# CPU is 16-core. Each uint64 is 8 bytes; cache line is 64 bytes.`}
+  outputLang="log"
+  question="A lock-free counter array shows IPC 0.42 (memory-stalled) despite using atomic operations and per-thread indices. Cache-miss rate 76%. What's the diagnosis and the fix?"
+  hint="Cache lines are 64 bytes. uint64 is 8 bytes. 8 uint64 per line."
+  answer="Diagnosis: false sharing. counters[0..7] live on one 64-byte cache line; counters[8..15] live on the next. When goroutine 0 increments counters[0] and goroutine 1 increments counters[1], both writes target the same cache line. Each atomic write invalidates the line in the other CPU's L1 cache through MESI coherency traffic; the other CPU re-fetches the line. With 8 goroutines hammering the same line, every increment causes a line bounce — IPC collapses to 0.42, cache-miss rate spikes to 76%. Fix: pad each counter to a full cache line. Define `type paddedCounter struct { value uint64; _ [56]byte }` so each element occupies 64 bytes alone. Re-measure: IPC rises to 2.5–3.0, cache-miss rate drops to less than 5%, throughput increases 5–20x depending on contention level."
+/>
+
+<Inset kind="why" lang="en">
+The Linux kernel's `task_struct`, Java's Disruptor ring buffer, and DPDK's per-core packet queues all carry explicit cache-line alignment annotations. Senior performance engineers add the same discipline to any struct whose fields are written by multiple CPUs simultaneously. Reviewers should flag struct definitions that pack multiple atomically-written fields tightly.
+</Inset>
+
+## Native-bridge hot paths: the FFI overhead trap
+
+Modern runtimes bridge to native code via FFI: Node's N-API, Java's JNI, Python's ctypes / cffi / Cython, Go's cgo. Each bridge crossing carries fixed overhead:
+
+- N-API (Node → native addon): ~50–200 ns per call.
+- JNI (Java → native): ~100–500 ns per call.
+- cgo (Go → C): ~200–500 ns per call (includes goroutine stack switch).
+- Python ctypes: ~1–5 μs per call.
+
+When the bridged function is expensive (milliseconds), this overhead is irrelevant. When the bridged function is cheap (nanoseconds), the bridge stub can dominate.
+
+### Signature in a cross-language flame graph
+
+A standard single-language profiler shows only its own stack. A cross-language profile (eBPF, Datadog continuous profiler, or a manually stitched perf + async-profiler capture) shows both stacks. The false-sharing signature from the profiler's perspective:
+
+- The native function itself is narrow (small self-time).
+- The bridge stub (`Cgo_runtime_cgocall`, `JNIEnv::CallStaticVoidMethod`, `napi_call_function`) is wide.
+
+### Real-world example
+
+A Node service called a Rust crypto routine via N-API: 10,000 calls per second, each call computing a 32-byte HMAC. The Rust function itself took ~40 ns. The N-API stub added ~160 ns per call — 4x the work. CPU profile: 40% in the stub, 8% in the actual crypto function.
+
+Fix: batch 64 operations per N-API call. The Rust function receives a slice of 64 inputs and returns a slice of 64 outputs. Per-item overhead drops from 200 ns to 43 ns (160 ns stub / 64 items). CPU profile after: 12% crypto function, stub invisible.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">FFI</th>
+        <th class="border border-border px-3 py-2 text-left">Per-call overhead</th>
+        <th class="border border-border px-3 py-2 text-left">Break-even threshold (native work needed to amortise)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">N-API (Node)</td>
+        <td class="border border-border px-3 py-2">50–200 ns</td>
+        <td class="border border-border px-3 py-2">~500 ns native work per call</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JNI (Java)</td>
+        <td class="border border-border px-3 py-2">100–500 ns</td>
+        <td class="border border-border px-3 py-2">~1 μs native work per call</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">cgo (Go)</td>
+        <td class="border border-border px-3 py-2">200–500 ns</td>
+        <td class="border border-border px-3 py-2">~2 μs native work per call</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">ctypes (Python)</td>
+        <td class="border border-border px-3 py-2">1–5 μs</td>
+        <td class="border border-border px-3 py-2">~10 μs native work per call</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Fix families for native-bridge overhead:
+
+1. **Batch per crossing** — pass a slice of inputs, receive a slice of outputs. Amortise the fixed overhead over N items.
+2. **Push the loop into native** — instead of calling native N times, call native once with the loop body inside the native function.
+3. **Raise the boundary** — move the FFI boundary to a coarser operation so fewer crossings happen per unit of work.
+
+<Quiz
+  id="06-quiz-1"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="en"
+  question="A lock-free atomic counter array shows IPC 0.4 and 72% cache-miss rate as thread count rises. The correct diagnosis is:"
+  choices={[
+    { label: "False sharing. Multiple threads write to different fields on the same cache line; each write forces a full cache-line bounce through MESI coherency, collapsing IPC. Fix: pad each counter to a full cache line (64 bytes).", correct: true },
+    { label: "Lock contention. The atomics are slow because they are equivalent to a spinlock.", misconception: "Atomics are not locks. The symptom is high CPU IPC collapse, not off-CPU wait time; and XSNP_HITM counters confirm cache-line bouncing, not scheduler blocking." },
+    { label: "The algorithm has bad time complexity and needs to be rewritten.", misconception: "The complexity is O(1) — a single atomic add. The cost is memory-system contention, which an algorithmic rewrite won't fix." },
+    { label: "The array is too large for L1 cache.", misconception: "16 uint64 = 128 bytes — easily fits in L1. The issue is writes from multiple CPUs to the same 64-byte line, not capacity." },
+  ]}
+/>
+
+<Misconception id="mc-false-sharing">
+<p><strong>"Lock-free means cache-friendly."</strong> Lock-free eliminates mutex syscalls; it says nothing about cache-line sharing. Adjacent atomic writes on the same cache line cause MESI coherency bounces — the hardware serialises them as if locked. Profile: memory-bound (low IPC, high miss rate), not lock-bound.</p>
+</Misconception>
+
+## Edge cases where "wider frame = bigger problem" lies
+
+Three situations where the widest leaf is not the right attack target.
+
+### 1. Sampled-out short hot paths
+
+A function called 500,000 times per second for 200 ns each runs for 100 ms/s total — 10% of a single CPU second. At a standard 100 Hz sampling rate, the profiler fires ~10 samples per second. Expected samples: 1. Actual samples: 0 or 1, depending on alignment.
+
+The frame is narrow in the flame graph, but it is a top consumer. Diagnosis: instrument with cheap counters (atomic increments + a Prometheus histogram), or raise sample rate temporarily to 1000 Hz during a dedicated profiling window.
+
+### 2. Spin-wait dominating the CPU profile
+
+A CPU profile shows a function wide because the program spin-waited inside it — busy-looping until a condition holds. The thread is on CPU, consuming cycles, but doing no real work. The fix is not to optimise the spin's body; it is to convert the spin into a proper wait (futex, condition variable, channel).
+
+Signature: function body is a tight branch back to itself; IPC is low despite being CPU-bound in the profile; context-switch rate is low (the thread never yields).
+
+### 3. Symbol resolution failures
+
+A wide `[unknown]` frame is not a function — it is a stack the profiler cannot resolve. Common causes: JIT-compiled code without perf maps (Node needs `--perf-basic-prof`; JVM needs `-XX:+PreserveFramePointer`), stripped DWARF debug info, missing kernel symbols.
+
+Before treating `[unknown]` as a target, fix the symbol resolution. The underlying function may be the real hot path, hidden by a diagnostic gap.
+
+<DragOrder
+  id="06-drag-1"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="en"
+  prompt="Order the steps to diagnose and fix a false-sharing regression:"
+  items={[
+    { id: "a", label: "Observe: IPC &lt;1, high cache-miss rate, performance worsens with thread count" },
+    { id: "b", label: "Run perf stat with XSNP_HITM (or cache-misses) to confirm cache-line bouncing" },
+    { id: "c", label: "Identify which struct fields are written by multiple threads simultaneously" },
+    { id: "d", label: "Calculate how many fields fit on one 64-byte cache line" },
+    { id: "e", label: "Pad each independently-written field to occupy a full cache line" },
+    { id: "f", label: "Re-run perf stat: IPC should rise, cache-miss rate should drop, throughput should increase" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="06-quiz-2"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="en"
+  question="A Node service calls a native Rust function via N-API 10,000 times/s. The Rust function takes 40 ns. The N-API stub takes 160 ns per call. What is the right fix?"
+  choices={[
+    { label: "Batch multiple inputs per N-API call. Pass a slice of 64 inputs and receive 64 outputs. Per-item stub cost drops from 160 ns to 2.5 ns, making the Rust function the dominant cost as intended.", correct: true },
+    { label: "Rewrite the Rust function in JavaScript to eliminate the bridge entirely.", misconception: "If the Rust function exists for performance or safety reasons, rewriting it removes the value. The diagnosis is bridge overhead, not choice of language." },
+    { label: "Use worker threads to parallelize N-API calls.", misconception: "More concurrency doesn't reduce per-call stub overhead. It may increase throughput, but each call still pays the full 160 ns crossing cost." },
+    { label: "Increase the Node.js heap size.", misconception: "Heap size is unrelated to N-API bridge overhead. The cost is stack switching and calling convention translation at the boundary." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>False sharing makes lock-free code pay MESI coherency cost on every write to a shared cache line — fix by padding fields to 64 bytes. Native-bridge stubs can cost more than the native function they call — fix by batching. Both require hardware counters or cross-language profilers to see.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through diagnosing false sharing: what does the profile show, which hardware counter confirms it, and what is the fix?", a: "The CPU profile shows the atomic-write function wide (CPU-attributed), but IPC is 0.3–0.6 and cache-miss rate is 60–80% — the CPU is stalled on memory, not executing instructions. The off-CPU profile is narrow (no lock waits). Performance degrades as thread count increases. The hardware counter MEM_LOAD_L3_HIT_RETIRED.XSNP_HITM (Intel) directly measures loads satisfied by a modified copy in another CPU's cache — a direct false-sharing signal. On Linux, `perf stat -e cache-references,cache-misses,instructions` exposes it indirectly via the extreme miss rate. Fix: pad each independently-written struct field to occupy a full 64-byte cache line so different threads' writes target separate lines. In Go: a padding array of [56]byte next to the uint64 field. In Java: @Contended annotation. In Rust: crossbeam::CachePadded. After padding, IPC rises to 2.5–3.0, miss rate drops below 5%, and throughput increases 5–20x. The key insight is that lock-free eliminates mutex overhead but says nothing about cache-line sharing; the hardware serialises concurrent writes to the same line regardless of how the software views them." },
+    { q: "Give two concrete examples of hot paths that appear wide in a flame graph but are NOT the right fix target, and explain why.", a: "1) Spin-wait wide in CPU profile. A thread busy-loops checking a condition — it is on CPU, burning cycles, and the profiler counts it as CPU work. The fix is not to optimise the loop body; it is to replace the spin with a proper wait primitive (futex, condition variable, channel). Optimising the spin body saves nanoseconds per iteration while the problem is millions of useless iterations per second. 2) [unknown] wide frame. A wide [unknown] frame is a symbol-resolution failure — the profiler cannot name the function because JIT code lacks perf maps (Node needs --perf-basic-prof), DWARF is stripped, or kernel symbols are missing. Before treating [unknown] as a target, fix symbol resolution. The underlying function may be the real hot path, invisible behind the diagnostic gap. In both cases, the naive 'fix the widest leaf' reflex would lead to wrong work; the senior move is to recognise the signature and apply the appropriate diagnostic tool first." },
+  ]}
+/>
+
+<Recap lang="en">
+False sharing and native-bridge overhead are two senior-level hot-path gotchas invisible to naive profiling. False sharing occurs when threads write to different fields on the same cache line; the MESI protocol serialises the writes at hardware level, collapsing IPC and spiking cache-miss rate despite lock-free code. The fix is cache-line padding. Native-bridge overhead occurs when the FFI stub (N-API, JNI, cgo) costs more than the native function it calls; the fix is batching operations per crossing. Both require hardware counters or cross-language profilers to diagnose. Three edge cases subvert the "widest frame = biggest problem" heuristic: sampled-out short hot paths, spin-wait spinning on CPU, and symbol-resolution gaps showing as [unknown].
+</Recap>

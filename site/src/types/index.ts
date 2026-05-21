@@ -18,8 +18,19 @@ export type Status = "stub" | "draft" | "ready";
 
 export type Bilingual = { en: string; ru: string };
 
-export type Track = "math" | "algorithms" | "base-cs";
+export type Track =
+  | "math" | "base-cs" | "algorithms"
+  | "networking" | "browser" | "frontend" | "backend"
+  | "apis" | "databases" | "caching" | "queues"
+  | "distributed" | "security" | "observability" | "deployment"
+  | "performance" | "data-engineering" | "ai-llm" | "engineering-practice";
 
-export const TRACKS: Track[] = ["math", "algorithms", "base-cs"];
+export const TRACKS: Track[] = [
+  "math", "base-cs", "algorithms",
+  "networking", "browser", "frontend", "backend",
+  "apis", "databases", "caching", "queues",
+  "distributed", "security", "observability", "deployment",
+  "performance", "data-engineering", "ai-llm", "engineering-practice",
+];
 
 export type LessonStatus = "stub" | "draft" | "ready";

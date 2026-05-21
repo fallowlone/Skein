@@ -1,0 +1,107 @@
+---
+slug: 06-backpressure-production
+lang: ru
+track: performance
+unit: 06-batching
+order: 6
+title: "Backpressure, изоляция сбоев и безопасность батчей в продакшене"
+summary: "Отравленные сообщения, частичные сбои батча, ограниченные очереди (block/drop/spill), бомбы декомпрессии, адаптивное окно — операционные edge case, которые крашат батчевые системы."
+estMin: 18
+status: stub
+lessonType: topic
+level: senior
+prereqs: ["performance/06-batching/01-basics", "performance/06-batching/02-window", "performance/06-batching/03-kafka-postgres", "performance/06-batching/04-syscall-observability", "performance/06-batching/05-nagle-io-uring"]
+deepensInto: []
+spiral: ["latency", "statefulness", "failure"]
+concepts: ["poison message", "split and retry", "bounded queue", "backpressure", "spill to disk", "decompression bomb", "adaptive batching"]
+sources:
+  - https://kafka.apache.org/documentation/#producerconfigs_linger.ms
+  - https://nvd.nist.gov/vuln/detail/CVE-2018-10872
+  - https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis.html#services-kinesis-errors
+  - https://www.reactive-streams.org/
+  - https://vector.dev/docs/architecture/buffering-model/
+  - https://www.usenix.org/conference/atc23/presentation/yang-juncheng
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+
+<Hook>
+Ваш Kafka consumer батчит по 500 сообщений за poll. У одного — битый header. Десериализатор бросает исключение. Без изоляции вы только что потеряли — или перепроиграли — 499 хороших сообщений вместе с ним. Батчинг умножает каждый сбой на размер батча.
+</Hook>
+
+<Crux>Батчинг усиливает сбои: одно poison убивает N, downstream копит N×k, один батч — 1 ГБ при распаковке. Нужны изоляция, backpressure, лимиты.</Crux>
+
+<Explanation>
+Уроки 01–05 покрыли плюс: амортизировать фиксированную стоимость, настроить окно, попасть в Парето. Этот урок — про минус: режимы сбоев, которые превращают throughput-победу в пейджер в 3 утра.
+
+<strong>Изоляция сбоев: проблема отравленного сообщения</strong>
+Батч потребляется атомарно. Если обработка падает на элементе 47 — что с 1–46 и 48–N?
+  • Наивный consumer: ретрай всего батча → бесконечный цикл, лаг взрывается, 47 всё ещё отравлен
+  • Skip-batch-on-error: теряем 499 хороших с одним плохим
+  • Split-and-retry: при сбое делим батч пополам и ретраим каждую половину; рекурсивно изолируем отравленный элемент, потом отправляем только его в dead-letter. O(log N) лишних запросов на одно отравленное сообщение.
+  • Per-item ACK с rangewise commit: обрабатываем элементы по одному, но коммитим максимальный непрерывный offset; AWS Lambda Kinesis использует `BisectBatchOnFunctionError` именно для этого
+  • Цена продакшена: dead-letter queue (DLQ) + re-drive job — не обсуждается. Постоянно падающие элементы летят в DLQ; оператор разбирает их вне основного потока.
+
+<strong>Backpressure и ограниченные очереди</strong>
+Скорость продюсера &gt; скорости consumer — устойчивое состояние любой продакшен-системы в какой-то момент. Куда деваться переполнению?
+  • Неограниченная in-memory очередь: работает до OOM kill при заполнении JVM heap. Классический антипаттерн.
+  • Ограниченная + block: продюсер блокируется при заполнении (Reactive Streams сигнал спроса `request(n)`, Akka backpressure). Латентность деградирует мягко; throughput упирается в самую медленную стадию. Лучший дефолт.
+  • Ограниченная + drop: дропаем новые элементы (с головы/хвоста) при заполнении. С потерями. Подходит для метрик/логов, где свежесть &gt; полнота — Statsd по UDP канонический пример.
+  • Ограниченная + spill-to-disk: переполнение страничит на локальный диск; consumer дренирует и память, и диск. Fluentd, Vector, Filebeat — все так делают для шиппинга логов. Меняем латентность + IOPS на durability при всплесках продюсера.
+  • Выбор — продуктовое, а не техническое решение: «сколько стоит потеря одного элемента vs. одна секунда добавленной латентности?» Ответьте один раз на пайплайн и зашейте в конфиг очереди.
+
+<strong>Безопасность: атаки, усиленные батчингом</strong>
+Граница батча — примитив для атакующего. Три класса эксплойтов:
+  • Бомбы декомпрессии (CVE-2018-10872): Kafka разрешал gzip-сжатые батчи до 1 МБ на проводе, разворачивающиеся в многогигабайтные на брокере, OOM-я JVM. Современная защита: проверять размер после декомпрессии, а не только на проводе.
+  • Replay внутри батча: если idempotency key per-batch, а не per-item, атакующий пихает один и тот же payload N раз в один батч и dedup это пропускает. Идемпотентность должна быть per-item, с per-item nonce.
+  • Переупорядочивание внутри батча: батчевые записи в kv store могут не сохранять порядок отправки при частичном сбое + ретрае. Если порядок важен (event sourcing, CRDT merge) — включайте sequence number per item и режьте out-of-order на consumer.
+
+<strong>Адаптивный батчинг: замыкание петли</strong>
+Статичное окно (`linger.ms=10`) неверно при любой нагрузке, кроме той, под которую тюнили. Адаптивные системы трактуют окно как управляющую переменную.
+  • Сигнал: наблюдаемая p99 латентность vs. потолок SLO. Если p99 &lt; SLO − margin, растим окно (больше throughput). Если p99 &gt; SLO — уменьшаем.
+  • AIMD (additive increase, multiplicative decrease): тот же управляющий цикл, что TCP использует для congestion. Растим окно на +1мс за здоровый интервал; делим пополам при пробитии SLO.
+  • Продакшен-примеры: у Kafka `batch.size` статичный, но `linger.ms` можно тюнить sidecar-ом; Envoy adaptive concurrency делает AIMD на in-flight запросах; многие внутренние RPC-библиотеки делают это для ретраев.
+  • Цена: дополнительная observability-поверхность (per-window гистограммы латентности) и контрольный цикл, который сам может осциллировать. Окупается после ~100k QPS; ниже — оверкилл.
+
+<strong>Senior-чеклист</strong>
+Перед шипом батчевого пайплайна:
+  • Какой путь восстановления от отравленного сообщения? (split-and-retry + DLQ + re-drive)
+  • Какое поведение при переполнении? (block / drop / spill — выбирать явно)
+  • Какой максимальный размер payload ПОСЛЕ декомпрессии? (не размер на проводе)
+  • Как сделана per-item идемпотентность? (не per-batch)
+  • Окно статичное или адаптивное? (статичное — окей; главное знать что именно)
+  • Какая observability? (гистограмма размера батча, gauge глубины очереди, rate DLQ)
+</Explanation>
+
+<RetrievalDrawer
+  client:load
+  id="06-backpressure-production-retrieval"
+  lang="ru"
+  questions={[
+    {
+      q: "Consumer батчит по 500 Kafka-сообщений за poll. Сообщение 47 падает при десериализации. Опишите паттерн split-and-retry изоляции.",
+      a: "При первом сбое consumer делит батч пополам на [1..250] и [251..500] и ретраит каждый. Половина [251..500] снова падает; делим на [251..375] и [376..500]. Продолжаем бисекцию только падающей половины — O(log N) лишних запросов. Дойдя до одного элемента, отправляем его в dead-letter (пишем в DLQ-топик с оригинальным payload + контекстом ошибки) и коммитим offset-ы хороших. AWS Lambda даёт это напрямую через BisectBatchOnFunctionError для источников Kinesis и DynamoDB Streams."
+    },
+    {
+      q: "Продюсер быстрее consumer. Ограниченная очередь полна. Что меняется между block, drop и spill-to-disk?",
+      a: "Block: продюсер ждёт, латентность растёт, throughput ограничен скоростью дренажа consumer. Лучший дефолт для систем, где потеря данных дороже добавленной латентности (заказы, платежи). Drop: продюсер выбрасывает новый элемент, свежесть сохраняется, старые элементы выживают — подходит для метрик/телеметрии, где один потерянный сэмпл невидим, а застрявший продюсер ломает видимость. Spill-to-disk: страницы очереди переполняются на локальный диск (ring buffer или rolling файлы), дренируются за memory-очередью — durable при всплесках продюсера ценой disk IOPS и end-to-end латентности. Vector и Fluentd по дефолту делают spill для логов, потому что логи durability-sensitive, но всплесковые."
+    },
+    {
+      q: "Почему per-batch идемпотентность небезопасна и как CVE-2018-10872 обобщает урок?",
+      a: "Per-batch idempotency держит один nonce на весь батч — атакующий отправляет один батч со 100 копиями одного payload, и dedup на границе батча видит один уникальный ключ, обрабатывая все 100. Общий урок из CVE-2018-10872 (Kafka decompression bomb): каждое свойство батча — размер, число элементов, idempotency key — должно валидироваться ПОСЛЕ декомпрессии и per-item, а не на границе провода. Сжатый батч в 1 МБ может нести 1 ГБ payload или 1 миллион дубликатов; ни то ни другое не видно проверке на уровне провода."
+    }
+  ]}
+/>
+
+<KeyTakeaway>
+Батчинг умножает сбои на N. Изолируйте отравленные элементы через split-and-retry + DLQ. Ограничивайте каждую очередь и осознанно выбирайте политику переполнения (block, drop или spill). Энфорсите лимиты ПОСЛЕ декомпрессии и per-item, не per-batch. Адаптивные окна бьют статичный тюнинг после ~100k QPS.
+</KeyTakeaway>
+
+<Recap lang="ru">
+Продакшен-батчинг падает тремя способами, которых не покрывают уроки throughput-тюнинга: один битый элемент убивает весь батч (фикс: split-and-retry + DLQ), один медленный consumer переполняет очередь (фикс: ограниченная очередь с осознанно выбранной политикой block/drop/spill), один зловредный батч усиливает атаку на порядки (фикс: лимиты после декомпрессии, per-item идемпотентность, sequence numbers). Статичные окна окей до ~100k QPS; выше — AIMD-контур по наблюдаемой p99 vs. SLO. Senior-чеклист — путь отравленного сообщения, политика переполнения, лимит декомпрессии, per-item nonce, observability — это то, что отделяет туториал по батчингу от батч-пайплайна.
+</Recap>

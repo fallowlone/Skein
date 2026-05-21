@@ -1,0 +1,188 @@
+---
+slug: 04-gc-tuning
+lang: ru
+track: performance
+unit: 04-gc
+order: 4
+title: "Настройка GC: пейсинг, форма кучи и наблюдаемость аллокаций"
+summary: "Пейсинг управляет моментом запуска GC, GOMEMLIMIT/MaxGCPauseMillis задают границы. Работу цикла определяет live-set, а не RSS. Дашборды rate аллокаций — ведущий индикатор для дежурных."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/04-gc/03-gc-tradeoffs
+deepensInto: []
+spiral: ["latency"]
+concepts: ["gc-pacing", "gomemlimit", "live-set", "heap-shape", "allocation-observability", "object-pooling"]
+sources:
+  - https://go.dev/doc/gc-guide
+  - https://tip.golang.org/doc/gc-guide#GOMEMLIMIT
+  - https://www.oracle.com/technical-resources/articles/java/g1gc.html
+  - https://v8.dev/blog/free-garbage-collection
+  - https://learn.microsoft.com/en-us/dotnet/standard/garbage-collection/latency
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Go-сервис запущен в контейнере с лимитом 4 ГБ. GOGC оставлен по умолчанию 100. При нагрузке куча вырастает до 3,8 ГБ, pаcer запускает интенсивные циклы GC, и под падает от OOM. Добавление GOMEMLIMIT=3600MiB решает проблему — без изменения кода и без смены коллектора.
+</Hook>
+
+<Crux>Пейсинг решает момент запуска GC; GOMEMLIMIT задаёт потолок. Live-set, а не RSS, определяет стоимость цикла. Измеряй аллокации до настройки.</Crux>
+
+<Explanation>
+
+## Пейсинг и мягкий лимит памяти
+
+Современные коллекторы управляют собой сами: предсказывают, когда нужно запустить следующий цикл, чтобы успеть завершить его до исчерпания кучи. Go's pacer (переработан в 1.18, доработан в 1.19 с GOMEMLIMIT) смешивает два сигнала — rate роста кучи и долю CPU в GC — в замкнутый контроллер. Цель G1 по времени паузы направляет его pacer к удержанию пауз ниже заданного.
+
+**Knobs Go:**
+- `GOGC=100` (по умолчанию) — запускать GC, когда живые байты удвоились с последнего цикла. Увеличить — откладывать GC (больше памяти, реже циклы); уменьшить — цикличнее (меньше памяти, больше CPU).
+- `GOMEMLIMIT` — мягкий лимит на общую память рантайма. Pacer становится агрессивнее по мере приближения к лимиту, принимая меньший throughput ради соблюдения границы. Для контейнеризованных сервисов устанавливать в ~90% лимита контейнера.
+
+**Knobs JVM:**
+- `-Xmx` — жёсткий потолок кучи.
+- `-XX:MaxGCPauseMillis=N` — G1 нацеливается на паузы N мс, регулируя размеры регионов и частоту сборки. Слишком малое значение → G1 пересобирает, теряя throughput. Слишком большое → изредка видим 200 мс спайк.
+
+<Inset kind="why" lang="ru">
+В контейнеризованных Go-сервисах OOM-убийства от переполнения кучи часты, когда GOMEMLIMIT не задан. Pacer не знает про cgroup-лимит. Установка GOMEMLIMIT в ~90% лимита контейнера — первый knob при настройке. К GOGC обращаться только после этого.
+</Inset>
+
+## Форма кучи и live-set
+
+Общая куча (RSS) — не то же самое, что live-set — байты, которые реально достижимы. RSS 4 ГБ может содержать лишь 800 МБ живых данных; оставшиеся 3,2 ГБ — мусор, ожидающий следующего цикла, или фрагментация, или зарезервированные арены рантайма.
+
+Время маркировки пропорционально **живым байтам**, а не RSS. Частота циклов пропорциональна **rate аллокаций**. Канонический ориентир: размер кучи ~1,5–2x live-set — меньше и GC работает почти непрерывно; больше и память тратится впустую без пропорционального выигрыша в latency.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Рантайм</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика live-set</th>
+        <th class="border border-border px-3 py-2 text-left">Как читать</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2"><code>runtime.MemStats.HeapLive</code></td>
+        <td class="border border-border px-3 py-2">Байты, помеченные живыми после последнего цикла</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM</td>
+        <td class="border border-border px-3 py-2"><code>MemoryUsage.getUsed()</code> после GC</td>
+        <td class="border border-border px-3 py-2">Использованные байты старого поколения после full GC</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">V8 / Node</td>
+        <td class="border border-border px-3 py-2"><code>v8.getHeapStatistics().used_heap_size</code></td>
+        <td class="border border-border px-3 py-2">После принудительного GC через <code>--expose-gc</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">.NET</td>
+        <td class="border border-border px-3 py-2"><code>GC.GetTotalMemory(true)</code></td>
+        <td class="border border-border px-3 py-2">Принудительная сборка, возвращает живые байты</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Workloads с большим изменчивым live-set (in-memory кэши, большие агрегации) нуждаются в верхней части диапазона. Маленькие стабильные сервисы работают экономно при 1,5x.
+
+## Наблюдаемость аллокаций по рантаймам
+
+Без инструментации рантайма диагноз ставится вслепую.
+
+**Go:** пакет `runtime/metrics` + скрейп `/debug/pprof/allocs` каждые 30 с. `GODEBUG=gctrace=1` — каждый цикл в stderr (полезно при разработке, шумно в prod).
+
+**JVM:** `-Xlog:gc*:file=gc.log:time,uptime,level,tags` для ротируемых GC-логов. JFR `ObjectAllocationInNewTLAB` для профилирования аллокаций. Micrometer экспортирует гистограмму `gc_pause_seconds` и rate `gc_memory_allocated_bytes_total` в Prometheus.
+
+**V8 / Node:** `process.memoryUsage().heapUsed` каждые 15 с; `v8.getHeapStatistics()` для детального view. `perf_hooks.PerformanceObserver` с типом `'gc'` перехватывает каждое событие паузы программно.
+
+**.NET:** rate `GC.GetTotalAllocatedBytes()` + `dotnet-counters monitor` для live просмотра `gen-0-gc-count`, `gen-1-gc-count`, `gen-2-gc-count` и `alloc-rate`.
+
+Кросс-рантаймовый паттерн алерта: **rate аллокаций выше порога сервиса (обычно 300–500 МБ/с/ядро) более 5 минут**. Пара rate аллокаций с p99 на одном графике — когда расходятся, подозревают GC.
+
+## Object pooling: когда работает, когда нет
+
+Пулинг переиспользует аллокации для снижения давления GC. Хорошо работает для объектов, дорогих в создании и кратко используемых на hot path: `bytes.Buffer`, JSON-энкодеры, regexp-объекты, scratch slices.
+
+**Пулинг вредит:**
+- Объекты дёшевы в создании (накладные расходы пула превышают экономию).
+- Объекты долгоживущие (пул держит память без освобождения).
+- Координационные расходы потоков превышают стоимость аллокации.
+
+У `sync.Pool` Go есть преимущество: GC может опустошить пул между циклами, память не заблокирована навсегда. Пулы JVM и .NET держат память до явного освобождения — следите за max-pool-size.
+
+Правило: **пулить только то, что профиль отмечает как горячий узел аллокации**. Не пулить превентивно.
+
+<Quiz
+  id="04-gc-tuning-quiz-1"
+  lessonSlug="04-gc-tuning"
+  lang="ru"
+  question="Контейнеризованный Go-сервис периодически падает от OOM при пиках трафика. Куча растёт по умолчанию GOGC=100. Какой knob установить первым?"
+  choices={[
+    { label: "GOMEMLIMIT в ~90% лимита памяти контейнера. Pacer будет защищать эту границу, принимая большей доле CPU в GC, но не позволяя процессу превысить лимит и получить OOM-kill.", correct: true },
+    { label: "GOGC=50 для уменьшения цели роста кучи вдвое", misconception: "GOGC=50 заставит pacer запускать GC чаще при меньшем размере кучи, но не устанавливает верхнюю границу — при нагрузке куча всё равно вырастет выше лимита контейнера." },
+    { label: "Увеличить память контейнера", misconception: "Лечит симптом. GOMEMLIMIT заставляет рантайм уважать существующий лимит контейнера без изменения кода." },
+    { label: "Переключиться на ZGC", misconception: "ZGC — JVM-коллектор; это Go-сервис. Кроме того, первопричина — отсутствующий мягкий лимит, а не алгоритм коллектора." },
+  ]}
+/>
+
+<Quiz
+  id="04-gc-tuning-quiz-2"
+  lessonSlug="04-gc-tuning"
+  lang="ru"
+  question="GC-лог JVM-сервиса показывает RSS 4 ГБ, но live-set только 600 МБ после каждого full GC. Максимум кучи установлен в 4 ГБ. Что это говорит о настройке?"
+  choices={[
+    { label: "Куча настроена ~6,7x live-set — намного выше канонического ориентира 1,5–2x. Уменьшение max-heap до ~1,2 ГБ сократит расходы памяти и, вероятно, время каждого цикла GC без значительного ухудшения частоты пауз.", correct: true },
+    { label: "У сервиса утечка памяти", misconception: "Стабильный live-set, остающийся на 600 МБ после каждого GC, — не утечка. Утечка проявляется как рост post-GC live-set со временем." },
+    { label: "Нужно увеличить кучу, чтобы избежать OOM", misconception: "При 600 МБ живых и 4 ГБ max OOM не грозит. Уменьшение max уместно." },
+    { label: "RSS и live-set — одно и то же", misconception: "RSS включает мусор, ожидающий сборки, фрагментацию и арены рантайма. Live-set — только достижимые байты, часто малая доля RSS." },
+  ]}
+/>
+
+<DragOrder
+  id="04-gc-tuning-drag-1"
+  lessonSlug="04-gc-tuning"
+  lang="ru"
+  prompt="Расставьте рычаги снижения давления GC по приоритету — от наибольшего к наименьшему:"
+  items={[
+    { id: "a", label: "Устранить аллокацию (мутация на месте, struct-of-arrays, примитивы)" },
+    { id: "b", label: "Пул/переиспользование аллокации (sync.Pool, ObjectPool, сброс bytes.Buffer)" },
+    { id: "c", label: "Дать escape analysis выполнить стековую аллокацию (меньший объект, локальная область видимости)" },
+    { id: "d", label: "Уменьшить аллокацию (меньший struct, меньший буфер, контейнер с предустановленным размером)" },
+    { id: "e", label: "Убрать аллокацию с hot path (кэшировать результат, вычислить один раз)" },
+    { id: "f", label: "Настроить knobs коллектора (GOGC, MaxGCPauseMillis, max-old-space-size)" },
+    { id: "g", label: "Сменить алгоритм GC (ParallelGC → G1 → ZGC)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Установить GOMEMLIMIT (Go) или max-heap (JVM) под реальные границы workload'а первым делом. Нацелить размер кучи на ~1,5–2x live-set. Подключить дашборды rate аллокаций до того, как трогать любой другой knob — настройка без профиля это угадывание.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-gc-tuning-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему max-size кучи должен нацеливаться на ~1,5–2x live-set и что происходит на краях диапазона?", a: "Live-set — байты, реально достижимые после цикла GC. Куча должна быть больше live-set — GC нужно место для новых аллокаций между циклами. Соотношение 1,5–2x — эмпирически точка баланса частоты циклов и стоимости маркировки: достаточно часто, чтобы мусор не накапливался, достаточно редко, чтобы накладные расходы на цикл были приемлемы. Ниже 1,5x: GC работает почти непрерывно; накладные расходы на маркировку доминируют, throughput рушится. Выше 3x: память тратится впустую; в контейнеризованных средах избыточная память тарифицируется посекундно. Workloads с изменчивым live-set (кэши, агрегации, растущие при спайках) нуждаются в верхней части. Стабильные сервисы работают экономно при 1,5x. Следите за live-set post-GC (HeapLive в Go, getUsed post-GC в JVM), чтобы знать текущее положение." },
+    { q: "Когда object pooling снижает давление GC, а когда вредит?", a: "Пулинг амортизирует стоимость аллокации за счёт переиспользования объектов. Помогает, когда объект дорог в создании (например, bytes.Buffer, выросший до 64 КБ, regexp.Regexp, скомпилированный из паттерна, JSON-энкодер с внутренним scratch-буфером) и кратко используется на hot path. Вредит в трёх случаях: (1) дешёвые объекты — mutex или атомарные операции пула стоят дороже, чем свежая аллокация; (2) долгоживущие объекты — пул держит большие буферы в памяти даже при низком трафике; (3) неправильная гигиена пула — объекты возвращаются с устаревшим состоянием (например, bytes.Buffer без Reset), что вызывает тонкие баги корруптации данных. sync.Pool Go имеет преимущество: GC опустошает его между циклами, память возвращается аллокатору. Пулы JVM и .NET держат память до явных лимитов. Диагностика: профилируйте аллокации первым делом; пулите только топ-N горячих мест; верифицируйте падение rate аллокаций." },
+  ]}
+/>
+
+<Recap lang="ru">
+Пейсинг GC использует сигналы рантайма для выбора момента следующего цикла. В Go GOMEMLIMIT — первый knob для контейнеризованных сервисов: он удерживает процесс в пределах бюджета памяти без изменения кода. В JVM MaxGCPauseMillis направляет G1 к целевому времени паузы. Размер кучи должен нацеливаться на ~1,5–2x live-set: ниже — GC работает непрерывно; выше — память тратится впустую. Наблюдаемость аллокаций — дашборды rate, подключённые к Prometheus, с алертами до пробития SLO — ведущий индикатор, улавливающий регрессии GC. Object pooling снижает давление на горячих путях аллокаций, но вредит для дешёвых или долгоживущих объектов. Сначала профиль rate аллокаций; потом knobs коллектора; смена алгоритма — последнее.
+</Recap>

@@ -1,0 +1,166 @@
+---
+slug: 05-syn-cookies-and-tfo
+lang: en
+track: networking
+unit: 03-tcp-handshake
+order: 5
+title: "SYN cookies, TFO, and TIME-WAIT at scale"
+summary: "How SYN cookies trade memory for CPU under flood, what TCP Fast Open saves and why deployment stalled, and how to fix TIME-WAIT exhaustion on a busy load balancer."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-tcp-options-and-pathologies"]
+deepensInto: ["06-bbr-and-production-ops"]
+spiral: []
+concepts: ["syn-cookies", "syn-flood", "tcp-fast-open", "tfo", "time-wait-exhaustion", "tw-reuse", "ip-local-port-range", "tcp-syncookies", "tcp-max-syn-backlog", "eaddrnotavail"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9293
+  - https://datatracker.ietf.org/doc/html/rfc7413
+  - https://datatracker.ietf.org/doc/html/rfc6191
+  - https://blog.cloudflare.com/how-to-stop-running-out-of-ephemeral-ports-and-start-to-love-long-lived-connections/
+  - https://kernel.org/doc/html/latest/networking/tcp.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A busy load balancer starts returning EADDRNOTAVAIL on outbound connections to a backend. ss -tan shows 30,000 TIME-WAIT sockets. Simultaneously, the public listener is being probed with a SYN flood. Both problems have solutions in Linux sysctls — but the wrong sysctl makes things worse.
+</Hook>
+
+<Crux>SYN cookies defend against SYN floods with no memory cost. TIME-WAIT exhaustion needs tcp_tw_reuse and connection pools — not a lower MSL.</Crux>
+
+<Explanation>
+
+## SYN cookies internals
+
+Under a SYN flood, the server's half-open queue overflows. Instead of allocating a `request_sock` for every SYN, the kernel takes the path in `net/ipv4/tcp_ipv4.c:cookie_v4_init_sequence`:
+
+```
+ISN_in_SYN-ACK = MAC over (saddr, sport, daddr, dport, isn, secret)
+```
+
+The top 5 bits encode the MSS index (8 options), the next 6 bits are a minute counter (replay window), and the low 21 bits are an HMAC. The connection is forgotten immediately. When the ACK comes back, `cookie_v4_check` recomputes and validates. If valid, the kernel allocates a full socket. If invalid, the ACK is silently dropped.
+
+**The trade-off:** CPU for memory — fine for large servers, not for small ones. **The cost:** only MSS survives in the cookie. Window scaling, SACK, and Timestamps offered in the original SYN are silently dropped for cookie-validated connections. On a long-RTT high-bandwidth path during a flood, legitimate clients' throughput degrades — the window is capped at 64 KiB without scaling.
+
+Linux enables SYN cookies when the half-open queue exceeds `tcp_max_syn_backlog` (default system-dependent, typically 4096). Enable with `net.ipv4.tcp_syncookies=1` (default since kernel 2.4). Value `2` forces unconditional cookie generation for testing.
+
+<NumbersCard
+  id="card-syn-cookies"
+  title="SYN cookie trade-offs"
+  data-lesson-visual
+  stats={[
+    { label: "Cookie protects against", value: "SYN flood / half-open queue overflow" },
+    { label: "What survives in cookie", value: "MSS index only (5 bits)" },
+    { label: "What is silently dropped", value: "Window scale, SACK, Timestamps" },
+    { label: "Window without scaling", value: "Max 64 KiB per connection" },
+    { label: "Linux default", value: "tcp_syncookies=1 (conditional)" },
+    { label: "Force on for testing", value: "tcp_syncookies=2" },
+  ]}
+/>
+
+<DebugLog
+  id="sr-debug-1"
+  pieceSlug="05-syn-cookies-and-tfo"
+  lang="en"
+  title="tcpdump trace of a SYN flood with SYN cookies"
+  output={`$ sudo tcpdump -i eth0 'tcp[tcpflags] & tcp-syn != 0' -tnn
+14:23:45.123456 IP 203.0.113.50.34521 > 198.51.100.10.443: Flags [S], seq 1000000, win 29200, length 0
+14:23:45.123489 IP 198.51.100.10.443 > 203.0.113.50.34521: Flags [S.], seq 3851629874, ack 1000001, win 28960, length 0
+14:23:45.124000 IP 203.0.113.50.34522 > 198.51.100.10.443: Flags [S], seq 2000000, win 29200, length 0
+14:23:45.124050 IP 198.51.100.10.443 > 203.0.113.50.34522: Flags [S.], seq 4025814937, ack 2000001, win 28960, length 0
+14:23:45.125000 IP 203.0.113.50.34521 > 198.51.100.10.443: Flags [.], seq 1000001, ack 3851629875, win 29200, length 0
+14:23:45.125010 IP 203.0.113.50.34522 > 198.51.100.10.443: Flags [.], seq 2000001, ack 4025814938, win 29200, length 0
+14:23:45.200000 IP 203.0.113.100.55000 > 198.51.100.10.443: Flags [S], seq 5000000, win 29200, length 0
+14:23:45.200050 IP 198.51.100.10.443 > 203.0.113.100.55000: Flags [S.], seq 2941837465, ack 5000001, win 28960, length 0
+(no ACK from 203.0.113.100; SYN flood from different spoofed sources)`}
+  outputLang="log"
+  question="Two ACKs arrive (legitimate clients complete handshake), but the third source never ACKs. Is the server at risk?"
+  hint="Are SYN-ACKs being sent for every incoming SYN? What prevents memory exhaustion when no ACK follows?"
+  answer="Two legitimate clients (203.0.113.50) complete the handshake. The third source (203.0.113.100) sends SYN but no ACK — spoofed or unresponsive. With tcp_syncookies=1 (default), the server is not allocating request_sock entries for each SYN; it encoded the MSS in the ISN and will validate the ACK when/if it arrives. Without cookies, the half-open queue grows toward tcp_max_syn_backlog and then connections are refused. With cookies enabled, no risk — CPU cost for the HMAC on each SYN-ACK and ACK-check, but no memory exhaustion."
+/>
+
+## TCP Fast Open (TFO, RFC 7413)
+
+The standard handshake costs 1 RTT before application data. TFO eliminates that for subsequent connections:
+
+1. **First connection:** server sends a Fast Open Cookie option in SYN-ACK; client caches per-(server-IP, server-port).
+2. **Subsequent connections:** client puts the cookie in SYN along with up to MSS bytes of application data; server validates and processes the data while completing the handshake — saving 1 RTT.
+
+On 280 ms RTT (London → Sydney), TFO saves 280 ms per warm connection.
+
+**Deployment reality:** middleware problems killed broad server-side TFO adoption. Middleboxes (firewalls, DPI appliances, some NAT gateways) strip the TFO option from SYN, breaking cookie delivery. Some NAT gateways break cookies when the client's external IP changes. Fallback is mandatory but adds latency. Server deployment is limited; most 0-RTT interest has shifted to QUIC, which sits above UDP and bypasses protocol ossification in network infrastructure. Linux supports both sides since kernel 3.6 (2012) via `net.ipv4.tcp_fastopen` bitmask (1=client, 2=server, 3=both).
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="05-syn-cookies-and-tfo"
+  lang="en"
+  scenario="A busy load balancer returns EADDRNOTAVAIL on outbound connections to one upstream origin. Trace the diagnosis and fix."
+  steps={[
+    { prompt: "Step 1: what does EADDRNOTAVAIL on connect() mean?", reveal: "The kernel cannot pick an ephemeral source port for the new four-tuple (local-IP, local-port, remote-IP, remote-port). Every port in the ephemeral range is currently in use to that destination." },
+    { prompt: "Step 2: where are the ports going?", reveal: "ss -tan | grep TIME-WAIT | wc -l returns tens of thousands of TIME-WAIT sockets to the upstream origin. The LB is closing connections faster than they exit TIME-WAIT (~120s)." },
+    { prompt: "Step 3: why not lower MSL to exit TIME-WAIT faster?", reveal: "Lowering MSL risks accepting stale FIN retransmissions as new-connection data on the same four-tuple — silent data corruption. Standards-compliant servers keep 2×MSL." },
+    { prompt: "Step 4: enable net.ipv4.tcp_tw_reuse=1. Why is that safe?", reveal: "tcp_tw_reuse allows reusing TIME-WAIT entries for new outbound connections only when Timestamps prove the new SYN is newer than the prior connection's last segment (RFC 6191 / PAWS). No data-corruption risk. Never enable tcp_tw_recycle — it was removed in Linux 4.12 because it drops legitimate SYNs from clients behind NAT." },
+    { prompt: "Step 5: the structural fix?", reveal: "Use a connection pool with keep-alive so each upstream connection serves many requests. The LB stops burning a four-tuple per request and the problem disappears entirely. Also: widen net.ipv4.ip_local_port_range to '1024 65535' for ~64k ephemeral ports." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="05-syn-cookies-and-tfo"
+  lang="en"
+  question="A senior engineer claims SYN cookies have no performance cost. Where is the bug in this claim?"
+  choices={[
+    { label: "Cookies are free — the HMAC is computed in hardware", misconception: "The HMAC is computed in software and adds CPU overhead per SYN/ACK." },
+    { label: "Cookies only encode MSS — window scaling, SACK, and timestamps are silently dropped for cookie-validated connections, capping throughput on long-RTT paths during a flood", correct: true },
+    { label: "Cookies leak the server's secret key", misconception: "The secret key is rotated periodically (minute counter); leakage risk is low." },
+    { label: "Cookies only work on IPv4", misconception: "Linux supports SYN cookies on both IPv4 and IPv6." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-2"
+  pieceSlug="05-syn-cookies-and-tfo"
+  lang="en"
+  question="What does tcp_tw_recycle do, and why was it removed from the Linux kernel in 4.12?"
+  choices={[
+    { label: "It was a faster TIME-WAIT recycling option that everyone should have used", misconception: "It was removed precisely because it caused outages." },
+    { label: "It enabled timestamp-based TIME-WAIT recycling that silently dropped legitimate SYNs from clients behind NAT — incompatible with the modern Internet", correct: true },
+    { label: "It was renamed to tcp_tw_reuse", misconception: "tcp_tw_reuse already existed alongside tw_recycle; they have different semantics." },
+    { label: "It was merged into the SYN cookie path", misconception: "SYN cookies operate on the half-open SYN queue, not on TIME-WAIT sockets." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+**Why TFO interest shifted to QUIC.** TFO requires both the client library and the server application to opt in, middleboxes to not strip the option, and NAT gateways to not alter addresses mid-flight. QUIC sidesteps all of this by running over UDP — middleboxes that don't understand it just forward it, and the protocol can evolve without kernel changes. QUIC's 0-RTT resumption achieves the same latency saving as TFO but with far better deployment success. This is a pattern repeated in networking: when the existing protocol layer is too ossified to evolve, move the innovation to a layer above.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>SYN cookies defend against SYN floods by encoding connection state in the ISN (losing SACK/scaling/timestamps for that connection). TIME-WAIT exhaustion needs tcp_tw_reuse + connection pools, not MSL reduction. Never enable tcp_tw_recycle — removed in 4.12 for breaking NAT.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-syn-cookies-and-tfo-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the SYN cookie mechanism: what is encoded in the cookie, what is lost, and when does the kernel activate cookies?", a: "When the half-open SYN queue exceeds tcp_max_syn_backlog, the kernel generates a SYN-ACK whose sequence number is a MAC over the connection 4-tuple plus a rotating secret. The top 5 bits encode the MSS index (8 choices), the next 6 bits are a minute counter, and the low 21 bits are an HMAC. The server forgets the connection immediately. When the ACK arrives, the kernel recomputes the cookie to validate and then allocates state. What is lost: Window Scaling, SACK, and Timestamps are silently dropped for cookie-validated connections, capping throughput. The cookie path is CPU-cheap but makes legitimate long-RTT connections worse during a flood." },
+    { q: "What is TIME-WAIT exhaustion, what causes it, and what are the three production fixes?", a: "TIME-WAIT exhaustion: Linux ephemeral port range defaults to 32768-60999 (~28k ports). A busy client opening many short connections to one origin accumulates TIME-WAIT entries (lasting 2×MSL = ~120s). Once all ports to that destination are in TIME-WAIT, connect() returns EADDRNOTAVAIL. Causes: short-lived HTTP/1.1 connections to one upstream without keep-alive. Three fixes: (1) net.ipv4.tcp_tw_reuse=1 — reuses TIME-WAIT entries for outbound connections when Timestamps prove no ambiguity; (2) widen net.ipv4.ip_local_port_range to 1024-65535 for ~64k ports; (3) use connection pools with keep-alive (the real fix — stops burning a four-tuple per request)." },
+    { q: "Why has TCP Fast Open seen limited server-side deployment despite being available since Linux 3.6?", a: "Middleboxes (firewalls, DPI appliances, NAT gateways) frequently strip the TFO option from SYN packets, breaking cookie delivery and silently falling back to 1-RTT. Some NATs break cookies by changing source IPs mid-flight. Server operators are reluctant to enable TFO without certainty that their users' network paths won't degrade. Most 0-RTT interest has moved to QUIC, which runs over UDP and bypasses middlebox TCP-option stripping entirely." },
+  ]}
+/>
+
+<Recap lang="en">
+SYN cookies defend busy servers against SYN floods by computing a cryptographic token from the connection 4-tuple and encoding it in the SYN-ACK sequence number, so no memory is allocated until a valid ACK arrives. The cost: only MSS survives in the cookie — SACK, Window Scaling, and Timestamps are dropped, hurting throughput for legitimate long-RTT clients during a flood. Enable with tcp_syncookies=1 (default) and ensure the backlog is large enough that cookies are not needed on steady-state load. TIME-WAIT exhaustion — EADDRNOTAVAIL on connect() — is fixed by tcp_tw_reuse=1 (safe timestamp-based reuse per RFC 6191), widening ip_local_port_range, and using connection pools. Never use tcp_tw_recycle (removed in Linux 4.12, broke NAT). TCP Fast Open saves 1 RTT for warm connections but requires non-stripping middleboxes; QUIC has superseded most TFO interest.
+</Recap>

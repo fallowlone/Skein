@@ -1,0 +1,167 @@
+---
+slug: 05-sqs-dlq
+lang: en
+track: queues
+unit: 01-delivery-guarantees
+order: 5
+title: "SQS visibility timeout, DLQ, and the outbox pattern"
+summary: "How SQS visibility timeout works per-message, the heartbeat pattern for long-running consumers, DLQ redrive discipline, and the outbox pattern for reliable producer-side publishing."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - queues/01-delivery-guarantees/02-failure-modes
+deepensInto:
+  - queues/01-delivery-guarantees/06-exactly-once-in-production
+spiral: ["statefulness"]
+concepts: ["visibility-timeout", "dead-letter-queue", "redrive-policy", "heartbeat-pattern", "outbox-pattern", "dual-write"]
+sources:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A DLQ silently accumulated 50,000 messages over three days while the on-call team watched a different dashboard. All of them were one-off edge-case orders that needed human review. When they finally ran redrive-all without a rate limit, the source queue received 50,000 messages in one second and the downstream service went down.
+</Hook>
+
+<Crux>Visibility timeout resets per redelivery. DLQ + rate-limited redrive is the production discipline separating queues from nightmares.</Crux>
+
+<Explanation>
+
+## SQS visibility timeout mechanics
+
+SQS does not have an acknowledge/reject RPC. Instead, it uses a **visibility timeout**. When a consumer receives a message, SQS records:
+- A per-message timestamp
+- The consumer's **receipt handle** (a unique token for this delivery)
+
+For the duration of the visibility timeout, no other consumer can receive the message. If the consumer calls `DeleteMessage` with the matching receipt handle before the timeout, the message is gone. If the timeout fires first, the message becomes visible to all consumers again — at-least-once delivery.
+
+Key pitfall: **visibility timeout resets to the queue default on each redelivery**, not to whatever value you set via `ChangeMessageVisibility` on the previous delivery. If your normal path extends to 90s but the queue default is 30s, every redelivered message starts with 30s and may expire again before your slow consumer finishes.
+
+Rule of thumb: **queue default visibility = 6x average processing time**.
+
+## The heartbeat pattern for variable processing times
+
+For consumers with processing times that vary widely (1s to 5 minutes depending on payload), the heartbeat pattern decouples the queue timeout from worst-case processing:
+
+1. When the consumer receives a message, start a background heartbeat thread.
+2. Every `visibility_timeout / 3` seconds, call `ChangeMessageVisibility(receipt_handle, new_timeout)`.
+3. If the consumer crashes, heartbeats stop. The timeout expires naturally. The broker redelivers.
+4. If the consumer finishes, cancel the heartbeat and `DeleteMessage`.
+
+This means the queue default only needs to cover the time between ReceiveMessage and the first heartbeat — not the entire processing time. The heartbeat also detects deadlocked consumers: if the processing thread is stuck (not crashed), heartbeats stop eventually anyway, and a different worker recovers the message.
+
+## Dead-letter queues and redrive discipline
+
+Without a DLQ, a **poison-pill message** — a payload that consistently crashes the consumer due to a bug or malformed data — blocks the queue forever. SQS redelivers it indefinitely, burning resources and preventing progress.
+
+The DLQ is a separate queue where SQS moves messages after `maxReceiveCount` failed delivery attempts:
+
+- **Recommended maxReceiveCount:** 5–10. Setting it to 1 or 2 sends transient failures (flaky downstream, brief DB timeout) to DLQ immediately — almost everything looks like a poison pill. Setting it too high means thrashing on real poison pills for a long time.
+- **DLQ retention:** up to 14 days (SQS maximum). Messages older than retention are lost permanently.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">DLQ redrive discipline</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">1</span>
+      <span>Snapshot DLQ to S3 (manifest + messages) before any redrive</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">2</span>
+      <span>Audit 20 random samples against the fixed code on staging</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">3</span>
+      <span>Rate-limited redrive: 1–10 msgs/s via StartMessageMoveTask</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 font-bold">!</span>
+      <span>Never bulk-redrive without rate limiting — stampede risk</span>
+    </div>
+  </div>
+</div>
+
+## The outbox pattern: producer-side reliability
+
+Even publishing a message to the broker is at-least-once: the producer may retry on timeout and the broker receives two copies. Worse, the **dual-write problem**: the application updates the DB *and* publishes a message as one logical operation. If the DB commits but the broker publish fails, the broker never sees the event. Silent data loss.
+
+The outbox pattern fixes this with a transactional outbox table:
+
+1. In the same DB transaction as the business update, INSERT a row into an `outbox` table: `(id, payload, status='pending')`.
+2. COMMIT: both the business update and the outbox row succeed atomically, or both roll back.
+3. A separate **Outbox Sender** reads pending rows and publishes them to the broker. On success, marks the row `status='sent'`.
+4. If the sender crashes after publish but before marking sent, the row stays pending. Next sender run re-publishes (duplicate), but the broker's idempotent producer or consumer dedup handles it.
+
+The CDC-based variant (Debezium reads the DB transaction log) is the modern form — no polling loop, lower latency, and works as long as the DB is online.
+
+<Quiz
+  id="05-q1"
+  pieceSlug="05-sqs-dlq"
+  lang="en"
+  question="An SQS consumer calls ChangeMessageVisibility to extend to 90s during processing. The consumer then crashes. When does SQS redeliver the message?"
+  choices={[
+    { label: "After the original queue default timeout (30s)", misconception: "The ChangeMessageVisibility call extends the timeout for this specific delivery — SQS honours the extended value, not the queue default." },
+    { label: "After the 90s extended timeout expires from the time of the ChangeMessageVisibility call", correct: true },
+    { label: "Immediately when the consumer crashes", misconception: "SQS does not detect consumer crashes. It only knows the message was not deleted within the timeout window." },
+    { label: "Never — extended messages are permanently locked", misconception: "ChangeMessageVisibility sets a new timeout window, not a lock. It expires and the message becomes visible again." },
+  ]}
+/>
+
+<Quiz
+  id="05-q2"
+  pieceSlug="05-sqs-dlq"
+  lang="en"
+  question="An application updates a Postgres row and publishes a Kafka message in two separate operations. The DB commit succeeds but Kafka publish fails. What data state exists?"
+  choices={[
+    { label: "Both rollback — Postgres supports distributed transactions with Kafka", misconception: "Standard Postgres does not coordinate transactions with Kafka. The two operations are independent." },
+    { label: "The DB has the update but the broker has no event — downstream consumers will never see the change. This is the dual-write problem.", correct: true },
+    { label: "Kafka automatically rewinds the Postgres transaction", misconception: "Kafka has no visibility into Postgres transactions." },
+    { label: "The publish will retry automatically and succeed", misconception: "Producer retries may help if the failure was transient, but if Kafka is down, the event is lost permanently without an outbox." },
+  ]}
+/>
+
+<DragOrder
+  id="05-drag-1"
+  pieceSlug="05-sqs-dlq"
+  lang="en"
+  prompt="Order the steps of the outbox pattern for reliable event publishing:"
+  items={[
+    "Application receives request to update order status",
+    "BEGIN DB transaction",
+    "UPDATE orders SET status='paid' WHERE id=123",
+    "INSERT INTO outbox (payload='{order_paid, id:123}', status='pending')",
+    "COMMIT — both update and outbox row committed atomically",
+    "Outbox Sender reads pending row and publishes to Kafka",
+    "Outbox Sender marks row status='sent'",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Visibility timeout = 6x avg processing time; heartbeat every timeout/3 for variable workloads. DLQ rate-limited redrive at 1–10 msgs/s; bulk redrive without rate limiting causes stampedes. Outbox pattern solves dual-write: INSERT outbox row in the same DB transaction as the business update.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-sqs-dlq-retrieval"
+  lang="en"
+  questions={[
+    { q: "What happens to the visibility timeout value on SQS message redelivery?", a: "It resets to the queue default, not to any value you set via ChangeMessageVisibility on the previous delivery. That extension was scoped to the previous receipt handle. This is why queue default visibility should be set to match the slowest expected processing path." },
+    { q: "What is the recommended maxReceiveCount for a production SQS DLQ and why not 1?", a: "5–10. Setting it to 1 or 2 sends transient errors (brief DB timeout, flaky downstream) to DLQ immediately. Most transient errors resolve on the second or third attempt; a low maxReceiveCount turns every transient into a poison-pill investigation." },
+    { q: "What is the dual-write problem and how does the outbox pattern solve it?", a: "Dual-write: updating a DB and publishing a message are two separate operations. Either can fail independently, leaving state inconsistent. Outbox: INSERT the event payload into an outbox table in the same DB transaction as the business update. A separate sender publishes from the outbox, ensuring the event is published if and only if the business update committed." },
+  ]}
+/>
+
+<Recap lang="en">
+SQS visibility timeout is a per-message timer that resets to the queue default on each redelivery — set it to 6x average processing time, and use ChangeMessageVisibility heartbeats (every timeout/3 seconds) for variable workloads. Dead-letter queues quarantine poison pills after maxReceiveCount failures (use 5–10, not 1); redrive with a rate limit of 1–10 msgs/s to avoid stampeding the source queue. The outbox pattern solves the producer-side dual-write problem by INSERTing an event row in the same DB transaction as the business update — the row is the durable intent; a separate sender publishes from it, and any publish failure is retried from the still-pending row without losing the event.
+</Recap>

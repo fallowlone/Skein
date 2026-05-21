@@ -1,0 +1,172 @@
+---
+slug: 06-histograms-slo-and-advanced
+lang: ru
+track: observability
+unit: 04-red-use
+order: 6
+title: "Native histograms, SLO и паттерны production-сбоев"
+summary: "Native (exponential) histograms устраняют ручную настройку бакетов. Duration и Errors из RED напрямую питают SLO error budget. Реальные production-сбои — Cloudflare, GitHub, Stripe, Discord — каждый сводится к конкретному пропущенному RED+USE сигналу."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/02-red-instrumentation"
+  - "observability/04-red-use/05-cardinality-and-cost"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["native-histograms", "slo-error-budget", "burn-rate-alerts", "red-failure-patterns", "self-referential-observability"]
+sources:
+  - https://prometheus.io/docs/practices/histograms/
+  - https://sre.google/sre-book/monitoring-distributed-systems/
+  - https://www.brendangregg.com/usemethod.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+GitHub, 2023: SLO-алерт на задержку code-search многократно срабатывал без реакции. Расследование обнаружило: алерт был настроен на среднюю задержку — фикс бага, поднявший p99 с 200 мс до 800 мс, едва сдвинул среднее. SLO был переработан на multi-window p99 burn-rate алерты по паттерну Google SRE Workbook. Следующий инцидент был пойман менее чем за 4 минуты.
+</Hook>
+
+<Crux>Native histograms: нет настройки бакетов. RED питает SLO бюджет. Cloudflare, GitHub, Stripe, Discord — каждый сбой один пропущенный сигнал.</Crux>
+
+<Explanation>
+
+## Native histograms (Prometheus 2.40+)
+
+Классические гистограммы требуют выбора границ бакетов во время инструментации. Если распределение задержки сервиса смещается — например, медленный путь внезапно начинает доминировать в диапазоне 1–5 с — нужен повторный деплой с другими бакетами.
+
+**Native histograms** (Prometheus 2.40+, также называемые exponential histograms в OTel) используют логарифмическую шкалу с динамически адаптирующимся разрешением. Каждое наблюдение помещается в бакет шириной ~1% относительной точности — `e^(2^-scale)` — без какого-либо статического списка границ. Преимущества:
+
+- Никакой ручной настройки бакетов.
+- Равномерная точность p99 по всему диапазону задержки (не только вблизи SLO).
+- Аналогичная стоимость хранения по сравнению с хорошо настроенной классической гистограммой.
+- Полная совместимость с PromQL: `histogram_quantile` работает так же.
+
+Exponential histograms OTel работают идентично и являются дефолтом для новой инструментации метрик в OTel SDK.
+
+**Совместимость:** некоторые старые storage-бэкенды (Cortex &lt; 1.15, Thanos &lt; 0.32) требуют обновления версий для чтения native histograms. Проверь storage-слой перед переходом.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип гистограммы</th>
+        <th class="border border-border px-3 py-2 text-left">Настройка бакетов</th>
+        <th class="border border-border px-3 py-2 text-left">Точность p99</th>
+        <th class="border border-border px-3 py-2 text-left">Совместимость</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Классическая (фиксированные бакеты)</td>
+        <td class="border border-border px-3 py-2">Ручная, per-service</td>
+        <td class="border border-border px-3 py-2">Хорошая только вблизи SLO</td>
+        <td class="border border-border px-3 py-2">Универсальная</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Native / exponential</td>
+        <td class="border border-border px-3 py-2">Не нужна</td>
+        <td class="border border-border px-3 py-2">~1% везде</td>
+        <td class="border border-border px-3 py-2">Prometheus 2.40+, дефолт OTel SDK</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Summary (per-replica)</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Корректная per-replica, неверная агрегированная</td>
+        <td class="border border-border px-3 py-2">Нельзя агрегировать по репликам</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Почему усреднение p99 по репликам неверно
+
+Усреднение предварительно вычисленных перцентилей (summary-метрики) по репликам — известный антипаттерн:
+
+Пример: реплика A обслуживает 100 запросов, все по 100 мс. Реплика B обслуживает 100 запросов, все по 1000 мс. p99 у A = 100 мс; p99 у B = 1000 мс; их среднее = 550 мс. Истинный p99 объединённых 200 запросов = 1000 мс (ранг 199 из 200, выше 99-го перцентиля). Среднее ошибается почти вдвое.
+
+Правильный паттерн: гистограммы эмитируют per-replica счётчики бакетов; `sum by (le) (rate(...))` агрегирует их во время запроса; `histogram_quantile` вычисляет истинный fleet-wide перцентиль из агрегированных счётчиков. Точность ±половина бакета. Никакой изоляции по репликам.
+
+## RED питает SLO error budget
+
+SLO — это обещание: 99,9% запросов успешно завершаются в пределах 200 мс за 30 дней. Duration и Errors из RED — это именно те метрики, которые наполняют это обещание.
+
+- **SLO по доступности**: `1 - rate(errors[window]) / rate(total[window])` — «99,9% запросов не должны возвращать 5xx»
+- **SLO по задержке**: `histogram_quantile(0.99, ...) &lt; 0.200` — «99-й перцентиль должен быть ниже 200 мс»
+- **Error budget**: оставшиеся минуты или количество запросов до нарушения SLO за месяц.
+
+Без RED-инструментации у тебя нет SLO — есть желание.
+
+**Multi-window burn-rate alerting** (Google SRE Workbook): алертить, когда error budget сжигается слишком быстро одновременно на двух окнах:
+
+- **1-часовое окно** (fast burn): ловит внезапные всплески (неудачный деплой).
+- **6-часовое окно** (slow burn): ловит медленные регрессии, которые пороговые алерты пропускают.
+
+Пороговый алерт на абсолютное значение p99 («сработать если p99 &gt; 200 мс») пропускает медленные регрессии (p99 растёт со 150 до 190 мс за две недели, всегда ниже порога) и выдаёт false positive при кратких всплесках. Burn-rate алерты ловят оба сценария.
+
+## Паттерны production-сбоев в RED+USE
+
+**GitHub 2023 (алерт на среднюю задержку):** SLO-алерт на среднюю задержку. Регрессия подняла p99 с 200 до 800 мс; среднее сдвинулось с 45 до 55 мс. Алерт не сработал. Фикс: переход на p99 burn-rate алерты с 1h коротким + 6h длинным окнами по SRE Workbook.
+
+**Cloudflare 2022 (cardinality explosion):** Новый label на `request_duration` вызвал OOM Prometheus-серверов. Задержка вычисления правил выросла с 100 мс до 4+ с, маскируя алерты сервисов. Собственная метрика Prometheus `prometheus_tsdb_head_series` была ведущим сигналом — но алерта на неё не было. Фикс: per-team cardinality budget, принудительный в CI; мета-мониторинг собственного RED Prometheus.
+
+**Stripe 2024 (PSI memory pressure невидима для free-RAM):** Webhook-воркер завис на 11 минут. Дашборды free-RAM показывали 500 МБ свободных. PSI memory `full` был на уровне 90% — ядро трэшило reclaim. Фикс: перенос saturation-алертинга с `MemAvailable &lt; threshold` на PSI-алертинг; следующий инцидент пойман за 30 секунд.
+
+**Discord 2023 (рост задержки вычисления правил):** Рефактор перенёс hot label с одной метрики на две. Cardinality удвоилась молча. Задержка вычисления правил Prometheus выросла с 100 мс до 4 с за две недели, задерживая алерты во время инцидента, видимого пользователям. Фикс: задержка вычисления правил добавлена как первоклассная панель в мета-мониторинг дашборд.
+
+<Inset kind="why" lang="ru">
+Самореференциальная наблюдаемость: Prometheus сам эмитирует RED- и USE-метрики. Ключевые self-метрики Prometheus, за которыми нужно следить: `prometheus_tsdb_head_series` (рост cardinality), `prometheus_engine_query_duration_seconds_p99` (задержка запросов), `prometheus_rule_evaluation_duration_seconds_p99` (задержки алертов). Каждый observability-слой — OTel Collector, Fluent Bit, Vector — эмитирует собственный RED. В зрелом стеке каждый слой наблюдаемости сам наблюдается. Режим отказа ненаблюдаемого monitoring-слоя — молчаливая ошибка: твои сервисы выглядят нормально, но мониторинговый пайплайн перестал доставлять их данные 20 минут назад.
+</Inset>
+
+<Quiz
+  id="06-histograms-slo-quiz-1"
+  lessonSlug="06-histograms-slo-and-advanced"
+  lang="ru"
+  question="Команда использует Prometheus summary (предварительно вычисленный p99 per-replica) и усредняет их для получения fleet-wide p99. Почему это математически неверно?"
+  choices={[
+    { label: "Summary-метрики менее точны, чем гистограммы per-replica", misconception: "Точность per-replica — не проблема; ломается именно агрегация по репликам." },
+    { label: "Перцентили не аддитивны. p99 объединения распределений не равен среднему индивидуальных p99. При репликах с сильно различающейся задержкой среднее может ошибаться вдвое и более.", correct: true },
+    { label: "Summary нельзя запрашивать в PromQL", misconception: "Summary можно запрашивать; проблема — математическая некорректность кросс-реплика агрегации." },
+    { label: "Усреднение p99 корректно при равном трафике по репликам", misconception: "Даже при равном трафике, если распределения задержки различаются по репликам, среднее их p99 не является p99 объединённого распределения." },
+  ]}
+/>
+
+<Quiz
+  id="06-histograms-slo-quiz-2"
+  lessonSlug="06-histograms-slo-and-advanced"
+  lang="ru"
+  question="Пороговый алерт срабатывает когда p99 > 200 мс. p99 дрейфует с 140 мс до 185 мс за три недели (никогда не пересекая 200 мс). SLO позволяет 99,9% запросов выполняться в пределах 200 мс. Что пороговый алерт пропускает, что поймал бы burn-rate алерт?"
+  choices={[
+    { label: "Ничего — 185 мс в рамках SLO-цели 200 мс, алерт не нужен", misconception: "SLO позволяет 0,1% запросов превышать 200 мс. Дрейф до 185 мс означает, что гораздо больше запросов близко к границе — error budget тратится медленно, а пороговый алерт этого не видит." },
+    { label: "Пороговый алерт пропускает медленные регрессии, постепенно расходующие error budget. Burn-rate алерт на 6-часовом окне срабатывает, когда темп расходования бюджета превышает устойчивый уровень, даже если абсолютное значение никогда не пересекает порог.", correct: true },
+    { label: "Пороговые алерты нельзя использовать для SLO на p99", misconception: "Можно — проблема в том, что они срабатывают только когда абсолютное значение пересекает порог, пропуская медленный дрейф и раннее расходование бюджета." },
+    { label: "Burn-rate алерт тоже не сработал бы — ни один не обнаруживает медленный дрейф", misconception: "Multi-window burn-rate alerting специально разработан для обнаружения и быстрых всплесков (1h окно), и медленного дрейфа (6h окно) путём измерения темпа расходования бюджета, а не абсолютного значения." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Native histograms устраняют ручную настройку бакетов при точности ~1% везде. Duration и Errors из RED напрямую питают SLO error budget — без RED-инструментации нет SLO. Multi-window burn-rate alerting ловит и внезапные всплески, и медленные регрессии, которые пороговые алерты пропускают. Каждый production-сбой в этом блоке сводился к одному пропущенному RED или USE сигналу.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-histograms-slo-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое native (exponential) histogram и какую проблему он решает по сравнению с классическими гистограммами?", a: "Native histogram использует логарифмическую шкалу бакетов с фиксированной относительной точностью (~1%) вместо статических списков границ. Каждое наблюдение помещается в динамически размещаемый бакет без конфигурации. Это устраняет ручную настройку бакетов — проблему классической гистограммы, когда неправильный выбор бакетов делает p99 нечитаемым вблизи SLO-цели. Native histograms дают равномерную точность p99 по всему диапазону задержки при аналогичной стоимости хранения и являются дефолтом OTel SDK для новой инструментации метрик (Prometheus 2.40+)." },
+    { q: "Как RED связан с SLO error budget? Какова формула SLO по задержке?", a: "Гистограмма Duration из RED — субстрат для SLO по задержке. Формула: 99-й перцентиль длительности запросов должен быть ниже цели SLO (например, 200 мс) в течение окна измерения (например, 30 дней). Error budget — это 0,1% запросов (для SLO 99,9%), которые могут превышать цель, — выраженных как счётчик запросов или минут. Errors из RED питают SLO по доступности (1 - error_rate). Без гистограммной инструментации Duration вычисление или алертинг на SLO по задержке невозможен." },
+    { q: "Каковы два burn-rate окна в multi-window alerting и что каждое из них ловит?", a: "1-часовое короткое окно: ловит быстрые сжигания — внезапные регрессии, например плохой деплой, немедленно поднимающий p99. Срабатывает быстро, до большого расхода бюджета. 6-часовое длинное окно: ловит медленные сжигания — постепенные регрессии, например таблица, вырастающая за shared_buffers, из-за чего задержка дрейфует со 140 до 185 мс за недели. Пороговый алерт полностью пропускает это, потому что абсолютное значение никогда не пересекает порог; 6h burn-rate алерт срабатывает, когда темп расходования бюджета превышает устойчивый для месяца." },
+  ]}
+/>
+
+<Recap lang="ru">
+Native (exponential) histograms, доступные в Prometheus 2.40+ и как дефолт OTel SDK, используют логарифмическую шкалу бакетов при ~1% относительной точности, устраняя ручную настройку бакетов, необходимую для классических гистограмм. Гистограммы Duration и счётчики Errors из RED — прямой субстрат для измерения SLO: SLO по доступности — `1 - error_rate`, SLO по задержке — `histogram_quantile(0.99) &lt; цель`. Multi-window burn-rate alerting (1h короткое + 6h длинное окна) ловит и внезапные регрессии, и медленный дрейф, которые пороговые алерты пропускают — поимка медленного типа была тем, что потребовал post-mortem инцидента GitHub 2023. Каждый крупный production-сбой в этом блоке — Cloudflare 2022, GitHub 2023, Stripe 2024, Discord 2023 — сводился к одному конкретному пропущенному RED или USE сигналу: cardinality explosion невидимый без self-мониторинга Prometheus, средняя задержка маскирующая p99, free-RAM невидимый для PSI memory pressure и рост задержки вычисления правил маскирующий алерты. Самореференциальная наблюдаемость — мониторинг самого monitoring-пайплайна с той же RED+USE дисциплиной — последняя линия защиты.
+</Recap>

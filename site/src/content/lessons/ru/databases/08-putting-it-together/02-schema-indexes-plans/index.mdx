@@ -1,0 +1,167 @@
+---
+slug: 02-schema-indexes-plans
+lang: ru
+track: databases
+unit: 08-putting-it-together-db
+order: 2
+title: "Акты 1–3 в глубину: схема, индексы и статистика планировщика"
+summary: "Первые три акта компонуются необратимо — неправильный тип это многодневная миграция при 100M строк, правило leading-column — самый нарушаемый принцип в дикой природе, а устаревшая статистика заставляет планировщик выбирать план в 1000× медленнее необходимого."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/01-the-seven-acts
+  - databases/01-relational-model/06-schema-integrity
+  - databases/02-indexes/02-leading-column-rule
+  - databases/03-execution-plans/04-statistics-and-analyze
+deepensInto:
+  - databases/08-putting-it-together/03-mvcc-pool-migrations
+spiral: ["statefulness", "latency"]
+concepts: ["schema-irreversibility", "leading-column-rule", "stale-statistics", "compound-cost"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://wiki.postgresql.org/wiki/Don't_Do_This
+  - https://www.pgmustard.com/blog/postgres-row-estimates-misleading
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Команда добавляет колонку `TEXT` для email вместо `CITEXT` в День 0. Шесть месяцев и 100M строк спустя баг с регистром требует смены типа по всей таблице. Исходное решение по схеме — принятое за пять секунд — стоит трёх дней и окна обслуживания. Схема — единственный акт, где цена ошибки необратима.
+</Hook>
+
+<Crux>Решения схемы необратимы на масштабе; индексы дёшевы, но дороги при ошибке; устаревшая статистика замедляет планировщик в 1000×.</Crux>
+
+<Explanation>
+
+## Акт 1 — Схема: единственное необратимое решение
+
+Неправильный тип (`TEXT` vs `CITEXT` для email) становится многодневной миграцией при 100M строк. Неправильный выбор ключа (составной натуральный ключ vs суррогатный `BIGSERIAL`) делает каждый join дорогим навсегда. Реляционная модель вознаграждает строгость с самого начала:
+
+- **`NOT NULL` по умолчанию** — nullable колонки влекут app-level null-проверки там, где должны быть ограничения базы.
+- **FK-ограничения, если нет измеренного throughput pressure** — ссылочная целостность предотвращает orphaned child rows, которые на масштабе дают неправильные результаты запросов.
+- **`CHECK`-ограничения для бизнес-инвариантов** — прямой SQL update без них может создать невалидное состояние.
+- **Суррогатные ключи для внешних ссылок** — `id BIGSERIAL` изолирует от изменений email; ретрофит суррогатных ключей при 1B строк требует полной перезаписи таблицы.
+
+Ошибки схемы и escape hatches:
+
+- Составной натуральный ключ (user_id, organization_id, email) как PK означает: каждый join несёт три колонки; каждый FK реплицирует три колонки. Исправление: суррогатный `id` дешевле, но ретрофит требует миграции с перезаписью таблицы.
+- Отсутствующий FK на child table означает отсутствие ссылочной целостности; данные деградируют со временем. Исправление: добавить FK ретроактивно, но сначала исправить orphaned child rows.
+- Отсутствующее `CHECK`-ограничение на domain-specific колонке (status должен быть одним из ACTIVE, PENDING, ARCHIVED) — приложение единственный guard. Исправление: добавить ограничение, вычистить невалидные строки.
+
+Нарушай правила только с доказательствами — отключай FK на highest-write child tables, если стоимость FK trigger превышает write budget, но никогда как стилистическое предпочтение.
+
+## Акт 2 — Индексы: окупаются только на правильных колонках
+
+B-tree на `email` разрешает `WHERE email = ?` за O(log N) page reads. B-tree на `(org_id, created_at DESC)` разрешает «50 последних событий для org» за два page read. GIN-индекс на `prefs jsonb` делает `WHERE prefs @> '{"theme":"dark"}'` поиском за 2 мс вместо 4 с seq-scan.
+
+**Забытая стоимость:** каждый insert и update пишет во все индексы. Правило leading-column — самый нарушаемый принцип в дикой природе.
+
+Ошибки выбора индексов:
+
+- B-tree индекс на low-cardinality колонке (gender с 2 значениями, status с 5) почти всегда бесполезен — планировщик выбирает seq-scan, а индекс ест write throughput.
+- Индекс на `(a, b)` **не** помогает запросам, фильтрующим только по `b`. Индекс `(user_id, created_at)`, созданный для «событий пользователя», не помогает «последним событиям любого пользователя». Отдельный `(created_at, user_id)` удовлетворяет оба запроса, и планировщик выбирает его исходя из запроса.
+- JSONB-индексы (GIN или GIST) мощные, но дорогие на writes — 100K inserts/s могут вдвое снизить write throughput при наивном индексировании JSONB-колонки.
+- **Partial indexes** решают проблему write throughput для dimension tables: `CREATE INDEX ... WHERE status != 'ARCHIVED'` покрывает 5% активных строк за долю стоимости.
+
+Цена ошибки здесь постоянная: legacy-приложения наследуют неверный порядок колонок, и любая попытка удалить индекс рискует регрессией в недокументированных code path.
+
+## Акт 3 — Статистика: планировщик выбирает планы из гистограмм
+
+Postgres сэмплирует таблицу во время `ANALYZE` и строит гистограмму на каждую колонку. Планировщик использует гистограммы для оценки количества строк; cost model ранжирует планы. Когда статистика устаревает, оценки неверны.
+
+Ошибка оценки в 1000× даёт план в 1000× медленнее: планировщик выбирает nested loop, ожидая 10 строк; реальная мощность — 10000 строк; цикл сканирует 10M index entries вместо одного hash join по 10K-строчной build side.
+
+Защита:
+- `autovacuum_analyze_scale_factor = 0.05` (или меньше, 0.01) на busy tables — при дефолтном 0.1 таблица, растущая на 1M строк в день, имеет устаревшую статистику уже через часы.
+- `CREATE STATISTICS (dependencies) ON user_id, created_at FROM events` учит планировщика корреляциям колонок (новые пользователи появляются в свежих данных; планировщик по умолчанию считает их независимыми).
+- `pg_stat_statements` для поиска проблемных планов по total execution time.
+- `auto_explain.log_min_duration = '500ms'` для triage хвостовой латентности.
+
+Ловушка на масштабе: одна плохая оценка каскадирует. Планировщик кеширует plan IDs (`pg_stat_statements.plan_id`); человек должен найти и принудительно перепланировать, удалив и пересоздав prepared statement запроса, или выполнив `DISCARD PLANS`.
+
+<NumbersCard
+  id="card-acts-1-3-numbers"
+  title="Акты 1–3: стоимость и время исправления"
+  stats={[
+    { label: "Схема: исправить неправильный тип при 1M строк", value: "часы" },
+    { label: "Схема: исправить неправильный тип при 100M строк", value: "дни + окно обслуживания" },
+    { label: "Index lookup в shared_buffers (L3 cache)", value: "5–50 мкс" },
+    { label: "Index lookup с SSD", value: "5–10 мс" },
+    { label: "Seq-scan таблицы 1 GB на SSD", value: "1–3 с" },
+    { label: "autovacuum analyze при дефолтном factor 0.1", value: "срабатывает после 100K новых строк" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="ru">
+Лимит `work_mem` (по умолчанию 4 MB) влияет на сортировки и hash join. Если оценки планировщика неверны и реальные данные требуют больше `work_mem`, чем доступно, запрос сбрасывается на диск и становится очень медленным. Re-ANALYZE решает проблему оценки; увеличение `work_mem` — проблему hash-build; ни то ни другое не является долгосрочной заменой корректной статистики.
+</Inset>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-1"
+  lessonSlug="02-schema-indexes-plans"
+  lang="ru"
+  question="Индекс есть на (user_id, created_at). Запрос фильтрует только по created_at. Что происходит?"
+  choices={[
+    { label: "Планировщик не может использовать этот индекс для фильтра только по created_at — leading column это user_id — и может сделать seq-scan", correct: true },
+    { label: "Планировщик использует индекс, потому что created_at вторая колонка", misconception: "B-tree индекс на (a, b) можно использовать для запросов, фильтрующих по a, или по (a, b) вместе, но не по b одному. Правило leading-column — самый нарушаемый принцип в дикой природе." },
+    { label: "Postgres автоматически создаёт индекс на created_at при индексировании user_id", misconception: "Postgres не создаёт вторичные индексы автоматически. Их нужно создавать явно." },
+    { label: "Индекс будет использован, если created_at имеет низкую кардинальность", misconception: "Низкая кардинальность делает индекс менее полезным, а не более. И правило leading-column применяется независимо от кардинальности." },
+  ]}
+/>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-2"
+  lessonSlug="02-schema-indexes-plans"
+  lang="ru"
+  question="autovacuum_analyze_scale_factor = 0.1 (дефолт). Таблица растёт на 1M строк в день. Как часто запускается ANALYZE?"
+  choices={[
+    { label: "После изменения 10% таблицы — при 10M строк только после 1M изменений; статистика может быть устаревшей на протяжении часов", correct: true },
+    { label: "ANALYZE запускается каждую ночь независимо от количества строк", misconception: "autovacuum_analyze срабатывает на основе порога analyze_scale_factor — доли размера таблицы — не по расписанию." },
+    { label: "ANALYZE запускается после каждого INSERT", misconception: "Это было бы слишком дорого. ANALYZE запускается когда доля изменённых строк превышает autovacuum_analyze_scale_factor × всего строк." },
+    { label: "scale factor не влияет на частоту analyze, только на vacuum", misconception: "autovacuum_analyze_scale_factor именно контролирует триггер ANALYZE. autovacuum_vacuum_scale_factor контролирует vacuum." },
+  ]}
+/>
+
+<Quiz
+  id="02-schema-indexes-plans-quiz-3"
+  lessonSlug="02-schema-indexes-plans"
+  lang="ru"
+  question="Добавляешь суррогатный BIGSERIAL id к таблице, которая уже использует email как натуральный ключ. Какова главная выгода на масштабе года 3?"
+  choices={[
+    { label: "Суррогатный id изолирует каждую FK-ссылку от изменений email — изменение колонки email не каскадирует на child tables и не требует перестройки индексов по схеме", correct: true },
+    { label: "Суррогатный id ускоряет запросы, потому что целые числа меньше текста", misconception: "Скорость запросов — вторичная выгода. Главная выгода — стабильность схемы: id это стабильный, непрозрачный дескриптор, отделяющий бизнес-данные от структурных ссылок." },
+    { label: "BIGSERIAL генерирует глобально уникальные id через шарды", misconception: "BIGSERIAL это per-sequence инкрементор, не глобально уникальный через шарды. Для distributed unique id нужны UUID или sequence-per-shard подход." },
+    { label: "Суррогатный id убирает необходимость в foreign keys", misconception: "Суррогатные id делают FK дешевле и стабильнее, но не заменяют ссылочную целостность, которую FK обеспечивают." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Схема необратима — неправильные типы и отсутствие суррогатных ключей компонуются в многодневные миграции на масштабе. Правило leading-column — самый нарушаемый принцип индексирования: индекс на (a, b) не помогает запросам только по b. Устаревшая статистика заставляет планировщик выбирать план в 1000× медленнее; установи autovacuum_analyze_scale_factor = 0.01 на high-growth tables и используй CREATE STATISTICS для коррелированных колонок.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-schema-indexes-plans-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему схема описана как 'единственное необратимое решение' и что это означает операционно?", a: "Изменения схемы на масштабе требуют блокировки или перезаписи строк — операции, занимающие секунды на таблице в 1K строк и дни на таблице в 100M строк. Неправильный тип (TEXT vs CITEXT) требует изменения каждого хранимого значения. Отсутствующий суррогатный ключ означает: каждый FK должен ссылаться на потенциально изменяемый натуральный ключ. Составной натуральный ключ PK означает: каждая child table несёт те N колонок как FK. Это нельзя исправить на месте; требуются миграции, которые либо блокируют writes (AccessExclusiveLock), либо используют expand-contract (5+ шагов). Чем раньше исправление, тем дешевле. При 1B строк любое изменение схемы — многонедельный проект." },
+    { q: "Объясни правило leading-column и приведи пример, как его нарушение вызывает production incident.", a: "B-tree индекс на (a, b) поддерживает запросы, фильтрующие по a, или по (a, b), но не по b одному. Планировщик не может начать index scan с произвольной позиции во второй колонке. Пример: команда создаёт (user_id, created_at) для поддержки 'событий пользователя X'. Позже дашборд запрашивает 'последние события любого пользователя', фильтруя только по created_at. Планировщик делает seq-scan; дашборд медленный. Исправление — отдельный индекс на created_at или (created_at, user_id). Если плохой индекс создан годами ранее на большой таблице, его удаление рискует регрессией в code paths, использующих его для фильтра (user_id, created_at) — нельзя безопасно удалить без аудита всех query paths." },
+    { q: "Что такое каскадный сбой при устаревшей статистике и как autovacuum_analyze_scale_factor и CREATE STATISTICS его исправляют?", a: "Устаревшая статистика заставляет планировщика оценивать неверное количество строк. Ошибка в 1000× вынуждает nested loop вместо hash join, превращая 5 мс запрос в 5 с запрос. autovacuum_analyze_scale_factor = 0.01 триггерит ANALYZE после изменения 1% строк, а не 10% — поддерживая статистику свежей на high-growth tables. CREATE STATISTICS учит планировщика корреляциям колонок (например, user_id и created_at коррелированы — новые пользователи появляются в свежих строках), которые дефолтная гистограмма считает независимыми. Без этого планировщик недооценивает строки для multi-column predicates и выбирает nested loops вместо hash joins." },
+  ]}
+/>
+
+<Recap lang="ru">
+Акты 1–3 — фундамент, на котором строится каждый последующий акт. Схема необратима — неправильные типы и отсутствие суррогатных ключей становятся многодневными миграциями при 100M строк; правило — `NOT NULL` по умолчанию, FK если нет измеренного throughput pressure, суррогатные ключи для внешних ссылок. Правило leading-column управляет каждым B-tree индексом: индекс на (a, b) не помогает запросам только по b, и неверный выбор навсегда замедляет нужные запросы — исправление это новый индекс, но старый плохой нельзя безопасно удалить без аудита. Статистика деградирует по мере роста таблицы быстрее дефолтного порога autovacuum; защита — меньший `autovacuum_analyze_scale_factor` на high-growth tables и `CREATE STATISTICS` для коррелированных колонок. Все три акта объединены одной темой: стоимость правильного решения в День 0 близка к нулю; стоимость исправления неверного решения в Год 3 экспоненциальна.
+</Recap>

@@ -1,0 +1,196 @@
+---
+slug: 03-tiered-cache-and-cache-control
+lang: ru
+track: networking
+unit: 07-cdn-edge
+order: 3
+title: "Многоуровневый кеш и Cache-Control"
+summary: "Как edge-кеш, origin shield и директивы Cache-Control работают вместе, чтобы 90%+ запросов никогда не достигали origin — и что задавать для каждого типа контента."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "06-http-versions/04-headers-caching-cors"
+  - "07-cdn-edge/01-cdn-what-and-why"
+deepensInto:
+  - "04-vary-header-and-cache-keys"
+  - "05-stale-while-revalidate-and-stampede"
+spiral: ["latency"]
+concepts: ["cache-control", "origin-shield", "s-maxage", "stale-while-revalidate", "cache-invalidation", "cache-purge", "cache-tags", "content-hashing", "conditional-request", "etag"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc7234
+  - https://web.dev/articles/stale-while-revalidate/
+  - https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+CDN стоит перед origin, но alarm origin по-прежнему срабатывает при каждом деплое. Новые пользователи промахиваются по кешу, каждый edge POP одновременно запрашивает origin — и вдруг 200 edge-серверов генерируют 200 параллельных запросов к origin для одного и того же некешированного URL. Это не баг — это отсутствие архитектурного слоя: origin shield.
+</Hook>
+
+<Crux>Cache-Control задаёт TTL каждому слою кеша; origin shield сворачивает все edge-промахи в один запрос к origin, предотвращая stampede.</Crux>
+
+<Explanation>
+
+## Четырёхуровневая иерархия кешей
+
+Когда браузер делает запрос, четыре кеша могут ответить до origin:
+
+1. **Кеш памяти браузера** (~субмс, живёт в рамках вкладки)
+2. **Дисковый кеш браузера** (~10 мс, сохраняется между вкладками)
+3. **Кеш CDN edge POP** (~20–50 мс по сети от пользователя)
+4. **CDN origin shield / региональный кеш** (~50–100 мс)
+
+Только если все четыре промахиваются, отвечает origin (~100–300 мс в зависимости от географии). Каждый слой подчиняется одним и тем же директивам `Cache-Control`, но применяет их независимо.
+
+## Директивы Cache-Control
+
+Заголовок ответа `Cache-Control` сообщает каждому кеширующему слою, что делать с ответом:
+
+| Директива | Значение |
+|-----------|---------|
+| `max-age=3600` | Свежий 1 час в **любом** кеше: браузер и CDN |
+| `s-maxage=86400` | Свежий 1 день **только в CDN** (браузер игнорирует `s-maxage`) |
+| `public` | Любой кеш (браузер, CDN, прокси) может хранить |
+| `private` | Только кеш браузера; CDN не должен хранить |
+| `no-store` | Ни один кеш не может хранить этот ответ |
+| `no-cache` | Перед отдачей хранимой копии нужна ревалидация с origin |
+| `stale-while-revalidate=604800` | Отдавать устаревшее до 7 дней, обновляя в фоне |
+| `immutable` | Не ревалидировать — содержимое по этому URL никогда не изменится |
+
+**Важнейшее правило:** без `Cache-Control: public` (или `s-maxage`) CDN **проксирует насквозь** — кеширования не происходит. Заголовки ответа origin управляют кешируемостью; CDN не может кешировать то, что origin не разрешает.
+
+<NumbersCard
+  id="card-cache-control-tiers"
+  title="Cache-Control по типу контента"
+  data-lesson-visual
+  stats={[
+    { label: "Статические ассеты (JS/CSS с content-hash)", value: "public, max-age=31536000, immutable" },
+    { label: "Изображения (с хешем в URL)", value: "public, max-age=31536000, immutable" },
+    { label: "HTML-страницы (часто обновляемые)", value: "public, max-age=300, stale-while-revalidate=3600" },
+    { label: "API-ответы (публичные, read-only)", value: "public, s-maxage=60, stale-while-revalidate=600" },
+    { label: "User-specific API (требует auth)", value: "private, no-store" },
+    { label: "Страницы оформления заказа", value: "no-store" },
+  ]}
+/>
+
+## Архитектура origin shield
+
+В каждом регионе CDN может быть десятки edge POP. Без shield промах кеша для популярного URL во всех 200 POP генерирует **200 одновременных запросов к origin** — thundering herd (эффект гремящего стада).
+
+**Origin shield** (называемый «Tiered Cache» у Cloudflare, «Origin Shield» у Fastly — одна фича) — это **региональный промежуточный кеш** между edge POP и origin. Все edge POP в регионе направляют промахи через **один shield-узел**. Shield поддерживает бо́льший кеш и обычно поглощает 90%+ промахов без обращения к origin.
+
+Сценарий для «холодного» URL:
+1. 200 edge POP промахиваются одновременно.
+2. Все 200 пересылают запрос к региональному shield.
+3. Shield отправляет один запрос к origin; остальные 199 ставятся в очередь.
+4. Origin отвечает один раз; shield распространяет ответ на все 199 ожидающих edge.
+5. Origin увидел **1 запрос** вместо 200.
+
+## Версионирование статических ассетов: избавиться от инвалидации
+
+Умнейший трюк с кешем: включить **content hash** в имя файла (например, `app.f3a2b8c.js`). Задать `max-age=31536000, immutable` (1 год). Когда файл меняется — меняется хеш, меняется URL — в кеше нет записи для нового URL, и он автоматически загружается свежим. Purge не нужен. Это делают автоматически: Webpack, Vite, esbuild, Astro.
+
+## Паттерны инвалидации кеша (когда всё-таки нужны)
+
+1. **Истечение TTL** — ждать, пока истечёт `max-age`. Дёшево, без API-вызовов, но медленно при срочных исправлениях.
+2. **Явный purge** — API-вызов CDN: `POST /purge {"url": "/api/products"}`. Быстро, но медленно при purge тысяч URL на деплое.
+3. **Cache tags** — теговать ответы на origin (`Cache-Tag: article-1001`), чистить по тегу (`POST /purge {"tag": "article-1001"}`). Максимальная гибкость; требует enterprise-тира CDN (Fastly, Cloudflare Enterprise).
+
+## Условные запросы и 304 Not Modified
+
+После истечения локального кеша браузер ревалидирует с `If-None-Match: <etag>`. Если ответ не изменился, CDN (или origin) возвращает **304 Not Modified** — пустое тело, экономия трафика. CDN прозрачно обрабатывает ETag для кешируемых ответов, пересылая к origin только при реально изменившемся ETag.
+
+<Misconception
+  id="r-cache-purge-browser"
+  title="Purge CDN не очищает кеш браузера"
+>
+CDN purge удаляет записи только из edge- и shield-кешей. Браузеры подчиняются `max-age`, полученному при первой загрузке. Чтобы заставить браузер загрузить свежий контент — меняйте URL (content-hash) или задавайте короткий `max-age`.
+</Misconception>
+
+<Quiz
+  id="mid-quiz-1"
+  pieceSlug="03-tiered-cache-and-cache-control"
+  lang="ru"
+  question="Что делает директива s-maxage в отличие от одного max-age?"
+  choices={[
+    { label: "Устанавливает более длинный TTL для кеша браузера", misconception: "Браузеры игнорируют s-maxage; директива применяется только к shared-кешам (CDN)." },
+    { label: "Переопределяет max-age для shared-кешей (CDN, прокси), оставляя max-age браузера неизменным", correct: true },
+    { label: "Отключает stale-while-revalidate", misconception: "s-maxage и stale-while-revalidate — независимые директивы." },
+    { label: "Запрещает CDN ревалидировать", misconception: "Это делает immutable для кешей браузера; политика ревалидации CDN отдельна." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-2"
+  pieceSlug="03-tiered-cache-and-cache-control"
+  lang="ru"
+  question="Почему URL статических ассетов обычно содержат content hash (например, app.f3a2b8c.js)?"
+  choices={[
+    { label: "Чтобы браузер не кешировал их", misconception: "Цель противоположная — кешировать агрессивно на срок до года." },
+    { label: "Чтобы URL менялся вместе с контентом, позволяя использовать TTL 1 год без риска раздачи устаревшего контента", correct: true },
+    { label: "Для аудита безопасности", misconception: "Content-хеши здесь служат инвалидации кеша, а не аудиту." },
+    { label: "Для сжатия файла", misconception: "Сжатие — отдельный вопрос, не связанный с хешированием имён файлов." },
+  ]}
+/>
+
+<TraceScenario
+  id="mid-trace-1"
+  pieceSlug="03-tiered-cache-and-cache-control"
+  lang="ru"
+  scenario="Трассировка холодной загрузки страницы статьи через всю иерархию CDN-кеша."
+  steps={[
+    { prompt: "Браузер DNS-резолвит hostname. Что получает?", reveal: "A-запись с CDN edge IP, ближайшим к пользователю — через Anycast или GeoDNS." },
+    { prompt: "Браузер открывает TCP + TLS к edge. Edge проверяет локальный кеш — промах. Куда форвардит?", reveal: "К региональному origin shield. Shield проверяет свой кеш. При промахе — форвардит к origin." },
+    { prompt: "Origin отвечает. Что несёт ответ, чтобы быть кешируемым?", reveal: "Cache-Control: public, max-age=3600 (или s-maxage для TTL только CDN). ETag для будущей ревалидации. Заголовок Vary со списком измерений, влияющих на содержимое ответа." },
+    { prompt: "Shield кеширует ответ и форвардит к edge. Edge кеширует и возвращает браузеру. Следующий пользователь запрашивает тот же URL в течение 3600 секунд?", reveal: "Cache hit на edge — ответ за ~20 мс без обращения к shield или origin. Продолжается до 3600 секунд для всех последующих идентичных запросов." },
+    { prompt: "Вы деплоите новую версию статьи. max-age=3600, прошло только 10 минут. Как пользователи получат новую версию?", reveal: "Либо ждать 50 минут до естественного истечения TTL, либо выполнить CDN purge для URL статьи / cache-тега. Purge распространяется на все edge за секунды." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-1"
+  pieceSlug="03-tiered-cache-and-cache-control"
+  lang="ru"
+  prompt="Упорядочите директивы Cache-Control от наиболее кешируемой к наименее:"
+  items={[
+    "public, max-age=31536000, immutable — 1 год, никогда не перезагружается",
+    "public, max-age=3600 — 1 час в любом кеше",
+    "public, max-age=60, stale-while-revalidate=600 — 60 с свежести, затем устаревшая версия 10 мин",
+    "private, max-age=300 — только браузер, 5 мин",
+    "no-cache — кеши обязаны ревалидировать при каждом запросе",
+    "no-store — ни один кеш не может хранить это вообще",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache-Control управляет что кешируется и как долго; s-maxage применяется только к CDN, max-age — ко всем кешам. Origin shield сворачивает edge-промахи в один запрос к origin, предотвращая stampede. URL с content-hash и TTL immutable полностью устраняют проблему инвалидации кеша для статических ассетов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-tiered-cache-and-cache-control-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему URL-версионирование с content-hash предпочтительнее ручного purge для статических ассетов?", a: "Хешированные URL делают проблему инвалидации кеша несуществующей: когда CSS-файл меняется — меняется его хеш, меняется URL — в кеше нет записи для нового URL. Старый URL продолжает кешироваться с max-age=1 год, но больше никогда не запрашивается. Ручные purge работают, но медленны, дороги в масштабе (тысячи URL на деплой) и создают гонку между деплоем и завершением purge, когда пользователи могут получить устаревший контент." },
+    { q: "Origin shield стоит между edge и origin. 200 edge одновременно промахиваются по одному URL. Сколько запросов генерирует shield к origin?", a: "Один. Shield получает все 200 запросов edge при промахах, распознаёт, что все они для одного URL, делает один запрос к origin, ждёт ответа, затем распространяет его на все 200 ожидающих edge. Без shield origin получил бы 200 одновременных запросов — thundering herd, способный исчерпать мощности origin." },
+    { q: "HTML-страница имеет Cache-Control: public, max-age=3600. Вы пушите hotfix. Пользователи видят старую страницу до 1 часа. Как сделать, чтобы все CDN edge раздавали новую версию за секунды?", a: "Выполнить CDN purge для URL страницы (или её cache-тега при использовании tag-based инвалидации). Большинство CDN-платформ распространяют purge на все edge POP за 1–5 секунд. Purge очищает только CDN-кеш — браузерные кеши по-прежнему держат старую версию до locally-stored max-age, поэтому для изменяемого контента как HTML лучше использовать короткий TTL (max-age=300) или stale-while-revalidate, а не длинный." },
+  ]}
+/>
+
+<Recap lang="ru">
+Иерархия CDN-кеша имеет четыре слоя — память браузера, диск браузера, edge POP и origin shield — каждый подчиняется одним директивам `Cache-Control`. Ключевые директивы: `max-age` задаёт окно свежести для всех кешей; `s-maxage` переопределяет его только для shared-кешей (CDN); `private` исключает CDN-кеширование; `no-store` запрещает любое кеширование. Origin shield предотвращает thundering herd, сворачивая все edge-промахи в регионе в один запрос к origin. URL с content-hash и `immutable, max-age=31536000` полностью устраняют проблему инвалидации кеша для статических ассетов. Для изменяемого контента выбирайте между истечением TTL (просто), purge по URL (быстро, но URL-специфично) или purge по cache-тегу (гибко, требует enterprise-тира).
+</Recap>

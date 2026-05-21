@@ -1,0 +1,214 @@
+---
+slug: 04-vacuum-and-bloat
+lang: ru
+track: databases
+unit: 04-mvcc-isolation
+order: 4
+title: "VACUUM, bloat и autovacuum"
+summary: "Каждый UPDATE пишет новый tuple; мёртвые версии накапливаются пока VACUUM их не уберёт. VACUUM никогда не сокращает файл — только помечает слоты. VACUUM FULL и pg_repack сокращают. Autovacuum запускается по формуле threshold + scale_factor × n_live_tup."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/04-mvcc-isolation/02-row-versions-and-snapshots"]
+deepensInto: ["databases/04-mvcc-isolation/06-ssi-and-production-tuning"]
+spiral: ["statefulness"]
+concepts: ["vacuum", "bloat", "autovacuum", "vacuum-full", "pg-repack", "oldest-xmin", "hot-standby-feedback"]
+sources:
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/warm-standby.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Таблица orders занимает 180 ГБ вместо ожидаемых 80 ГБ. Autovacuum запускался 14 раз за ночь. Диск полон к 7 утра. Почему VACUUM не помог — и как остановить это в следующий раз?
+</Hook>
+
+<Crux>VACUUM не сжимает файл — помечает слоты переиспользуемыми. Диск вернёт VACUUM FULL или pg_repack. Долгая транзакция пинит oldest-xmin.</Crux>
+
+<Explanation>
+
+## Откуда берётся bloat
+
+Каждый `UPDATE` создаёт новую версию tuple плюс помечает старую мёртвой — оба на диске. До коммита оба существуют. После коммита мёртвая версия остаётся на диске, пока VACUUM не решит, что она больше никому не нужна.
+
+**Модель затрат:**
+
+| Операция | Heap | Индексы |
+|----------|------|---------|
+| INSERT | +1 tuple | +1 запись на индекс |
+| UPDATE (не HOT) | +1 живой + 1 мёртвый tuple | +1 запись на индекс |
+| UPDATE (HOT) | +1 живой + 1 мёртвый tuple | 0 новых записей |
+| DELETE | +1 мёртвый tuple | (запись остаётся до VACUUM) |
+
+Пока VACUUM не уберёт мёртвые tuple, каждый sequential scan пробегает мимо них, каждый индексный lookup может на них наткнуться, и каждая страница больше необходимого минимума.
+
+Правило большого пальца: целевая доля мёртвых tuple менее 20% для таблиц больше 50 ГБ.
+
+## Три варианта уборки
+
+| Операция | Что делает | Блокировка | Диск |
+|----------|-----------|------------|------|
+| `VACUUM` | Помечает мёртвые tuple переиспользуемыми | SHARE UPDATE EXCLUSIVE (чтения/записи продолжаются) | Файл не сокращается |
+| `VACUUM FULL` | Переписывает всю таблицу | ACCESS EXCLUSIVE (блокирует всё) | Возвращает диск ОС |
+| `pg_repack` | Переписывает онлайн | Только короткий ACCESS EXCLUSIVE на финальный swap | Возвращает диск ОС |
+
+<Misconception id="mc-bloat">
+**"VACUUM чистит мёртвые строки"**. Не та половина. VACUUM помечает слоты переиспользуемыми внутри файла — не сокращает его, не возвращает место ОС, не убирает tuple, видимый старому snapshot. Долгая транзакция закрепляет каждый tuple; диагноз через `pg_stat_activity.backend_xmin`.
+</Misconception>
+
+## Как autovacuum решает запускаться
+
+Autovacuum — фоновый пул процессов (3 воркера по умолчанию), просыпающийся каждую минуту и проверяющий каждую таблицу на пороговое условие:
+
+```
+autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × n_live_tup
+```
+
+Дефолт: 50 + 20% живых tuple. Когда таблица переходит порог, autovacuum посылает воркера.
+
+**Шаги одного прогона autovacuum:**
+
+<DragOrder
+  id="drag-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="ru"
+  prompt="Поставь шаги одного прогона autovacuum в правильном порядке:"
+  items={[
+    "Планировщик просыпается; проверяет n_dead_tup против threshold + scale_factor × n_live_tup",
+    "Воркер подключается; берёт SHARE UPDATE EXCLUSIVE (параллельные чтения и записи продолжаются)",
+    "Вычисляет глобально старейший xmin по всем сессиям — только tuple старше можно убирать",
+    "Скан heap: обходит каждую страницу, выявляет мёртвые tuple с t_xmax &lt; oldest xmin",
+    "Помечает слоты мёртвых tuple переиспользуемыми; перестраивает free-space map",
+    "Чистка индексов: удаляет записи, ссылающиеся на освобождённые heap-слоты",
+    "Обновляет pg_class.relfrozenxid + счётчики pg_stat_all_tables; отпускает блокировку",
+  ]}
+/>
+
+## Oldest xmin: почему долгие транзакции блокируют уборку
+
+Autovacuum может убирать только tuple, чей `t_xmax` старше **глобально старейшего `xmin`** по всем сессиям. Если одна транзакция держится открытой, её `backend_xmin` пинит oldest-xmin.
+
+**Диагностика:**
+
+```sql
+SELECT pid, backend_xmin,
+       now() - xact_start AS duration,
+       state, query
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+ORDER BY backend_xmin
+LIMIT 5;
+```
+
+Самый старый `backend_xmin` — это то, что блокирует уборку.
+
+## Нюанс hot_standby_feedback
+
+Стриминговые реплики можно настроить с `hot_standby_feedback = on`, которая отсылает primary старейший активный `xmin` реплики. Без неё долгий аналитический запрос на реплике может упасть с `canceling statement due to conflict with recovery`.
+
+С ней bloat primary — заложник самого долгого запроса реплики. **Большинство production-сетапов выбирают `off` на аналитической реплике** и принимают периодические отмены запросов — закрепление bloat primary навсегда хуже.
+
+## Числа
+
+<NumbersCard
+  id="card-vacuum-numbers"
+  lessonSlug="04-vacuum-and-bloat"
+  title="VACUUM и bloat: ключевые числа"
+  stats={[
+    { label: "Bloat-цель (>50 ГБ)", value: "&lt;20% мёртвых tuple" },
+    { label: "Дефолты autovacuum", value: "3 воркера, 60с naptime, 20% scale" },
+    { label: "Блокировка VACUUM FULL", value: "ACCESS EXCLUSIVE" },
+    { label: "Размер заголовка tuple", value: "23 Б (+ выравнивание)" },
+    { label: "XID ширина", value: "32 бита; заморозка на 2^31" },
+    { label: "pg_repack онлайн-стоимость", value: "временно 2x disk" },
+  ]}
+/>
+
+</Explanation>
+
+## Проверь себя
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="ru"
+  question="Таблица orders занимает 180 ГБ. Ты запустил VACUUM и он завершился без ошибок. Теперь df показывает... что?"
+  choices={[
+    { label: "Файл таблицы уменьшился до реального размера живых данных", misconception: "VACUUM помечает слоты переиспользуемыми внутри файла, но не сокращает файл и не возвращает место ОС." },
+    { label: "Файл остался 180 ГБ, но внутри помечены слоты для повторного использования", correct: true },
+    { label: "Файл уменьшился ровно на число мёртвых tuple × средний размер строки", misconception: "Физический размер файла не изменился. Только внутренняя free-space map обновилась." },
+    { label: "Файл уменьшился до нуля — autovacuum должен был убрать всё", misconception: "Autovacuum никогда не выполняет VACUUM FULL автоматически; обычный VACUUM не сокращает файл." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="ru"
+  question="Autovacuum запускался 10 раз за ночь, но n_dead_tup не падает. Какая самая вероятная причина?"
+  choices={[
+    { label: "autovacuum_vacuum_scale_factor слишком высок", misconception: "Scale factor контролирует порог запуска, не способность убирать. Autovacuum явно запускался — просто не мог убирать." },
+    { label: "Долгая транзакция или orphan replication slot пинит глобальный oldest-xmin", correct: true },
+    { label: "fillfactor слишком мал, поэтому HOT-цепочки ломаются слишком часто", misconception: "HOT влияет на количество мёртвых tuple создаваемых UPDATE, но не на способность autovacuum их убирать." },
+    { label: "Слишком много индексов на таблице", misconception: "Количество индексов влияет на скорость уборки индексов, но не является барьером для уборки heap." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-3"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="ru"
+  question="Когда hot_standby_feedback = on на реплике, что происходит с primary?"
+  choices={[
+    { label: "Primary видит меньше bloat, потому что реплика помогает убирать мёртвые tuple", misconception: "Реплика ничего не убирает на primary. hot_standby_feedback предотвращает уборку, а не помогает ей." },
+    { label: "Primary не может убирать tuple, которые нужны snapshot реплики — bloat primary заложник самого долгого запроса реплики", correct: true },
+    { label: "Primary делает VACUUM быстрее, потому что реплика подтверждает какие tuple можно убрать", misconception: "Нет. Эффект обратный: реплика удерживает уборку, не ускоряет её." },
+    { label: "Это настройка не влияет на primary; она только предотвращает отмены на реплике", misconception: "Она напрямую влияет на oldest-xmin primary — именно из-за этого есть выбор между отменами на реплике и bloat на primary." },
+  ]}
+/>
+
+<KeyTakeaway>Bloat — неизбежное следствие MVCC; дисциплина — держать его в рамках. VACUUM никогда не сокращает файл — только помечает место переиспользуемым. VACUUM FULL возвращает диск под ACCESS EXCLUSIVE; pg_repack делает то же самое онлайн. Oldest-xmin — это потолок того что autovacuum может убрать; одна долгая транзакция поднимает этот потолок для всей базы.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="04-vacuum-and-bloat"
+  lang="ru"
+  questions={[
+    {
+      id: "q1",
+      q: "Почему обычный VACUUM не возвращает место ОС, даже если убрал миллионы мёртвых tuple?",
+      a: "VACUUM помечает слоты мёртвых tuple переиспользуемыми внутри heap-файла, но не truncate-ит файл. Postgres не может укоротить файл с середины — слоты в конце файла могут быть заняты живыми данными. Возврат диска ОС требует VACUUM FULL (который переписывает всю таблицу подряд под ACCESS EXCLUSIVE) или pg_repack (онлайн переписывание теневой копией). После обычного VACUUM место будет повторно использовано новыми INSERT/UPDATE, но файл не сожмётся.",
+    },
+    {
+      id: "q2",
+      q: "Долгая батч-задача накопила 10 ГБ мёртвых tuple на таблице orders. Autovacuum запускался, но n_dead_tup не падает. Что вероятная причина и как её подтвердить?",
+      a: "Самая частая причина — долгая транзакция (или неиспользуемый replication slot), удерживающая глобальный oldest-xmin. Autovacuum может убирать только tuple, которые ни один живой snapshot не нуждается видеть. Подтверждаем: SELECT pid, backend_xmin, now() - xact_start AS duration FROM pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY backend_xmin LIMIT 5; Самый маленький backend_xmin — узкое место. Для replication slot: SELECT slot_name, xmin FROM pg_replication_slots WHERE xmin IS NOT NULL; Лечится: убить долгую транзакцию (pg_terminate_backend) или удалить неиспользуемый slot (pg_drop_replication_slot), затем следующий autovacuum уберёт bloat.",
+    },
+    {
+      id: "q3",
+      q: "Когда стоит выбрать VACUUM FULL вместо pg_repack?",
+      a: "VACUUM FULL берёт ACCESS EXCLUSIVE на всё время переписывания — он блокирует все чтения и записи. Это допустимо только при плановом maintenance-окне с нулевым трафиком на таблицу. pg_repack работает онлайн, создавая теневую копию и применяя WAL-изменения инкрементально, с коротким ACCESS EXCLUSIVE только в момент финального swap. В production без maintenance-окна единственный разумный выбор — pg_repack. VACUUM FULL дешевле (нет зависимостей, нет теневой копии), поэтому иногда используется на staging или при первоначальной настройке кластера.",
+    },
+  ]}
+/>
+
+<Recap>
+- Каждый UPDATE пишет новый tuple + помечает старый мёртвым; mёртвые версии накапливаются до прохода VACUUM
+- VACUUM помечает слоты переиспользуемыми; не сокращает файл и не возвращает диск ОС
+- VACUUM FULL возвращает диск под ACCESS EXCLUSIVE (блокирует всё); pg_repack — онлайн аналог
+- Autovacuum запускается по threshold + scale_factor × n_live_tup; cost-based rate-limit контролирует IO
+- Oldest-xmin — потолок уборки; долгая транзакция или orphan slot пинит его для всей базы
+- hot_standby_feedback = on на реплике → primary bloat заложник самого долгого запроса реплики
+</Recap>

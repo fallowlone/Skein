@@ -1,0 +1,217 @@
+---
+slug: 04-collector-pipeline
+lang: ru
+track: observability
+unit: 03-otel
+order: 4
+title: "Collector OTel: receivers, processors, exporters и паттерны развёртывания"
+summary: "Collector — это настраиваемый через YAML пайплайн: receivers принимают телеметрию, processors преобразуют её на лету, exporters отправляют в бэкенды. Три паттерна развёртывания доминируют: agent, gateway и agent-to-gateway."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/03-otel/03-auto-and-manual-instrumentation"]
+deepensInto: []
+spiral: ["latency", "encapsulation"]
+concepts: ["otel-collector", "collector-receivers", "collector-processors", "collector-exporters", "daemonset-agent", "agent-to-gateway", "k8sattributes"]
+sources:
+  - https://opentelemetry.io/docs/collector/
+  - https://opentelemetry.io/docs/collector/deployment/gateway/
+  - https://opentelemetry.io/docs/platforms/kubernetes/operator/automatic/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Поступает новое требование от бэкенда: маршрутизировать трассировки в vendor-A, логи — в vendor-B, и редактировать PII из обоих, начиная с понедельника. Без Collector — это три отдельных деплоя приложений в 50 командах. С Collector — одно изменение YAML и один перезапуск Collector.
+</Hook>
+
+<Crux>Collector — плоскость политик: receivers, processors, exporters компонуются в YAML вне приложения и обновляются без деплоя кода.</Crux>
+
+<Explanation>
+
+## Receivers, processors, exporters
+
+Collector — это настраиваемый через YAML пайплайн с тремя стадиями:
+
+**Receivers** принимают входящую телеметрию:
+- `otlp` — gRPC (порт 4317) и HTTP (порт 4318), основной receiver для сервисов с OTel-инструментированием
+- `filelog` — читает лог-файлы из файловой системы (полезен для legacy-приложений, пишущих в stdout/файлы)
+- `prometheus` — скрейпит эндпоинты `/metrics` (соединяет Prometheus-экспортёры с OTel)
+- `kafka` — читает телеметрию из Kafka-топиков
+- Vendor-специфичные receivers для данных не в формате OTel
+
+**Processors** преобразуют записи на лету:
+- `memory_limiter` — сбрасывает новые записи, когда Collector превышает порог RAM; предотвращает OOM по замыслу
+- `batch` — группирует записи в эффективные батчи (меньше сетевых round trips к экспортёрам)
+- `resource` — добавляет service.name и другие Resource-атрибуты (например, инжектирует `deployment.environment=production`)
+- `attributes` — редактирует, переименовывает, добавляет поля; используется для удаления PII и соблюдения Semantic Conventions
+- `tail_sampling` — сохраняет/сбрасывает трассировки на основе полного контекста трассировки (ошибки, задержка, бизнес-критерии) — рассматривается в следующем уроке
+- `transform` — универсальные преобразования через OTTL (OpenTelemetry Transformation Language)
+- `k8sattributes` — обогащает спаны/логи метаданными Kubernetes: pod, namespace, node, deployment
+
+**Exporters** отправляют записи в бэкенды:
+- `otlp` — в другой OTel-совместимый бэкенд (другой Collector, Grafana Tempo, Jaeger и др.)
+- `datadog` — vendor-специфичный
+- `prometheusremotewrite` — в Prometheus или Grafana Mimir
+- `loki` — в Grafana Loki для логов
+- Vendor-специфичные экспортёры для New Relic, Honeycomb, Splunk, Elastic и др.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+Минимальный production-ready YAML Collector — один пайплайн для трассировок:
+
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+  batch:
+    timeout: 10s
+    send_batch_size: 512
+  attributes:
+    actions:
+      - key: user.email
+        action: delete
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch, attributes]
+      exporters: [otlp/tempo]
+```
+
+Конфигурация принимает OTLP на 4317/4318, ограничивает RAM Collector до 80% (сбрасывает новые записи перед OOM), группирует спаны в батчи (максимум 10 с ожидания, 512 в батче), удаляет `user.email` из каждого спана, и экспортирует OTLP в бэкенд Tempo.
+</div>
+
+## Три паттерна развёртывания
+
+**Agent** — Collector работает как sidecar (один на pod) или DaemonSet (один на node). Принимает телеметрию от локального приложения, выполняет минимальную обработку (обогащение resource, батчинг), экспортирует напрямую в бэкенд. Минимальное количество сетевых хопов, но tail sampling сложно реализовать (каждый агент видит трафик только одной ноды).
+
+**Gateway** — приложения экспортируют напрямую в центральный пул реплик Collector, который выполняет тяжёлую обработку (tail sampling, редактирование, маршрутизация в несколько бэкендов). Масштабировать обработку централизованно проще, но каждый спан пересекает сеть от приложения до шлюза.
+
+**Agent-to-gateway** (production-canonical паттерн) — DaemonSet-агент на каждой ноде выполняет минимальную локальную обработку и пересылает через OTLP в централизованный пул шлюзов, который обрабатывает tail sampling, редактирование и маршрутизацию. Агент добавляет Kubernetes-метаданные (pod, namespace, node) через процессор `k8sattributes` перед пересылкой.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Паттерн</th>
+        <th class="border border-border px-3 py-2 text-left">Расположение агента</th>
+        <th class="border border-border px-3 py-2 text-left">Tail sampling возможен?</th>
+        <th class="border border-border px-3 py-2 text-left">Лучше всего для</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Только agent</td>
+        <td class="border border-border px-3 py-2">DaemonSet на ноде</td>
+        <td class="border border-border px-3 py-2">Нет — каждый агент видит только одну ноду</td>
+        <td class="border border-border px-3 py-2">Простые конфигурации, только head sampling</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Только gateway</td>
+        <td class="border border-border px-3 py-2">Центральный пул</td>
+        <td class="border border-border px-3 py-2">Да — видит весь трафик</td>
+        <td class="border border-border px-3 py-2">Небольшие флоты, простые топологии</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Agent-to-gateway</td>
+        <td class="border border-border px-3 py-2">DaemonSet + центральный шлюз</td>
+        <td class="border border-border px-3 py-2">Да — шлюз видит полные трассировки через sticky-маршрутизацию</td>
+        <td class="border border-border px-3 py-2">Production Kubernetes, любые размеры</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+В паттерне agent-to-gateway loadbalancing exporter агента маршрутизирует по хэшу `trace_id`, гарантируя, что все спаны трассировки попадают на одну реплику шлюза — необходимо для tail sampling, рассматриваемого в следующем уроке.
+
+<Inset kind="why" lang="ru">
+Почему Collector заслуживает быть отдельным процессом от приложения, даже если SDK мог бы экспортировать напрямую в бэкенды? Три причины. (1) Буферизация: когда бэкенд замедляется или падает, Collector буферизует (в памяти и на диске), чтобы приложение не блокировалось. Прямой экспорт из SDK либо теряет телеметрию (потеря данных), либо создаёт обратное давление на обработчик запросов приложения (регрессия задержки). (2) Политика: tail sampling, редактирование, маршрутизация в несколько бэкендов должны находиться вне кода приложения — платформенные инженеры обновляют YAML без координации передеплоя 50 команд. (3) Гетерогенный флот: разные сервисы работают на разных языках и версиях SDK. Collector нормализует всё в OTLP и применяет единую политику вне зависимости от upstream.
+</Inset>
+
+<Quiz
+  id="04-collector-quiz-1"
+  lessonSlug="04-collector-pipeline"
+  lang="ru"
+  question="Collector команды сбрасывает спаны во время всплеска трафика (otelcol_processor_dropped_spans ненулевой). Какой процессор скорее всего это вызывает?"
+  choices={[
+    { label: "batch — слишком много спанов в батче", misconception: "batch не сбрасывает; он группирует записи для эффективного экспорта." },
+    { label: "memory_limiter — при настроенном пороге RAM сброс — это то, как он избегает OOM", correct: true },
+    { label: "tail_sampling — удерживает слишком мало", misconception: "tail_sampling сбрасывает по политике — это его предназначенное поведение, а не сбой памяти." },
+    { label: "attributes — не удалось редактировать поле", misconception: "attributes — это процессор преобразования; он не сбрасывает записи." },
+  ]}
+/>
+
+<Quiz
+  id="04-collector-quiz-2"
+  lessonSlug="04-collector-pipeline"
+  lang="ru"
+  question="Почему паттерн agent-to-gateway является production-canonical развёртыванием для Kubernetes?"
+  choices={[
+    { label: "Он потребляет меньше вычислительных ресурсов, чем только agent или только gateway", misconception: "Он потребляет больше, чем любой из них по отдельности — такова цена его возможностей." },
+    { label: "DaemonSet-агент добавляет Kubernetes-метаданные и пересылает через sticky trace_id-маршрутизацию на шлюз, который может выполнять tail sampling на полных трассировках, сочетая локальную эффективность с централизованной политикой", correct: true },
+    { label: "Kubernetes требует DaemonSets для всех sidecar-процессов", misconception: "Kubernetes не имеет такого требования; DaemonSets выбираются для агентного уровня, потому что дают одного агента на ноду." },
+    { label: "Паттерн только gateway не поддерживает OTLP", misconception: "Паттерн только gateway полностью поддерживает OTLP; преимущество agent-to-gateway — tail sampling и локальное обогащение Kubernetes-метаданными." },
+  ]}
+/>
+
+<DragOrder
+  id="04-collector-drag-1"
+  lessonSlug="04-collector-pipeline"
+  lang="ru"
+  prompt="Упорядочите стадии пайплайна Collector, через которые проходит спан в стандартном пайплайне трассировок:"
+  items={[
+    { id: "a", label: "OTLP receiver принимает батч спанов от SDK приложения" },
+    { id: "b", label: "memory_limiter проверяет текущий RAM и сбрасывает при превышении порога" },
+    { id: "c", label: "k8sattributes добавляет метаданные pod, namespace и node" },
+    { id: "d", label: "batch группирует спаны для эффективного экспорта" },
+    { id: "e", label: "attributes редактирует поля PII" },
+    { id: "f", label: "OTLP exporter отправляет батч в бэкенд" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Collector — это компонуемый YAML-пайплайн: receivers принимают OTLP, processors (memory_limiter, batch, attributes, k8sattributes, tail_sampling) преобразуют на лету, exporters отправляют в бэкенды. Паттерн agent-to-gateway (DaemonSet + центральный пул шлюзов) — production-canonical Kubernetes-развёртывание: он включает tail sampling, обогащение Kubernetes-метаданными и маршрутизацию в несколько бэкендов без изменений кода приложения.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-collector-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что делает процессор memory_limiter и почему он должен стоять перед другими процессорами в пайплайне?", a: "memory_limiter проверяет текущую резидентную память Collector на каждом check_interval (обычно 1 с). Когда память превышает limit_percentage от настроенного лимита, он начинает отклонять новые записи — эффективно сбрасывая входящую телеметрию. Он должен стоять первым в цепочке процессоров, потому что сброс перед более дорогостоящими процессорами (tail_sampling, transform, attributes) означает, что CPU не тратится впустую на записи, которые всё равно будут сброшены. Без memory_limiter всплеск трафика может вызвать OOM процесса Collector, который разом сбросит все буферизованные в памяти записи — хуже, чем постепенный сброс, обеспечиваемый memory_limiter." },
+    { q: "Почему паттерн agent-to-gateway использует loadbalancing exporter на агентном уровне вместо простого round-robin?", a: "Tail sampling на шлюзе требует, чтобы все спаны трассировки попадали на одну реплику шлюза — сэмплеру нужен полный контекст трассировки (все спаны, финальный статус, общая задержка) для принятия решения сохранить/сбросить. Round-robin распределяет спаны случайно по репликам, поэтому одна трассировка оказывается разделённой между двумя или тремя репликами, и ни одна реплика не видит полной трассировки. loadbalancing exporter хэширует по trace_id и маршрутизирует детерминировано: все спаны с одинаковым trace_id идут на одинаковый pod шлюза, поэтому tail sampling работает корректно." },
+    { q: "Назовите три процессора и объясните production-порядок их расположения в пайплайне трассировок.", a: "memory_limiter первым — дёшево сбрасывает записи перед дорогостоящей обработкой при давлении памяти. Затем batch — группирует записи для эффективного сетевого экспорта (меньше round trips). Затем tail_sampling (или attributes/k8sattributes) — они дорогостоящие; запускаются только для записей, которые memory_limiter пропустил. memory_limiter должен быть первым, потому что его цель — защитить Collector от OOM до того, как другие процессоры потребят ещё больше памяти. batch должен стоять перед tail_sampling, потому что tail_sampling должен собирать спаны за окно 30-60 с и батчить их внутренне." },
+  ]}
+/>
+
+<Recap lang="ru">
+OTel Collector — это настраиваемый через YAML пайплайн с тремя стадиями: receivers (otlp, filelog, prometheus, kafka), принимающие входящую телеметрию; processors (memory_limiter, batch, resource, attributes, k8sattributes, tail_sampling, transform), преобразующие записи на лету; и exporters (otlp, datadog, prometheusremotewrite, loki), отправляющие записи в бэкенды. memory_limiter должен стоять первым — он дёшево сбрасывает записи перед дорогостоящей обработкой при давлении памяти. Три паттерна развёртывания: agent (DaemonSet на ноду, простой, без tail sampling), gateway (центральный пул, tail sampling возможен) и agent-to-gateway (production-canonical Kubernetes-паттерн — DaemonSet-агенты обогащают Kubernetes-метаданными и пересылают через маршрутизацию по хэшу trace_id на центральный шлюз, запускающий tail sampling и маршрутизацию в несколько бэкендов). Ценность Collector — в отделении политики (редактирование, маршрутизация, сэмплирование) от инструментирования (код приложения): обновляй YAML, а не код.
+</Recap>

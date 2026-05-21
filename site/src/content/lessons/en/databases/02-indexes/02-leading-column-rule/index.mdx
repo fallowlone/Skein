@@ -1,0 +1,177 @@
+---
+slug: 02-leading-column-rule
+lang: en
+track: databases
+unit: 02-indexes
+order: 2
+title: "The leading-column rule and composite index design"
+summary: "A multi-column B-tree is sorted by its first column first. Queries that skip the leading column cannot use it. Designing composites around this rule is the central skill in Postgres index engineering."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-index-anatomy"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["composite-index", "leading-column-rule", "index-selectivity", "bitmap-heap-scan", "index-scan", "multicolumn-index"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-multicolumn.html
+  - https://www.postgresql.org/docs/current/indexes-types.html
+  - https://use-the-index-luke.com/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+A team creates an index on `(workspace_id, status, created_at)` for a dashboard. Queries filter by `workspace_id` alone — fast. Queries filter by `workspace_id` and `status` — still fast. A new analytics query filters by `status` alone — sequential scan, 8 seconds. The index exists and is correct. The query is wrong for this index. The difference is the leading-column rule.
+</Hook>
+
+<Crux>A composite B-tree is sorted by its first column, then the second within it. Queries that skip the first column cannot use it at all.</Crux>
+
+<Explanation>
+
+## B-tree internals: why order matters
+
+Postgres's default index type is a B-tree (balanced search tree). Each internal node is a disk page (8KB) containing a sorted list of keys and pointers to child pages. Leaf nodes contain the actual key values and pointers (TIDs) to the heap rows.
+
+A B-tree on a single column `(a)` is sorted globally by `a`. To answer `WHERE a = 42`, Postgres walks the tree from the root, taking at most ~4 hops for a 100M-row table (B-tree depth ≈ 4 levels with fanout ~200–400 keys per page), then reads the matching leaf entries.
+
+A multi-column B-tree on `(a, b, c)` is sorted primarily by `a`, then by `b` within equal `a` values, then by `c` within equal `(a, b)` pairs. It accelerates:
+
+- Queries filtering on `a` alone: scan the leading subtree.
+- Queries filtering on `a` and `b`: narrow further.
+- Queries filtering on `a, b, c`: narrowest possible, best case.
+- Queries with `a` plus a range on `b` (e.g., `WHERE a = 1 AND b > 100`): still uses the index.
+- Queries with `a` plus `ORDER BY b`: the index already provides that sort order.
+
+It does **NOT** accelerate:
+
+- Queries filtering only on `b`, only on `c`, or only on `b, c` — the index provides no ordering entry point for these; a full scan of the index is required, which is almost always worse than a seq scan.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Query filter</th>
+        <th class="border border-border px-3 py-2 text-left">Index (a, b, c) helps?</th>
+        <th class="border border-border px-3 py-2 text-left">Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border border-border px-3 py-2">WHERE a = ?</td><td class="border border-border px-3 py-2">Yes</td><td class="border border-border px-3 py-2">Leading column — narrows by a</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">WHERE a = ? AND b = ?</td><td class="border border-border px-3 py-2">Yes</td><td class="border border-border px-3 py-2">Prefix (a, b)</td></tr>
+      <tr><td class="border border-border px-3 py-2">WHERE a = ? AND b &gt; ?</td><td class="border border-border px-3 py-2">Yes</td><td class="border border-border px-3 py-2">Range on second column after equality on first</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">WHERE a = ? ORDER BY b</td><td class="border border-border px-3 py-2">Yes</td><td class="border border-border px-3 py-2">Index already sorted by b within a</td></tr>
+      <tr><td class="border border-border px-3 py-2">WHERE b = ?</td><td class="border border-border px-3 py-2">No</td><td class="border border-border px-3 py-2">b is not the leading column</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">WHERE b = ? AND c = ?</td><td class="border border-border px-3 py-2">No</td><td class="border border-border px-3 py-2">Neither leading</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Designing composite indexes for real query patterns
+
+The leading-column rule means composite index design follows the queries, not the table. The discipline:
+
+1. List the top-N hot queries for a table.
+2. Group them by which column is always present in the filter.
+3. For each group, design a composite with that always-present column as the leading column, then add secondary columns in decreasing selectivity order.
+4. Use `ORDER BY` columns as trailing key columns — they serve both the filter and the sort without an extra Sort step.
+
+Example: a dashboard query `WHERE workspace_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 50`. The always-present column is `workspace_id` (every query is tenant-scoped). The secondary filter is `status`. The sort is `created_at DESC`.
+
+Best composite: `(workspace_id, created_at DESC) WHERE status = 'pending'` — the leading column matches the always-present filter; the sort column is second; the partial `WHERE` clause is handled separately (covered in lesson 03). An index `(workspace_id, status, created_at)` would also work but is a different shape.
+
+## One composite vs two single-column indexes
+
+A composite `(a, b)` is one physical structure. It costs roughly 30–50% more than `(a)` alone in size and write overhead. Two single-column indexes `(a)` and `(b)` cost roughly the sum of their sizes and write overheads separately.
+
+A composite wins when the dominant query always filters by the leading column. Two single-column indexes win when queries filter by `a` often AND by `b` often, never together — in that case no composite serves both, and the planner can combine them via a Bitmap Index Scan.
+
+Senior rule: design the composite for the dominant query first. Add a second index only if a separate hot query needs a different leading column and the Bitmap And plan is not fast enough.
+
+<Misconception id="mc-leading-column">
+  <p><strong>"A multi-column index on (a, b, c) covers queries that filter on any of a, b, c."</strong> No. Multi-column B-tree only covers queries that filter on a leading prefix (a; a, b; a, b, c). A query that filters only on b or c is not accelerated. Design composites for the dominant query.</p>
+</Misconception>
+
+<TraceScenario
+  id="02-leading-column-rule-trace-1"
+  lessonSlug="02-leading-column-rule"
+  lang="en"
+  scenario="A team migrates a legacy events table to add proper indexes. Walk the decisions."
+  steps={[
+    { prompt: "Step 1: how do you identify which indexes are needed?", reveal: "Two sources. (a) pg_stat_statements (extension that records every executed query, normalised) — find the top-N queries by total time. (b) The application's hot-path query list (the queries the team knows are critical). For each, EXPLAIN ANALYZE in production-like data to see the current plan. Anything doing Seq Scan on a large table is a candidate for an index." },
+    { prompt: "Step 2: how do you design composites?", reveal: "List the top-10 query patterns. Group queries with the same leading column. For each group, pick a composite index whose leading column matches the always-present filter, then secondary columns in order of selectivity. A single well-designed composite often replaces 3–5 single-column indexes — fewer indexes, fewer writes." },
+    { prompt: "Step 3: how do you deploy without downtime?", reveal: "CREATE INDEX CONCURRENTLY for every new index. Wait for completion (monitor pg_stat_progress_create_index). Verify with EXPLAIN ANALYZE that the planner picks the index. Stage the rollout over multiple deploys to limit the write-overhead spike of multiple new indexes simultaneously building." },
+  ]}
+/>
+
+<Quiz
+  id="02-leading-column-rule-quiz-1"
+  lessonSlug="02-leading-column-rule"
+  lang="en"
+  question="A table has an index on (region, status). Which query can use this index?"
+  choices={[
+    { label: "WHERE region = 'us-east-1'", correct: true },
+    { label: "WHERE status = 'active'", misconception: "status is the second column; the index cannot be used without the leading column region." },
+    { label: "WHERE status = 'active' AND region = 'us-east-1'", correct: true },
+    { label: "ORDER BY status", misconception: "Sorting by status alone requires an index where status is the leading column." },
+  ]}
+/>
+
+<Quiz
+  id="02-leading-column-rule-quiz-2"
+  lessonSlug="02-leading-column-rule"
+  lang="en"
+  question="A query filters on (region, status) where region has 5 values and status has 4. Which composite index order is better?"
+  choices={[
+    { label: "(region, status) — region first because it has fewer values", misconception: "Lower cardinality does not automatically mean leading; it depends on query patterns." },
+    { label: "Depends on which column is filtered alone in other queries; if region is queried alone often, put region first; if status is queried alone often, put status first; if always together, the order matters less", correct: true },
+    { label: "Either is identical — composite indexes are order-independent", misconception: "Composite indexes are strictly order-dependent (the leading-column rule)." },
+    { label: "(status, region) — status first because it is more selective at 4 values", misconception: "Selectivity alone does not determine order; the always-present filter column leads." },
+  ]}
+/>
+
+<DragOrder
+  id="02-leading-column-rule-drag-1"
+  lessonSlug="02-leading-column-rule"
+  lang="en"
+  prompt="Order the composite index design steps:"
+  items={[
+    { id: "a", label: "List the top-N hot queries for the table" },
+    { id: "b", label: "Identify which column is always present in the WHERE clause" },
+    { id: "c", label: "Use that always-present column as the leading column" },
+    { id: "d", label: "Add secondary filter columns in selectivity order" },
+    { id: "e", label: "Add ORDER BY columns as trailing key columns to avoid extra Sort steps" },
+    { id: "f", label: "Verify with EXPLAIN ANALYZE that the planner uses the index and eliminates Sort nodes" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A composite B-tree (a, b, c) accelerates queries that filter on a leading prefix — (a), (a, b), or (a, b, c). Queries that skip the leading column get no benefit. Design composites around the always-present filter column as the leader. One well-placed composite beats three single-column indexes for write cost.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-leading-column-rule-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain in detail why the leading-column rule exists, and what production patterns work around it.", a: "A multi-column B-tree on (a, b, c) is sorted primarily by a, then within each a-value by b, then within each (a, b) pair by c. The index entries form a single ordered sequence; to use the index for a query, the engine navigates the tree using the sort order — that means the leading column must be present in the filter or the engine cannot narrow to any subset of the tree. A query on b alone is like asking 'find all books where the second author is Smith' in a library indexed by first-then-second-author: you must scan every first-author. Workaround patterns: (1) Separate indexes per leading column. (2) If both (a, b) and (b, a) are hot, build both. (3) pg_trgm and bloom indexes bypass the leading-column rule for specific types. (4) For queries that always combine two columns — make the more-filtered column leading." },
+    { q: "When does a composite index win over two single-column indexes, and when do two single-column indexes win?", a: "A composite (a, b) is one physical structure, ~30–50% larger than (a) alone. Two separate indexes (a) and (b) cost roughly the sum of their sizes. The composite wins when the dominant query always filters by the leading column — less total storage and one write per insert instead of two. Two single-column indexes win when queries filter by a alone often AND by b alone often without each other — no composite order serves both, so the planner can combine them via Bitmap And. In practice the composite usually wins; build the second index only when you have measured the Bitmap And plan as insufficient." },
+    { q: "A query is SELECT * FROM events WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50. Design the best single index.", a: "CREATE INDEX ON events (project_id, created_at DESC). Leading column is project_id (the always-present equality filter). The second column is created_at DESC (matches the ORDER BY exactly, so the planner serves the sort from the index without an extra Sort node). Result: an Index Scan or Index Only Scan that narrows to one project's rows and reads them in reverse-time order, returning 50 rows without sorting. Without the DESC, the planner would either scan in ascending order (slow for LIMIT with DESC) or add a Sort step." },
+  ]}
+/>
+
+<Recap lang="en">
+A composite B-tree on (a, b, c) is sorted by a globally, b within each a-group, c within each (a, b)-group. The engine navigates from the root using this sort order, so the leading column must appear in the filter — otherwise the index offers no starting point. This is the most violated rule in production indexing. Design composites by listing hot queries, identifying the always-present filter column as the leader, adding secondary columns in selectivity order, and matching `ORDER BY` with trailing key columns. A well-designed composite typically replaces 3–5 single-column indexes at lower total write cost.
+</Recap>

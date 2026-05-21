@@ -1,0 +1,183 @@
+---
+slug: 03-consumer-dedup
+lang: en
+track: queues
+unit: 01-delivery-guarantees
+order: 3
+title: "Consumer-side dedup: the cheapest path to exactly-once processing"
+summary: "How to wrap side effects and dedup inserts in one DB transaction, why INSERT must come before the side effect, and the Stripe Idempotency-Key pattern for external APIs."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - queues/01-delivery-guarantees/02-failure-modes
+deepensInto:
+  - queues/01-delivery-guarantees/04-kafka-eos
+  - queues/01-delivery-guarantees/06-exactly-once-in-production
+spiral: ["statefulness", "encapsulation"]
+concepts: ["idempotency", "dedup-table", "transactional-dedup", "stripe-idempotency-key", "outbox-pattern"]
+sources:
+  - https://stripe.com/docs/api/idempotent_requests
+  - https://docs.confluent.io/kafka/design/delivery-semantics.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+You added a dedup check to your payment consumer — a quick SELECT before charging. Duplicates dropped from dozens per week to zero. Then, three weeks later, a DB connection pool exhaustion caused the check to fail silently and the charge ran twice again. The check was outside the transaction. One line in the wrong place.
+</Hook>
+
+<Crux>Dedup INSERT and side effect must commit atomically. Outside the transaction, any crash window re-opens the duplicate.</Crux>
+
+<Explanation>
+
+## The naive dedup pattern and why it fails
+
+The first instinct is a two-step check:
+
+```sql
+SELECT 1 FROM processed WHERE msg_id = 'msg-7a3f';
+-- if found: skip
+-- if not found: call Stripe, then INSERT into processed
+```
+
+This fails under concurrent delivery. Two consumers receive the same message simultaneously (possible during a rebalance or after a visibility timeout). Both run the SELECT at the same moment, both see "not found", both call Stripe. Race condition. Two charges.
+
+## The correct pattern: INSERT-first, single transaction
+
+The fix: put the dedup INSERT and the side effect in one atomic DB transaction, and INSERT *first*:
+
+```sql
+BEGIN;
+  INSERT INTO processed (msg_id, created_at)
+  VALUES ('msg-7a3f', now());
+  -- on UNIQUE violation: ROLLBACK and skip
+  -- if insert succeeded: do the side effect
+  UPDATE orders SET status = 'paid' WHERE id = 'O-123';
+COMMIT;
+```
+
+On a unique-constraint violation, the transaction rolls back — the side effect never runs. On commit, both the record and the side effect are written together. No crash window between them.
+
+The key property: if the consumer crashes after the DB transaction commits but before it acks the broker, the broker redelivers. The next consumer tries to INSERT `msg-7a3f` again, hits the unique constraint, rolls back, and acks the broker. The side effect was already done once; the duplicate is silently discarded.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Transaction structure: INSERT dedup row first</div>
+  <div class="flex flex-col gap-1 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">1</span>
+      <span>BEGIN transaction</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">2</span>
+      <span>INSERT INTO processed (msg_id) — UNIQUE constraint</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 font-bold">2a</span>
+      <span>UNIQUE violation? → ROLLBACK. Log "duplicate skipped". Ack broker.</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">3</span>
+      <span>Perform side effect (UPDATE orders, send email job, etc.)</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">4</span>
+      <span>COMMIT transaction</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">5</span>
+      <span>Ack the broker — message removed from queue</span>
+    </div>
+  </div>
+</div>
+
+## External APIs: the Stripe Idempotency-Key
+
+The transaction trick only works when the side effect is a DB write inside the same transaction. What about external API calls — Stripe, SES, Twilio? You cannot include an HTTP call in a Postgres transaction.
+
+The pattern for external APIs: pass an `Idempotency-Key` header derived from the message ID.
+
+```http
+POST /v1/charges
+Idempotency-Key: msg-7a3f
+```
+
+Stripe stores the key and the first response for 24 hours. If you call Stripe again with the same key (because the broker redelivered), Stripe returns the cached response without charging the card again. PayPal, Square, and most payment APIs follow the same convention.
+
+When the external API supports idempotency keys, the pattern is:
+
+1. INSERT a pending row: `INSERT INTO stripe_intents (msg_id, status='pending')` — in a transaction. This is the intent log.
+2. Call the external API with `Idempotency-Key = msg_id`.
+3. On success: UPDATE the row to `status='completed', charge_id=...`.
+
+If the consumer crashes between steps 2 and 3, redelivery re-calls Stripe with the same key (Stripe returns the cached `charge_id`), then completes the UPDATE. No double charge.
+
+<Quiz
+  id="03-q1"
+  pieceSlug="03-consumer-dedup"
+  lang="en"
+  question="Why must the dedup INSERT be in the same transaction as the side effect?"
+  choices={[
+    { label: "Transactions are faster than separate queries", misconception: "Performance is a side benefit; the correctness reason is atomicity — both must succeed or both fail together." },
+    { label: "If INSERT commits separately and the side effect then fails, the message is marked processed but the work never happened — and redelivery skips it permanently", correct: true },
+    { label: "The INSERT needs the side effect's return value", misconception: "The INSERT only needs the message ID, which is known before the side effect." },
+    { label: "UNIQUE constraints only work inside transactions", misconception: "UNIQUE constraints work independently; the issue is the crash window between a separate INSERT and side effect." },
+  ]}
+/>
+
+<Quiz
+  id="03-q2"
+  pieceSlug="03-consumer-dedup"
+  lang="en"
+  question="A consumer uses Stripe's Idempotency-Key but no local DB dedup. The Stripe call succeeds, then the consumer crashes before acking. On redelivery, what happens?"
+  choices={[
+    { label: "Stripe charges the card again — Idempotency-Key is per-request, not persisted", misconception: "Stripe persists the key and response for 24 hours; the second call with the same key returns the cached response." },
+    { label: "Stripe returns the cached response for the same key — no second charge", correct: true },
+    { label: "The broker discards the redelivery because the key already exists", misconception: "The broker does not know about Stripe's idempotency keys; it only manages message visibility." },
+    { label: "The consumer receives an error from Stripe and must handle it manually", misconception: "Stripe returns HTTP 200 with the cached response on duplicate keys." },
+  ]}
+/>
+
+<DragOrder
+  id="03-drag-1"
+  pieceSlug="03-consumer-dedup"
+  lang="en"
+  prompt="Order the steps of a correct idempotent consumer wrapping an external payment API:"
+  items={[
+    "Receive msg-7a3f from broker",
+    "BEGIN DB transaction",
+    "INSERT INTO payment_intents (msg_id, status='pending') — unique on msg_id",
+    "COMMIT the pending row",
+    "Call Stripe with Idempotency-Key=msg-7a3f",
+    "UPDATE payment_intents SET status='done', charge_id=ch_abc123",
+    "Ack the broker — message removed from queue",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Wrap dedup INSERT and side effect in one transaction; INSERT first. For external APIs, pass an Idempotency-Key derived from message ID — Stripe stores the key and returns cached responses for 24 hours.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-consumer-dedup-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the crash window that makes SELECT-then-act unsafe for dedup?", a: "If two consumers receive the same message concurrently (during rebalance or after visibility timeout), both SELECT, both see 'not found', and both execute the side effect. The SELECT and the INSERT are not atomic, so any concurrent delivery reopens the race." },
+    { q: "If the consumer crashes after the DB COMMIT but before acking the broker, what happens on redelivery?", a: "The broker redelivers. The consumer tries INSERT again — hits the UNIQUE constraint — rolls back — acks the broker. The side effect was already committed by the first run; the duplicate is silently discarded. Correctness is preserved." },
+    { q: "What is the Stripe Idempotency-Key TTL and what happens after it expires?", a: "24 hours. After expiry, Stripe treats the key as new and will process the charge again. This means your dedup mechanism must retry within 24 hours or switch to a permanent local record. In practice, queues redeliver within minutes, not days." },
+  ]}
+/>
+
+<Recap lang="en">
+Consumer-side dedup is the cheapest path to effectively exactly-once processing: maintain a processed-messages table with a UNIQUE constraint on message ID, BEGIN a transaction, INSERT the dedup row first, perform the side effect, COMMIT. A UNIQUE violation on redelivery rolls back the entire transaction so the side effect never re-runs. For external APIs that live outside the DB transaction, derive an Idempotency-Key from the message ID and pass it with every call — Stripe, PayPal, and Square all support this convention and will cache the first response for at least 24 hours, making retries safely idempotent across the broker boundary.
+</Recap>

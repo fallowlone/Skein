@@ -1,0 +1,180 @@
+---
+slug: 06-postgres-process-model
+lang: ru
+track: databases
+unit: 05-pooling
+order: 6
+title: "Процессная модель Postgres и почему увеличение max_connections снижает производительность"
+summary: "Каждое Postgres-соединение форкает backend через postmaster; пропускная способность достигает пика при (ядра × 2) активных процессах и нелинейно падает после этого — увеличение max_connections без пулера почти всегда неправильное решение."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/05-pooling/05-transaction-mode-migration"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["postmaster", "proc_array", "PgBouncer", "multiplexing"]
+sources:
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.pgbouncer.org/features.html
+  - https://node-postgres.com/guides/pool-sizing
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Команда сталкивается с исчерпанием пула. Они поднимают max_connections со 100 до 1000. P99 ухудшается. Поднимают до 2000. База данных начинает падать с OOM. Повышение max_connections — это инстинкт; понимание того, почему это не работает, — это навык.
+</Hook>
+
+<Crux>Postgres форкает OS-процесс на соединение; proc array и блокировки деградируют пропускную способность нелинейно. Ограничьте max_connections.</Crux>
+
+<Explanation>
+
+## Процессная модель Postgres подробно
+
+При подключении клиента **postmaster** (процесс-супервизор) форкает новый backend-процесс. Каждый backend имеет:
+
+- **Приватная память**: ~5–10 МБ резидентной памяти (рабочая память для запросов, кэш планов, буферы libpq). На 16-ядерной машине с 1 000 backend'ов это ~5–10 ГБ только для приватной памяти backend'ов.
+- **Слот в общей памяти**: запись proc array (снятие снапшота сканирует её), запись в таблице блокировок, метаданные predicate-lock. Эти структуры предварительно выделяются при запуске, размером под `max_connections`. Удвоение max_connections удваивает фиксированный объём общей памяти.
+- **Ядерный процесс** с собственным стеком, таблицей файловых дескрипторов и записью в планировщике.
+
+Запуск соединения стоит ~5 мс на стороне Postgres (fork + инициализация) плюс TLS и аутентификация на сетевой стороне.
+
+**Почему процессы, а не потоки?** Postgres появился раньше надёжного pthreads на большинстве Unix-вариантов. Процессная модель даёт изоляцию сбоев (OOM одного backend не портит общую память), простое управление приватной кучей и лёгкое форкание воркеров параллельных запросов. Ценой является нередуцируемые накладные расходы на соединение — которые поглощает пулинг.
+
+## Почему увеличение max_connections снижает пропускную способность
+
+Наивные команды поднимают `max_connections` со 100 до 1 000 при исчерпании пула. Четыре вещи идут не так:
+
+1. **Масштабирование общей памяти**: `max_connections = 1000` предварительно выделяет ~500 МБ+ фиксированной общей памяти только для proc array, хэша блокировок и структур predicate-lock — ощутимо на небольших инстанциях.
+
+2. **Накладные расходы переключения контекста**: при 1 000 активных backend'ов под нагрузкой время планирования ядра становится измеримой долей CPU. Каждый OS-процесс конкурирует за планировщик.
+
+3. **Конкуренция на менеджере блокировок**: итерация proc array при снятии снапшота O(active_backends). При 1 000 активных backend'ов каждый `BEGIN` сканирует 1 000 записей. Сканы таблицы блокировок и конкуренция за MultiXact буфер масштабируются аналогично.
+
+4. **Очередь форка postmaster**: создание соединения требует форка нового процесса через postmaster; при высокой частоте соединений это сериализуется. ~2 КБ PgBouncer на клиентское соединение против ~10 МБ Postgres на backend — ключевая асимметрия.
+
+Кривая пропускной способности нелинейна: 16-ядерный Postgres достигает пика примерно при 32–48 активных backend'ах и **деградирует после него**. Добавление backend'ов после пика означает, что каждый backend получает меньшую долю CPU, при этом платя за бо́льшие накладные расходы конкуренции.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Активные backend'ы</th>
+        <th class="border border-border px-3 py-2 text-left">Поведение (16-ядерный Postgres)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1–32</td>
+        <td class="border border-border px-3 py-2">Линейный рост пропускной способности; растёт использование CPU</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">32–50</td>
+        <td class="border border-border px-3 py-2">Плато пропускной способности; начинают проявляться накладные расходы переключения контекста и блокировок</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">50–200</td>
+        <td class="border border-border px-3 py-2">Пропускная способность стабильна или снижается; видна конкуренция за общую память</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">200–1000</td>
+        <td class="border border-border px-3 py-2">Пропускная способность падает; удельная пропускная способность на backend может вдвое снизиться</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">1000+</td>
+        <td class="border border-border px-3 py-2">Вероятен OOM или исчерпание таблицы процессов ядра</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Практический лимит max_connections
+
+Руководство сообщества Postgres (неизменное 25+ лет): ограничьте `max_connections` несколькими сотнями. Практический диапазон для production OLTP — 200–500: достаточно для административных соединений, реплик и некоторого запаса выше `pool_size` пулера.
+
+Распределение бюджета `max_connections`:
+- PgBouncer `pool_size` (primary) + `reserve_pool_size` — реальные OLTP backend'ы
+- Соединения реплик (потоковая репликация)
+- `superuser_reserved_connections` (по умолчанию 3) — для аварийного доступа
+- Административные и мониторинговые соединения
+- Пулы PgBouncer для read-реплик, если есть
+
+Пример: 8-ядерный primary, pool_size = 24, reserve = 6, 2 реплики по pool_size = 20, superuser_reserved = 3, admin/monitoring = 10. Итого: 24 + 6 + 40 + 3 + 10 = 83. `max_connections = 100` — нормально; `max_connections = 1000` — расточительно и вредно.
+
+<Inset kind="why" lang="ru">
+Что происходит, если max_connections слишком мал? Postgres возвращает "FATAL: remaining connection slots are reserved for non-replication superuser connections", когда заполняются последние слоты `superuser_reserved_connections` — воркеры приложения начинают получать отказы до жёсткого лимита. Всегда оставляйте запас выше pool_size + reserve_pool_size для административного доступа во время инцидентов.
+</Inset>
+
+<NumbersCard
+  id="card-process-model"
+  title="Production числа процессной модели Postgres"
+  stats={[
+    { label: "Приватная память backend", value: "~5–10 МБ" },
+    { label: "Дефолт max_connections", value: "100" },
+    { label: "Практический лимит max_connections", value: "200–500" },
+    { label: "Оптимальные активные backend'ы (16 ядер, NVMe)", value: "32–48" },
+    { label: "Память PgBouncer на клиентское соединение", value: "~2 КБ" },
+    { label: "Стоимость запуска backend", value: "~5 мс (fork + init)" },
+    { label: "Общая память: proc array при 1000 backend'ах", value: "~500 МБ+" },
+  ]}
+/>
+
+<Misconception id="mc-raise-max-connections">
+  <p><strong>«Исчерпание пула? Поднять max_connections.»</strong> Неправильный инструмент. max_connections выделяет общую память на процесс; это не рычаг пропускной способности. Более 500 — деградация через переключения контекста. Используйте пулер для мультиплексирования клиентов на число backend'ов, насыщающее CPU.</p>
+</Misconception>
+
+<Quiz
+  id="06-postgres-process-model-quiz-1"
+  lessonSlug="06-postgres-process-model"
+  lang="ru"
+  question="Инстанция Postgres с max_connections=200 начинает отклонять соединения при ~150 активных backend'ах. Почему это может происходить ниже лимита?"
+  choices={[
+    { label: "superuser_reserved_connections + reserved_connections съедают часть бюджета; эффективный доступный лимит ниже max_connections", correct: true },
+    { label: "max_connections — это мягкая рекомендация, которую Postgres игнорирует при нагрузке", misconception: "max_connections — жёсткий лимит; соединения сверх него отклоняются с ошибкой FATAL." },
+    { label: "Postgres округляет вниз до ближайшего числа кратного 50", misconception: "Никакого округления нет; отклонение происходит точно при лимите минус зарезервированные слоты." },
+    { label: "NAT или фаервол отбрасывает SYN-пакеты до достижения Postgres", misconception: "Помехи NAT вызывали бы таймауты соединения, а не сообщение 'too many clients'." },
+  ]}
+/>
+
+<Quiz
+  id="06-postgres-process-model-quiz-2"
+  lessonSlug="06-postgres-process-model"
+  lang="ru"
+  question="Почему Postgres использует модель процесс-на-соединение, а не потоки?"
+  choices={[
+    { label: "Исторически: Postgres появился раньше надёжного pthreads на большинстве Unix-вариантов; процессная модель обеспечивает изоляцию сбоев и более простое управление приватной памятью", correct: true },
+    { label: "Потоки не поддерживаются ни на одной ОС, на которую ориентирован Postgres", misconception: "Postgres работает на Linux, macOS, Windows — все поддерживают потоки. Процессная модель — архитектурный выбор, а не ограничение." },
+    { label: "Процессы позволяют Postgres использовать больше ядер, чем потоки", misconception: "Обе модели позволяют многоядерное использование. Различие в изоляции сбоев и модели памяти, а не в использовании ядер." },
+    { label: "Поддержка потоков на соединение потребовала бы поддержки ядра, которую Postgres не реализовал", misconception: "Поддержка потоков — решение на уровне пространства пользователя в архитектуре Postgres, а не пробел ядра." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Каждое Postgres-соединение форкает OS-процесс, потребляющий ~10 МБ RAM и слот в общей памяти. Пропускная способность достигает пика при (ядра × 2) активных backend'ах и деградирует после из-за переключений контекста и конкуренции за proc array. Ограничьте max_connections до 200–500; мультиплексируйте выше через PgBouncer, а не поднимая лимит.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-postgres-process-model-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какие структуры общей памяти масштабируются с max_connections и почему его увеличение снижает пропускную способность?", a: "Три структуры масштабируются с max_connections: (1) proc array — массив фиксированного размера в общей памяти, хранящий запись на каждый возможный backend; каждый BEGIN сканирует его O(active_backends) для построения снапшота; (2) хэш-таблица блокировок — предварительно выделенное количество слотов масштабируется с max_connections; (3) метаданные predicate-lock — аналогично. При max_connections = 1000 эти структуры потребляют сотни МБ фиксированной общей памяти, предварительно выделенной при запуске. При высоком числе активных backend'ов итерация proc array при каждом снятии снапшота становится точкой сериализации — 1000 активных backend'ов означает 1000 сканируемых записей proc array на BEGIN, тогда как при 32 активных — это 32 сканирования. Накладные расходы переключения контекста растут линейно с числом активных backend'ов. Суммарный эффект: пропускная способность Postgres достигает пика при небольшом кратном числу ядер и деградирует после — увеличение max_connections без снижения числа активных backend'ов не помогает и активно вредит пропускной способности." },
+    { q: "Как должен senior-инженер распределять бюджет max_connections на primary Postgres-инстанции?", a: "Перечислите потребителей: (1) Primary OLTP пул: PgBouncer pool_size + reserve_pool_size (например, 24 + 6 = 30). (2) Слоты репликации реплик: каждой реплике нужен walsender backend (например, 2 реплики = 2). (3) Пулы PgBouncer для read-реплик: если read-запросы пулируются отдельно, их pool_size (например, 20 × 2 = 40). (4) superuser_reserved_connections (по умолчанию 3) — для аварийного администрирования; никогда не снижайте до 0. (5) Мониторинговые и административные соединения: обычно 5–15. Сумма = 30 + 2 + 40 + 3 + 10 = 85. Установите max_connections = 100–150 для комфортного запаса. Цель — достаточно для всех ожидаемых потребителей плюс аварийный запас; 200–500 — типичный диапазон для production. 1000+ почти всегда признак отсутствующего пулера, а не реальной потребности в backend'ах." },
+    { q: "Почему деградация пропускной способности после (ядра × 2) нелинейная, а не линейная?", a: "Деградация имеет несколько нарастающих источников. Переключения контекста: планировщик ядра по кругу распределяет N активных процессов по C ядрам; N > C означает, что процессы проводят время в вытеснении и очередях планировщика. Конкуренция за блокировки: менеджер блокировок PostgreSQL использует спинлоки над структурами общей памяти; конкуренция за них растёт суперлинейно с числом активных backend'ов, потому что каждое удержание блокировки заставляет других спиннеров сжигать CPU в busy-wait. Итерация proc array: каждое снятие снапшота — O(active_backends); удвоение активных backend'ов удваивает стоимость снапшота. Давление памяти: при 1000 backend'ах по 10 МБ приватной памяти каждый начинается конкуренция рабочего набора со shared_buffers; частота попаданий в кэш падает. Каждый фактор умножается на другие, производя кривую пропускной способности с крутым падением после оптимума, а не плавным." },
+  ]}
+/>
+
+<Recap lang="ru">
+Каждое Postgres-соединение форкает backend через postmaster: ~10 МБ приватной памяти, слот proc array, запись в таблице блокировок. Запуск соединения стоит ~5 мс. Структуры общей памяти предварительно выделяются под `max_connections` при запуске — удвоение удваивает фиксированные накладные расходы. После `(ядра × 2)` активных backend'ов накладные расходы переключения контекста и сканирования proc array вызывают нелинейную деградацию пропускной способности. Руководство сообщества Postgres на протяжении 25 лет: ограничивайте `max_connections` до 200–500; мультиплексируйте выше с помощью пулера. Повышение `max_connections` до 1 000 без пулера — почти всегда неверный ответ на исчерпание пула: это смещает симптом, ухудшая базовый профиль пропускной способности.
+</Recap>

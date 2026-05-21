@@ -1,0 +1,152 @@
+---
+slug: 03-xfetch-probabilistic
+lang: en
+track: caching
+unit: 03-stampede
+order: 3
+title: "XFetch: coordination-free probabilistic early expiration"
+summary: "Vattani et al.'s XFetch algorithm refreshes the cache before TTL fires using a probabilistic decision rule — no locks, no coordination, expected exactly one early refresh per TTL window regardless of fleet size."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/02-lock-and-single-flight
+deepensInto:
+  - caching/03-stampede/04-stale-while-revalidate
+spiral: ["statefulness"]
+concepts: ["xfetch", "probabilistic-early-expiration", "beta-parameter", "rebuild-delta", "coordination-free"]
+sources:
+  - https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+  - https://github.com/internetarchive/xfetch
+  - https://en.wikipedia.org/wiki/Cache_stampede
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A lock-based mitigation adds a Redis round-trip to every cache miss — fine for ultra-hot keys, wasteful for the 99% of keys that rarely collide. XFetch achieves the same "only one rebuild per TTL window" guarantee with zero coordination and zero network cost.
+</Hook>
+
+<Crux>XFetch fires a probabilistic early refresh before TTL expires — no lock, no coordination, expected one refresh per TTL window.</Crux>
+
+<Explanation>
+
+## The decision rule
+
+Each cache read evaluates:
+
+```
+should_refresh = (-beta * delta * ln(rand())) >= time_to_expire
+```
+
+Where:
+- `delta` — typical rebuild duration in seconds (e.g., 0.4)
+- `beta` — tuning constant, default 1.0
+- `rand()` — uniform random in (0, 1)
+- `time_to_expire` — seconds until the current TTL fires
+
+As `time_to_expire` approaches 0 (close to expiry), the threshold on the left (`-beta * delta * ln(rand())`) is increasingly likely to exceed it. Far from expiry the probability is near zero. Near expiry it climbs fast.
+
+**Result:** the cache key gets refreshed before it expires. The first request to fire the probabilistic threshold runs the rebuild while the existing cached value is still served to everyone else. By the time TTL would have fired, the cache already has a fresh value.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Time before TTL | delta=0.4 s, beta=1.0 | Probability of early refresh per read |
+|---|---|---|
+| 10 s | — | ~4% |
+| 2 s | — | ~18% |
+| 0.4 s (= delta) | — | ~63% |
+| 0.1 s | — | ~98% |
+
+</div>
+
+The exact numbers depend on the distribution of reads, but the trend is clear: the probability concentrates in the final few seconds before expiry.
+
+## Expected refreshes per TTL window = 1
+
+The key property Vattani et al. prove: integrating the probability over the TTL window gives exactly one expected early refresh, regardless of fleet size or read rate. A fleet of 100 nodes reading the key 1,000 times per second does not produce 100,000 early refreshes — it still produces approximately 1. The exponential distribution has the property that the minimum of N independent draws is also exponential with rate N × lambda. As fleet size grows, the earliest reader fires the threshold sooner, but the total count remains ~1.
+
+## When XFetch works and when it does not
+
+XFetch requires reads to be frequent enough that "some reader" hits the probabilistic threshold before TTL. The algorithm is transparent when reads happen, say, every 100 ms over a 60-second TTL — many chances to fire the threshold in the final seconds.
+
+**Failure case:** cold or sporadic keys. A key read once per 30 seconds with TTL=60 s may have only one or two reads in the entire "early refresh" window (the final ~1 s). With small N, the probability of missing the threshold entirely is significant. The key expires normally and stampedes.
+
+**Rule of thumb:** use XFetch on keys with ≥ 10 reads per expected-rebuild-duration window before TTL. For colder keys, fall back to a lock or SWR.
+
+<Inset kind="why" lang="en">
+Why the exponential distribution? It is the continuous-time memoryless distribution — the minimum of N independent exponential draws is still exponential. This means XFetch's "exactly 1 expected early refresh" property holds no matter how many readers or nodes exist. Any non-exponential decision rule either requires more expected refreshes as fleet size grows (wasted work) or accepts a non-zero miss probability (stampede). The exponential is uniquely optimal among coordination-free algorithms, which is the core result of Vattani et al. (VLDB 2015).
+</Inset>
+
+## Tuning beta
+
+`beta` controls how early the refresh window opens:
+
+- **beta &lt; 1.0:** earlier refreshes, wider window, more wasted early rebuilds on cold keys. Use when rebuild cost is very low and staleness must be minimised.
+- **beta = 1.0 (default):** the window opens when `time_to_expire ≈ delta`. Balanced.
+- **beta &gt; 1.0:** later refreshes, narrower window, higher risk of missing the threshold on cold keys. Use only when rebuild is expensive and early staleness must be avoided.
+
+<Quiz
+  id="xfetch-q1"
+  lessonSlug="03-xfetch-probabilistic"
+  lang="en"
+  question="A cache key has TTL=60 s and rebuild time delta=0.4 s. At what approximate time before TTL does XFetch (beta=1.0) typically fire the first early refresh?"
+  choices={[
+    { label: "30 s before TTL (halfway through the window)", misconception: "XFetch concentrates refreshes near expiry, not in the middle. The probability near the start of the window is very close to zero." },
+    { label: "Around 0.4 s before TTL — the probability threshold concentrates near time_to_expire ≈ delta", correct: true },
+    { label: "Exactly at TTL, same as without XFetch", misconception: "XFetch refreshes before TTL fires, not at it. That is the entire point — the cache already has a fresh value when TTL would have expired." },
+    { label: "Uniformly random across the full 60 s TTL window", misconception: "The probability grows as TTL approaches, so refreshes are strongly concentrated in the final seconds, not uniform." },
+  ]}
+/>
+
+<Quiz
+  id="xfetch-q2"
+  lessonSlug="03-xfetch-probabilistic"
+  lang="en"
+  question="A read-heavy cache has cold keys accessed once every 30 s (TTL=60 s). Why does XFetch perform poorly here?"
+  choices={[
+    { label: "XFetch is not compatible with Redis TTLs", misconception: "XFetch is algorithm-agnostic and works with any backend. The problem is the read rate, not the backend." },
+    { label: "The probabilistic refresh needs frequent reads to fire the early-refresh threshold; with only one read per 30 s the window may pass with zero reads and the key expires normally", correct: true },
+    { label: "XFetch requires coordination between nodes, which cold keys cannot provide", misconception: "XFetch is explicitly coordination-free. The issue is per-key read rate." },
+    { label: "Cold keys have no TTL, so XFetch has nothing to compute", misconception: "Cold keys still have TTL. The problem is that sporadic reads make it unlikely any read falls in the narrow early-refresh window." },
+  ]}
+/>
+
+<Quiz
+  id="xfetch-q3"
+  lessonSlug="03-xfetch-probabilistic"
+  lang="en"
+  question="A 200-node fleet reads a hot key 50,000 times per second. With XFetch enabled, approximately how many early rebuilds happen per TTL window?"
+  choices={[
+    { label: "200 — one per node because each decides independently", misconception: "XFetch's expected-value property scales with fleet size. The minimum of 200 independent exponential draws is itself exponential, and the expected number of fires per window is still 1." },
+    { label: "50,000 — every read has some probability of firing", misconception: "The probability per read is calibrated so the total fires per window is ~1. Each individual read has very low probability; they are not additive to 50,000." },
+    { label: "~1 — the exponential distribution property means the expected count is independent of fleet size", correct: true },
+    { label: "0 — XFetch requires a lock and the fleet has none", misconception: "XFetch is explicitly lock-free. The algorithm needs no coordination." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>XFetch fires one expected early rebuild per TTL window at zero coordination cost. It works only on hot keys with frequent reads. For cold or sporadic keys, use a distributed lock or SWR instead. Beta=1.0 opens the refresh window when time-to-expire ≈ rebuild delta.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="xfetch-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does XFetch work without any cross-fleet coordination while distributed locks require explicit cross-node communication?", a: "XFetch's design constraint is that the expected number of early refreshes per TTL window is exactly 1 globally, calibrated against rebuild delta, not the number of readers. Mathematically, the minimum of N independent exponential draws is also exponential, so as the fleet grows the first reader fires the threshold sooner — but the expected total count stays ~1. Distributed locks require a shared primitive (Redis SETNX, ZooKeeper, etcd) and pay a round-trip per acquire attempt. XFetch's cost is one random number generation per read, zero network. Trade-off: XFetch requires frequent reads to work; distributed locks work even for cold keys accessed once per TTL window." },
+    { q: "What does increasing beta above 1.0 do to XFetch's behaviour, and what is the cost?", a: "Higher beta makes the early-refresh window narrower — the threshold fires closer to the actual TTL boundary. This reduces the amount of wasted early rebuilds on warm keys and reduces staleness. The cost: the probability of missing the window on cold or lightly-read keys increases. In the extreme (beta very large), XFetch approaches normal TTL behaviour with no early refresh. Higher beta is appropriate when rebuild cost is high (you want fewer early refreshes) and you know the key is hot enough to guarantee many reads near TTL." },
+  ]}
+/>
+
+<Recap lang="en">
+XFetch (Vattani et al., VLDB 2015) solves the stampede problem for hot keys without coordination. Each cache read evaluates `-beta * delta * ln(rand()) &gt;= time_to_expire`. As TTL approaches, probability climbs; on average exactly one reader per TTL window fires an early rebuild while all others continue hitting the still-valid cached value. The exponential distribution is uniquely optimal among coordination-free algorithms. XFetch fails for cold keys (sporadic reads may miss the narrow window). The practical rule: use XFetch for keys with many reads per rebuild-duration window before TTL, and fall back to a lock or stale-while-revalidate for everything else.
+</Recap>

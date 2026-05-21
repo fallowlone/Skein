@@ -1,0 +1,167 @@
+---
+slug: 05-sqs-dlq
+lang: ru
+track: queues
+unit: 01-delivery-guarantees
+order: 5
+title: "SQS visibility timeout, DLQ и outbox pattern"
+summary: "Как работает SQS visibility timeout per-message, heartbeat pattern для долгих consumer-ов, дисциплина DLQ redrive и outbox pattern для надёжной producer-side публикации."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - queues/01-delivery-guarantees/02-failure-modes
+deepensInto:
+  - queues/01-delivery-guarantees/06-exactly-once-in-production
+spiral: ["statefulness"]
+concepts: ["visibility-timeout", "dead-letter-queue", "redrive-policy", "heartbeat-pattern", "outbox-pattern", "dual-write"]
+sources:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+DLQ тихо накопила 50 000 сообщений за три дня, пока on-call команда смотрела другой дашборд. Все они были edge-case заказами, требующими ручной проверки. Когда наконец запустили redrive-all без rate limit, source queue получила 50 000 сообщений за одну секунду и downstream сервис лёг.
+</Hook>
+
+<Crux>Visibility timeout — per-message, не per-round. DLQ + rate-limited redrive — production-дисциплина, разделяющая очереди и кошмары.</Crux>
+
+<Explanation>
+
+## Механика SQS visibility timeout
+
+У SQS нет ack/reject RPC. Вместо этого — **visibility timeout**. Когда consumer получает сообщение, SQS записывает:
+- Per-message timestamp
+- **Receipt handle** consumer-а (уникальный токен для этой доставки)
+
+В течение visibility timeout ни один другой consumer не может получить сообщение. Если consumer вызывает `DeleteMessage` с правильным receipt handle до истечения таймаута — сообщение исчезает. Если таймаут срабатывает первым, сообщение снова видно всем consumer-ам — at-least-once delivery.
+
+Ключевой pitfall: **visibility timeout сбрасывается на queue default при каждой redelivery**, не на значение, установленное через `ChangeMessageVisibility` в предыдущей доставке. Если нормальный путь consumer-а расширяется до 90с, но queue default — 30с, каждое redelivered сообщение начинает с 30с и может истечь снова до того, как медленный consumer завершит.
+
+Rule of thumb: **queue default visibility = 6x среднее processing time**.
+
+## Heartbeat pattern для переменного processing time
+
+Для consumer-ов с processing time, варьирующимся от 1с до 5 минут в зависимости от payload, heartbeat pattern разделяет timeout от worst-case:
+
+1. При получении сообщения запусти background heartbeat thread.
+2. Каждые `visibility_timeout / 3` секунд вызывай `ChangeMessageVisibility(receipt_handle, new_timeout)`.
+3. Если consumer падает, heartbeat-ы останавливаются. Timeout истекает естественно. Брокер передоставляет.
+4. Если consumer завершает — отменяй heartbeat и `DeleteMessage`.
+
+Queue default теперь покрывает только время между ReceiveMessage и первым heartbeat, а не всё processing. Heartbeat также детектирует deadlocked consumer-ов: если processing thread stuck (не упал), heartbeat-ы в конечном счёте останавливаются, и другой worker восстанавливает сообщение.
+
+## Dead-letter queues и дисциплина redrive
+
+Без DLQ **poison-pill сообщение** — payload, постоянно крашащий consumer из-за бага или malformed данных — блокирует очередь вечно. SQS передоставляет бесконечно, сжигая ресурсы и мешая прогрессу.
+
+DLQ — отдельная очередь, куда SQS переносит сообщения после `maxReceiveCount` провальных попыток:
+
+- **Рекомендуемый maxReceiveCount:** 5–10. Установка 1 или 2 отправляет transient failures (flaky downstream, brief DB timeout) в DLQ немедленно — почти всё выглядит как poison pill. Слишком высокий — Consumer молотит реальные poison pills долго до quarantine.
+- **DLQ retention:** максимум 14 дней (лимит SQS). Сообщения старше retention теряются навсегда.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Дисциплина DLQ redrive</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">1</span>
+      <span>Snapshot DLQ в S3 (manifest + сообщения) до любого redrive</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">2</span>
+      <span>Аудит 20 случайных сэмплов на исправленном коде на staging</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">3</span>
+      <span>Rate-limited redrive: 1–10 msgs/s через StartMessageMoveTask</span>
+    </div>
+    <div class="flex items-start gap-2">
+      <span class="shrink-0 w-6 text-center rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 font-bold">!</span>
+      <span>Никогда не bulk-redrive без rate limit — риск stampede</span>
+    </div>
+  </div>
+</div>
+
+## Outbox pattern: producer-side надёжность
+
+Даже публикация сообщения в брокер at-least-once: producer может ретраить на timeout и брокер получит две копии. Хуже — **dual-write problem**: приложение апдейтит БД *и* публикует сообщение как одну логическую операцию. Если БД коммитит, но publish в брокер падает, брокер никогда не видит событие. Тихая потеря данных.
+
+Outbox pattern фиксит это транзакционной outbox-таблицей:
+
+1. В той же DB-транзакции, что и бизнес-апдейт, INSERT строку в таблицу `outbox`: `(id, payload, status='pending')`.
+2. COMMIT: и бизнес-апдейт, и outbox row успешны атомарно, или оба откатываются.
+3. Отдельный **Outbox Sender** читает pending rows и публикует в брокер. При успехе — помечает `status='sent'`.
+4. Если sender падает после publish, но до mark-as-sent, строка остаётся pending. Следующий прогон sender-а re-publish (дубликат), но idempotent producer брокера или consumer dedup обрабатывает его.
+
+CDC-based вариант (Debezium читает DB transaction log) — современная форма: без polling loop, меньше латентность, работает пока БД онлайн.
+
+<Quiz
+  id="05-q1"
+  pieceSlug="05-sqs-dlq"
+  lang="ru"
+  question="SQS consumer вызывает ChangeMessageVisibility до 90с во время processing. Consumer потом падает. Когда SQS передоставляет сообщение?"
+  choices={[
+    { label: "После оригинального queue default timeout (30с)", misconception: "Вызов ChangeMessageVisibility расширяет timeout для этой конкретной доставки — SQS чтит расширенное значение, не queue default." },
+    { label: "После истечения расширенного 90с timeout с момента вызова ChangeMessageVisibility", correct: true },
+    { label: "Немедленно при краше consumer", misconception: "SQS не детектирует краши consumer. Он только знает, что сообщение не удалено в окне timeout." },
+    { label: "Никогда — расширенные сообщения заблокированы навсегда", misconception: "ChangeMessageVisibility устанавливает новое timeout-окно, не лок. Оно истекает и сообщение снова видно." },
+  ]}
+/>
+
+<Quiz
+  id="05-q2"
+  pieceSlug="05-sqs-dlq"
+  lang="ru"
+  question="Приложение апдейтит Postgres строку и публикует Kafka сообщение двумя отдельными операциями. DB commit успешен, Kafka publish падает. Какое состояние данных?"
+  choices={[
+    { label: "Оба откатываются — Postgres поддерживает distributed transactions с Kafka", misconception: "Стандартный Postgres не координирует транзакции с Kafka. Две операции независимы." },
+    { label: "БД имеет апдейт, но брокер не видит события — downstream consumer-ы никогда не узнают об изменении. Это dual-write проблема.", correct: true },
+    { label: "Kafka автоматически rewind-ит Postgres транзакцию", misconception: "Kafka не видит Postgres транзакции." },
+    { label: "Publish автоматически ретраит и succeeds", misconception: "Producer retry помогает при transient сбое, но если Kafka down — событие потеряно навсегда без outbox." },
+  ]}
+/>
+
+<DragOrder
+  id="05-drag-1"
+  pieceSlug="05-sqs-dlq"
+  lang="ru"
+  prompt="Поставь шаги outbox pattern для надёжной публикации событий:"
+  items={[
+    "Приложение получает запрос обновить статус заказа",
+    "BEGIN DB-транзакцию",
+    "UPDATE orders SET status='paid' WHERE id=123",
+    "INSERT INTO outbox (payload='{order_paid, id:123}', status='pending')",
+    "COMMIT — и апдейт, и outbox row committed атомарно",
+    "Outbox Sender читает pending row и публикует в Kafka",
+    "Outbox Sender помечает row status='sent'",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Visibility timeout = 6x avg processing time; heartbeat каждые timeout/3 для переменных workload. DLQ rate-limited redrive 1–10 msgs/s; bulk redrive без rate limit вызывает stampede. Outbox pattern решает dual-write: INSERT outbox row в той же DB-транзакции, что и бизнес-апдейт.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-sqs-dlq-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что происходит со значением visibility timeout при SQS redelivery?", a: "Сбрасывается на queue default, не на значение, установленное через ChangeMessageVisibility в предыдущей доставке. Расширение было scoped к предыдущему receipt handle. Поэтому queue default visibility должен быть установлен под slowest expected processing path." },
+    { q: "Какой рекомендуемый maxReceiveCount для production SQS DLQ и почему не 1?", a: "5–10. Установка 1 или 2 отправляет transient errors (brief DB timeout, flaky downstream) в DLQ немедленно. Большинство transient ошибок разрешаются на второй-третьей попытке; низкий maxReceiveCount превращает каждый transient в расследование poison-pill." },
+    { q: "Что такое dual-write проблема и как outbox pattern её решает?", a: "Dual-write: апдейт БД и публикация сообщения — две отдельные операции. Любая может упасть независимо, оставляя состояние несогласованным. Outbox: INSERT event payload в outbox-таблицу в той же DB-транзакции, что и бизнес-апдейт. Отдельный sender публикует из outbox, обеспечивая публикацию только если бизнес-апдейт committed." },
+  ]}
+/>
+
+<Recap lang="ru">
+SQS visibility timeout — per-message таймер, сбрасывающийся на queue default при каждой redelivery — установи его в 6x среднее processing time и используй ChangeMessageVisibility heartbeat-ы (каждые timeout/3 секунды) для переменных workload. Dead-letter queues помещают poison pills в карантин после maxReceiveCount сбоев (используй 5–10, не 1); redrive с rate limit 1–10 msgs/s во избежание stampede source queue. Outbox pattern решает producer-side dual-write проблему через INSERT event row в той же DB-транзакции, что и бизнес-апдейт — строка — это durable intent; отдельный sender публикует из неё, и любой publish failure ретраится из всё ещё pending строки без потери события.
+</Recap>

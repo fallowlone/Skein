@@ -1,0 +1,191 @@
+---
+slug: 04-health-checks-and-draining
+lang: en
+track: networking
+unit: 09-proxy-load-balancing
+order: 4
+title: "Health checks, connection draining, and slow start"
+summary: "Active probes catch total failures; passive outlier detection catches silent 5xx degradation; connection draining lets in-flight requests finish before a backend is removed; slow start prevents a cold backend from drowning under full load."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "09-proxy-load-balancing/01-what-reverse-proxies-do"
+  - "09-proxy-load-balancing/02-balancing-algorithms"
+deepensInto:
+  - "06-retry-storms-and-circuit-breakers"
+spiral: ["latency", "statefulness"]
+concepts: ["active-health-check", "passive-health-check", "outlier-detection", "connection-draining", "slow-start", "health-check-flapping"]
+sources:
+  - https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking
+  - https://www.haproxy.com/blog/layer-4-vs-layer-7-load-balancing/
+  - https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-target-groups.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A backend's disk fills up. It keeps accepting TCP connections but every HTTP request returns 500. Your L4 health check (TCP SYN probe) says the backend is healthy. Requests keep routing to it and failing. This is the gap that passive health checking fills.
+</Hook>
+
+<Crux>Active probes detect crashes in 10–30 s; passive outlier detection catches silent 5xx — use both, each sees what the other misses.</Crux>
+
+<Explanation>
+
+## Active health checks
+
+The LB sends **probe requests** to each backend on a fixed interval, independent of real client traffic.
+
+**Probe types:**
+- **HTTP GET `/healthz`** — most common; expects 200 OK. Catches application-layer failures (disk full, database unreachable).
+- **TCP SYN** — lightweight; just attempts to establish TCP. Catches total network or process failure but misses application errors.
+- **gRPC health check** — standard for gRPC services (`grpc.health.v1.Health/Check`).
+- **Custom UDP probes** — for non-TCP services.
+
+**Thresholds:**
+- Mark **unhealthy** after 2–3 consecutive failures.
+- Mark **healthy** after 2–3 consecutive successes.
+- Interval: 10–30 seconds.
+
+**The silent-failure gap.** A backend that crashes hard (process killed) is caught by TCP SYN. A backend that hangs (thread pool exhausted, returning 500) accepts TCP but fails HTTP — a TCP SYN probe misses this entirely. HTTP GET probes catch it, but only if the probe URL exercises the actual application logic, not just a trivial stub that always returns 200 regardless.
+
+## Passive health checks and outlier detection
+
+Instead of probing, the LB **observes real traffic**. If a backend returns repeated 5xx errors or repeated timeouts, it is an outlier.
+
+**Envoy outlier detection (default config):**
+- Eject a backend after **5 consecutive 5xx responses**.
+- Ejection duration starts at **30 seconds**, doubles on each re-ejection: 30 s → 60 s → 120 s → up to ~300 s.
+- The LB stops routing new requests to the ejected backend for the duration.
+
+**Passive vs active — which catches what:**
+- Active catches: crashed process, network partition, misrouted port.
+- Passive catches: application-level hangs, database pool exhaustion, GC-induced 500 storms.
+- Neither alone is sufficient. Use both for defense in depth.
+
+## Health-check flapping
+
+A network blip causes 2–3 consecutive active check failures → backend ejected. Network recovers → 2–3 successes → backend re-added. Blip again → ejected. This cycling — called **flapping** — causes rapid traffic churn as the backend oscillates between healthy and unhealthy.
+
+**Fix:** Increase failure/success thresholds (require 5 consecutive failures before ejection). Add **jitter** to check timing so checks from multiple LB replicas do not synchronize. Envoy's exponential ejection backoff (30 s → 60 s → 120 s) naturally stabilizes a flapping backend: the ejection window widens until it is longer than the flap duration.
+
+<NumbersCard
+  id="card-health-check-numbers"
+  title="Health check and draining numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Active health check interval", value: "10–30 s" },
+    { label: "Consecutive failures before ejection", value: "2–3" },
+    { label: "Consecutive successes before re-add", value: "2–3" },
+    { label: "Envoy passive ejection duration (initial)", value: "30 s" },
+    { label: "Envoy ejection duration maximum", value: "~300 s" },
+    { label: "AWS ALB connection drain timeout (default)", value: "300 s" },
+    { label: "Connection drain for short HTTP", value: "5–30 s" },
+    { label: "Connection drain for WebSocket/SSE", value: "300+ s" },
+    { label: "Slow-start ramp duration (typical)", value: "1–5 min" },
+  ]}
+/>
+
+## Connection draining
+
+When removing a backend (deployment, scale-in, maintenance), you must not tear down active connections abruptly. **Connection draining:**
+
+1. Stop routing **new** requests to the backend.
+2. Allow **in-flight** requests to complete within a drain timeout.
+3. After the timeout, force-close any remaining connections.
+
+**Drain timeouts:**
+- Short HTTP requests: 5–30 s.
+- Long-running WebSocket / SSE connections: 300+ s.
+- AWS ALB default: 300 s (configurable 0–3 600 s).
+- GCP: 0–3 600 s configurable.
+
+**The application side.** On SIGTERM, the backend should:
+1. Call `close(listening_socket)` — stop accepting new connections.
+2. Finish all in-flight requests.
+3. Exit cleanly.
+
+Without draining, the LB removes the backend mid-request: the client receives a connection reset and must retry. With draining, the request completes normally and the backend exits quietly.
+
+## Slow start / warm-up
+
+When a backend **rejoins** the pool after recovery or first deployment, it is cold:
+- In-process caches are empty.
+- Database connection pools need priming.
+- TLS session caches are cold.
+
+Sending 100% of traffic immediately causes the backend to fall behind under the surge, potentially triggering a cascade failure.
+
+**Solution:** Ramp traffic gradually — 10% → 50% → 100% over 1–5 minutes. Envoy supports this via `slow_start_window` and `slow_start_duration`. AWS ALB supports it via a weighted target group that starts a new backend at weight 1 and increments over time.
+
+<TraceScenario
+  id="lb-mid-trace-health"
+  pieceSlug="04-health-checks-and-draining"
+  lang="en"
+  scenario="Trace a backend crash, health-check detection, and graceful rejoining."
+  steps={[
+    { prompt: "Backend B2 crashes. The LB's active health check probes B2 via HTTP GET /healthz every 30 s. What does the LB see on the first probe after the crash?", reveal: "TCP connection to B2 is refused (ECONNREFUSED) or times out. The LB records one failure. It continues routing requests to B2 for now because the failure threshold has not been reached." },
+    { prompt: "After 2–3 consecutive health check failures, the LB marks B2 unhealthy. What happens to new requests vs in-flight requests?", reveal: "New requests are no longer routed to B2 — they go to B1, B3, B4 via the balancing algorithm. In-flight requests on existing connections to B2 are allowed to complete (or fail on their own TCP timeout)." },
+    { prompt: "B2 restarts and passes 3 consecutive health checks. How does traffic ramp back?", reveal: "Slow start: the LB adds B2 back at 10% of its normal share for 1 minute, then 50% for 1 minute, then 100%. This lets B2's database connection pool warm up and its in-process cache fill before full load hits." },
+    { prompt: "B3 is still up but its database pool is exhausted — it returns 500 on all requests. The active health check (TCP SYN) still succeeds. What detects the problem?", reveal: "Passive outlier detection: Envoy observes that B3 has returned 5 consecutive 5xx responses on real traffic. It ejects B3 for 30 s. If B3 recovers and passes checks, it re-enters the pool with slow-start ramping." },
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+**Health-check endpoint design.** A trivial `/healthz` that always returns 200 is dangerous — it passes the active probe even when the application is broken. A good health-check endpoint tests the minimum critical dependencies: can we reach the database? Can we reach the cache? Return 200 only if the backend can actually serve requests. But do not add all dependencies: if a non-critical downstream service is down, returning 500 from `/healthz` will eject the backend unnecessarily.
+</Inset>
+
+<Quiz
+  id="lb-mid-quiz-health"
+  pieceSlug="04-health-checks-and-draining"
+  lang="en"
+  question="A backend accepts TCP connections but its thread pool is exhausted and it returns 500 on every HTTP request. Which health check type catches this, and which misses it?"
+  choices={[
+    { label: "TCP SYN catches it; HTTP GET misses it", misconception: "TCP SYN only checks that TCP connects — if the process accepts the connection but then fails HTTP, TCP SYN sees success." },
+    { label: "HTTP GET /healthz catches it if the endpoint exercises real application logic; TCP SYN misses it because the TCP connection succeeds even while the application fails", correct: true },
+    { label: "Both catch it simultaneously", misconception: "TCP SYN cannot detect HTTP-level failures. Only HTTP-level probes can." },
+    { label: "Neither catches it — only passive outlier detection can", misconception: "An HTTP GET health check that exercises real app logic (not a trivial stub) will catch it via the 500 response code." },
+  ]}
+/>
+
+<Quiz
+  id="lb-mid-quiz-drain"
+  pieceSlug="04-health-checks-and-draining"
+  lang="en"
+  question="Why is connection draining necessary when removing a backend from the load balancer pool?"
+  choices={[
+    { label: "To allow the LB to flush its routing table before removing the backend", misconception: "The LB's routing table update is fast. The concern is in-flight request completion, not LB routing state." },
+    { label: "Because removing a backend immediately tears down active TCP connections mid-request, causing data loss and user-visible errors", correct: true },
+    { label: "To prevent health checks from running against the removed backend", misconception: "Health checks stop automatically when the backend is removed. Draining is about in-flight request completion." },
+    { label: "To wait for the backend to finish its current health check cycle", misconception: "Draining is about client request completion, not health check cycles." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Active probes detect crashes in 10–30 s; passive outlier detection catches silent 5xx degradation in real time. Connection draining lets in-flight requests finish (5–30 s for HTTP, 300+ s for WebSocket) before a backend is removed. Slow start ramps new backends 10%→100% over minutes to avoid overwhelming cold caches.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-health-checks-and-draining-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why should you use both active and passive health checks rather than one alone?", a: "Active checks detect total failures (crashed process, network partition) but miss application-level degradation (thread pool exhausted, database unreachable while TCP accepts). Passive checks detect real-traffic 5xx bursts but have no coverage during low-traffic periods. Together they provide defense in depth: active is the safety net, passive catches the common live-failure modes." },
+    { q: "What is health-check flapping and how does Envoy's ejection backoff mitigate it?", a: "Flapping is when a backend oscillates between healthy and unhealthy due to transient network blips: ejected → network recovers → re-added → blip → ejected again. Envoy's exponential ejection backoff doubles the ejection duration on each re-ejection (30 s → 60 s → 120 s → up to ~300 s), so a flapping backend's ejection window widens until it outlasts the transient failure, naturally stabilizing." },
+    { q: "What should a backend do on SIGTERM to cooperate with connection draining?", a: "Close the listening socket (stop accepting new connections), finish all in-flight requests, then exit. This prevents the LB from waiting the full drain timeout unnecessarily: once the backend closes its listening socket, the LB knows it will receive no new connections and can complete the drain as soon as all existing connections close." },
+  ]}
+/>
+
+<Recap lang="en">
+Two health-check strategies complement each other. Active checks send probes (HTTP GET, TCP SYN, gRPC) every 10–30 seconds and eject a backend after 2–3 failures — fast but blind to application-layer degradation when TCP still accepts. Passive outlier detection watches real traffic and ejects after repeated 5xx responses, with an exponential ejection backoff (30 s → 300 s) that dampens flapping. Connection draining bridges the gap at removal time: new requests stop immediately, in-flight requests get 5–30 s (HTTP) or 300+ s (WebSocket) to finish. Slow start protects rejoining backends by ramping traffic from 10% to 100% over 1–5 minutes so cold caches and connection pools can warm before they bear full load.
+</Recap>

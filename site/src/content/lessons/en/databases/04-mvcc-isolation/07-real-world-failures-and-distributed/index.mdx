@@ -1,0 +1,273 @@
+---
+slug: 07-real-world-failures-and-distributed
+lang: en
+track: databases
+unit: 04-mvcc-isolation
+order: 7
+title: "Real-world MVCC failures, deployment patterns, and distributed snapshots"
+summary: "Long transactions, orphan replication slots, pg_repack, pgbouncer SET LOCAL, idle_in_transaction_session_timeout, Postgres version history 8.3–18, and how distributed systems extend or replace single-node MVCC."
+estMin: 20
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/04-mvcc-isolation/05-clog-xid-wraparound-and-multixact", "databases/04-mvcc-isolation/06-ssi-and-production-tuning"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["long-transaction-bloat", "replication-slot", "pg-repack", "pgbouncer", "idle-in-transaction-session-timeout", "hot-standby-feedback", "hlc", "distributed-snapshot", "logical-replication", "bdr", "citus"]
+sources:
+  - https://www.postgresql.org/docs/current/warm-standby.html#STREAMING-REPLICATION-SLOTS
+  - https://www.postgresql.org/docs/current/pgstatactivity.html
+  - https://reorg.github.io/pg_repack/
+  - https://www.pgbouncer.org/config.html
+  - https://www.postgresql.org/docs/current/runtime-config-client.html#GUC-IDLE-IN-TRANSACTION-SESSION-TIMEOUT
+  - https://www.postgresql.org/docs/current/logical-replication.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+
+<Hook>
+Sentry 2017: autovacuum fell behind, XID wraparound triggered, the cluster refused new connections, and the team did manual freezing under fire. GitLab 2017: a misclick during maintenance deleted the wrong directory, and the surrounding bloat made pg_dump recovery take orders of magnitude longer. Both incidents trace back to the same root: MVCC's storage tax collected without discipline.
+</Hook>
+
+<Crux>Long txns and orphan slots pin oldest-xmin; pg_repack, idle_in_transaction_session_timeout, analytics routing — three levers against bloat.</Crux>
+
+<Explanation>
+
+## Real-world failures: long-transaction bloat and orphan replication slots
+
+The canonical production failure pattern:
+
+1. A 6-hour ETL or analytical `SELECT` runs against the OLTP cluster
+2. Its `backend_xmin` pins the global oldest-xmin
+3. Every `orders` table autovacuum logs: `cannot remove tuples, oldest xmin: XXXXXXXX`
+4. Overnight, `orders` grows from 80 GB to 180 GB
+5. Morning team discovers a disk-full alert at 7 AM
+
+Replication slots that go orphan when a downstream consumer dies produce an identical failure. The slot's `xmin` column holds the global oldest-xmin until someone notices and drops the slot.
+
+**Diagnosing the pin:**
+
+```sql
+-- Find the oldest snapshot holder
+SELECT pid, backend_xmin,
+       now() - xact_start AS age,
+       state, query
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+ORDER BY backend_xmin
+LIMIT 5;
+
+-- Find orphan replication slot pins
+SELECT slot_name, xmin, confirmed_flush_lsn
+FROM pg_replication_slots
+WHERE xmin IS NOT NULL;
+```
+
+The smallest `backend_xmin` or slot `xmin` matches what autovacuum logs as "oldest xmin." Fix: `pg_terminate_backend(pid)` or `pg_drop_replication_slot('name')`. The very next autovacuum cycle then reclaims the dead tuples.
+
+**Mitigation strategies:**
+
+- Route analytics to a replica with `hot_standby_feedback = off` so the primary's autovacuum is never held back
+- Use a logical replica with its own independent autovacuum policy
+- Set `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` with a `statement_timeout` of 30 minutes — forces long queries to fail loud instead of pinning silently
+
+The `hot_standby_feedback = off` setting deserves emphasis: when it is on (the default), the replica sends its `xmin` back to the primary, which prevents the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica with `hot_standby_feedback = on` is indistinguishable from a 6-hour query on the primary — both pin bloat. Turn it off on analytics replicas and let the replica accept its own bloat.
+
+## Misconception: "Postgres has snapshot-too-old like Oracle"
+
+<Misconception id="mc-snapshot-too-old">
+**"Postgres has snapshot-too-old like Oracle."** No — a real operational gap. Oracle's bounded UNDO throws ORA-01555 on stale snapshots. Postgres has no such timeout; an 8-hour query just pins `backend_xmin` and accumulates bloat. Workaround: `statement_timeout` + alerts on `backend_xmin` age.
+</Misconception>
+
+## Deployment patterns: pg_repack, pgbouncer, idle_in_transaction_session_timeout
+
+**pg_repack** rewrites a bloated table online without a long `ACCESS EXCLUSIVE` lock:
+
+1. Creates a shadow copy of the table
+2. Applies WAL changes incrementally as the copy is built
+3. Atomically swaps the shadow copy for the original (brief lock for the swap only)
+
+The catch: transient 2x disk usage during the rewrite. Production discipline: run `pg_repack` nightly on the top-10 most-bloated tables.
+
+**pgbouncer in transaction mode** multiplexes thousands of client connections onto a small pool of Postgres backends. The MVCC interaction: *session-mode* `SET` commands leak across clients in transaction mode.
+
+```sql
+-- This leaks in transaction mode — wrong:
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+
+-- Use SET LOCAL — scoped to the current transaction:
+SET LOCAL TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+```
+
+`SET LOCAL` is automatically rolled back at transaction end, so the next client picks up a clean connection.
+
+**`idle_in_transaction_session_timeout`** (default: off; production recommendation: 5–15 minutes) kills sessions that have an open transaction without activity. Many production incidents trace to an application that opens a transaction at request start and forgets to close it on an error path — `idle_in_transaction_session_timeout` is the safety net.
+
+```sql
+-- Set cluster-wide in postgresql.conf:
+idle_in_transaction_session_timeout = '10min'
+-- Or per role:
+ALTER ROLE app_user SET idle_in_transaction_session_timeout = '5min';
+```
+
+## Numbers
+
+<NumbersCard
+  id="card-failure-numbers"
+  lessonSlug="07-real-world-failures-and-distributed"
+  title="Operational MVCC numbers"
+  stats={[
+    { label: "HOT chain length (typical)", value: "4–8 versions before break" },
+    { label: "Default fillfactor", value: "100 (tables), 90 (indexes)" },
+    { label: "MultiXact wraparound", value: "2B, separate from XID" },
+    { label: "Freeze trigger", value: "autovacuum_freeze_max_age 200M" },
+    { label: "SSI false-positive rate", value: "0.1–1% healthy; &gt;5% tune" },
+    { label: "pg_repack online cost", value: "transient 2x disk" },
+    { label: "idle_in_transaction_session_timeout", value: "5–15 min recommended" },
+    { label: "Logical slot lag risk", value: "orphan slot pins xmin" },
+  ]}
+/>
+
+## Autovacuum log diagnosis
+
+<DebugLog
+  id="debug-autovacuum"
+  lessonSlug="07-real-world-failures-and-distributed"
+  lang="en"
+  title="Diagnose the autovacuum log line — what is wrong and how do you fix it?"
+  output={`LOG:  automatic vacuum of table "production.public.orders": index scans: 1
+    pages: 0 removed, 18475821 remain, 1854000 skipped due to pins
+    tuples: 0 removed, 412809321 remain, 287163445 are dead but not yet removable, oldest xmin: 28391456
+    index scan needed: 32140 pages from table (0.17% of total) had 281422 dead item identifiers removed
+    avg read rate: 28.412 MB/s, avg write rate: 5.211 MB/s
+    buffer usage: 4189213 hits, 8923214 misses, 21430 dirtied
+    WAL usage: 41203 records, 0 full page images, 9241221 bytes
+    system usage: CPU: user: 312.18 s, system: 18.91 s, elapsed: 1842.21 s`}
+  outputLang="log"
+  question="The vacuum ran for 30 minutes, removed 0 dead tuples, and 287 million are not-yet-removable. What is the root cause and how do you confirm + fix?"
+  hint="The 'not yet removable' count is the giveaway. What pins the oldest xmin in Postgres?"
+  answer="The 287 million tuples cannot be removed because backend_xmin is held back by either a long-running transaction or an orphan replication slot. The log line 'oldest xmin: 28391456' is the pinned value. Diagnose with: SELECT pid, backend_xmin, now() - xact_start AS age, state, query FROM pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY backend_xmin LIMIT 5; and SELECT slot_name, xmin, confirmed_flush_lsn FROM pg_replication_slots WHERE xmin IS NOT NULL; The smallest backend_xmin or smallest replication-slot xmin matches 28391456. Fix: kill the long transaction (pg_terminate_backend) or drop the orphan slot (pg_drop_replication_slot). The very next autovacuum cycle then reclaims the 287M tuples. Prevention: set idle_in_transaction_session_timeout to 5-15 minutes; monitor replication slot lag and alert on orphans."
+/>
+
+## Postgres version history: 8.3 → 18
+
+| Version | Year | MVCC-relevant feature |
+|---------|------|-----------------------|
+| 8.3 | 2008 | HOT updates |
+| 9.1 | 2011 | SSI (true SERIALIZABLE) |
+| 9.5 | 2016 | `INSERT ... ON CONFLICT` (upsert, interacts subtly with MVCC via internal retry on unique-violation) |
+| 12 | 2019 | Declarative partitioning — multi-billion-row tables finally feasible |
+| 13 | 2021 | Incremental sort, lower VACUUM cost on heavy-update tables |
+| 14 | 2021 | Bottom-up index deletion — dramatically reduces index bloat for UPDATE-heavy patterns where indexed columns rarely change |
+| 16 | 2023 | Cold-start freezing performance improvements |
+| 17 | 2024 | Vacuum re-architected to use TID stores instead of arrays — removes the `maintenance_work_mem` ceiling on dead tuples per pass (eliminates "VACUUM has reached the maintenance_work_mem limit, restarting") |
+| 18 | 2025 | Better skip-scan during freezing |
+
+## Cross-protocol: logical replication, BDR, Citus
+
+**Logical replication** uses MVCC under the hood. The WAL decoder reads tuple changes from WAL and produces a stream the subscriber applies. The subscriber runs its own independent autovacuum. Logical slots pin the publisher's `xmin` so the subscriber can catch up — an idle subscriber is a slow-motion bloat bomb. Monitor `pg_replication_slots.xmin` and alert on orphaned slots.
+
+**BDR (BiDirectional Replication, EDB)** implements eventual consistency on top of logical replication with conflict resolution that explicitly understands MVCC: last-update-wins by tuple `xmin` timestamp.
+
+**Citus** shards a table across worker nodes. Each shard is a real Postgres table with its own MVCC. The coordinator's snapshot is propagated to workers as a "global snapshot" passed in the worker connection. Distributed serializable transactions on Citus require all worker nodes to agree on SSI dependencies — implemented via a coordinator-managed predicate-lock table.
+
+## Distributed snapshots and global serializability
+
+Single-node Postgres has a global snapshot per backend, computed in shared memory. When sharding across multiple Postgres instances (Citus, YugabyteDB, Postgres-XC ancestors), no single shared-memory snapshot exists.
+
+The standard approach is **hybrid logical clocks (HLC)**: each instance maintains a logical timestamp that monotonically advances, transactions are tagged with HLC values at start, and visibility decisions on remote shards use HLC ordering. HLC needs to be consistent with wall-clock ordering enough that humans can reason about "the transaction at 12:00:01" — TrueTime in Spanner is one solution; HLC in YugabyteDB is another.
+
+**SSI across shards** requires either:
+- A centralized predicate-lock table (correct but slow)
+- A deterministic concurrency-control protocol (Calvin-style; FaunaDB; CockroachDB's hybrid) that linearizes at start instead of commit
+
+Citus chooses pragmatism: distributed transactions default to read-committed-with-prepared-commit, and applications that need stronger isolation co-locate dependent rows on the same shard to keep them on the same backend.
+
+</Explanation>
+
+## Quizzes
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="07-real-world-failures-and-distributed"
+  lang="en"
+  question="An orphan replication slot is causing runaway bloat. Which system view confirms the slot's xmin and tells you how far it has fallen behind?"
+  choices={[
+    { label: "pg_stat_activity filtered by backend_xmin IS NOT NULL", misconception: "pg_stat_activity shows session xmin, not slot xmin. A slot can pin xmin with no active session." },
+    { label: "pg_replication_slots — xmin column shows the slot's oldest held xmin", correct: true },
+    { label: "pg_stat_all_tables.n_dead_tup — high count implies a slot", misconception: "n_dead_tup shows effect, not cause. Many things can cause dead tuples; this does not identify the pinning source." },
+    { label: "pg_stat_database.datfrozenxid — indicates freeze backlog", misconception: "datfrozenxid tracks the oldest un-frozen tuple in the database, not slot xmin." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="07-real-world-failures-and-distributed"
+  lang="en"
+  question="In pgbouncer transaction mode, why must you use SET LOCAL instead of SET for isolation level changes?"
+  choices={[
+    { label: "SET LOCAL is faster because it skips WAL", misconception: "Transaction-scoped GUC changes do not affect WAL at all. The reason is scope, not performance." },
+    { label: "Session-mode SET persists across clients when the connection is reused; SET LOCAL is rolled back at transaction end", correct: true },
+    { label: "pgbouncer only supports SET LOCAL syntax", misconception: "pgbouncer passes both SET forms through; the issue is semantics, not syntax." },
+    { label: "SET is deprecated in PostgreSQL 15+", misconception: "SET is not deprecated. It is fully supported but session-scoped, which leaks in pooling." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-3"
+  lessonSlug="07-real-world-failures-and-distributed"
+  lang="en"
+  question="pg_repack rewrites a table online. What is the primary operational cost compared to VACUUM FULL?"
+  choices={[
+    { label: "pg_repack requires a long ACCESS EXCLUSIVE lock on the table", misconception: "The opposite — pg_repack avoids the long lock. Only the final swap is brief ACCESS EXCLUSIVE." },
+    { label: "pg_repack produces transient 2x disk usage while the shadow copy is built", correct: true },
+    { label: "pg_repack cannot run on tables with foreign keys", misconception: "pg_repack supports tables with foreign keys; it rebuilds them correctly." },
+    { label: "pg_repack blocks all reads during the rewrite phase", misconception: "Reads and writes continue during pg_repack; it applies WAL changes incrementally to the shadow copy." },
+  ]}
+/>
+
+<KeyTakeaway>Long transactions and orphan replication slots are the same failure: both pin the global oldest-xmin and block autovacuum. The trifecta that prevents this is idle_in_transaction_session_timeout on the primary, hot_standby_feedback=off on analytics replicas, and replication-slot lag alerts. In distributed systems, MVCC extends via HLC for clock-based visibility and coordinator-managed predicate locks for SSI — or pragmatically collapses to per-shard isolation with co-location.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="07-real-world-failures-and-distributed"
+  lang="en"
+  questions={[
+    {
+      id: "q1",
+      q: "A 200 GB orders table is not being vacuumed despite autovacuum running. The log says 287M tuples are not-yet-removable. Walk through the diagnosis and fix.",
+      a: "The oldest-xmin is pinned by a long transaction or orphan replication slot. Query pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY backend_xmin to find the oldest holder; query pg_replication_slots WHERE xmin IS NOT NULL for slot pins. The smallest value matches what autovacuum logged. Fix: pg_terminate_backend or pg_drop_replication_slot. Prevention: idle_in_transaction_session_timeout = 5–15 min; alert on slot lag.",
+    },
+    {
+      id: "q2",
+      q: "Why is hot_standby_feedback=on dangerous for the primary's bloat, and when is it acceptable?",
+      a: "With hot_standby_feedback=on, the replica sends its xmin back to the primary, preventing the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica is indistinguishable from the same query on the primary — both pin bloat. It is acceptable when the replica workload is short-lived and bounded (e.g., p99 query time <5 min), or when the replica's lag is monitored and bounded by a streaming replication slot with a confirmed_flush_lsn lag limit.",
+    },
+    {
+      id: "q3",
+      q: "Explain why Citus defaults to read-committed-with-prepared-commit for distributed transactions rather than distributed SSI.",
+      a: "Distributed SSI requires all worker nodes to agree on rw-antidependencies, which requires either a centralized predicate-lock table (a coordination bottleneck that scales poorly) or a deterministic concurrency-control protocol that linearizes at transaction start (high latency, like Calvin/FaunaDB). Citus pragmatically defaults to RC+2PC, which is correct for most OLTP workloads, and relies on application-level co-location (keeping dependent rows on the same shard) to provide per-shard SERIALIZABLE when needed.",
+    },
+  ]}
+/>
+
+<Recap>
+- Long transactions and orphan replication slots pin `oldest-xmin` and block autovacuum — same failure shape, different source
+- Diagnose with `pg_stat_activity WHERE backend_xmin IS NOT NULL` and `pg_replication_slots WHERE xmin IS NOT NULL`
+- `idle_in_transaction_session_timeout` (5–15 min) kills forgotten open transactions before they accumulate bloat
+- `hot_standby_feedback = off` on analytics replicas decouples primary autovacuum from replica query lifetimes
+- `pg_repack` rewrites bloated tables online at the cost of transient 2x disk; `VACUUM FULL` requires a long lock
+- In `pgbouncer` transaction mode, use `SET LOCAL` not `SET` — session-mode settings leak across pooled clients
+- Postgres 17 removed the `maintenance_work_mem` ceiling on vacuum by replacing arrays with TID stores
+- Distributed MVCC uses HLC for cross-shard visibility; SSI across shards requires centralized predicate locks or deterministic CC
+</Recap>

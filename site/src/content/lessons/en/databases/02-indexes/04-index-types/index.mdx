@@ -1,0 +1,261 @@
+---
+slug: 04-index-types
+lang: en
+track: databases
+unit: 02-indexes
+order: 4
+title: "Index types: GIN, GiST, BRIN, Hash, Bloom, and HOT updates"
+summary: "Beyond B-tree: when GIN, GiST, BRIN, Hash, and Bloom are the right tool, how HOT updates reduce index write overhead, why fillfactor matters, and why fresh statistics matter more than the index itself."
+estMin: 18
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-partial-expression-covering"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["gin-index", "gist-index", "brin-index", "hash-index", "bloom-index", "hot-update", "fillfactor", "analyze-statistics", "write-amplification"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-types.html
+  - https://www.postgresql.org/docs/current/storage-hot.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A team adds `CREATE INDEX ON events(payload)` on a JSONB column and watches query time drop from 4 seconds to 4 seconds. B-tree cannot index inside JSONB. GIN can. Knowing which index type matches which data shape is what separates a working index from a wasted hour and a wasted gigabyte.
+</Hook>
+
+<Crux>B-tree: 95% of work. GIN: JSONB/arrays. GiST: spatial. BRIN: time-series. Hash: equality. Each type changes write-tax per insert.</Crux>
+
+<Explanation>
+
+## Why B-tree is not enough
+
+B-tree indexes one value per row and answers equality, range, and sort queries on that value. When a row contains multiple values (JSONB keys, array elements, text lexemes) or when the "less than" relation is not defined (geometric shapes, IP ranges), B-tree has no useful sort order to walk. The other index types fill those gaps.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Index type</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+        <th class="border border-border px-3 py-2 text-left">Trade</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">B-tree</td>
+        <td class="border border-border px-3 py-2">Equality, range, sort on ordered types</td>
+        <td class="border border-border px-3 py-2">~10-30% of table size; 5-50 µs/write</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">GIN</td>
+        <td class="border border-border px-3 py-2">JSONB containment, arrays, full-text</td>
+        <td class="border border-border px-3 py-2">2-5x size; slow on high-write JSONB</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">GiST</td>
+        <td class="border border-border px-3 py-2">Geospatial (PostGIS), range types, nearest-neighbour</td>
+        <td class="border border-border px-3 py-2">Extension-dependent size; complex update</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">BRIN</td>
+        <td class="border border-border px-3 py-2">Huge insert-only tables with natural ordering</td>
+        <td class="border border-border px-3 py-2">Tiny size; only works on physically-ordered data</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Hash</td>
+        <td class="border border-border px-3 py-2">Equality on very wide keys</td>
+        <td class="border border-border px-3 py-2">No range; usually B-tree is better</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Bloom</td>
+        <td class="border border-border px-3 py-2">Multi-column equality, unpredictable filter combos</td>
+        <td class="border border-border px-3 py-2">Approximate (false positives); heap re-check required</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## GIN: inverted index for composite types
+
+Generalized Inverted Index. Where B-tree stores one value per row, GIN stores many values per row — every key in a JSONB document, every element in an array, every lexeme in a tsvector. Internally, GIN is a B-tree of indexed values, each pointing to a posting list (or posting tree for large lists) of TIDs that contain that value.
+
+Use cases:
+- **JSONB containment**: `WHERE payload @> '{"event_type":"login"}'` — does this document contain this sub-document?
+- **Array overlap**: `WHERE tags && ARRAY['premium','active']`
+- **Full-text search**: `WHERE to_tsvector('english', body) @@ to_tsquery('postgres')`
+
+GIN indexes are typically 2-5x the size of the indexed column data. On high-write JSONB columns, each row insert updates every indexed key — so `fastupdate` mode defers those updates to a background process, giving faster writes at the cost of slightly stale index entries until the buffer is flushed. Production discipline: measure GIN write cost after adding it to a write-heavy column; if insert latency spikes, consider `fastupdate` or narrow to an expression index on known-hot JSONB fields.
+
+## GiST: generic search tree
+
+For data that lacks a global sort order: geospatial shapes, IP ranges, timestamp ranges. GiST is extensible — each non-leaf node stores a "predicate" (e.g., a bounding box) that summarises its subtree. Queries prune subtrees by testing the predicate before descending.
+
+Most engineers encounter GiST via PostGIS:
+
+```sql
+CREATE INDEX ON locations USING GIST (geom);
+-- enables: WHERE ST_DWithin(geom, ST_MakePoint(-74, 40.7), 1000)
+```
+
+Range types (`int4range`, `tsrange`) also use GiST by default. Nearest-neighbour queries (`ORDER BY geom <-> point LIMIT 10`) require GiST.
+
+## BRIN: tiny index for huge ordered tables
+
+Block Range INdex. Stores min and max values per block range (default: 128 pages, ~1 MB of heap). To answer a query, Postgres reads the BRIN metadata, identifies candidate ranges, and scans only those blocks. BRIN is approximate — it narrows the heap scan but cannot eliminate it.
+
+BRIN is only useful when data is physically ordered by the indexed column. The classic case: a time-series table where rows are inserted in timestamp order.
+
+```sql
+-- 10 billion rows, 8 TB table
+CREATE INDEX ON events USING BRIN (created_at);
+-- Result: ~few MB index; range query reads only the relevant 128-page blocks
+```
+
+For randomly distributed data, BRIN provides no speedup — every block range's min-max spans the full range, and Postgres must scan all blocks.
+
+## Hash indexes
+
+Equality only; no range support; no ORDER BY. Prior to Postgres 10, Hash indexes were not WAL-logged and could not survive crashes — avoid them in older installations. Post-10 they are stable. The narrow use case: equality lookup on very wide keys (e.g., a 1000-character JSON string) where B-tree's size would be excessive. In practice, B-tree handles this well enough that Hash indexes remain rare. Default to B-tree unless you have a specific, measured reason.
+
+## Bloom indexes for multi-column equality
+
+The `bloom` extension provides a probabilistic filter index. A Bloom index on `(a, b, c, d, e)` accelerates any query that filters by any subset of those columns — without the leading-column rule. The trade: it is approximate. Every match is a candidate that must be re-verified against the heap (false positives exist). Use case: tables with many columns where queries combine different filter sets unpredictably, making it impractical to build 2^N composite B-tree indexes.
+
+## HOT updates and fillfactor
+
+When a row is UPDATEd, Postgres creates a new tuple version (MVCC) and must update every index referencing that row — even indexes whose columns did not change. This is write amplification: one logical update fans out to N index updates.
+
+**HOT (Heap-Only Tuple)** eliminates index updates when both conditions hold:
+1. No indexed column changed in this update.
+2. The new tuple fits on the same heap page as the old one (there is free space).
+
+When HOT fires, only the heap page changes — index entries still point to the old TID, which chains to the new version. The result: dramatically lower write overhead on update-heavy workloads.
+
+**Fillfactor** controls how full each page is at insert time (default: 100% for tables, 90% for B-tree indexes). Setting fillfactor to 70–80% on an update-heavy table leaves room on pages for HOT updates:
+
+```sql
+ALTER TABLE orders SET (fillfactor = 70);
+-- Re-fill pages: CLUSTER or VACUUM FULL (offline) or gradual via natural inserts
+```
+
+The trade is initial storage: lower fillfactor means more pages, larger table. Production teams measure update frequency and tune fillfactor on hot tables — a frequently overlooked lever.
+
+## Write cost accounting
+
+Every index adds ~5-50 µs per write per index touched. For a table with 10 indexes, each INSERT costs 50-500 µs in index overhead beyond the heap write. Under a write-heavy workload (10,000 inserts/second), that is 0.5-5 ms of overhead per second of clock time. GIN indexes on JSONB columns with many keys can cost 50-200 µs per write — higher than any B-tree.
+
+Senior teams model index budget per table: given write-throughput target, how many indexes can the table afford? Tools: `pg_stat_statements` for baseline latency, `pgbench` for synthetic write benchmarks under new index candidates.
+
+## Index size vs shared_buffers
+
+Postgres caches hot pages in `shared_buffers` (typically 25% of server RAM). Large indexes compete with heap pages for cache space. A 5 GB GIN index on a JSONB column can evict hot heap pages, causing queries that were fast from cache to become disk-bound. Symptom: `pg_stat_database.blks_hit / blks_read` ratio drops after adding a new index. Mitigation: use partial indexes, expression indexes on known-hot fields, or drop unused indexes to reclaim cache.
+
+## Why ANALYZE matters more than the index itself
+
+The planner's choice of which index to use — or whether to use one at all — depends on table statistics collected by ANALYZE (run automatically by autovacuum, manually when needed). Stale statistics cause the planner to under- or over-estimate how many rows a filter matches, leading to wrong plan choices.
+
+Production discipline:
+- Run `ANALYZE` after bulk inserts, large UPDATEs, or schema changes affecting distributions.
+- Tune `autovacuum_analyze_scale_factor` lower on tables with skewed data (default 0.2 = 20% change triggers analyze; set 0.02 for hot OLTP tables).
+- Use `CREATE STATISTICS` for correlated columns (e.g., `country, city`) so the planner does not assume independence.
+
+A "wrong index choice" diagnosis is often actually "stale stats."
+
+<NumbersCard
+  id="04-index-types-numbers"
+  title="Index type costs"
+  stats={[
+    { label: "B-tree size, 8-byte key, 100M rows", value: "~1 GB" },
+    { label: "GIN size vs indexed column data", value: "2-5x larger" },
+    { label: "BRIN size, 10B-row time-series", value: "~few MB" },
+    { label: "Hash index use case in production", value: "rare (B-tree usually better)" },
+    { label: "HOT update savings (no indexed column changed)", value: "eliminates N index updates" },
+    { label: "GIN write overhead on high-write JSONB", value: "~50-200 µs per row" },
+    { label: "B-tree write overhead per index", value: "~5-50 µs per write" },
+    { label: "fillfactor default (table / B-tree)", value: "100% / 90%" },
+    { label: "fillfactor for update-heavy HOT-friendly tables", value: "70-80%" },
+    { label: "ANALYZE trigger (autovacuum_analyze_scale_factor default)", value: "20% of rows changed" },
+  ]}
+/>
+
+<Misconception id="04-index-types-mc-1">
+<strong>"CREATE INDEX ON events(payload) speeds up JSONB queries."</strong> Not with B-tree. B-tree indexes the whole document as an opaque value — it cannot answer `@>` containment. Use `CREATE INDEX ON events USING GIN (payload)` or GIN on a specific path `(payload->'event_type')`.
+</Misconception>
+
+<Quiz
+  id="04-index-types-quiz-1"
+  lessonSlug="04-index-types"
+  lang="en"
+  question="A table stores geolocation data and the hot query is: WHERE ST_DWithin(geom, $1, 500). Which index type is correct?"
+  choices={[
+    { label: "B-tree on geom", misconception: "B-tree requires a linear sort order that geometric types do not have." },
+    { label: "GIN on geom", misconception: "GIN is for composite/multi-value types (JSONB, arrays, tsvector), not geometric shapes." },
+    { label: "GiST on geom — the correct choice for geospatial nearest-neighbour and distance queries", correct: true },
+    { label: "BRIN on geom", misconception: "BRIN stores min/max per block range, which has no meaning for geometric shapes." },
+  ]}
+/>
+
+<Quiz
+  id="04-index-types-quiz-2"
+  lessonSlug="04-index-types"
+  lang="en"
+  question="HOT updates skip index maintenance. What is the requirement for a HOT update to trigger?"
+  choices={[
+    { label: "The indexed column must have changed in the update", misconception: "HOT triggers when NO indexed column changed — the opposite." },
+    { label: "No indexed column changed AND the new tuple fits on the same heap page", correct: true },
+    { label: "The table must have fillfactor = 100", misconception: "fillfactor = 100 leaves no space on pages, which prevents HOT. Lower fillfactor enables HOT." },
+    { label: "The index must be a partial index", misconception: "HOT works on any index type; partial indexes just reduce how many rows are indexed." },
+  ]}
+/>
+
+<DragOrder
+  id="04-index-types-drag-1"
+  lessonSlug="04-index-types"
+  lang="en"
+  prompt="Match the scenario to the correct index type — order from best match to worst match for the scenario: 'search JSONB documents by key presence'."
+  items={[
+    { id: "a", label: "GIN — designed for multi-value types; answers @> and ? operators natively" },
+    { id: "b", label: "Expression B-tree on (payload->>'key') — works for equality on a known field, but not general containment" },
+    { id: "c", label: "B-tree on payload — indexes the whole document as opaque; useless for containment queries" },
+    { id: "d", label: "BRIN on payload — only useful for min/max on ordered data; irrelevant here" },
+  ]}
+  correctOrder={["a", "b", "c", "d"]}
+/>
+
+<Inset kind="why" lang="en">
+Why does Postgres ship six index types instead of one universal index? Because the fundamental data structures are incompatible. B-tree requires a total order (every value is comparable with less-than). JSONB documents have no total order. Geometric shapes require a spatial predicate, not a linear key. Time-series blocks need range summaries. Trying to fit all of these into B-tree would produce either a useless or astronomically expensive structure. The design choice — multiple specialized types — keeps each index tight and appropriate for its data shape.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>GIN for JSONB/arrays/full-text; GiST for geospatial and range types; BRIN for huge insert-only tables with natural ordering; Hash is a niche rarely-used alternative to B-tree; Bloom for multi-column equality without leading-column constraints. HOT updates eliminate index writes when no indexed column changes and the page has free space — tune fillfactor to 70-80% on update-heavy tables to keep HOT firing. ANALYZE is required for the planner to pick the right index; run it after bulk data changes.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-index-types-retrieval"
+  lang="en"
+  questions={[
+    { q: "A colleague suggests adding a GIN index to a JSONB audit_log column that receives 5,000 inserts per second. What are the write-cost implications, and what alternative might work?", a: "GIN indexes every key in each JSONB document. For a document with 20 keys, each insert touches 20 GIN posting lists — potentially 50-200 µs of overhead per row. At 5,000 inserts/second, that is up to 1 second of GIN write overhead per second of clock time, which will saturate I/O. Alternatives: (1) use fastupdate=on to defer GIN maintenance (reduces write latency at the cost of a periodic merge spike); (2) use a narrow expression index on the specific known-hot field, e.g., CREATE INDEX ON audit_log USING GIN ((payload->'event_type')) — only one posting list updated per insert; (3) use a B-tree expression index on (payload->>'event_type') if queries are equality-only on that field. Always benchmark with pgbench before deploying a GIN on a high-write column." },
+    { q: "Explain when BRIN is dramatically better than B-tree and when it is useless.", a: "BRIN stores min and max values per block range (default 128 pages ≈ 1 MB). To answer a query, Postgres reads the BRIN metadata to find candidate ranges, then scans only those blocks. This is dramatically better than B-tree when: (1) the data is physically ordered by the indexed column — inserts happen in order (e.g., time-series events inserted in timestamp order). In this case, a range query on created_at can skip 99% of blocks using BRIN at kilobyte cost vs a gigabyte B-tree. BRIN is useless when: the data is randomly distributed — every block range has min-max spanning the full value range, so every range is a candidate and Postgres scans every block. BRIN is also useless for equality lookups on randomly-distributed data or for columns used in joins or sort. The test: if you physically cluster the table by the indexed column (or if inserts are naturally ordered), BRIN wins. Otherwise, B-tree wins." },
+    { q: "What is write amplification in the context of indexes, and what mechanisms reduce it?", a: "Write amplification: one logical write (INSERT or UPDATE) fans out to multiple physical writes — one to the heap, plus one per index per indexed column. A table with 10 indexes: each insert causes 11 writes. UPDATE that touches 3 indexed columns causes 4 writes (heap + 3 index updates), even if 7 other indexes are not touched. Mechanisms that reduce it: (1) HOT updates — when no indexed column changes and the page has free space, index writes are skipped entirely; the new tuple version is linked in-place. (2) fillfactor — leaving free space on pages (e.g., fillfactor=70) ensures HOT can fire even under moderate update load. (3) Fewer indexes — the most effective reduction; audit and drop unused indexes. (4) Partial indexes — only indexed rows that match the WHERE clause trigger index writes; status='pending' index is untouched by updates to status='done' rows. (5) GIN fastupdate — defers index maintenance to background, reducing per-write latency at the cost of merge spikes." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres ships six index types. B-tree covers equality, range, and sort on ordered types — 95% of production use. GIN indexes multiple values per row (JSONB keys, array elements, tsvector lexemes) using an inverted structure; it is 2-5x larger and slower to write than B-tree. GiST handles geospatial and range types where no linear sort order exists. BRIN stores min-max per block range and is only useful when data is physically ordered (time-series inserts). Hash is equality-only and rarely preferred over B-tree. Bloom is a probabilistic multi-column equality index that avoids the leading-column rule at the cost of false positives.
+
+HOT updates skip index maintenance when no indexed column changed and the heap page has space — tune fillfactor to 70-80% on update-heavy tables to keep HOT firing. GIN write cost on high-write JSONB columns can reach 50-200 µs per insert; narrow to expression indexes on known-hot fields when write overhead is the bottleneck. ANALYZE must be current for the planner to pick the right index; stale statistics are the most common cause of "unexpected Seq Scan despite existing index."
+</Recap>

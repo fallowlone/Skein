@@ -1,0 +1,178 @@
+---
+slug: 05-node-differences
+lang: ru
+track: browser
+unit: 01-event-loop
+order: 5
+title: "Event loop Node.js: фазы, nextTick и задержка цикла"
+summary: "Как шестифазный цикл Node на libuv отличается от браузерного — приоритет process.nextTick, setImmediate vs setTimeout(0), блокировка цикла и измерение задержки event loop."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["01-loop-model", "02-queues-and-scheduling"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["libuv", "node-phases", "process-nextTick", "setImmediate", "event-loop-lag", "worker-threads", "monitorEventLoopDelay"]
+sources:
+  - https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick
+  - https://nodejs.org/api/perf_hooks.html#performancemonitoreventloopdelay
+  - https://nodejs.org/api/worker_threads.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Ваш Node-сервис отлично обрабатывает 1000 запросов в секунду на стейджинге. В продакшене иногда выдаёт хвостовую задержку 500 мс. DevTools бесполезен — у Node нет кадров, нет INP. Нужен эквивалентный диагностический инструмент для headless-цикла: задержка event loop.
+</Hook>
+
+<Crux>У цикла Node шесть фаз — process.nextTick срабатывает до микрозадач, а любой блокирующий вызов задерживает все параллельные запросы.</Crux>
+
+<Explanation>
+
+## Цикл libuv Node: шесть фаз
+
+Управляемый libuv цикл Node проходит шесть фаз за итерацию:
+
+| Фаза | Что выполняется |
+| --- | --- |
+| timers | Истёкшие колбэки `setTimeout` / `setInterval` |
+| pending callbacks | Отложенные колбэки ошибок I/O |
+| idle / prepare | Внутреннее использование libuv |
+| poll | Блокировка на I/O (новые данные сокета, чтение файлов) |
+| check | Колбэки `setImmediate` |
+| close | События `close` (например, `socket.destroy()`) |
+
+Между **каждой** фазой дренируются две очереди: очередь `process.nextTick` (специфичная для Node, срабатывает **до** микрозадач) и стандартная очередь микрозадач (Promise.then, queueMicrotask).
+
+<NumbersCard
+  id="card-node-phases"
+  title="Приоритет очередей цикла Node"
+  data-lesson-visual
+  stats={[
+    { label: "1-й — синхронный код", value: "выполняется до завершения" },
+    { label: "2-й — process.nextTick", value: "дренируется между каждой фазой" },
+    { label: "3-й — микрозадачи (Promise.then)", value: "дренируются между каждой фазой" },
+    { label: "4-й — фаза timers", value: "setTimeout / setInterval" },
+    { label: "5-й — фаза check", value: "setImmediate" },
+    { label: "6-й — фаза close", value: "события close" },
+  ]}
+/>
+
+## process.nextTick — колбэк с наивысшим приоритетом в Node
+
+`process.nextTick` — колбэк с наивысшим приоритетом кроме синхронного кода. Срабатывает до микрозадач — до `Promise.then`. Неправильное использование вызывает тот же паттерн голодания, что и неуправляемые микрозадачи в браузере, но на один уровень приоритета выше:
+
+```javascript
+function tick() {
+  process.nextTick(tick); // голодание на уровне nextTick
+}
+tick(); // колбэки I/O, setImmediate, таймеры никогда не запустятся
+```
+
+Если нужно «запустить после этого синхронного блока», в Node предпочтительнее `queueMicrotask` или `Promise.resolve().then` — они имеют правильный приоритет относительно I/O.
+
+## setImmediate vs setTimeout(0) в Node
+
+Несмотря на имена, `setImmediate` не запускается немедленно, а `setTimeout(0)` — не с нулевой задержкой.
+
+- `setImmediate` запускается в фазе **check** (после I/O текущей итерации).
+- `setTimeout(0)` запускается в фазе **timers** **следующей** итерации.
+
+Внутри I/O-колбэка (чтение файла, чтение сокета) `setImmediate` всегда выигрывает — он срабатывает в фазе check текущей итерации до фазы timers следующей итерации. Вне I/O-колбэков порядок **недетерминирован** по спецификации. Код, полагающийся на порядок между этими двумя, хрупок; если нужен гарантированный порядок — используйте `queueMicrotask` (всегда раньше обоих) или явные зависимости.
+
+<Quiz
+  id="sr-node-quiz-1"
+  pieceSlug="05-node-differences"
+  lang="ru"
+  question="Внутри I/O-колбэка что срабатывает первым — `setImmediate(fn)` или `setTimeout(fn, 0)`, запланированные из этого колбэка?"
+  choices={[
+    { label: "setImmediate — он выполняется в фазе check текущей итерации, до фазы timers следующей итерации", correct: true },
+    { label: "setTimeout(0) — у него нулевая задержка, поэтому он срабатывает немедленно", misconception: "setTimeout(0) выполняется в фазе timers следующей итерации цикла, а не текущей. Внутри I/O-колбэка setImmediate стабильно выигрывает." },
+    { label: "Порядок недетерминирован", misconception: "Вне I/O-колбэков порядок недетерминирован, но внутри I/O-колбэка setImmediate стабильно срабатывает до setTimeout(0) из-за порядка фаз." },
+    { label: "Ни тот ни другой — оба ждут завершения фазы poll", misconception: "Фаза poll — это то, что доставила I/O-колбэк. После возврата колбэка цикл переходит в фазу check (setImmediate), затем возвращается к таймерам на следующей итерации." },
+  ]}
+/>
+
+<Quiz
+  id="sr-node-quiz-2"
+  pieceSlug="05-node-differences"
+  lang="ru"
+  question="Обработчик запроса Node делает синхронный `JSON.parse` тела 3 МБ. Какое влияние на другие запросы?"
+  choices={[
+    { label: "Каждый другой запрос в очереди этого процесса заблокирован на всю длительность JSON.parse — обычно 60–120 мс для 3 МБ на стандартном сервере", correct: true },
+    { label: "Только запросы, ожидающие того же файлового дескриптора, заблокированы", misconception: "Node однопоточный. Любая синхронная работа на главном потоке блокирует все задачи, а не только те, что разделяют файловый дескриптор." },
+    { label: "Node автоматически распределяет парсинг по доступным ядрам CPU", misconception: "Event loop Node однопоточный. Распределение работы CPU требует Worker threads (node:worker_threads) или дочерних процессов — автоматически не происходит." },
+    { label: "Влияние пренебрежимо, потому что JSON.parse работает в нативном коде", misconception: "Нативный код всё равно синхронный на главном потоке. 3 МБ при пропускной способности парсинга ~30 МБ/с — это ~100 мс блокировки независимо от языка реализации." },
+  ]}
+/>
+
+## Почему блокировка цикла Node важна
+
+У Node нет концепции кадров или ввода — но он однопоточный, как браузер. `JSON.parse` на 500 мс в обработчике запроса блокирует каждый другой запрос на том же процессе на 500 мс. Нет защитного барьера рендеринга. Решения:
+
+- Перенести работу, зависящую от CPU, в Worker thread (`node:worker_threads`).
+- Делать обработчики запросов async-first.
+- Использовать стриминговые парсеры (`JSONStream`, `oboe.js`) для больших тел.
+
+Та же дисциплина «более короткие задачи», которая лечит INP браузера, лечит хвостовую задержку Node.
+
+## Измерение задержки event loop в Node
+
+У браузера есть INP и LoAF. У Node есть **задержка event loop** — эквивалентный диагностический инструмент для headless-цикла. Идея: запланировать таймер на T мс и измерить, насколько поздно он фактически сработал; превышение над T — это время, когда цикл был заблокирован синхронной работой.
+
+`perf_hooks.monitorEventLoopDelay()` даёт гистограмму этой задержки с перцентилями. Здоровый процесс держит задержку p99 в однозначных мс; p99 в сотнях мс означает, что какой-то обработчик регулярно монополизирует поток, и каждый запрос, попадающий в это окно, получает хвостовую задержку.
+
+```javascript
+const { monitorEventLoopDelay } = require('perf_hooks');
+const h = monitorEventLoopDelay({ resolution: 10 });
+h.enable();
+// … позже:
+console.log(`p99 задержка: ${h.percentile(99)}мс`);
+```
+
+Это то же измерение, что INP в браузере — «как долго одна задача держала единственный поток выполнения» — только выраженное как задержка, а не задержка взаимодействия.
+
+<Quiz
+  id="sr-node-quiz-3"
+  pieceSlug="05-node-differences"
+  lang="ru"
+  question="В Node `process.nextTick(fn)` выполняется до `Promise.resolve().then(fn)`. Почему этот порядок важен?"
+  choices={[
+    { label: "nextTick может голодать микрозадачи так же, как микрозадачи могут голодать рендеринг в браузере — рекурсивный nextTick предотвращает I/O и всю последующую работу", correct: true },
+    { label: "Это означает, что колбэки nextTick надёжнее для упорядочивания работы после I/O", misconception: "Более высокий приоритет nextTick — это ловушка, а не фича. Для упорядочивания работы после I/O используйте queueMicrotask или резолвнутый Promise — они менее агрессивны и оставляют место для реальных I/O-колбэков." },
+    { label: "Порядок важен только внутри async-функций — вне их оба ведут себя идентично", misconception: "Порядок применяется везде в Node, а не только внутри async-функций. process.nextTick срабатывает до микрозадач во всех контекстах." },
+    { label: "Это деталь реализации; спецификация требует их эквивалентности", misconception: "process.nextTick — специфичный для Node API, который намеренно срабатывает до стандартной очереди микрозадач. ECMA-262 не определяет его; это дизайнерское решение Node с реальными последствиями для упорядочивания." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Различия в таймингах браузер-vs-Node вызывают продакшен-баги. Модуль, протестированный только в Node, может полагаться на срабатывание `process.nextTick` до `Promise.then`. Тот же код в браузере (где nextTick не существует) может использовать полифил, отображающий его на queueMicrotask — который имеет тот же приоритет, что и `Promise.then`. Код, чередующий nextTick и Promise.then и ожидающий специфичного порядка, даст разные результаты в каждой среде. Тестируйте предположения об асинхронном порядке в обеих средах, а не только в одной.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Цикл Node имеет шесть фаз, и process.nextTick срабатывает до микрозадач — неправильное использование голодает весь цикл. Блокировка потока Node блокирует все параллельные запросы; используйте Worker threads или стриминговые парсеры. Мониторьте здоровье с monitorEventLoopDelay() p99.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-node-differences-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Перечислите шесть фаз event loop Node по порядку.", a: "1. timers — истёкшие колбэки setTimeout/setInterval. 2. pending callbacks — отложенные колбэки ошибок I/O. 3. idle/prepare — внутренний libuv. 4. poll — блокировка на I/O (новые данные). 5. check — колбэки setImmediate. 6. close — события close. Между каждой фазой: дренируется очередь process.nextTick, затем очередь микрозадач." },
+    { q: "Почему process.nextTick(fn) — ловушка по сравнению с queueMicrotask(fn)?", a: "process.nextTick срабатывает до микрозадач — это колбэк с наивысшим асинхронным приоритетом в Node. Рекурсивный nextTick создаёт тот же паттерн голодания, что и рекурсивная микрозадача в браузере, но с более высоким приоритетом: он предотвращает микрозадачи, I/O-колбэки и все фазные колбэки от запуска до разрыва nextTick-цепочки. queueMicrotask срабатывает после nextTick и не перегружает I/O-приоритет так же. Используйте nextTick только когда явно нужно выполниться до микрозадач — что редко." },
+    { q: "Задержка event loop p99 сервиса Node выросла с 5 мс до 200 мс после нового релиза. Вероятная причина и как её найти?", a: "В горячем обработчике запроса добавилась синхронная операция — скорее всего JSON.parse/stringify большой нагрузки, синхронная крипто-операция или filter/sort по большому датасету в памяти. Для поиска: используйте clinic.js или node --prof для CPU-профиля процесса под нагрузкой, найдите синхронные функции, доминирующие во flame chart, измерьте длительность их вызовов с performance.now(). Лечение: переместить работу в Worker thread (node:worker_threads), перейти на стриминговый парсер или уменьшить нагрузку на стороне сервера." },
+  ]}
+/>
+
+<Recap lang="ru">
+Event loop Node управляется libuv через шесть упорядоченных фаз: timers, pending callbacks, idle/prepare, poll, check (setImmediate) и close. Между каждой фазой сначала дренируются колбэки `process.nextTick` (до микрозадач), что делает его примитивом с наивысшим асинхронным приоритетом в Node и риском голодания при рекурсивном использовании. `setImmediate` срабатывает в фазе check текущей итерации; `setTimeout(0)` — в фазе timers следующей итерации: внутри I/O-колбэков setImmediate всегда выигрывает; вне них порядок недетерминирован. Поскольку у Node нет шага рендеринга или событий ввода, эквивалент INP браузера — задержка event loop, измеряемая с `perf_hooks.monitorEventLoopDelay()`. Всплеск задержки p99 означает, что обработчик удерживает единственный главный поток — блокируя каждый параллельный запрос — и лечение идентично браузеру: более короткие задачи, стриминговые парсеры или Worker threads для работы, зависящей от CPU.
+</Recap>

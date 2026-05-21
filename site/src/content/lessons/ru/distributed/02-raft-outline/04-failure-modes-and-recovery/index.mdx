@@ -1,0 +1,140 @@
+---
+slug: 04-failure-modes-and-recovery
+lang: ru
+track: distributed
+unit: 02-raft-outline
+order: 4
+title: "Raft в реальном мире: partition, медленный диск и клиентская маршрутизация"
+summary: "Что Raft гарантирует при partition (CP, а не AP), как клиентские записи достигают лидера, и три production-failure — медленный диск, network jitter и дрейф часов — причины большинства реальных инцидентов."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - distributed/02-raft-outline/03-leader-election-in-depth
+deepensInto:
+  - distributed/02-raft-outline/05-advanced-extensions
+spiral: ["statefulness", "multiplexing"]
+concepts: ["cp-consistency", "client-routing", "fsync-latency", "network-partition", "clock-drift"]
+sources:
+  - https://raft.github.io/raft.pdf
+  - https://developer.hashicorp.com/consul/docs/concept/consensus
+  - https://www.yugabyte.com/blog/how-does-consensus-based-replication-work-in-distributed-databases/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Network partition разделяет твой 5-нодовый etcd-кластер: 3 ноды в DC A, 2 ноды в DC B. Клиенты начинают получать write-ошибки с одной стороны. Это баг? Или именно так Raft и должен работать?
+</Hook>
+
+<Crux>Raft — это CP: при partition minority-сторона останавливает прогресс, а не рискует split brain — недоступность это фича, а не баг.</Crux>
+
+<Explanation>
+
+## Поведение при partition: minority останавливается
+
+Когда partition изолирует minority нод (меньше большинства), они не могут коммитить или выбирать лидера. Они циклически проводят неудачные выборы, возвращая ошибки любому подключившемуся клиенту. Majority-сторона продолжает нормально.
+
+Это **CP-поведение** в смысле CAP: Raft выбирает консистентность над доступностью. Minority-сторона отказывает от сервиса, не рискуя двумя одновременными лидерами с конфликтующими коммитами.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Сторона | Ноды | Могут выбирать? | Могут коммитить? | Клиент видит |
+|---------|------|----------------|-----------------|-------------|
+| Majority (DC A) | 3 из 5 | Да | Да | Нормально |
+| Minority (DC B) | 2 из 5 | Нет | Нет | Ошибки / таймауты |
+
+</div>
+
+После восстановления partition: stale-ноды minority видят больший term в первом сообщении от majority-стороны, переходят в follower, обновляют term и догоняют лог через AppendEntries. Никаких потерь данных, никакого раздвоения состояния.
+
+## Trace partition: лидер в minority
+
+Более тонкий сценарий: сам лидер оказывается на minority-стороне.
+
+<TraceScenario
+  id="raft-mid-trace2"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="ru"
+  scenario="Проследи partition, где текущий лидер изолирован на minority-стороне."
+  steps={[
+    { prompt: "5-нодовый кластер A, B, C, D, E. A — лидер term 4. Partition: A и B изолированы от C, D, E.", reveal: "A всё ещё видит B; пытается коммитить, реплицируя на B (1 follower). Кворум (3 из 5) недостижим. Записи A накапливаются незакоммиченными. A продолжает слать heartbeat-ы только B." },
+    { prompt: "На стороне C, D, E что происходит?", reveal: "Heartbeat-ы от A перестают достигать C, D, E. Их election-таймеры срабатывают. C стартует выборы term 5, собирает голоса D и E (3 из 5 = большинство). C становится лидером." },
+    { prompt: "Состояние во время partition: существуют два 'лидера'?", reveal: "C — реальный лидер (может коммитить, имеет кворум). A — stale-лидер (не может коммитить, не может достичь кворума). Записи A term-4 никогда не завершаются. Никакого split brain: только C может реально коммитить." },
+    { prompt: "Partition восстанавливается. Heartbeat A достигает C.", reveal: "A шлёт AppendEntries с term=4. C отвечает текущим term=5. A видит больший term, переходит в follower, обновляет term до 5. Незакоммиченные entry A term-4 перезаписываются логом C через проверку целостности AppendEntries." },
+    { prompt: "Что испытали клиенты?", reveal: "Клиенты A получали таймауты или 'unable to commit' во время partition. Клиенты C, D, E работали нормально. После восстановления клиенты A перенаправляются к C. Raft был корректен всё время — одна сторона остановилась, другая продолжила." },
+  ]}
+/>
+
+## Клиентская маршрутизация
+
+Только лидер может коммитить записи. Стратегии маршрутизации клиентов:
+
+1. **Redirect:** любой follower, получивший запись, отвечает адресом текущего лидера. Клиент ретраит к тому адресу. Типичный паттерн в etcd, Consul, TiKV.
+2. **Leader cache:** клиенты кешируют последнего известного лидера и идут к нему напрямую; при неудаче откатываются к любой ноде.
+3. **Proxy:** балансировщик нагрузки отслеживает лидера через health API кластера.
+
+Задержка redirect обычно 1–5 мс на редком промахе. В steady state записи идут напрямую к лидеру.
+
+**Консистентность чтения:** линеаризуемые чтения должны идти через лидера (ReadIndex или lease — разбираются в следующем уроке). Eventually-consistent чтения могут идти к любому follower-у. Application-слой выбирает per query.
+
+## Три production-failure
+
+**1. Медленный fsync диска.** Каждое закоммиченное entry требует как минимум одного fsync на лидере и одного на каждом подтверждающем follower-е. На NVMe с battery-backed cache fsync занимает 50–100 мкс. На cloud-объёмах (EBS gp3, GCP balanced PD) — 1–3 мс. Если fsync лидера начинает превышать heartbeat-интервал, follower-ы таймаутят до того, как лидер подтвердит их AppendEntries, и стартуют выборы. Новый лидер попадает на ту же disk-проблему — цикл повторяется. Фикс: dedicated NVMe для Raft WAL, никогда shared cloud-объёмы.
+
+**2. Network jitter.** Краткий congestion или потеря пакетов обрывают heartbeat-ы и триггерят выборы, хотя кластер в основном здоров. Кластер испытывает 150–300 мс недоступности без длительных последствий. Pre-vote (разбирается в следующем уроке) митигирует это, требуя dry-run перед увеличением term.
+
+**3. Дрейф часов при lease read.** Если часы лидера убегают вперёд follower-ов, он может растянуть своё lease-окно за фактический heartbeat round и обслуживать чтения, которые уже потеряли lease — stale-данные возвращаются как актуальные. NTP-синхронизация всех нод — требование корректности для lease read, а не просто гигиена.
+
+<Quiz
+  id="raft-mid-q4"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="ru"
+  question="Fsync диска лидера Raft начинает занимать 2 секунды (вместо нормальных 50 мкс). Каков наблюдаемый симптом и почему?"
+  choices={[
+    { label: "Записи начинают возвращать stale-данные", misconception: "Stale-данные — проблема консистентности чтения. Disk-проблема влияет на commit latency и timing heartbeat." },
+    { label: "Follower-ы таймаутят и запускают выборы, потому что heartbeat-ы блокируются во время долгого fsync", correct: true },
+    { label: "Кластер молча замедляется, но продолжает коммитить", misconception: "Если fsync превышает election timeout, follower-ы рестартуют выборы, вызывая повторную смену лидера." },
+    { label: "Лидер начинает обслуживать чтения из stale log entry", misconception: "Stale чтений связаны с commit index, а не с disk latency напрямую." },
+  ]}
+/>
+
+<Quiz
+  id="raft-mid-q5"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="ru"
+  question="Raft описывается как CP, а не AP. Что это означает на практике при network partition?"
+  choices={[
+    { label: "Обе партиции продолжают обслуживать записи — Raft всегда доступен", misconception: "Это было бы AP-поведение (Dynamo/Cassandra). Raft явно останавливает minority-сторону, чтобы сохранить консистентность." },
+    { label: "Minority-сторона отказывает в записях, majority-сторона продолжает — недоступность намеренна", correct: true },
+    { label: "Raft реплицирует записи на обе стороны и мержит их после восстановления partition", misconception: "У Raft нет механизма мержа. Он предотвращает конфликтующие коммиты, требуя majority-кворум." },
+    { label: "Raft ставит на паузу все записи во время partition и возобновляет при восстановлении", misconception: "На паузу ставится только minority-сторона. Majority-сторона с кворумом продолжает нормально." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>При partition Raft жертвует доступностью на minority-стороне ради сохранения консистентности — это CP-гарантия. Три наиболее частых в production триггера нежелательных выборов: медленный fsync диска, network jitter и (для lease read) дрейф часов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="raft-mid-retrieval3"
+  lang="ru"
+  questions={[
+    { q: "5-нодовый Raft-кластер имеет 2 ноды в DC A и 3 в DC B. Межdc-связь падает на 5 минут. Что испытывают клиенты, подключённые к DC A?", a: "DC A (2 из 5 нод) не может собрать большинство, не может выбрать лидера и коммитить. Клиенты на DC A видят ошибки или таймауты на всех записях в течение 5-минутного partition. После восстановления связи ноды DC A переходят в follower, догоняют лог от лидера DC B, и сервис возобновляется. Клиенты DC B (majority-сторона) не испытали перебоя." },
+    { q: "Почему 'медленный диск' у лидера хуже, чем у follower-а?", a: "Fsync лидера должен завершиться до того, как он сможет подтвердить AppendEntries и отправить следующий heartbeat. Если fsync лидера занимает дольше election timeout, follower-ы считают лидера мёртвым и стартуют выборы. Медленный fsync follower-а задерживает его подтверждение, что может замедлить commit latency, но не триггерит выборы — лидер всё ещё может подтверждать другие follower-ы и достигать кворума." },
+    { q: "Каков правильный фикс для Raft-кластера, испытывающего выборы каждые 30–60 секунд?", a: "Сначала проверь etcd_disk_wal_fsync_duration_seconds p99. Если оно высокое (выше 50 мс), корневая причина — disk latency: лидер не может достаточно быстро слать heartbeat. Фикс: перенести Raft WAL на dedicated local NVMe. Если fsync latency нормальная, проверь etcd_network_peer_round_trip_time_seconds — высокий RTT вызывает тот же симптом с сетевой стороны. Как временную митигацию увеличь election timeout (например с 1с до 5с) для терпимости к медленным heartbeat-ам пока устраняется корневая причина." },
+  ]}
+/>
+
+<Recap lang="ru">
+Raft — это CP: при partition minority-сторона отказывает в коммитах, не рискуя split brain. Majority-сторона продолжает нормально; после восстановления stale-ноды догоняют лог через проверку целостности AppendEntries. Клиенты маршрутизируют записи к лидеру через redirect или кешированный адрес лидера. Три наиболее частых production-сбоя: медленный fsync диска лидера (триггерит выборы, блокируя heartbeat), network jitter (обрывает heartbeat без причины) и дрейф часов (ломает корректность lease read). У каждого есть известный фикс: dedicated NVMe, pre-vote и NTP-синхронизация соответственно.
+</Recap>

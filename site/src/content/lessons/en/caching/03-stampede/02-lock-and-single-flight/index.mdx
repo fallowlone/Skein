@@ -1,0 +1,186 @@
+---
+slug: 02-lock-and-single-flight
+lang: en
+track: caching
+unit: 03-stampede
+order: 2
+title: "Lock and single-flight: bounding concurrent rebuilds"
+summary: "A Redis SETNX lock serialises rebuilds across the fleet; in-process single-flight collapses the per-node herd to one Promise at zero network cost. Use both layers in sequence."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/01-what-is-stampede
+deepensInto:
+  - caching/03-stampede/03-xfetch-probabilistic
+spiral: ["statefulness", "encapsulation"]
+concepts: ["setnx-lock", "single-flight", "lock-ttl", "singleflight-group", "distributed-lock", "thundering-herd"]
+sources:
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+  - https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt
+  - https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+At a TTL boundary 100,000 requests hit a 50-node fleet. Each node runs an in-process single-flight. How many DB queries happen? Not 100,000 — but not 1 either. The answer reveals exactly where each mitigation layer does and does not help.
+</Hook>
+
+<Crux>Single-flight collapses the per-process herd to one Promise; a Redis lock collapses the per-fleet herd to one rebuild. Use both.</Crux>
+
+<Explanation>
+
+## Mitigation 1: distributed locking with SETNX
+
+The simplest cross-node mitigation: before running the rebuild, acquire a lock. The Redis primitive is:
+
+```
+SET lock:key uuid EX 30 NX
+```
+
+- `NX` — set only if the key does not exist (set-if-not-exists).
+- `EX 30` — auto-expire after 30 s (the safety net for crashed rebuilders).
+- `uuid` — the acquiring process's unique token (used for fencing, covered in the senior lesson).
+
+**What happens at expiry:**
+
+1. Request-1 arrives. Runs `SET lock:homepage:v1 uuid-A EX 30 NX` → success. Starts rebuild.
+2. Requests 2–N arrive. Run the same SET → fail (NX). They see the lock is held.
+3. Option A: each waiter re-checks the cache on a short sleep (50–200 ms). By the time they re-check, the rebuild may have finished.
+4. Option B: each waiter returns a fallback (stale value, default page, empty 204) immediately.
+5. Request-1 finishes rebuild. Writes new value. Deletes lock.
+
+The EX=30 is not the cache TTL — it is a safety net. If the rebuilder crashes at step 1 without deleting the lock, the lock auto-expires after 30 s. Set EX to longer than rebuild p99, but short enough that a crash does not stall traffic for too long. A typical target: 3× average rebuild duration.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Scenario | Without lock | With SETNX lock |
+|---|---|---|
+| 10-node fleet, 2,000 misses/node | 20,000 parallel DB queries | 10 DB queries (1 per node) or 1 with cross-node lock |
+| Rebuilder crashes mid-work | Herd repeats every TTL | Lock auto-expires after EX seconds |
+| Lock EX too short | N/A | Second rebuilder races — duplicate writes |
+
+</div>
+
+## Mitigation 2: in-process single-flight
+
+Distributed locks coordinate across the fleet; single-flight coordinates within one process. No Redis, no network round-trip — just an in-process map.
+
+**The pattern:**
+```
+type SingleFlight struct { mu sync.Mutex; inflight map[string]*call }
+```
+
+1. Request arrives; cache miss.
+2. Check in-process map for `key`. If a `Promise` / `call` already exists → subscribe to it, wait for resolution, return the shared result.
+3. If no entry → create a new entry (Promise), start the rebuild, add to map.
+4. When rebuild completes → resolve the Promise, remove from map. All subscribers get the result simultaneously.
+
+Go's standard library ships this as `singleflight.Group.Do`. Node.js equivalents: `p-memoize` or a manual `Map<key, Promise>` pattern.
+
+**Cost:** O(1) map lookup in process memory. No network. No lock acquire.
+
+**Scope:** per-process only. A 50-node fleet has 50 independent in-process maps. At a TTL boundary with 100,000 concurrent requests evenly distributed, single-flight alone gives 50 DB queries (1 per node), not 100,000. Add a distributed lock to go from 50 to 1.
+
+<Inset kind="why" lang="en">
+Facebook's memcache "leases" (Nishtala et al., NSDI 2013) implement the same idea at the cache layer: on a miss the cache returns a 64-bit lease token. Only the client holding the token may write back. Concurrent miss-clients get a null with no token and are told to wait. The result: peak DB query rate fell from 17K QPS to 1.3K QPS — roughly 13x — on a single hot key cluster.
+</Inset>
+
+## Composing both layers
+
+Neither layer is sufficient alone:
+
+- Single-flight only: 50-node fleet still sends 50 concurrent rebuilds.
+- Distributed lock only: waiters (all but 1 lock-holder) receive nothing while the rebuild runs — adds latency to every request at the boundary.
+
+**Combined stack:**
+
+1. Check in-process map → if Promise in flight, subscribe and wait.
+2. No in-flight Promise → try `SET lock:key uuid EX 30 NX`.
+3. Lock acquired → register Promise, start rebuild, write value, delete lock, resolve Promise.
+4. Lock NOT acquired → retry GET cache after 50 ms. Return stale fallback if still missing.
+
+<DragOrder
+  id="lock-sf-drag1"
+  lessonSlug="02-lock-and-single-flight"
+  lang="en"
+  prompt="Order the steps a request takes in a single-flight + Redis-lock stack:"
+  items={[
+    "Cache GET returns nil (miss)",
+    "Check in-process singleflight map — if a Promise exists, subscribe to it",
+    "No Promise: try SET lock:key uuid EX 30 NX",
+    "Lock acquired: register a new Promise and start the rebuild",
+    "Rebuild completes: write value to cache with TTL, delete the Redis lock, resolve the Promise",
+    "All in-process subscribers receive the resolved value via the shared Promise",
+    "Lock NOT acquired: wait 50 ms, re-check cache, return stale fallback if still missing",
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q1"
+  lessonSlug="02-lock-and-single-flight"
+  lang="en"
+  question="A 50-node fleet uses in-process single-flight only. At a TTL boundary 100,000 concurrent misses arrive. How many DB rebuilds happen?"
+  choices={[
+    { label: "1 — single-flight collapses everything to one rebuild", misconception: "Single-flight is per-process. 50 nodes = 50 independent in-process maps = up to 50 concurrent rebuilds." },
+    { label: "100,000 — single-flight only deduplicates cache reads, not rebuilds", misconception: "Single-flight is exactly the rebuild coalescer — it fires here, just per-node." },
+    { label: "50 — one rebuild per node because each node has its own in-process map", correct: true },
+    { label: "It depends on how fast the DB responds", misconception: "DB speed does not affect the count. The coordination scope (per-process) determines it." },
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q2"
+  lessonSlug="02-lock-and-single-flight"
+  lang="en"
+  question="What is the role of the EX value in a SETNX-based lock?"
+  choices={[
+    { label: "It sets how often the cache key is refreshed", misconception: "Cache TTL and lock TTL are independent. EX is about lock safety, not cache freshness." },
+    { label: "It bounds how long a crashed rebuilder can block the system — must be longer than rebuild p99 but short enough that crashes do not stall traffic for too long", correct: true },
+    { label: "It matches the cache TTL so both expire together", misconception: "Making them equal breaks things. A cache TTL of 60 s with a lock EX of 60 s means a 61-second rebuild leaves the lock expired and a duplicate rebuild starts." },
+    { label: "It rotates the lock key to prevent stale locks", misconception: "EX is purely a stuck-lock safety net. Key rotation is a separate concept." },
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q3"
+  lessonSlug="02-lock-and-single-flight"
+  lang="en"
+  question="A cache lock uses EX=10 s. The rebuild takes 12 s. What happens?"
+  choices={[
+    { label: "The rebuild is cancelled after 10 s", misconception: "Redis does not cancel the rebuilder. It only deletes the lock key after 10 s." },
+    { label: "The lock auto-expires, a second request acquires the lock and starts a parallel rebuild — both eventually write to the cache key (duplicate writes)", correct: true },
+    { label: "The rebuild is queued and runs after the lock expires", misconception: "There is no rebuild queue. The second request simply sees an absent lock and starts its own rebuild." },
+    { label: "Nothing — EX is only advisory", misconception: "EX is enforced by Redis. After 10 s the lock key is gone and the next NX acquire succeeds." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Single-flight = free per-process coalescing; Redis lock = cross-node serialisation at network cost. A 50-node fleet needs both: single-flight collapses 2,000 per-node to 1, then the lock collapses 50 nodes to 1. Pair the lock with a stale fallback so waiters never starve.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="lock-sf-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the practical difference between in-process single-flight and a Redis distributed lock, and when should you use each?", a: "Single-flight lives in process memory: O(1) lookup, no network cost. Use it first — it collapses N requests per process to 1 for free. A distributed lock lives in a shared store (Redis, etcd): every acquire costs a network round-trip (~1 ms). Use it second — after single-flight collapses N to 1 per node, the lock collapses M nodes to 1. The composition is: single-flight first (fast, free), distributed lock second (slow, shared). Add SWR or a stale fallback so waiters always get something while the rebuild is in flight." },
+    { q: "Facebook memcache leases (NSDI 2013) reduced peak DB QPS from 17K to 1.3K. What mechanism achieves this?", a: "The lease is a 64-bit token returned with a cache miss. Only the token-holder may write back. Concurrent miss-clients receive a null with no token and are told to wait and re-GET. Additionally, the cache server issues at most one lease per key per 10 seconds — a throttle on top of the single-writer constraint. The combination means only one client writes per 10-second window regardless of how many concurrent misses arrive." },
+    { q: "Why must the lock EX value be set to more than the rebuild p99, not just the rebuild average?", a: "If EX equals the average rebuild time, roughly half of all rebuilds will outlast the lock. Each one triggers a race: the lock auto-expires, a second request acquires it, starts a parallel rebuild, and both eventually write the cache key. EX must exceed the slowest realistic rebuild (p99.9 is better than p99) so that the lock is still held when the rebuild completes and the rebuilder can delete it explicitly. A common target: 3× the average rebuild duration." },
+  ]}
+/>
+
+<Recap lang="en">
+Two mitigations bound concurrent rebuilds without changing the cache TTL. In-process single-flight maintains a per-process map of in-flight Promises; every request that arrives while a rebuild is running subscribes to the same Promise instead of starting a new rebuild — zero network cost, zero coordination. A Redis SETNX distributed lock serialises rebuilds across the entire fleet using a `SET key uuid EX N NX` acquire and an explicit delete on completion. Composing both reduces 100,000 concurrent misses on a 50-node fleet to 1 DB query. The lock EX must exceed the rebuild p99; pair the lock with a stale fallback so waiters never block indefinitely.
+</Recap>

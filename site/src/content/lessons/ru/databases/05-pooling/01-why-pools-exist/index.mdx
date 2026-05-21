@@ -1,0 +1,171 @@
+---
+slug: 01-why-pools-exist
+lang: ru
+track: databases
+unit: 05-pooling
+order: 1
+title: "Connection pool: зачем амортизировать стоимость backend Postgres"
+summary: "Каждое соединение с Postgres форкает тяжёлый OS-процесс; пул кэширует небольшой набор открытых соединений, чтобы запросы никогда не платили стоимость установки заново."
+estMin: 8
+status: ready
+lessonType: topic
+level: junior
+prereqs: ["databases/04-mvcc-isolation/01-mvcc-basics"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["connection-pool", "backend-process", "client-side-pool", "server-side-pooler", "pool-exhaustion"]
+sources:
+  - https://www.pgbouncer.org/features.html
+  - https://node-postgres.com/guides/pool-sizing
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+
+<Hook>
+Отто пишет `new Client(); client.connect(); await client.query(...); client.end()` на каждый запрос. P99 = 80 мс — почти всё это connect. Свен переходит на пул. P99 падает до 4 мс: та же база, те же запросы.
+</Hook>
+
+<Crux>Пул кэширует TCP-соединения — запросы не платят TCP + TLS + auth. Без пула max_connections ограничивает ~100 параллельных backend'ов.</Crux>
+
+<Explanation>
+
+## Сколько на самом деле стоит открытие соединения с Postgres
+
+Открытие соединения с Postgres — не дёшево: TCP handshake, TLS handshake, Postgres protocol startup, аутентификация и форк backend OS-процесса. В сумме: **5–50 мс на новое соединение и ~10 МБ памяти на backend**, которую Postgres должен выделить.
+
+Делать это на каждый веб-запрос превращает setup соединения в доминирующую стоимость — до того как выполнится хоть один байт SQL.
+
+**Пул амортизирует стоимость**: открываем соединения один раз при старте, переиспользуем для тысяч запросов. Накладные расходы пула на запрос — поиск в списке за долю миллисекунды, а не полный OS round-trip.
+
+## Метафора: стоянка такси
+
+Connection pool — это стоянка такси, а не приложение для вызова такси. На стоянке несколько машин ждут у бордюра, готовые ехать. Подошёл, взял такси, доехал, вернул. Общее время на поездку: сама поездка.
+
+Вызывать новое такси на каждый квартал означает ждать диспетчера, ждать водителя, потом ехать. Большая часть времени — это dispatch. Пул убирает dispatch: несколько соединений держатся открытыми, готовы к следующему запросу.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Без пула</th>
+        <th class="border border-border px-3 py-2 text-left">С пулом</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Новые TCP + TLS + auth на запрос: 5–50 мс накладных расходов</td>
+        <td class="border border-border px-3 py-2">Берём idle-соединение: &lt;1 мс</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Каждый backend: ~10 МБ памяти Postgres</td>
+        <td class="border border-border px-3 py-2">Пул держит 5–20 соединений; память фиксирована</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">40 worker × 20 соединений = 800 — превышает max_connections=100</td>
+        <td class="border border-border px-3 py-2">PgBouncer мультиплексирует 800 клиентов на 50 backend</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Два слоя: client-side и server-side
+
+Современные стеки используют **два слоя пулов**:
+
+1. **Client-side pool** — живёт внутри каждого процесса приложения (node-postgres `Pool`, HikariCP для Java, asyncpg для Python). Кэширует 5–20 TCP-соединений на worker. Убирает стоимость connect на каждый запрос.
+
+2. **Server-side pooler** (PgBouncer, Supavisor, Odyssey) — отдельный процесс перед Postgres. Принимает тысячи клиентских соединений от всех worker и маршрутизирует их на маленький набор реальных backend Postgres. Убирает проблему лимита max_connections.
+
+Комбинация: каждый worker имеет ~10 дешёвых client-pool соединений к PgBouncer; PgBouncer держит 20–50 реальных backend. 10 000 клиентов приложения становятся устойчивыми на Postgres с `max_connections = 100`.
+
+<Inset kind="why" lang="ru">
+Почему Postgres использует один OS-процесс на соединение, а не потоки? История: Postgres создавался до появления надёжных pthreads на большинстве Unix-систем. Модель процессов изолирует сбои (OOM одного backend не портит других), упрощает управление памятью — у каждого backend собственная куча. Цена — неустранимые накладные расходы на соединение, которые пулы и призваны поглощать.
+</Inset>
+
+## Сбой при масштабировании без server-side pooler
+
+Команда запускает 4 worker, client pool `max: 20`, Postgres `max_connections = 100`. Масштабируют до 40 worker. Итого соединений: 40 × 20 = 800. Postgres жёстко ограничивает 100. Результат: `FATAL: sorry, too many clients already` на 700 попыток. Приложение падает.
+
+Фикс: добавляем PgBouncer. Worker подключаются к PgBouncer (8000 client-соединений — дёшево, ~2 КБ каждое). PgBouncer держит 50 реальных backend. Итого backend Postgres: 50. Проблема исчезает.
+
+<Quiz
+  id="01-why-pools-exist-quiz-1"
+  lessonSlug="01-why-pools-exist"
+  lang="ru"
+  question="Почему открытие нового соединения с Postgres на каждый HTTP-запрос — плохая идея?"
+  choices={[
+    { label: "Каждое соединение стоит ~10 МБ памяти БД и 5–50 мс на handshake; per-request setup становится доминирующей стоимостью, и у Postgres жёсткий лимит max_connections", correct: true },
+    { label: "Postgres однопоточный, поэтому несколько соединений не помогают", misconception: "Postgres обрабатывает много соединений параллельно через процессы. Проблема в стоимости на соединение, а не в однопоточности." },
+    { label: "TLS handshake не поддерживается per-connection в Postgres", misconception: "TLS работает; просто добавляет к накладным расходам на соединение." },
+    { label: "Postgres берёт плату за каждое соединение", misconception: "Не берёт — выделяет OS-ресурсы, которые ограничены." },
+  ]}
+/>
+
+<Quiz
+  id="01-why-pools-exist-quiz-2"
+  lessonSlug="01-why-pools-exist"
+  lang="ru"
+  question="У worker client pool max 20. Масштабируете до 40 worker, Postgres имеет max_connections=100. Что произойдёт?"
+  choices={[
+    { label: "Postgres отвергает большинство попыток, потому что 40 × 20 = 800 намного больше max_connections=100", correct: true },
+    { label: "Postgres автоматически делит max_connections поровну между worker", misconception: "Не делит — max_connections это жёсткий общий лимит." },
+    { label: "Client-pool соединения бесплатны и безлимитны", misconception: "Каждое клиентское соединение к Postgres открывает реальный OS-процесс backend." },
+    { label: "Количество worker автоматически адаптируется к max_connections", misconception: "Worker не самоограничиваются; база отвергает излишек и возвращает ошибки." },
+  ]}
+/>
+
+<DragOrder
+  id="01-why-pools-exist-drag-1"
+  lessonSlug="01-why-pools-exist"
+  lang="ru"
+  prompt="Расположи шаги, происходящие при заимствовании соединения из пула:"
+  items={[
+    { id: "a", label: "Код приложения вызывает pool.query(sql, params)" },
+    { id: "b", label: "Пул ищет idle-соединение в кэше" },
+    { id: "c", label: "Если есть — заимствует; если нет и под max — открывает новое; если на max — ждёт или отвергает" },
+    { id: "d", label: "Пул отправляет запрос Postgres через заимствованное соединение" },
+    { id: "e", label: "Postgres выполняет запрос и возвращает строки" },
+    { id: "f", label: "Пул возвращает соединение в idle-список — НЕ закрывает его" },
+    { id: "g", label: "Код приложения получает строки и продолжает" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+<MetaphorComplete
+  id="01-why-pools-exist-metaphor-1"
+  lessonSlug="01-why-pools-exist"
+  lang="ru"
+  setup="Заполни пропуск: connection pool относится к соединениям Postgres так же, как пул потоков относится к OS-___ — небольшой кэш дорогих переиспользуемых ресурсов, амортизирующий стоимость setup на множество коротких задач."
+  accepted={["потокам", "поток", "threads", "threads"]}
+  canonical="потокам"
+  explanation="Пул потоков кэширует OS-потоки, чтобы рабочие элементы не платили overhead за создание на каждую задачу. Пул соединений кэширует соединения с БД, чтобы запросы не платили TCP + TLS + auth на каждый запрос. Один и тот же паттерн, разный ресурс."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Connection pool кэширует открытые соединения Postgres: client-side пулы (5–20 на worker) убирают per-request setup; server-side pooler (PgBouncer) мультиплексирует тысячи клиентских соединений на десятки реальных backend, обходя лимиты max_connections.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-why-pools-exist-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Двумя предложениями: что такое connection pool и почему он всегда нужен в продакшн Postgres?", a: "Connection pool — это кэш уже открытых, переиспользуемых TCP-соединений с Postgres, которым владеет либо приложение (client pool), либо отдельный процесс перед Postgres (server pooler, например PgBouncer). Без пулинга каждый backend стоит 5–10 МБ и занимает слот в max_connections (по умолчанию 100), поэтому нельзя масштабироваться более чем на несколько worker до того, как база начнёт отвергать соединения; пул также амортизирует стоимость setup 5–50 мс на соединение, превращая её в checkout меньше 1 мс." },
+    { q: "Что решает каждый из двух слоёв пула?", a: "Слой 1: client-side pool живёт внутри каждого worker и кэширует 5–20 соединений; убирает стоимость TCP + TLS + auth на каждый запрос (50 мс overhead → под 1 мс). Слой 2: server-side pooler (PgBouncer и др.) сидит перед Postgres и мультиплексирует тысячи входящих клиентских соединений на маленький пул реальных backend; решает исчерпание max_connections, которое возникает, когда у многих worker каждый есть client pool." },
+    { q: "Почему Postgres использует один OS-процесс на соединение и каков практический вывод для пулинга?", a: "Postgres создавался до надёжных pthreads на Unix и использует модель process-per-connection для изоляции сбоев и простого управления частной памятью. Следствие: каждое соединение форкает backend (~10 МБ), а max_connections — жёсткий лимит на их количество одновременно. Именно поэтому каждый продакшн-деплой Postgres нуждается в pooler: этот overhead нельзя убрать на стороне сервера." },
+  ]}
+/>
+
+<Recap lang="ru">
+Postgres создаёт один OS-процесс на соединение — каждый backend потребляет ~10 МБ и занимает слот в `max_connections` (по умолчанию 100). Открытие соединения стоит 5–50 мс TCP + TLS + auth overhead. Connection pool решает оба вопроса: client-side pool кэширует соединения на worker, чтобы запросы никогда не платили setup; server-side pooler, например PgBouncer, мультиплексирует тысячи клиентских соединений на несколько десятков реальных backend, удерживая количество backend Postgres ниже `max_connections`. Без обоих слоёв масштабирование с 4 до 40 worker по 20 соединений каждый создаёт 800 попыток соединения против 100-слотового лимита — гарантированные ошибки.
+</Recap>

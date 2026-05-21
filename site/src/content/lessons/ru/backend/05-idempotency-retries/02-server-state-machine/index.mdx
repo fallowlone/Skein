@@ -1,0 +1,159 @@
+---
+slug: 02-server-state-machine
+lang: ru
+track: backend
+unit: 05-idempotency-retries
+order: 2
+title: "Серверный state machine: четыре состояния idempotency key"
+summary: "Когда запрос с Idempotency-Key приходит на сервер, он проходит четыре состояния: new, in-flight, replay, mismatch. Fingerprint запроса ловит переиспользование ключа с другим намерением."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/05-idempotency-retries/01-why-idempotency
+deepensInto:
+  - backend/05-idempotency-retries/05-concurrency-and-cache
+spiral: ["statefulness"]
+concepts: ["idempotency-state-machine", "request-fingerprint", "409-conflict", "422-mismatch", "idempotency-cache", "TTL"]
+sources:
+  - https://stripe.com/blog/idempotency
+  - https://docs.stripe.com/api/idempotent_requests
+  - https://brandur.org/idempotency-keys
+  - https://httptoolkit.com/blog/idempotency-keys/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+POST с Idempotency-Key K1 прилетает на сервер. Через две секунды тот же ключ прилетает снова — но поле amount изменилось. Проиграть старый ответ? Обработать новое списание? Отказать? Неправильный выбор — либо потерянное изменение, либо двойное списание.
+</Hook>
+
+<Crux>Четыре состояния на ключ: new, in-flight, replay, mismatch. Fingerprint (хеш body) отличает безопасный replay от молчаливой перезаписи.</Crux>
+
+<Explanation>
+
+## Четыре состояния
+
+Когда запрос с `Idempotency-Key` приходит, сервер ищет ключ в кеше дедупликации (таблица Postgres или запись Redis). Ровно четыре исхода:
+
+**1. New** — строки для этого ключа нет.
+Сервер вставляет `(key, fingerprint, status=in_progress, expires_at)` в той же транзакции, что бизнес-логика, обрабатывает работу, затем обновляет строку: `(response_body, response_status, status=completed)`.
+
+**2. In-flight** — строка с `status=in_progress` существует.
+Другой запрос уже обрабатывает этот ключ конкурентно. Сервер возвращает **409 Conflict** с `{"error": "idempotency key in use"}` немедленно. Клиент откатывается и ретраит.
+
+**3. Replay** — строка с `status=completed` и сохранённым ответом.
+Сервер возвращает кешированный body и status code без повторного запуска бизнес-логики. Клиент получает одно подтверждение. Клиент списан один раз.
+
+**4. Mismatch** — строка для этого ключа есть, но fingerprint входящего запроса не совпадает.
+Клиент переиспользовал ключ с другим намерением (другая сумма, другой получатель). Сервер возвращает **422 Unprocessable Entity**. Клиент должен сгенерировать новый ключ для новой операции.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Состояние | Условие | Ответ сервера | Бизнес-логика запускается? |
+|---|---|---|---|
+| New | Строки для ключа нет | 200/201 (после обработки) | Да |
+| In-flight | Строка, status=in_progress | 409 Conflict | Нет |
+| Replay | Строка, status=completed, fingerprint совпадает | 200 (кеш) | Нет |
+| Mismatch | Строка, fingerprint отличается | 422 Unprocessable Entity | Нет |
+
+</div>
+
+## Почему fingerprint запроса важен
+
+Fingerprint — это хеш тела запроса (и опционально метода, пути и ключевых заголовков). Stripe хеширует body; платёжные API, зависящие от `Stripe-Account`, включают его явно.
+
+Без fingerprint клиент, случайно переиспользовавший ключ для другой суммы, молча получит исходный ответ — новая сумма потеряна навсегда. Fingerprint превращает это в явную ошибку (422) вместо молчаливой потери данных.
+
+**Стоимость:** одна SHA-256 на запрос — микросекунды. Дешёвая страховка.
+
+## Где хранить кеш
+
+**Таблица Postgres** (простая, durable):
+
+```sql
+CREATE TABLE idempotency_keys (
+  key          TEXT PRIMARY KEY,
+  fingerprint  TEXT NOT NULL,
+  response_body JSONB,
+  response_status INT,
+  status       TEXT NOT NULL DEFAULT 'in_progress',
+  expires_at   TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX ON idempotency_keys (expires_at);
+```
+
+Дневная cleanup-задача удаляет строки с истёкшим `expires_at`. Stripe v1 держал ключи 24 часа; v2 расширил до 30 дней.
+
+**Redis с TTL** (высокий throughput):
+`SETNX key value EX ttl_seconds` — атомарный set-if-not-exists. Redis быстрее, но рискует потерять записи при async-fsync сбое. Платёжные API с юридической ответственностью держат авторитетную запись в Postgres и используют Redis как hot-path read-through cache.
+
+<Inset kind="why" lang="ru">
+Почему 409 для in-flight вместо блокировки до завершения первого запроса? Блокировка занимает серверное соединение на всё время потенциально медленного внешнего API-вызова (десятки-сотни миллисекунд). 409 дешевле: клиент ретраит после короткого backoff, к тому времени первый запрос обычно уже завершился и строка перешла в replay-состояние.
+</Inset>
+
+<Quiz
+  id="state-machine-q1"
+  lessonSlug="02-server-state-machine"
+  lang="ru"
+  question="POST в /charge с Idempotency-Key K1 завершился успешно. Клиент ретраит K1 с другим полем amount. Что должен вернуть сервер?"
+  choices={[
+    { label: "200 OK с исходным ответом (молча проигнорировать изменение)", misconception: "Тихий replay при изменении body теряет намерение нового списания. Клиент может никогда не получить исправленный заряд." },
+    { label: "200 OK с новым списанием на новую сумму", misconception: "Обработать дважды под одним ключом — это ровно то, что идемпотентность должна предотвращать." },
+    { label: "422 Unprocessable Entity — ключ переиспользован с mismatched fingerprint", correct: true },
+    { label: "500 Internal Server Error", misconception: "Сервер корректно понял запрос. Это клиентский баг переиспользования ключа, а не серверная ошибка." },
+  ]}
+/>
+
+<Quiz
+  id="state-machine-q2"
+  lessonSlug="02-server-state-machine"
+  lang="ru"
+  question="Почему сервер возвращает 409, а не блокируется, когда видит ключ со status=in_progress?"
+  choices={[
+    { label: "409 — стандартный код для дублирующихся ресурсов", misconception: "409 обычно сигнализирует о конфликте. Здесь он говорит о том, что идентичная операция уже в процессе — клиент должен отступить." },
+    { label: "Блокировка заняла бы соединение на всё время первого запроса, а 409 позволяет клиенту ретраить после короткого backoff", correct: true },
+    { label: "Сервер не может читать поле status во время in_progress", misconception: "Сервер может читать строку в любое время. Выбор 409 — намеренное дизайн-решение для эффективности соединений." },
+    { label: "RFC 9110 требует 409 для конкурентного использования idempotency key", misconception: "RFC 9110 не специфицирует это. Это конвенция Stripe, широко принятая." },
+  ]}
+/>
+
+<Quiz
+  id="state-machine-q3"
+  lessonSlug="02-server-state-machine"
+  lang="ru"
+  question="Клиент ретраит Idempotency-Key K1 с тем же body через 26 часов после первой попытки (Stripe v1 TTL = 24 часа). Что делает сервер?"
+  choices={[
+    { label: "Возвращает кешированный ответ 26-часовой давности", misconception: "Cleanup-задача удалила строку после 24 часов. У сервера нет памяти о K1." },
+    { label: "Обрабатывает запрос как новый, списывает снова — риск двойного списания", correct: true },
+    { label: "Возвращает 410 Gone, сигнализируя об истечении ключа", misconception: "Истёкший ключ выглядит идентично новому ключу с точки зрения сервера — состояния 'истёкший ключ' нет." },
+    { label: "Возвращает 422, потому что ключ уже использовался", misconception: "422 — для mismatched fingerprint на существующей строке, а не для истёкшей строки, которая уже удалена." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Четыре состояния на ключ: new (обработать + сохранить), in-flight (409), replay (вернуть кеш), mismatch (422). Fingerprint body предотвращает молчаливую потерю при переиспользовании ключа с другим намерением.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="state-machine-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Зачем нужен fingerprint запроса (хеш body) наряду с idempotency key, и что ломается без него?", a: "Fingerprint ловит клиентские баги: тот же ключ переиспользован для другой операции. Без него сервер проигрывает исходный ответ как есть — если клиент хотел списать $55 и переиспользовал ключ от $50, пользователь видит ответ $50 и намерение $55 молча теряется. С fingerprint сервер обнаруживает несоответствие и возвращает 422, заставляя клиента исправить ключ или body." },
+    { q: "Проследи POST /charge, который завершился успешно, потом ретраится с тем же ключом и body. Что происходит на каждом шаге?", a: "Первая попытка: сервер вставляет (K1, hash(body), status=in_progress), проводит списание, возвращает 200, обновляет строку до status=completed с body ответа. Вторая попытка с тем же ключом и body: сервер ищет K1, находит status=completed, fingerprint совпадает — возвращает кешированный 200 без повторного вызова обработчика. Клиент списан один раз, получает одно подтверждение." },
+    { q: "Когда хранить idempotency key в Postgres, а когда в Redis, и какой компромисс по durability?", a: "Postgres (с ACID транзакциями) гарантирует, что ключ никогда не будет потерян — подходит для платёжных API, где потеря ключа может вызвать двойное списание. Redis (SETNX с TTL) быстрее и масштабируется горизонтально, но async fsync означает: крах в течение миллисекунд может потерять запись. Production платёжные системы используют Redis как hot-path cache, backed by Postgres: Redis miss проваливается в Postgres для восстановления авторитетной записи." },
+  ]}
+/>
+
+<Recap lang="ru">
+Каждый lookup idempotency key разрешается в одно из четырёх состояний: new (вставить и обработать), in-flight (409 для backoff), replay (вернуть кешированный ответ), mismatch (422 — fingerprint изменился). Fingerprint запроса — SHA-256 body — делает replay безопасным: без него переиспользованный ключ с другой суммой молча вернул бы неправильный ответ. Stripe v1 держит ключи 24 часа; v2 расширил до 30 дней для compliance. После истечения строка удалена, сервер обрабатывает запрос как новый.
+</Recap>

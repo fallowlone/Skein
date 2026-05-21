@@ -1,0 +1,246 @@
+---
+slug: 04-incident-to-enforcement
+lang: ru
+track: performance
+unit: 08-putting-it-together-perf
+order: 4
+title: "От инцидента к enforcement: SLO burn до верифицированного исправления за 35 минут"
+summary: "Полный проработанный пример: SLO burn на /checkout, диагностированный через непрерывное профилирование и распределённые трейсы, исправленный за 35 минут и защищённый enforcement gates от возврата того же класса регрессий."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/08-putting-it-together/03-observability-stack-and-gates
+  - performance/05-n-plus-one/01-what-is-n-plus-one
+  - performance/04-gc/01-gc-pause-anatomy
+deepensInto:
+  - performance/08-putting-it-together/05-culture-economics-and-scale
+spiral: ["latency", "statefulness"]
+concepts: ["incident-loop", "root-cause-analysis", "enforcement-gates", "postmortem"]
+sources:
+  - https://sre.google/sre-book/eliminating-toil/
+  - https://github.com/grafana/pyroscope
+  - https://opentelemetry.io/docs/specs/otel/profiles/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Алерт SLO burn срабатывает в 10:47. Без непрерывного профилирования и распределённых трейсов дежурный тратит день на угадывание. С ними она находит первопричину и выпускает исправление к 11:22. Окно в 35 минут — не удача; это возврат предыдущих инвестиций в observability под давлением.
+</Hook>
+
+<Crux>Со стеком на месте: profile-classify-trace-fix-verify-enforce разрешает SLO burn за час. Без него — часы, затем повтор.</Crux>
+
+<Explanation>
+
+## Инцидент: /checkout p99 сжигает SLO
+
+В 10:47 срабатывает алерт: "checkout SLO p99 burn rate 14x — 12 часов error budget сожжено за 6 часов."
+
+Дежурный инженер открывает единый дашборд. Деплоев в последний час нет. Трафик на базовом уровне. Это не спайк — что-то изменилось в downstream-сервисе.
+
+## Шаг 1: Observe — 60 секунд
+
+Prometheus: /checkout p99 вырос с 240 мс до 1,4 с. Начался примерно два часа назад. RPS ровный. Error rate ровный. Чистая деградация латентности.
+
+RUM: LCP на стороне клиента не затронут. Это server-side проблема, не bundle-регрессия.
+
+## Шаг 2: Profile — 90 секунд
+
+Pyroscope, отфильтрованный по /checkout за последние два часа:
+
+```
+runtime.scanobject:   22%   (базовый: 4%)
+runtime.mallocgc:      9%   (базовый: 2%)
+encoding/json.Marshal: 24%  (базовый: 4%)
+handlers.Checkout:      6%
+pgx.Query:             12%
+```
+
+GC-фреймы выросли с 6% до 31%. JSON Marshal вырос с 4% до 24%. Что-то производит намного больше мусора и сериализует намного большие payload, чем прежде.
+
+## Шаг 3: Classify — 60 секунд
+
+Allocation-bound (family: GC / фрагмент 04), причём overhead сериализации указывает на необычно большой ответ, производимый, а не только обрабатываемый. Это паттерн family N+1 (фрагмент 05), применённый к межсервисным payload: что-то upstream начало возвращать bulk-данные там, где было достаточно summary.
+
+Амдал по совокупным фреймам GC + Marshal (55%): `1 / (1 - 0,55) = 2,2x`. Это снизит p99 с 1,4 с до 636 мс — всё ещё выше SLO 200 мс. Первопричина — не просто "GC горячий"; это то, что *вызывает* давление GC и Marshal.
+
+## Шаг 4: Корреляция трейсов — 5 минут
+
+Открыть Tempo, отфильтровать по медленным /checkout трейсам за последние два часа. Waterfall показывает:
+
+```
+[span] handle_request          1820мс
+  [span] auth_check               5мс
+  [span] order_query             340мс   (базовый: 12мс)
+  [span] inventory_check         850мс   (базовый: 80мс)
+  [span] payment_call            280мс   (базовый: 90мс)
+  [span] serialise_response      340мс   (базовый: 8мс)
+```
+
+Каждый downstream span и шаг сериализации деградировали на один и тот же множитель. Это паттерн upstream-сервиса, возвращающего ответ намного больше ожидаемого — каждый потребитель раздувается пропорционально.
+
+Проверить историю деплоев: inventory-service выпущен в 10:31 — за 16 минут до начала SLO burn. Diff: добавлено `include_full_sku_details: true` в ответ /inventory. Прежде возвращались только SKU ID; теперь — полные SKU-объекты. Payload ответа: 8 КБ → 85 КБ на вызов.
+
+Сервис /checkout получает 85 КБ, десериализует (больше аллокаций), выбирает 0,1% нужных данных, затем сериализует собственный ответ с раздутыми данными инвентаря. Все три центра затрат — GC, Marshal, downstream latency — ведут к одной причине.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Сигнал</th>
+        <th class="border border-border px-3 py-2 text-left">Наблюдение</th>
+        <th class="border border-border px-3 py-2 text-left">Вывод</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Pyroscope GC-фреймы</td>
+        <td class="border border-border px-3 py-2">6% → 31%</td>
+        <td class="border border-border px-3 py-2">Намного больше мусора на запрос</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Pyroscope json.Marshal</td>
+        <td class="border border-border px-3 py-2">4% → 24%</td>
+        <td class="border border-border px-3 py-2">Намного больший payload сериализуется</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Tempo: span inventory_check</td>
+        <td class="border border-border px-3 py-2">80мс → 850мс</td>
+        <td class="border border-border px-3 py-2">Upstream-сервис намного медленнее или возвращает больше</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Лог деплоев: inventory-service</td>
+        <td class="border border-border px-3 py-2">Деплой в 10:31</td>
+        <td class="border border-border px-3 py-2">Payload вырос с 8 КБ до 85 КБ на вызов</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">В совокупности</td>
+        <td class="border border-border px-3 py-2">Все деградировавшие span коррелируют</td>
+        <td class="border border-border px-3 py-2">Единственная первопричина: деплой inventory-service</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Шаг 5: Fix — 15 минут
+
+Два параллельных действия:
+
+1. Откатить деплой inventory-service через консоль деплоев.
+2. Добавить защитную проверку в /checkout: отклонять любой ответ инвентаря более 64 КБ с ошибкой до обработки.
+
+Оба выпущены в течение 15 минут.
+
+## Шаг 6: Verify — 10 минут
+
+Pyroscope после отката: `scanobject` возвращается к 4%, `mallocgc` — к 2%, `json.Marshal` — к 4%. Профиль на базовом уровне.
+
+Prometheus: /checkout p99 на 235 мс в течение 5 минут после завершения отката. Burn rate SLO падает до 0,1x.
+
+Подтверждено улучшение и локального профиля, и headline-метрики.
+
+## Шаг 7: Enforce — следующий спринт
+
+Три enforcement-действия, принятые в следующем спринте:
+
+**А. PR gate: размер межсервисного ответа.** Любой PR к любому сервису, изменяющий схему ответа, должен пройти contract test, проверяющий, что размер тела не превышает 2x текущего медианного. PR, увеличивающие ответ более чем в 2 раза, требуют явного ревью SRE.
+
+**Б. Production alert: p99 размера payload на endpoint.** Добавить метрику, отслеживающую p99 байт тела ответа на downstream вызов. Алерт при росте более чем на 50% за неделю. При первом срабатывании этого класса регрессии алерт маршрутизируется к дежурному ответственной команды до сгорания SLO.
+
+**В. Запись в runbook.** "Спайк p99 на /checkout с пропорциональной деградацией всех span → проверить деплои upstream за последние 2 часа на изменения схемы ответа. Проверить inventory-service в первую очередь." Следующий дежурный решит ту же задачу менее чем за 5 минут вместо начала с нуля.
+
+**Итого от алерта до исправления:** 35 минут.
+**Итого до enforcement:** один спринт (1 неделя).
+**Инженерных часов: ответ на инцидент + postmortem + enforcement:** 6 часов.
+**Без непрерывного профилирования + трейсов:** оценочно 4–8 часов только на инцидент.
+
+<Inset kind="why" lang="ru">
+Шаг enforcement — это то, что отличает дисциплину от пожаротушения. Инцидент занял 35 минут. Без gate тот же класс регрессии — другой сервис с неожиданно выросшим ответом — займёт ещё 35 минут через 3–6 месяцев. С gate каждый будущий PR, изменяющий схему ответа, проверяется. Разовая стоимость добавления gate — менее 4 инженерных часов. Повторяющаяся стоимость без него — 35+ минут на инцидент, потенциально десятки раз.
+</Inset>
+
+<NumbersCard
+  id="04-incident-numbers"
+  title="Числа по циклу инцидента"
+  stats={[
+    { label: "Время от алерта до верифицированного исправления (с полным стеком)", value: "35 минут" },
+    { label: "Время от алерта до первопричины (без непрерывного профилирования)", value: "4–8 часов" },
+    { label: "Рост payload inventory-service", value: "8 КБ → 85 КБ" },
+    { label: "Деградация p99 на /checkout", value: "240мс → 1820мс" },
+    { label: "p99 после отката (в течение 5 мин)", value: "235мс" },
+    { label: "Инженерных часов на добавление enforcement gates", value: "~4 часа" },
+    { label: "Среднее количество предотвращённых инцидентов на enforcement gate", value: "3–8 в год" },
+  ]}
+  data-lesson-visual
+/>
+
+<Quiz
+  id="04-incident-quiz-1"
+  lessonSlug="04-incident-to-enforcement"
+  lang="ru"
+  question="В инциденте /checkout профиль показал спайки GC и json.Marshal. Наивная реакция — исправить allocation hotspot. Почему это неверно?"
+  choices={[
+    { label: "GC и Marshal — оба симптомы upstream первопричины. Исправление аллокаций в /checkout при сохранении раздутого ответа от inventory-service вернёт то же давление со следующим запросом.", correct: true },
+    { label: "GC hotspot нельзя исправить", misconception: "GC hotspot исправимы через переиспользование пулов, снижение аллокаций и ленивую сериализацию. Проблема в том, что исправление симптома без первопричины означает его возврат." },
+    { label: "Marshal не является bottleneck", misconception: "Marshal на 24% CPU — значительный bottleneck. Суть в том, что это симптом, вызванный большим payload от inventory-service." },
+    { label: "Данные профиля ненадёжны", misconception: "Данные непрерывного профилирования точны. Проблема — в интерпретации: оба фрейма являются следствиями одной причины." },
+  ]}
+/>
+
+<Quiz
+  id="04-incident-quiz-2"
+  lessonSlug="04-incident-to-enforcement"
+  lang="ru"
+  question="Почему шаг enforcement (добавление CI gates и записей в runbook) важнее самого исправления?"
+  choices={[
+    { label: "Исправление решает один инцидент. Enforcement gate решает весь класс инцидентов навсегда. Gate, добавленный после одного инцидента, предотвращает тот же класс для всех будущих инженеров во всех будущих PR.", correct: true },
+    { label: "Исправление может быть неверным", misconception: "Исправление подтверждено шагом Verify. Enforcement важен, потому что будущие исправления должны предотвращать повторение, а не потому что текущее исправление сомнительно." },
+    { label: "Enforcement быстрее реализовать", misconception: "Enforcement обычно занимает больше времени, чем само исправление. Его ценность — в предотвращении десятков будущих инцидентов." },
+    { label: "Этого требует менеджмент", misconception: "Enforcement — не бюрократия; это механизм, превращающий стоимость инцидента в системную защиту." },
+  ]}
+/>
+
+<DragOrder
+  id="04-incident-drag-1"
+  lessonSlug="04-incident-to-enforcement"
+  lang="ru"
+  prompt="Упорядочите диагностические шаги инцидента /checkout от первого наблюдения до подтверждённой первопричины:"
+  items={[
+    { id: "a", label: "SLO алерт: p99 1,4с, RPS ровный, RUM не затронут — только server-side" },
+    { id: "b", label: "Профиль показывает GC-фреймы 6% → 31%, json.Marshal 4% → 24%" },
+    { id: "c", label: "Classify: allocation-bound + serialisation-bound; первопричина должна быть upstream" },
+    { id: "d", label: "Трейс: все downstream span деградировали пропорционально — upstream bulk payload" },
+    { id: "e", label: "Лог деплоев: inventory-service выпущен в 10:31 с полными SKU-деталями в ответе" },
+    { id: "f", label: "Откат inventory-service; профиль и p99 возвращаются к базовому уровню в течение 5 минут" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Полный performance-инцидент — от алерта до исправления до enforcement — работает менее чем за час при наличии пятисигнального стека. Ключевой инсайт: симптомы профиля указывали на кросс-сервисную первопричину, которую никакое единственное исправление /checkout не устранило бы. Enforcement превращает локальное исправление в системный gate, предотвращающий возврат всего класса.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-incident-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, как каждый из пяти observability-сигналов поспособствовал разрешению инцидента /checkout.", a: "Метрики (Prometheus): алерт SLO burn сработал, определив серьёзность и назвав /checkout затронутым сервисом. Без него команда могла бы заметить замедление через часы по жалобам пользователей. Трейсы (Tempo): показали пропорциональную деградацию всех downstream span, с inventory_check выросшим с 80 мс до 850 мс. Это исключило локальный баг /checkout и указало на upstream причину. Профили (Pyroscope): показали спайки GC и json.Marshal, подтвердив allocation pressure от намного большего payload. В связке с данными трейса это определило механизм: больший payload → больше аллокаций → больше GC → выше latency везде. Логи: лог деплоев подтвердил деплой inventory-service в 10:31. RUM: подтвердил server-side проблему, не client-side, сузив пространство поиска с самого начала. Все пять сигналов вместе разрешили инцидент за 35 минут. Любой один сигнал дал бы частичную информацию и вероятно привёл к ошибочному диагнозу." },
+    { q: "Инцидент /checkout объединял family 04 (GC) и family 05 (N+1/bulk payload). Как кросс-family идентификация меняет стратегию исправления?", a: "Если инженер идентифицировал только GC (family 04), исправление было бы снижением аллокаций в /checkout — верно, но недостаточно. GC pressure вернулось бы с каждым запросом после отката или проявилось снова, когда другой сервис вырастил бы свой ответ. Если идентифицировал только upstream payload (family 05), исправление — откат inventory-service — верно и достаточно как немедленное исправление, но без решения системного риска, что другие сервисы сделают то же самое. Идентификация обеих family вместе даёт три действия: немедленный откат (смягчение family 05), защитная проверка в /checkout (смягчение family 04 ограничением размера payload) и PR gate для будущих регрессий размера ответа во всех сервисах (системная защита). Составная идентификация обеспечивает более полную защиту." },
+    { q: "Каковы три enforcement-действия после инцидента /checkout и какой класс регрессий каждое предотвращает?", a: "1. PR gate на размер межсервисного ответа: предотвращает любой будущий PR от роста payload ответа более чем в 2 раза без ревью SRE. Ловит весь класс 'upstream-сервис начинает возвращать больше данных, чем ожидают вызывающие'. 2. Production alert на p99 размера payload на endpoint: ловит тот же класс при проскальзывании через CI — например, изменение конфига или feature flag, растящее ответ во время выполнения, а не через изменение кода. Алерт до сгорания SLO. 3. Запись в runbook для 'спайк p99 с пропорциональной деградацией всех span': обеспечивает следующему дежурному разрешение того же диагностического паттерна за менее чем 5 минут вместо 35. Runbook — институциональная память, закодированная как процедура. Вместе три действия предотвращают регрессию на этапе PR (gate), быстро ловят её при проскальзывании через CI (alert) и снижают MTTR при её проявлении (runbook)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Инцидент /checkout прошёл от алерта до верифицированного исправления за 35 минут, потому что пятисигнальный стек observability был на месте. Метрики назвали сервис и серьёзность. RUM исключил client-side причины. Профили показали GC и давление сериализации — два следствия одной причины. Трейсы показали пропорциональную деградацию всех downstream span, указывая на upstream-сервис. История деплоев подтвердила рост payload inventory-service с 8 КБ до 85 КБ за 16 минут до начала SLO burn. Исправление — откат плюс защитная проверка размера. Шаг enforcement — PR gate, alert на размер payload, запись в runbook — предотвращает весь класс регрессий upstream payload от превращения в инциденты в будущем. Это и отличает дисциплину от пожаротушения: разбор инцидента завершается gate, а не только исправлением.
+</Recap>

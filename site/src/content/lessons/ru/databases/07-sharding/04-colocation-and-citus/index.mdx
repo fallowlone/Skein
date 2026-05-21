@@ -1,0 +1,177 @@
+---
+slug: 04-colocation-and-citus
+lang: ru
+track: databases
+unit: 07-sharding
+order: 4
+title: "Ко-локация и Citus: инвариант, делающий шардирование пригодным к использованию"
+summary: "Ко-локация — одинаковый ключ шарда означает одного воркера — держит joins в рамках клиента на одном узле. Типы таблиц Citus (distributed, reference, local) и его планировщик запросов явно разграничивают одношардовые и fan-out запросы."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/07-sharding/03-partitioning-vs-sharding"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["colocation", "citus", "distributed-table", "reference-table", "cross-shard-query", "citus-coordinator"]
+sources:
+  - https://docs.citusdata.com/en/stable/get_started/concepts.html
+  - https://www.citusdata.com/blog/2023/08/04/understanding-partitioning-and-sharding-in-postgres-and-citus/
+  - https://www.crunchydata.com/blog/designing-your-postgres-database-for-multi-tenancy
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Команда мигрирует на Citus и рада, что запросы для отдельных клиентов так же быстры, как раньше. Потом они добавляют новую таблицу без колонки tenant_id, и новый join-запрос занимает 500 мс вместо 5 мс. Ревью схемы выявляет причину: одна таблица не была ко-локирована.
+</Hook>
+
+<Crux>Ко-локация удерживает 99% join-запросов клиента на одном воркере, выравнивая шарды связанных таблиц.</Crux>
+
+<Explanation>
+
+## Архитектура Citus
+
+Citus — расширение Postgres, превращающее кластер экземпляров Postgres в одну логическую шардированную базу данных:
+
+- **Координатор**: один узел, хранящий метаданные кластера (карта шардов, информация о распределении таблиц), разбирающий запросы, планирующий распределённое выполнение и возвращающий результаты клиенту.
+- **Воркеры**: N узлов, хранящих фактические данные (шарды). Воркеры выполняют Postgres-запросы локально и возвращают результаты координатору.
+- **Клиент**: подключается к координатору как к обычному Postgres. Изменения драйвера не требуются.
+
+```
+Клиент → Координатор (держит метаданные, планирует, маршрутизирует)
+              ↓               ↓               ↓
+          Воркер 0        Воркер 1        Воркер 2
+        (шарды 0-10)   (шарды 11-21)  (шарды 22-31)
+```
+
+## Три типа таблиц
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип</th>
+        <th class="border border-border px-3 py-2 text-left">Живёт на</th>
+        <th class="border border-border px-3 py-2 text-left">Для чего</th>
+        <th class="border border-border px-3 py-2 text-left">Стоимость join</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Distributed</td>
+        <td class="border border-border px-3 py-2">Воркеры, разбита по ключу шарда</td>
+        <td class="border border-border px-3 py-2">Все таблицы в рамках клиента (orders, users, projects, …)</td>
+        <td class="border border-border px-3 py-2">Одного узла при ко-локации; fan-out без неё</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Reference</td>
+        <td class="border border-border px-3 py-2">Полная копия на каждом воркере</td>
+        <td class="border border-border px-3 py-2">Небольшие, преимущественно читаемые lookup-таблицы (plans, feature_flags, countries)</td>
+        <td class="border border-border px-3 py-2">Всегда локальный; запись через 2PC (медленно)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Local</td>
+        <td class="border border-border px-3 py-2">Только координатор</td>
+        <td class="border border-border px-3 py-2">Таблицы admin/control plane (список клиентов, workers_meta)</td>
+        <td class="border border-border px-3 py-2">Нельзя объединять с таблицами воркеров в одном запросе</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+```sql
+-- Распределить таблицы в рамках клиента по tenant_id
+SELECT create_distributed_table('users',       'tenant_id');
+SELECT create_distributed_table('projects',    'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('tasks',       'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('comments',    'tenant_id', colocate_with => 'users');
+SELECT create_distributed_table('attachments', 'tenant_id', colocate_with => 'users');
+
+-- Реплицировать небольшие lookup-таблицы на каждый воркер
+SELECT create_reference_table('plans');
+SELECT create_reference_table('feature_flags');
+SELECT create_reference_table('countries');
+
+-- Таблица tenants остаётся локальной на координаторе (control plane)
+```
+
+## Ко-локация: центральный инвариант
+
+**Ко-локация** означает, что таблицы, распределённые по одному ключу, имеют соответствующие шарды на одном физическом воркере. Если `orders` и `payments` обе распределены по `tenant_id`, то все заказы клиента 42 и все его платежи живут на воркере 1.
+
+Запрос, соединяющий orders и payments с фильтром по `tenant_id = 42`:
+- **С ко-локацией**: планировщик отправляет join на воркер 1, который выполняет его как обычный Postgres join — одна машина, полное использование индексов, однозначные миллисекунды.
+- **Без ко-локации** (например, payments распределена по `payment_id`): координатор должен собрать частичные результаты со всех воркеров и объединить их. P99 задержка = самый медленный воркер. Каждый воркер участвует. В 10–100× медленнее.
+
+Ко-локация — не оптимизация производительности — это проектный контракт, благодаря которому шардированная система ведёт себя как единственный Postgres для 99% случаев.
+
+## Кросс-шард запросы и их смягчение
+
+Запросы без фильтра по ключу шарда расходятся на все шарды. Примеры:
+- «Список всех пользователей с email, заканчивающимся на @enterprise.com» (нет tenant_id)
+- «Подсчёт всех заказов за сегодня по всем клиентам» (кросс-клиентская аналитика)
+- «Найти пользователя по email для входа» (email, не tenant_id)
+
+Для OLTP:
+1. **Переработать API**: почти все OLTP-запросы должны нести tenant_id. Lookup при входе по email требует отдельного индекса или небольшого lookup-сервиса, разрешающего email → tenant_id сначала.
+2. **CDC в OLAP**: кросс-клиентская аналитика должна выполняться на отдельном аналитическом хранилище (ClickHouse, BigQuery), пополняемом через Change Data Capture. Никогда не запускайте глобальные агрегаты на OLTP-кластере.
+3. **Rate-limit fan-out endpoints**: для редких легитимных кросс-шард операций — rate-limit и документируйте их стоимость.
+
+Опытная метрика: кросс-шард запросы должны составлять &lt;1–2% OLTP-трафика. Выше этого — схема ушла от ко-локации и требует ревью.
+
+<Inset kind="why" lang="ru">
+Почему Citus по умолчанию создаёт 32 шарда на таблицу даже на кластере из 4 воркеров? Шарды — единица ребалансировки: больше шардов означает более точную ребалансировку и более плавное распределение при добавлении воркеров. При 32 шардах на 4 воркерах каждый воркер получает 8 шардов; добавление 5-го воркера позволяет ребалансировщику перемещать шарды без разрезания шарда пополам. Команды часто поднимают это до 64 или 128 при планировании под большие кластеры. Значение по умолчанию 32 — отправная точка, а не мандат.
+</Inset>
+
+<Quiz
+  id="04-colocation-and-citus-quiz-1"
+  lessonSlug="04-colocation-and-citus"
+  lang="ru"
+  question="В чём преимущество маркировки таблицы как reference table Citus вместо distributed table?"
+  choices={[
+    { label: "Полная копия на каждом воркере — joins из любой distributed table к reference table остаются локальными без сетевого fan-out; идеально для небольших, преимущественно читаемых таблиц вроде plans, countries или feature_flags", correct: true },
+    { label: "Более быстрые записи, потому что записи идут только на один воркер вместо всех", misconception: "Записи в reference table медленнее, а не быстрее — они используют 2PC для одновременного обновления каждого воркера, чтобы все копии оставались согласованными." },
+    { label: "Меньшее общее хранилище, потому что таблица хранится только один раз", misconception: "Reference tables хранятся на каждом воркере — N× хранилище по сравнению с одной копией. Компромисс — стоимость хранилища за производительность локального join." },
+    { label: "Автоматическое решардирование, когда reference table вырастает", misconception: "Reference tables реплицируются, а не шардируются. У них нет автоматического решардирования. Они должны оставаться небольшими и преимущественно читаемыми." },
+  ]}
+/>
+
+<Quiz
+  id="04-colocation-and-citus-quiz-2"
+  lessonSlug="04-colocation-and-citus"
+  lang="ru"
+  question="Новый инженер добавляет таблицу 'audit_log', распределённую по 'id' (не tenant_id), в кластер Citus, шардированный по клиентам. Что ломается?"
+  choices={[
+    { label: "Любой join между audit_log и таблицей в рамках клиента становится кросс-шард запросом — координатор собирает частичные joins со всех N воркеров, задержка растёт в 10–100×, и каждый воркер участвует в каждом таком запросе", correct: true },
+    { label: "Ничего не ломается — Citus обрабатывает кросс-ключевые joins автоматически и эффективно", misconception: "Citus выполняет join, но должен собирать данные с каждого воркера, потому что audit_log и таблицы клиентов имеют разные ключи шарда. Это fan-out путь — дорогой, а не эффективный." },
+    { label: "INSERT в audit_log падает, потому что Citus отклоняет вставки без ключа клиента", misconception: "Citus принимает вставки в любую distributed table независимо от выбора ключа. Проблема возникает во время запроса при join с ко-локированными таблицами клиентов." },
+    { label: "Строки audit_log автоматически распределяются на те же шарды, что и соответствующий клиент", misconception: "Citus использует объявленный ключ распределения, а не эвристику. Строки audit_log идут на шарды по id, а не tenant_id — автоматического выравнивания нет." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Ко-локация — все таблицы в рамках клиента распределены по одному ключу, чтобы совпадающие шарды попадали на один воркер — держит 99% OLTP joins на одном узле. Reference tables (полная копия на каждом воркере) держат lookup joins локальными. Кросс-шард запросы должны составлять &lt;2% OLTP; аналитика идёт в отдельное OLAP-хранилище через CDC.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-colocation-and-citus-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, что означает ко-локация в Citus и что происходит с производительностью запросов при её нарушении.", a: "Ко-локация: таблицы, распределённые по одному ключу, имеют соответствующие шарды на одном физическом воркере. При шардировании по tenant_id с 32 шардами шард 0 'orders' и шард 0 'payments' живут на воркере 0; шард 1 обоих — на воркере 1; и т.д. Запрос, соединяющий orders и payments для одного клиента, выполняется полностью на одном воркере — как в обычном Postgres. При нарушении (например, payments распределена по payment_id) координатор должен вытягивать частичные joins со всех 32 воркеров и объединять — P99 равен задержке самого медленного воркера, каждый воркер задействован, задержка растёт в 10–100×." },
+    { q: "Каковы три типа таблиц Citus и какой случай использования обслуживает каждый?", a: "Distributed: строки разбиты по воркерам ключом шарда — все таблицы в рамках клиента; даёт N× пропускной способности и хранилища. Reference: полная копия на каждом воркере, чтение локально, запись через 2PC — небольшие, преимущественно читаемые lookup-таблицы (plans, countries, feature_flags), которым нужно соединяться со многими distributed tables без сетевого перехода. Local: только на координаторе — admin/control plane таблицы (сам список клиентов, метаданные воркеров). Только local-таблицы должны быть теми, что никогда не соединяются с таблицами воркеров в OLTP-запросах." },
+    { q: "Как нужно обрабатывать кросс-клиентский запрос вроде 'подсчитать все заказы за сегодня' в кластере Citus, шардированном по клиентам?", a: "Не запускать его на OLTP-кластере. Этот запрос расходится на все шарды, касается каждого воркера, работает при P99 = самый медленный шард и конкурирует с клиентскими OLTP-запросами за ресурсы. Вместо этого: реплицировать данные в отдельное аналитическое хранилище (ClickHouse, BigQuery, Redshift) через CDC (Debezium, pglogical). Запускать кросс-клиентскую аналитику там. OLTP-кластер остаётся клиентским и быстрым. Для дашбордов, требующих агрегатов по клиентам, предвычислять и хранить результаты на клиента." },
+  ]}
+/>
+
+<Recap lang="ru">
+Citus добавляет координатор (метаданные, планирование, маршрутизация) и N воркеров (хранилище шардов и выполнение) к кластеру Postgres, делая его похожим на единственную базу данных. Таблицы классифицируются как distributed (шардированные по ключу, на воркерах), reference (полная копия на каждом воркере для локальных joins) или local (только координатор для control-plane данных). Ко-локация — каждая таблица в рамках клиента распределена по одному ключу, чтобы совпадающие шарды попадали на один воркер — это инвариант, удерживающий клиентские joins на одном узле. Нарушение ко-локации (распределение таблицы по другому ключу) превращает каждый join с ней в кросс-шард fan-out: N× работы, P99 = самый медленный воркер. Кросс-шард аналитика должна выгружаться в выделенное OLAP-хранилище через CDC, а не запускаться на OLTP-кластере.
+</Recap>

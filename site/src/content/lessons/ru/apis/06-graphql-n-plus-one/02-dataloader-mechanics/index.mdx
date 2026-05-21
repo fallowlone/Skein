@@ -1,0 +1,163 @@
+---
+slug: 02-dataloader-mechanics
+lang: ru
+track: apis
+unit: 06-graphql-n-plus-one
+order: 2
+title: "Механика DataLoader: батчинг на границе тика"
+summary: "DataLoader ждёт окончания текущего тика event loop и делает один батчевый запрос за все накопленные ключи — превращая N per-item SQL-вызовов в один."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - apis/06-graphql-n-plus-one/01-why-graphql-gets-nplus1
+  - performance/05-n-plus-one/04-dataloader-pattern
+deepensInto:
+  - apis/06-graphql-n-plus-one/03-batch-function-contracts
+spiral: ["statefulness"]
+concepts: ["dataloader", "event-loop-tick", "request-scope-cache", "batch-dedup", "per-request-instance"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://www.apollographql.com/docs/apollo-server/data/fetching-data
+  - https://shopify.engineering/solving-the-n-1-problem-for-graphql-through-batching
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+
+<Hook>
+После подключения DataLoader страница Sven'а падает с 51 запроса до 2 — без изменений схемы и клиентского запроса. GraphQL-документ и все резолверы остаются ровно такими же. Меняется только fetcher.
+</Hook>
+
+<Crux>DataLoader объединяет все .load(id) одного тика event loop в один запрос. Per-request скоуп делает его безопасным.</Crux>
+
+<Explanation>
+
+## Что делает DataLoader
+
+DataLoader — небольшая библиотека, изначально извлечённая из реализации GraphQL в Facebook и поддерживаемая GraphQL Foundation. Конструктор: `new DataLoader(batchLoadFn, options)`, где `batchLoadFn(keys: Array<K>): Promise<Array<V | Error>>` — твой батчевый fetcher.
+
+Резолверы вызывают `loader.load(key)` и получают Promise. Под капотом:
+
+1. Каждый `.load(key)` ставит ключ во внутренний массив. Запрос ещё не выполняется.
+2. Когда текущий синхронный шаг JavaScript заканчивается — когда очередь микротасок начинает сливаться — DataLoader берёт все накопленные ключи и вызывает `batchLoadFn` один раз со всем массивом.
+3. `batchLoadFn` выполняет один `WHERE id IN (...)` и возвращает значения в том же порядке, что входные ключи.
+4. DataLoader разрешает каждый ожидающий Promise его значением.
+
+Граница тика — естественная точка склейки: движок GraphQL заканчивает обход одного уровня запроса синхронно. Все 50 вызовов резолвера `Post.author` ставят ID в очередь во время обхода этого уровня. Микротаска DataLoader срабатывает после — когда все ID уже накоплены.
+
+## Почему фиксированное временное окно было бы хуже
+
+Буфер в 5 мс либо добавил бы 5 мс латентности к каждому запросу (ненужное ожидание), либо сработал бы слишком рано под нагрузкой (не захватив все ID). Граница тика срабатывает в самый ранний возможный момент, когда все ID для текущего уровня уже в очереди — без лишнего ожидания.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+```
+Тик event loop (GraphQL разрешает уровень 2):
+  Post.author(post1) → loader.load(7)   // в очереди
+  Post.author(post2) → loader.load(9)   // в очереди
+  Post.author(post3) → loader.load(7)   // деdup: уже в очереди
+
+Микротаска (тик кончился):
+  batchLoadFn([7, 9])
+  → SELECT id, name FROM users WHERE id IN (7, 9)
+  → разрешает: 7→Bea, 9→Sven
+
+Все три Post.author Promise разрешаются: post1→Bea, post2→Sven, post3→Bea
+```
+
+</div>
+
+## Дедупликация внутри одного запроса
+
+Если `loader.load(7)` вызывается дважды в одном запросе, DataLoader возвращает тот же Promise — ключ появляется в батче только один раз. Это полезно, когда одна сущность доступна по нескольким путям в документе (например, автор поста и автор комментария — один и тот же user). Отключается через `options.cache = false` для резолверов, которым нужны свежие чтения внутри одного запроса (редко: паттерн write-after-read).
+
+## Правило per-request инстанса
+
+DataLoader-инстанс — это кеш. Его время жизни должно быть request, не процесс. Модульно-скоупленный DataLoader, разделённый между всеми запросами:
+
+- Возвращает stale-данные: Request A грузит user 7, строка обновляется, Request B грузит user 7 из кеша и получает pre-update строку.
+- Утекает между арендаторами: Request A и B принадлежат разным tenant'ам. Tenant B получает закешированную строку Tenant A для того же ID.
+
+Дисциплина: создавай DataLoader внутри фабрики request-context (функция, которую Apollo Server вызывает на каждый запрос), прикрепляй к `context`, дай GC почистить по окончании запроса.
+
+```javascript
+// Фабрика context Apollo Server — правильно
+context: async ({ req }) => ({
+  loaders: {
+    author: new DataLoader(batchAuthors),
+    tags:   new DataLoader(batchTags),
+  },
+})
+
+// Резолвер — правильно
+Post: {
+  author: (post, _args, ctx) => ctx.loaders.author.load(post.authorId),
+}
+```
+
+<Inset kind="warning" lang="ru">
+Глобальный DataLoader теоретически экономит память. На практике — утекает данные между арендаторами и отдаёт stale-строки. Документация Apollo явно: «DataLoader-инстансы per-request — если используешь DataLoader в источнике данных, создавай новый инстанс на каждый запрос».
+</Inset>
+
+<Quiz
+  id="dl-mechanics-q1"
+  lessonSlug="02-dataloader-mechanics"
+  lang="ru"
+  question="DataLoader вызывают дважды с тем же ключом в одном запросе. Что происходит?"
+  choices={[
+    { label: "Два батч-вызова, по одному на .load()", misconception: "DataLoader дедуплицирует: второй вызов возвращает тот же Promise, что первый." },
+    { label: "Второй .load() возвращает тот же Promise, что первый; batch-функция видит ключ один раз", correct: true },
+    { label: "Loader кидает ошибку на дубликате", misconception: "Дубли — нормальная и ожидаемая ситуация; дедупликация задумана." },
+    { label: "Кеш обходится из-за недетерминизма", misconception: "Недетерминизма нет — тот же ключ, тот же Promise внутри одного запроса." },
+  ]}
+/>
+
+<Quiz
+  id="dl-mechanics-q2"
+  lessonSlug="02-dataloader-mechanics"
+  lang="ru"
+  question="Почему DataLoader батчит на границе тика event loop, а не на фиксированном окне 5 мс?"
+  choices={[
+    { label: "Фиксированное окно добавило бы 5 мс к каждому запросу или сработало бы слишком рано под нагрузкой; граница тика — самый ранний момент, когда все ID для текущего уровня запроса уже в очереди", correct: true },
+    { label: "Node.js не поддерживает окна в 5 мс", misconception: "Node поддерживает setImmediate и setTimeout — DataLoader мог бы их использовать. Он не делает этого из-за латентности." },
+    { label: "Граница тика быстрее, потому что использует меньше памяти", misconception: "Память не причина — размер батча определяет расход памяти. Причина — латентность." },
+    { label: "Фиксированные окна изменили бы порядок резолверов", misconception: "Порядок резолверов не зависит от тайминга dispatch'а." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="dl-mechanics-metaphor"
+  lessonSlug="02-dataloader-mechanics"
+  lang="ru"
+  setup="Заполни пропуск: DataLoader собирает все .load() в одном _______ event loop и вызывает один батч."
+  accepted={["тик", "тике", "фрейм", "фрейме", "цикл", "цикле"]}
+  canonical="тик (также: фрейм, цикл — один синхронный шаг JavaScript)"
+  explanation="Точное правило DataLoader: любой .load(), сделанный до того, как очередь микротасок начнёт сливаться, попадает в один батч. Батч уходит в самый ранний момент, когда GraphQL поставил в очередь всё, что мог."
+/>
+
+</Explanation>
+
+<KeyTakeaway>DataLoader ставит ID в очередь, делает один батч на тик, дедуплицирует в рамках запроса и должен создаваться per-request. Глобальный инстанс утекает tenant-данные и отдаёт stale-строки.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="dl-mechanics-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему DataLoader-инстанс должен создаваться per-request, а не один раз при старте сервера?", a: "Модульно-скоупленный DataLoader делит кеш между всеми запросами. Строка Tenant A для user 7 возвращается запросу Tenant B. Строка, обновлённая после загрузки Request A, никогда не перечитывается для Request B. Оба случая — баги корректности данных, а не просто staleness. Инстанциируй в context-фабрике, чтобы каждый запрос имел чистый изолированный кеш." },
+    { q: "Когда DataLoader вызывает batch-функцию относительно вызовов резолверов?", a: "После окончания текущего синхронного шага JavaScript и начала слива очереди микротасок. Это граница тика — момент, когда GraphQL закончил вызывать все резолверы для одного уровня запроса и поставил все их ID в очередь. Никаких таймеров." },
+  ]}
+/>
+
+<Recap lang="ru">
+DataLoader переносит fetch из каждого резолвера в per-request батч. Каждый резолвер вызывает `loader.load(id)` и получает Promise. DataLoader накапливает все ID до конца тика event loop, затем делает один `WHERE id IN (...)` за полный набор. Ключи дедуплицируются в батче: `loader.load(7)` с двух разных путей в одном документе порождает один SQL-lookup, а не два. Инстанс должен создаваться per-request — глобальный инстанс утекает tenant-данные и возвращает stale-строки.
+</Recap>

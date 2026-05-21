@@ -1,0 +1,301 @@
+---
+slug: 06-false-sharing-and-native-bridge
+lang: ru
+track: performance
+unit: 02-hot-paths
+order: 6
+title: "False sharing и горячие пути нативных мостов"
+summary: "Два класса горячих путей, побеждающих наивные исправления: false sharing (lock-free код медленнее заблокированного) и overhead нативного моста (stub шире функции, которую вызывает). Оба требуют аппаратных счётчиков или cross-language профилировщиков."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/02-hot-paths/05-hardware-counters-and-tma"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["false-sharing", "mesi", "cache-line-padding", "ffi-overhead", "native-bridge", "n-api", "jni", "cgo", "cross-language-flame-graph"]
+sources:
+  - https://www.brendangregg.com/usemethod.html
+  - https://www.intel.com/content/www/us/en/docs/vtune-profiler/user-guide/2024-2/cpu-microarchitecture-analysis.html
+  - https://github.com/LMAX-Exchange/disruptor/wiki/Introduction
+  - https://pkg.go.dev/runtime/pprof
+  - https://nodejs.org/api/n-api.html
+  - https://github.com/google/pprof/blob/main/doc/README.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import PersonaTag from "~/components/pedagogy/PersonaTag.astro";
+
+<Hook>
+Команда потратила неделю, делая массив счётчиков lock-free с атомарными операциями. Под нагрузкой он работает медленнее, чем заблокированная версия. Flame graph показывает `updateCounter` широким, IPC 0.42. Тем временем Rust-библиотека криптографии простаивает 92% времени. Node-сервис вызывает её 10 000 раз в секунду — и 40% CPU в N-API stub, а не в коде криптографии.
+</Hook>
+
+<Crux>False sharing заставляет lock-free платить как заблокированный; stub нативного моста может доминировать над callee. Нужны hardware counters.</Crux>
+
+<Explanation>
+
+## False sharing: когда «lock-free» медленнее заблокированного
+
+False sharing происходит, когда несколько потоков записывают в разные поля, которые случайно находятся на одной cache line. MESI coherency-протокол оборудования рассматривает cache line как атомарную единицу владения. Когда один CPU записывает в любой байт 64-байтной линии, он захватывает эксклюзивное владение и инвалидирует линию в кеше каждого другого CPU. Каждый другой CPU, который затем читает или записывает любой байт этой линии, должен заново получить её через coherency fabric — с латентностью L3 или DRAM (~150–300 тактов), а не L1 (~5 тактов).
+
+Результат: атомарные операции, которые выглядят как неконкурирующие на уровне кода, сильно конкурируют на аппаратном уровне, потому что их данные находятся на одной cache line.
+
+### Сигнатура в профилях
+
+False sharing не выглядит как lock contention в стандартном CPU-профиле. Нет видимого mutex, нет заблокированного потока. Вместо этого:
+
+- IPC проседает (обычно 0.3–0.6 на затронутом коде, по сравнению с 2–4 для compute-bound кода).
+- Cache-miss rate экстремальный (60–80%), даже если данные малы и «должны» быть горячими.
+- Горячая функция выглядит невинно — атомарный инкремент, простая запись в поле.
+- Производительность ухудшается с ростом числа потоков, а не улучшается.
+
+### Аппаратные счётчики, которые это выявляют
+
+Аппаратное событие `MEM_LOAD_L3_HIT_RETIRED.XSNP_HITM` (Intel) считает загрузки, обслуженные изменённой копией в кеше другого CPU — прямой сигнал false sharing. В Linux `perf stat -e cache-references,cache-misses,instructions` в паре с масштабированием числа потоков выявляет это косвенно.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Наблюдение</th>
+        <th class="border border-border px-3 py-2 text-left">Подозрение: false sharing</th>
+        <th class="border border-border px-3 py-2 text-left">Подозрение: lock contention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Ширина в CPU-профиле</td>
+        <td class="border border-border px-3 py-2">Широкий (CPU ждёт памяти)</td>
+        <td class="border border-border px-3 py-2">Узкий в CPU, широкий в off-CPU</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">IPC</td>
+        <td class="border border-border px-3 py-2">0.3–0.6 (memory-stalled)</td>
+        <td class="border border-border px-3 py-2">Около 0 (поток не выполняется)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Off-CPU профиль</td>
+        <td class="border border-border px-3 py-2">Узкий (не ждёт на lock)</td>
+        <td class="border border-border px-3 py-2">Широкий (futex wait / monitor wait)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Масштабирование с потоками</td>
+        <td class="border border-border px-3 py-2">Ухудшается (больше писателей — больше bounces)</td>
+        <td class="border border-border px-3 py-2">Ухудшается (больше ожидающих)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Счётчик XSNP_HITM</td>
+        <td class="border border-border px-3 py-2">Очень высокий</td>
+        <td class="border border-border px-3 py-2">Низкий</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Исправление: выравнивание по cache line
+
+Исправление — гарантировать, что каждое независимо записываемое поле занимает свою cache line. На x86 cache line — 64 байта; на ARM — 64 или 128 байт.
+
+```go
+// ДО: 16 uint64 счётчиков делят 2 cache line (8 на линию)
+var counters [16]uint64
+
+// ПОСЛЕ: каждый счётчик на своей 64-байтной линии
+type paddedCounter struct {
+    value uint64
+    _     [56]byte // дополнение до 64 байт
+}
+var counters [16]paddedCounter
+```
+
+В Java `@Contended` (из `sun.misc.Contended` или `jdk.internal.vm.annotation.Contended`) вставляет дополнение автоматически. В Rust `crossbeam::CachePadded` оборачивает значения. В C++ `alignas(64)` на полях структуры. Disruptor (Java) и DPDK (C) бакают явное выравнивание cache line в свои базовые структуры данных как не обсуждаемый инвариант.
+
+<DebugLog
+  id="06-debug-1"
+  pieceSlug="06-false-sharing-and-native-bridge"
+  lang="ru"
+  title="Диагностировать false-sharing регрессию по выводу perf счётчиков"
+  output={`# perf stat -e cache-references,cache-misses,L1-dcache-load-misses,instructions ./service
+
+   1,250,000,000      cache-references
+     950,000,000      cache-misses           # 76% miss rate — экстремальный
+   1,200,000,000      L1-dcache-load-misses  # почти каждый L1 доступ промахивается
+   3,000,000,000      instructions
+                      IPC = 0.42             # CPU stalled 58% of the time
+
+# Profile shows hot leaf:
+#   updateCounter(idx int):
+#     atomic.AddUint64(&counters[idx], 1)   # supposed lock-free fast path
+
+# counters[] — плоский массив из 16 uint64 значений, 16 worker-
+# горутин обращаются к нему (каждая инкрементирует свой индекс).
+# CPU: 16 ядер. uint64 — 8 байт; cache line — 64 байта.`}
+  outputLang="log"
+  question="Lock-free массив счётчиков показывает IPC 0.42 (memory-stalled), несмотря на атомарные операции и per-thread индексы. Cache-miss rate 76%. Каков диагноз и исправление?"
+  hint="Cache line — 64 байта. uint64 — 8 байт. 8 uint64 на линию."
+  answer="Диагноз: false sharing. counters[0..7] находятся на одной 64-байтной cache line; counters[8..15] — на следующей. Когда горутина 0 инкрементирует counters[0], а горутина 1 — counters[1], оба действия записывают в одну cache line. Каждая атомарная запись инвалидирует линию в L1-кеше другого CPU через MESI coherency; другой CPU заново получает линию. С 8 горутинами, бьющими по одной линии, каждый инкремент вызывает line bounce — IPC проседает до 0.42, cache-miss rate вырастает до 76%. Исправление: дополнить каждый счётчик до полной cache line. Определить `type paddedCounter struct { value uint64; _ [56]byte }` чтобы каждый элемент занимал 64 байта отдельно. Перемерить: IPC вырастет до 2.5–3.0, cache-miss rate упадёт ниже 5%, пропускная способность увеличится в 5–20 раз в зависимости от уровня конкуренции."
+/>
+
+<Inset kind="why" lang="ru">
+`task_struct` ядра Linux, ring buffer Disruptor в Java и per-core очереди пакетов DPDK содержат явные аннотации выравнивания по cache line. Senior performance-инженеры вводят ту же дисциплину для любой структуры, поля которой записываются несколькими CPU одновременно. Ревьюеры должны помечать определения структур, где несколько атомарно записываемых полей упакованы плотно.
+</Inset>
+
+## Горячие пути нативных мостов: ловушка FFI overhead
+
+Современные runtime'ы соединяются с нативным кодом через FFI: N-API в Node, JNI в Java, ctypes/cffi/Cython в Python, cgo в Go. Каждый переход через мост несёт фиксированные накладные расходы:
+
+- N-API (Node → нативный аддон): ~50–200 нс за вызов.
+- JNI (Java → нативный): ~100–500 нс за вызов.
+- cgo (Go → C): ~200–500 нс за вызов (включает переключение стека горутины).
+- Python ctypes: ~1–5 мкс за вызов.
+
+Когда нативная функция дорогая (миллисекунды), эти накладные расходы несущественны. Когда нативная функция дешёвая (наносекунды), stub моста может доминировать.
+
+### Сигнатура в cross-language flame graph
+
+Стандартный однозычный профилировщик показывает только свой стек. Cross-language профиль (eBPF, Datadog continuous profiler, или вручную сшитый perf + async-profiler) показывает оба стека. Сигнатура с точки зрения профилировщика:
+
+- Нативная функция сама по себе узкая (маленькое self-time).
+- Bridge stub (`Cgo_runtime_cgocall`, `JNIEnv::CallStaticVoidMethod`, `napi_call_function`) широкий.
+
+### Реальный пример
+
+Node-сервис вызывал Rust-рутину криптографии через N-API: 10 000 вызовов в секунду, каждый вычисляет 32-байтный HMAC. Сама Rust-функция занимала ~40 нс. N-API stub добавлял ~160 нс за вызов — работы в 4 раза больше. CPU-профиль: 40% в stub, 8% в реальной криптофункции.
+
+Исправление: пакетировать 64 операции на один N-API вызов. Rust-функция получает срез из 64 входных значений и возвращает срез из 64 выходных. Per-item overhead падает с 200 нс до 43 нс (160 нс stub / 64 элемента). CPU-профиль после: 12% криптофункция, stub невидим.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">FFI</th>
+        <th class="border border-border px-3 py-2 text-left">Overhead за вызов</th>
+        <th class="border border-border px-3 py-2 text-left">Порог окупаемости (нужная нативная работа)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">N-API (Node)</td>
+        <td class="border border-border px-3 py-2">50–200 нс</td>
+        <td class="border border-border px-3 py-2">~500 нс нативной работы за вызов</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JNI (Java)</td>
+        <td class="border border-border px-3 py-2">100–500 нс</td>
+        <td class="border border-border px-3 py-2">~1 мкс нативной работы за вызов</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">cgo (Go)</td>
+        <td class="border border-border px-3 py-2">200–500 нс</td>
+        <td class="border border-border px-3 py-2">~2 мкс нативной работы за вызов</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">ctypes (Python)</td>
+        <td class="border border-border px-3 py-2">1–5 мкс</td>
+        <td class="border border-border px-3 py-2">~10 мкс нативной работы за вызов</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Семейства исправлений для overhead нативного моста:
+
+1. **Пакетирование за переход** — передавать срез входных значений, получать срез выходных. Амортизировать фиксированный overhead на N элементов.
+2. **Перенести цикл в нативный код** — вместо N вызовов нативного кода вызвать нативный код один раз с телом цикла внутри нативной функции.
+3. **Поднять границу** — переместить FFI-границу к более крупной операции, чтобы меньше переходов происходило на единицу работы.
+
+<Quiz
+  id="06-quiz-1"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="ru"
+  question="Lock-free массив атомарных счётчиков показывает IPC 0.4 и 72% cache-miss rate с ростом числа потоков. Правильный диагноз:"
+  choices={[
+    { label: "False sharing. Несколько потоков записывают в разные поля на одной cache line; каждая запись вызывает полный cache-line bounce через MESI coherency, обрушивая IPC. Исправление: дополнить каждый счётчик до полной cache line (64 байта).", correct: true },
+    { label: "Lock contention. Атомарные операции медленные, потому что эквивалентны spinlock.", misconception: "Атомарные операции — не локи. Симптом — высокое IPC-проседание CPU, а не off-CPU wait time; счётчики XSNP_HITM подтверждают cache-line bouncing, а не блокировку планировщика." },
+    { label: "Алгоритм имеет плохую временную сложность и требует переработки.", misconception: "Сложность O(1) — одна атомарная операция. Стоимость — конкуренция в подсистеме памяти, которую алгоритмическая переработка не исправит." },
+    { label: "Массив слишком велик для L1-кеша.", misconception: "16 uint64 = 128 байт — легко помещается в L1. Проблема в записях нескольких CPU на одну 64-байтную линию, а не в ёмкости." },
+  ]}
+/>
+
+<Misconception id="mc-false-sharing">
+<p><strong>«Lock-free означает cache-friendly.»</strong> Lock-free устраняет mutex-вызовы; про cache line ничего не говорит. Соседние атомарные записи на одной cache line вызывают MESI bounces — оборудование сериализует их как при локе. Профиль: memory-bound (низкий IPC, высокий miss rate), не lock-bound.</p>
+</Misconception>
+
+## Крайние случаи, где «широкий фрейм = большая проблема» лжёт
+
+Три ситуации, где самый широкий leaf не является правильной целью атаки.
+
+### 1. Коротко живущие горячие пути, выпадающие из сэмплирования
+
+Функция, вызываемая 500 000 раз в секунду по 200 нс каждый раз, работает 100 мс/с — 10% одного CPU-секунды. При стандартной частоте сэмплирования 100 Гц профилировщик срабатывает ~10 раз в секунду. Ожидаемые сэмплы: 1. Реальные сэмплы: 0 или 1, в зависимости от выравнивания.
+
+Фрейм узкий во flame graph, но является главным потребителем. Диагностика: инструментировать дешёвыми счётчиками (атомарные инкременты + гистограмма Prometheus) или временно повысить частоту сэмплирования до 1000 Гц в течение выделенного окна профилирования.
+
+### 2. Spin-wait, доминирующий в CPU-профиле
+
+CPU-профиль показывает функцию широкой, потому что программа выполняла spin-wait внутри неё — busy-loop, ожидающий выполнения условия. Поток находится на CPU, тратя такты, но не делает реальной работы. Исправление — не оптимизировать тело spin; нужно преобразовать spin в правильное ожидание (futex, condition variable, channel).
+
+Сигнатура: тело функции — плотная ветвь обратно на себя; IPC низкий, несмотря на то что в профиле это CPU-bound; rate переключений контекста низкий (поток никогда не уступает).
+
+### 3. Сбои разрешения символов
+
+Широкий фрейм `[unknown]` — это не функция, это стек, который профилировщик не может разрешить. Распространённые причины: JIT-скомпилированный код без perf maps (Node нужен `--perf-basic-prof`; JVM нужен `-XX:+PreserveFramePointer`), stripped DWARF debug info, отсутствующие kernel symbols.
+
+Перед тем как рассматривать `[unknown]` как цель, исправить разрешение символов. Скрытая функция может быть реальным горячим путём.
+
+<DragOrder
+  id="06-drag-1"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="ru"
+  prompt="Упорядочить шаги диагностики и исправления false-sharing регрессии:"
+  items={[
+    { id: "a", label: "Наблюдать: IPC &lt;1, высокий cache-miss rate, производительность ухудшается с ростом числа потоков" },
+    { id: "b", label: "Запустить perf stat с XSNP_HITM (или cache-misses) для подтверждения cache-line bouncing" },
+    { id: "c", label: "Определить, какие поля структуры записываются несколькими потоками одновременно" },
+    { id: "d", label: "Вычислить, сколько полей помещается на одну 64-байтную cache line" },
+    { id: "e", label: "Дополнить каждое независимо записываемое поле до занятия полной cache line" },
+    { id: "f", label: "Перезапустить perf stat: IPC должен вырасти, cache-miss rate — упасть, пропускная способность — увеличиться" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="06-quiz-2"
+  lessonSlug="06-false-sharing-and-native-bridge"
+  lang="ru"
+  question="Node-сервис вызывает нативную Rust-функцию через N-API 10 000 раз/с. Rust-функция занимает 40 нс. N-API stub занимает 160 нс за вызов. Каково правильное исправление?"
+  choices={[
+    { label: "Пакетировать несколько входных значений на один N-API вызов. Передавать срез из 64 входных значений и получать 64 выходных. Per-item стоимость stub падает с 160 нс до 2.5 нс, делая Rust-функцию доминирующей стоимостью, как и задумано.", correct: true },
+    { label: "Переписать Rust-функцию на JavaScript для полного устранения моста.", misconception: "Если Rust-функция существует ради производительности или безопасности, переписывание устраняет ценность. Диагноз — overhead моста, а не выбор языка." },
+    { label: "Использовать worker threads для параллельных N-API вызовов.", misconception: "Большая конкурентность не снижает per-call overhead stub. Это может увеличить пропускную способность, но каждый вызов всё равно платит полные 160 нс crossing." },
+    { label: "Увеличить размер heap Node.js.", misconception: "Размер heap не связан с overhead N-API моста. Стоимость — это переключение стека и трансляция calling convention на границе." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>False sharing заставляет lock-free код платить MESI coherency-цену за каждую запись в общую cache line — исправлять дополнением полей до 64 байт. Стабы нативного моста могут стоить больше, чем нативная функция, которую они вызывают — исправлять пакетированием. Оба требуют аппаратных счётчиков или cross-language профилировщиков для обнаружения.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Разберите диагностику false sharing: что показывает профиль, какой аппаратный счётчик это подтверждает и каково исправление?", a: "CPU-профиль показывает функцию атомарной записи широкой (CPU-атрибутированной), но IPC 0.3–0.6, а cache-miss rate 60–80% — CPU ждёт памяти, а не выполняет инструкции. Off-CPU профиль узкий (нет lock waits). Производительность ухудшается с ростом числа потоков. Аппаратный счётчик MEM_LOAD_L3_HIT_RETIRED.XSNP_HITM (Intel) напрямую измеряет загрузки, обслуженные изменённой копией в кеше другого CPU — прямой сигнал false sharing. В Linux `perf stat -e cache-references,cache-misses,instructions` выявляет это косвенно через экстремальный miss rate. Исправление: дополнить каждое независимо записываемое поле структуры до занятия полной 64-байтной cache line. В Go: массив дополнения [56]byte рядом с полем uint64. В Java: аннотация @Contended. В Rust: crossbeam::CachePadded. После дополнения IPC вырастает до 2.5–3.0, miss rate падает ниже 5%, пропускная способность увеличивается в 5–20 раз. Ключевая мысль: lock-free устраняет mutex overhead, но ничего не говорит о совместном использовании cache line; оборудование сериализует конкурентные записи в одну линию независимо от того, как программное обеспечение их рассматривает." },
+    { q: "Дайте два конкретных примера горячих путей, которые выглядят широкими во flame graph, но НЕ являются правильной целью исправления, и объясните почему.", a: "1) Spin-wait широкий в CPU-профиле. Поток в busy-loop проверяет условие — он на CPU, тратит такты, и профилировщик считает это CPU-работой. Исправление — не оптимизировать тело цикла; нужно заменить spin правильным примитивом ожидания (futex, condition variable, channel). Оптимизация тела spin экономит наносекунды на итерацию, тогда как проблема — миллионы бесполезных итераций в секунду. 2) Широкий фрейм [unknown]. Широкий [unknown] фрейм — сбой разрешения символов. Профилировщик не может назвать функцию, потому что JIT-коду не хватает perf maps (Node нужен --perf-basic-prof), DWARF stripped, или kernel symbols отсутствуют. Перед тем как рассматривать [unknown] как цель, исправить разрешение символов. Скрытая функция может быть реальным горячим путём, невидимым за диагностическим пробелом. В обоих случаях наивный рефлекс «исправить самый широкий leaf» привёл бы к неправильной работе; senior-ход — распознать сигнатуру и сначала применить подходящий диагностический инструмент." },
+  ]}
+/>
+
+<Recap lang="ru">
+False sharing и overhead нативного моста — два senior-уровневых подводных камня горячих путей, невидимых при наивном профилировании. False sharing происходит, когда потоки записывают в разные поля одной cache line; MESI-протокол сериализует записи на аппаратном уровне, обрушивая IPC и вызывая всплеск cache-miss rate, несмотря на lock-free код. Исправление — выравнивание по cache line. Overhead нативного моста возникает, когда FFI stub (N-API, JNI, cgo) стоит больше, чем нативная функция, которую он вызывает; исправление — пакетирование операций за переход. Оба требуют аппаратных счётчиков или cross-language профилировщиков для диагностики. Три крайних случая нарушают эвристику «самый широкий фрейм = главная проблема»: коротко живущие горячие пути, выпадающие из сэмплирования; spin-wait, крутящийся на CPU; и пробелы разрешения символов, отображаемые как [unknown].
+</Recap>

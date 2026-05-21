@@ -1,0 +1,190 @@
+---
+slug: 05-shared-array-buffer-and-atomics
+lang: ru
+track: browser
+unit: 04-workers
+order: 5
+title: "SharedArrayBuffer, Atomics и cross-origin isolation"
+summary: "SAB — реальная разделяемая память между потоками, закрытая за COOP + COEP; Atomics предотвращает гонки данных; relaxed memory model означает, что атомарные операции — единственная надёжная гарантия порядка."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["browser/04-workers/03-structured-clone-and-transfer", "browser/04-workers/01-what-workers-are"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["SharedArrayBuffer", "Atomics", "cross-origin-isolation", "COOP", "COEP", "data-race", "relaxed-memory-model", "happens-before", "Atomics.wait", "Atomics.notify"]
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/API/SharedArrayBuffer
+  - https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated
+  - https://html.spec.whatwg.org/multipage/structured-data.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import Term from "~/components/prose/Term.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Каждый postMessage либо копирует данные, либо передаёт владение. Но многопоточному WASM нужен разделяемый ring buffer, который и потоки кодека, и JS могут читать и писать одновременно — без копии, без передачи, просто общая память. И затем он молча возвращает `undefined` в продакшене.
+</Hook>
+
+<Crux>SharedArrayBuffer — zero-copy разделяемая память за COOP + COEP; без обоих он undefined и WASM-потоки молча отключаются.</Crux>
+
+<Explanation>
+
+## Что такое SharedArrayBuffer
+
+`SharedArrayBuffer` (SAB) — это блок памяти, который два и более потока могут читать и писать одновременно без копирования. Над ним создаются typed-array views на каждом потоке — и они видят одни и те же байты:
+
+```js
+// главный поток
+const sab = new SharedArrayBuffer(1024);
+worker.postMessage({ sab }); // НЕ передаётся — именно разделяется
+
+// воркер
+self.onmessage = e => {
+  const view = new Int32Array(e.data.sab);
+  view[0] = 42; // сразу видно главному потоку
+};
+```
+
+Это фундамент, на котором работает многопоточный WebAssembly в браузере — линейная память WASM *является* SharedArrayBuffer при компиляции с флагом `-pthread`.
+
+## Growable SAB
+
+В современных браузерах SAB можно создать с возможностью роста:
+
+```js
+const sab = new SharedArrayBuffer(4096, { maxByteLength: 64 * 1024 });
+// later, on any thread:
+sab.grow(8192); // расширить до 8 КБ
+```
+
+Это критично для WASM-рантаймов: линейная память WASM использует `memory.grow`, который под капотом вызывает grow() на SAB. Каждый рост **аннулирует все существующие typed-array views** — любой поток, удерживающий старый view и обращающийся к нему после роста, получает устаревшие данные. WASM-тулчейн должен эмитировать атомарные барьеры вокруг вызовов роста; кастомные аллокаторы, вызывающие grow() без синхронизации, порождают трудноуловимые краши.
+
+## Зачем нужен Atomics
+
+Два потока, пишущие в одно место SAB без координации — это **data race**: результат зависит от таймингов и не определён. `Atomics` предоставляет операции, которые CPU гарантирует как неделимые:
+
+- `Atomics.add(view, i, 1)` — читает, прибавляет, записывает как один непрерываемый шаг. Два потока, инкрементирующие один счётчик, никогда не потеряют обновление.
+- `Atomics.compareExchange(view, i, expected, replacement)` — строительный блок lock-free структур данных.
+- `Atomics.wait(view, i, expected)` — **блокирует** вызывающий поток до вызова `Atomics.notify(view, i)` из другого потока. Настоящий blocking primitive — запрещён на главном потоке, разрешён внутри воркеров. Пара wait/notify — это то, как пул WASM-потоков паркует незанятых воркеров и пробуждает их при появлении работы.
+
+<NumbersCard
+  id="card-sab-numbers-ru"
+  title="SharedArrayBuffer с первого взгляда"
+  data-lesson-visual
+  stats={[
+    { label: "Требует", value: "COOP: same-origin + COEP: require-corp" },
+    { label: "Проверка crossOriginIsolated", value: "self.crossOriginIsolated === true" },
+    { label: "Без заголовков", value: "typeof SharedArrayBuffer === 'undefined'" },
+    { label: "Atomics.wait", value: "Запрещён на главном потоке — блокирует поток" },
+    { label: "Growable SAB", value: "new SharedArrayBuffer(size, { maxByteLength })" },
+  ]}
+/>
+
+## Relaxed memory model
+
+SAB открывает доступ к relaxed memory model: без атомиков запись одного потока не гарантированно видна другому в каком-либо определённом порядке — CPU и компилятор могут переупорядочивать неатомарные операции.
+
+Атомарные операции устанавливают рёбра синхронизации (happens-before отношения), которые делают предшествующие неатомарные записи видимыми. Практическое правило для прикладного кода:
+
+1. Воркер пишет bulk-данные обычными typed-array записями.
+2. Воркер делает один `Atomics.store` во флаг "данные готовы".
+3. Читатель делает один `Atomics.load` флага.
+4. Как только читатель увидел нужное значение — все bulk-записи гарантированно видны.
+
+Lock-free структуры, написанные без этой дисциплины, дают баги, проявляющиеся только под нагрузкой и только на определённых CPU.
+
+## Гейт COOP/COEP
+
+После **Spectre** (уязвимость CPU, 2018 год) высокоточная разделяемая память стала угрозой безопасности — SAB-backed таймер достаточно точен для side-channel атаки. Браузеры заперли SAB за двумя заголовками ответа, которые должен отдавать документ:
+
+- `Cross-Origin-Opener-Policy: same-origin` (COOP) — изолирует вашу browsing-context group от других origin'ов.
+- `Cross-Origin-Embedder-Policy: require-corp` (COEP) — требует, чтобы каждый кроссоригинный подресурс явно согласился на встраивание через `Cross-Origin-Resource-Policy`.
+
+При наличии обоих `self.crossOriginIsolated` равен `true` и `SharedArrayBuffer` доступен. Без них — `SharedArrayBuffer` равен `undefined` и любой код, нуждающийся в нём — прежде всего многопоточный WASM — молча падает.
+
+**Цена:** COEP ломает кроссоригинные изображения, шрифты и скрипты, не отправляющие совпадающий заголовок `Cross-Origin-Resource-Policy`. Включение изоляции означает аудит и починку каждого стороннего ресурса. Сначала включайте COEP в report-only режиме (`Cross-Origin-Embedder-Policy-Report-Only`), чтобы перечислить, что сломается, прежде чем включать принудительно.
+
+<DebugLog
+  id="sr-debug-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="ru"
+  label="Консоль браузера — проверка SharedArrayBuffer"
+  output={`> typeof SharedArrayBuffer
+'undefined'
+
+> self.crossOriginIsolated
+false
+
+> performance.getEntriesByType('navigation')[0].responseHeaders
+// Cross-Origin-Opener-Policy: same-origin
+// Cross-Origin-Embedder-Policy: (не установлен)
+
+[WASM] запрошено потоков: 8
+[WASM] SharedArrayBuffer недоступен — откат к однопоточному режиму
+[WASM] инициализация завершена (однопоточный, в 4.2x медленнее цели)`}
+  outputLang="log"
+  question="Многопоточный WASM-модуль молча работает однопоточно в продакшене. Консоль показывает, что SharedArrayBuffer undefined, crossOriginIsolated = false. COOP установлен, COEP — нет. Что именно нужно исправить и что это сломает?"
+  hint="SharedArrayBuffer требует ОБА заголовка. Прочитайте, какой отсутствует — затем подумайте, что COEP принудительно применяет к каждому другому ресурсу."
+  answer="Нужно добавить отсутствующий заголовок: Cross-Origin-Embedder-Policy: require-corp в ответ документа. При наличии обоих COOP: same-origin и COEP: require-corp crossOriginIsolated станет true, SharedArrayBuffer будет определён, WASM-потоки инициализируются. Но COEP: require-corp заблокирует каждый кроссоригинный подресурс, не отправляющий Cross-Origin-Resource-Policy: cross-origin (или не доступный через CORS). Сторонние изображения, шрифты, скрипты, iframe — все должны предоставить CORP, либо проксируйте их через свой origin, либо используйте COEP: credentialless (более мягкий режим, сбрасывающий credentials вместо блокировки) для публичных ресурсов. Сначала включайте COEP в report-only режиме, чтобы перечислить, что сломается."
+/>
+
+<Quiz
+  id="sr-quiz-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="ru"
+  question="Почему `Atomics.wait()` запрещён на главном потоке, но разрешён внутри воркера?"
+  choices={[
+    { label: "Atomics.wait блокирует вызывающий поток до уведомления; блокировка главного потока заморозила бы рендеринг и ввод, что платформа запрещает", correct: true },
+    { label: "Главный поток не имеет доступа к SharedArrayBuffer", misconception: "Главный поток может нормально использовать SharedArrayBuffer при cross-origin isolation. Запрещена именно блокирующая wait — конкретно для него." },
+    { label: "Atomics.wait медленнее на главном потоке", misconception: "Скорость — не причина. Это жёсткий запрет: блокирующий вызов на главном потоке завесит всю страницу." },
+    { label: "Воркеры имеют более высокий приоритет, чем главный поток", misconception: "Никакого такого приоритета нет. Правило — о недопустимости блокировки потока, владеющего рендерингом и вводом." },
+  ]}
+/>
+
+<TraceScenario
+  id="sr-trace-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="ru"
+  scenario="Страница деплоит COOP + COEP для разблокировки многопоточного WASM. После деплоя crossOriginIsolated = true, но WASM-модуль паникует при запуске с 'memory.grow failed'. Найдите причину."
+  steps={[
+    { prompt: "WASM-модуль использует growable SharedArrayBuffer (опция maxByteLength), но браузер его не поддерживает", reveal: "Возможно, но редко. Все современные браузеры поддерживают growable SAB. Паника при memory.grow скорее всего — runtime сбой: WASM-рантайм запросил больше памяти, чем позволяет maxByteLength SAB, или сам вызов grow() не синхронизирован между потоками." },
+    { prompt: "WASM-рантайм вызвал memory.grow без атомарной координации — другой поток был в середине чтения старой области памяти", reveal: "Верно. memory.grow на SAB-backed памяти WASM аннулирует все существующие typed-array views. Любой поток, удерживающий старый view и обращающийся к нему после роста, получает устаревшие указатели. WASM-тулчейн должен эмитировать атомарные барьеры вокруг grow(), но неверно настроенная сборка или кастомный аллокатор, вызывающий grow() небезопасно, могут породить этот сбой." },
+    { prompt: "Размер SharedArrayBuffer превышает лимиты браузера", reveal: "Нет универсального лимита браузера, который вызвал бы здесь панику. Проблема — concurrent memory.grow без синхронизации." },
+    { prompt: "COEP заблокировал один из WASM-импортов", reveal: "Блокировка COEP провалила бы загрузку, а не запуск. Паника происходит в рантайме — это указывает на concurrency-проблему при resize." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем существует Spectre-гейт? Spectre — уязвимость микроархитектуры CPU (CVE-2017-5753): спекулятивное выполнение утекает память через process boundary через timing side-channels. Высокоточные таймеры (в том числе те, что можно построить из SharedArrayBuffer, инкрементируя счётчик в одном потоке и замеряя чтения в другом) делают эти атаки практичными в браузере. COOP не даёт вашей странице делить процесс с потенциально вредоносными кроссоригинными страницами; COEP не позволяет загружать кроссоригинные ресурсы без явного согласия. Вместе они дают браузеру уверенность, что можно включить высокоточную разделяемую память, не утекая секреты смежных origin'ов.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>SharedArrayBuffer — zero-copy разделяемая память между потоками, достаточно мощная для многопоточного WASM, закрытая за COOP + COEP иначе undefined. Atomics предотвращает гонки данных; Atomics.wait запрещён на главном потоке. Growable SAB аннулирует views при росте — координируйте через атомики. Включайте cross-origin isolation в report-only режиме сначала, чтобы проверить ущерб от COEP.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-shared-array-buffer-and-atomics-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Перечислите всё, что должно выполняться для доступности SharedArrayBuffer, и что это стоит.", a: "Документ должен отдаваться с двумя заголовками ответа: COOP: same-origin (разрывает связь с кроссоригинными контекстами, которые могут делить процесс) и COEP: require-corp или credentialless (принуждает каждый кроссоригинный подресурс явно согласиться). При наличии обоих self.crossOriginIsolated = true и SharedArrayBuffer определён. Цена: COEP блокирует каждое кроссоригинное изображение, шрифт, скрипт и iframe без Cross-Origin-Resource-Policy. Сначала проверьте в report-only режиме." },
+    { q: "Почему атомарные операции необходимы при использовании SharedArrayBuffer?", a: "Без атомиков два потока, пишущие в одно место SAB, порождают data race — результат зависит от переупорядочивания CPU и компилятора и не определён. Atomics предоставляет неделимые операции (add, compareExchange) и примитивы синхронизации (wait, notify), устанавливающие happens-before отношения и делающие записи потока видимыми другим потокам в определённом порядке." },
+    { q: "Какой практический паттерн использовать для сигнализации 'данные готовы' через атомарный флаг в SharedArrayBuffer?", a: "Пишите bulk-данные обычными typed-array записями (быстро, без гарантии порядка). Затем один Atomics.store во флаг. Читатель делает Atomics.load флага — как только видит нужное значение, happens-before ребро делает все предшествующие bulk-записи видимыми. Это позволяет не делать каждую запись атомарной (дорого), при этом гарантируя видимость." },
+  ]}
+/>
+
+<Recap lang="ru">
+`SharedArrayBuffer` — это побег из message-passing: блок памяти, видимый всем потокам, удерживающим его view, с нулевыми накладными расходами на копирование. Это фундамент многопоточного WASM в браузере. Закрыт за `COOP: same-origin` и `COEP: require-corp` (или `credentialless`) — без обоих заголовков `SharedArrayBuffer` равен `undefined` и многопоточный WASM молча деградирует. Growable SAB (`maxByteLength`) позволяет расти линейной памяти WASM, но рост аннулирует все view — координация через атомики обязательна. Atomics предотвращает гонки данных: `Atomics.add`, `Atomics.compareExchange` и `Atomics.wait`/`notify` — примитивы. `Atomics.wait` запрещён на главном потоке, потому что блокирует — а блокировка главного потока замораживает страницу. Relaxed memory model означает: только атомарные операции гарантируют порядок между потоками.
+</Recap>

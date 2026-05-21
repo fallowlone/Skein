@@ -1,0 +1,190 @@
+---
+slug: 05-quic-websocket-paths
+lang: en
+track: networking
+unit: 12-putting-it-together
+order: 5
+title: "Alternate paths: QUIC 0-RTT, WebSocket upgrade, connection migration"
+summary: "When the standard HTTP/1.1 request-response path is too slow or too static, two alternate transports take over: HTTP/3 over QUIC (0-RTT, HoL-free streams, mobile migration) and WebSocket upgrade (persistent full-duplex). Both have specific failure modes you must handle."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "02-dns-tcp-tls-sequence"
+  - "08-websocket-realtime/01-upgrade-handshake"
+  - "10-quic-internals/02-quic-streams-and-hol"
+  - "10-quic-internals/04-connection-migration"
+deepensInto:
+  - "06-observability-and-traces"
+  - "07-resilience-and-cascades"
+spiral: ["multiplexing", "statefulness", "latency"]
+concepts: ["HTTP3-QUIC", "0-RTT-streams", "HoL-blocking", "WebSocket-upgrade", "connection-migration", "PATH_CHALLENGE", "backpressure", "stream-independence"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9000
+  - https://datatracker.ietf.org/doc/html/rfc9001
+  - https://datatracker.ietf.org/doc/html/rfc6455
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+A mobile user on a train reports the site reloads every time the train goes through a tunnel. Meanwhile your WebSocket-based real-time dashboard drops messages silently when one client is slow to consume. Both problems have the same root cause: the transport was designed for stable connections, but reality is not stable. HTTP/3 and WebSocket handle this differently — and both fail in ways you must explicitly design for.
+</Hook>
+
+<Crux>HTTP/3 streams survive packet loss and IP changes; WebSocket gives persistent bidirectional frames but stalls when receivers are slow.</Crux>
+
+<Explanation>
+
+## Path A: HTTP/3 over QUIC
+
+**Why QUIC instead of TCP.** TCP multiplexes streams over one connection, but a single lost packet stalls the entire TCP receive window until retransmission. HTTP/2 over TCP has exactly this problem: one slow stream blocks all other streams on the same connection. QUIC implements streams as independent entities — a lost packet on stream A does not block streams B, C, or D. This stream independence is the primary win on lossy networks (mobile, intercontinental links).
+
+**Merged handshake.** TCP requires a separate 3-way handshake (1 RTT) before TLS can begin (another 1 RTT minimum). QUIC merges them: the QUIC Initial packet carries the TLS ClientHello. Server responds in one packet with both QUIC transport parameters and TLS ServerHello. Total: **1 RTT for a new connection** instead of 2.
+
+**0-RTT resumption.** For warm connections (user returning to the same origin within the session ticket's lifetime), the client sends application data inside the QUIC Initial packet — before the server has responded. Effective RTT for first byte: 0 additional round-trips. Constraint: 0-RTT is safe only for **idempotent methods** (GET, HEAD). POST/PUT requests must wait for the handshake to complete (server rejects 0-RTT for non-idempotent requests with 425 Too Early).
+
+**0-RTT max early data.** Servers cap how many bytes of early data they accept (typical: 16–64 KB). If the HTTP request + headers exceed this, the rest is sent after the handshake. This cap prevents attackers from using 0-RTT to inject large payloads before authentication completes.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="text-sm w-full border-collapse">
+    <thead>
+      <tr class="bg-slate-100">
+        <th class="border px-3 py-2 text-left">Feature</th>
+        <th class="border px-3 py-2 text-left">HTTP/2 + TCP</th>
+        <th class="border px-3 py-2 text-left">HTTP/3 + QUIC</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border px-3 py-1">New connection cost</td><td class="border px-3 py-1">2 RTT (TCP + TLS)</td><td class="border px-3 py-1">1 RTT (merged)</td></tr>
+      <tr><td class="border px-3 py-1">Warm connection (resumption)</td><td class="border px-3 py-1">1 RTT (TLS PSK)</td><td class="border px-3 py-1">0 RTT (0-RTT early data)</td></tr>
+      <tr><td class="border px-3 py-1">Packet loss impact</td><td class="border px-3 py-1">Stalls all streams (HoL block)</td><td class="border px-3 py-1">Affects only the lost stream</td></tr>
+      <tr><td class="border px-3 py-1">IP change</td><td class="border px-3 py-1">Connection broken</td><td class="border px-3 py-1">Migrates via Connection ID</td></tr>
+      <tr><td class="border px-3 py-1">Congestion control</td><td class="border px-3 py-1">Kernel (not tunable per-flow)</td><td class="border px-3 py-1">User-space (tunable, BBR2, PCC)</td></tr>
+      <tr><td class="border px-3 py-1">Middlebox compatibility</td><td class="border px-3 py-1">Excellent</td><td class="border px-3 py-1">Some firewalls block UDP</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Connection migration (mobile networks)
+
+When Bea's phone switches from WiFi to cellular, her IP address changes. Under TCP+HTTP/2, the TCP 4-tuple (src IP, src port, dst IP, dst port) is part of the connection identity — an IP change breaks the connection. Bea must re-establish TCP + TLS + HTTP, paying full handshake cost.
+
+Under QUIC, connections are identified by a **Destination Connection ID** — an opaque token Sven issued at handshake, chosen by Sven, carried in every QUIC packet header. Bea's kernel sends a `PATH_CHALLENGE` frame from the new IP. Sven responds with `PATH_RESPONSE` using the same Connection ID, proving the IP change is legitimate (not an attacker spoofing Bea's original IP). All in-flight streams continue on the new path. Migration costs one extra round-trip (~50 ms on a good network), but avoids re-establishing the entire connection.
+
+<Inset kind="edgecase" lang="en">
+QUIC connection migration only works if the server's load balancer routes packets with the same Connection ID to the same backend process. This is a deployment constraint: stateless load balancers that route by source IP will break QUIC migration. Solution: route QUIC by Connection ID (Nginx QUIC, Caddy, Cloudflare support this natively).
+</Inset>
+
+## Path B: WebSocket upgrade for real-time communication
+
+HTTP is request-response — one request, one response. For real-time bidirectional communication (chat, collaborative editing, live dashboards), the client needs to receive messages from the server without issuing a new request for each. WebSocket solves this by upgrading an HTTP connection to a persistent full-duplex channel.
+
+**Upgrade handshake.** The client sends:
+```
+GET /ws HTTP/1.1
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Key: <base64 random 16 bytes>
+```
+The server responds:
+```
+HTTP/1.1 101 Switching Protocols
+Upgrade: websocket
+Connection: Upgrade
+Sec-WebSocket-Accept: <HMAC of key + magic string>
+```
+After 101, the TCP connection is repurposed as a WebSocket. Both sides exchange **frames** asynchronously — no request-response ordering, no headers on each message.
+
+**Frame structure.** Each WebSocket frame carries:
+- FIN bit (1 = final fragment, 0 = more fragments follow)
+- Opcode (1=text, 2=binary, 8=close, 9=ping, 10=pong)
+- Masking (client→server mandatory, XOR with 4-byte masking key — cache poisoning defence)
+- Payload length + payload
+
+Large messages are fragmented across multiple frames (FIN=0 for fragments, FIN=1 for final fragment). The receiver buffers until FIN=1 before delivering to the application.
+
+**Ping/pong heartbeats.** WebSocket does not have a built-in keepalive at the TCP level. After ~75 s without a frame, many network devices time out idle TCP connections. Solution: send `ping` frames every 15–30 s. The receiver replies `pong`. If no pong is received within the timeout, the connection is dead and should be reestablished.
+
+**Backpressure failure mode.** If Bea's application is slow to consume messages (e.g., heavy JavaScript processing per message), Sven's send buffer fills. When Sven calls `write()` on the socket, the kernel returns `WOULDBLOCK`. Naive server code that spins on `WOULDBLOCK` spikes CPU; naive code that drops messages loses data. Correct pattern: Sven stops reading from Bea (pauses the inbound stream) until his outbound buffer drains. Proper WebSocket libraries implement this via async/await and stream backpressure APIs.
+
+<TraceScenario
+  id="mid-trace-quic"
+  lessonSlug="05-quic-websocket-paths"
+  lang="en"
+  scenario="Trace QUIC + HTTP/3 handshake and compare to TCP + HTTP/2."
+  steps={[
+    { prompt: "New connection, HTTP/3. What does the client send first?", reveal: "QUIC Initial packet containing: QUIC transport parameters (max stream count, flow control limits) + TLS ClientHello (key share, SNI, cipher suites, 0-RTT session ticket if available). All in one UDP datagram." },
+    { prompt: "Server responds. What is in the server's first packet?", reveal: "QUIC Initial + Handshake packets: TLS ServerHello (chosen cipher, key share) + certificate + encrypted QUIC Handshake data. Client can derive traffic keys after this — one RTT elapsed." },
+    { prompt: "Client has keys. Can it send HTTP request now?", reveal: "Yes — client sends QUIC Handshake ACK and the HTTP/3 HEADERS frame (request) in a new 1-RTT packet. For 0-RTT: the HTTP HEADERS were already in the Initial packet. Either way, first byte of request is sent after 1 RTT (or 0 RTT for 0-RTT)." },
+    { prompt: "Packet loss on stream 3 (CSS file). What happens to streams 1 and 2 (HTML + JS)?", reveal: "Streams 1 and 2 continue unaffected. QUIC retransmits only the lost packets on stream 3. Streams have independent sequence numbers; loss on one stream does not block delivery on others. TCP+HTTP/2 would stall ALL streams until the lost TCP segment is retransmitted." },
+    { prompt: "User's phone switches from WiFi to LTE mid-download. What happens?", reveal: "Bea's kernel detects the IP change and sends PATH_CHALLENGE frame with the new source IP. Sven responds PATH_RESPONSE on the same Connection ID. All in-flight stream downloads continue on the new path after ~1 additional RTT. TCP+HTTP/2 would break the connection; Bea would have to reload." },
+  ]}
+/>
+
+<TraceScenario
+  id="mid-trace-ws"
+  lessonSlug="05-quic-websocket-paths"
+  lang="en"
+  scenario="Trace WebSocket backpressure failure and the correct fix."
+  steps={[
+    { prompt: "Sven broadcasts 1,000 messages/s to 5,000 connected WebSocket clients. One client (Bea) is slow — processing each message takes 10 ms. What happens?", reveal: "Bea's processing rate is 100 msg/s; Sven sends 1,000 msg/s to her. Sven's send buffer for Bea's connection fills (typically 256 KB kernel buffer). After buffer fills, Sven's write() syscall returns WOULDBLOCK." },
+    { prompt: "Naive server: spin loop on WOULDBLOCK. What happens?", reveal: "Server thread busy-waits on the socket write. CPU spikes. Other clients' messages are queued. Server throughput drops for all 5,000 clients because one slow client is consuming a server thread or event-loop tick." },
+    { prompt: "Second naive approach: drop messages when buffer full. What happens?", reveal: "Bea's application receives an incomplete stream. For a collaborative editor, this is data loss. For a dashboard, stale or inconsistent state. Application must implement its own retry/resync protocol — complex." },
+    { prompt: "Correct approach: backpressure propagation.", reveal: "Server detects WOULDBLOCK and stops reading from Bea's inbound stream (pauses the receive side). Bea's kernel receive buffer fills, TCP window shrinks to zero, Bea's application stops sending. Both sides pause. When Sven's outbound buffer drains (Bea catches up), Sven resumes reading from Bea. Full backpressure loop — no data loss, no CPU spike." },
+    { prompt: "If Bea never catches up (offline, slow forever). What is the timeout strategy?", reveal: "Server sets a maximum queue depth per client. If queue depth exceeds threshold for longer than T seconds, server sends WebSocket Close frame (opcode 8, code 1001 Going Away) and terminates the connection. Client-side reconnection logic detects the close and reconnects. Application-level sequence numbers allow the client to request missed messages on reconnect." },
+  ]}
+/>
+
+<Quiz
+  id="mid-q1"
+  lessonSlug="05-quic-websocket-paths"
+  lang="en"
+  question="Stream independence is QUIC's main win over HTTP/2+TCP. What specific failure does it prevent?"
+  choices={[
+    { label: "Head-of-line blocking: a lost TCP segment stalls all HTTP/2 streams on the connection until retransmitted", correct: true },
+    { label: "TLS handshake delay on new connections", misconception: "HoL blocking is about in-flight stream stalling, not handshake cost." },
+    { label: "DNS lookup failures affecting all streams", misconception: "DNS is resolved before the connection; stream independence does not affect DNS." },
+    { label: "Certificate verification taking too long", misconception: "Certificate verification is a TLS concern, separate from stream multiplexing." },
+  ]}
+/>
+
+<Quiz
+  id="mid-q2"
+  lessonSlug="05-quic-websocket-paths"
+  lang="en"
+  question="Why is client→server WebSocket frame masking mandatory but server→client masking is not?"
+  choices={[
+    { label: "Servers have faster CPUs so masking is less expensive", misconception: "CPU cost is not the reason for asymmetric masking rules." },
+    { label: "Client-to-server masking prevents cache poisoning attacks where a malicious page tricks an intermediate cache into storing a fake HTTP response", correct: true },
+    { label: "The WebSocket spec was written before symmetric encryption was standard", misconception: "The reason is specifically cache poisoning, not historical accident." },
+    { label: "Server-to-client traffic is already encrypted by TLS", misconception: "TLS encrypts both directions; masking is an additional layer for a specific attack, not a TLS substitute." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>HTTP/3 eliminates 1 RTT on new connections and survives IP changes; WebSocket provides persistent bidirectional frames but requires explicit backpressure handling to avoid silent data loss or CPU spikes.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-quic-websocket-paths-retrieval"
+  lang="en"
+  questions={[
+    { q: "QUIC connection migration: what is the Destination Connection ID and why does it survive an IP change?", a: "The Destination Connection ID (DCID) is an opaque token chosen by Sven at handshake time and carried in every QUIC packet header. It identifies the connection independently of the IP 4-tuple. When Bea's IP changes, she sends a PATH_CHALLENGE frame with the new IP but the same DCID. Sven validates with PATH_RESPONSE and continues using the same connection state — congestion window, streams, TLS keys — on the new path." },
+    { q: "What happens if a load balancer routes QUIC packets by source IP instead of Connection ID during migration?", a: "After IP change, the first PATH_CHALLENGE packet from Bea's new IP will be routed to a different backend server that has no state for this DCID. That server sends a stateless reset or QUIC CONNECTION_REFUSED. Bea's migration fails; she must restart the connection from scratch. Fix: configure the QUIC load balancer to route by Destination Connection ID (DCID-based routing, supported by Nginx QUIC, Envoy, Cloudflare)." },
+    { q: "Explain how WebSocket backpressure propagates from application layer down to TCP flow control.", a: "Application slow consumer → Sven's send buffer fills → write() returns WOULDBLOCK → server pauses reading from Bea's inbound stream → Bea's kernel receive buffer fills → TCP advertised receive window shrinks to zero → Bea's kernel cannot send more data → Bea's application backpressures. The entire chain propagates without data loss or CPU spin." },
+  ]}
+/>
+
+<Recap lang="en">
+HTTP/3 over QUIC solves two TCP limitations: head-of-line blocking (a lost packet no longer stalls all streams) and IP-change fragility (QUIC connection IDs survive WiFi-to-cellular handoffs via PATH_CHALLENGE/RESPONSE). The merged QUIC + TLS handshake costs 1 RTT for new connections and 0 RTT for warm resumptions, but 0-RTT is unsafe for non-idempotent requests due to replay risk. WebSocket upgrades an HTTP connection to a persistent full-duplex channel using opcode frames and masking; its main failure mode is backpressure collapse when a slow consumer fills the send buffer — the correct fix is propagating backpressure from the application layer all the way to TCP flow control, not dropping messages or spinning on WOULDBLOCK.
+</Recap>

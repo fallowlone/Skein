@@ -1,0 +1,181 @@
+---
+slug: 03-retry-strategies
+lang: ru
+track: backend
+unit: 05-idempotency-retries
+order: 3
+title: "Стратегии retry: backoff, jitter и thundering herd"
+summary: "Exponential backoff без jitter создаёт синхронизированные retry storm. Full jitter размазывает retry по времени. Retry-After и retry budget не дают восстанавливающемуся сервису снова упасть."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/05-idempotency-retries/01-why-idempotency
+deepensInto:
+  - backend/05-idempotency-retries/06-idempotency-senior
+spiral: ["latency"]
+concepts: ["exponential-backoff", "full-jitter", "decorrelated-jitter", "thundering-herd", "retry-after", "retry-budget", "retry-condition"]
+sources:
+  - https://www.codereliant.io/p/retries-backoff-jitter
+  - https://en.wikipedia.org/wiki/Thundering_herd_problem
+  - https://stripe.com/blog/idempotency
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Сервис возвращает 503. Тысяча клиентов планирует retry ровно через 2 секунды. В T+2с тысяча запросов бьёт восстанавливающийся сервер одновременно — тот самый спайк, который сломал его в первый раз. Механизм retry только что усилил outage.
+</Hook>
+
+<Crux>Backoff без jitter — thundering-herd ловушка. Jitter размазывает retry; Retry-After и retry budget не дают сервису снова упасть.</Crux>
+
+<Explanation>
+
+## Exponential backoff: базовая формула
+
+Минимально жизнеспособный retry loop ждёт дольше перед каждой следующей попыткой:
+
+```
+delay = min(cap, base × 2^attempt)
+```
+
+`base` обычно 100–500 мс. `cap` обычно 30–60 с. Попытки ограничены 3–6 в зависимости от критичности операции.
+
+С `base = 200мс` и `cap = 30с`:
+- Попытка 1 → ждём 200 мс
+- Попытка 2 → ждём 400 мс
+- Попытка 3 → ждём 800 мс
+- Попытка 4 → ждём 1 600 мс
+- ...
+- Попытка 8 → ждём 30 с (cap)
+
+**Проблема:** если 1000 клиентов упали одновременно, все выберут одну задержку и ретраят в один и тот же момент — синхронизированный спайк и есть thundering herd.
+
+## Jitter: размазываем retry по времени
+
+Три варианта jitter (названы в AWS Architecture Blog):
+
+**Full jitter** (рекомендован по умолчанию):
+```
+delay = random(0, min(cap, base × 2^attempt))
+```
+Выбирает случайное значение от 0 до экспоненциального cap. Самое плавное распределение. Проще всего реализовать.
+
+**Equal jitter:**
+```
+delay = (base × 2^attempt)/2 + random(0, (base × 2^attempt)/2)
+```
+Половина детерминирована, половина случайна. Сложнее рассуждать.
+
+**Decorrelated jitter** (используется в AWS SDK v3):
+```
+delay = min(cap, random(base, prev_delay × 3))
+```
+Окно каждого retry зависит от предыдущей задержки. Растёт органично. Эмпирически похож на full jitter по профилю нагрузки.
+
+Избегай чистого exponential backoff без jitter — это учебниковая thundering-herd ловушка.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Тип jitter | Формула | Используется в |
+|---|---|---|
+| Full | `random(0, min(cap, base × 2^n))` | Большинство SDK |
+| Equal | `half_fixed + random(0, half_fixed)` | Некоторые Java-библиотеки |
+| Decorrelated | `random(base, prev × 3)` capped | AWS SDK v3 |
+| Нет | `min(cap, base × 2^n)` | Thundering herd |
+
+</div>
+
+## Что ретраить — и что нет
+
+Условия retry важны не меньше, чем тайминг:
+
+**Ретрай:** 5xx-ошибки, network timeout, connection refused, 429 Too Many Requests (с `Retry-After`).
+
+**Не ретрай:** 4xx-ошибки (кроме 408 и 429) — запрос клиента некорректен, retry даст тот же 4xx. 410 Gone — ресурс окончательно отсутствует.
+
+Многие библиотеки наивно ретраят всё не-2xx, порождая retry storm на клиентские баги. Явно перечисляй условие retry в конфигурации.
+
+## Retry-After: подсказка сервера по backoff
+
+Когда сервер возвращает 429 или 503, он может включить `Retry-After: 30` (секунды) или абсолютную дату. Хорошо настроенный клиент уважает это перед применением своего backoff. gRPC использует трейлер `grpc-retry-pushback-ms` для того же.
+
+Клиент, игнорирующий `Retry-After` и применяющий короткий собственный backoff — это thundering-herd в действии. Сервер попросил передышку, клиент отказал.
+
+## Retry budget: ограничиваем суммарный retry по call site
+
+Индивидуальных ограничений попыток (3–6) недостаточно на масштабе. **Retry budget** — token-bucket допустимых retry в секунду по всему call site. Когда bucket опустел, клиент открывает circuit и возвращает детерминированную ошибку — перестаёт бить downstream.
+
+Без retry budget outage сервиса заставляет каждого клиента сжечь свои 6 попыток одновременно, умножая трафик в 6 раз и превращая 30-секундный блип в минутный outage.
+
+<Inset kind="why" lang="ru">
+Netflix и Google опубликовали tail-latency статьи, показывающие каскад от uncapped retry: медленный downstream вызывает retry, retry увеличивает нагрузку на downstream, повышенная нагрузка создаёт ещё больше медленных ответов, что создаёт ещё больше retry. Retry budget ломает этот цикл, делая rate retry жёстким ограничением, а не per-request политикой.
+</Inset>
+
+<Quiz
+  id="retry-strat-q1"
+  lessonSlug="03-retry-strategies"
+  lang="ru"
+  question="Зачем добавлять jitter поверх exponential backoff?"
+  choices={[
+    { label: "Это ускоряет обнаружение сбоев", misconception: "Jitter не влияет на latency обнаружения — он влияет на распределение retry-трафика по времени." },
+    { label: "Размазывает синхронизированный retry storm по времени так, что восстанавливающийся сервис не получает thundering herd", correct: true },
+    { label: "Тестирует терпимость сервера к clock skew", misconception: "Backoff — клиентское поведение. Сервер не участвует в расчёте задержки." },
+    { label: "Удовлетворяет требованиям RFC для идемпотентных эндпоинтов", misconception: "Ни один RFC не предписывает jitter. Это операционная best practice из производственного опыта." },
+  ]}
+/>
+
+<Quiz
+  id="retry-strat-q2"
+  lessonSlug="03-retry-strategies"
+  lang="ru"
+  question="Сервер возвращает 503 с Retry-After: 30. Три клиента: A уважает Retry-After, B игнорирует и использует 1с backoff, C не ретраит вообще. Какой клиент ведёт себя корректно?"
+  choices={[
+    { label: "C — fail fast единственный безопасный вариант", misconception: "Fail fast теряет transient восстановления. Пользователь никогда не получит шанс на успех после кратковременного outage." },
+    { label: "B — свой backoff предсказуемее", misconception: "Игнорирование Retry-After — это thundering-herd антипаттерн в действии. Сервер попросил передышку." },
+    { label: "A — уважает hint сервера по backoff, потом применяет свой только если нужно", correct: true },
+    { label: "Все три эквивалентны под нагрузкой", misconception: "Retry-After — сигнал управления нагрузкой. Уважать его материально снижает нагрузку на восстанавливающийся сервис." },
+  ]}
+/>
+
+<DragOrder
+  id="retry-strat-drag1"
+  lessonSlug="03-retry-strategies"
+  lang="ru"
+  prompt="Поставь шаги thundering herd сценария в правильном порядке (без jitter, 1000 клиентов):"
+  items={[
+    "Все 1000 клиентов POST-ят на сервер; downstream перегружен и возвращает 503",
+    "Все 1000 клиентов планируют retry ровно на T + 1с (без jitter)",
+    "В T + 1с все 1000 ретраят одновременно — тот же спайк, что сломал сервер",
+    "Сервер снова возвращает 503; все 1000 планируют T + 2с",
+    "Паттерн повторяется бесконечно, не давая сервису восстановиться",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Retry с full jitter: `random(0, min(cap, base × 2^n))`. Уважай `Retry-After`. Ретраить только 5xx и timeout — никогда 4xx. Ограничь попытки (3–6) и используй retry budget по call site, чтобы не усилить outage.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="retry-strat-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, почему retry loop без jitter опаснее исходного сбоя, который он пытается восстановить.", a: "Синхронизированные retry от N клиентов попадают на восстанавливающийся сервис в один момент, умножая нагрузку на N. Сервис, сломавшийся под 1× нагрузкой, теперь получает N× нагрузку на каждом такте retry — гарантировано ломается снова. Без jitter паттерн повторяется бесконечно и 30-секундный блип превращается в 30-минутный outage. Jitter размазывает retry по времени, чтобы восстанавливающийся сервис видел нагрузку плавно." },
+    { q: "Что такое full jitter формула и что означает каждая переменная?", a: "delay = random(0, min(cap, base × 2^attempt)). base — минимальное ожидание (100–500мс). cap — максимальное ожидание (30–60с). attempt — индекс попытки (с нуля). random(0, X) выбирает равномерно в [0, X], размазывая retry по полному экспоненциальному окну. min(cap, ...) не даёт ожиданиям расти безгранично." },
+    { q: "Что такое retry budget и почему индивидуального ограничения в 6 попыток недостаточно?", a: "Retry budget — token-bucket, ограничивающий суммарное количество retry в секунду по всем вызывающим на call site. Индивидуального ограничения в 6 недостаточно, потому что 10 000 конкурентных запросов, каждый сжигающий 6 попыток, дают 60 000 суммарных retry за короткое окно — достаточно, чтобы снова убить восстанавливающийся сервис. Budget вводит fleet-wide потолок и при исчерпании открывает circuit breaker, чтобы все вызывающие fail-fast." },
+  ]}
+/>
+
+<Recap lang="ru">
+Exponential backoff — `min(cap, base × 2^n)` — увеличивает ожидание между попытками, но без jitter синхронизирует всех клиентов на один момент и вызывает thundering herd. Full jitter добавляет `random(0, ...)` для равномерного размазывания. AWS SDK v3 использует decorrelated jitter с аналогичным профилем нагрузки. Ретраить только 5xx и timeout, не 4xx. Уважать заголовок `Retry-After` из ответов 429/503. Ограничить попытки 3–6 на запрос и применять retry budget (token-bucket) по call site, чтобы не дать failing downstream умереть от каждого retry-цикла.
+</Recap>

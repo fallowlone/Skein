@@ -1,0 +1,168 @@
+---
+slug: 02-jit-pipeline
+lang: en
+track: browser
+unit: 03-v8-internals
+order: 2
+title: "V8's four-tier JIT pipeline and profile-guided tiering"
+summary: "How Ignition, Sparkplug, Maglev, and TurboFan cooperate — compile costs, runtime speeds, the FeedbackVector, and operational levers for keeping code on the fast tier."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-what-v8-is"]
+deepensInto: ["06-turbofan-and-deopt"]
+spiral: ["statefulness"]
+concepts: ["Ignition", "Sparkplug", "Maglev", "TurboFan", "FeedbackVector", "profile-guided tiering", "concurrent compilation", "TypedArrays"]
+sources:
+  - https://v8.dev/blog/maglev
+  - https://v8.dev/blog/sparkplug
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A page feels snappy within 200ms of load. A few seconds later it gets faster still. A third speed-up appears after thousands of user interactions. That is not magic — it is V8's tiered compiler moving hot code up the ladder while leaving cold code cheap.
+</Hook>
+
+<Crux>Four JIT tiers span the cost-vs-speed curve; profile-guided tiering promotes a function only when its FeedbackVector justifies it.</Crux>
+
+<Explanation>
+
+## The four-tier pipeline
+
+V8 has four execution modes layered by compile-time vs run-time tradeoff.
+
+**Ignition** — the bytecode interpreter. The parser produces an AST; Ignition lowers it to a compact register-based bytecode and executes that on a virtual machine. While interpreting, Ignition records type feedback into a per-function FeedbackVector — slots for each "interesting" location (property load, function call, arithmetic, comparison). Cheap to enter (no compile cost), ~10× slower per instruction than optimised native code.
+
+**Sparkplug** — the baseline JIT, added in 2021. Sparkplug emits unspecialised machine code in a single linear pass over the bytecode — no SSA, no real optimisation, just a faithful translation of each bytecode to a small block of machine instructions plus a tail call. Compile cost is essentially free (~1 ms/kB bytecode); speedup over Ignition is 1.5–2×.
+
+**Maglev** — the mid-tier optimising compiler, added in 2023. Maglev uses observed types from the FeedbackVector and SSA-based optimisations to emit specialised machine code, but skips TurboFan's heavyweight passes. ~10× slower compile than Sparkplug, ~10× faster compile than TurboFan; code roughly halfway between the two in runtime speed.
+
+**TurboFan** — the heavy optimising compiler. Aggressive inlining, escape analysis, range analysis, hidden-class-driven specialisation, speculative optimisations that may deopt. Compile cost is high (tens to hundreds of ms for complex functions); runtime code is the fastest V8 produces.
+
+<NumbersCard
+  id="card-jit-numbers"
+  title="JIT tier compile and runtime costs"
+  data-lesson-visual
+  stats={[
+    { label: "Sparkplug compile rate", value: "~1 ms / kB bytecode" },
+    { label: "Sparkplug vs Ignition speedup", value: "~1.5–2×" },
+    { label: "Maglev compile time", value: "~10 ms / function" },
+    { label: "Maglev code quality vs TurboFan", value: "~50–70%" },
+    { label: "TurboFan compile time", value: "~100 ms / function" },
+    { label: "Sparkplug promotion threshold", value: "~100 calls" },
+    { label: "Maglev promotion threshold", value: "low thousands of calls" },
+    { label: "TurboFan promotion threshold", value: "tens of thousands of calls" },
+  ]}
+/>
+
+## Profile-guided tiering
+
+Functions enter Ignition. After execution-count thresholds are crossed (per-function, dynamic), V8 promotes to the next tier. The FeedbackVector tracks not just types but also branch frequencies, so TurboFan can lay out the hot path with optimal branch prediction. Promotion happens off-thread (concurrent compilation) — the JS main thread keeps running on the current tier while a worker thread compiles the next.
+
+Functions can skip tiers: a very hot function seen at startup may jump from Ignition directly to Maglev. Functions whose feedback is unstable (frequent IC transitions) are deferred or skipped — TurboFan on an unstable function would produce code that deoptimizes immediately, wasting 100 ms of compile work.
+
+## Operational levers
+
+Eight patterns that keep code on V8's fast tier:
+
+1. **Constructor pattern** — declare all object properties in one place so hidden classes are stable.
+2. **Avoid `delete`** — use `null` or `undefined` assignment instead; `delete` forces dictionary mode.
+3. **Keep functions monomorphic** — do not pass different shapes to the same call site.
+4. **Avoid `arguments`** in old code; use rest parameters.
+5. **Pre-allocate arrays** with known capacity to avoid resize.
+6. **Reuse object pools** for short-lived workloads (canvas, animation) instead of allocating new objects per frame.
+7. **Avoid massive object literals** in hot paths — they go megamorphic fast.
+8. **For very hot numeric loops**, use TypedArrays — V8 has highly tuned paths for `Uint32Array` and friends that bypass the IC layer entirely.
+
+<TraceScenario
+  id="mid-trace-jit"
+  pieceSlug="jit-pipeline"
+  lang="en"
+  scenario="A React app drops to 20fps after adding a new prop to a component. Trace the JS-perf root cause."
+  steps={[
+    { prompt: "Step 1: 20fps means a frame takes >50ms when it should take <16ms. What sub-systems could be eating the budget?", reveal: "Possible culprits: more JS work per render (longer scripting time), more layout/paint, GC pause, hidden-class transitions in render path. Start with Performance panel — break the frame into Scripting / Rendering / Painting / GC." },
+    { prompt: "Step 2: Performance shows 40ms of Scripting per frame, was 8ms before. The new prop is involved. What is the V8-level shape?", reveal: "Adding a prop to a React component is harmless at the React level — but if the prop is dynamic (sometimes a string, sometimes a number, sometimes undefined), the component's props object now has different hidden classes per render. Any component-internal IC keyed off props.X goes polymorphic or megamorphic." },
+    { prompt: "Step 3: how to confirm hidden-class instability is the issue?", reveal: "Run with --trace-opt --trace-deopt. Look for deopt messages mentioning the component's render function. Or use %GetOptimizationStatus on the render function — if it bounces between 'optimized' and 'not optimized' across renders, IC degradation is breaking the optimisation." },
+    { prompt: "Step 4: structural fix?", reveal: "Make the prop's type consistent. If it can be string-or-undefined, use a default value to make it always defined. If it can be number-or-string, pick one canonical representation. The React docs hint at this in the 'avoid changing object identity' guidance — the deeper reason is hidden-class stability for V8." },
+    { prompt: "Step 5: prevent regression?", reveal: "TypeScript strict mode catches most cases (no implicit any, no | undefined unless explicit). Add a perf-budget test: render the component N times, assert total time stays below threshold. Run on every PR touching the component." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-jit"
+  pieceSlug="jit-pipeline"
+  lang="en"
+  prompt="Order the steps of a property access at a TurboFan-compiled monomorphic IC:"
+  items={[
+    "TurboFan-compiled function receives an object pointer in a register",
+    "First instruction: load the hidden-class pointer from the object header",
+    "Compare loaded hidden class to the expected hidden class from compile time",
+    "If equal: read the property at the precomputed offset (1 MOV instruction)",
+    "If not equal: deoptimize — throw away compiled code, fall back to lower tier",
+    "Continue execution in the lower tier; IC records the new hidden class and may transition state",
+    "Function may be re-optimised later with updated IC information",
+  ]}
+  correctOrder={["0", "1", "2", "3", "4", "5", "6"]}
+/>
+
+<Quiz
+  id="mid-quiz-jit-1"
+  pieceSlug="jit-pipeline"
+  lang="en"
+  question="Why does V8 have FOUR compilation tiers instead of two?"
+  choices={[
+    { label: "Historical accident, no real reason", misconception: "Each tier was added deliberately to fill a specific niche in compile-cost-vs-runtime-speed tradeoff." },
+    { label: "Each tier covers a different point on the compile-time-vs-run-time curve — Sparkplug for fast warm-up, Maglev for mid-tier code that does not warrant TurboFan", correct: true },
+    { label: "Different tiers for different browsers", misconception: "V8 is one engine; all tiers ship together." },
+    { label: "Marketing", misconception: "Each tier has measurable, documented impact on real workloads." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-jit-2"
+  pieceSlug="jit-pipeline"
+  lang="en"
+  question="A function suddenly slows from 50µs to 2ms after a 'small' refactor. Where do you look first?"
+  choices={[
+    { label: "Garbage collector pauses", misconception: "GC is a possible cause, but slowdown of a single function is more often from deopt or IC degradation." },
+    { label: "Whether the function was deoptimized (look at --trace-deopt logs or DevTools Performance trace 'recompile' events) — and which call site went mega/polymorphic", correct: true },
+    { label: "Network latency", misconception: "If the function is a pure compute function, the network is unrelated." },
+    { label: "Mac vs Linux V8 difference", misconception: "Same V8 ships in all OSes; performance differences are within ~5%." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why not TurboFan everything from the start? Three reasons. First: most functions run once or never — TurboFan compile cost would be pure waste. Second: TurboFan needs type feedback from Ignition to make good speculations; without warm-up it has no information to specialise on. Third: compile latency directly hits perceived load time. A page that boots in 2s because every onload function TurboFan-compiled feels broken. Tiered design front-loads cheap Ignition, reaches expensive TurboFan only for the small subset of code that warrants it.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Four tiers mean V8 pays compile cost only for code that earns it. Profile-guided tiering plus FeedbackVector data lets TurboFan specialise on observed types — and skip functions whose types are too unstable to optimise safely.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="jit-pipeline-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does V8 not just compile every function with TurboFan immediately?", a: "Three reasons: (1) most functions run once or never — TurboFan compile cost would be waste; (2) TurboFan needs type feedback from Ignition warm-up to generate good speculative code — without it the result would be as slow as Sparkplug at 1000× the cost; (3) compile latency hits perceived load time. Tiered design front-loads cheap Ignition, climbs to expensive TurboFan only for functions that are both hot and stable." },
+    { q: "What is the FeedbackVector and who reads it?", a: "A per-function fixed-size array in the V8 heap, one slot per IC site (property load, call, binary op). Ignition writes observed hidden classes and call targets into it while interpreting. Sparkplug reads minimal feedback. Maglev uses richer data (class chains, call frequencies). TurboFan reads everything plus infers loop trip counts and branch probabilities. A megamorphic slot blocks TurboFan from optimising that site." },
+    { q: "What are the two main reasons Maglev exists alongside TurboFan?", a: "Maglev covers the 'medium hot' tier — functions called thousands of times but not tens of thousands — where TurboFan's ~100ms compile cost is too expensive but Sparkplug's unspecialised code is too slow. Maglev compiles in ~10ms and produces code at ~50-70% of TurboFan quality. It gives a measurable speedup without the latency cost of TurboFan, keeping frame-time budgets healthy during the warm-up phase." },
+  ]}
+/>
+
+<Recap lang="en">
+V8's four tiers span the entire compile-cost-vs-runtime-speed axis: Ignition (free compile, 10× slower code), Sparkplug (~1ms compile, 1.5–2× faster), Maglev (~10ms compile, 50–70% of TurboFan speed), TurboFan (~100ms compile, maximum speed). Functions move up the ladder only when they are hot enough and their FeedbackVector is stable enough to justify the compile cost. The FeedbackVector is the key data structure — one slot per call site, tracking observed hidden classes and call frequencies. Concurrent compilation keeps the main thread running on the current tier while a worker thread builds the next. Operational levers — stable constructors, no `delete`, monomorphic call sites, TypedArrays for numeric loops — keep functions on the fast tier across their lifetime.
+</Recap>

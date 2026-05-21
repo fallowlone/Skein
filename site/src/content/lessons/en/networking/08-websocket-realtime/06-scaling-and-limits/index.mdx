@@ -1,0 +1,175 @@
+---
+slug: 06-scaling-and-limits
+lang: en
+track: networking
+unit: 08-websocket-realtime
+order: 6
+title: "WebSocket at scale: HTTP/2 multiplexing, permessage-deflate, C10M"
+summary: "The three ceilings that gate WebSocket scale — RAM per idle connection, file descriptors, and NIC bandwidth — and how HTTP/2 extended CONNECT and compression tuning shift those limits."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "08-websocket-realtime/04-backpressure-and-flow"
+  - "06-http-versions/02-http2-multiplexing"
+deepensInto:
+  - "07-production-architecture"
+spiral: ["latency", "statefulness"]
+concepts: ["http2-extended-connect", "rfc-8441", "rfc-9220", "webtransport", "permessage-deflate", "c10k", "c10m", "file-descriptors", "head-of-line-blocking"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc8441
+  - https://datatracker.ietf.org/doc/html/rfc9220
+  - https://datatracker.ietf.org/doc/html/rfc7692
+  - https://www.phoenixframework.org/blog/the-road-to-2-million-websocket-connections
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Phoenix demonstrated 2 million concurrent WebSocket connections on one 64 GB server. MigratoryData reports 10 million on commodity hardware. Getting there requires understanding three independent ceilings: RAM per idle connection, file descriptor limits, and NIC bandwidth — and the protocol evolution that shifts those ceilings.
+</Hook>
+
+<Crux>WebSocket scale hits RAM, file descriptors, and NIC ceilings in order. HTTP/2 shifts RAM; ulimits shift FDs; connection sharding shifts NIC.</Crux>
+
+<Explanation>
+
+## Three ceilings in order
+
+**Ceiling 1 — RAM per idle connection.** An idle WebSocket connection consumes kernel socket buffers (send + receive), plus the framework's application state. At default Linux settings:
+
+- Kernel socket buffers: ~4–8 KB (socket rmem/wmem default).
+- Framework connection state: varies by language/framework (Node.js: ~10–50 KB per connection due to V8 object overhead; Go: ~2–5 KB; Rust: ~1–2 KB).
+
+With `permessage-deflate` at default window_bits=15: +256 KB per compressor + 44 KB per decompressor = **+300 KB per connection**.
+
+At 10 M connections × 10 KB base = **100 GB RAM** minimum. This is why Phoenix's 2 M on 64 GB is impressive — they strip per-connection overhead to under 32 KB per connection.
+
+**Ceiling 2 — File descriptors.** Linux defaults are 1,024 per process. Production servers raise with `ulimit -n` or `LimitNOFILE` in systemd. Maximum practical limit per process is around 1 M on modern Linux. At 10 M connections per server you need 10 M file descriptors — requires kernel tuning (`fs.nr_open`, `fs.file-max`).
+
+**Ceiling 3 — NIC bandwidth.** Keepalive pings every 25 s at 125-byte payload: 10 M connections × 4 pings/minute × 125 bytes = ~83 MB/s of ping traffic alone on a 1 Gbps NIC. NIC saturation sets the practical ceiling for idle connections around 500 k–2 M depending on ping interval and message rate.
+
+<NumbersCard
+  id="card-ws-scale-numbers"
+  title="WebSocket at scale — key numbers"
+  data-lesson-visual
+  stats={[
+    { label: "RAM per idle connection (framework-dependent)", value: "2–50 KB" },
+    { label: "permessage-deflate overhead per connection (default)", value: "~300 KB" },
+    { label: "Phoenix: concurrent connections on 64 GB, single server", value: "2 million" },
+    { label: "MigratoryData: concurrent on commodity hardware", value: "10 million" },
+    { label: "Linux fd default per process", value: "1,024 (raise to 1 M in production)" },
+    { label: "Practical single-server ceiling (RAM or NIC)", value: "500 k–2 M idle connections" },
+  ]}
+/>
+
+## HTTP/2 extended CONNECT (RFC 8441)
+
+Opening 100 WebSocket connections via HTTP/1.1 Upgrade means 100 TCP 3-way handshakes (~30 ms each at 10 ms RTT) plus 100 TLS sessions (~20 ms resuming). Each TCP connection consumes a file descriptor and ~8 KB of kernel buffers.
+
+RFC 8441 defines **extended CONNECT for WebSocket over HTTP/2**. Instead of `GET + Upgrade`, the client sends:
+
+```
+HEADERS stream=5
+  :method = CONNECT
+  :protocol = websocket
+  :scheme = https
+  :path = /chat
+  :authority = example.com
+  sec-websocket-protocol = chat
+```
+
+The server replies with `200 OK` (not 101). The HTTP/2 **stream 5** becomes the WebSocket tunnel. Other HTTP/2 streams on the same TCP connection carry different traffic simultaneously.
+
+Benefits:
+- 100 WebSocket connections share **one TCP connection** — one 3-way handshake total.
+- Zero extra file descriptors for additional connections.
+- Congestion control tuning on the shared connection benefits all streams.
+- Cumulative handshake latency for 100 connections: ~30 ms instead of ~3,000 ms.
+
+Trade-off: requires HTTP/2 end-to-end (client, server, all proxies). As of 2026, major cloud load balancers (AWS ALB, GCP Load Balancer) support it, but most corporate proxies and firewalls do not. Adoption is limited to hyperscale operators.
+
+## WebSocket over HTTP/3 (RFC 9220)
+
+HTTP/3 runs over QUIC (UDP-based). RFC 9220 defines WebSocket over HTTP/3 using the same extended CONNECT with `:protocol websocket`.
+
+Key difference from HTTP/2: QUIC streams are **independent at the transport layer** — a lost packet on stream 0 does not block stream 4 (no head-of-line blocking). HTTP/2 over TCP still suffers TCP-level HoL blocking: a lost TCP segment blocks all HTTP/2 streams on that connection.
+
+As of early 2026, no major browser or server ships production WebSocket-over-HTTP/3 support. **WebTransport** (a QUIC-native protocol) is the preferred choice for applications needing QUIC semantics: it offers bidirectional streams plus unreliable datagrams and has ~75% browser support (Chrome 120+, Firefox 127+, Safari 17+).
+
+## permessage-deflate tuning
+
+The `permessage-deflate` extension (RFC 7692) compresses each message with DEFLATE. Compression ratio:
+- **50–90%** on text payloads (JSON, HTML).
+- **Poor** on small messages (< 64 bytes) — can expand.
+- **~0%** on already-compressed data (images, video, encrypted payloads).
+
+Memory cost per connection at default `window_bits=15`:
+- Compressor: **~256 KB**
+- Decompressor: **~44 KB**
+
+At window_bits=12: ~50 KB total per connection. The trade-off is lower compression ratio (32 KB history window vs. 32 KB at window_bits=15... wait, window_bits=15 = 32 KB, window_bits=12 = 4 KB). Compression ratio drops from ~70% to ~50% on typical JSON payloads.
+
+Production strategies:
+- **Disable entirely** for idle connections and connections sending small messages or binary data.
+- **Set window_bits=10–12** for memory-constrained deployments.
+- **Enable context_takeover=false** to reset compression state per message — trades ratio for lower per-message overhead.
+
+<Inset kind="why" lang="en">
+**Why head-of-line blocking matters for WebSocket specifically.** WebSocket multiplexes all application channels onto one TCP connection. If your application sends independent data channels (game entities A, B, C), a TCP retransmit on entity A's packet blocks the entire connection for ~10–30 ms (typical retransmit timer). Entity B and C updates stall even though their packets were delivered. Mitigation: use multiple WebSocket connections (one per independent channel), or move to WebTransport/QUIC which has stream-level independence. Most production applications tolerate this HoL risk for interactive latency (< 100 ms) without special handling.
+</Inset>
+
+<TraceScenario
+  id="ws-sr-trace-2"
+  pieceSlug="06-scaling-and-limits"
+  lang="en"
+  scenario="Trace the memory and handshake savings of moving 1,000 WebSocket connections from HTTP/1.1 to HTTP/2 extended CONNECT."
+  steps={[
+    { prompt: "HTTP/1.1: 1,000 connections. Each idle connection uses 10 KB kernel socket buffers. What is the total kernel memory?", reveal: "1,000 × 10 KB = 10 MB for kernel socket buffers alone, plus framework overhead per connection." },
+    { prompt: "HTTP/1.1: opening those 1,000 connections one by one at 10 ms RTT. How much total handshake latency?", reveal: "1,000 connections × 30 ms (3-way handshake) × ~1 ms TLS resume = ~31 seconds of cumulative handshake latency. In practice parallelised, but each connection still requires its own handshake." },
+    { prompt: "HTTP/2 extended CONNECT: 1,000 WebSocket connections share one TCP connection. How much kernel memory for socket buffers?", reveal: "One TCP connection: ~10–50 KB kernel socket buffers. HTTP/2 stream IDs and flow control windows: ~8 bytes per stream = ~8 KB for 1,000 streams. Total ~50–60 KB vs. 10 MB — approximately 200× reduction in kernel buffer memory." },
+    { prompt: "HTTP/2: how many TCP handshakes?", reveal: "One. The single TCP connection requires one 3-way handshake and one TLS session. All 1,000 WebSocket connections multiplex over it. Total handshake latency: ~30 ms (plus TLS ~20 ms) = ~50 ms, regardless of how many WebSocket connections follow." },
+    { prompt: "What is the deployment constraint that limits HTTP/2 extended CONNECT adoption?", reveal: "All proxies and load balancers on the path must understand HTTP/2 and the extended CONNECT with :protocol header. Many corporate proxies, some cloud load balancers, and most off-the-shelf API gateways do not support it as of 2026. It is limited to hyperscale operators who control the full proxy stack." },
+  ]}
+/>
+
+<Quiz
+  id="ws-sr-quiz-3"
+  pieceSlug="06-scaling-and-limits"
+  lang="en"
+  question="A server has 100k idle WebSocket connections with permessage-deflate enabled at default window_bits=15. Memory used by compression state alone is approximately?"
+  choices={[
+    { label: "~30 GB (300 KB per connection × 100k)", correct: true, misconception: "Each connection uses ~256 KB compressor + ~44 KB decompressor = ~300 KB. At 100k connections: 30 GB." },
+    { label: "~3 GB (30 KB per connection)", correct: false, misconception: "30 KB is the overhead at window_bits=10 (1 KB history). Default window_bits=15 allocates a 32 KB history window per compressor context, totalling ~300 KB per connection." },
+    { label: "~300 MB (3 KB per connection)", correct: false, misconception: "3 KB is the kernel socket buffer overhead. Compression state is separate and much larger at default settings." },
+    { label: "~1 GB (10 KB per connection)", correct: false, misconception: "10 KB is the total idle connection kernel overhead without compression. permessage-deflate adds 300 KB on top of that." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>WebSocket scale hits RAM first (2–300 KB per idle connection depending on compression), file descriptors second (raise ulimit to 1 M), and NIC third (ping traffic saturates 1 Gbps at ~2 M idle connections). HTTP/2 extended CONNECT cuts TCP connections and handshake latency by 100× — but requires a fully HTTP/2-aware proxy chain.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-scaling-and-limits-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why HTTP/2 extended CONNECT can support multiple concurrent WebSocket connections more efficiently than opening multiple separate TCP connections.", a: "HTTP/2 multiplexes streams over one TCP connection; one 3-way handshake establishes the whole connection, and each additional WebSocket uses a new stream (stream ID + flow control window: ~8 bytes) rather than a new TCP socket (~8 KB kernel buffers + file descriptor). 100 connections via HTTP/2 need 1 handshake and ~100 KB memory; via HTTP/1.1 Upgrade they need 100 handshakes and ~1 MB memory. The trade-off is that all streams share the TCP connection's congestion window — a loss on any stream causes a TCP retransmit that briefly stalls all streams (HoL)." },
+    { q: "What is the effect of setting server_no_context_takeover in permessage-deflate negotiation, and when should you use it?", a: "server_no_context_takeover resets the DEFLATE compression context (the sliding history window) after each message instead of maintaining it across messages. Without it, the compressor can reference bytes from previous messages, achieving higher ratios on repetitive content (e.g., JSON feeds where keys repeat across messages). With context_takeover disabled, each message is compressed independently — ratios drop by 10–20% on typical JSON. Use it when per-message memory isolation matters (shared compressor state complicates multi-thread access) or when messages are largely independent (so context contributes little anyway)." },
+    { q: "Name the three independent ceilings that limit WebSocket connections per single server, and state the practical limit each imposes.", a: "1) RAM: idle connection uses 2–50 KB framework state + kernel buffers; with permessage-deflate, up to 300 KB per connection; practical ceiling is server RAM divided by per-connection footprint — ~2 M connections on 64 GB at 30 KB each. 2) File descriptors: Linux default 1024, production raised to 100k–1 M via ulimit; 10 M connections require 10 M FDs and kernel tuning (fs.file-max, fs.nr_open). 3) NIC bandwidth: ping traffic at 10 M connections × 4 pings/min × 125 bytes = ~83 MB/s; a 1 Gbps NIC is saturated at around 1–2 M idle connections given other traffic." },
+  ]}
+/>
+
+<Recap lang="en">
+WebSocket connections at scale hit three independent ceilings. RAM is first: each idle connection uses 2–50 KB of framework state and kernel buffers; permessage-deflate at default settings adds 300 KB more per connection, making 100k connections consume 30 GB in compression state alone — most production deployments disable compression or tune window_bits down. File descriptors are second: Linux defaults to 1,024 per process; production servers raise this to 100k–1 M via `ulimit -n`. NIC bandwidth is third: ping traffic alone saturates a 1 Gbps NIC at around 1–2 M idle connections. HTTP/2 extended CONNECT (RFC 8441) addresses the TCP and file descriptor ceilings by multiplexing 100 WebSocket connections over one TCP connection — 100× reduction in kernel buffer memory and handshake latency — but requires an HTTP/2-aware proxy chain not yet common outside hyperscale deployments. WebSocket over HTTP/3 (RFC 9220) adds QUIC-level stream independence but has no production browser support as of 2026; WebTransport is the current QUIC-native alternative.
+</Recap>

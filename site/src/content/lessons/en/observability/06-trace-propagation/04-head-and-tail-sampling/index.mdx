@@ -1,0 +1,198 @@
+---
+slug: 04-head-and-tail-sampling
+lang: en
+track: observability
+unit: 06-trace-propagation
+order: 4
+title: "Head sampling and tail sampling: deciding which traces survive"
+summary: "Head sampling is cheap but blind — it makes the keep/drop decision at trace start without seeing the outcome. Tail sampling sees the whole trace before deciding, catching errors and slow requests that head sampling drops, at the cost of collector RAM and routing discipline."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/06-trace-propagation/03-baggage-and-async-boundaries"]
+deepensInto: []
+spiral: []
+concepts: ["head-sampling", "tail-sampling", "trace-flags", "sampled-flag", "otel-collector", "trace-cost"]
+sources:
+  - https://opentelemetry.io/docs/concepts/sampling/
+  - https://opentelemetry.io/blog/2022/tail-sampling/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Your service handles 10,000 requests per second. Storing every trace is prohibitively expensive. But if you sample randomly at 1%, the one slow request that triggered the customer complaint has a 99% chance of being silently discarded.
+</Hook>
+
+<Crux>Head sampling: cheap, blind to outcomes. Tail sampling: catches errors head drops, costs RAM and requires sticky routing per trace-id.</Crux>
+
+<Explanation>
+
+## Head-based sampling
+
+The keep/drop decision is made at trace start — encoded in the `traceparent` trace-flags `01` (sampled) bit. The decision is propagated to all downstream services, which honour it by default.
+
+**Common strategies:**
+- **Probabilistic:** keep N% of traces (1–5% typical). Simple, predictable, scales linearly with traffic.
+- **Rate-limiting:** keep at most K traces per second regardless of traffic volume.
+
+**Cost:** cheap — the decision is made once at the root span, before any work is done. Unsampled requests generate no spans at all, saving CPU, network, and storage.
+
+**Drawback:** the decision is blind to the outcome. A slow or error-prone request that happens to be in the unsampled 99% is invisible in the tracing backend. If an incident hits 0.5% of traffic and you sample at 1%, you will keep roughly half the incident traces — but you might keep none if the incident is brief.
+
+**The sampled flag:** when the flag is `01`, downstream services record and export their spans. When it is `00`, OTel SDKs create spans internally but do not export them by default. This is consistent sampling: either the whole trace is kept or none of it, never a fragment. A downstream service may override the incoming flag (for example, always sample its own errors), but partial overrides produce fragmentary traces that are nearly useless for debugging.
+
+## Tail-based sampling
+
+The OTel Collector buffers all spans for a trace-id for a configurable decision window (30s–5min), then decides whether to keep the trace based on policies:
+- **Error present** → keep 100%.
+- **Duration &gt; threshold** → keep 100%.
+- **Specific attribute** (e.g. `user.tier=premium`) → keep 100%.
+- **Probabilistic top-up** → keep 1% of the rest for baseline visibility.
+
+**Advantages:**
+- Catches every error trace, even at 0.1% traffic rate.
+- Catches every slow trace above the latency threshold.
+- Provides the kind of selectivity that makes tail sampling the dominant pattern at high-traffic services.
+
+**Cost:** the collector must hold every trace's spans in memory until decision time.
+
+Memory model: `active_traces × avg_spans_per_trace × bytes_per_span`. At 50,000 in-flight traces × 100 spans × 1 KB per span = 5 GB RAM. The decision window directly controls the RAM footprint.
+
+**Load-balancing exporter requirement:** with multiple collector replicas, random span distribution scatters a trace's spans across different instances. Each instance only sees fragments and cannot make a correct keep/drop decision. The solution is a load-balancing exporter that hashes by trace-id and routes all spans for one trace to the same collector instance. This is mandatory for tail sampling to work correctly.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Head sampling</th>
+        <th class="border border-border px-3 py-2 text-left">Tail sampling</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Decision time</td>
+        <td class="border border-border px-3 py-2">At trace start (head)</td>
+        <td class="border border-border px-3 py-2">After all spans complete (tail)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Sees outcome?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Yes (error, latency, attributes)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Collector RAM</td>
+        <td class="border border-border px-3 py-2">Minimal</td>
+        <td class="border border-border px-3 py-2">Proportional to active traces × spans × span size</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Routing requirement</td>
+        <td class="border border-border px-3 py-2">None (stateless)</td>
+        <td class="border border-border px-3 py-2">Load-balancing exporter (trace-id hash)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Misses error traces?</td>
+        <td class="border border-border px-3 py-2">Yes (at rate = 1 − sample%)</td>
+        <td class="border border-border px-3 py-2">No (if error policy = 100%)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The hybrid pattern (dominant in production)
+
+Head-sample at 100% (every request enters the pipeline), then tail-sample by policy:
+- Error traces → 100% keep.
+- Latency &gt; 99th percentile threshold → 100% keep.
+- Everything else → 1% probabilistic.
+
+This gives the volume control of head sampling and the selectivity of tail sampling, at the cost of one piece of additional infrastructure: the tail-sampling Collector tier with load-balancing exporter and sufficient RAM.
+
+At 10k req/s with 30s decision window, 10 spans/trace, 1 KB/span:
+`10,000 × 30 × 10 × 1,024 B = ~3 GB` collector RAM. Doable with 4–8 collector replicas.
+
+<Inset kind="why" lang="en">
+The hybrid pattern is why "we need to keep all error traces" and "we can't afford to store everything" are not mutually exclusive. Head sampling enters every request without committing storage; the tail-sampling tier then applies the 100%-for-errors policy. Engineers who try to solve this with head sampling alone either store everything (expensive) or miss errors (unreliable). The two-tier design resolves both constraints.
+</Inset>
+
+<NumbersCard
+  id="04-sampling-numbers"
+  title="Sampling cost reference numbers"
+  stats={[
+    { label: "Typical head sample rate", value: "0.5–5% of traces" },
+    { label: "Typical tail decision window", value: "30s–5 min" },
+    { label: "Tail-sampler RAM at 50k traces × 100 spans × 1 KB", value: "~5 GB" },
+    { label: "Tail-sampler RAM at 10k req/s, 30s window, 10 spans, 1 KB", value: "~3 GB" },
+    { label: "Load-balancing exporter: routing key", value: "trace-id hash" },
+    { label: "Consistent sampling: trace is kept/dropped", value: "100% or 0% — never a fragment" },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-1"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="en"
+  question="A team chooses tail-based sampling so they can keep all error traces. What is the operational catch they must plan for?"
+  choices={[
+    { label: "All spans for one trace must reach the same collector instance during the decision window; this requires a load-balancing exporter that hashes by trace-id, and the collector needs RAM proportional to in-flight trace count × span count × span size", correct: true },
+    { label: "Tail sampling is not supported in OpenTelemetry", misconception: "It is supported in the OTel Collector via the tail_sampling processor." },
+    { label: "It costs more than head sampling per trace", misconception: "Per-trace cost is similar; the difference is collector RAM and routing complexity." },
+    { label: "It is incompatible with W3C traceparent", misconception: "Sampling and propagation are orthogonal; W3C works with both head and tail." },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-2"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="en"
+  question="When traceparent arrives with the sampled flag set to `00`, what should the receiving service do by default?"
+  choices={[
+    { label: "Create spans but do not export them — consistent sampling means the whole trace is either kept or dropped, and the upstream already decided: drop", correct: true },
+    { label: "Ignore the flag and always export spans", misconception: "Overriding the upstream flag produces partial traces — some services export, others don't — which are nearly useless for debugging." },
+    { label: "Reject the request", misconception: "The sampled flag is a sampling hint, not an access control mechanism. The request is processed normally." },
+    { label: "Regenerate a new trace-id with a fresh sampled=01 flag", misconception: "Regenerating the trace-id breaks propagation — the trace in the backend would no longer link to the upstream spans." },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-3"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="en"
+  question="A tail-sampling Collector OOMs every few hours. The metrics show trace count is steady but spans-per-trace is growing. What is the likely cause?"
+  choices={[
+    { label: "A long-running trace (batch job, recursive worker) accumulates thousands of spans, each held in RAM until the decision window closes", correct: true },
+    { label: "The collector is receiving duplicate spans", misconception: "Duplicates would increase span count across all traces, not concentrate per-trace span count on specific long-running traces." },
+    { label: "The W3C traceparent header contains an incorrect trace-id", misconception: "Invalid trace-ids would cause the collector to start fresh traces, increasing trace count, not per-trace span count." },
+    { label: "The decision window is too short — extend it to fix the OOM", misconception: "Extending the decision window increases the amount of data held in RAM — it makes the OOM worse, not better." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Head sampling decides at trace start — cheap but blind to errors and slowdowns. Tail sampling buffers all spans until the trace completes and applies policies (keep all errors, keep all slow traces, 1% everything else). The hybrid head-100% + tail-policy pattern is the production standard; it requires a load-balancing exporter and collector RAM proportional to active trace count.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-sampling-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does head sampling miss error traces and what is the rate of missing?", a: "Head sampling makes the keep/drop decision at trace start, before any downstream service has executed. At that point, there is no error to observe. A 1% head sample rate drops 99% of all traces indiscriminately — errors and successes alike. If an incident causes 0.5% of requests to fail and you sample at 1%, you will keep roughly 0.5% × 1% = 0.005% of error traces — almost none. The only way to catch errors reliably is to make the sampling decision after observing the outcome, which is what tail sampling provides." },
+    { q: "Explain the load-balancing exporter and why tail sampling breaks without it.", a: "A tail-sampling Collector must see all spans for a given trace-id before it can apply the keep/drop policy. With multiple Collector replicas and random span distribution, a trace with 10 spans might land on 10 different replicas — no single replica can see the complete trace and none can make a correct decision. The load-balancing exporter (built into the OTel Collector) hashes each span's trace-id to a deterministic replica, routing all spans for one trace to the same instance. Without it, the tail sampler makes decisions on fragments and its policy correctness degrades toward head sampling, but with the overhead of tail sampling — the worst of both approaches." },
+    { q: "Describe the hybrid head-100% + tail-policy pattern and when each tier acts.", a: "Tier 1 (head, at the SDK): sample at 100% — every request generates spans and exports them. The sampled flag is always 01. This means the full volume of spans flows from the application to the collector. No decisions are made here about what to keep. Tier 2 (tail, at the Collector): after the decision window (30s–5min), apply policies: keep all traces with any error span (status code 2 = ERROR), keep all traces where the root span duration exceeds the p99 threshold, keep 1% probabilistic sample of the rest. Discard everything else. Result: error and slow traces are always kept; background baseline traces are sampled at 1%. The head tier costs CPU but no storage; the tail tier costs RAM but enables policy-driven retention. The two tiers are independent — scaling the collector handles more traffic without changing SDK configuration." },
+  ]}
+/>
+
+<Recap lang="en">
+Head sampling makes the keep/drop decision at trace start using the `traceparent` sampled flag, propagating the decision to all downstream services. It is cheap — unsampled requests generate no spans at all — but blind to outcomes: a 1% head rate drops 99% of error traces alongside 99% of normal ones. Tail sampling buffers all spans in the OTel Collector until the decision window closes (30s–5min), then applies policies: keep all errors, keep all slow traces, keep 1% baseline. The cost is collector RAM (active-traces × spans/trace × bytes/span) and a mandatory load-balancing exporter that routes all spans for one trace to the same collector instance. The hybrid head-100% + tail-policy pattern is the production standard: head at 100% feeds everything into the pipeline; the tail tier decides what to persist.
+</Recap>

@@ -1,0 +1,182 @@
+---
+slug: 03-partitioning-vs-sharding
+lang: en
+track: databases
+unit: 07-sharding
+order: 3
+title: "Partitioning vs sharding: same word, two different things"
+summary: "Partitioning is single-instance query pruning and retention management; sharding is multi-instance throughput scaling. They are complementary and typically composed in production."
+estMin: 10
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/07-sharding/02-shard-key-selection"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["declarative-partitioning", "partition-pruning", "sharding", "composing-partitioning-sharding"]
+sources:
+  - https://www.postgresql.org/docs/current/ddl-partitioning.html
+  - https://www.citusdata.com/blog/2023/08/04/understanding-partitioning-and-sharding-in-postgres-and-citus/
+  - https://docs.citusdata.com/en/stable/get_started/concepts.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A team adds `PARTITION BY RANGE (created_at)` to their `events` table and calls it "sharding the database." A month later they wonder why write throughput has not improved. Partitioning and sharding are often conflated — they solve different problems on different scales.
+</Hook>
+
+<Crux>Partitioning splits one table on one Postgres for pruning; sharding spreads data across many instances for throughput scale.</Crux>
+
+<Explanation>
+
+## Partitioning: one Postgres, table split for pruning
+
+Declarative table partitioning (introduced in PostgreSQL 10) splits a single table into named sub-tables called **partitions**, all living on the same Postgres instance.
+
+```sql
+-- One Postgres, one machine, many partitions
+CREATE TABLE events (
+  id BIGINT,
+  tenant_id INT,
+  created_at TIMESTAMPTZ,
+  payload JSONB
+) PARTITION BY RANGE (created_at);
+
+CREATE TABLE events_2026_01 PARTITION OF events
+  FOR VALUES FROM ('2026-01-01') TO ('2026-02-01');
+CREATE TABLE events_2026_02 PARTITION OF events
+  FOR VALUES FROM ('2026-02-01') TO ('2026-03-01');
+```
+
+Postgres gains two things from this:
+
+1. **Partition pruning**: a query with `WHERE created_at >= '2026-02-01'` only scans the relevant partitions, not the whole table.
+2. **Instant retention DROP**: deleting a month of data is `DROP TABLE events_2026_01` — instantaneous, no long DELETE, no dead-tuple bloat, no massive VACUUM.
+
+**The critical limitation**: partitioning does not increase throughput beyond one machine. All writes still go to the same Postgres primary; all reads share the same CPU and RAM.
+
+## Sharding: many Postgres instances, routed by key
+
+Sharding distributes rows across N physically separate Postgres instances. Each instance holds a subset of the data. Writes and reads for a given shard key go to that shard's Postgres — parallel, independent IO and CPU.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Partitioning</th>
+        <th class="border border-border px-3 py-2 text-left">Sharding</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Postgres instances</td>
+        <td class="border border-border px-3 py-2">One</td>
+        <td class="border border-border px-3 py-2">Many (N)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Increases write throughput?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Yes (~N×)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Primary benefit</td>
+        <td class="border border-border px-3 py-2">Partition pruning, fast DROP for retention</td>
+        <td class="border border-border px-3 py-2">Scale past one machine's ceiling</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Cross-table joins</td>
+        <td class="border border-border px-3 py-2">Free (all on one instance)</td>
+        <td class="border border-border px-3 py-2">Expensive if cross-shard; free if co-located</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Operational multiplier</td>
+        <td class="border border-border px-3 py-2">Low (one instance still)</td>
+        <td class="border border-border px-3 py-2">N× per-shard operations</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Available since</td>
+        <td class="border border-border px-3 py-2">PostgreSQL 10 (declarative)</td>
+        <td class="border border-border px-3 py-2">Via Citus extension or application-level routing</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How they compose in production
+
+Real production systems typically use **both** — partition within each shard:
+
+```
+Shard 0: Postgres instance holding tenant_id 1–500
+  └── events table: PARTITION BY RANGE (created_at)
+        ├── events_2026_01 (Jan rows for tenants 1-500)
+        ├── events_2026_02 (Feb rows for tenants 1-500)
+        └── ...
+
+Shard 1: Postgres instance holding tenant_id 501–1000
+  └── events table: same month partitions
+        ├── events_2026_01
+        └── ...
+```
+
+The shard key (`tenant_id`) routes traffic to the right Postgres instance. Within that instance, the time partition means: query `WHERE tenant_id = 42 AND created_at >= '2026-02-01'` prunes to just the February partition. Retention is `DROP PARTITION events_2026_01` per shard.
+
+The senior intuition: **partition for what you would do on a single machine anyway** (time-series retention, query pruning for large tables); **shard only when single-Postgres throughput and storage limits are measured and proven binding**.
+
+<Inset kind="why" lang="en">
+Why does Postgres support up to ~1–2k partitions in OLTP workloads but ~10k in OLAP? The partition metadata is loaded into the planner's working memory on every query — large numbers of partitions slow plan generation. For OLTP queries that touch one or two partitions, the plan overhead from 10k partitions dominates execution time. OLAP queries that scan many partitions in parallel can amortize the planning cost. The practical limit in OLTP is around 1–2k partitions per table.
+</Inset>
+
+<Quiz
+  id="03-partitioning-vs-sharding-quiz-1"
+  lessonSlug="03-partitioning-vs-sharding"
+  lang="en"
+  question="A team adds PARTITION BY RANGE (created_at) to their largest table. What problem does this solve?"
+  choices={[
+    { label: "Query pruning (only scan relevant time partitions) and instant retention DROP — but it does not increase write throughput beyond the single Postgres machine", correct: true },
+    { label: "Doubles write throughput by distributing writes across partitions on parallel CPUs", misconception: "All partitions live on the same Postgres primary. Writes still contend for the same WAL, CPU, and IO. Throughput does not increase." },
+    { label: "Partitioning is sharding — both split the dataset across multiple Postgres instances", misconception: "Partitioning is single-instance. Sharding is multi-instance. They are different mechanisms solving different problems." },
+    { label: "Reduces storage by compressing old partitions automatically", misconception: "Postgres does not compress partitions automatically. The storage benefit of partitioning is instant DROP of old partitions without VACUUM bloat, not compression." },
+  ]}
+/>
+
+<Quiz
+  id="03-partitioning-vs-sharding-quiz-2"
+  lessonSlug="03-partitioning-vs-sharding"
+  lang="en"
+  question="In a production Citus cluster, what is the typical composition of partitioning and sharding?"
+  choices={[
+    { label: "Shard by tenant_id across Postgres instances (for throughput scaling) and partition by created_at within each shard (for retention and pruning)", correct: true },
+    { label: "Either partition or shard — never both, they conflict in Citus", misconception: "They compose cleanly. Citus distributes tables across workers by shard key; within each worker, tables can be partitioned by time or other dimensions. Citus even has native declarative-partition + distribution support." },
+    { label: "Partition first, then point each partition at a different Postgres instance", misconception: "That is sharding by a different name. Citus works at the table level — distributed tables are sharded by a key, and those shards can internally be partitioned." },
+    { label: "Partitioning replaces sharding once the table exceeds 100 GB per instance", misconception: "Partitioning does not replace sharding — it operates on a single instance and does not help when that instance's throughput ceiling is hit." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Partitioning (single instance, PG 10+) wins on pruning and retention DROP. Sharding (multi-instance) wins on throughput and storage scale. Production systems compose both: shard by tenant_id, partition by time within each shard.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-partitioning-vs-sharding-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two main benefits of declarative table partitioning in Postgres, and what is its key limitation?", a: "Benefits: (1) partition pruning — queries with a partition-key filter only scan relevant partitions, not the whole table; (2) instant retention management — DROP TABLE on an old partition takes milliseconds with no dead-tuple bloat, versus a slow DELETE + VACUUM. Key limitation: all partitions live on the same Postgres instance, so partitioning does not increase write throughput or allow the data to grow past one machine's storage and RAM." },
+    { q: "A B2B SaaS shards orders by tenant_id across 16 Postgres instances. Each instance also partitions orders by created_at month. What does the query WHERE tenant_id = 42 AND created_at >= '2026-02-01' do?", a: "The shard key (tenant_id = 42) routes the query to shard 3 (for example). Within that instance, the planner prunes to only the events_2026_02 partition (and later months). The query never touches the other 15 Postgres instances, and within its shard it never scans January's partition. It gets both the scale-out of sharding and the pruning benefit of partitioning." },
+    { q: "Why is 'partition for manageability, shard for capacity' the senior heuristic?", a: "Partitioning improves query planning and makes retention operations instantaneous — both are useful on any Postgres regardless of scale. Sharding comes with N× operational overhead (N backups, N migrations, N per-shard operations) and introduces cross-shard query complexity. Sharding should only be added when single-Postgres limits are measured and proven; partitioning can be added as soon as a table grows large enough to benefit from pruning." },
+  ]}
+/>
+
+<Recap lang="en">
+Partitioning (PostgreSQL 10+ declarative `PARTITION BY`) splits one table into sub-tables on a single Postgres instance — it benefits query pruning and makes retention DROP instantaneous, but does not increase throughput past one machine. Sharding distributes rows across N separate Postgres instances by a shard key, giving roughly N× the throughput and storage capacity at the cost of N× the operational complexity. Production systems use both: shard by tenant_id for cross-machine capacity, and partition by time within each shard for pruning and retention. The senior rule: partition freely when the table is large enough to benefit; shard only after measuring and proving that single-Postgres limits are the real bottleneck.
+</Recap>

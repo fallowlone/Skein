@@ -1,0 +1,197 @@
+---
+slug: 05-gc-internals
+lang: ru
+track: performance
+unit: 04-gc
+order: 5
+title: "Внутреннее устройство GC: tri-color инвариант, write barriers и глубокое погружение в рантаймы"
+summary: "Tri-color маркировка — формальная основа любого concurrent GC. Write barriers поддерживают инвариант. Go's pacer, colored pointers ZGC и V8 Orinoco реализуют одни идеи по-разному — знание реализации определяет, как писать allocation-safe hot paths."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/04-gc/02-gc-algorithms
+  - performance/04-gc/04-gc-tuning
+deepensInto: []
+spiral: ["latency"]
+concepts: ["tri-color-marking", "write-barrier", "satb", "go-pacer", "zgc-colored-pointers", "v8-orinoco"]
+sources:
+  - https://go.dev/blog/ismmkeynote
+  - https://openjdk.org/jeps/333
+  - https://openjdk.org/jeps/377
+  - https://v8.dev/blog/concurrent-marking
+  - https://go.googlesource.com/proposal/+/master/design/44167-gc-pacer-redesign.md
+  - https://shipilev.net/jvm/anatomy-quarks/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+JVM-сервис мигрирует с G1 на ZGC. Паузы падают с 60 мс до субмиллисекундных на 16 ГБ кучи — но throughput снижается на 12%, а потребление памяти растёт на 18%. Чтобы понять почему, нужно знать, что такое colored pointers и сколько стоят load barriers.
+</Hook>
+
+<Crux>Tri-color маркировка — инвариант каждого concurrent GC. Write barriers и colored pointers — разные ставки на один и тот же tradeoff.</Crux>
+
+<Explanation>
+
+## Tri-color маркировка и write barrier
+
+Tri-color абстракция (Dijkstra, 1978) — формальный фундамент concurrent GC. Объекты классифицируются в три цвета:
+
+- **Белый** — ещё не посещён; кандидат для сборки, если маркировка закончится, пока объект белый.
+- **Серый** — посещён, но дочерние объекты ещё не полностью просканированы.
+- **Чёрный** — посещён, все дочерние объекты просканированы; считается живым.
+
+Маркировка переводит серые объекты в чёрные, сканируя их дочерние объекты и делая каждый непосещённый дочерний серым. Когда серых объектов не остаётся, все белые — недостижимы и могут быть возвращены.
+
+**Фундаментальный инвариант:** чёрный объект не должен напрямую ссылаться на белый. Если мутаторный поток записывает ссылку из чёрного объекта в белый *после* того, как чёрный был просканирован, белый объект становится невидимым для GC — коллектор освободит живую память, что тихо разрушит кучу.
+
+### SATB vs incremental-update барьеры
+
+Write barrier предотвращает нарушение инварианта, перехватывая каждую запись ссылки:
+
+**Snapshot-at-the-beginning (SATB):** барьер маркирует *старую* ссылку, которую вот-вот перезапишут, обеспечивая её выживание в текущем цикле. Коллектор ведёт себя так, как если бы снял снимок кучи на старте GC. Используется в G1, Shenandoah, ZGC и гибридном Yuasa-барьере Go.
+
+**Incremental-update (стиль Dijkstra):** барьер маркирует *новую* ссылку, записываемую в поле чёрного объекта, гарантируя её сканирование до завершения цикла. Используется в CMS и классическом V8 mark-compact.
+
+SATB консервативнее — может сохранить объекты, ставшие мусором во время цикла (floating garbage, возвращается в следующем цикле). Но даёт более строгие гарантии завершения маркировки и проще в формальном анализе. Incremental-update может требовать фазы повторной маркировки.
+
+Оба варианта стоят **2–10% CPU** на каждой записи ссылки — цена concurrent маркировки без больших STW-пауз.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип барьера</th>
+        <th class="border border-border px-3 py-2 text-left">Что маркирует</th>
+        <th class="border border-border px-3 py-2 text-left">Используется в</th>
+        <th class="border border-border px-3 py-2 text-left">Побочный эффект</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">SATB</td>
+        <td class="border border-border px-3 py-2">Старая ссылка (до записи)</td>
+        <td class="border border-border px-3 py-2">G1, Shenandoah, ZGC, Go</td>
+        <td class="border border-border px-3 py-2">Floating garbage (задержка на один цикл)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Incremental-update</td>
+        <td class="border border-border px-3 py-2">Новая ссылка (после записи)</td>
+        <td class="border border-border px-3 py-2">CMS, классический V8</td>
+        <td class="border border-border px-3 py-2">Может потребоваться фаза remark</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+Write barriers важны для write-heavy hot paths. Сервис, записывающий миллионы ссылок в секунду (например, обновляющий большой in-memory граф), платит стоимость барьера при каждой записи. Для большинства CRUD-сервисов это незначительно; для graph-mutation или event-sourcing workloads это появляется в профилях как `runtime.wbBufFlush` (Go) или аналогичные GC-фреймы. Знайте свой паттерн записей, прежде чем утверждать, что барьер бесплатен.
+</Inset>
+
+## Переработка pacer Go
+
+Переработка GC pacer Go в 1.18 (proposal 44167, Михаил Кнышек) заменила эвристики на замкнутую систему управления. Старый pacer оценивал, когда запустить следующий цикл, чтобы успеть до удвоения кучи; он был нестабильным при высоком rate аллокаций и принимал плохие решения при cgo-heavy workloads.
+
+Новый pacer использует **PI-контроллер** (пропорционально-интегральный) по двум сигналам: rate роста кучи и утилизация CPU в GC. Контроллер нацеливается на завершение GC до достижения целевого размера кучи (заданного GOGC), с интегральной обратной связью, предотвращающей устойчивое отклонение.
+
+`GOMEMLIMIT` (добавлен в 1.19) интегрирован в pacer: по мере приближения к лимиту pacer вытягивает GC вперёд — принимая бо́льший GC CPU — для предотвращения OOM. При нахождении ниже лимита pacer отступает.
+
+**Production-совет:** устанавливать `GOMEMLIMIT` в ~90% лимита контейнера; оставлять `GOGC` на дефолтном 100 если только профилирование не показывает конкретную причину для изменения. `GOGC=off` безопасен только для memory-bounded batch-задач, освобождающих память через завершение процесса.
+
+Переработка сократила дисперсию пауз ~на 50% на реальных workloads.
+
+## ZGC и colored pointers
+
+ZGC (JEP 333, JDK 11 экспериментальный; production в JDK 15 через JEP 377) достигает субмиллисекундных пауз на кучах до 16 ТБ за счёт двух инноваций:
+
+**Colored pointers** упаковывают метаданные в 64-битный указатель. ZGC использует биты 0–41 для адреса (ограничивая кучу ~4 ТБ) и биты 42–45 для состояния маркировки — «хорошие» цвета vs «плохие», указывающие на перемещение или ожидающую работу.
+
+**Load barriers** перехватывают каждую загрузку из кучи (каждое разыменование указателя). Если цвет «плохой», барьер запускает медленный путь для обновления указателя на месте. Поскольку барьер выполняется inline при каждой загрузке, приложение участвует в работе GC инкрементально, а не ждёт большой STW-фазы.
+
+Результат: маркировка, перемещение и обработка ссылок — всё concurrent. STW-фазы ограничены сканированием корней — субмиллисекундные даже на кучах в несколько ТБ.
+
+**Tradeoff:** load barriers стоят ~5–15% CPU на read-heavy workloads. ZGC также требует multi-mapped кучи для быстрого перемещения, сильно раздувая виртуальную память (но не физический RSS). Падение throughput на 12% и рост памяти на 18% в hook-сценарии — ожидаемые расходы ZGC, не баги.
+
+**Generational ZGC** (JEP 439, JDK 21+) добавляет молодое поколение, сокращая бо́льшую часть разрыва в throughput с G1. Команды, переходящие на JDK 21+, должны оценить generational ZGC.
+
+## V8 Orinoco
+
+Проект V8 Orinoco (2017+) перевёл GC V8 с преимущественно stop-the-world на преимущественно concurrent:
+
+- **Concurrent marking:** маркировка выполняется в фоновом потоке параллельно с JavaScript. Write barriers (SATB-стиль) поддерживают согласованность.
+- **Parallel compaction:** несколько потоков перемещают объекты параллельно во время STW-фазы компактизации, сокращая её длительность.
+- **Параллельный scavenger молодого поколения:** несколько потоков эвакуируют молодую кучу параллельно.
+
+Результат: типичные web workloads видят паузы ≤10 мс, большая часть маркировки скрыта в фоне. Overhead памяти: ~5–15% для инфраструктуры маркировки.
+
+Node.js наследует Orinoco по умолчанию. Настройка через `--max-old-space-size` и `--max-semi-space-size`. Крупные изменения Orinoco могут сместить характеристики производительности при обновлении Node — инженерные команды должны отслеживать release notes V8.
+
+<Quiz
+  id="05-gc-internals-quiz-1"
+  lessonSlug="05-gc-internals"
+  lang="ru"
+  question="Сервис мигрировал с G1 на ZGC: паузы упали с 60 мс до <1 мс, но throughput снизился на 12%, а RSS вырос на 18%. Это ожидаемо?"
+  choices={[
+    { label: "Да — load barriers ZGC (на каждом чтении из кучи) стоят ~5-15% CPU, а multi-mapped куча раздувает виртуальную память. Tradeoff: время паузы в обмен на throughput и память. Generational ZGC (JDK 21+) частично закрывает разрыв в throughput.", correct: true },
+    { label: "Нет — ZGC должен улучшить все три метрики одновременно", misconception: "Фундаментальный 3-way tradeoff GC. ZGC покупает время паузы за счёт throughput и памяти. Ни один коллектор не улучшает все три одновременно." },
+    { label: "Миграция на ZGC была выполнена неправильно", misconception: "Цифры (12% throughput, 18% память) — в пределах нормальных накладных расходов ZGC (непоколенческий вариант). Миграция выглядит корректной." },
+    { label: "Throughput и память не зависят от выбора коллектора", misconception: "Write/load barriers и bookkeeping коллектора напрямую влияют на CPU throughput. Colored pointers и multi-mapping раздувают память." },
+  ]}
+/>
+
+<Quiz
+  id="05-gc-internals-quiz-2"
+  lessonSlug="05-gc-internals"
+  lang="ru"
+  question="Почему GC Go использует SATB write barrier вместо incremental-update?"
+  choices={[
+    { label: "SATB маркирует старую ссылку, гарантируя выживание ранее указанного объекта в текущем цикле. Это даёт более строгие гарантии завершения маркировки и проще в формальном анализе — ценой некоторого floating garbage, которое будет собрано в следующем цикле.", correct: true },
+    { label: "Incremental-update не поддерживается в Go", misconception: "Incremental-update используется в других рантаймах (CMS, классический V8 mark-compact). Go выбрал SATB за гарантии завершения, а не потому что альтернатива невозможна." },
+    { label: "SATB использует меньше памяти, чем incremental-update", misconception: "SATB может использовать немного больше памяти (remembered sets для старых ссылок), но выбор определяется гарантиями завершения и простотой реализации, а не памятью." },
+    { label: "SATB не требует write barrier", misconception: "SATB реализован через write barrier, срабатывающий до перезаписи ссылки для маркировки старого значения." },
+  ]}
+/>
+
+<DragOrder
+  id="05-gc-internals-drag-1"
+  lessonSlug="05-gc-internals"
+  lang="ru"
+  prompt="Расставьте шаги, которые load barrier ZGC выполняет при чтении указателя с 'плохим' цветом:"
+  items={[
+    { id: "a", label: "Мутатор читает ссылку из кучи (разыменование указателя)" },
+    { id: "b", label: "Inline load barrier проверяет биты цвета указателя" },
+    { id: "c", label: "Цвет 'плохой' — объект перемещён или ожидает обработки" },
+    { id: "d", label: "Барьер запускает медленный путь: ищет в таблице forwarding" },
+    { id: "e", label: "Барьер обновляет указатель на месте до нового адреса" },
+    { id: "f", label: "Мутатор продолжает работу с исправленным (heal'd) указателем" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Tri-color маркировка + write barriers — инвариант, который поддерживает каждый concurrent GC. SATB маркирует старые ссылки; incremental-update — новые. ZGC меняет throughput и память на субмиллисекундные паузы через colored pointers + load barriers. Знайте, какой барьер использует ваш рантайм — это влияет на write-heavy hot paths.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-gc-internals-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните tri-color инвариант и роль write barrier в его поддержании при concurrent маркировке.", a: "Tri-color маркировка классифицирует каждый объект кучи как белый (непосещённый), серый (посещён, дочерние ожидают) или чёрный (полностью просканирован). Цикл маркировки серит дочерние объекты серых и переводит их в чёрные; когда серых нет — все белые недостижимы и могут быть освобождены. Инвариант: чёрный объект не должен напрямую ссылаться на белый. Если мутатор записывает ссылку на белый объект в поле чёрного после сканирования чёрного, белый становится невидимым для GC — коллектор освободит живую память, тихо повредив программу. Write barrier предотвращает это, перехватывая каждую запись ссылки. SATB (snapshot-at-the-beginning): срабатывает до перезаписи, маркирует СТАРУЮ ссылку — она считается живой в текущем цикле. Используется в G1, Shenandoah, ZGC, Go. Incremental-update (Dijkstra): срабатывает после записи, маркирует НОВУЮ ссылку, чтобы она была просканирована до конца цикла. Используется в CMS, классическом V8. Оба поддерживают инвариант; SATB консервативнее (немного больше floating garbage на один цикл), но проще для доказательства завершения. Стоимость 2-10% CPU на каждой записи ссылки — цена concurrent маркировки без больших STW-пауз на многогигабайтных кучах." },
+    { q: "Какую проблему решила переработка pacer Go 1.18 и какова роль GOMEMLIMIT?", a: "Старый pacer был эвристическим: оценивал, когда запустить следующий цикл GC, чтобы завершить его до удвоения кучи. Два задокументированных режима отказа: (1) нестабильность при высоком rate аллокаций, где оценка могла расходиться, приводя к GC-штормам или недосборке; (2) плохие решения при cgo-heavy workloads, где статистика кучи Go не отражала нативную память. Переработка (proposal 44167) заменила эвристику PI-контроллером (пропорционально-интегральным), смешивающим rate роста кучи и долю GC в CPU в цикл обратной связи. Интегральный член поглощает устойчивую ошибку, предотвращая дрейф. Результат — сокращение дисперсии пауз ~на 50% на реальных workloads. GOMEMLIMIT (Go 1.19) интегрирован в контроллер: представляет мягкое ограничение на общую память рантайма. По мере приближения к лимиту pacer вытягивает циклы GC вперёд — принимая бо́льший GC CPU — для удержания процесса ниже лимита. Это позволяет контейнеризованным Go-сервисам установить GOMEMLIMIT=90%*container_limit и быть защищёнными от OOM-убийств без ручной настройки GOGC. При значительном запасе до лимита pacer использует стандартную цель на основе GOGC." },
+  ]}
+/>
+
+<Recap lang="ru">
+Tri-color маркировка классифицирует объекты как белые, серые и чёрные и поддерживает инвариант: ни один чёрный объект не должен напрямую ссылаться на белый. Write barrier обеспечивает этот инвариант при concurrent маркировке, перехватывая каждую запись ссылки: SATB маркирует старую ссылку (используется в Go, G1, ZGC); incremental-update — новую (в CMS, классическом V8). Оба стоят 2–10% CPU. ZGC расширяет это colored pointers — метаданными в 64-битных указателях — и load barriers, исправляющими устаревшие указатели inline, достигая субмиллисекундных пауз ценой ~5–15% throughput и повышенной памяти. Переработка pacer Go (1.18) заменила эвристики PI-контроллером; GOMEMLIMIT (1.19) даёт контейнеризованным сервисам мягкий лимит памяти, который pacer соблюдает. Orinoco V8 привнёс concurrent маркировку и parallel compaction, снижая паузы JavaScript GC до ≤10 мс. Знание барьера вашего рантайма определяет, как писать write-heavy hot paths.
+</Recap>

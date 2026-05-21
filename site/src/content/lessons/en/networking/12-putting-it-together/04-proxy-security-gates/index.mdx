@@ -1,0 +1,168 @@
+---
+slug: 04-proxy-security-gates
+lang: en
+track: networking
+unit: 12-putting-it-together
+order: 4
+title: "Proxy intercepts and security gates: rate limiters, WAF, mTLS"
+summary: "Before a request reaches origin processing, it passes through reverse proxy health-routing, token-bucket rate limiters, WAF signature matching, and optional mTLS service-mesh auth — each adding latency budgets and operational complexity."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "01-the-twelve-layers"
+  - "09-proxy-load-balancing/01-what-reverse-proxies-do"
+  - "11-network-security/03-rate-limiting-algorithms"
+  - "11-network-security/04-waf-and-firewalls"
+deepensInto:
+  - "07-resilience-and-cascades"
+spiral: ["statefulness", "latency"]
+concepts: ["reverse-proxy", "health-check", "token-bucket", "WAF", "mTLS", "SPIFFE", "rate-limit-jitter", "connection-draining"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9110
+  - https://spiffe.io/
+  - https://www.cloudflare.com/en-gb/learning/ddos/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A botnet sends 10,000 requests per second from 10,000 different IPs. Your per-IP rate limiter sees 1 request per IP — well under the limit. Your WAF sees legitimate-looking browser fingerprints. The origin server is about to be overwhelmed. The security gates are running, but they are running alone instead of in layers. This lesson examines each gate, its cost, and why none of them works without the others.
+</Hook>
+
+<Crux>Every request passes four security gates before origin; each adds &lt;5 ms but removes an entire attack class — none works alone.</Crux>
+
+<Explanation>
+
+## Gate 1: Reverse proxy health routing
+
+Before Bea's SYN packet reaches origin, it may arrive at Patty — a reverse proxy or CDN edge. Patty makes a routing decision:
+
+**Cache hit path.** Patty checks her cache: "Do I have the response for this URL with matching Vary headers?" If yes, she responds immediately without forwarding to origin. TCP + TLS were negotiated against Patty's edge server (~20 ms RTT); origin never sees the request.
+
+**Cache miss path.** Patty checks origin health. Health checks run out-of-band every few seconds — a periodic GET /health or TCP probe to each origin server. If origin is healthy, Patty forwards. If unhealthy (failed check, process down, 5xx rate too high), Patty routes to a backup server in the pool. This happens mid-flight — a SYN arriving during a failover may be routed to a different server than the one the previous SYN reached.
+
+**Connection draining.** When a server is being removed from the pool (deploy, scale-down), Patty stops sending new connections to it but lets existing connections finish their response. The draining window (typically 30–60 s) ensures in-flight requests complete cleanly before the server is taken offline.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="text-sm w-full border-collapse">
+    <thead>
+      <tr class="bg-slate-100">
+        <th class="border px-3 py-2 text-left">Gate</th>
+        <th class="border px-3 py-2 text-left">Latency</th>
+        <th class="border px-3 py-2 text-left">What it blocks</th>
+        <th class="border px-3 py-2 text-left">What it misses</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border px-3 py-1">Proxy cache check</td><td class="border px-3 py-1">&lt;1 ms</td><td class="border px-3 py-1">Cacheable traffic — serves from edge</td><td class="border px-3 py-1">Non-cacheable, mutation endpoints</td></tr>
+      <tr><td class="border px-3 py-1">Per-IP rate limiter</td><td class="border px-3 py-1">&lt;1 ms</td><td class="border px-3 py-1">Single-IP floods, naive scrapers</td><td class="border px-3 py-1">Distributed botnets (1 req/IP/s)</td></tr>
+      <tr><td class="border px-3 py-1">WAF signature match</td><td class="border px-3 py-1">1–5 ms</td><td class="border px-3 py-1">SQLi, XSS, CVE signatures</td><td class="border px-3 py-1">Novel attacks, encrypted payloads</td></tr>
+      <tr><td class="border px-3 py-1">mTLS client cert verify</td><td class="border px-3 py-1">20–40 ms</td><td class="border px-3 py-1">Unauthenticated services in service mesh</td><td class="border px-3 py-1">Compromised but valid cert holder</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Gate 2: Rate limiter (token bucket)
+
+The rate limiter enforces quotas: "This IP may send N requests per second." Implementation: **token bucket algorithm**. Each IP has a bucket with capacity C. Every second, T tokens are added (up to C). Each request consumes one token. When tokens are exhausted, new requests are dropped or returned 429 Too Many Requests.
+
+**Token bucket vs leaky bucket.** Token bucket allows bursts up to capacity C. Leaky bucket drains at a constant rate, preventing bursts. Most API rate limiters use token bucket because it allows bursty-but-honest clients (a browser loading 30 subresources simultaneously) without penalising them.
+
+**The distributed botnet problem.** A botnet with 10,000 IPs, each sending 0.9 req/s, sends 9,000 req/s total. Per-IP limit of 2 req/s passes all of them. Defence: add a **global concurrent-connection limit** or **adaptive concurrency limiting** at origin — when in-flight requests exceed the server's capacity, reject new ones with fast 503 regardless of the per-IP quota.
+
+**Jitter on limit resets.** If all clients hit their rate limit simultaneously and all tokens reset at second 0, a thundering herd hits the origin at t=1 s. Solution: randomise token-refill offsets per client (add ±10% jitter to the refill window). Rate limit resets stagger across clients, smoothing origin load.
+
+## Gate 3: WAF — Web Application Firewall
+
+The WAF inspects application-layer content. Two modes:
+
+**Signature-based (rule mode).** OWASP ModSecurity Core Rule Set (CRS) defines patterns: SQL injection (`union select`), XSS (`<script>`), path traversal (`../`), CVE-specific payloads. Each request is matched against hundreds of rules. Running at PL1–PL2 (Paranoia Level 1-2) balances false-positives against coverage. PL4 (paranoid) blocks legitimate traffic that happens to match aggressive patterns.
+
+**Anomaly-based.** Baseline normal request shape (rate, user-agent, header structure, payload entropy). Deviations are scored. An IP sending 100 req/min with headless Chrome fingerprint that suddenly sends 3,000 req/min with identical headers is flagged as a bot. Anomaly detection cannot be bypassed by knowing the rules.
+
+**WAF cost.** 1–5 ms per request for a rule-based WAF running at the edge. Justification: eliminates broad classes of application attacks that would otherwise require expensive application-layer code paths or DB query defenses.
+
+## Gate 4: mTLS — mutual TLS for service-to-service auth
+
+Ordinary TLS authenticates only the server (Bea trusts Sven via Cara's certificate). **mTLS** authenticates both parties. During the TLS handshake, Sven sends a `CertificateRequest` message. Bea sends her client certificate. Sven verifies it against a trusted CA.
+
+**Where mTLS matters.** Internal microservices in a zero-trust network. If you have a payment service and a user service on the same Kubernetes cluster, mTLS ensures the user service cannot impersonate the payment service — even if an attacker gains network access inside the cluster.
+
+**SPIFFE.** The SPIFFE/SPIRE framework automates certificate issuance for workloads: each service gets a short-lived certificate (SVIDs) from a SPIFFE server. Certificates rotate automatically (e.g., hourly). mTLS is enforced by the service mesh (Istio, Linkerd) as a sidecar proxy — application code does not handle TLS directly.
+
+**mTLS cost.** One extra round-trip per new connection (client cert request + send). 20–40 ms added to first-connection latency. On warm connections (session resumption), the cost is zero. Operational cost: certificate distribution, rotation, and revocation must be automated — doing this manually for hundreds of services is impractical.
+
+<Inset kind="edgecase" lang="en">
+mTLS does not protect against a compromised-but-valid certificate holder. If an attacker steals a valid client certificate, mTLS trusts them. Defence: short certificate lifetimes (1 hour via SPIFFE) + OCSP stapling for revocation. The probability of an attacker intercepting and using a stolen cert before it expires drops dramatically when certs live only an hour.
+</Inset>
+
+<TraceScenario
+  id="mid-trace-sec"
+  lessonSlug="04-proxy-security-gates"
+  lang="en"
+  scenario="Trace a request from a normal user and a botnet IP through all four gates."
+  steps={[
+    { prompt: "Normal user: TCP SYN arrives at Patty's edge. First check?", reveal: "Cache lookup. If cache hit (e.g., the HTML was cached after the last visitor), Patty returns 200 immediately from edge cache. Rate limiter, WAF, and origin are never involved. Latency: ~20 ms." },
+    { prompt: "Cache miss. Rate limiter check for normal user (2 req/s IP limit)?", reveal: "User's token bucket has tokens (they just navigated here for the first time this minute). Token consumed, request passes. &lt;1 ms." },
+    { prompt: "WAF check for normal user?", reveal: "Request headers, path, and body match no attack signatures at PL2. Request passes. 1–3 ms." },
+    { prompt: "Botnet IP: 10,000 IPs each sending 1 req/s. Per-IP rate limiter?", reveal: "Each individual IP is under the 2 req/s limit. All 10,000 req/s pass the per-IP gate. Rate limiter fails to catch the distributed botnet." },
+    { prompt: "Global concurrency limit at origin. In-flight requests exceed threshold. What happens?", reveal: "Origin's adaptive concurrency limiter (e.g., AIMD-based, or explicit max_concurrency=500) sees request queue depth exceed threshold. New requests get 503 immediately — fast rejection, stable origin. Botnet sees 503 errors; legitimate users are protected by the CDN edge cache (they still get cached responses)." },
+    { prompt: "mTLS for an internal API call (payment service → user service). What extra step?", reveal: "User service presents its SPIFFE SVID (client certificate) during the TLS handshake. Payment service verifies the SVID against the SPIFFE trust domain. If valid, connection proceeds. If expired or wrong trust domain, TLS terminates immediately. Zero application code involved." },
+  ]}
+/>
+
+<Quiz
+  id="mid-q1"
+  lessonSlug="04-proxy-security-gates"
+  lang="en"
+  question="A botnet sends 1 request/second from 10,000 different IPs. Your per-IP rate limit is 5 req/s. How do you defend without blocking legitimate users?"
+  choices={[
+    { label: "Lower the per-IP limit to 0.5 req/s", misconception: "This would block legitimate users who burst (e.g., a browser loading 30 subresources at once)." },
+    { label: "Add a global adaptive concurrency limit at origin so in-flight requests beyond capacity trigger fast 503 for all excess traffic", correct: true },
+    { label: "Block all IPs from the botnet's ASNs", misconception: "Botnets often use residential IPs that share ASNs with legitimate users." },
+    { label: "Increase the per-IP limit to reduce false positives", misconception: "Higher limits help legitimate users but make the botnet harder to stop." },
+  ]}
+/>
+
+<Quiz
+  id="mid-q2"
+  lessonSlug="04-proxy-security-gates"
+  lang="en"
+  question="Why do mTLS certificates need to be short-lived (e.g., 1 hour) in a zero-trust service mesh?"
+  choices={[
+    { label: "TLS 1.3 only supports short-lived certificates", misconception: "TLS 1.3 supports certificates of any duration." },
+    { label: "Short lifetimes reduce the window during which a stolen certificate can be used before it expires", correct: true },
+    { label: "Certificate validation is faster for short-lived certs", misconception: "Validation time depends on the certificate's signature algorithm, not its lifetime." },
+    { label: "SPIFFE requires hourly rotation by spec", misconception: "SPIFFE recommends short-lived certs as best practice; rotation interval is configurable." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>No single security gate stops all attack classes; CDN caching removes load before rate limiters see it, per-IP rate limiting stops obvious floods, WAF blocks known signatures, mTLS prevents lateral movement — all four layers are needed.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-proxy-security-gates-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is connection draining, and why is it needed during a rolling deploy?", a: "Connection draining means the load balancer stops sending new connections to a server being removed, but lets existing connections complete their response. Typical draining window: 30–60 s. Without it, in-flight requests are abruptly terminated when the server goes down, causing client errors. Rolling deploys remove one server at a time, so draining ensures zero user-visible downtime per server replacement." },
+    { q: "Why does adding jitter to rate-limit token-refill timing reduce origin load spikes?", a: "If all clients hit their rate limit simultaneously and all token buckets refill at second 0, a synchronized burst of N clients all send at t=1 s — a thundering herd. Adding ±10% random jitter to each client's refill offset staggers resets across the second window. Traffic smooths from one large spike to a flat rate, eliminating the origin overload at reset time." },
+    { q: "What does SPIFFE add over manually managing mTLS certificates?", a: "SPIFFE automates workload identity: each service gets a short-lived X.509 SVID (SPIFFE Verifiable Identity Document) from a SPIFFE server, renewed automatically (e.g., hourly). The service mesh (Istio, Linkerd) injects certificate rotation transparently via sidecars — no application code changes. Manual mTLS cert management across hundreds of services is impractical: SPIFFE makes it O(1) operational cost per new service." },
+  ]}
+/>
+
+<Recap lang="en">
+Before a request reaches origin, it passes through four gates: CDN cache lookup (eliminates the request entirely if cached), per-IP rate limiter using a token bucket (stops single-IP floods), WAF signature matching (blocks known attack patterns), and optional mTLS client certificate verification (prevents unauthenticated service-to-service calls in a zero-trust mesh). Each gate adds under 5 ms except mTLS (20–40 ms on first connection). Distributed botnets defeat per-IP rate limits by spreading load — the defence is a global adaptive concurrency limiter at origin that rejects excess in-flight requests with fast 503 regardless of per-IP quota. SPIFFE automates mTLS certificate issuance and rotation, making short-lived hourly certs operationally practical for hundreds of microservices.
+</Recap>

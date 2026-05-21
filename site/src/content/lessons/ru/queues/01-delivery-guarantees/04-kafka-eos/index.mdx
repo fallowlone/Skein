@@ -1,0 +1,153 @@
+---
+slug: 04-kafka-eos
+lang: ru
+track: queues
+unit: 01-delivery-guarantees
+order: 4
+title: "Kafka exactly-once semantics: idempotent producer и транзакции"
+summary: "Как Kafka idempotent producer убирает producer-retry дубликаты с ~3% overhead, и как транзакции расширяют exactly-once на multi-partition записи и offset commits с ~20–30% overhead."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - queues/01-delivery-guarantees/03-consumer-dedup
+deepensInto:
+  - queues/01-delivery-guarantees/06-exactly-once-in-production
+spiral: ["statefulness"]
+concepts: ["kafka-idempotent-producer", "kafka-transactions", "KIP-98", "producer-id", "sequence-number", "read-committed"]
+sources:
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
+  - https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+  - https://strimzi.io/blog/2023/05/03/kafka-transactions/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Kafka Streams job обогащает order-события и пишет результаты в output topic. Во время broker rolling restart job ретраит батч, уже записанный, производя 3000 дублирующих output-записей downstream. Фикс — одна строка конфига: `enable.idempotence=true`. Фича существует с 2017 года. Никто её не включал.
+</Hook>
+
+<Crux>Kafka exactly-once: idempotent producer (~3%), транзакции (~20–30%), read_committed consumer-ы. Каждый слой — разный класс дубликатов.</Crux>
+
+<Explanation>
+
+## Слой 1 — Idempotent producer (KIP-98, Kafka 0.11.0)
+
+Idempotent producer убирает дубликаты, вызванные producer-ретраями в брокер.
+
+При запуске producer получает уникальный **producer-ID** от брокера. Каждое сообщение в partition несёт монотонно растущий **sequence number**, scoped к этому producer-ID и partition. Брокер трекает последний sequence per (producer-ID, partition).
+
+Когда producer ретраит — потому что сеть уронила ack — брокер снова видит (producer-ID, sequence). Он распознаёт дубликат, тихо ack-ит и отбрасывает запись. Out-of-order sequences (возможны при позднем retry) отвергаются.
+
+- Включается через: `enable.idempotence=true`
+- Overhead: ~3% throughput
+- Доступно с: Kafka 0.11.0 (середина 2017)
+
+Решает только дубликаты ножки 1. Не помогает при краше consumer после обработки.
+
+## Слой 2 — Transactional producer (KIP-98)
+
+Транзакции расширяют exactly-once на полный read-process-write pipeline внутри Kafka.
+
+Transactional producer оборачивает батч записей через несколько partition **плюс** consumer-offset commit в одну атомарную единицу, управляемую **transaction coordinator** брокером. Либо все записи и offset commit видны downstream consumer-ам, либо ничего.
+
+Типичный Kafka Streams паттерн:
+
+```
+beginTransaction()
+  consume из input-partition P0 at offset 42
+  produce в output-partition P1
+  sendOffsetsToTransaction(group-id, {P0: offset 43})
+commitTransaction()
+```
+
+Если job падает в полёте, транзакция abort-ится на рестарте. Input offset не advance-ится. Частичный output rolled back (consumer-ы с `isolation.level=read_committed` пропускают aborted-записи). Job переобрабатывает с offset 42 — idempotent producer дедупит retry.
+
+- Включается через: `transactional.id=my-app-v1`
+- Consumer должен установить: `isolation.level=read_committed`
+- Overhead: ~20–30% throughput (two-phase commit между coordinator и partition leaders)
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Kafka exactly-once: три слоя</div>
+  <div class="flex flex-col gap-3 text-xs">
+    <div class="flex items-start gap-3">
+      <span class="shrink-0 w-36 font-bold text-blue-700 dark:text-blue-300">Idempotent producer</span>
+      <div>
+        <div>Убирает: producer-retry дубликаты (ножка 1)</div>
+        <div class="text-ink-2">Config: enable.idempotence=true | Cost: ~3%</div>
+      </div>
+    </div>
+    <div class="flex items-start gap-3">
+      <span class="shrink-0 w-36 font-bold text-purple-700 dark:text-purple-300">Транзакции</span>
+      <div>
+        <div>Убирает: partial-write + offset-skip (только внутри Kafka)</div>
+        <div class="text-ink-2">Config: transactional.id + read_committed | Cost: ~20–30%</div>
+      </div>
+    </div>
+    <div class="flex items-start gap-3">
+      <span class="shrink-0 w-36 font-bold text-green-700 dark:text-green-300">Consumer dedup</span>
+      <div>
+        <div>Убирает: cross-system дубликаты (Kafka → Postgres, Kafka → Stripe)</div>
+        <div class="text-ink-2">Config: ON CONFLICT DO NOTHING + Idempotency-Key | Cost: одна DB-запись</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+## Что Kafka transactions НЕ покрывают
+
+Kafka transactions атомарны *внутри Kafka*. Как только ты пишешь в Postgres или вызываешь Stripe — ты выходишь за границу транзакции. Если Kafka offset commit-ится, но Postgres write падает (или наоборот), возникает partial-write gap.
+
+Для Kafka-to-DB pipeline правильный паттерн — всё равно consumer-side dedup с идемпотентной DB-записью (`ON CONFLICT DO NOTHING` с Kafka offset как частью primary key). 20–30% Kafka transaction overhead заменяется одной дешёвой DB unique-constraint проверкой. Большинство production stream-to-DB pipeline выбирают этот гибрид: at-least-once Kafka delivery + idempotent DB consumer.
+
+<Quiz
+  id="04-q1"
+  pieceSlug="04-kafka-eos"
+  lang="ru"
+  question="Kafka idempotent producer убирает какой класс дубликатов?"
+  choices={[
+    { label: "Все дубликаты в системе включая consumer-side", misconception: "Только producer-retry дубликаты внутри Kafka. Consumer-side и cross-system требуют других механизмов." },
+    { label: "Дубликаты от producer retry — брокер дедупит по producer-ID + sequence number per partition", correct: true },
+    { label: "Consumer processing дубликаты после rebalance", misconception: "Consumer dedup — отдельная проблема; idempotent producer не трогает consumer-сторону." },
+    { label: "Network-level packet дубликаты", misconception: "TCP обрабатывает packet-level dedup; idempotent producer — про application-level message дубликаты." },
+  ]}
+/>
+
+<Quiz
+  id="04-q2"
+  pieceSlug="04-kafka-eos"
+  lang="ru"
+  question="Kafka Streams job использует транзакции и пишет и в Kafka output topic, и в Postgres. Гарантирует ли Kafka-транзакция exactly-once для Postgres-записи?"
+  choices={[
+    { label: "Да — Kafka транзакции координируются с Postgres автоматически", misconception: "Kafka transactions атомарны только внутри Kafka. Они не включают внешние системы." },
+    { label: "Нет — Kafka transactions атомарны только внутри Kafka. Postgres-запись вне границы транзакции и нужен свой idempotency-механизм.", correct: true },
+    { label: "Да если Postgres использует JDBC", misconception: "JDBC — драйвер, не distributed transaction coordinator. Scoping-проблема остаётся." },
+    { label: "Нет — Kafka transactions не существуют", misconception: "Kafka transactions существуют с KIP-98 (Kafka 0.11.0, 2017)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Kafka exactly-once имеет два broker-side слоя: idempotent producer (~3% cost) убирает producer-retry дубликаты; транзакции (~20–30% cost) делают multi-partition write + offset-commit атомарными внутри Kafka. Ни один не покрывает cross-system записи — те нуждаются в consumer-side dedup.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-kafka-eos-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какие два значения Kafka-брокер трекает для дедупликации idempotent producer retry?", a: "producer-ID (назначается при запуске) и per-partition sequence number (монотонно растущий). Брокер трекает последний sequence per (producer-ID, partition). Retry с тем же sequence тихо ack-ится и отбрасывается." },
+    { q: "Что делает isolation.level=read_committed на Kafka consumer?", a: "Фильтрует сообщения, принадлежащие aborted или in-progress транзакциям. Consumer видит только committed-записи, поэтому частичные записи от упавшего транзакционного job никогда не видны downstream." },
+    { q: "KIP-98 shipped в какой версии и году Kafka?", a: "Kafka 0.11.0, середина 2017. Ввёл как idempotent producer, так и transactional messaging. KIP-447 позже снизил overhead в Kafka Streams; KIP-936 добавил более сильное fencing zombie-producer в 2024." },
+  ]}
+/>
+
+<Recap lang="ru">
+Exactly-once семантика Kafka строится в трёх слоях. Idempotent producer (enable.idempotence=true, ~3% cost) назначает producer-ID и per-partition sequence numbers, чтобы брокер мог прозрачно дедупить retry. Транзакции (transactional.id + read_committed consumer-ы, ~20–30% cost) оборачивают multi-partition записи и offset commits в одну атомарную единицу, управляемую coordinator-брокером, позволяя полному read-process-write-commit циклу внутри Kafka быть exactly-once. Но транзакции скопированы к Kafka: любая запись в Postgres или внешний API выходит за границу транзакции и требует своего idempotency-механизма — обычно ON CONFLICT DO NOTHING с Kafka offset как частью ключа.
+</Recap>

@@ -1,0 +1,252 @@
+---
+slug: 02-fix-families
+lang: ru
+track: performance
+unit: 05-n-plus-one
+order: 2
+title: "Семейства фиксов: JOIN, IN, preload и DataLoader"
+summary: "Четыре структурных способа исправить N+1 — JOIN, батчинг через IN, ORM eager loading и DataLoader — и как выбрать нужный по кардинальности связи и источнику данных."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/01-what-is-nplus1
+deepensInto: []
+spiral: ["latency"]
+concepts: ["join", "in-list", "eager-loading", "dataloader", "cardinality"]
+sources:
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+  - https://github.com/graphql/dataloader
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+В query-логе подтверждён N+1: 50 запросов к customers на одной странице заказов. Есть четыре способа исправить это, и у каждого свои tradeoff'ы. Выбрать неподходящий для вашей формы данных — значит сделать хуже.
+</Hook>
+
+<Crux>JOIN, IN, preload и DataLoader — четыре вариации одной идеи: меньше round-trip'ов. Кардинальность и источник данных определяют, что выбрать.</Crux>
+
+<Explanation>
+
+## Четыре семейства фиксов
+
+### 1. JOIN — один запрос, один round-trip
+
+Получить родителя и потомков в одном SQL-запросе через JOIN:
+
+```sql
+SELECT o.*, c.name AS customer_name
+FROM orders o
+JOIN customers c ON o.customer_id = c.id
+WHERE o.user_id = 42
+LIMIT 50;
+```
+
+**Один round-trip.** База данных возвращает всё слитым в один результирующий набор.
+
+**Tradeoff:** для связей один-ко-многим результирующий набор дублирует колонки родителя для каждой строки-потомка. Пятьдесят заказов с пятью позициями каждый дают 250 строк, где 200 повторяют одни и те же колонки заказа. Сетевой трафик и стоимость парсинга в ORM могут перекрыть экономию на round-trip. JOIN лучше всего работает для **один-к-одному** или небольшого один-ко-многим (1–5 потомков на родителя).
+
+### 2. IN — два запроса, без дублирования
+
+Два round-trip'а: сначала получить родителей, затем получить всех потомков через `WHERE id IN (...)`:
+
+```sql
+-- Запрос 1: получить все заказы
+SELECT * FROM orders WHERE user_id = 42 LIMIT 50;
+
+-- Запрос 2: получить всех customers для этих заказов
+SELECT * FROM customers WHERE id IN (1, 2, 3, ..., 50);
+```
+
+Никакого дублирования строк. Родительский результат — 50 строк; результат потомков — до 50 строк. Каждая строка данных появляется ровно один раз.
+
+**Tradeoff:** IN-список имеет практические ограничения. Postgres обрабатывает 10 000+ элементов с растущей стоимостью планировщика; MySQL имеет жёсткое ограничение по `max_allowed_packet`. Для большинства пагинаций (10–1000 элементов) IN — правильный выбор по умолчанию для один-ко-многим.
+
+### 3. Preload / eager loading — директива ORM
+
+Все крупные ORM предоставляют директиву, которая заранее объявляет, какие связи загружать. ORM сам выбирает JOIN или IN внутри:
+
+```
+# Rails — .includes выбирает стратегию
+Order.where(user_id: current_user).includes(:customer).limit(50)
+
+# Django
+Order.objects.filter(user=request.user).select_related('customer')[:50]
+
+# SQLAlchemy
+session.query(Order).options(selectinload(Order.customer)).filter_by(...).limit(50)
+
+# Prisma
+prisma.order.findMany({ where: {...}, include: { customer: true } })
+```
+
+Все эти варианты дают 2 запроса вместо 51. Вы объявляете намерение; ORM оптимизирует тактику.
+
+**Tradeoff:** если объявлять preload слишком агрессивно — загружать связи, которые запрос никогда не использует — вы тратите I/O впустую. Объявляйте только то, что нужно текущему запросу.
+
+### 4. DataLoader — батчинг в рамках запроса
+
+DataLoader (Facebook, 2015) накапливает ID-шники в очереди на протяжении всего запроса и выполняет один батч-запрос, когда event loop переходит к следующему тику:
+
+```javascript
+// Создаётся один раз на запрос
+const userLoader = new DataLoader(async (ids) => {
+  const users = await db.user.findMany({ where: { id: { in: ids } } });
+  return ids.map(id => users.find(u => u.id === id));
+});
+
+// Вызвать из любого места в запросе — каждый вызов ставит id в очередь
+const user = await userLoader.load(orderId);
+```
+
+DataLoader даёт три свойства: (1) **автоматический батчинг** — множество вызовов `load(id)` становятся одним запросом, (2) **автоматическое кэширование** — повторный `load(id)` в том же запросе возвращает кэшированный результат без повторного запроса, (3) **request scope** — кэш ограничен запросом, поэтому устаревшие данные не утекают между запросами.
+
+**Tradeoff:** DataLoader требует async / event-loop runtime. Добавляет сложность кэширования и небольшую latency batch-window (обычно менее 1 мс). Это правильный инструмент, когда потребности в данных разбросаны по множеству несвязанных путей в одном запросе — канонический пример — GraphQL-резолверы.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Фикс</th>
+        <th class="border border-border px-3 py-2 text-left">Запросы</th>
+        <th class="border border-border px-3 py-2 text-left">Лучше для</th>
+        <th class="border border-border px-3 py-2 text-left">Tradeoff</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">JOIN</td>
+        <td class="border border-border px-3 py-2">1</td>
+        <td class="border border-border px-3 py-2">Один-к-одному, небольшой один-ко-многим</td>
+        <td class="border border-border px-3 py-2">Колонки родителя дублируются на каждую строку потомка</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">IN</td>
+        <td class="border border-border px-3 py-2">2</td>
+        <td class="border border-border px-3 py-2">Один-ко-многим с большим fan-out</td>
+        <td class="border border-border px-3 py-2">Ограничения IN-списка (~10 k на Postgres)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Preload</td>
+        <td class="border border-border px-3 py-2">2–3</td>
+        <td class="border border-border px-3 py-2">Известная форма в точке запроса</td>
+        <td class="border border-border px-3 py-2">Избыточная загрузка если не используется</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">DataLoader</td>
+        <td class="border border-border px-3 py-2">1 на тип</td>
+        <td class="border border-border px-3 py-2">Multi-source, GraphQL-резолверы</td>
+        <td class="border border-border px-3 py-2">Требует async runtime; сложность кэша</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Выбор по кардинальности
+
+Правило большого пальца:
+
+- **Один-к-одному** → JOIN. Нет дублирования. Один trip.
+- **Один-ко-многим (небольшой fan-out)** → preload. ORM выбирает JOIN внутри. Просто в написании.
+- **Один-ко-многим (большой fan-out)** → IN-based selectinload. Избегает раздувания result set.
+- **Multi-source или GraphQL** → DataLoader. Батчит из несвязанных путей кода.
+
+<Inset kind="why" lang="ru">
+Почему IN обходит JOIN для один-ко-многим с большим fan-out? Запрос, возвращающий 50 заказов с 20 позициями каждый через JOIN, вернёт 1 000 строк, где 950 повторяют одни и те же данные заказа. Сетевой трафик и стоимость парсинга ORM могут перекрыть экономию от одного saved round-trip. Подход через IN отправляет 2 запроса, но без дублирования: 50 строк заказов и 1 000 строк позиций, каждая появляется ровно один раз.
+</Inset>
+
+## Практический пример: вложенный eager load
+
+```
+# Rails вложенный eager load:
+User.find(42).projects.includes(tasks: :comments).limit(50)
+# Даёт:
+#   SELECT * FROM projects WHERE user_id = 42 LIMIT 50
+#   SELECT * FROM tasks WHERE project_id IN (1, 2, ..., 50)
+#   SELECT * FROM comments WHERE task_id IN (...)
+# 3 запроса вместо 1 + 50 + 250 = 301
+```
+
+```python
+# Эквивалент на Django:
+Project.objects.filter(user=user).prefetch_related('tasks__comments')[:50]
+```
+
+```python
+# SQLAlchemy:
+session.query(Project).options(
+    selectinload(Project.tasks).selectinload(Task.comments)
+).filter_by(user_id=42).limit(50)
+```
+
+<Quiz
+  id="02-fix-families-quiz-1"
+  lessonSlug="02-fix-families"
+  lang="ru"
+  question="Страница загружает 50 постов в блоге, у каждого список тегов (в среднем 10 тегов на пост). Какая стратегия фикса избегает дублирования в result set при минимальном количестве запросов?"
+  choices={[
+    { label: "IN-based preload (selectinload / prefetch_related) — два запроса, без дублирования строк: 50 строк постов плюс до 500 строк тегов, каждая встречается один раз.", correct: true },
+    { label: "JOIN — один запрос всегда лучше", misconception: "Для один-ко-многим с большим fan-out, JOIN дублирует колонки родителя для каждой строки потомка. 500 строк будут повторять одни и те же данные поста 10 раз каждая." },
+    { label: "DataLoader — всегда правильный инструмент", misconception: "DataLoader — правильный инструмент для multi-source или GraphQL-резолверов. Для одной страницы ORM с известной формой, preload проще." },
+    { label: "Загрузить теги отдельным запросом из браузера", misconception: "Это добавляет HTTP-latency и усложняет клиент; фикс должен быть серверным батчингом." },
+  ]}
+/>
+
+<Quiz
+  id="02-fix-families-quiz-2"
+  lessonSlug="02-fix-families"
+  lang="ru"
+  question="GraphQL-запрос 'me { posts { author { name } } }' для 50 постов запускает 1 + 50 запросов к авторам. Что является каноническим фиксом?"
+  choices={[
+    { label: "DataLoader — батчит все ID авторов по всему дереву резолверов и выполняет один запрос на тип на тик event loop.", correct: true },
+    { label: "Добавить JOIN в резолвер", misconception: "JOIN'ы не обобщаются на multi-source данные и не обрабатывают кэширование. DataLoader обрабатывает батчинг и кэширование автоматически." },
+    { label: "Rails .includes", misconception: ".includes — это ORM-level eager loading, объявляемый на границе запроса. В GraphQL-резолверах DataLoader является каноническим фиксом, потому что запросы приходят из множества несвязанных резолверов." },
+    { label: "Ограничить посты до 10", misconception: "Это обходной путь, не фикс. Структурный N+1 остаётся в меньшем масштабе." },
+  ]}
+/>
+
+<DragOrder
+  id="02-fix-families-drag-1"
+  lessonSlug="02-fix-families"
+  lang="ru"
+  prompt="Упорядочите шаги диагностики и исправления N+1 по-сеньорски:"
+  items={[
+    { id: "a", label: "Включить DB query log или APM trace, посчитать запросы на запрос" },
+    { id: "b", label: "Определить место вызова — часто цикл по родителям с lazy-доступом к дочерней связи" },
+    { id: "c", label: "Выбрать семейство фикса по кардинальности: один-к-одному → JOIN; один-ко-многим → IN/selectinload; multi-source → DataLoader" },
+    { id: "d", label: "Применить ORM-директиву или batch loader" },
+    { id: "e", label: "Проверить, перечитав query log: количество должно упасть до 2–5 с N+1" },
+    { id: "f", label: "Перемерить p99 — ожидать улучшения в 5–20x для типичного фикса N+1 на странице-списке" },
+    { id: "g", label: "Добавить CI gate: бюджет количества запросов на запрос, провальные PR при регрессии" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Четыре семейства фиксов устраняют N+1: JOIN (1 trip, может раздуть payload), IN (2 trips, без дублирования), ORM preload (ORM выбирает стратегию), DataLoader (батчинг в рамках запроса для GraphQL или multi-source). Выбирайте по кардинальности и источнику данных, затем проверяйте по количеству запросов — не только по p99.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-fix-families-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройдитесь по четырём семействам фиксов N+1 с примером, когда каждый является правильным выбором.", a: "JOIN: получить родителя и потомков в одном SQL-запросе. Правильный для один-к-одному или небольшого один-ко-многим, маленьких колонок родителя. Пример: order → shipping_address (1:1) → один запрос с JOIN. IN: два запроса — получить ID родителей, затем SELECT children WHERE id IN (...). Правильный для один-ко-многим fan-out чтобы избежать дублирования. Пример: 50 заказов → все позиции → 2 запроса, нет повторяющихся данных родителя. Preload: ORM-директива (Rails .includes, Django .select_related, SQLAlchemy joinedload/selectinload, Prisma include). Объявляет намерение; ORM выбирает JOIN или IN под капотом. Правильный когда вы знаете форму в точке построения запроса. Пример: User.includes(:posts, :comments).first(100). DataLoader: батчинг в рамках запроса. Каждый вызов ставит ID в очередь; loader выполняет один запрос на тип при тике event loop. Правильный для GraphQL или multi-source запросов, где потребности в данных разбросаны по несвязанным путям кода. Пример: GraphQL-резолвер, батчирующий все user ID из множества вызовов резолверов в один запрос." },
+    { q: "Почему IN-based fetching часто обходит JOIN для связей один-ко-многим?", a: "JOIN дублирует колонки родителя для каждой строки потомка. Пятьдесят заказов с 20 позициями каждый через JOIN вернут 1 000 строк, где 950 содержат повторяющиеся данные заказа — лишние байты в сети, которые ORM затем парсит и отбрасывает. Подход через IN отправляет два запроса, но без дублирования: 50 строк заказов и до 1 000 строк позиций, каждая появляется ровно один раз. Для большого один-ко-многим fan-out, стоимость дублирования в JOIN при передаче и парсинге может перекрыть экономию от одного saved round-trip. Для один-к-одному дублирования нет, поэтому JOIN выигрывает." },
+  ]}
+/>
+
+<Recap lang="ru">
+Четыре семейства фиксов N+1: JOIN (один trip, лучше для один-к-одному), IN-based батчинг (два trip'а, без дублирования, лучше для один-ко-многим fan-out), ORM preload (объявляет намерение в точке запроса) и DataLoader (батчинг в рамках запроса по множеству путей кода, канонический для GraphQL). Кардинальность определяет выбор: один-к-одному предпочитает JOIN; тяжёлый один-ко-многим предпочитает IN или selectinload; multi-source резолверы предпочитают DataLoader. После применения любого фикса проверяйте через query log — количество должно упасть с N+1 до 2–5, и p99 должен следовать по закону Амдала на доле round-trip.
+</Recap>

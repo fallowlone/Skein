@@ -1,0 +1,222 @@
+---
+slug: 05-extended-statistics
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 5
+title: "Extended statistics: fixing correlated-column estimate failures"
+summary: "By default the planner assumes columns are independent. CREATE STATISTICS teaches it about functional dependencies, multi-column n_distinct, and MCV combinations — eliminating the largest class of row-estimate failures."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-statistics-and-analyze"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["create-statistics", "dependencies", "ndistinct", "mcv", "functional-dependency", "correlated-columns", "extended-statistics"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+  - https://www.postgresql.org/docs/current/multivariate-statistics-examples.html
+  - https://www.postgresql.org/docs/current/planner-stats.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A WHERE clause filters on `country='US' AND region='CA' AND status='shipped'`. The planner predicts 500 matching rows — three independent probabilities multiplied together. There are actually 50,000. A Nested Loop runs 100× too many times. The columns are correlated, not independent. `CREATE STATISTICS` fixes this in two SQL lines.
+</Hook>
+
+<Crux>The planner assumes column independence. CREATE STATISTICS adds functional dependencies and MCV combinations for correlated columns.</Crux>
+
+<Explanation>
+
+## Why the independence assumption fails
+
+The planner's default multi-column selectivity model:
+
+```
+P(country='US' AND region='CA' AND status='shipped')
+  = P(country='US') × P(region='CA') × P(status='shipped')
+  = 0.50 × 0.05 × 0.20
+  = 0.005 (0.5%)
+```
+
+But if country determines region (every CA order is in US — a functional dependency), the actual selectivity is:
+
+```
+P(region='CA') × P(status='shipped') = 0.05 × 0.20 = 1.0%
+```
+
+On 100M rows: the planner estimates 500,000 rows; reality is 1,000,000 — a 2× error that can tip Nested Loop into catastrophic territory. With tighter correlations the error can be 1000×.
+
+## The three kinds of extended statistics
+
+`CREATE STATISTICS` (available since PG 10) supports three complementary kinds:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Kind</th>
+        <th class="border border-border px-3 py-2 text-left">What it stores</th>
+        <th class="border border-border px-3 py-2 text-left">Fixes</th>
+        <th class="border border-border px-3 py-2 text-left">Since</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>dependencies</code></td>
+        <td class="border border-border px-3 py-2">Functional dependency coefficients between column pairs</td>
+        <td class="border border-border px-3 py-2">One column implies another (zip → city, country → region)</td>
+        <td class="border border-border px-3 py-2">PG 10</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ndistinct</code></td>
+        <td class="border border-border px-3 py-2">Distinct combination count for multi-column groups</td>
+        <td class="border border-border px-3 py-2">GROUP BY cardinality over multiple columns</td>
+        <td class="border border-border px-3 py-2">PG 10</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>mcv</code></td>
+        <td class="border border-border px-3 py-2">Most-common value tuples for the column combination</td>
+        <td class="border border-border px-3 py-2">Exact estimates for frequent combinations</td>
+        <td class="border border-border px-3 py-2">PG 12</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### dependencies
+
+Stores functional dependency factors between column pairs. A factor close to 1.0 means "column A almost always determines column B". When the planner sees `WHERE country='US' AND region='CA'`, it checks the dependency between `country` and `region` — if country determines region with factor 0.95, the planner knows not to multiply P(country) × P(region); instead it estimates based on the more selective of the two.
+
+```sql
+CREATE STATISTICS stx_orders_geo (dependencies)
+  ON country, region, status FROM orders;
+ANALYZE orders;
+```
+
+### ndistinct
+
+Without this, the planner estimates the number of distinct (country, region) combinations as `n_distinct(country) × n_distinct(region)`, which wildly overestimates when the columns are correlated. `ndistinct` stores the actual combination count.
+
+Useful for queries like:
+
+```sql
+SELECT country, region, COUNT(*) FROM orders GROUP BY country, region;
+```
+
+Without `ndistinct`, the planner may allocate a Hash Aggregate expecting millions of groups when there are only hundreds.
+
+### mcv (multi-column most common values)
+
+Stores the most frequent tuples of the column combination directly — analogous to the per-column MCV list, but for pairs or triples. For `WHERE country='US' AND status='shipped'`, if (US, shipped) is a common combination, the planner reads its exact frequency from the MCV list rather than multiplying marginal probabilities.
+
+Available since PG 12 and often the highest-value kind for OLTP query patterns.
+
+### Expression statistics (PG 14+)
+
+PG 14 added statistics on expressions:
+
+```sql
+CREATE STATISTICS stx_orders_lower_email ON LOWER(email) FROM users;
+ANALYZE users;
+```
+
+This lets the planner accurately estimate selectivity for `WHERE LOWER(email) = 'x'` even without a functional index on `LOWER(email)`.
+
+## When and how to apply CREATE STATISTICS
+
+The workflow:
+
+1. Run `EXPLAIN ANALYZE` on the slow query. Find nodes where `rows` (estimate) differs from `actual rows` by more than 10×.
+2. Identify the WHERE clause columns on that node. Check if they are naturally correlated: zip and city, country and region, product and category.
+3. Create the statistics object:
+
+```sql
+-- Most common pattern: dependencies + mcv together
+CREATE STATISTICS stx_orders_country_region_status
+  (dependencies, mcv)
+  ON country, region, status FROM orders;
+
+-- For GROUP BY accuracy:
+CREATE STATISTICS stx_orders_ndistinct
+  (ndistinct)
+  ON country, region FROM orders;
+
+-- Run ANALYZE to populate:
+ANALYZE orders;
+```
+
+4. Re-run `EXPLAIN ANALYZE`. Verify that `rows` tracks `actual rows` within 2× on the affected nodes.
+
+Storage cost: small — kilobytes per statistics object. Planning improvement on the affected queries: 100–1000×.
+
+<Inset kind="why" lang="en">
+Why does default_statistics_target not solve this? Raising the target (e.g., to 1000) gives finer histograms and longer MCV lists for individual columns — it does not teach the planner about correlations between columns. With 1000-entry MCV lists, the planner still multiplies P(country) × P(region) — it just has better per-column estimates. The independence assumption survives. CREATE STATISTICS replaces the independence assumption for specific column groups; SET STATISTICS refines the data used within it.
+</Inset>
+
+<Quiz
+  id="05-extstats-quiz-1"
+  lessonSlug="05-extended-statistics"
+  lang="en"
+  question="Which is the right tool to make the planner aware that two columns are correlated (e.g., zip and city)?"
+  choices={[
+    { label: "CREATE STATISTICS (dependencies, mcv) ON zip, city FROM addresses; ANALYZE addresses;", correct: true },
+    { label: "ALTER TABLE addresses ALTER COLUMN zip SET STATISTICS 1000;", misconception: "This refines single-column zip statistics; it does not teach the planner the correlation with city." },
+    { label: "CREATE INDEX ON addresses (zip, city)", misconception: "An index helps query execution; it does not refine the planner's row-estimate model for multi-column predicates." },
+    { label: "SET enable_nestloop = off", misconception: "Disabling a join type is a workaround for the symptom; the underlying bad estimate remains." },
+  ]}
+/>
+
+<Quiz
+  id="05-extstats-quiz-2"
+  lessonSlug="05-extended-statistics"
+  lang="en"
+  question="When is `ndistinct` the right kind of extended statistics to create?"
+  choices={[
+    { label: "When a query has GROUP BY on multiple correlated columns and the planner wildly overestimates the number of groups", correct: true },
+    { label: "When two columns have a functional dependency (A determines B)", misconception: "Functional dependencies are handled by the 'dependencies' kind, not 'ndistinct'." },
+    { label: "When a frequent value combination (e.g., country='US' AND status='shipped') is underestimated", misconception: "Frequent combinations are handled by the 'mcv' kind." },
+    { label: "When a column has a skewed distribution (a few values are very common)", misconception: "Single-column skew is handled by per-column SET STATISTICS, not extended statistics." },
+  ]}
+/>
+
+<Quiz
+  id="05-extstats-quiz-3"
+  lessonSlug="05-extended-statistics"
+  lang="en"
+  question="After running CREATE STATISTICS on (country, region, status) and ANALYZE, how do you verify the statistics actually improved the estimate?"
+  choices={[
+    { label: "Re-run EXPLAIN ANALYZE on the affected query and compare rows-estimated vs actual rows — they should now track within 2x on the affected node", correct: true },
+    { label: "Check pg_statistic for the column — it should show new entries", misconception: "Extended statistics are stored in pg_statistic_ext and pg_statistic_ext_data, not in the per-column pg_statistic. And looking at storage confirms the object exists but not whether it improved the estimate." },
+    { label: "The query will automatically run faster without re-checking", misconception: "You need to verify with EXPLAIN ANALYZE — the statistics object helps only if the planner uses it for the specific predicate combination." },
+    { label: "Run pg_stat_statements and observe the query's mean_exec_time dropped", misconception: "This confirms performance improved but does not isolate whether the statistics fix was the cause." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CREATE STATISTICS (dependencies, mcv) ON col1, col2 FROM tbl; ANALYZE — teaches the planner about correlated columns. Use dependencies when A implies B (country → region); use mcv for frequent value combinations; use ndistinct for GROUP BY cardinality. Verify improvement with EXPLAIN ANALYZE rows-estimated vs actual.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-extstats-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the independence assumption failure and why CREATE STATISTICS (dependencies) fixes it.", a: "By default, for a predicate WHERE A = 'x' AND B = 'y', the planner estimates P(A='x') × P(B='y'). This assumes A and B are statistically independent — their joint probability equals the product of their marginal probabilities. When A and B are correlated (A determines B with high probability, e.g., country → region), the actual joint probability is much closer to P(B='y') alone — you cannot gain information from P(A='x') because it is implied. The independence assumption underestimates selectivity dramatically: if P(country='US')=0.5 and P(region='CA')=0.05, the planner predicts 2.5% but actual is 5% (because region='CA' implies country='US'). CREATE STATISTICS with 'dependencies' measures the functional dependency factor between column pairs during ANALYZE and stores it. When the planner sees the same predicate, it uses the dependency factor to discount the multiplied probability toward the more selective column's probability. The estimate becomes accurate; the join choice follows." },
+    { q: "What is the difference between 'dependencies', 'mcv', and 'ndistinct' in CREATE STATISTICS?", a: "All three address multi-column estimate failures but for different query patterns. 'dependencies' tracks functional dependency coefficients — how strongly column A determines column B. Useful when one column's value implies another's (zip → city, country → region). 'mcv' stores the most-common-value tuples for the column combination — analogous to the per-column MCV list but for pairs or triples. Useful for frequent specific combinations like (country='US', status='shipped'). 'ndistinct' tracks the actual count of distinct value combinations — useful for GROUP BY queries where the planner needs to know how many groups to expect. In practice, creating both 'dependencies' and 'mcv' together covers most OLTP cases: CREATE STATISTICS stx (dependencies, mcv) ON col1, col2 FROM tbl." },
+    { q: "How do you identify which column combinations need extended statistics in a production database?", a: "The workflow: (1) Use pg_stat_statements to identify the top-20 queries by total_exec_time. (2) For each, run EXPLAIN ANALYZE and look for nodes where rows-estimated / rows-actual ratio exceeds 10x. (3) Examine the WHERE clause on that node — which columns are filtered? Do any of these have a natural correlation (geographic hierarchy like country/region/city, product hierarchy like category/subcategory/product, status and date columns that shift together)? (4) Check the actual data: SELECT country, region, COUNT(*) FROM orders GROUP BY country, region ORDER BY count(*) DESC LIMIT 20 — if region values are highly concentrated within countries, a functional dependency exists. (5) Create the statistics object, ANALYZE, re-run EXPLAIN ANALYZE. (6) Verify rows-estimated tracks rows-actual within 2x on the affected node. Storage cost is trivial (kilobytes); planning improvement is 100-1000x on the affected queries." },
+  ]}
+/>
+
+<Recap lang="en">
+By default the planner multiplies single-column selectivities assuming independence — wildly wrong for correlated columns like (country, region) or (zip, city). `CREATE STATISTICS` adds three kinds of multi-column information: `dependencies` (functional dependency factors between column pairs, fixing estimate failures for WHERE A='x' AND B='y' when A determines B), `ndistinct` (actual combination counts for accurate GROUP BY cardinality), and `mcv` (most-common value tuples for frequent specific combinations, available since PG 12). PG 14+ added expression statistics on computed expressions. Storage cost is kilobytes; planning improvement on affected queries can be 100–1000×. After creating statistics, always run `ANALYZE` and verify with `EXPLAIN ANALYZE` that rows-estimated tracks rows-actual within 2× on the affected nodes.
+</Recap>

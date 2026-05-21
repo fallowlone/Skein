@@ -1,0 +1,260 @@
+---
+slug: 04-index-types
+lang: ru
+track: databases
+unit: 02-indexes
+order: 4
+title: "Типы индексов: GIN, GiST, BRIN, Hash, Bloom и HOT-обновления"
+summary: "За пределами B-tree: когда GIN, GiST, BRIN, Hash и Bloom — правильный инструмент, как HOT-обновления снижают write-overhead, почему fillfactor важен и почему свежая статистика важнее самого индекса."
+estMin: 18
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["03-partial-expression-covering"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["gin-index", "gist-index", "brin-index", "hash-index", "bloom-index", "hot-update", "fillfactor", "analyze-statistics", "write-amplification"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-types.html
+  - https://www.postgresql.org/docs/current/storage-hot.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Команда добавляет `CREATE INDEX ON events(payload)` на JSONB-столбец и наблюдает, как время запроса меняется с 4 секунд... на 4 секунды. B-tree не может индексировать внутри JSONB. GIN может. Знание того, какой тип индекса соответствует какой форме данных, — это разница между рабочим индексом и потраченным часом и гигабайтом.
+</Hook>
+
+<Crux>B-tree: 95% задач. GIN: JSONB/массивы. GiST: гео/range. BRIN: time-series. Hash: equality. Каждый тип меняет write-overhead на INSERT.</Crux>
+
+<Explanation>
+
+## Почему B-tree недостаточно
+
+B-tree индексирует одно значение на строку и отвечает на запросы equality, range и sort по этому значению. Когда строка содержит несколько значений (JSONB-ключи, элементы массива, текстовые лексемы) или когда отношение «меньше чем» не определено (геометрические фигуры, IP-диапазоны), B-tree не имеет полезного порядка сортировки. Другие типы индексов заполняют эти пробелы.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип индекса</th>
+        <th class="border border-border px-3 py-2 text-left">Лучше всего для</th>
+        <th class="border border-border px-3 py-2 text-left">Цена</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">B-tree</td>
+        <td class="border border-border px-3 py-2">Equality, range, sort на упорядоченных типах</td>
+        <td class="border border-border px-3 py-2">~10-30% размера таблицы; 5-50 мкс/запись</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">GIN</td>
+        <td class="border border-border px-3 py-2">JSONB containment, массивы, full-text</td>
+        <td class="border border-border px-3 py-2">2-5x размер; медленный на high-write JSONB</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">GiST</td>
+        <td class="border border-border px-3 py-2">Геопространственные (PostGIS), range-типы, nearest-neighbour</td>
+        <td class="border border-border px-3 py-2">Зависит от расширения; сложное обновление</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">BRIN</td>
+        <td class="border border-border px-3 py-2">Огромные insert-only таблицы с natural ordering</td>
+        <td class="border border-border px-3 py-2">Крошечный размер; только при физически упорядоченных данных</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Hash</td>
+        <td class="border border-border px-3 py-2">Equality на очень широких ключах</td>
+        <td class="border border-border px-3 py-2">Нет range; обычно B-tree лучше</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Bloom</td>
+        <td class="border border-border px-3 py-2">Multi-column equality, непредсказуемые комбинации фильтров</td>
+        <td class="border border-border px-3 py-2">Приближённый (false positives); нужна re-проверка в heap</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## GIN: inverted index для composite-типов
+
+Generalized Inverted Index. Где B-tree хранит одно значение на строку, GIN хранит много значений на строку — каждый ключ в JSONB-документе, каждый элемент в массиве, каждый лексем в tsvector. Внутри GIN — B-tree indexed values, каждое указывает на posting list (или posting tree) TID-ов, содержащих это значение.
+
+Use cases:
+- **JSONB containment**: `WHERE payload @> '{"event_type":"login"}'`
+- **Array overlap**: `WHERE tags && ARRAY['premium','active']`
+- **Full-text search**: `WHERE to_tsvector('english', body) @@ to_tsquery('postgres')`
+
+GIN-индексы обычно в 2-5x больше индексируемых данных столбца. На high-write JSONB-столбцах каждая вставка строки обновляет каждый indexed ключ — `fastupdate` режим откладывает эти обновления в background-процесс. Продакшн-дисциплина: измерь GIN write-cost после добавления на write-heavy столбец; при спайке latency вставки — рассмотри `fastupdate` или expression-индексы на известных горячих JSONB-полях.
+
+## GiST: generic search tree
+
+Для данных без глобального порядка сортировки: геопространственные фигуры, IP-диапазоны, timestamp-диапазоны. GiST расширяем — каждый non-leaf узел хранит «предикат» (например, bounding box), обобщающий своё поддерево. Запросы отсекают поддеревья, проверяя предикат перед спуском.
+
+Большинство инженеров встречают GiST через PostGIS:
+
+```sql
+CREATE INDEX ON locations USING GIST (geom);
+-- включает: WHERE ST_DWithin(geom, ST_MakePoint(-74, 40.7), 1000)
+```
+
+Range-типы (`int4range`, `tsrange`) также используют GiST по умолчанию. Nearest-neighbour запросы (`ORDER BY geom <-> point LIMIT 10`) требуют GiST.
+
+## BRIN: крошечный индекс для огромных упорядоченных таблиц
+
+Block Range INdex. Хранит min и max значения per block range (дефолт: 128 страниц, ~1 MB heap). Для ответа на запрос Postgres читает BRIN-метаданные, находит candidate ranges и сканирует только эти блоки. BRIN приближённый — сужает heap-scan, но не устраняет его.
+
+BRIN полезен только когда данные физически упорядочены по indexed-столбцу. Классический случай: time-series таблица со вставками в порядке timestamp.
+
+```sql
+-- 10 миллиардов строк, 8 TB таблица
+CREATE INDEX ON events USING BRIN (created_at);
+-- Результат: ~несколько MB индекс; range-запрос читает только нужные 128-страничные блоки
+```
+
+Для случайно распределённых данных BRIN не даёт ускорения — min-max каждого block range охватывает весь диапазон.
+
+## Hash-индексы
+
+Только equality; нет range-поддержки; нет ORDER BY. До Postgres 10 Hash-индексы не логировались в WAL и не переживали сбои — избегай в старых инсталляциях. После Postgres 10 — стабильны. Узкий use case: equality-lookup на очень широких ключах. На практике B-tree почти всегда предпочтительнее (поддерживает range и ORDER BY). Дефолт B-tree.
+
+## Bloom-индексы для multi-column equality
+
+Расширение `bloom` — вероятностный индекс. Bloom на `(a, b, c, d, e)` ускоряет любой запрос с фильтром по любому подмножеству столбцов — без leading-column rule. Цена: approximate — каждый матч — кандидат, требующий re-проверки в heap (false positives возможны). Use case: таблицы с много столбцами, где запросы непредсказуемо комбинируют разные наборы фильтров, что делает невозможным построить 2^N composite B-tree.
+
+## HOT-обновления и fillfactor
+
+При UPDATE Postgres создаёт новую tuple-версию (MVCC) и должен обновить каждый индекс, ссылающийся на эту строку — даже индексы с неизменёнными столбцами. Это write amplification: одно логическое обновление разворачивается в N обновлений индексов.
+
+**HOT (Heap-Only Tuple)** устраняет обновления индексов при выполнении обоих условий:
+1. Ни один indexed-столбец не изменился в этом UPDATE.
+2. Новый tuple помещается на ту же heap-страницу, что и старый (есть свободное место).
+
+Когда HOT срабатывает, меняется только heap-страница — записи индекса по-прежнему указывают на старый TID, который цепочкой ведёт к новой версии. Результат: резко сниженный write-overhead на update-heavy workloads.
+
+**Fillfactor** управляет заполненностью каждой страницы при вставке (дефолт: 100% для таблиц, 90% для B-tree). Установка fillfactor в 70-80% на update-heavy таблице оставляет место на страницах для HOT:
+
+```sql
+ALTER TABLE orders SET (fillfactor = 70);
+```
+
+Цена: начальное хранилище больше — меньший fillfactor означает больше страниц. Продакшн-команды измеряют частоту обновлений и настраивают fillfactor на горячих таблицах — часто упускаемый рычаг.
+
+## Write-cost accounting
+
+Каждый индекс добавляет ~5-50 мкс на запись на каждый затронутый индекс. Для таблицы с 10 индексами каждый INSERT стоит 50-500 мкс в overhead на индексы сверх heap write. GIN-индексы на JSONB-столбцах с многими ключами могут стоить 50-200 мкс на запись — больше любого B-tree.
+
+Senior-команды моделируют index budget для каждой таблицы: при заданном write-throughput target, сколько индексов может себе позволить таблица? Инструменты: `pg_stat_statements` для baseline latency, `pgbench` для синтетических write-бенчмарков под новые индексы.
+
+## Размер индекса и shared_buffers
+
+Postgres кеширует горячие страницы в `shared_buffers` (типично 25% RAM сервера). Большие индексы конкурируют с heap-страницами за cache-место. 5 GB GIN-индекс на JSONB-столбце может вытеснить горячие heap-страницы, превращая запросы, ранее быстрые из cache, в disk-bound. Симптом: `pg_stat_database.blks_hit / blks_read` падает после добавления нового индекса. Mitigation: partial-индексы, expression-индексы на known-hot полях, удаление неиспользуемых.
+
+## Почему ANALYZE важнее самого индекса
+
+Выбор планировщика — использовать индекс или нет — зависит от статистики таблицы (`pg_statistic`): распределение значений, количество строк, корреляции. Устаревшая статистика вынуждает планировщика недо- или переоценивать количество строк, соответствующих фильтру, что приводит к неверному выбору плана.
+
+Продакшн-дисциплина:
+- Запускай `ANALYZE` после bulk-insert, больших UPDATE или schema-изменений.
+- Снижай `autovacuum_analyze_scale_factor` для таблиц со skewed данными (дефолт 0.2 = 20% изменений — установи 0.02 для горячих OLTP-таблиц).
+- Используй `CREATE STATISTICS` для коррелированных столбцов (например, `country, city`).
+
+«Неправильный выбор индекса» — часто в действительности «устаревшая статистика».
+
+<NumbersCard
+  id="04-index-types-numbers"
+  title="Стоимость типов индексов"
+  stats={[
+    { label: "B-tree size, 8-байт key, 100M строк", value: "~1 GB" },
+    { label: "GIN size vs индексируемые данные столбца", value: "2-5x больше" },
+    { label: "BRIN size, 10B-row time-series", value: "~несколько MB" },
+    { label: "Hash-индекс в продакшне", value: "редко (B-tree обычно лучше)" },
+    { label: "HOT update экономия (нет indexed-столбца)", value: "устраняет N обновлений индексов" },
+    { label: "GIN write-overhead на high-write JSONB", value: "~50-200 мкс на строку" },
+    { label: "B-tree write-overhead на индекс", value: "~5-50 мкс на запись" },
+    { label: "fillfactor default (таблица / B-tree)", value: "100% / 90%" },
+    { label: "fillfactor для update-heavy HOT-friendly таблиц", value: "70-80%" },
+    { label: "ANALYZE trigger (autovacuum_analyze_scale_factor default)", value: "20% строк изменено" },
+  ]}
+/>
+
+<Misconception id="04-index-types-mc-1">
+<strong>«B-tree индекс на JSONB ускоряет containment-запросы.»</strong> Нет. B-tree индексирует весь документ как непрозрачное значение — не отвечает на `@>`. Используй `CREATE INDEX USING GIN (payload)` или GIN на конкретном пути `(payload->'event_type')`.
+</Misconception>
+
+<Quiz
+  id="04-index-types-quiz-1"
+  lessonSlug="04-index-types"
+  lang="ru"
+  question="Таблица хранит геолокационные данные, горячий запрос: WHERE ST_DWithin(geom, $1, 500). Какой тип индекса правильный?"
+  choices={[
+    { label: "B-tree на geom", misconception: "B-tree требует линейный порядок сортировки, которого у геометрических типов нет." },
+    { label: "GIN на geom", misconception: "GIN для composite/multi-value типов (JSONB, массивы, tsvector), не для геометрических фигур." },
+    { label: "GiST на geom — правильный выбор для геопространственных nearest-neighbour и distance запросов", correct: true },
+    { label: "BRIN на geom", misconception: "BRIN хранит min/max per block range, что не имеет смысла для геометрических фигур." },
+  ]}
+/>
+
+<Quiz
+  id="04-index-types-quiz-2"
+  lessonSlug="04-index-types"
+  lang="ru"
+  question="HOT-обновления пропускают поддержку индекса. Что требуется для срабатывания HOT?"
+  choices={[
+    { label: "Indexed-столбец должен был измениться при обновлении", misconception: "HOT срабатывает, когда НИ ОДИН indexed-столбец НЕ изменился — противоположное." },
+    { label: "Ни один indexed-столбец не изменился И новый tuple помещается на ту же heap-страницу", correct: true },
+    { label: "Таблица должна иметь fillfactor = 100", misconception: "fillfactor = 100 не оставляет места на страницах, что препятствует HOT. Меньший fillfactor включает HOT." },
+    { label: "Индекс должен быть partial", misconception: "HOT работает с любым типом индекса; partial-индексы просто уменьшают, сколько строк индексируется." },
+  ]}
+/>
+
+<DragOrder
+  id="04-index-types-drag-1"
+  lessonSlug="04-index-types"
+  lang="ru"
+  prompt="Упорядочи от лучшего к худшему для сценария: 'поиск JSONB-документов по наличию ключа'."
+  items={[
+    { id: "a", label: "GIN — спроектирован для multi-value типов; нативно отвечает на @> и ? операторы" },
+    { id: "b", label: "Expression B-tree на (payload->>'key') — работает для equality на known-field, но не общий containment" },
+    { id: "c", label: "B-tree на payload — индексирует весь документ как непрозрачный; бесполезен для containment" },
+    { id: "d", label: "BRIN на payload — только для min/max на упорядоченных данных; нерелевантен здесь" },
+  ]}
+  correctOrder={["a", "b", "c", "d"]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему Postgres поставляется с шестью типами индексов вместо одного универсального? Потому что фундаментальные структуры данных несовместимы. B-tree требует тотального порядка (каждое значение сравнимо с другим). JSONB-документы не имеют тотального порядка. Геометрические фигуры требуют пространственного предиката, а не линейного ключа. Time-series блоки нуждаются в range summary. Один универсальный индекс был бы либо астрономически дорогим, либо бесполезным. Дизайн-решение — несколько специализированных типов — делает каждый индекс tight и соответствующим своей форме данных.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>GIN для JSONB/массивов/full-text; GiST для геопространственных и range-типов; BRIN для огромных insert-only таблиц с natural ordering; Hash — редко используемая нишевая альтернатива B-tree; Bloom для multi-column equality без leading-column constraint. HOT-обновления устраняют записи в индекс, когда ни один indexed-столбец не изменился и страница имеет свободное место — настраивай fillfactor в 70-80% на update-heavy таблицах. ANALYZE обязателен для правильного выбора индекса планировщиком — запускай после массовых изменений данных.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-index-types-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Коллега предлагает добавить GIN-индекс на JSONB-столбец audit_log, получающий 5000 inserts/сек. Каковы write-cost последствия и какая альтернатива может работать?", a: "GIN индексирует каждый ключ в каждом JSONB-документе. Для документа с 20 ключами каждая вставка затрагивает 20 GIN posting lists — потенциально 50-200 мкс overhead на строку. При 5000 inserts/сек это до 1 секунды GIN write-overhead в секунду времени, что насытит I/O. Альтернативы: (1) fastupdate=on для откладывания GIN-поддержки (снижает write-latency ценой периодических merge-спайков); (2) узкий expression-индекс на конкретном known-hot поле: CREATE INDEX ON audit_log USING GIN ((payload->'event_type')) — только один posting list обновляется при вставке; (3) B-tree expression-индекс на (payload->>'event_type') для equality-only запросов. Всегда бенчмарки с pgbench перед деплоем GIN на high-write столбец." },
+    { q: "Объясни, когда BRIN резко лучше B-tree и когда он бесполезен.", a: "BRIN хранит min и max per block range (дефолт 128 страниц ≈ 1 MB). Для ответа на запрос читает BRIN-метаданные, находит candidate ranges, сканирует только эти блоки. Резко лучше B-tree когда: данные физически упорядочены по indexed-столбцу — вставки идут в порядке (time-series события в порядке timestamp). Range-запрос на created_at может пропустить 99% блоков с BRIN при килобайтной стоимости vs гигабайтный B-tree. Бесполезен когда: данные случайно распределены — min-max каждого block range охватывает полный диапазон, каждый range кандидат, Postgres сканирует все блоки. Тест: если физически кластеризуешь таблицу по индексированному столбцу (или вставки естественно упорядочены), BRIN побеждает. Иначе — B-tree." },
+    { q: "Что такое write amplification в контексте индексов и какие механизмы его снижают?", a: "Write amplification: одна логическая запись (INSERT или UPDATE) разворачивается в несколько физических записей — одна в heap, плюс одна на каждый индекс на indexed-столбец. Таблица с 10 индексами: каждая вставка вызывает 11 записей. UPDATE, затрагивающий 3 indexed-столбца, вызывает 4 записи (heap + 3 обновления индексов), даже если 7 других индексов не затронуты. Механизмы снижения: (1) HOT-обновления — когда ни один indexed-столбец не изменился и страница имеет место, записи в индекс пропускаются полностью; (2) fillfactor — оставляет свободное место на страницах (70%) для HOT; (3) Меньше индексов — наиболее эффективное снижение; аудит и удаление неиспользуемых; (4) Partial-индексы — только строки, соответствующие WHERE, вызывают write-overhead; (5) GIN fastupdate — откладывает поддержку индекса в background." },
+  ]}
+/>
+
+<Recap lang="ru">
+Postgres поставляется с шестью типами индексов. B-tree покрывает equality, range и sort на упорядоченных типах — 95% продакшн-использования. GIN индексирует несколько значений на строку (JSONB-ключи, элементы массивов, tsvector-лексемы) используя inverted-структуру; в 2-5x больше и медленнее на запись. GiST для геопространственных и range-типов без линейного порядка. BRIN хранит min-max per block range и полезен только при физически упорядоченных данных (time-series). Hash — equality only, редко предпочтительнее B-tree. Bloom — probabilistic multi-column equality без leading-column rule ценой false positives.
+
+HOT-обновления пропускают поддержку индекса, когда ни один indexed-столбец не изменился и heap-страница имеет место — настраивай fillfactor 70-80% на update-heavy таблицах. GIN write-cost на high-write JSONB может достигать 50-200 мкс на вставку; сужай до expression-индексов на known-hot полях. ANALYZE должен быть актуальным для правильного выбора индекса планировщиком; устаревшая статистика — самая частая причина «неожиданного Seq Scan при существующем индексе».
+</Recap>

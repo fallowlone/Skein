@@ -1,0 +1,228 @@
+---
+slug: 03-baggage-and-async-boundaries
+lang: en
+track: observability
+unit: 06-trace-propagation
+order: 3
+title: "Baggage and async boundaries: carrying context across queues and callbacks"
+summary: "W3C baggage propagates key-value pairs alongside the trace, but its unbounded size and semi-public visibility make it a PII trap. Async boundaries — setTimeout, Kafka, workers — silently drop context unless bound with context.with() or message-level inject/extract."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/06-trace-propagation/02-traceparent-and-tracestate"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["baggage", "async-context", "context-bind", "kafka-propagation", "otel-context-with"]
+sources:
+  - https://www.w3.org/TR/baggage/
+  - https://opentelemetry.io/docs/specs/otel/baggage/api/
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+A developer writes `setTimeout(() => doWork(), 100)` inside a request handler. The deferred work runs fine, emits spans, and shows up in the tracing dashboard — as a completely separate trace with no connection to the request that triggered it.
+</Hook>
+
+<Crux>HTTP auto-instrumentation is easy. setTimeout, workers, and Kafka consumers break context — carry it explicitly across every async boundary.</Crux>
+
+<Explanation>
+
+## Baggage: arbitrary key-values across the journey
+
+Baggage is a second header (`baggage`) defined by W3C, propagated identically to `traceparent`. It carries free-form key-value pairs: tenant-id, region, feature-flag selection, A/B test cohort. Baggage is read by downstream services and can be attached as span attributes or used by code (for example, to enforce per-tenant quotas).
+
+The catch: baggage is unbounded by spec, sized only by the carrier protocol. HTTP header limits (typically 8–64 KB per header field, server-configurable) are the practical cap.
+
+**Two real risks:**
+
+1. **Latency bloat.** Baggage is propagated on every request hop, every queue message, every async boundary. Each hop pays the cost twice: serialise on outbound, parse on inbound. A 16-KB baggage payload on 10k req/s of internal traffic means roughly 160 MB/s of pure baggage transport plus parsing time at every hop.
+
+2. **PII leakage.** Baggage flows to every downstream service including third-party integrations and SaaS APIs that might log or persist headers — often in less-audited contexts than the source database. Anything in baggage is effectively semi-public within and beyond your engineering org.
+
+**Discipline: baggage holds operational tags, never identity data.**
+
+What to put in baggage: tenant-id (opaque token), region, feature-flag state, A/B cohort name, request-source label. What never to put in baggage: user emails, credit-card or payment tokens, API keys, auth tokens, customer PII, internal secrets.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Safe in baggage</th>
+        <th class="border border-border px-3 py-2 text-left">Never in baggage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">tenant-id (opaque token)</td>
+        <td class="border border-border px-3 py-2">user email or full user-id</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">region / availability-zone</td>
+        <td class="border border-border px-3 py-2">credit-card or payment token</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">feature-flag state (e.g. `checkout-v2=true`)</td>
+        <td class="border border-border px-3 py-2">API keys or auth tokens</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">A/B cohort name</td>
+        <td class="border border-border px-3 py-2">any customer PII</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Async boundaries: the killer
+
+HTTP propagation is the easy case — OTel auto-instrumentation handles it for supported HTTP servers and clients. The hard cases are queues, timers, callbacks.
+
+**The Node.js setTimeout trap.** The in-process "current context" in Node.js flows through the call stack automatically, but `setTimeout`, `setImmediate`, and `queueMicrotask` schedule work to run later in a different call stack. When the callback fires, the original request's context is gone. OTel creates a new root span (a fresh trace-id) for the deferred work. The result: a trace that ends abruptly at the setTimeout call site, and a separate orphan trace for the deferred work.
+
+**The fix:** wrap the callback with `context.bind(ctx, fn)` or run it inside `context.with(ctx, fn)`:
+
+```js
+// BROKEN: traceparent lost across the setTimeout
+app.post('/checkout', async (req, res) => {
+  setTimeout(() => {
+    doDeferredWork(); // new trace; not linked to request
+  }, 100);
+  res.status(202).end();
+});
+
+// FIXED: bind context across the boundary
+app.post('/checkout', async (req, res) => {
+  const ctx = context.active();
+  setTimeout(context.bind(ctx, () => {
+    doDeferredWork(); // now sees the request's trace-id
+  }), 100);
+  res.status(202).end();
+});
+```
+
+`context.bind(ctx, fn)` returns a wrapped function that restores the captured context when invoked. The same pattern applies to `setImmediate`, `queueMicrotask`, callbacks passed to third-party libraries, and any custom thread or worker abstraction.
+
+## Kafka and message-queue propagation
+
+When work crosses a process boundary via a message queue (Kafka, RabbitMQ, SQS, Cloud Pub/Sub), the in-process context cannot carry across. The trace-id must be written into the message's wire format and read back on the other side:
+
+- **Producer side:** call `propagator.inject(context, message.headers)` before publishing. This writes `traceparent` (and `baggage`) into the message's header map.
+- **Consumer side:** call `context = propagator.extract(message.headers)` after polling. This restores the trace-id, allowing the consumer to create a child span linked to the producer's span.
+
+OTel's Kafka instrumentation handles both sides automatically — but only if the instrumentation library is loaded and configured.
+
+**The critical distinction:** `context.bind` keeps in-process context alive across an async boundary in the producer, but it does not write `traceparent` into the message. Kafka lives in a separate process. The consumer's process has no shared memory with the producer; the only way to carry the trace-id is to inject it into the message headers before publishing.
+
+<Misconception id="mc-broken-async">
+  <p><strong>"Auto-instrumentation handles everything."</strong> No. Async callbacks (setTimeout, queues, workers, fire-and-forget promises) lose context unless bound with <code>context.with()</code>. Queue consumers need inject on the producer and extract on the consumer. Unwrapped async boundaries are the leading cause of split traces.</p>
+</Misconception>
+
+<FadedExample
+  client:load
+  id="03-baggage-fe-1"
+  pieceSlug="03-baggage-and-async-boundaries"
+  lang="en"
+  title="Fix a broken setTimeout propagation in Node.js"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Setup:</strong> An Express endpoint kicks off a deferred task. The trace ends at the setTimeout boundary; the deferred work has its own orphan trace.</p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`// BROKEN: traceparent lost across the setTimeout
+const { context, trace } = require('@opentelemetry/api');
+
+app.post('/checkout', async (req, res) => {
+  const span = trace.getSpan(context.active());
+  // do sync work...
+  setTimeout(() => {
+    doDeferredWork(); // <-- new trace; not linked to request
+  }, 100);
+  res.status(202).end();
+});
+
+// FIXED: bind context across the boundary
+app.post('/checkout', async (req, res) => {
+  const ctx = context.active();
+  setTimeout(context.bind(ctx, () => {
+    doDeferredWork(); // <-- now sees the request's trace-id
+  }), 100);
+  res.status(202).end();
+});`}</code></pre>
+        <p><strong>Why this works:</strong> <code>context.bind(ctx, fn)</code> returns a wrapped function that restores the captured context when invoked. The deferred work now runs with the request's trace-id, so the spans link. The same pattern applies to <code>setImmediate</code>, <code>queueMicrotask</code>, callbacks passed to third-party libraries, and any custom thread / worker abstraction.</p>
+      </div>
+    ),
+    semi: {
+      prompt: "If the deferred work pushes a Kafka message, what additional propagation step is needed at the publish site?",
+      blanks: [
+        { id: "step", expected: "inject", placeholder: "verb (inject/extract/bind/start)" },
+      ],
+    },
+    blank: {
+      prompt: "Why does context.bind not fix Kafka propagation by itself?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>context.bind keeps the in-process context alive across the async boundary in the producer, but the message itself crosses a process boundary into the Kafka cluster and then into the consumer process. The consumer's process has no shared memory with the producer; the only way to carry the trace-id is to inject the traceparent into the message headers before publishing, and have the consumer extract it on receive. OTel's Kafka instrumentation does both automatically, but only if the instrumentation library is loaded and configured.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "step:extract": "extract is the consumer side. The producer must inject the traceparent before sending.",
+    "step:bind": "bind keeps in-process context but doesn't write to the message wire format.",
+  }}
+/>
+
+<Quiz
+  id="03-baggage-quiz-1"
+  lessonSlug="03-baggage-and-async-boundaries"
+  lang="en"
+  question="A service places a user's email address in the baggage header to pass it to downstream services. What is the risk?"
+  choices={[
+    { label: "The email flows to every downstream service and any third-party integration that reads headers — it is effectively semi-public within and beyond the engineering org", correct: true },
+    { label: "Baggage headers are stripped at TLS termination", misconception: "Baggage is a normal HTTP header and is not stripped at TLS termination. The risk is propagation to downstream third parties, not encryption." },
+    { label: "The W3C spec prohibits strings in baggage", misconception: "Baggage values are arbitrary strings. The spec does not prohibit any content type — the risk is organizational and privacy-related, not a spec violation." },
+    { label: "Email addresses exceed the 256-char value limit", misconception: "Typical email addresses are well under 256 chars. The risk is PII exposure, not size." },
+  ]}
+/>
+
+<Quiz
+  id="03-baggage-quiz-2"
+  lessonSlug="03-baggage-and-async-boundaries"
+  lang="en"
+  question="A Node.js service uses OTel auto-instrumentation and Kafka. Traces arriving from Kafka consumers are disconnected orphans. What is the most likely cause?"
+  choices={[
+    { label: "The producer is not calling propagator.inject() into message headers before publishing, so the traceparent is never written to the wire", correct: true },
+    { label: "Kafka does not support message headers", misconception: "Kafka record headers (added in Kafka 0.11) are the standard mechanism for OTel propagation. The issue is whether the producer is injecting them." },
+    { label: "The consumer needs to call context.bind() before processing messages", misconception: "context.bind is for in-process async boundaries. Kafka crosses a process boundary, so the solution is inject on the producer side and extract on the consumer side." },
+    { label: "OTel does not support Kafka propagation", misconception: "OTel has official Kafka instrumentation for major client libraries. The issue is whether it is loaded and used." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Baggage carries operational key-values alongside the trace but flows everywhere — never put PII or secrets in it. Async boundaries (setTimeout, Kafka, workers) silently drop context: use context.bind/context.with for in-process callbacks, and inject/extract for message queue boundaries.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-baggage-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why baggage size discipline matters in production, and what should never go into baggage.", a: "Baggage is propagated on every request hop, every queue message, every async boundary. Each hop pays the cost twice: serialise on outbound, parse on inbound. A 16-KB baggage payload added to 10k req/s of internal traffic means roughly 160 MB/s of pure baggage transport plus parsing time at every hop. Beyond cost, baggage is high-trust: it flows to every downstream service including third-party integrations and SaaS APIs that might log or persist headers. Anything in baggage is effectively semi-public within your engineering org. Never put: user emails, full user IDs (use opaque tokens if you must identify a tenant), credit-card or payment tokens, API keys, auth tokens, customer PII, internal secrets. Always put: tenant-id (opaque), region, feature-flag state, A/B cohort name, request-source label — operational tags that downstream services genuinely need to make routing or feature decisions." },
+    { q: "What is the difference between context.bind (in-process) and inject/extract (cross-process) for trace propagation?", a: "context.bind and context.with operate within one process's memory. They capture the current OTel context (which includes the trace-id) and restore it when a callback executes, so asynchronous callbacks like setTimeout or queueMicrotask see the same context as the code that scheduled them. This works because everything runs in the same process. inject/extract operate across process boundaries. inject writes the trace-id into a message's wire format (Kafka headers, HTTP headers, AMQP properties) so it can travel across the network. extract reads it back on the receiving side. Without inject, no trace-id is written to the message; context.bind in the producer only keeps the context alive within the producer's process — it has no effect on the consumer process which started with no context." },
+    { q: "Name four async boundaries in Node.js that require explicit context propagation and explain the fix for each.", a: "1. setTimeout/setImmediate: wrap the callback with context.bind(ctx, fn) before passing it to setTimeout. The SDK restores the context when the timer fires. 2. queueMicrotask: same pattern — context.bind(ctx, fn). 3. Kafka/RabbitMQ/SQS publish: call propagator.inject(context.active(), messageHeaders) before sending. On the consumer side, call propagator.extract(messageHeaders) after polling. 4. Worker threads / Web Workers: pass the serialised trace-id string as a worker message argument, then call setSpan on the worker's OTel context with a RemoteSpan built from the received ids. Each fix addresses the same root cause: the OTel context is thread-local or async-local — it does not cross process or thread boundaries automatically." },
+  ]}
+/>
+
+<Recap lang="en">
+The W3C `baggage` header propagates operational key-values (tenant-id, feature flags, A/B cohort) alongside the trace, but every hop pays serialise and parse costs, and the header flows to every downstream including third-party integrations. PII or secrets in baggage are semi-public within and beyond the engineering org. Async boundaries are the leading cause of split traces in production: `setTimeout`, `setImmediate`, and `queueMicrotask` fire in a different call stack with no OTel context; fix them with `context.bind` or `context.with`. Queue consumers (Kafka, RabbitMQ, SQS) cross a process boundary — the fix is `propagator.inject()` into message headers at the producer and `propagator.extract()` at the consumer; `context.bind` alone is not enough.
+</Recap>

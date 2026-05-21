@@ -1,0 +1,159 @@
+---
+slug: 02-server-state-machine
+lang: en
+track: backend
+unit: 05-idempotency-retries
+order: 2
+title: "Server-side state machine: four states of an idempotency key"
+summary: "When a request arrives with an Idempotency-Key the server moves through four states: new, in-flight, replay, and mismatch. The request fingerprint catches reused keys with changed intent."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/05-idempotency-retries/01-why-idempotency
+deepensInto:
+  - backend/05-idempotency-retries/05-concurrency-and-cache
+spiral: ["statefulness"]
+concepts: ["idempotency-state-machine", "request-fingerprint", "409-conflict", "422-mismatch", "idempotency-cache", "TTL"]
+sources:
+  - https://stripe.com/blog/idempotency
+  - https://docs.stripe.com/api/idempotent_requests
+  - https://brandur.org/idempotency-keys
+  - https://httptoolkit.com/blog/idempotency-keys/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A payment POST arrives with Idempotency-Key K1. Two seconds later the same key arrives again — but the amount field has changed. Should the server replay the old response, process a new charge, or refuse? Getting this wrong either misses a real change or creates a duplicate charge.
+</Hook>
+
+<Crux>Four key states: new, in-flight (409), replay, mismatch (422). Body fingerprint separates safe replay from a silent wrong-data overwrite.</Crux>
+
+<Explanation>
+
+## The four states
+
+When a request with `Idempotency-Key` arrives, the server looks up the key in a deduplification cache (a Postgres table or Redis entry). There are exactly four outcomes:
+
+**1. New** — no row exists for this key.
+The server inserts `(key, fingerprint, status=in_progress, expires_at)` in the same transaction as the business logic, processes the work, then updates the row with `(response_body, response_status, status=completed)`.
+
+**2. In-flight** — a row exists with `status=in_progress`.
+Another request is already processing this key concurrently. The server returns **409 Conflict** with `{"error": "idempotency key in use"}` immediately. The client backs off and retries.
+
+**3. Replay** — a row exists with `status=completed` and a stored response.
+The server returns the cached response body and status code without re-running any business logic. The client gets one confirmation. The customer is charged once.
+
+**4. Mismatch** — a row exists for this key, but the fingerprint of the incoming request does not match.
+The client has reused the key with a different intent (different amount, different recipient). The server returns **422 Unprocessable Entity**. The client must generate a fresh key for the new operation.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| State | Condition | Server response | Business logic runs? |
+|---|---|---|---|
+| New | No row for this key | 200/201 (after processing) | Yes |
+| In-flight | Row exists, status=in_progress | 409 Conflict | No |
+| Replay | Row exists, status=completed, fingerprint matches | 200 (cached) | No |
+| Mismatch | Row exists, fingerprint differs | 422 Unprocessable Entity | No |
+
+</div>
+
+## Why the request fingerprint matters
+
+The fingerprint is a hash of the request body (and optionally method, path, and key headers). Stripe hashes the body; payment APIs that route by `Stripe-Account` include that header too.
+
+Without the fingerprint, a client that accidentally reuses a key for a different amount would silently get back the original response — and the new amount would be lost forever. The fingerprint makes this a hard error (422) instead of silent data loss.
+
+**Cost:** one SHA-256 per request — microseconds. Cheap insurance.
+
+## Where to store the cache
+
+**Postgres table** (simple, durable):
+
+```sql
+CREATE TABLE idempotency_keys (
+  key          TEXT PRIMARY KEY,
+  fingerprint  TEXT NOT NULL,
+  response_body JSONB,
+  response_status INT,
+  status       TEXT NOT NULL DEFAULT 'in_progress',
+  expires_at   TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX ON idempotency_keys (expires_at);
+```
+
+A daily cleanup job deletes rows past `expires_at`. Stripe v1 held keys for 24 hours; v2 extended to 30 days.
+
+**Redis with TTL** (higher throughput):
+`SETNX key value EX ttl_seconds` — atomic set-if-not-exists. Redis is faster but risks losing entries on async-fsync crash. Payment APIs that hold legal liability keep the authoritative record in Postgres and use Redis as a hot-path read-through cache.
+
+<Inset kind="why" lang="en">
+Why 409 for in-flight instead of blocking until the first request finishes? Because blocking ties up a server connection for the duration of a potentially slow external API call (tens to hundreds of milliseconds). 409 is cheaper: the client retries after a short backoff, and by then the first request has usually completed and the row is in replay state.
+</Inset>
+
+<Quiz
+  id="state-machine-q1"
+  lessonSlug="02-server-state-machine"
+  lang="en"
+  question="A POST to /charge with Idempotency-Key K1 succeeded. The client retries K1 with a different amount field. What should the server return?"
+  choices={[
+    { label: "200 OK with the original response (silently ignore the change)", misconception: "Replaying silently when the body changed loses the new charge intent. The customer may never receive the corrected charge." },
+    { label: "200 OK with a new charge for the new amount", misconception: "Processing twice under one key is exactly what idempotency prevents." },
+    { label: "422 Unprocessable Entity — key reused with mismatched fingerprint", correct: true },
+    { label: "500 Internal Server Error", misconception: "The server understood the request fine. This is a client-side key-reuse bug, not a server error." },
+  ]}
+/>
+
+<Quiz
+  id="state-machine-q2"
+  lessonSlug="02-server-state-machine"
+  lang="en"
+  question="Why does the server return 409 instead of blocking when it sees a key with status=in_progress?"
+  choices={[
+    { label: "409 is the standard code for duplicate resources", misconception: "409 typically signals conflict. Here it signals that an identical operation is already in progress — the client should back off." },
+    { label: "Blocking would tie up a connection for the full duration of the first request, while 409 lets the client retry after a short backoff", correct: true },
+    { label: "The server cannot read the status field while in_progress", misconception: "The server can read the row at any time. The choice of 409 is a deliberate design for connection efficiency." },
+    { label: "RFC 9110 requires 409 for concurrent idempotency key use", misconception: "RFC 9110 does not specify this. It is Stripe's convention, now widely adopted." },
+  ]}
+/>
+
+<Quiz
+  id="state-machine-q3"
+  lessonSlug="02-server-state-machine"
+  lang="en"
+  question="A client retries Idempotency-Key K1 with the same body 26 hours after the first attempt (Stripe v1 TTL = 24 hours). What does the server do?"
+  choices={[
+    { label: "Returns the cached response from 26 hours ago", misconception: "The cleanup job deleted the row after 24 hours. The server has no memory of K1." },
+    { label: "Treats the request as new, processes and charges again — risking a double charge", correct: true },
+    { label: "Returns 410 Gone to signal the key expired", misconception: "A gone key looks identical to a new key from the server's perspective — there is no expired-key state." },
+    { label: "Returns 422 because the key was already used", misconception: "422 is for a fingerprint mismatch on an existing row, not for an expired row that was already deleted." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Four states per key: new (process + store), in-flight (409), replay (return cached), mismatch (422). The body fingerprint prevents silent loss when a key is reused with different intent.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="state-machine-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does the request fingerprint (body hash) matter alongside the idempotency key, and what breaks without it?", a: "The fingerprint catches client bugs where the same key is reused for a different operation. Without it, the server replays the original response unchanged — so if the client meant to charge $55 and reused the key from a $50 charge, the customer sees the $50 response and the $55 intent is silently lost. With the fingerprint, the server detects the mismatch and returns 422, forcing the client to either fix the key or fix the body." },
+    { q: "Trace a POST /charge that succeeds, then is retried with the same key and body. What happens at each step?", a: "First attempt: server inserts (K1, hash(body), status=in_progress), runs the charge, returns 200, updates row to status=completed with the response body. Second attempt with the same key and body: server looks up K1, finds status=completed, fingerprint matches — returns the cached 200 without running the charge handler again. Customer is charged once. Client gets one confirmation." },
+    { q: "When should the server store the idempotency key in Postgres vs Redis, and what is the durability tradeoff?", a: "Postgres (with ACID transactions) guarantees the key is never lost — suitable for payment APIs where a lost key could cause a double charge. Redis (SETNX with TTL) is faster and scales horizontally but defaults to async fsync, meaning a crash within milliseconds can lose the entry. Production payment systems use Redis as a hot-path cache backed by Postgres: a Redis miss falls through to the Postgres table to recover the authoritative record." },
+  ]}
+/>
+
+<Recap lang="en">
+Every idempotency-key lookup resolves to one of four states: new (insert and process), in-flight (409 to trigger backoff), replay (return the cached response), or mismatch (422 because the fingerprint changed). The request fingerprint — a SHA-256 of the body — is what makes it safe to replay: without it, a reused key with a different amount would silently return the wrong response. Stripe v1 holds keys for 24 hours; v2 extended to 30 days for compliance. Past expiry, the row is gone and the server treats the request as new.
+</Recap>

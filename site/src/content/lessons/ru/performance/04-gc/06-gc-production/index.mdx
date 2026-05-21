@@ -1,0 +1,246 @@
+---
+slug: 06-gc-production
+lang: ru
+track: performance
+unit: 04-gc
+order: 6
+title: "GC в production: наблюдаемость, безопасность, edge cases и управление флотом"
+summary: "Давление GC проявляется как сгорание SLO, а не как OOM. Дашборды rate аллокаций, код без finalizer'ов и одностраничный runbook, доступный дежурным SRE, отличают команды, которые предотвращают GC-инциденты, от тех, кто их тушит."
+estMin: 20
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/04-gc/04-gc-tuning
+  - performance/04-gc/05-gc-internals
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["gc-observability", "finalizer-storm", "pinned-objects", "allocation-dos", "gc-runbook", "gctrace"]
+sources:
+  - https://go.dev/doc/gc-guide
+  - https://shipilev.net/jvm/anatomy-quarks/
+  - https://discord.com/blog/why-discord-is-switching-from-go-to-rust
+  - https://engineering.linkedin.com/garbage-collection/garbage-collection-optimization-high-throughput-and-low-latency-java-applications
+  - https://netflixtechblog.com/application-data-caching-using-ssds-5bf3995e1cf3
+  - https://owasp.org/www-community/attacks/Denial_of_Service
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Go-сервис начинает день с 1% GC CPU. Через 60 минут gctrace показывает 39% CPU на коллекторе. Время concurrent mark выросло с 1,3 мс до 361 мс. Сервис в GC death-spiral — и OOM наступит раньше, чем дежурный дочитает алерт.
+</Hook>
+
+<Crux>Давление GC проявляется как сгорание SLO — раньше OOM. Дашборды rate аллокаций и runbook превращают реактивный пожар в проактивный сигнал.</Crux>
+
+<Explanation>
+
+## Чтение gctrace: GC death-spiral в Go
+
+`GODEBUG=gctrace=1` записывает одну строку на каждый цикл GC:
+
+```
+gc N @Ts X%: Apre+Aconc+Apost ms clock, ... ms cpu, Bpre->Bduring->Bafter MB, goal MB, P
+```
+
+Ключевые поля:
+- `X%` — доля CPU в GC с начала программы.
+- `Aconc ms` — время фазы concurrent маркировки.
+- `Bpre->Bduring->Bafter` — размер кучи до, во время и после цикла.
+- `goal MB` — размер кучи, который pacer нацеливает.
+
+Сигнатура death-spiral:
+
+```
+gc 1   @0.012s  1%: 0.011+1.3+0.018 ms ...  4->4->1 MB,  5 MB goal
+gc 2   @0.045s  3%: 0.024+5.8+0.032 ms ...  5->8->4 MB,  7 MB goal
+...
+gc 487 @61.2s  38%: 0.45+340+1.2 ms  ... 1820->2890->1450 MB, 1900 MB goal
+gc 488 @62.1s  39%: 0.41+352+1.1 ms  ... 1900->2980->1490 MB, 1990 MB goal
+```
+
+Concurrent mark растёт с 1,3 мс → 352 мс, GC% поднимается с 1% до 39%: pacer не успевает завершить каждый цикл до следующей волны аллокаций. Коллектор отстаёт; pacer отвечает более частым планированием GC, что крадёт CPU, снижает throughput приложения, что делает давление аллокаций хуже относительно доступного CPU. Без вмешательства — OOM.
+
+**Приоритет правок:**
+1. Немедленно — найти hotspot аллокаций через `/debug/pprof/allocs`; сократить rate аллокаций. Даже 50% сокращение должно опустить GC CPU ниже 15%.
+2. Краткосрочно — установить `GOMEMLIMIT` в ~90% лимита контейнера; pacer будет защищать эту границу.
+3. Настройка — `GOGC=200` откладывает GC (куча удваивается-удваивается, меньше циклов). Только после сокращения аллокаций; маскирует, не лечит.
+4. Архитектура — если workload реально нуждается в большом объёме живых данных, рассмотреть off-heap хранилища (Redis, mmap'd файлы) вместо in-heap кэшей.
+
+## Наблюдаемость в production по рантаймам
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Рантайм</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика rate аллокаций</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика пауз</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика GC CPU</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2"><code>runtime/metrics: /gc/heap/allocs:bytes</code></td>
+        <td class="border border-border px-3 py-2">Rate <code>PauseTotalNs</code></td>
+        <td class="border border-border px-3 py-2"><code>gctrace X%</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM</td>
+        <td class="border border-border px-3 py-2">Micrometer <code>gc_memory_allocated_bytes_total</code></td>
+        <td class="border border-border px-3 py-2">Гистограмма <code>gc_pause_seconds</code></td>
+        <td class="border border-border px-3 py-2">JFR GCCPUTime events</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Node</td>
+        <td class="border border-border px-3 py-2">Дельта <code>v8.getHeapStatistics()</code></td>
+        <td class="border border-border px-3 py-2"><code>PerformanceObserver 'gc'</code></td>
+        <td class="border border-border px-3 py-2">Нет встроенного; вывести из total pause</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">.NET</td>
+        <td class="border border-border px-3 py-2"><code>dotnet-counters</code> <code>alloc-rate</code></td>
+        <td class="border border-border px-3 py-2">EventCounters <code>gc-pause-time-percent</code></td>
+        <td class="border border-border px-3 py-2"><code>gc-pause-time-percent</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+**Паттерн senior-дашборда** — четыре панели на сервис:
+1. Rate аллокаций (байт/с) во времени.
+2. Распределение пауз GC (гистограмма p50/p99/max).
+3. Доля GC в CPU (%).
+4. Тренд размера кучи vs live-set.
+
+Привязать к сгоранию SLO: регрессии пауз GC — ведущий индикатор нарушений SLO по хвостовой latency. Алерты: rate аллокаций выше порога сервиса (300–500 МБ/с/ядро) более 5 минут; p99 пауза выше 100 мс (G1) / 5 мс (ZGC) / 50 мс (Go); GC CPU > 10%.
+
+## Безопасность: DoS через аллокации
+
+Злоумышленник, способный заставить сервер аллоцировать большие объекты, может довести его до OOM или разрушительного давления GC. Heap exhaustion входит в OWASP Top 10 server-side DoS векторов.
+
+**Векторы атаки:**
+- Тела запросов без ограничений: парсинг 100 МБ JSON, чтобы обнаружить одно плохое поле.
+- Неограниченные результаты запросов: вернуть все строки, когда ожидалась пагинация.
+- Regex bombs: backtracking аллоцирует промежуточное состояние.
+- Zip-bomb декомпрессия: маленький input → огромный output.
+- Глубокая вложенность JSON: рекурсивные парсеры аллоцируют объекты, эквивалентные call stack.
+
+**Меры защиты:**
+- Ограничения размера тела запроса на шлюзе (1 МБ по умолчанию; больше на конкретных endpoint'ах с явной авторизацией).
+- Ограничение размера результатов запросов на стороне сервера; никогда `SELECT *` без `LIMIT`.
+- RE2-based regex (без backtracking; линейное время).
+- Проверка коэффициентов сжатия до декомпрессии.
+- Per-request memory tracking с жёсткими лимитами и явной обработкой переполнения.
+
+<Inset kind="why" lang="ru">
+Каждый узел аллокации, масштабируемый с управляемым атакующим input'ом, нуждается в явной границе. Ядро Linux использует kmem_cache limits и cgroup memory caps; код приложения должен отражать эту дисциплину. Один незащищённый endpoint, принимающий многомегабайтные payload'ы, может обрушить сервис, запустив давление GC, распространяющееся на все запросы.
+</Inset>
+
+## Edge cases
+
+**Finalizer storms:** регистрация многих объектов с finalizers'ами (`Object.finalize` в Java, `runtime.SetFinalizer` в Go, `FinalizationRegistry` в JS) требует, чтобы GC ставил их в очередь для отдельного finalizer-потока. Всплеск finalisable объектов в тесном цикле может застопорить коллектор, пока очередь finalizer'ов не опустеет. Файловые дескрипторы, сокеты и нативная память, удерживаемые finalizers'ами, остаются открытыми до обработки очереди.
+
+Решение: полностью избегать finalizers'ов. Использовать явные `close()` / `Closeable` / `defer`. В Java `java.lang.ref.Cleaner` (JDK 9+) — более безопасный backstop, чем `finalize()`. В Go предпочитать `defer` вместо `SetFinalizer`.
+
+**Pinned objects:** объекты, которые не могут быть перемещены (DMA-буферы, JNI-pinned массивы, типизированная внешняя память V8), мешают коллектору компактизировать кучу. Устойчивая утечка pinned объектов фрагментирует кучу и вызывает OOM при низкой утилизации.
+
+Решение: явный lifecycle для pinning; аудит всего JNI/native interop. Алерты на метрики фрагментации кучи.
+
+**Ссылочные циклы с finalizers'ами:** взаимные сильные ссылки между объектами, имеющими также finalizers'ы, могут предотвратить освобождение даже с cycle collector'ом, поскольку finalizers'ы должны выполняться в определённом порядке, который GC не всегда может определить. Решение: WeakRef там, где уместно; никогда не комбинировать finalizers'ы с циклическими сильными ссылками.
+
+## История: 1960 – 2024
+
+Пять шагов за 64 года:
+
+1. **1960** — Lisp Маккарти вводит mark-sweep. Первый программный GC, пакетный и медленный.
+2. **1970** — копирующий коллектор Cheney. Делит кучу, копирует живое, bump-pointer аллокация. До сих пор влияет на Scavenger V8.
+3. **1984** — поколенческая гипотеза Ангара (Berkeley Smalltalk). Большинство объектов умирают молодыми; используй это.
+4. **1990-е** — инкрементальные и concurrent GC (Baker, Yuasa, абстрактный фреймворк Dijkstra). Паузы падают с секунд до десятков мс.
+5. **2010-е–2020-е** — low-pause concurrent коллекторы (G1, ZGC, Shenandoah, tri-color Go, V8 Orinoco). Субмиллисекундные паузы на кучах несколько ГБ. Замкнутые pacers, generational ZGC, энергоэффективная настройка для облачных workloads.
+
+Каждое поколение снижало стоимость пауз на порядок.
+
+## Production-истории
+
+**Discord 2020:** хвостовая latency chat-сервиса определялась паузами GC. Переход на улучшенный pacer Go 1.14 снизил p99 на 40%.
+
+**LinkedIn 2018:** мигрировали большой Kafka-кластер с CMS на G1. p99 latency упала на 25-50%, нагрузка на операторов снизилась.
+
+**Netflix 2022:** развернули ZGC на Cassandra-флоте. p99 read latency улучшилась в 5-10x без изменений в коде приложения.
+
+**Twitter 2019:** finalizer storm вызвал OOM в JVM-сервисе. Заменили явными `Closeable`.
+
+**Stripe 2023:** Go-сервис впервые достиг `GOMEMLIMIT` во время пика трафика. Pacer удержал память в пределах, но throughput упал на 15% — диагностировано и исправлено сокращением аллокаций на hot path.
+
+Паттерн: у каждого крупного production-сервиса есть своя GC-история. Senior инженеры исходят из предположения, что GC будет вопросом; цель — знать, когда это ответ.
+
+<Quiz
+  id="06-gc-production-quiz-1"
+  lessonSlug="06-gc-production"
+  lang="ru"
+  question="Java-сервис использует Object.finalize() для объектов, держащих файловые дескрипторы. При нагрузке количество открытых дескрипторов непредсказуемо скачет. Наиболее вероятная причина?"
+  choices={[
+    { label: "Finalizer'ы выполняются в отдельном GC-управляемом потоке без гарантии времени. При нагрузке finalisable объекты накапливаются до обработки finalizer-потоком, держа дескрипторы открытыми. Решение: заменить явными close() / try-with-resources.", correct: true },
+    { label: "GC сломан в этой версии JVM", misconception: "GC работает; finalizer'ы задокументированы как недетерминированные и явно не предназначены для управления ресурсами." },
+    { label: "ОС утекает файловые дескрипторы", misconception: "ОС назначает дескрипторы корректно; недетерминированное освобождение через finalizer'ы — непосредственная причина." },
+    { label: "Нужен меньший heap", misconception: "Размер heap не влияет на время выполнения finalizer'ов. Проблема в дизайне — finalizer'ы неверный механизм для lifecycle ресурсов." },
+  ]}
+/>
+
+<Quiz
+  id="06-gc-production-quiz-2"
+  lessonSlug="06-gc-production"
+  lang="ru"
+  question="API endpoint принимает JSON-тело без ограничения размера. Как это создаёт вектор DoS через аллокации?"
+  choices={[
+    { label: "Большое или глубоко вложенное JSON-тело заставляет парсер аллоцировать пропорциональный объём heap-памяти за запрос. При всплеске oversized запросов rate аллокаций резко возрастает, циклы GC накапливаются, и p99 latency деградирует для всех пользователей — не только для запросов атакующего.", correct: true },
+    { label: "Парсинг JSON всегда требует O(1) памяти", misconception: "Парсинг JSON аллоцирует память пропорционально размеру и глубине вложенности входных данных. Неограниченный input = неограниченная аллокация." },
+    { label: "Только аутентифицированные запросы могут вызвать OOM", misconception: "Неаутентифицированные endpoint'ы, принимающие большие payload'ы, — классический вектор DoS. Проверка аутентификации во многих фреймворках происходит после парсинга, к этому моменту аллокация уже произошла." },
+    { label: "Rate limiting полностью предотвращает эту атаку", misconception: "Rate limiting снижает частоту запросов, но единственный достаточно большой запрос при лимите всё равно может вызвать серьёзное давление GC. Ограничения размера тела — правильный уровень защиты." },
+  ]}
+/>
+
+<DragOrder
+  id="06-gc-production-drag-1"
+  lessonSlug="06-gc-production"
+  lang="ru"
+  prompt="Расставьте шаги диагностики Go GC death-spiral — от первого симптома до подтверждённой правки:"
+  items={[
+    { id: "a", label: "Срабатывает алерт p99 latency — повышенный burn rate SLO" },
+    { id: "b", label: "Проверить gctrace или долю GC CPU в Prometheus — подтвердить рост GC%" },
+    { id: "c", label: "Захватить профиль аллокаций через /debug/pprof/allocs" },
+    { id: "d", label: "Определить топ-N hotspot'ов аллокаций по суммарным байтам" },
+    { id: "e", label: "Применить целевую правку (предварительный размер slice, sync.Pool, отложить JSON encode)" },
+    { id: "f", label: "Повторно профилировать и подтвердить падение rate аллокаций ≥50%" },
+    { id: "g", label: "Подтвердить возврат GC CPU% и p99 к базовому уровню" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Пауза GC = симптом; давление аллокаций = причина. Дашборды rate аллокаций, GOMEMLIMIT, отказ от finalizer'ов для управления ресурсами, граница на каждом узле аллокации с пользовательским input'ом и одностраничный runbook до первого инцидента — вот что отличает команды, предотвращающие GC-пожары, от тех, кто их тушит.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-gc-production-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Диагностика и устранение finalizer storm в production Java-сервисе: метрики, структурная правка, предотвращение повторения.", a: "Finalizer storm возникает, когда много объектов с finalize() становятся недостижимыми за короткое время; finalizer-поток JVM не успевает, и finalisable объекты (с файловыми дескрипторами, сокетами, нативной памятью) остаются прикреплёнными. Симптомы: количество открытых дескрипторов растёт без объяснений; внезапные OOM при низкой утилизации кучи (объекты нельзя освободить до выполнения finalizer'ов); GC-логи показывают рост фазы references-pending; периодические STW-паузы 5-30 с при обработке очереди finalizer'ов. Обнаружение: мониторить java.lang.management.MemoryMXBean.getObjectPendingFinalizationCount(); алерт при превышении ~10 000. Отслеживать количество дескрипторов через lsof или /proc/PID/fd/. Диагностика: heap snapshot, фильтр по классам с finalize() override; определить доминирующий класс. Структурная правка: заменить финализацию явным lifecycle. Три подхода в современной Java: (1) AutoCloseable + try-with-resources — язык обеспечивает close() при выходе из scope; правильный ответ почти для всех resource-holding объектов. (2) java.lang.ref.Cleaner (JDK 9+) — более эффективная современная альтернатива finalize(), выполняется на выделенном потоке; всё равно не для основного управления ресурсами. (3) Phantom references с reference queue — для framework-level tracking. Миграция: аудит finalize() overrides (обычно 1-3 класса); заменить AutoCloseable + try-with-resources; добавить правило static-analysis lint, запрещающее новые finalize() реализации. Верификация: подтвердить стабилизацию количества дескрипторов, нулевую частоту OOM, метрику references-pending около нуля." },
+    { q: "Спроектируйте программу наблюдаемости GC для флота из 20 сервисов на Go + JVM + Node. Какие метрики, алерты и структура runbook'а дают дежурным SRE сигнал для диагностики регрессии GC за час?", a: "Слой 1 — телеметрия. Каждый сервис публикует language-specific GC метрики в Prometheus. Go: скрейпер runtime/metrics с /gc/heap/allocs:bytes rate, rate /sched/pauses/total/gc:seconds, HeapAlloc, HeapLive. JVM: Micrometer GC binder (гистограмма gc_pause_seconds, rate gc_memory_allocated_bytes_total, gauge gc_live_data_size). Node: process.memoryUsage().heapUsed + v8.getHeapStatistics() каждые 15 с; PerformanceObserver для 'gc' событий. Слой 2 — четыре Grafana панели на сервис: (a) rate аллокаций во времени; (b) гистограмма пауз GC (p50/p99/max); (c) доля GC в CPU; (d) тренд размера кучи vs live-set. Алерт на каждую: rate аллокаций > порог сервиса (500 МБ/с/ядро); p99 пауза > 100 мс (G1) / 5 мс (ZGC) / 50 мс (Go); GC CPU > 10%; куча > 90% лимита контейнера. Слой 3 — корреляция с SLO. Трейсовые сэмплы включают окна пауз GC в метаданных span'ов; запросы, связывающие latency-выбросы с циклами GC, появляются автоматически при сгорании SLO. Слой 4 — CI-gate при создании PR. Критические сервисы запускают 5-минутный load test на canary; CI захватывает профиль аллокаций и сравнивает с базовым main; PR помечается, если доля аллокаций любой функции растёт > 20%. Слой 5 — одностраничный runbook, четыре раздела: (a) Быстрая сортировка — проверить четыре панели дашборда; спайк rate аллокаций → регрессия аллокаций; рост GC CPU → кандидат на death-spiral; расширение p99 пауз → нужна настройка коллектора; рост кучи без трафика → утечка памяти. (b) Частые причины по языкам (Go: zero-cap slice + append, отсутствие sync.Pool, fmt.Sprintf на hot path; Java: конкатенация строк, autoboxing, unbounded ArrayList; Node: переиспользование больших массивов, JSON.parse на больших payload'ах). (c) Приоритет правок — устранить > пул > escape-analyse > уменьшить > вынести > настроить > сменить. (d) Чеклист верификации — повторный профиль, подтверждение падения rate аллокаций, падения пауз, восстановления метрики SLO. Ежеквартально: топ-10 сервисов по rate аллокаций — 30-минутный разбор; паттерны добавляются в runbook." },
+  ]}
+/>
+
+<Recap lang="ru">
+GC death-spirals видны в gctrace как растущий GC% и увеличивающееся время concurrent-mark; решение — сокращение аллокаций первым, GOMEMLIMIT вторым, настройка третьей. Production наблюдаемость требует четырёх панелей на сервис: rate аллокаций, гистограмма пауз, доля GC в CPU, куча vs live-set — в Prometheus, с алертами до сгорания SLO. Finalizer'ы не для управления ресурсами: используйте явные close() / try-with-resources / defer; finalizer storm вызывает OOM при низкой утилизации кучи. Каждый узел аллокации, масштабируемый с пользовательским input'ом — вектор DoS; ограничивайте размер тела на шлюзе и размер результата на уровне запроса. Pinned объекты фрагментируют кучу; аудитируйте JNI и native interop. Одностраничный runbook — быстрая сортировка, частые причины по языкам, приоритет правок, чеклист верификации — то, что отличает команды, предотвращающие GC-инциденты, от тех, кто их тушит.
+</Recap>

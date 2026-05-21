@@ -1,0 +1,213 @@
+---
+slug: 06-ssi-and-production-tuning
+lang: ru
+track: databases
+unit: 04-mvcc-isolation
+order: 6
+title: "SSI и production-тюнинг autovacuum"
+summary: "SSI отслеживает rw-антизависимости для ловли write skew; production autovacuum требует per-table override; аналитику с реплики нужно маршрутизировать с hot_standby_feedback=off чтобы разделить primary bloat."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/04-mvcc-isolation/03-hot-updates-and-isolation-levels", "databases/04-mvcc-isolation/04-vacuum-and-bloat"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["ssi", "predicate-lock", "rw-antidependency", "autovacuum-tuning", "fillfactor", "pg-stat-progress-vacuum", "observability"]
+sources:
+  - https://www.postgresql.org/docs/current/mvcc-serialization-failure-handling.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/storage-hot.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+
+<Hook>
+Production OLTP-кластер внезапно логирует сотни ошибок "could not serialize access" в минуту на таблице orders. У тебя 15 минут до эскалации. Путь диагностики — подтверждение уровня изоляции, счётчик предикатных блокировок, подлинность конфликта — это пошаговая процедура, не угадывание.
+</Hook>
+
+<Crux>SSI ловит write skew через rw-антизависимые циклы; autovacuum требует per-table override; аналитику с реплики — с hot_standby_feedback=off.</Crux>
+
+<Explanation>
+
+## Внутренности SSI
+
+Postgres 9.1 ввёл SSI по статье Cahill, Röhm и Fekete (2008). Механизм:
+
+1. Каждое **чтение** отслеживает «предикатные блокировки» — лёгкие, в памяти, ссылки на «я прочитал этот набор»
+2. Каждая **запись** отслеживает rw-антизависимости — «эта транзакция записала что-то, что соответствовало моему предикату, после того как я прочитал»
+3. На **коммите**, если транзакция часть «опасной структуры» — цикла rw-антизависимостей — SSI откатывает её с SQLSTATE 40001 `could not serialize access due to read/write dependencies`
+
+Математика консервативна: SSI иногда откатывает транзакции, которые закоммитились бы безопасно (false positive корректны, но стоят throughput), но никогда не пропускает non-serializable расписание.
+
+**Ограничение памяти:** предикатные блокировки ограничены `max_pred_locks_per_transaction` × `max_connections`. Под нагрузкой блокировки грубеют: row → page → relation, поднимая долю false positive.
+
+Операционно: отслеживай частоту `SQLSTATE 40001` в логах. Если превышает несколько процентов от коммитов — давление блокировок выходит за бюджет.
+
+## Диагностика SSI-кризиса
+
+<TraceScenario
+  id="trace-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  scenario="Production OLTP-кластер внезапно логирует сотни ошибок 'could not serialize access' в минуту на таблице orders. Проследи диагностику."
+  steps={[
+    { prompt: "Шаг 1: Что сообщение ошибки говорит про уровень изоляции?", reveal: "SQLSTATE 40001 с формулировкой 'read/write dependencies' — это SSI под SERIALIZABLE. Под Repeatable Read увидел бы 'could not serialize access due to concurrent update'." },
+    { prompt: "Шаг 2: Как подтвердить уровень изоляции, который использует приложение?", reveal: "Проверь pg_stat_statements на проблемные запросы или сэмплируй pg_stat_activity.query и инспектируй настройки соединения. Также проверь конфиг connection-pool — Hibernate/SQLAlchemy/Django часто по дефолту RC, поэтому SERIALIZABLE должен быть явно выставлен." },
+    { prompt: "Шаг 3: Подтверждён SERIALIZABLE. Какая метрика говорит — давление нагрузки или ошибка конфига?", reveal: "Сравни pg_stat_database.xact_commit с частотой 40001. Если 40001 выше 5% коммитов, предикатные блокировки грубеют (memory pressure) ИЛИ у нагрузки реальный read-write конфликт. Проверь pg_locks на счётчики предикатных блокировок и сравни с max_pred_locks_per_transaction × max_connections." },
+    { prompt: "Шаг 4: pg_locks показывает грубение предикатных блокировок с row до page. Что настраиваешь?", reveal: "Увеличь max_pred_locks_per_transaction (дефолт 64) до 128 или 256, или уменьши working-set каждой SERIALIZABLE-транзакции. Если ни то ни другое не помогает, нагрузке нужна шардировка на уровне приложения (обработка заказов региона A только на сессии 1, региона B на сессии 2)." },
+    { prompt: "Шаг 5: После тюнинга частота ошибок остаётся высокой. Какая следующая гипотеза?", reveal: "Реальный workload-конфликт. У приложения много транзакций, которые читают один и тот же набор и пишут в него (например, reserve-inventory). SSI это магически не решит. Варианты: переключиться на оптимистичную конкуренцию (SELECT FOR UPDATE на горячей строке, fallback в RR), или партиционировать горячую строку в N горячих строк через app-managed бакетирование." },
+  ]}
+/>
+
+## Production-тюнинг autovacuum
+
+Дефолтные ручки слишком мягкие для любой высоконагруженной таблицы. Per-table override:
+
+```sql
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.05,   -- запуск на 5% мёртвых (вместо 20%)
+  autovacuum_vacuum_cost_limit = 2000,      -- высокий IO-бюджет за цикл
+  autovacuum_vacuum_cost_delay = 2          -- 2мс задержки (0 на NVMe)
+);
+```
+
+Для NVMe: `cost_delay = 0`. Для burst-нагрузок — дополнительно `VACUUM (PARALLEL 4) orders;` ночью по cron.
+
+Кластерные ручки: `autovacuum_max_workers = 6–8` на больших хостах; воркеры конкурируют за слоты в `max_worker_processes`.
+
+**Мониторинг прогресса live:**
+
+```sql
+SELECT phase, heap_blks_scanned, heap_blks_total,
+       index_vacuum_count
+FROM pg_stat_progress_vacuum
+WHERE relid = 'orders'::regclass;
+```
+
+Фазы: `scanning heap` → `vacuuming indexes` → `vacuuming heap` → `cleaning up indexes` → `truncating heap` → `performing final cleanup`.
+
+## Observability: метрики, которые реально двигаются
+
+- `pg_stat_all_tables.n_dead_tup + n_live_tup` — доля bloat per-table
+- `pg_stat_user_tables.last_autovacuum`, `last_autoanalyze` — отставание уборки
+- `pg_stat_activity WHERE backend_xmin IS NOT NULL ORDER BY backend_xmin` — кто пинит oldest-xmin
+- `pg_stat_replication_slots.xmin` — bloat, удерживаемый slot
+- `pg_stat_database.deadlocks + pg_stat_database_conflicts` — контеншн
+- `pg_stat_database.xact_commit + xact_rollback` — transaction throughput
+- Log-scraping на `SQLSTATE 40001` — SSI false-positive rate
+- `SELECT datname, age(datfrozenxid), age(datminmxid) FROM pg_database` — алерты на 1B/1.2B
+
+Расширения: `pgstattuple` (физическое состояние страниц), `pg_buffercache` (cache occupancy). Prometheus: `pg_exporter`, `postgres_exporter`.
+
+## HOT-доля и fillfactor
+
+Мониторинг HOT: `pg_stat_all_tables.n_tup_hot_upd / n_tup_upd`. Выше 80% — хорошо; ниже 50% — fillfactor слишком агрессивный или неправильный набор индексов. `pgstattuple` выдаёт `tuple_count`, `dead_tuple_count`, `free_space` per-table для детального осмотра.
+
+## Tradeoff: стратегия изоляции для банка
+
+<TradeoffMatrix
+  id="tradeoff-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  prompt="Сервис перевода денег банка двигает суммы между счетами. Выбери стратегию изоляции, лучше всего балансирующую корректность, throughput и операционную сложность."
+  options={[
+    { name: "READ COMMITTED + SELECT ... FOR UPDATE на обоих счетах", summary: "Пессимистичная блокировка на RC.", correct: true, justification: "Блокировки в консистентном порядке избегают deadlock; FOR UPDATE заставляет читать обе строки на последней закоммиченной версии. Throughput ограничен контеншном на горячих счетах, но предсказуем. Большинство банков выкатывают именно этот паттерн; он хорошо композируется с retry на детекте deadlock." },
+    { name: "REPEATABLE READ + retry loop на SQLSTATE 40001", summary: "Snapshot isolation, оптимистично.", justification: "Работает на low-contention путях, но катастрофично на горячих счетах: каждый параллельный перевод на популярный счёт откатывается и ретраится, throughput коллапсирует. У snapshot isolation также риск write skew если схема включает derived колонки." },
+    { name: "SERIALIZABLE с SSI", summary: "Самый строгий, самый дорогой.", justification: "Корректно по построению, но доля false positive SSI резко растёт на горячих счетах. Банковские нагрузки требуют 99.9% надёжности — SSI под нагрузкой может её снизить. Оставь SERIALIZABLE для нагрузок где корректность важнее throughput (аудит, регулятор)." },
+    { name: "READ COMMITTED без блокировок, приложение проверяет balance > 0 после UPDATE", summary: "Оптимистично на уровне приложения.", justification: "Уязвимо к lost update при гонке двух переводов: оба читают balance=100, оба вычитают 80, оба коммитят, баланс уходит в -60. Катастрофа для банка. Никогда не отправляй в прод." },
+  ]}
+/>
+
+## DesignPrompt: autovacuum-политика
+
+<DesignPrompt
+  id="design-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  prompt="Спроектируй политику autovacuum для высоконагруженной OLTP-таблицы, получающей 5 000 вставок и обновлений в секунду, с целевой долей мёртвых tuple ниже 10% и нулевым влиянием на пользовательскую latency."
+  constraints={[
+    "Таблица 200 ГБ, рост 2–3 ГБ в день.",
+    "Хранилище NVMe, single-tenant.",
+    "Приложение периодически открывает 5-минутные аналитические транзакции с реплики.",
+    "Customer-facing p99 должна остаться под 50 мс во время autovacuum.",
+    "Окон downtime нет.",
+  ]}
+  canonical="Per-table параметры: autovacuum_vacuum_scale_factor = 0.02 (срабатывает на 2% мёртвых), autovacuum_vacuum_cost_limit = 4000 (высокий), autovacuum_vacuum_cost_delay = 0 (NVMe), autovacuum_vacuum_insert_scale_factor = 0.05, fillfactor = 80. Кластер: autovacuum_max_workers = 6, maintenance_work_mem = 2GB. Аналитика с реплики: hot_standby_feedback = OFF, чтобы autovacuum primary не удерживался; реплика принимает свой bloat. Добавь ночной cron VACUUM (PARALLEL 4) — явный проход также делает ANALYZE и обновляет статистику планировщика. Мониторинг: pg_stat_progress_vacuum.phase + доля n_dead_tup каждые 30с; алерт если доля выше 8% в течение 10 минут. idle_in_transaction_session_timeout = 5min на primary."
+  keyPoints={[
+    "Per-table scale_factor значительно ниже глобального дефолта 0.2.",
+    "cost_delay = 0 только потому что NVMe это вытянет; rotational storage требует cost_delay > 0.",
+    "hot_standby_feedback = OFF на реплике — единственная самая важная настройка, она отвязывает аналитику от primary bloat.",
+    "Fillfactor 80 оставляет место HOT-обновлениям без чрезмерной потери места.",
+    "Явный ночной VACUUM — belt-and-suspenders, но окупается обновлением статистики.",
+  ]}
+/>
+
+</Explanation>
+
+## Проверь себя
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  question="Postgres логирует 'cannot remove tuples deleted by transactions in progress' при autovacuum на 200 ГБ orders. Самая вероятная корневая причина?"
+  choices={[
+    { label: "autovacuum_vacuum_cost_limit слишком низок; поднять", misconception: "Cost limit влияет на скорость autovacuum, не на то, что ему можно убирать. Лог говорит что убрать нельзя ничего." },
+    { label: "Долгая транзакция или orphan replication slot закрепляет глобальный oldest xmin", correct: true },
+    { label: "Слишком высокий fillfactor на таблице", misconception: "Fillfactor влияет на запас под HOT-цепочки, а не на oldest-xmin барьер autovacuum." },
+    { label: "Postgres приближается к XID wraparound", misconception: "Wraparound запустил бы аварийный anti-wraparound vacuum с другой строкой лога." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  question="SSI логирует 8% ошибок 40001 от всех коммитов. Первый шаг диагностики?"
+  choices={[
+    { label: "Снизить max_connections для уменьшения предикатных блокировок", misconception: "Снижение max_connections уменьшает параллелизм но не обязательно давление предикатных блокировок. Нужна диагностика, не случайная ручка." },
+    { label: "Проверить pg_locks на graning предикатных блокировок (row→page→relation) и сравнить с max_pred_locks_per_transaction × max_connections", correct: true },
+    { label: "Переключить на Repeatable Read для устранения 40001", misconception: "Переключение на RR устранит 40001 только устраняя SSI — но тогда write skew снова разрешена. Сначала надо понять причину." },
+    { label: "Запустить VACUUM FULL чтобы снизить bloat и улучшить производительность SSI", misconception: "VACUUM FULL и bloat не связаны с давлением предикатных блокировок SSI." },
+  ]}
+/>
+
+<KeyTakeaway>SSI отслеживает rw-антизависимые циклы с ограниченной памятью под предикатные блокировки — когда памяти не хватает, блокировки грубеют и растёт доля false positive. Production autovacuum требует per-table override с более агрессивным scale_factor и cost_limit; hot_standby_feedback = off на аналитических репликах — единственная наиболее важная настройка для защиты primary bloat.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="06-ssi-and-production-tuning"
+  lang="ru"
+  questions={[
+    {
+      id: "q1",
+      q: "Объясни, как ломается HOT-цепочка и какие наблюдаемые симптомы говорят, что это происходит слишком часто.",
+      a: "HOT-цепочка — trail из heap-указателей от исходного tuple (HEAP_HOT_UPDATED) через обновлённые версии (HEAP_ONLY_TUPLE) на одной heap-странице. Ломается когда: (а) UPDATE затрагивает индексированную колонку — нужна новая индексная запись; (б) новая версия не влезает на ту же страницу — fillfactor-резерв исчерпан. Симптомы: n_tup_hot_upd / n_tup_upd падает ниже 50%; index bloat растёт быстрее table bloat; WAL на UPDATE удваивается; p99 write latency на таблице растёт. Лечение: снизить fillfactor, аудит индексов (каждый индекс стоит на запись), убедиться что UPDATE не трогает индексированные колонки.",
+    },
+    {
+      id: "q2",
+      q: "Банк настаивает на SERIALIZABLE для переводов. Throughput на пике в 5 раз ниже чем под READ COMMITTED. DBA предлагает READ COMMITTED + SELECT FOR UPDATE. Compliance переживает за корректность. Кто прав и почему?",
+      a: "DBA прав для этой нагрузки. READ COMMITTED + SELECT FOR UPDATE на обоих счетах (источник и приёмник) в детерминированном порядке (сначала самый низкий account-id) функционально эквивалентен SERIALIZABLE для переводов: обе строки прочитаны на последней закоммиченной версии, эксклюзивно заблокированы, изменены и разблокированы на коммите. Write skew требует чтения набора с последующим изменением другой строки этого набора. Перевод читает и меняет ровно две строки — поверхности для write skew нет. SERIALIZABLE платит крутую цену предикатных блокировок за защиту, которая нагрузке перевода не нужна.",
+    },
+  ]}
+/>
+
+<Recap>
+- SSI: предикатные блокировки + rw-антизависимости + обнаружение цикла на коммите = SQLSTATE 40001
+- Память ограничена max_pred_locks_per_transaction × max_connections; при нехватке блокировки грубеют (row→page→relation)
+- &gt;5% ошибок 40001 от коммитов → диагностировать давление предикатных блокировок
+- Per-table autovacuum override: scale_factor = 0.02–0.05, cost_limit = 2000–4000, cost_delay = 0 на NVMe
+- hot_standby_feedback = off на аналитических репликах — защищает primary autovacuum
+- Мониторинг: pg_stat_progress_vacuum.phase, n_dead_tup ratio, backend_xmin oldest holder, slot xmin
+</Recap>

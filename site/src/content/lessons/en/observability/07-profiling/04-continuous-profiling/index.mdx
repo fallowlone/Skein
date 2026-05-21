@@ -1,0 +1,178 @@
+---
+slug: 04-continuous-profiling
+lang: en
+track: observability
+unit: 07-profiling
+order: 4
+title: "Continuous profiling: always-on flame graphs with eBPF and trace-id correlation"
+summary: "Continuous profiling runs always at 2-5% overhead — when an SLO burns the flame graph is already saved. eBPF captures polyglot stacks without language hooks; trace-id correlation drills any slow span to the exact function in 30 seconds."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/07-profiling/03-profile-types"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["continuous-profiling", "ebpf", "pyroscope", "parca", "trace-profile-correlation", "profile-storage"]
+sources:
+  - https://github.com/grafana/pyroscope
+  - https://github.com/parca-dev/parca
+  - https://opentelemetry.io/docs/specs/otel/profiles/
+  - https://www.brendangregg.com/flamegraphs.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+An SLO burns at 2:14 AM. The pager wakes the on-call. Traditional profiling requires them to SSH in, reproduce the issue under load, capture a profile, and parse it — at 2:14 AM, under pressure. Continuous profiling already has the flame graph for 2:14 AM waiting in a dashboard.
+</Hook>
+
+<Crux>Continuous profiling stores profiles from every moment. When an incident starts, the flame graph is already there — no reproduction needed.</Crux>
+
+<Explanation>
+
+## Traditional vs continuous profiling
+
+**Traditional (on-demand) profiling**: SSH in, run `perf record` or hit `/debug/pprof/profile`, gather data, analyse, leave. Cost: only during capture. Limitation: requires you to be present and the issue to be actively occurring. For intermittent issues or incidents that self-resolve, you lose the evidence.
+
+**Continuous profiling**: an agent runs on every host or container, sampling 100 times per second continuously, batching and shipping compressed profiles every 10-15 seconds to a backend. The backend stores them indexed by service, host, and time range. Storage: ~50-200 MB/day per service, ~1.5-6 GB/month. Overhead: 2-5% CPU. The critical win: when an SLO burns, the profile of the burning minutes is already saved.
+
+## eBPF: language-agnostic profiling
+
+Traditional language profilers (Go pprof, JFR, async-profiler, py-spy) require language-specific support — the runtime must expose stack walking APIs. For Python, Ruby, and older PHP interpreters, this requires hooks the runtime team must provide.
+
+eBPF profilers (Pyroscope eBPF mode, Parca) read stacks from the kernel side: the kernel's `perf_event_open` syscall plus a BPF-attached probe captures user-space stacks at sample time. This means:
+
+- Works for any language, any binary, with no application code change.
+- One agent covers all services on the host — Go, Java, Node, Python.
+- Catches third-party library overhead that language-specific profilers might miss.
+
+The catch: symbol resolution. The kernel sees memory addresses; the profiler maps them back to function names using debug info (DWARF, BTF, JIT-emitted symbol files for V8 or JVM). Most production eBPF profilers handle this; occasional `[unknown]` frames appear when DWARF is stripped or JIT code is too volatile.
+
+## Cross-language profiler coverage
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Language</th>
+        <th class="border border-border px-3 py-2 text-left">Native profiler</th>
+        <th class="border border-border px-3 py-2 text-left">eBPF coverage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2">pprof (built-in)</td>
+        <td class="border border-border px-3 py-2">Full — frame pointers standard</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Java</td>
+        <td class="border border-border px-3 py-2">JFR, async-profiler</td>
+        <td class="border border-border px-3 py-2">Partial — needs JIT symbol maps</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Python</td>
+        <td class="border border-border px-3 py-2">py-spy, cProfile</td>
+        <td class="border border-border px-3 py-2">Limited — interpreter frames opaque</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Node.js</td>
+        <td class="border border-border px-3 py-2">--prof, clinic.js, 0x</td>
+        <td class="border border-border px-3 py-2">Partial — V8 needs --perf-prof flag</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Rust / C / C++</td>
+        <td class="border border-border px-3 py-2">perf, pprof-rs</td>
+        <td class="border border-border px-3 py-2">Full — compiled with frame pointers</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Trace-id correlation: from slow span to flame graph in 30 seconds
+
+Each profile sample can carry the trace-id of the request being processed at the moment of sampling — stored in thread-local context. When a slow trace appears in the trace view, the matching profile samples (only those carrying that trace-id) can be filtered out and rendered as a flame graph for that specific request.
+
+This is the bridge between "where did time go in the request" (trace span) and "what code ate the CPU" (profile). The workflow:
+
+1. SLO alert fires — p99 latency over budget.
+2. Open trace view — find slow spans, note trace-id.
+3. Open profile view filtered by trace-id — flame graph for that exact request appears.
+4. Widest frame is the function to fix.
+5. Done in under 60 seconds.
+
+OpenTelemetry's profile signal (stabilising in 2025-2026) standardises this linkage. Production-grade observability platforms (Datadog, Grafana with Pyroscope, Honeycomb) ship this drilldown out of the box.
+
+## Profile storage economics
+
+<NumbersCard
+  id="card-profile-storage"
+  title="Continuous profiling: cost and storage"
+  stats={[
+    { label: "Profile size per 30-second capture", value: "~50-500 KB compressed" },
+    { label: "Profiles per hour (15-s intervals)", value: "240" },
+    { label: "Storage per service per day", value: "~50-200 MB" },
+    { label: "Storage per service per month", value: "~1.5-6 GB" },
+    { label: "Fleet of 200 services", value: "300 GB - 1.2 TB/month" },
+    { label: "Object storage cost", value: "~$0.02/GB ≈ $25/month" },
+    { label: "Pyroscope 2.0 storage improvement", value: "~3x vs v1 via symbol deduplication" },
+  ]}
+/>
+
+Pyroscope 2.0 (released April 2026) cut storage 3x by deduplicating symbols across profiles from the same binary — function names and source paths are shared in a common symbol table instead of repeated in every profile.
+
+**Retention strategy**: 7 days full-fidelity for active debugging, 30 days downsampled (one profile per 5 minutes), 90 days for long-term trend analysis. Budget-conscious teams cap at 14 days fine + 60 days coarse.
+
+<Quiz
+  id="04-continuous-profiling-quiz-1"
+  lessonSlug="04-continuous-profiling"
+  lang="en"
+  question="An eBPF profiler shows many '[unknown]' frames for a Python service. What is the cause?"
+  choices={[
+    { label: "CPython uses an interpreter loop; the kernel eBPF profiler sees C-level frames but cannot map them to Python function names without CPython-specific support", correct: true },
+    { label: "Python is too slow for eBPF profiling", misconception: "Speed is not the issue; symbol resolution across interpreter frames is." },
+    { label: "The eBPF profiler is broken", misconception: "[unknown] frames are expected for interpreted runtimes without explicit support — switch to py-spy or a CPython-aware eBPF profiler." },
+    { label: "Python uses JIT compilation that confuses eBPF", misconception: "CPython is an interpreter, not a JIT. JVM and V8 do JIT and have their own symbol challenges." },
+  ]}
+/>
+
+<Quiz
+  id="04-continuous-profiling-quiz-2"
+  lessonSlug="04-continuous-profiling"
+  lang="en"
+  question="What does trace-id correlation in continuous profiling enable that a standalone CPU profile cannot provide?"
+  choices={[
+    { label: "A flame graph filtered to the exact requests that were slow — isolating the code path of one specific user's 1.5s request from the ambient fleet noise", correct: true },
+    { label: "Higher sample rate", misconception: "Trace-id correlation is about filtering, not sample rate." },
+    { label: "Off-CPU profiling support", misconception: "Off-CPU profiling is a separate capability; trace-id correlation works for CPU profiles too." },
+    { label: "Automatic bug fixing", misconception: "Profiling localises the bug; fixing still requires human judgment." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Continuous profiling stores always-on flame graphs at 2-5% overhead — the profile of any incident moment is pre-saved. eBPF agents cover all languages from the kernel side at one agent per host. Trace-id correlation turns any slow span into a filtered flame graph of just that request in under 30 seconds.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-continuous-profiling-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the critical operational advantage of continuous profiling over on-demand profiling during incidents?", a: "With on-demand profiling, you must be present when the problem is occurring, reproduce the issue under load, and capture data during the repro window. Many production issues are intermittent — they resolve before you can SSH in. Continuous profiling stores profiles from every moment at 2-5% overhead, so when an SLO burns at 2 AM, the flame graph for those burning minutes is already in the backend. No reproduction needed. The on-call opens the dashboard, filters to the burn window, and sees the profile immediately. This is the difference between a 5-minute root cause identification and a multi-hour investigation that may never conclude." },
+    { q: "Why does an eBPF profiler work for Go and Rust but produce [unknown] frames for Python?", a: "Go and Rust compile to native code with frame pointers or DWARF unwind info embedded in the binary — the kernel's stack walker can follow the frame chain and match addresses to function names in debug info. CPython is an interpreter: user Python code compiles to bytecode that runs inside the CPython interpreter's C loop (PyEval_EvalFrameDefault). The addresses the eBPF profiler captures point into that C loop, not into Python source. Without CPython-specific support (which newer profilers like Pyroscope eBPF add by walking PyFrameObject linked lists in-kernel), the profiler shows the C interpreter frames as [unknown]. The fix is to use a Python-aware profiler (py-spy, or a CPython-supporting eBPF profiler), or run py-spy as a sidecar alongside the universal eBPF agent." },
+    { q: "How does trace-id correlation work mechanically?", a: "Every profile sample can carry labels — arbitrary key-value metadata attached at sample time. The language's OTel SDK stores the current trace-id and span-id in thread-local context. The profiler agent reads these at each sample tick and attaches them as labels to the captured stack. The profile backend stores all samples with their labels. When you filter by trace-id in the UI, the backend retrieves only samples carrying that trace-id and renders a flame graph from them. The result is a CPU profile of exactly the requests that matched — all other concurrent traffic is filtered out, leaving a clean signal for the specific slow path you are investigating." },
+  ]}
+/>
+
+<Recap lang="en">
+Continuous profiling agents run on every host, sample stacks 100 times per second, and ship compressed profiles every 10-15 seconds to a backend like Pyroscope or Parca. At 2-5% overhead, this is affordable enough to leave always-on. eBPF agents capture stacks from the kernel side without language-specific hooks — one agent per host covers Go, Java, Node, and Python, though interpreter-based runtimes need extra support for accurate symbol resolution. Trace-id labels on every sample enable a flame graph filtered to one specific request in under 30 seconds. Pyroscope 2.0's symbol deduplication cut storage costs 3x, making per-service monthly storage under 10 GB. The SLO → trace → profile workflow reduces MTTR for any CPU-bound incident to under 90 seconds.
+</Recap>

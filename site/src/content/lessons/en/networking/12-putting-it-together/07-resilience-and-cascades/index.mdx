@@ -1,0 +1,227 @@
+---
+slug: 07-resilience-and-cascades
+lang: en
+track: networking
+unit: 12-putting-it-together
+order: 7
+title: "Resilience: cascading retries, circuit breakers, and error budgets"
+summary: "A single slow dependency triggers client retries across all twelve layers simultaneously — amplifying 1 error into 10× load. Circuit breakers, exponential backoff with jitter, bulkheads, and error-budget-driven release cadence are the layered defenses against cascade failures."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "04-proxy-security-gates"
+  - "05-quic-websocket-paths"
+  - "06-observability-and-traces"
+  - "09-proxy-load-balancing/06-retry-storms-and-circuit-breakers"
+deepensInto: []
+spiral: ["statefulness", "latency", "encapsulation"]
+concepts: ["retry-storm", "cascading-failure", "circuit-breaker", "exponential-backoff", "jitter", "bulkhead", "load-shedding", "error-budget", "SLO", "cell-based-architecture", "capacity-planning"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9110
+  - https://opentelemetry.io/
+  - https://www.cloudflare.com/en-gb/learning/ddos/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+
+<Hook>
+A third-party payment API slows to 5 seconds per response. Your server times out waiting, returns a 503. The client library retries after 100 ms, 200 ms, 400 ms. So do 1,000 other users. Your origin server, which normally handles 500 req/s, is now receiving 3,000 req/s — and still waiting on the slow payment API. Within 30 seconds, the entire site is down. The payment API was slow, not broken. But you turned "slow" into "catastrophic" by retrying without coordination.
+</Hook>
+
+<Crux>Uncoordinated retries at every layer turn one slow dependency into a total outage; circuit breakers and jitter break the amplification loop.</Crux>
+
+<Explanation>
+
+## The cascade anatomy
+
+A **retry storm** is a positive feedback loop: one timeout → many retries → more load → more timeouts → more retries.
+
+**The amplification math.** A 99.9% origin server (1 error per 1,000 requests) normally passes traffic fine. During a slowdown, requests queue. 1,000 clients each retry 3 times with a naive backoff. Origin traffic: 3× normal. Origin slows more. More retries. In 30 seconds, origin receives 10× normal traffic. A 99.9% server is now the bottleneck for 100% of traffic. **A single degraded dependency turns a 0.1% error rate into a 100% outage.**
+
+**The twelve-layer problem.** Each layer in the request chain has its own retry logic:
+- DNS client retries on SERVFAIL (3 attempts, 2 s apart).
+- TCP SYN retries on timeout (exponential backoff, up to 3 attempts).
+- TLS handshake retries on timeout (1–2 attempts).
+- HTTP client library retries on 5xx (3 attempts, default exponential).
+- Application-layer retry (business logic retries failed service calls).
+
+**All twelve layers retry independently.** A single failure at layer 6 (origin processing) causes retries at layers 3 through 12 simultaneously. In aggregate, what was one failed request becomes 30+ network operations — all compounding the load on the already-struggling origin.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="text-sm w-full border-collapse">
+    <thead>
+      <tr class="bg-slate-100">
+        <th class="border px-3 py-2 text-left">Defense</th>
+        <th class="border px-3 py-2 text-left">What it prevents</th>
+        <th class="border px-3 py-2 text-left">Cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border px-3 py-1">Exponential backoff + jitter</td><td class="border px-3 py-1">Synchronized retry thundering herd</td><td class="border px-3 py-1">Slower recovery for individual clients</td></tr>
+      <tr><td class="border px-3 py-1">Circuit breaker</td><td class="border px-3 py-1">Retries to a failing dependency</td><td class="border px-3 py-1">Fast failures during open circuit; tuning required</td></tr>
+      <tr><td class="border px-3 py-1">Bulkhead</td><td class="border px-3 py-1">One slow dependency starving all threads</td><td class="border px-3 py-1">Thread pool per dependency; complexity</td></tr>
+      <tr><td class="border px-3 py-1">Load shedding</td><td class="border px-3 py-1">Queue depth causing timeouts</td><td class="border px-3 py-1">Fast 503 errors for excess traffic</td></tr>
+      <tr><td class="border px-3 py-1">Graceful degradation</td><td class="border px-3 py-1">Complete outage when origin is down</td><td class="border px-3 py-1">Stale data served; complex cache design</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Defense 1: Exponential backoff with jitter
+
+**Naive retry.** Client sees 503, retries immediately. Server still broken. Client sees 503, retries again. Server never recovers.
+
+**Exponential backoff.** First retry after 100 ms, second after 200 ms, third after 400 ms, fourth after 800 ms (doubling each time, capped at some max). The origin has time to recover between retries.
+
+**Why jitter is required.** If 1,000 clients all hit a limit and all use the same backoff parameters, they all retry at t=100 ms, t=200 ms, etc. simultaneously. The origin gets a burst every 100 ms — a **thundering herd**. Jitter: add ±25% random variation to each retry delay. The 1,000 clients spread their retries across a 200 ms window. Origin load is constant instead of pulsed.
+
+**Full jitter formula (Jeff Atwood / Amazon):** `sleep = random_between(0, min(cap, base * 2^attempt))`. This gives up to cap ms sleep on the final attempt, fully randomised — the most effective at preventing thundering herd.
+
+## Defense 2: Circuit breaker
+
+Pattern from electrical engineering: a switch that opens when current exceeds a threshold, preventing damage from cascading.
+
+**Three states:**
+1. **Closed** (normal). Requests pass through. Error rate and latency are monitored.
+2. **Open** (tripped). Error rate or latency exceeded threshold for the last N requests. New requests fail immediately (fast error, no network call). Server is not contacted.
+3. **Half-open** (probe). After a cool-down window (e.g., 30 s), a single request is allowed through. If it succeeds, circuit closes (normal). If it fails, circuit reopens.
+
+**Why fast failure helps.** If the circuit is open and returns 503 in &lt;1 ms, the client fails fast. With exponential backoff + jitter, the client waits and retries. The origin gets relief. When the origin recovers, the half-open probe succeeds, and traffic resumes. Without a circuit breaker, the client keeps retrying for seconds — adding load to an already-struggling origin.
+
+**Implementation.** Libraries: Netflix Hystrix (Java, deprecated), Resilience4j (Java), Polly (.NET), opossum (Node.js). Configuration: failure threshold (e.g., 50% error rate over last 10 requests), half-open cooldown (30 s), sliding window size.
+
+## Defense 3: Bulkhead
+
+Named after ship compartments that isolate flooding to one section. In software: give each dependency a **separate thread pool** (or async semaphore). If the payment API is slow, it fills the payment thread pool. The user API, product API, and CDN-fetch thread pools remain available. Slow dependency does not starve all threads.
+
+**Without bulkheads.** Shared thread pool of 100 threads. Payment API slows → 100 requests queue → all 100 threads occupied → every API endpoint (user, product, search) is blocked. Site is down for all features, not just payment.
+
+**With bulkheads.** Payment: 20 threads. User: 30 threads. Product: 30 threads. Misc: 20 threads. Payment API slows → 20 payment threads occupied → payment endpoint slow → all other endpoints unaffected. Graceful partial degradation.
+
+## Defense 4: Load shedding
+
+When the request queue exceeds the server's capacity to process, **shed the excess** with fast 503 instead of letting requests timeout.
+
+**Why fast 503 is better than timeout.** A request that eventually times out after 30 s holds a thread, a DB connection, and memory for 30 s. A request that gets 503 in &lt;1 ms releases all resources immediately. The client can retry with backoff. The server stays stable.
+
+**Implementation.** Nginx: `limit_req_zone` + `limit_req` (rate-based, returns 503 when queue is full). In application: check request queue depth; if > threshold, return 503 immediately. Combine with **stale-while-revalidate** at the CDN so cached content is still served from edge during origin overload.
+
+## Error budgets and SLO-driven release cadence
+
+**SLO (Service Level Objective).** A 99.9% availability SLO over a 30-day window means the service is allowed 0.1% errors — about 43.2 minutes of downtime. A 99.95% SLO allows ~21.6 minutes.
+
+**Error budget.** The allowed failure time. When the budget is burned:
+- At 50% consumed: slow down risky changes (feature releases, config changes).
+- At 100% consumed: freeze all non-essential releases until reliability improves.
+
+This formalises the latency/feature-velocity trade-off without politics. Engineers can ship fast while they have budget; operations can enforce a release freeze when the budget is gone.
+
+**Performance budgets.** Extend the same idea to page load: set explicit targets (LCP &lt; 2.5 s, JS bundle &lt; 200 KB). Enforce in CI with tools like bundlewatch, size-limit, Lighthouse CI. A build that exceeds budget fails the pipeline. Forces conscious trade-offs at PR time instead of discovering bloat in production.
+
+<Inset kind="why" lang="en">
+Error budgets resolve the classic reliability-vs-velocity tension. Instead of engineering and product arguing about "can we ship this risky change," the error budget answers it mathematically: if you have 30 minutes of budget left this month, a change with a 20% chance of a 5-minute incident is worth the risk (expected cost: 1 minute); a change with 20% chance of a 45-minute incident is not (expected cost: 9 minutes > 30-minute budget). Quantified risk replaces opinion.
+</Inset>
+
+<TraceScenario
+  id="sr-trace-cascade"
+  lessonSlug="07-resilience-and-cascades"
+  lang="en"
+  scenario="Cascading retry storm from a DDoS amplification attack: how a single failure at layer 11 cascades across all twelve layers."
+  steps={[
+    { prompt: "Layer 11 (Network Security): Botnet launches 1 Gbps volumetric DDoS (UDP flood) at the origin. How does the rate limiter respond?", reveal: "Edge rate limiter (token bucket) drops packets from the attacker IPs. For legitimate clients, no impact. But attacker's UDP packets consume ingress bandwidth. If not scrubbed upstream, DDoS traffic reaches the origin's network interface, consuming backhaul capacity." },
+    { prompt: "Layer 10 (QUIC): Attack shifts to spoofed-IP amplification. QUIC's anti-amplification limit?", reveal: "QUIC has anti-amplification limits: server cannot send more bytes than it received in the first RTT. If attacker spoofs their IP, QUIC server will not respond with amplified replies. But legitimate clients see retransmit packets they didn't ask for. TCP retransmit timeout logic kicks in → clients retry the same request." },
+    { prompt: "Layer 9 (Proxy/Load Balancing): Legitimate clients timeout. Load balancer health checks fail. What happens?", reveal: "Load balancer removes the origin from rotation. Clients' retries (100 ms, 200 ms, 400 ms backoff) hit the load balancer. With one origin down, traffic shifts to backup origins. If backups also slow (under DDoS), retry logic amplifies: 1,000 clients × 3 retries = 3,000 requests = 3× spike." },
+    { prompt: "Layers 3 through 1 (TCP through Physical): Congestion propagates backward. Failure signature?", reveal: "Every layer retries independently: DNS clients retry SERVFAIL. TCP clients retry SYN. TLS clients retry handshake. HTTP clients retry GET. All retries use exponential backoff but with independent timers. In aggregate, traffic to the origin grows from 100 req/s to 1,000+ req/s in 30 seconds. Origin fully saturated, then overloaded." },
+    { prompt: "Layered defense response: circuit breaker + load shedding + jitter + graceful degradation.", reveal: "(1) Circuit breaker at proxy layer: stop routing to failing origins after 50% error rate for 30 s. (2) Load shedding at origin: when in-flight > 500, return fast 503. (3) Exponential backoff + jitter at client library: retries spread out, not synchronized. (4) CDN stale-while-revalidate: edge serves cached content while origin is shedding. (5) Bulkheads: critical service (auth) isolated from payment service. Together: circuit closes → load shed fast errors → clients retry slowly + jittered → origin recovers → circuit half-opens → traffic resumes." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="sr-tradeoff-1"
+  lessonSlug="07-resilience-and-cascades"
+  lang="en"
+  prompt="A real-time collaboration product needs p95 sub-100 ms latency globally for document edits."
+  options={[
+    { name: "Single origin in us-east-1 with CDN front", summary: "Standard architecture.", justification: "Static assets fast everywhere. Mutating writes (document edits) hit one origin — 200+ ms RTT for users in Asia/Europe. Does not meet the SLO." },
+    { name: "Multi-region origin with regional sharding", summary: "Users routed to nearest region.", justification: "Latency wins for reads but cross-region writes (a user in Asia editing a doc owned by US) still pay long RTT. Eventual consistency complicates UX." },
+    { name: "Edge compute (Cloudflare Workers + Durable Objects)", summary: "Stateful edge.", correct: true, justification: "Durable Object lives at the regional edge nearest the document's primary user. Writes sub-50 ms for the primary; replication to other regions happens async. All static and dynamic content served at edge. Latency-budget SLO is met for the common case." },
+    { name: "Peer-to-peer WebRTC between users", summary: "Skip servers entirely.", justification: "Lowest theoretical latency but operational complexity — NAT traversal, mobile-network compatibility, persistence requires a server anyway. Do not reinvent the infrastructure." },
+  ]}
+/>
+
+<DesignPrompt
+  id="sr-design-1"
+  lessonSlug="07-resilience-and-cascades"
+  lang="en"
+  prompt="Design the request-path architecture for a global SaaS that must meet: p95 page load 1 s, p95 API call 200 ms, 99.99% availability."
+  constraints={[
+    "Global user base, mostly North America + Europe + Asia.",
+    "Mostly read traffic; some write traffic to user accounts and document edits.",
+    "Compliance requires EU users' data to remain in EU.",
+  ]}
+  canonical="Edge: Cloudflare (HTTP/3, h2, h1 fallback). DNS via Cloudflare anycast. Static assets: cache 1 year (content-hash filenames), purge on deploy via cache-tags. API gateway at edge does auth, rate limit, routing. Compute: regional Kubernetes clusters in us-east-1, eu-west-1, ap-southeast-1 with origin-shielded CDN routing. Data: per-region PostgreSQL with cross-region read replicas; EU user data pinned to eu-west-1 via row-level policy. Caching tier: per-region Redis. Observability: OpenTelemetry with W3C Trace Context, head-based sampling 5% + tail-based 100% errors. Multi-CDN failover via Cedexis RUM. Circuit breakers (Resilience4j) on every third-party dependency. Performance budgets enforced in CI."
+  keyPoints={[
+    "Cache static at edge; route dynamic via edge gateway to regional clusters.",
+    "Regional data residency via row-level policy + per-region replicas.",
+    "OpenTelemetry distributed tracing end-to-end with tail-based error sampling.",
+    "Circuit breakers on every third-party dependency.",
+    "CI-enforced performance budgets keep regressions visible at PR time.",
+    "Error budget (99.99% = 4.38 min/month) drives release cadence — freeze on budget exhaust.",
+  ]}
+/>
+
+<Quiz
+  id="sr-q1"
+  lessonSlug="07-resilience-and-cascades"
+  lang="en"
+  question="What is the error budget for an SLO of 99.95% availability over a 30-day window?"
+  choices={[
+    { label: "About 4.5 hours of downtime", misconception: "That would be about 99.4% — a much weaker SLO." },
+    { label: "About 21.6 minutes of downtime", correct: true },
+    { label: "About 43 minutes of downtime", misconception: "That is the 99.9% SLO budget." },
+    { label: "About 5 minutes of downtime", misconception: "That would be approximately 99.99% — a much stronger SLO." },
+  ]}
+/>
+
+<Quiz
+  id="sr-q2"
+  lessonSlug="07-resilience-and-cascades"
+  lang="en"
+  question="A circuit breaker is in the OPEN state. A new request arrives. What should happen?"
+  choices={[
+    { label: "The request is queued until the circuit closes", misconception: "Queuing defeats the purpose — queue fills and causes the same overload the breaker was meant to prevent." },
+    { label: "The request immediately returns a fast error (503) without contacting the downstream service", correct: true },
+    { label: "The request is forwarded to a backup service automatically", misconception: "Fallback to a backup service is a separate pattern (bulkhead/fallback); the circuit breaker itself just returns fast error." },
+    { label: "The circuit breaker resets to CLOSED to try again", misconception: "After OPEN, the circuit moves to HALF-OPEN after a cool-down window, then a single probe request tests recovery." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Uncoordinated retries at each of twelve independent layers amplify a single slow dependency into a site-wide outage; circuit breakers stop the amplification, jitter staggers recovery, bulkheads contain blast radius, and error budgets make the velocity/reliability trade-off calculable.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-resilience-and-cascades-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the amplification math: how does a 99.9% server fail 100% under a retry storm?", a: "A 99.9% server serves 1 error per 1,000 requests normally. During a slowdown, requests queue. 1,000 concurrent clients each retry 3× with a naive backoff at the same intervals. Origin receives 3,000 req/s instead of 1,000 req/s. At 3× load the origin slows more, causing more timeouts, more retries. Within 30 s, load is 10× normal. The 99.9% server is now serving 100% errors — not because it failed, but because retries amplified the load past its capacity." },
+    { q: "Why does adding jitter to exponential backoff prevent thundering herd, and what is the full-jitter formula?", a: "Without jitter, all clients with the same backoff parameters retry at t=100 ms, t=200 ms simultaneously — a synchronized burst. Jitter adds random variation (e.g., ±25%) to each retry delay, spreading 1,000 retries across a 200 ms window. Full jitter formula: sleep = random_between(0, min(cap, base * 2^attempt)). This gives maximum randomisation — each attempt is fully random up to the cap — and is most effective at preventing thundering herd." },
+    { q: "A senior architect argues edge compute always beats regional origins. Where is the bug in that argument?", a: "Edge compute wins for latency-sensitive read paths where computation is cheap and data fits at edge (auth tokens, A/B decisions, request routing, KV cache lookups). For complex stateful workloads — joins across large databases, ML inference, payment processing, regulatory-bound data — edge compute is impractical: cold starts matter more, memory limits bite, debugging is harder, data residency is murky. Right pattern: edge for thin gateway logic + regional clusters for the meaty workload. 'Edge always' oversimplifies." },
+  ]}
+/>
+
+<Recap lang="en">
+Cascading retry storms arise because every layer in the twelve-phase request chain has independent retry logic — when a dependency slows, all layers retry simultaneously, amplifying traffic from 1× to 10× in under a minute. The defense stack: exponential backoff with full jitter (staggers retries), circuit breakers (fast error during outage, half-open probe for recovery), bulkheads (thread pool per dependency to contain blast radius), and load shedding (fast 503 when queue depth exceeds capacity). Error budgets formalise the velocity/reliability trade-off: a 99.95% SLO allows 21.6 minutes of downtime per 30-day window; burning the budget triggers a release freeze rather than an argument. The complete architecture for a global SaaS combines CDN edge for static assets, regional Kubernetes clusters with per-region data residency, OpenTelemetry with tail-based error sampling, and CI-enforced performance budgets — treating every layer as a potential failure domain with explicit runbooks.
+</Recap>

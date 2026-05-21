@@ -1,0 +1,220 @@
+---
+slug: 05-0rtt-defenses-and-modern-tls
+lang: en
+track: networking
+unit: 05-tls-handshake
+order: 5
+title: "0-RTT defenses, ECH, hybrid PQ, and production TLS"
+summary: "Production 0-RTT replay defenses, STEK rotation at CDN scale, Encrypted ClientHello, hybrid post-quantum key exchange, kernel TLS offload, and the observability metrics every TLS-serving service should track."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-key-schedule-and-extensions"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["stek", "anti-replay", "ech", "hybrid-pq", "ml-kem", "ktls", "mtls", "tls-observability", "cve-triage", "grease", "middlebox"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc8446
+  - https://datatracker.ietf.org/doc/html/rfc8470
+  - https://datatracker.ietf.org/doc/html/rfc8701
+  - https://datatracker.ietf.org/doc/draft-ietf-tls-ecdhe-mlkem/
+  - https://blog.cloudflare.com/announcing-encrypted-client-hello/
+  - https://blog.cloudflare.com/tls-session-resumption-full-speed-and-secure/
+  - https://docs.kernel.org/networking/tls.html
+  - https://aws.amazon.com/blogs/security/ml-kem-post-quantum-tls-now-supported-in-aws-kms-acm-and-secrets-manager/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A FinTech serving 50k TLS handshakes per second cannot afford naively enabled 0-RTT, a static session-ticket key, or a purely classical key exchange that a future quantum computer could retroactively break. This lesson covers how production deployments defend against replay, rotate STEKs, hide the SNI with ECH, add post-quantum protection, and observe TLS health at scale.
+</Hook>
+
+<Crux>Production TLS layers three defenses: 0-RTT replay windows, hourly STEK rotation, and ECH plus hybrid PQ to close privacy and quantum gaps.</Crux>
+
+<Explanation>
+
+## 0-RTT replay defenses in production (RFC 8446 §8 + RFC 8470)
+
+Three orthogonal mitigations are layered together:
+
+**1. Ticket-age validation.** The client sends `obfuscated_ticket_age`; the server subtracts `ticket_age_add`, accounts for expected RTT, and rejects early_data if the result is outside a narrow window (typical: 10 s). An attacker replaying hours later is rejected immediately.
+
+**2. Single-use ticket consumption.** An in-memory cache keyed on `(ticket_nonce, age_bucket)` rejects any second decryption attempt. Cloudflare runs per-PoP caches plus best-effort cross-PoP gossip so replays across regions are also caught within the window.
+
+**3. Application-layer idempotency.** Only safe methods ever cross into `early_data`. Frameworks (Spring, Express, Caddy) inspect the `Early-Data: 1` request header and return `425 Too Early` for any handler that mutates state.
+
+## Session-ticket encryption key (STEK) rotation
+
+Without forward secrecy on resumption, a leaked STEK lets an attacker decrypt every 0-RTT payload from tickets that key issued. Production rules:
+
+- Rotate at least hourly (Cloudflare rotates hourly; Nginx operators should reload with a fresh `ssl_session_ticket_key` head).
+- Keep a ring buffer of prior keys for decryption-only (typically 24 keys) so in-flight tickets continue to resume.
+- **Never persist STEKs to disk.** Memory-only storage is non-negotiable.
+- Push new keys to all backends via authenticated distribution before their old key expires, so cross-node tickets stay resumable.
+
+Failure modes: keys persisted to disk and recovered after a node compromise (GoDaddy 2023 incident); static STEK configured for a year turning resumption into a single-key monoculture.
+
+## Encrypted ClientHello (ECH, RFC 9849)
+
+A plain TLS 1.3 ClientHello leaks SNI, ALPN, supported groups, and signature algorithms — enough to identify the destination hostname and client stack. ECH (RFC 9849, published March 2026) defines:
+- An **outer** ClientHello sent to a public front-end hostname.
+- An **inner** ClientHello encrypted via HPKE using the origin's published ECH key (fetched from a DNS `HTTPS`/`SVCB` record, RFC 9460).
+
+The client fetches the ECH key before the TCP connection. If unavailable, it can GREASE (send fake ECH) or fall back to plain SNI. Chrome ships ECH by default from Chrome 117+; Firefox enabled it from 119; Safari support is still in progress as of May 2026.
+
+Operators must rotate the ECH public key regularly (the DNS TTL is the upper bound on key compromise) and accept that the outer SNI still names a generic front-end.
+
+## Hybrid post-quantum key exchange
+
+`draft-ietf-tls-ecdhe-mlkem` (February 2026) standardises `X25519MLKEM768` (named-group codepoint `0x11EC`). ML-KEM is NIST FIPS 203 (standardised August 2024). The hybrid shared secret is:
+
+```
+combined_secret = concat(ecdhe_secret, mlkem_secret)
+```
+
+This feeds into `HKDF-Extract` where the classical ECDHE secret used to sit — the key schedule downstream is unchanged. The hybrid is secure if **either** primitive holds: a quantum computer that breaks ECDHE cannot recover the session if ML-KEM holds.
+
+Wire-format cost: ML-KEM-768 public keys are 1184 bytes, ciphertexts 1088 bytes — pushing ClientHello past 1500 bytes and forcing TCP segmentation. Chrome 131+ (November 2024) ships hybrid PQ as default. As of Q1 2026, over one-third of Cloudflare traffic uses hybrid PQ handshakes.
+
+<NumbersCard
+  id="card-pq-cost"
+  title="Hybrid PQ key exchange costs"
+  data-lesson-visual
+  stats={[
+    { label: "X25519 public key", value: "32 bytes" },
+    { label: "ML-KEM-768 public key", value: "1 184 bytes" },
+    { label: "ML-KEM-768 ciphertext", value: "1 088 bytes" },
+    { label: "Hybrid ClientHello size", value: ">1 500 bytes (TCP segments)" },
+    { label: "Chrome default since", value: "Chrome 131 (Nov 2024)" },
+    { label: "Cloudflare traffic on hybrid PQ (Q1 2026)", value: ">33%" },
+  ]}
+/>
+
+## Kernel TLS (kTLS) offload
+
+`setsockopt(fd, SOL_TLS, TLS_TX, &crypto_info)` hands the symmetric record layer to the kernel after user-space completes the handshake (Linux 4.13+, OpenSSL 3.2+). Modern kernels plus a supported NIC can build encrypted records on the wire with zero per-record CPU cost.
+
+Netflix and Cloudflare attribute 8–29% CPU savings on static file serving to `sendfile()` over kTLS: the file moves from page cache to NIC without entering user space. Supported algorithms: AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 — TLS 1.3 only.
+
+## Middlebox interference and GREASE (RFC 8701)
+
+TLS 1.3 puts `0x0303` (TLS 1.2) in the `legacy_version` field and sends a dummy `ChangeCipherSpec` record because too many middleboxes abort connections whose bytes do not match TLS 1.2 patterns. GREASE (RFC 8701) sprinkles reserved codepoints (`0x0A0A`, `0x1A1A`, …, `0xFAFA`) through extension lists and cipher suites. A correct peer ignores unknown values; a fragile middlebox breaks immediately, surfacing the bug to the vendor instead of letting it ossify the protocol.
+
+## Production observability
+
+Minimum-viable Prometheus metrics for a TLS-serving service:
+
+- `tls_handshake_duration_seconds_bucket` — histogram; p95 above 200 ms on a CDN-fronted origin is a regression.
+- `tls_resumption_total{kind="psk|ticket|none"}` — a sudden drop in resumption ratio usually means STEK rotation without an overlap window.
+- `tls_version_total{version="1.2|1.3"}` — flag any traffic still on 1.2.
+- `tls_cipher_suite_total` — surface non-preferred suites.
+- `tls_early_data_total{outcome="accepted|rejected"}` — an early-data rejection spike often precedes a customer report of duplicate POSTs.
+- `tls_ocsp_staple_total{outcome="ok|expired|missing"}` — missing staple on a must-staple cert will cause connection refusals.
+
+## Production failure stories
+
+- **Let's Encrypt 2021 chain expiry:** DST Root CA X3 expired; Android &lt; 7.1.1 failed verification, breaking a long tail of devices.
+- **GoDaddy 2023 STEK leak:** A leaked STEK in a customer's misconfigured backup let an attacker decrypt months of cached 0-RTT data — exactly the failure mode RFC 8446 §2.3 warns about.
+- **Heartbleed (CVE-2014-0160):** Missing length check in OpenSSL's heartbeat extension let attackers read 64 KB of process memory including private keys. Post-mortem reshaped the ecosystem (BoringSSL, rustls) and is why kTLS limits the kernel surface to record-layer encryption only.
+
+<TraceScenario
+  id="sr-trace-1"
+  pieceSlug="05-0rtt-defenses-and-modern-tls"
+  lang="en"
+  scenario="Hybrid ML-KEM-768 + x25519 handshake (Chrome 131+)"
+  steps={[
+    { prompt: "Client sends x25519 pubkey + ML-KEM-768 public key in key_share. What security property does this achieve?", reveal: "Hybrid binds classical (x25519) + post-quantum (ML-KEM-768): shared_secret = HKDF(ecdhe_secret || mlkem_secret). Breaking either primitive alone leaves the session secure — quantum computer breaks x25519 but ML-KEM holds, session stays safe." },
+    { prompt: "Old server does not recognise ML-KEM-768 named group. What happens?", reveal: "Server sends HelloRetryRequest requesting x25519-only. Client retries with x25519 key_share only. Adds one RTT but backward-compatible — hybrid is opt-in both sides." },
+    { prompt: "Why does hybrid PQ force TCP segmentation on most connections?", reveal: "ML-KEM-768 public key is 1184 bytes. Combined with other ClientHello fields, the total exceeds the 1500-byte initial TCP MTU. The packet is segmented, and middleboxes that buffer a full ClientHello before forwarding may trigger HRR or abort — a known deployment friction point." },
+  ]}
+/>
+
+<DebugLog
+  id="sr-debug-1"
+  pieceSlug="05-0rtt-defenses-and-modern-tls"
+  lang="en"
+  title="OpenSSL handshake error — diagnose the cause."
+  output={`% openssl s_client -connect api.example.internal:443 -tls1_3 -showcerts
+CONNECTED(00000005)
+depth=0 CN = api.example.internal
+verify error:num=20:unable to get local issuer certificate
+verify return:1
+depth=0 CN = api.example.internal
+verify error:num=21:unable to verify the first certificate
+verify return:1
+---
+Certificate chain
+ 0 s:CN = api.example.internal
+   i:CN = Internal Corp Issuing CA
+---
+SSL handshake has read 1845 bytes and written 308 bytes
+---
+New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
+Server certificate
+subject=CN = api.example.internal
+issuer=CN = Internal Corp Issuing CA
+---
+SSL-Session:
+    Protocol  : TLSv1.3
+    Verify return code: 21 (unable to verify the first certificate)`}
+  outputLang="log"
+  question="The handshake completes, but verify return code = 21. What is the misconfiguration and what does the server need to send to fix it?"
+  hint="Look at the chain length and the depth at which verification failed. Count how many certificates the server sent versus how many are needed."
+  answer="The server is sending only the leaf certificate (chain length 1). 'Internal Corp Issuing CA' is an intermediate, not a root in any default trust store. The client cannot build a path from the leaf to a trusted root. Fix: configure the server to send the full chain — leaf + intermediate(s). In Nginx, concatenate the intermediate certificates into the ssl_certificate file. The TLS handshake succeeds at the protocol level (keys derived), but verification fails because the chain is incomplete."
+/>
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="05-0rtt-defenses-and-modern-tls"
+  lang="en"
+  question="Why does a leaked STEK allow decrypting 0-RTT data but not regular TLS 1.3 handshakes?"
+  choices={[
+    { label: "STEK is used to sign the Certificate", misconception: "The server's long-term signing key signs CertificateVerify; STEK encrypts the session ticket." },
+    { label: "The STEK decrypts the session ticket revealing the PSK, which was used to derive 0-RTT traffic keys — no ECDHE secret is involved in PSK-only resumption", correct: true },
+    { label: "STEK is only used for TLS 1.2 sessions", misconception: "Session tickets exist in TLS 1.3 (NewSessionTicket). STEK rotation matters for TLS 1.3 0-RTT." },
+    { label: "A leaked STEK can also decrypt regular cold handshakes", misconception: "Cold handshakes derive keys from ephemeral ECDHE; the STEK is not involved." },
+  ]}
+/>
+
+<Misconception
+  id="pq-misconception"
+  title="'We use TLS 1.3 so we are safe from future quantum computers'"
+>
+Classical ECDHE is breakable by a quantum computer. An adversary can record today's handshakes and decrypt later. Hybrid PQ (X25519MLKEM768) mitigates this: even if ECDHE breaks, ML-KEM keeps the session secret.
+</Misconception>
+
+<Inset kind="why" lang="en">
+**mTLS at service-mesh scale.** Istio + SPIFFE/SPIRE issue fresh leaf certificates per workload (TTL often under 24 hours), rotating via the SPIRE workload API. At 10,000 pods with 24-hour rotation that is roughly 7,000 cert issuances per minute. The control-plane CA becomes a hotspot; hierarchical CA design (root → intermediate per cluster) keeps leaf-signing on-cluster and fast. The data plane (Envoy) terminates and re-originates TLS for every hop — your end-to-end latency budget pays for a TLS 1.3 handshake at every service boundary unless connection pools amortise the cost across thousands of requests.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Production TLS stacks three 0-RTT replay defenses (ticket-age window, single-use nonce cache, app-layer idempotency), rotate STEKs hourly in memory, adopt hybrid PQ (X25519MLKEM768) to protect against store-now-decrypt-later, and surface health via resumption ratio, handshake duration p95, and early-data rejection rate.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-0rtt-defenses-and-modern-tls-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the three orthogonal 0-RTT replay defenses and what each catches.", a: "1. Ticket-age validation: rejects replays outside a narrow time window (e.g. 10 s) by comparing obfuscated_ticket_age to expected RTT. 2. Single-use ticket cache: keyed on (ticket_nonce, age_bucket), rejects any second decryption attempt. 3. Application-layer idempotency: 425 Too Early for non-idempotent routes, so even a replay that passes the first two checks cannot cause a harmful mutation." },
+    { q: "Why does hybrid PQ concatenate the ECDHE and ML-KEM secrets rather than using just one of them?", a: "Hybrid security: the combined secret is secure if either primitive holds. If a quantum computer breaks x25519, the ML-KEM component still provides security. If ML-KEM turns out to have a classical flaw, x25519 still provides security. Concatenation before HKDF-Extract means both secrets contribute to every derived key — compromising one alone yields nothing." },
+    { q: "What production metric most directly signals an STEK rotation bug?", a: "A sudden drop in the resumption ratio (resumed / total handshakes per node). If STEK rotation happens without an overlap window where the old key remains valid for decryption, clients with cached tickets from before the rotation trigger fresh cold handshakes instead of resuming — visibly reducing the resumption percentage." },
+  ]}
+/>
+
+<Recap lang="en">
+Production 0-RTT safety requires three layered defenses: a ticket-age replay window, a per-PoP single-use nonce cache, and application-layer 425 Too Early for non-idempotent routes. Session-ticket encryption keys must rotate at least hourly, never touch disk, and distribute to all backends before the old key expires. Encrypted ClientHello (RFC 9849) hides the target SNI from on-path observers; hybrid PQ (X25519MLKEM768) defends against store-now-decrypt-later quantum attacks at the cost of larger ClientHello. Kernel TLS offloads the symmetric record layer to the NIC for 8–29% CPU savings on static file serving. The minimum-viable observability set tracks handshake duration p95, resumption ratio, early-data outcomes, and cipher suite distribution — a drop in resumption ratio is the fastest signal of an STEK rotation bug.
+</Recap>

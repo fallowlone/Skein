@@ -1,0 +1,191 @@
+---
+slug: 06-stampede-senior
+lang: en
+track: caching
+unit: 03-stampede
+order: 6
+title: "Metastable failure, fencing tokens, and production postmortems"
+summary: "How an unmitigated stampede pushes a system into a self-sustaining retry storm it cannot escape, the fencing token fix for lock TTL races, four production stampede postmortems, and a three-tier global cache design exercise."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - caching/03-stampede/05-detection-and-ttl-design
+spiral: ["statefulness", "encapsulation"]
+concepts: ["metastable-failure", "retry-storm", "fencing-token", "lock-race", "cache-aside-patterns", "cache-layer-composition"]
+sources:
+  - https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+  - https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://blog.cloudflare.com/coalescing-requests/
+  - https://www.fastly.com/blog/request-collapsing
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A stampede lasts 10 seconds. Four hours later the DB is still at 100% CPU. The stampede is over — but the system cannot self-recover. This is the metastable failure pattern: once the system falls into the retry storm, it stays there.
+</Hook>
+
+<Crux>Stampede → DB saturation → retry storm → self-sustaining loop. Recovery requires an external kill signal, not just better caching.</Crux>
+
+<Explanation>
+
+## The metastable failure sequence
+
+A cache stampede can escalate into a self-sustaining failure:
+
+1. **T=0** — TTL fires, herd hits DB. DB CPU saturates.
+2. **T=0–5s** — queries queue. Queue depth grows past client request timeout (e.g., 5 s).
+3. **T=5s** — client timeouts begin. Most client SDKs auto-retry with exponential backoff. Backoff is short (100 ms to 1 s) because the original timeout looked like a transient network failure, not an overloaded server.
+4. **T=5–30s** — retries multiply the herd. Original 10,000 misses become 30,000 in-flight requests (3 retry attempts per client). DB is now serving retries instead of fresh queries. Cache rebuild cannot complete because DB is too busy to answer rebuild queries.
+5. **T=4h** — system remains saturated. Every new arrival retries. Retries prevent DB recovery. DB prevents cache rebuild. Cache emptiness generates more retries. **Self-sustaining loop.**
+
+The system has two stable states: healthy (cache full, low DB load) and storm (cache empty, DB at 100%). A perturbation moved it from healthy to storm. It cannot move back on its own.
+
+## Why the system cannot self-recover
+
+The loop is: no cache → retries → DB overload → no DB capacity → no cache rebuild → no cache. Each component is correctly following its designed behaviour. No component "knows" it is in a storm. The client SDK retries because it sees timeouts. The DB processes queries in order. The cache does not rebuild because the DB never answers fast enough.
+
+**Recovery requires breaking the loop from outside:**
+
+1. **Load-shedding at the gateway** — return `503 Service Unavailable` immediately when DB CPU exceeds 90%. Most client SDKs treat 503 as "do not retry immediately" and back off with long jitter. After 30–60 s the queue drains, the DB recovers, and the cache rebuilds.
+2. **Circuit-breaker on the rebuild path** — if the rebuild query fails or takes too long, serve `stale forever` until the DB recovers. This breaks the dependency between cache rebuild and DB health.
+3. **Manual cache warmup** — operators write known-good values directly to the cache, bypassing the rebuild path. Immediately returns the system to the healthy state.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Recovery mechanism | How it breaks the loop | Side effect |
+|---|---|---|
+| 503 at gateway | Clients stop retrying | 503s visible to users for 30–60 s |
+| Circuit-breaker | Rebuild stops depending on DB | Stale data served indefinitely |
+| Manual warmup | Inserts cache values directly | Requires operator action |
+
+</div>
+
+## The fencing token fix for lock TTL races
+
+A Redis lock with `SET lock:key uuid EX 30 NX` has a race condition when the rebuild outlasts EX:
+
+1. Request-1 acquires lock with uuid-A, EX=10 s. Starts a 12-second rebuild.
+2. T=10 s: lock auto-expires. Request-2 acquires lock with uuid-B.
+3. T=12 s: request-1 finishes rebuild. Writes to cache.
+4. T=12 s: request-2 also finishes rebuild. Writes to cache.
+5. **Result:** duplicate writes. If there is a concurrent invalidation from a DB write, request-1's stale value may overwrite a newer-correct value.
+
+**Fix 1: increase EX above rebuild p99.9.** Most duplicates prevented. Not proof against all races.
+
+**Fix 2: fencing token check before write.**
+```
+# Before writing the rebuilt value:
+current_lock = GET lock:key
+if current_lock != my_uuid:
+  ABORT  # we lost the lock; someone else is rebuilding
+ELSE:
+  SET cache:key new_value EX 60  # write only if still holding lock
+```
+
+**Fix 3: monotonic version per key.** Include a version in every cache write. The DB or cache layer rejects writes with version ≤ current version. Stale rebuilds write with an old version and are silently rejected. Martin Kleppmann's 2016 critique of RedLock formalised this: distributed locks alone are insufficient for correctness; fencing is required.
+
+## XFetch: why the exponential is optimal
+
+Vattani et al. (VLDB 2015) prove no coordination-free algorithm can do better than exponential at keeping expected refreshes per TTL window at exactly 1. Any tighter rule either:
+- Requires coordination (distributed lock, lease) to bound variance, or
+- Accepts higher variance (some windows get 0 refreshes → stampede, some get many → wasted work).
+
+The exponential is uniquely optimal because: the minimum of N independent Exp(λ) draws is Exp(N·λ). As fleet size N grows, the "winning" reader fires sooner — but the expected total remains 1. No other distribution has this scaling property while remaining memoryless (no state required per-reader).
+
+## Four production postmortems
+
+**Reddit 2017.** A feed-cache change shipped without single-flight. Result: 3× DB peaks at every TTL boundary. On-call paged on DB CPU 30 minutes after deploy; rolled back within 1 hour.
+
+**Shopify 2020 (Black Friday).** A flash-sale homepage had TTL=30 s and no SWR. At 12:00:30 the TTL fired under 10× normal traffic. The entire storefront edge had multi-second outages at every TTL boundary for the first 10 minutes of the sale. Fixed by deploying stale-grace=5 min on the next push.
+
+**Twitter 2022.** An unrelated cache invalidation bug triggered 30M concurrent rebuild attempts. The DB connection pool saturated for 4 hours. Recovery required load-shedding + manual cache seed.
+
+**Cloudflare 2024.** A KV cache coalescing bug briefly allowed N requests for the same key to bypass coalescing during a deploy window. The origin saw proportional load during the window. Fixed by deploying a guard flag that disabled coalescing rollout until the bug was patched.
+
+**Pattern across all four:** stampede protection was either absent, misconfigured, or had a bug that defeated it under load. The cost was proportional to the protection gap.
+
+## Full-stack composition design
+
+A production cache stack for a global high-traffic site needs protection at every tier:
+
+| Tier | Mechanism | Stampede reduction |
+|---|---|---|
+| CDN edge | SWR + request coalescing | N concurrent misses → 1 origin request |
+| Application cache (Redis) | XFetch + single-flight + lock | N concurrent misses → 1 rebuild per TTL window |
+| DB | Circuit-breaker, read replicas | Origin load shedding during overload |
+
+Each tier must independently bound its herd — a failure at any tier cascades to the one below. SWR at the CDN absorbs 99% of TTL-boundary traffic. XFetch prevents the next layer's stampede by refreshing before expiry. Single-flight collapses per-node herds. The Redis lock collapses cross-node herds for the hottest 1% of keys. TTL jitter desynchronises multi-key boundaries. Together they reduce 10,000 concurrent misses to 1 rebuild anywhere in the stack.
+
+<Inset kind="why" lang="en">
+Bouman et al. (SOSP 2024) formalised the metastable failure pattern as a class: a system in a metastable failure is stable in both the healthy and storm states, and a perturbation moves it between them. The transitions are: healthy → storm (stampede + retry amplification) and storm → healthy (external intervention). Their key result: any system with at-least-once retries and no load-shedding can be pushed into metastability by a sufficiently large transient overload. The fix is an explicit "kill the herd" mechanism (503-on-overload, circuit-breaker) that is separate from the caching logic.
+</Inset>
+
+<Quiz
+  id="senior-q1"
+  lessonSlug="06-stampede-senior"
+  lang="en"
+  question="A system enters metastable failure after a stampede. DB CPU stays at 100% for 4 hours. The cache is empty. What is the correct diagnosis?"
+  choices={[
+    { label: "The stampede is still ongoing — the original herd is still hitting the DB", misconception: "The original stampede lasted seconds. The sustained load is from retries from timed-out clients, not the original herd." },
+    { label: "Client retries from timed-out requests are sustaining the storm — each retry adds load that prevents cache rebuild, which generates more timeouts", correct: true },
+    { label: "The cache is broken and needs to be restarted", misconception: "Restarting the cache alone (cold) will make things worse, not better — the cold cache generates 100% miss rate." },
+    { label: "The DB has a runaway query using all CPU", misconception: "The DB CPU is being consumed by the high concurrent query load from retries, not a single runaway query." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q2"
+  lessonSlug="06-stampede-senior"
+  lang="en"
+  question="A Redis lock uses EX=10 s, but rebuilds can take up to 15 s. A rebuild starts at T=0 s. What is the exact failure at T=10 s?"
+  choices={[
+    { label: "The rebuild is cancelled and the cache key remains empty", misconception: "Redis expires the lock key, not the build process. The rebuild continues running; it just no longer holds the lock." },
+    { label: "The lock key auto-expires. A second request sees no lock, acquires it, starts a parallel rebuild. At T=15 s both rebuilds complete and write to the cache key — duplicate writes.", correct: true },
+    { label: "The first rebuild gets a 30-second grace extension from Redis", misconception: "Redis has no built-in grace extension for locks. EX is absolute." },
+    { label: "The lock becomes permanent and blocks the system until manually deleted", misconception: "EX prevents permanent locks — the lock expires after 10 s. The problem is what happens after it expires." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q3"
+  lessonSlug="06-stampede-senior"
+  lang="en"
+  question="A global news site needs stampede protection at every cache tier. Which stack satisfies: p99 latency under 200 ms during 10× viral spikes AND DB never sees more than 5× steady-state QPS?"
+  choices={[
+    { label: "Redis lock only — serialises all rebuilds to one at a time", misconception: "Lock alone leaves 10,000 request waiters queueing during rebuilds. Under 10× traffic, queue depth easily exceeds the 200 ms p99 budget." },
+    { label: "SWR at CDN + XFetch + single-flight + Redis lock + TTL jitter — each layer drops the herd by an order of magnitude", correct: true },
+    { label: "Increase cache TTL to 24 hours — fewer expiries per day", misconception: "Longer TTL reduces stampede frequency but not severity. Each daily stampede hits with 24 hours of accumulated traffic — far worse than hourly." },
+    { label: "Horizontal scaling of the DB — more nodes absorb the spike", misconception: "DB scaling reduces the impact threshold but does not eliminate the spike. Under viral 10× traffic, no static scaling budget is sufficient without a caching strategy." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Metastable failure = stampede → retry storm → no DB capacity → no cache rebuild → more retries. Recovery needs an external kill signal (503 gate, circuit-breaker). Lock races need fencing tokens, not just larger EX. Full-stack protection layers — CDN SWR, XFetch, single-flight, Redis lock — each reduce the herd by an order of magnitude.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="stampede-senior-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the metastable failure shape that follows an unmitigated cache stampede and why the system cannot self-recover.", a: "The sequence: stampede hits DB, DB CPU saturates, queries queue, queue depth grows past client timeout, queries time out. Clients retry (most SDKs retry on timeout with short backoff because the timeout looked like a transient network failure). Retries multiply the original herd — 10,000 misses become 30,000 in-flight. The DB is now serving retries instead of fresh queries; the cache cannot rebuild because the DB is too busy. Without the cache, every new arrival also retries. The system is locked: high load prevents cache rebuild, which prevents load reduction. Recovery requires breaking the loop externally: 503-on-overload at the gateway (clients back off long), circuit-breaking the rebuild path (serve stale indefinitely), or manual cache seeding. No component within the loop can break it alone because each is following correct local behaviour." },
+    { q: "A Redis lock with EX=10 s produces duplicate writes when rebuilds exceed 10 s. Explain the three-component fix.", a: "Fix 1: set EX to rebuild p99.9 × 3. This makes it rare for the lock to expire before the rebuild finishes. Fix 2: fencing token check — before writing the rebuilt value, GET the lock key and verify it still holds the original uuid. If the uuid changed, abort the write (someone else is now the lock holder). This is the fencing token pattern: the write is conditional on still holding the lock. Fix 3: monotonic version on cache writes — include a version number in every write. The cache or DB rejects writes with version ≤ current version. Stale rebuilds from an expired lock carry an old version and are silently dropped. Together these three components prevent duplicate writes even in the face of lock expiry races, network partitions, and concurrent invalidations." },
+    { q: "Why does XFetch's 'expected 1 refresh per TTL window' property hold regardless of fleet size, while a distributed lock requires explicit cross-node coordination?", a: "XFetch uses the exponential distribution, which has the property that the minimum of N independent Exp(λ) draws is Exp(N·λ). As the fleet grows from 1 to 100 nodes, each node reads the key independently. The 'first' reader to hit the probabilistic threshold fires earlier (since there are more draws), but the expected number of fires per TTL window is still 1. The fleet size cancels out. A distributed lock has no equivalent mathematical property — adding more nodes adds more competing lock attempts. The lock must check a shared external state (Redis) to determine who holds it, paying a round-trip per attempt. XFetch's only per-read cost is generating one random number. The trade-off: XFetch requires frequent reads (the minimum draw needs to happen during the early-refresh window); distributed locks work even for cold keys accessed once per TTL window." },
+  ]}
+/>
+
+<Recap lang="en">
+A cache stampede that overloads the DB can escalate into a metastable failure lasting hours: client retries from timed-out requests sustain the load that prevents DB recovery, which prevents cache rebuild, which generates more retries. Breaking the loop requires an external mechanism — 503-on-overload at the gateway, circuit-breaking the rebuild path, or manual cache seeding. Distributed lock races (EX too short) require three defences: extended EX, fencing token verification before write, and monotonic version on cache keys. The full production stack layers SWR at the CDN edge, XFetch at the application cache, single-flight per process, and a Redis lock for the hottest keys — each tier reducing the herd by an order of magnitude. Four real incidents (Reddit 2017, Shopify 2020, Twitter 2022, Cloudflare 2024) all share one pattern: protection missing, misconfigured, or defeated under load.
+</Recap>
