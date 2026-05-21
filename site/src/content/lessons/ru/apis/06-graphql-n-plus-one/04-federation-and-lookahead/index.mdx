@@ -1,0 +1,161 @@
+---
+slug: 04-federation-and-lookahead
+lang: ru
+track: apis
+unit: 06-graphql-n-plus-one
+order: 4
+title: "Federation и lookahead: батчинг за пределами DataLoader"
+summary: "Apollo Federation даёт кросс-subgraph батчинг через _entities бесплатно; внутри subgraph ты всё равно обязан DataLoader. Lookahead-джойны сворачивают многоуровневую вложенность ценой изоляции резолверов."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - apis/06-graphql-n-plus-one/02-dataloader-mechanics
+deepensInto:
+  - apis/06-graphql-n-plus-one/06-graphql-api-senior
+spiral: ["statefulness", "encapsulation"]
+concepts: ["apollo-federation", "entities-batch", "resolve-reference", "resolver-lookahead", "info-ast"]
+sources:
+  - https://www.apollographql.com/docs/graphos/schema-design/guides/handling-n-plus-one
+  - https://www.apollographql.com/docs/graphos/schema-design/federated-schemas/reference/subgraph-spec
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Федеративный граф маршрутизирует запрос через subgraph users и subgraph posts. Supergraph-роутер автоматически собирает 50 user-ссылок в один `_entities`-вызов. Внутри users-subgraph реализация `__resolveReference` проходит цикл по 50 representations и 50 раз ходит в базу. Federation отдал тебе сетевой батч бесплатно; батч на базу — всё ещё твоя ответственность.
+</Hook>
+
+<Crux>_entities Federation батчит кросс-subgraph ссылки на роутере; DataLoader внутри __resolveReference нужен для поездок в базу.</Crux>
+
+<Explanation>
+
+## Как Apollo Federation батчит между subgraph'ами
+
+В федеративной схеме каждый subgraph, владеющий entity-типом, экспонирует резолвер `__resolveReference(representation)`. Когда запрос пересекает границы subgraph — скажем, posts-subgraph возвращает `Post.author: User`, а users-subgraph владеет `User` — supergraph-роутер:
+
+1. Собирает все `User`-ссылки, возникшие при разрешении запроса (например, 50 постов, каждый ссылается на автора).
+2. Отправляет один `_entities(representations: [_Any!]!)` в users-subgraph со всеми 50 representations.
+3. `__resolveReference` в users-subgraph вызывается для каждого representation.
+
+Кросс-subgraph батч автоматический и бесплатный. Роутер делает всё сам.
+
+## Что ты всё ещё обязан сделать внутри __resolveReference
+
+Наивная реализация:
+
+```javascript
+// users subgraph — наивно, N+1 внутри _entities
+User: {
+  __resolveReference: async (rep) => {
+    return db.users.findById(rep.id); // Один запрос на representation
+  }
+}
+```
+
+С 50 representations это делает 50 SQL-запросов внутри единственного `_entities`-вызова. Нужен DataLoader:
+
+```javascript
+// users subgraph — правильно
+User: {
+  __resolveReference: (rep, ctx) => ctx.loaders.user.load(rep.id),
+}
+```
+
+Загрузчик батчит все 50 `.load(rep.id)` вызовов из 50 `__resolveReference`-вызовов в один `WHERE id IN (...)`.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+```
+Supergraph-роутер:
+  posts subgraph → 50 постов, у каждого authorId
+  → один _entities([{__typename:"User", id:7}, ...×50]) в users subgraph
+
+users subgraph (наивно):
+  __resolveReference({id:7})  → SELECT * FROM users WHERE id=7   (1 SQL)
+  __resolveReference({id:9})  → SELECT * FROM users WHERE id=9   (1 SQL)
+  ... × 50                                                       (50 SQL)
+
+users subgraph (с DataLoader):
+  __resolveReference({id:7})  → loader.load(7)   (в очереди)
+  __resolveReference({id:9})  → loader.load(9)   (в очереди)
+  ... × 50                    → batchFn([7,9,...]) → 1 SQL
+```
+
+</div>
+
+## Lookahead: сворачивание многоуровневой вложенности
+
+DataLoader чинит форму «N запросов за одной колонкой». Если клиент просит `posts { author { profile { bio } } }`, у тебя по-прежнему три уровня разрешения — DataLoader накапливает каждый уровень отдельно, три поездки вместо одной.
+
+**Resolver lookahead** читает AST из аргумента `info` внутри top-level резолвера, видит, какие дочерние поля запросил клиент, и джойнит их одним SQL на верхнем уровне.
+
+```javascript
+Query: {
+  posts: (_, __, ctx, info) => {
+    const wantsAuthor = selectionSetContains(info, 'author');
+    const query = wantsAuthor
+      ? 'SELECT posts.*, users.name AS author_name FROM posts JOIN users...'
+      : 'SELECT * FROM posts';
+    return db.query(query);
+  }
+}
+```
+
+Библиотеки Pothos, TypeGraphQL с `SelectQueryBuilder` и Hasura реализуют это, маппя AST в SQL-планировщик.
+
+<Inset kind="why" lang="ru">
+Tradeoff: lookahead-резолверы знают про целое поддерево. Top-level резолвер больше не изолирован — он меняет поведение в зависимости от того, какие дочерние поля выбрал клиент. Это ломает ключевое свойство GraphQL (per-field изоляция). Используй lookahead только когда DataLoader на каждом уровне оставляет наблюдаемую латентность после измерений.
+</Inset>
+
+<Quiz
+  id="federation-q1"
+  lessonSlug="04-federation-and-lookahead"
+  lang="ru"
+  question="Федеративный supergraph получает запрос, ссылающийся на 50 пользователей через два subgraph. Что делает роутер и что subgraph всё ещё нужен?"
+  choices={[
+    { label: "Роутер шлёт 50 индивидуальных запросов в users-subgraph; DataLoader не нужен", misconception: "Роутер автоматически батчит все 50 ссылок в один _entities-вызов." },
+    { label: "Роутер шлёт один _entities-вызов с 50 representations; subgraph всё ещё нужен DataLoader внутри __resolveReference для батчинга SQL-запросов", correct: true },
+    { label: "Роутер объединяет subgraph и выполняет один SQL-запрос к обеим базам", misconception: "Subgraph не делят базы; роутер общается через HTTP, не SQL." },
+    { label: "Supergraph автоматически использует DataLoader, и subgraph он не нужен", misconception: "Supergraph батчит на уровне HTTP; внутрисервисный N+1 — твоя ответственность." },
+  ]}
+/>
+
+<Quiz
+  id="federation-q2"
+  lessonSlug="04-federation-and-lookahead"
+  lang="ru"
+  question="Каков главный tradeoff resolver lookahead по сравнению с DataLoader?"
+  choices={[
+    { label: "Lookahead медленнее DataLoader для большинства запросов", misconception: "Lookahead может быть быстрее, снижая число поездок, но производительность зависит от сложности джойна." },
+    { label: "Lookahead ломает per-field изоляцию резолверов — top-level резолвер должен знать, какие дочерние поля выбраны, связываясь со структурой дочерней схемы", correct: true },
+    { label: "Lookahead требует другого драйвера базы данных", misconception: "Lookahead — техника GraphQL-уровня, использующая info AST, а не вопрос драйвера базы." },
+    { label: "Lookahead не работает с Apollo Federation", misconception: "Lookahead работает в любом GraphQL-сервере, включая федеративные subgraph." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>_entities Federation батчит сетевые вызовы между subgraph бесплатно; каждый subgraph всё ещё нужен DataLoader внутри __resolveReference. Lookahead сворачивает многоуровневую вложенность чтением AST ценой изоляции резолверов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="federation-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему _entities-батчинг Apollo Federation не устраняет потребность в DataLoader внутри subgraph?", a: "_entities батчит на сетевом уровне: роутер шлёт один HTTP-вызов с 50 representations вместо 50 HTTP-вызовов. Внутри subgraph __resolveReference всё равно вызывается по разу на каждое representation. Если эти вызовы ходят в базу напрямую, получается 50 SQL-запросов внутри единственного _entities. DataLoader батчит их в один SQL-поход." },
+    { q: "Когда выбрать lookahead вместо DataLoader?", a: "Когда три и более уровня вложенных полей оставляют измеримую латентность после применения DataLoader на каждом уровне. Lookahead сворачивает уровни в один JOIN ценой связывания top-level резолвера с выбором дочерних полей. Сначала измеряй; lookahead — последнее средство, потому что ломает per-field изоляцию." },
+  ]}
+/>
+
+<Recap lang="ru">
+Apollo Federation обрабатывает кросс-subgraph батчинг на роутере: все user-ссылки в запросе становятся одним `_entities`-вызовом в users-subgraph. Внутри subgraph `__resolveReference` всё равно вызывается по разу на representation, и DataLoader всё ещё нужен для батчинга их в один SQL-запрос. Для запросов, пересекающих несколько уровней вложенности, lookahead читает клиентский AST selection set на верхнем уровне и делает один JOIN — сворачивая три DataLoader-поездки в одну ценой per-field изоляции.
+</Recap>

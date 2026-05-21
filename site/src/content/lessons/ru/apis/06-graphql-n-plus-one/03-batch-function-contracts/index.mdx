@@ -1,0 +1,169 @@
+---
+slug: 03-batch-function-contracts
+lang: ru
+track: apis
+unit: 06-graphql-n-plus-one
+order: 3
+title: "Контракты batch-функции: порядок, формы, ошибки"
+summary: "batchLoadFn должна возвращать значения в том же порядке, что входные ключи, явно обрабатывать отсутствующие строки и per-key ошибки, и поддерживать формы one-to-one, one-to-many и count."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - apis/06-graphql-n-plus-one/02-dataloader-mechanics
+deepensInto:
+  - apis/06-graphql-n-plus-one/06-graphql-api-senior
+spiral: ["statefulness"]
+concepts: ["batch-function", "order-preservation", "one-to-many-loader", "per-key-error", "maxBatchSize"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://www.apollographql.com/docs/apollo-server/data/fetching-data
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Sven подключает DataLoader и страница быстрая — для большинства запросов. Иногда посты показывают не того автора. SQL-запрос выполнился правильно и вернул верные строки. Баг в batch-функции: она вернула строки в том порядке, что выбрал Postgres, а не в том, что ожидал DataLoader.
+</Hook>
+
+<Crux>batchLoadFn(keys) должна вернуть одно значение на ключ в том же порядке. Неверный порядок или пропуск слота тихо корёжат резолверы.</Crux>
+
+<Explanation>
+
+## Контракт порядка
+
+`batchLoadFn(keys: Array<K>): Promise<Array<V | Error>>` должна вернуть массив той же длины, что `keys`, с значениями на соответствующих позициях. Если `keys = [7, 9, 3]`, возврат должен быть `[row7, row9, row3]` — в этом порядке.
+
+Postgres (и большинство баз) не гарантируют порядок строк из `WHERE id IN (...)`. Если запрос вернул `[row9, row7, row3]` и ты возвращаешь этот массив напрямую, DataLoader разрешает:
+- ключ 7 → row9 (неверно)
+- ключ 9 → row7 (неверно)
+- ключ 3 → row3 (верно случайно)
+
+Это тихий баг: никакой ошибки, тесты могут пройти, в проде — неверные авторы на случайных запросах.
+
+**Решение:** строй Map из результатов, потом проходи входные ключи.
+
+```javascript
+async function batchAuthors(ids) {
+  const rows = await db.query(
+    'SELECT id, name FROM users WHERE id = ANY($1)', [ids]
+  );
+  const map = new Map(rows.map(r => [r.id, r]));
+  // Обходи ids в исходном порядке; null для отсутствующих строк
+  return ids.map(id => map.get(id) ?? null);
+}
+```
+
+## Обработка отсутствующих строк
+
+Если у ключа нет строки в базе, `map.get(id)` возвращает `undefined`. Возврат `undefined` в слоте разрешает Promise в `undefined`, которое попадает в резолвер как значение поля. Для non-nullable GraphQL-полей это runtime-ошибка валидации.
+
+Правильный подход зависит от nullable-настройки поля:
+- Nullable-поле: вернуть `null` для отсутствующих строк.
+- Non-nullable поле, которое всегда должно существовать: вернуть `new Error('User not found: ' + id)`.
+
+Возврат `Error` в слоте заставляет DataLoader отклонить только этот конкретный `.load()`-Promise, а не все ожидающие. Это противоположность throw из batch-функции, который отклоняет **все** ожидающие Promise.
+
+## Форма one-to-many
+
+Для поля `Post.tags` ключ загрузчика — ID поста, значение — массив тегов. Пустые массивы для постов без тегов обязательны — если вернуть `undefined` или пропустить слот, теги следующего поста заполнят его место.
+
+```javascript
+async function batchTags(postIds) {
+  const rows = await db.query(
+    'SELECT post_id, tag FROM tags WHERE post_id = ANY($1)', [postIds]
+  );
+  // Предзаполни каждый ключ пустым массивом
+  const map = new Map(postIds.map(id => [id, []]));
+  rows.forEach(r => map.get(r.post_id).push(r.tag));
+  return postIds.map(id => map.get(id));
+}
+```
+
+## Форма count
+
+Для `Post.likeCount` батч выполняет `GROUP BY post_id COUNT(*)` и возвращает число (по умолчанию 0 для постов без лайков).
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Форма | Ключ | Возврат на ключ | Паттерн |
+|---|---|---|---|
+| One-to-one | ID сущности | строка или null | authorLoader |
+| One-to-many | ID родителя | массив (возможно пустой) | tagsLoader |
+| Count | ID родителя | число (возможно 0) | likeCountLoader |
+
+</div>
+
+## maxBatchSize
+
+Когда один GraphQL-документ ссылается на 5000 уникальных авторов, один `WHERE id IN (...)` с 5000 ID медленнее, чем пять запросов по 1000 из-за накладных расходов планировщика Postgres. Устанавливай `options.maxBatchSize` (типично: 500–1000) для автоматического разбиения больших батчей.
+
+<Inset kind="why" lang="ru">
+Почему DataLoader позволяет вернуть `Error` на слот, а не бросить throw? Потому что throw отклоняет все ожидающие `.load()`-Promise — каждый резолвер в запросе получает rejection, даже те, чьи строки вернулись успешно. Per-slot ошибки дают точечный отказ: одно поле с отсутствующей строкой возвращает ошибку, все остальные разрешаются нормально. Apollo Server переводит ошибку резолвера в partial GraphQL response с одним `null`-полем и одной error-записью.
+</Inset>
+
+<Quiz
+  id="batch-contracts-q1"
+  lessonSlug="03-batch-function-contracts"
+  lang="ru"
+  question="Batch-функция возвращает строки в том порядке, что вернула база, без Map-построения. Каков симптом?"
+  choices={[
+    { label: "Batch-функция бросает DataLoader-ошибку", misconception: "DataLoader не валидирует порядок возвращаемого массива. Он доверяет batchLoadFn." },
+    { label: "Некоторые резолверы тихо получают не ту строку, потому что порядок строк из базы не совпадает с порядком входных ключей", correct: true },
+    { label: "Запрос медленнее из-за дополнительной сортировки", misconception: "Сортировка не добавляется. Баг — в корректности, не в скорости." },
+    { label: "Только первый вызов резолвера получает верное значение", misconception: "Любой резолвер может получить не то значение в зависимости от произвольного порядка строк из базы." },
+  ]}
+/>
+
+<Quiz
+  id="batch-contracts-q2"
+  lessonSlug="03-batch-function-contracts"
+  lang="ru"
+  question="One-to-many batch-функция для Post.tags пропускает пустые массивы для постов без тегов. Что ломается?"
+  choices={[
+    { label: "Loader кидает ошибку для отсутствующих постов", misconception: "DataLoader не бросает ошибку на пропущенных слотах — он разрешает с тем значением, которое стоит на этой позиции в возвращённом массиве." },
+    { label: "Следующие посты получают теги предыдущих, потому что пропущенные слоты сдвигают все последующие позиции", correct: true },
+    { label: "Сервер возвращает пустой ответ на весь запрос", misconception: "Отказ локален для резолвера — остальные поля разрешаются нормально." },
+    { label: "DataLoader автоматически повторяет batch-функцию", misconception: "DataLoader не повторяет. Контракт — вернуть одно значение на ключ." },
+  ]}
+/>
+
+<Quiz
+  id="batch-contracts-q3"
+  lessonSlug="03-batch-function-contracts"
+  lang="ru"
+  question="Batch-функция бросает необработанное исключение. Какие .load()-Promise отклоняются?"
+  choices={[
+    { label: "Только тот .load()-вызов, который вызвал исключение", misconception: "Throw отклоняет все ожидающие Promise батча, а не один." },
+    { label: "Все .load()-Promise в текущем батче", correct: true },
+    { label: "Никакие — DataLoader перехватывает исключения и возвращает null в каждый слот", misconception: "DataLoader пробрасывает throw как отказ всего батча." },
+    { label: "Только Promise для ключей, уже находившихся в кеше", misconception: "Закешированные Promise уже разрешены. Throw затрагивает только текущий незакешированный батч." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>batchLoadFn должна вернуть по одной записи на входной ключ в том же порядке, используя Map для переупорядочивания результатов базы. Возвращай null или Error на слот для отсутствующих/упавших строк; throw — только для отказов всего батча.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="batch-contracts-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему batchLoadFn должна возвращать значения в том же порядке, что входные ключи?", a: "DataLoader отображает i-е значение в возвращённом массиве на i-й ключ во входном массиве. Если порядок отличается, каждый .load()-Promise разрешается с неверным значением. Базы данных не гарантируют порядок строк из WHERE id IN (...), поэтому нужно строить Map по ID и проходить входные ключи в исходном порядке." },
+    { q: "В чём разница между возвратом Error в слоте и throw из batchLoadFn?", a: "Возврат Error в слоте отклоняет только .load()-Promise для этого конкретного ключа — все остальные Promise разрешаются нормально. Throw из batchLoadFn отклоняет все ожидающие Promise всего батча. Используй per-slot ошибки для known-failures (не найдено, нет прав); throw — только для катастрофических отказов (база упала)." },
+    { q: "Что нужно вернуть для родительского ключа без детей в one-to-many загрузчике?", a: "Пустой массив — не undefined, не null, не пропущенный слот. Если пропустить слот, дети следующего родителя заполнят его позицию, тихо отдав неверные данные каждому резолверу ниже по потоку." },
+  ]}
+/>
+
+<Recap lang="ru">
+Контракт batch-функции: три правила — та же длина, что входные ключи; значения в том же порядке, что входные ключи; значение (или Error) на каждый ключ. Нарушение порядка тихо возвращает не те строки — DataLoader доверяет позиции. Нарушение длины сдвигает все последующие резолверы. Пропуск пустых массивов в one-to-many батчах передаёт данные одного родителя другому. Возвращай per-slot Error для known-bad строк, чтобы другие резолверы в том же батче прошли успешно; throw — только когда весь батч не может выполниться.
+</Recap>

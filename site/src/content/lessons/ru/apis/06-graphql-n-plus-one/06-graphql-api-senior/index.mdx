@@ -1,0 +1,212 @@
+---
+slug: 06-graphql-api-senior
+lang: ru
+track: apis
+unit: 06-graphql-n-plus-one
+order: 6
+title: "Senior GraphQL API: scheduling-контракт, изоляция арендаторов, наблюдаемость"
+summary: "Точная семантика планирования DataLoader, tenant-safe per-request скоупинг, APQ vs trusted documents, мультипликативный complexity scoring, анатомия alias-бомбы и минимальный дашборд наблюдаемости."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - apis/06-graphql-n-plus-one/03-batch-function-contracts
+  - apis/06-graphql-n-plus-one/05-query-complexity-defences
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["enqueue-post-promise-job", "tenant-isolation", "apq-vs-trusted-documents", "multiplicative-complexity", "alias-bomb-anatomy", "resolver-observability"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://www.apollographql.com/docs/apollo-server/data/fetching-data
+  - https://escape.tech/blog/graphql-batch-attacks-cause-dos/
+  - https://graphql.org/learn/security/
+  - https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Production-инцидент: скорость вызовов базы в 6 раз выше нормы, HTTP-RPS нормальный. Persisted queries enforced — необычных хешей нет. Недавний рефакторинг переместил один DataLoader из context-фабрики в module scope. Одна строка, ноль тестов, поймавших это, — и теперь кеш делится между арендаторами.
+</Hook>
+
+<Crux>DataLoader ограничен event loop JS, не таймером. Изоляция tenant требует SQL-фильтра. Complexity scoring умножай на размер списка.</Crux>
+
+<Explanation>
+
+## Точный scheduling-контракт DataLoader
+
+Библиотека использует `enqueuePostPromiseJob` — обёртку над `process.nextTick` в Node.js и `Promise.resolve().then` в браузерах — для планирования dispatch'а батча. Dispatch запускается:
+
+- После текущего синхронного фрейма
+- После всех микротасок, поставленных в очередь в этом фрейме
+
+Это значит: `.load()`-вызовы внутри тел резолверов, внутри `.then()`-цепочек после синхронной работы резолвера и внутри nextTick-отложенной логики — все попадают в один батч. Окно ограничено event loop JS-рантайма, не таймером. Никаких `setTimeout`, `setImmediate`, фиксированных миллисекунд.
+
+`batchScheduleFn` переопределяет это если нужна другая семантика (например, дебаунс на уровне кластера через cross-process брокер). Production-серверы оставляют дефолт.
+
+## Изоляция арендаторов в cache key
+
+Паттерн context-фабрики из урока 02 необходим, но недостаточен для multi-tenant систем. Новый DataLoader-инстанс на каждый запрос предотвращает кросс-request кеш-хиты, но если batch-функция запрашивает данные без фильтрации по tenant, два одновременных запроса от разных арендаторов в одном Node-процессе могут получить данные друг друга через сам SQL-запрос (не через кеш).
+
+Безопасный паттерн:
+
+```javascript
+context: async ({ req }) => ({
+  loaders: makeLoaders(req.auth.tenantId),
+})
+
+function makeLoaders(tenantId) {
+  return {
+    user: new DataLoader(async (ids) => {
+      const rows = await db.query(
+        'SELECT * FROM users WHERE id = ANY($1) AND tenant_id = $2',
+        [ids, tenantId]   // tenant-скоуп на уровне SQL
+      );
+      const map = new Map(rows.map(r => [r.id, r]));
+      return ids.map(id => map.get(id) ?? null);
+    }),
+  };
+}
+```
+
+Аудит SonarSource 2024 года OSS GraphQL-серверов нашёл tenant-leak баги в 6 из 12 кодовых баз — все из-за module-scope DataLoader или отсутствия tenant-фильтра в batch-запросе.
+
+## APQ vs trusted documents
+
+Два разных механизма под одним именем «persisted queries»:
+
+- **Automatic Persisted Queries (APQ):** Клиент считает SHA-256 от текста запроса и шлёт только хеш. Если сервер не видел хеш раньше, возвращает `PersistedQueryNotFound`, клиент пересылает полный документ. APQ экономит байты на тёплом кеше (5 KB запрос → 64-символьный хеш). Он **не** ограничивает форму запроса — любой клиент может зарегистрировать и выполнить любой документ.
+
+- **Trusted documents:** Выполняются только pre-registered хеши. Неизвестные отклоняются. Регистрация — на этапе сборки клиента. Это граница безопасности, не оптимизация производительности.
+
+Production-команды, которым нужно и то и другое, деплоят trusted documents и используют APQ-style хеширование внутри зарегистрированного набора.
+
+## Почему field-count complexity scoring — баг недосчёта
+
+Наивное правило «cost = 1 на поле, суммируется» сообщает cost 50 для 10-глубокого запроса с 5 полями на уровень. Реальная стоимость — в расширении строк на каждом list-уровне. Запрос, запрашивающий `first: 100` на каждом из 5 уровней, читает 100^5 = 10^10 строк концептуально — но field-count всё равно сообщает 50.
+
+Правильная формула умножает на размер list-аргумента:
+
+```
+cost(field) = field_weight + sum(child.first_arg × cost(child))
+```
+
+С `first: 100` на каждом уровне калькулятор возвращает 100^5 — астрономически за бюджетом, запрос отклоняется при парсинге AST до запуска любого резолвера. Публичная формула GitHub — документированная версия этого мультипликативного правила.
+
+## Анатомия alias-бомбы
+
+Один документ с 1000 корневых алиасов:
+
+```graphql
+q1: user(id: 1) { email }
+q2: user(id: 2) { email }
+...
+q1000: user(id: 1000) { email }
+```
+
+Один валидный документ, парсится один раз. Выполнение запускает 1000 вызовов резолверов. DataLoader сворачивает поездки в базу до одного батч-запроса — но число вызовов резолверов — рычаг атакующего: 1000 резолверов вызывают логику проверки прав, логирование, поиск в контексте. Документ в 5 МБ может дать шестизначное число вызовов резолверов на одном HTTP-запросе, обходя любой наивный per-request rate limit.
+
+Аудит Escape.tech 2024: 64% production GraphQL-эндпоинтов не имеют alias-кепов. Отчёт Imperva 2023 приписал 18% GraphQL production-инцидентов alias-batch DoS.
+
+## Минимальный дашборд наблюдаемости
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Метрика | Условие алерта |
+|---|---|
+| `graphql_request_total{operation,outcome}` | Error rate выше SLO |
+| `graphql_request_duration_p99` | Выше latency-бюджета |
+| `graphql_resolver_call_count` на запрос | Выше N (регрессия N+1) |
+| гистограмма `graphql_query_cost` | Long-tail выше бюджета |
+| `graphql_persisted_query_hit_ratio` | Ниже 90% |
+| `graphql_introspection_request_total` | Non-zero в проде (если интроспекция off) |
+
+</div>
+
+Per-resolver трассировка через OpenTelemetry GraphQL instrumentation эмитит span на каждый `type.field`-вызов. Агрегация span'ов по операции даёт счётчики вызовов резолверов. Без этой инструментации регрессия N+1 невидима, пока CPU базы не запейджит дежурного.
+
+<NumbersCard
+  id="card-senior-numbers-ru"
+  title="Senior-tier числа защиты GraphQL"
+  stats={[
+    { label: "GitHub GraphQL points/час кеп", value: "5000" },
+    { label: "GitHub per-query cost кеп", value: "1000" },
+    { label: "Shopify Storefront per-query кеп", value: "1000 cost units" },
+    { label: "Shopify Storefront throttle", value: "1000 cost/sec/IP" },
+    { label: "Дефолтный depth limit (Apollo Router)", value: "10" },
+    { label: "Рекомендация list-depth", value: "3–4" },
+    { label: "Alias-bomb кеп (типично)", value: "≤20 root алиасов" },
+    { label: "Operation-batch кеп (типично)", value: "≤5 операций" },
+  ]}
+/>
+
+<Misconception id="mc-dataloader-global-senior-ru">
+  <p><strong>«Глобальный DataLoader экономит память за счёт кеширования между запросами.»</strong> Он также утекает данные между арендаторами. Тот же ключ — та же строка, отозванное право Tenant A невидимо Tenant B. DataLoader — per-request: создавай в context-фабрике, никогда как module-singleton.</p>
+</Misconception>
+
+<Quiz
+  id="senior-q1"
+  lessonSlug="06-graphql-api-senior"
+  lang="ru"
+  question="Федеративный supergraph применяет depth limit 7 на роутере. Почему каждый subgraph должен также применять свои complexity- и depth-лимиты?"
+  choices={[
+    { label: "Defence-in-depth — предполагаем, что роутер можно обойти или неправильно настроить", correct: true },
+    { label: "Роутер не передаёт лимиты downstream в subgraph", misconception: "Роутер enforce'ит свои лимиты. Вопрос в том, что каждый subgraph добавляет сверху для defence-in-depth." },
+    { label: "Subgraph всегда работают на другом железе с другими лимитами", misconception: "Железо ортогонально защите формы запроса." },
+    { label: "Спецификация federation требует per-subgraph лимитов", misconception: "Best practice требует; спецификация federation — нет." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q2"
+  lessonSlug="06-graphql-api-senior"
+  lang="ru"
+  question="Правило complexity: «cost = 1 на поле, суммируется по AST». 10-глубокий рекурсивный запрос с 5 полями на уровень даёт cost 50 и проходит 1000-бюджет. Что не так?"
+  choices={[
+    { label: "Правило недосчитывает, игнорируя умножение list-аргументов — запрос с first:100 на каждом из 5 уровней читает 100^5 строк, а не 50", correct: true },
+    { label: "Правило перечитывает, потому что веса полей должны быть дробными", misconception: "Проблема — недосчёт, а не перечёт." },
+    { label: "Правило верно — 50 полей это 50 стоимости", misconception: "Подсчёт полей игнорирует расширение строк из list-аргументов. 5 уровней с first:100 = 10^10 строк концептуально." },
+    { label: "Правило не работает, потому что depth limit надо применять первым", misconception: "Depth-лимиты и complexity scoring дополняют друг друга, не последовательны. Это баг в самой формуле complexity." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q3"
+  lessonSlug="06-graphql-api-senior"
+  lang="ru"
+  question="DataLoader создаётся per-request, но batch-функция запрашивает базу без tenant-фильтра. Каков режим отказа?"
+  choices={[
+    { label: "Кросс-request кеш-хиты предотвращены, но два одновременных запроса от разных арендаторов могут получить строки друг друга через сам SQL-запрос", correct: true },
+    { label: "Per-request кеш предотвращает все кросс-tenant утечки данных", misconception: "Изоляция кеша предотвращает кросс-request кеш-хиты, но без фильтра tenant в SQL разные арендаторы могут получить строки друг друга из базы." },
+    { label: "Batch-функция автоматически фильтрует по tenant", misconception: "Batch-функция — твой код; он фильтрует то, что ты в него заложишь." },
+    { label: "Это важно только в федеративных графах", misconception: "Изоляция арендаторов — проблема любого multi-tenant GraphQL-сервера, федеративного или нет." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Планирование DataLoader ограничено семантикой JS event loop. Изоляция арендаторов требует tenant-фильтров в SQL внутри batch-функции. Мультипликативный complexity scoring ловит list-расширение, которое field-count пропускает. Resolver-level OpenTelemetry-трассировка — единственный надёжный способ поймать N+1-регрессии в production.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="senior-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему _entities-батчинг Apollo Federation не устраняет потребность в DataLoader внутри subgraph?", a: "_entities батчит на сетевом уровне: роутер шлёт один HTTP-вызов с 50 representations вместо 50 HTTP-вызовов. Внутри subgraph __resolveReference всё равно вызывается по разу на каждое representation. Если эти вызовы ходят в базу напрямую, получается 50 SQL внутри одного _entities. DataLoader батчит их в один SQL-поход. Federation отдаёт тебе сетевой батч бесплатно; батч базы — твоя ответственность." },
+    { q: "В чём разница между APQ и trusted documents?", a: "APQ — оптимизация производительности: клиент шлёт хеш, сервер выполняет полный документ если знает его. Любой документ всё ещё можно зарегистрировать и выполнить — APQ не ограничивает форму. Trusted documents — граница безопасности: выполняются только pre-registered хеши, неизвестные отклоняются. APQ экономит байты; trusted documents закрывают атакующую поверхность." },
+  ]}
+/>
+
+<Recap lang="ru">
+Окно батчинга DataLoader — граница микротаск event loop JavaScript, не таймер. Все `.load()`-вызовы из тел резолверов и их Promise-цепочек попадают в один батч. Per-request инстанциирование предотвращает кросс-request загрязнение кеша; tenant ID в SQL-фильтре предотвращает кросс-tenant утечки данных. APQ экономит байты на проводе, но не ограничивает форму запроса; trusted documents — ограничивают. Field-count complexity scoring пропускает list-расширение — умножай на `first/last`-аргументы, чтобы поймать 100^5-строчные запросы. Alias-бомбы обходят rate limit через амплификацию числа вызовов резолверов; кепи на ≤20 алиасов. Подключи счётчики вызовов резолверов к OpenTelemetry span'ам: без per-resolver трассировки N+1-регрессии невидимы, пока база не запейджит дежурного.
+</Recap>
