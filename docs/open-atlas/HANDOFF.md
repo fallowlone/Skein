@@ -160,10 +160,60 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Work queue (in order)
 
-1. **Migration: 3-tier → single-level lessons** — large. Convert the authored
-   networking pillar (12 pieces × 3 tiers, EN+RU) into single-level connected lessons;
-   rework the linter, the `/infographic` command, and `TierAccordion`. Do this now,
-   while only 1 of 16 pillars is authored. Give it its own written plan.
+1. **Migration: 3-tier → single-level lessons** — COMPLETE 2026-05-21. The
+   3-tier `book/` model is fully retired. All 16 pillars now expose single-level
+   connected lessons (open-atlas Model A) via `lessons/{en,ru}/<track>/<unit>/<lesson>/`.
+   - Spec: `docs/superpowers/specs/2026-05-19-tier-to-single-level-migration-design.md`
+   - Plan: `docs/superpowers/plans/2026-05-19-tier-to-single-level-migration.md`
+   - Phase A (additive infra) COMPLETE 2026-05-19.
+   - Phase B (content: 51 ready units) COMPLETE 2026-05-21. 5 ready pillars
+     (networking 12, browser 8, databases 8, observability 8, performance 8) +
+     7 lone ready pieces (apis/06-graphql-n-plus-one, backend/05-idempotency-retries,
+     caching/03-stampede, distributed/02-raft-outline, frontend/02-data-fetching,
+     queues/01-delivery-guarantees, security/02-oauth-oidc).
+   - Phase C (stubs: 81 units) COMPLETE 2026-05-21. Per-pillar batches: `bfda814`
+     ai-llm, `944d8d5` data-engineering, `a94c7d5` deployment, `4d850f4`
+     engineering-practice, `432fd8f` apis, `389a87d` backend, `0ec500f` caching,
+     `232e42a` distributed, `5a0eaa5` frontend, `b240a74` queues, `2f2ef86` security.
+   - Phase D (teardown) COMPLETE 2026-05-21. `01add9f` D1 piece-only lint rules
+     dropped (`depth-checkpoints`, `tier-accordion`, `tier-word-budgets`,
+     `exercise-counts`; `EXERCISE_COMPONENTS` moved to shared `exercise-components.ts`).
+     `f5d9c46` D2 piece routes removed; `Chapter.astro` deleted, `Topic.astro` kept
+     (still imported by Lesson/glossary/settings/threads/learn pages). `2cac861` D3
+     `book`/`pillars`/`chapters` collections + data files retired, orphan nav components
+     cleaned, `PillarGrid`/`GlobalSearch`/home page repointed at tracks/lessons.
+     `e1f4520` D4 `TierAccordion.astro` + `3-tier-piece.mdx` + `tier-persist.spec.ts`
+     deleted. `378f43e` D5 final cleanup of piece-era orphan components + dead CSS;
+     stale-reference grep clean.
+   - **Final state**: build 2359 pages, lint 0/0. 19 tracks (3 foundations + 16
+     fullstack pillars). 132 units (51 ready + 81 stub). On branch
+     `interesting-antonelli-002bf7`, NOT yet merged to main; separate merge task.
+
+   Carry-forward notes (still relevant for future work):
+   - `08-putting-it-together` slug recurs across many tracks; performance dedupes
+     with `-perf` suffix in `units.json` to avoid collision. Other tracks left as-is —
+     non-fatal slug warning at build time.
+   - `personas.json` is still used (`PersonaTag`, `PersonaLegend`, lint rule) — not
+     deleted in D3.
+   **Traps learned during Phase B (encode into every subagent prompt):**
+   - MDX parses `<1`, `<2`, `<5` etc as JSX → build fails. Use `&lt;1` or "under 1".
+   - Bare `>` in prose → `&gt;`.
+   - `\"` backslash escapes inside JSX string attrs → use `&quot;`.
+   - Curly-brace runs like `{trace_id}` outside JSX attrs → wrap as `{"{trace_id}"}`.
+   - `~` chars inside HTML table cells → `&#126;` (markdown strikethrough parse).
+   - `MetaphorComplete` widget props are `pieceSlug`/`setup`/`accepted`/`canonical`/
+     `explanation` — NOT `lessonSlug`/`pairs`/`prompt`.
+   - Length norms (linter measures rendered stripped text — converge by trim iterations):
+     Crux ≤140, KeyTakeaway EN ≤~240 RU ≤~440, Misconception body ≤310 raw (renders ≤320
+     after "heads-up" prefix), summary ≤~280.
+   - All component imports via `~/` alias — never `..` relative segments.
+   **Subagent timeout pattern (2026-05-20):** sonnet implementer occasionally hits "API
+   Error: Stream idle timeout" after ~17-20 min while authoring ~14 lesson files.
+   Observed twice this session (07-sharding, 02-structured-logging). Recovery: do NOT
+   redo from scratch — dispatch a focused reconcile subagent that takes existing
+   EN/RU orphan files as the starting point and finishes missing files + units.json
+   entry + build gate + git rm source + commit. Both reconciles completed cleanly
+   (commits `9b312c6`, `0b87822`).
 
 ## Open questions
 
@@ -208,3 +258,40 @@ by following a connected path of lessons. Practice is deferred (theory first).
 - Build: `cd site && bun run build` (expect ~484 pages, lint clean).
 - Preview: launch the `atlas-preview` server (Claude Preview); it serves `site/dist`
   on port 4400. Home at `/en/`, lesson shell at `/lesson-preview/`.
+
+## ⚠️ CONCURRENCY COLLISION — 2026-05-19, networking/01-physical-link
+
+A scheduled `proceed-work` run started while another claude-code session was already
+actively authoring `networking/01-physical-link` in this same worktree
+(`interesting-antonelli-002bf7`). Two agents migrated the same unit at once — confirmed
+by lesson files appearing / being overwritten every ~2 min from another process, and
+by this HANDOFF being edited mid-run. **Only ONE session must touch this worktree.**
+
+State of `01-physical-link` as the scheduled run withdrew (NOTHING committed):
+- EN lessons present: `01-bits-on-the-wire`, `02-modulation-and-shannon`,
+  `03-latency-math`, `04-bufferbloat-and-congestion`, `05-datacenter-and-800g`.
+- RU lessons present: `01`, `02`, `03` only — `04` and `05` RU twins MISSING.
+- The scheduled run deleted two of its own orphan lessons (`05-the-datacentre-fabric`,
+  `06-the-physical-frontier`) that duplicated the other agent's cut, and repointed
+  `04`'s `deepensInto` to `05-datacenter-and-800g`. `01`/`02` cruxes trimmed to ≤140.
+- Known build breakage: `03-latency-math` (EN+RU) has `<1 ms` in a Markdown table —
+  MDX parses `<1` as a JSX tag, vite build fails. RU `02` URLLC line has the same
+  `<1` bug. Fix: `&lt;1` or "under 1 ms".
+
+Before resuming this unit, one agent must: reconcile/confirm the cut plan + slugs,
+finish RU twins for `04`+`05`, fix the `<1` MDX bug, add the `units.json` entry,
+`cd site && bun run build` to lint 0/0, delete `book/{en,ru}/networking/01-physical-link/`,
+then commit. Verify each lesson before declaring it `ready`.
+
+## ⚠️ CONCURRENCY COLLISION — 2026-05-20, mid-session lock loss
+
+During an autonomous Phase B run (this session, databases + observability + perf 01-04
+on 2026-05-20), another claude session committed `59cdb76`
+(`docs(open-atlas): refresh CONTINUE-PROMPT to 26/51 + add POST-MIGRATION-PROMPT`) and
+silently removed `docs/open-atlas/.migration-lock/` while the primary session held it.
+The concurrent commit was docs-only (`CONTINUE-PROMPT.md` + `POST-MIGRATION-PROMPT.md`)
+— not a content collision. The primary session reacquired the lock and continued. No
+content corruption resulted. Going forward: the lock dir is the ONLY coordination
+signal; do not bypass it. If the concurrent process is your own scheduled-run
+refresher, gate it behind a lock check too — it must NOT `rm -rf` a lock it does not
+own.

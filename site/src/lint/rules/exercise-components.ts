@@ -1,0 +1,16 @@
+export const EXERCISE_COMPONENTS = new Set([
+  "Quiz",
+  "FadedExample",
+  "RetrievalDrawer",
+  "TraceScenario",
+  "DebugLog",
+  "TradeoffMatrix",
+  "DragOrder",
+  "MetaphorComplete",
+  "RFCQuiz",
+  "DesignPrompt",
+  "AnimationStep",
+  "NumberDrill",
+  "Sandbox",
+  "RequestBudgetSandbox",
+]);
