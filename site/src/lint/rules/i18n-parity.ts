@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, access } from "node:fs/promises";
 import { join, basename } from "node:path";
 import glossary from "../../i18n/glossary.json";
 
@@ -16,6 +16,7 @@ async function walk(dir: string): Promise<string[]> {
 export async function checkI18nParity(siteSrc: string): Promise<string[]> {
   const errs: string[] = [];
   const bookDir = join(siteSrc, "content/book");
+  try { await access(bookDir); } catch { return errs; }
   const files = await walk(bookDir);
   const enReady = new Set<string>();
   const ruReady = new Set<string>();
