@@ -1,0 +1,168 @@
+---
+slug: 02-log-replication-and-commit
+lang: ru
+track: distributed
+unit: 02-raft-outline
+order: 2
+title: "Как Raft реплицирует log entry и решает, что его безопасно коммитить"
+summary: "RPC AppendEntries, проверка целостности, удерживающая логи идентичными, commit index и паттерн replicated state machine, построенный сверху."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - distributed/02-raft-outline/01-raft-roles-and-terms
+deepensInto:
+  - distributed/02-raft-outline/03-leader-election-in-depth
+spiral: ["statefulness"]
+concepts: ["append-entries", "commit-index", "log-matching", "state-machine", "fsync"]
+sources:
+  - https://raft.github.io/raft.pdf
+  - https://raft.github.io/
+  - https://www.pingcap.com/article/understanding-raft-consensus-in-distributed-systems-with-tidb/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+Клиент отправляет `SET x = 42` Raft-кластеру. Лидер дописывает это в свой лог. Но только лидер не может коммитить эту запись — ему нужно подтверждение от достаточного числа follower-ов, что они тоже её получили. Если лидер упадёт сразу после дописи, но до того как хоть один follower ответит, что происходит с записью?
+</Hook>
+
+<Crux>Entry закоммичено — безопасно навсегда — только когда большинство персистировало его; незакоммиченные entry исчезают при падении лидера.</Crux>
+
+<Explanation>
+
+## Лог и AppendEntries
+
+Лидер Raft хранит упорядоченный лог из entry. Каждый entry — тройка: **(term, index, command)**. Когда клиент отправляет запись:
+
+1. Лидер дописывает entry в свой лог и выполняет fsync на диск.
+2. Лидер шлёт RPC `AppendEntries` каждому follower, передавая: новый entry, плюс **prevIndex** и **prevTerm** — index и term entry, предшествующего новому.
+3. Каждый follower проверяет: есть ли в моём логе entry на `prevIndex` с `prevTerm`? Если да — дописывает и делает fsync. Если нет — отвечает mismatch.
+4. Как только лидер получает подтверждение от большинства (включая себя), он помечает entry **закоммиченным**.
+5. Лидер пристёгивает свой **commit index** к следующему heartbeat. Follower-ы применяют entry до этого index к своим state machine.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Шаг | Кто действует | Что происходит |
+|-----|--------------|---------------|
+| 1 | Лидер | Дописывает (term=7, idx=101, cmd="SET x=42"), fsync |
+| 2 | Лидер | Шлёт AppendEntries B, C, D, E с prevIdx=100, prevTerm=7 |
+| 3 | Follower-ы B, C, D, E | Каждый проверяет: idx=100 имеет term 7. Дописывает, fsync, отвечает success |
+| 4 | Лидер | Получает 2 success (плюс своё = 3 из 5). Помечает idx=101 закоммиченным |
+| 5 | Лидер | Отвечает клиенту success |
+| 6 | Следующий heartbeat | Несёт commitIndex=101 — follower-ы применяют "SET x=42" к state machine |
+
+</div>
+
+## Проверка целостности: Log Matching
+
+Проверка `prevIndex`/`prevTerm` — не бюрократия, это механизм, удерживающий лог каждого follower идентичным логу лидера. Если лог follower-а расходится (потому что предыдущий лидер записал другие entry перед падением), ответ mismatch сигнализирует лидеру откатиться и повторить с более ранним `prevIndex`. Лидер продолжает уменьшать до нахождения последней точки согласия, затем перезаписывает расходящийся хвост follower-а своим.
+
+Это приводит к идентичным логам, потому что: каждое закоммиченное entry в предыдущем term было сохранено большинством нод. Лог нового лидера (избранного большинством) пересекается с этим предыдущим большинством, поэтому новый лидер имеет закоммиченные entry. Незакоммиченные entry на диске старого лидера перезаписываются — они никогда не были подтверждены клиенту, поэтому потери данных нет.
+
+## Паттерн replicated state machine
+
+Raft не интересует, что означают команды. Твоё приложение определяет **state machine** — key-value-маппу, дерево конфига, отношение — и команды, мутирующие её. Raft гарантирует: каждая нода применяет каждое закоммиченное entry в одном и том же порядке. Поскольку команды детерминированы, каждая state machine заканчивает в одном состоянии. Это паттерн **replicated state machine**: упорядоченный реплицированный лог + детерминированная state machine = консистентный распределённый сервис.
+
+Важные следствия:
+- Не используй `NOW()`, `random()` или внешние API-вызовы внутри обработчиков команд — они нарушают детерминизм между репликами.
+- State machine специфична приложению; Raft агностичен к ней.
+- Чтения для линеаризуемости должны идти через лидера (ReadIndex/lease, разбираются в следующем уроке); чтения с follower-ов могут вернуть stale-данные.
+
+<Quiz
+  id="raft-mid-q1"
+  lessonSlug="02-log-replication-and-commit"
+  lang="ru"
+  question="Follower Raft получает AppendEntries с prevIndex=50, prevTerm=4, но его лог на index 50 имеет term 3. Что делает follower?"
+  choices={[
+    { label: "Дописывает entry и доверяет лидеру", misconception: "Добавление без проверки prevTerm привело бы к расхождению логов — ровно то, что предотвращает Log Matching." },
+    { label: "Отвергает AppendEntries с mismatch-ответом; лидер повторит с меньшим prevIndex", correct: true },
+    { label: "Промоутит себя в candidate", misconception: "Сравнение term управляет сменой ролей, а не log-index-несоответствиями. Follower остаётся follower-ом." },
+    { label: "Обрезает весь лог и начинает с нуля", misconception: "Truncation инкрементален — лидер откатывается по одному index до нахождения совпадающей точки." },
+  ]}
+/>
+
+<FadedExample
+  client:load
+  id="raft-mid-fe1"
+  lessonSlug="02-log-replication-and-commit"
+  lang="ru"
+  title="Проследи клиентскую запись через 5-нодовый Raft-кластер"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Сетап:</strong> 5-нодовый кластер (A, B, C, D, E). A — лидер term 7. Все follower-ы догнали лог до index 100.</p>
+        <p><strong>Клиент пишет:</strong> "SET x = 42".</p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>A дописывает entry (term=7, index=101, cmd="SET x=42") и делает fsync.</li>
+          <li>A шлёт AppendEntries B, C, D, E: prevIndex=100, prevTerm=7, новый entry.</li>
+          <li>B и C проверяют: лог на 100 имеет term 7. Дописывают, fsync, отвечают success.</li>
+          <li>A считает: своё + B + C = 3 из 5. Кворум достигнут. Помечает 101 закоммиченным.</li>
+          <li>A отвечает клиенту success. Следующий heartbeat пристёгивает commitIndex=101.</li>
+        </ul>
+      </div>
+    ),
+    semi: {
+      prompt: "A падает после fsync entry 101 на свой диск, но ДО отправки AppendEntries. После выборов какой term у нового лидера?",
+      blanks: [
+        { id: "new_term", expected: "8", placeholder: "номер term" },
+      ],
+    },
+    blank: {
+      prompt: "Тот же crash. Entry 101 было только на диске A. Включит ли новый лидер B entry 101 в историю кластера?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p><strong>Нет.</strong> Entry 101 никогда не было реплицировано и не было закоммичено. Когда B выигрывает term 8, его лог заканчивается на index 100. B не видит 101. Когда A вернётся, B скажет A: лог расходится на 101 — обрежь. A подчиняется.</p>
+          <p>Клиент никогда не получил success для 101 (A упал до ответа), поэтому клиент либо ретраит, либо считает это сбоем. Ни одно закоммиченное entry не потеряно; только незакоммиченная попытка отброшена. Это Log Matching и Leader Append-Only в работе.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "new_term:7": "Term 7 принадлежал A. B увеличивает term при старте выборов, поэтому новый лидер минимум на term 8.",
+  }}
+/>
+
+<DragOrder
+  id="raft-mid-drag1"
+  lessonSlug="02-log-replication-and-commit"
+  lang="ru"
+  prompt="Поставь шаги проверки целостности AppendEntries в правильном порядке:"
+  items={[
+    "Лидер выбирает следующий log index для отправки follower-у",
+    "Лидер шлёт AppendEntries с prevIndex, prevTerm и новым entry",
+    "Follower проверяет: есть ли в моём логе entry на prevIndex с prevTerm?",
+    "Если да — follower дописывает и отвечает success",
+    "Если нет — follower отвечает mismatch со своим конфликтующим index/term",
+    "Лидер уменьшает nextIndex для этого follower и повторяет с более ранним prevIndex",
+    "В итоге лидер находит последнюю точку совпадения; follower обрезает хвост и принимает версию лидера",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>AppendEntries реплицирует entry по одному, с проверкой prevIndex/prevTerm, удерживающей каждый лог follower-а идентичным лидерскому. Entry закоммичено — и безопасно навсегда — только когда большинство сделало fsync. Незакоммиченные entry на диске упавшего лидера молча отбрасываются.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="raft-mid-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему log entry Raft не является закоммиченным в момент, когда лидер записывает его на диск?", a: "Потому что 'закоммичено' в Raft означает, что большинство нод персистировало entry. Если только лидер имеет его, crash и новые выборы приведут к лидеру без этого entry, и оно будет перезаписано. Только когда большинство сделало fsync, entry переживёт любую возможную смену лидера. Лидер сигнализирует о коммите, обновляя commit index, который пристёгивает к следующему AppendEntries или heartbeat." },
+    { q: "Follower был offline 2 минуты и пропустил 500 log entry. Он возвращается. Как он догоняет?", a: "Лидер отслеживает nextIndex для каждого follower — следующий log index для отправки. При переподключении follower начинает отвергать AppendEntries, пока лидер не откатится до последнего совпадающего prevIndex/prevTerm. Как только точка найдена, лидер шлёт пропущенные entry по порядку. Если follower отстал настолько, что лидер уже скомпрессировал эти entry в snapshot, лидер шлёт InstallSnapshot вместо них." },
+    { q: "Почему обработчики команд в Raft state machine должны быть детерминированы?", a: "Каждая нода применяет каждое закоммиченное entry независимо и должна прийти к одному состоянию. Если команда вызывает NOW(), random() или выполняет сетевой запрос, разные ноды получают разные значения для одной команды, и состояние расходится между репликами. Все недетерминированные значения должны вычисляться лидером и встраиваться в log entry как константы до репликации." },
+  ]}
+/>
+
+<Recap lang="ru">
+Лидер реплицирует записи через AppendEntries, который несёт проверку целостности prevIndex/prevTerm, заставляющую лог каждого follower-а сходиться к лидерскому. Entry закоммичено, когда большинство персистировало его; лидер затем транслирует commit index, чтобы follower-ы применили entry к своим state machine. Это паттерн replicated state machine: идентичные упорядоченные логи плюс детерминированные обработчики равно идентичное состояние на каждой реплике. Незакоммиченные entry от упавшего лидера безопасно отбрасывать — они никогда не были подтверждены. Стоимость fsync при каждом коммите — доминирующая операционная цена, поэтому Raft-нагрузки требуют dedicated NVMe, а не shared cloud-объёмов.
+</Recap>

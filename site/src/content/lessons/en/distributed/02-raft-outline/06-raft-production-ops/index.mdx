@@ -1,0 +1,162 @@
+---
+slug: 06-raft-production-ops
+lang: en
+track: distributed
+unit: 02-raft-outline
+order: 6
+title: "Raft in production: membership changes, Multi-Raft, and observability"
+summary: "Joint consensus for safe membership change, Multi-Raft sharding patterns, leadership transfer for rolling deploys, the minimum viable Raft dashboard, and three real production postmortems."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - distributed/02-raft-outline/05-advanced-extensions
+spiral: ["statefulness", "multiplexing"]
+concepts: ["joint-consensus", "multi-raft", "leadership-transfer", "raft-observability", "membership-change"]
+sources:
+  - https://raft.github.io/raft.pdf
+  - https://github.com/hashicorp/raft/blob/main/membership.md
+  - https://developer.hashicorp.com/consul/docs/concept/consensus
+  - https://arxiv.org/pdf/2504.14802
+  - https://www.yugabyte.com/blog/how-does-consensus-based-replication-work-in-distributed-databases/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+You need to replace a dead node in your 3-node etcd cluster. "Just remove it and add the new one" sounds simple — but done wrong, it can leave you with two groups of nodes each believing they are the majority. Joint consensus exists specifically to prevent this.
+</Hook>
+
+<Crux>Joint consensus, Multi-Raft, and five observability metrics separate a Raft cluster that runs from one that stays running.</Crux>
+
+<Explanation>
+
+## Membership change via joint consensus
+
+Adding or removing nodes from a running Raft cluster is the most error-prone operation in production. The naive approach — atomically swap the config on all nodes — creates a discontinuity window during which two separate majorities can exist simultaneously.
+
+**Example of the bug:** transitioning from 3 nodes (A, B, C) to 5 nodes (A, B, C, D, E). If different nodes apply the config change at different times, you can briefly have: a majority of the old config (2 of A, B, C) and a majority of the new config (3 of A, B, C, D, E). These two majorities can have zero overlap — two leaders could be elected simultaneously.
+
+**Joint consensus** fixes this: the cluster transitions through an intermediate configuration `C_old_new` that requires a majority from **both** the old and the new configuration. Commits during this phase need a majority of C_old AND a majority of C_new. No two valid quorums in this window can be disjoint. Once `C_old_new` is committed cluster-wide, the cluster transitions to C_new alone.
+
+Hashicorp Raft and etcd implement joint consensus with an additional simplification: **single-server changes only** (add or remove one node at a time). This limits the joint phase to a simple two-majority requirement and makes the operational story tractable. Never bypass joint consensus for membership changes in production — the Alibaba Cloud Raft engineering post documents a real 30-minute split brain caused by exactly this shortcut.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Phase | Config | Quorum rule |
+|-------|--------|------------|
+| Before | C_old: A, B, C | Majority of C_old (2 of 3) |
+| Transition | C_old_new | Majority of C_old AND majority of C_new |
+| After | C_new: A, B, C, D, E | Majority of C_new (3 of 5) |
+
+</div>
+
+## Leadership transfer for rolling deploys
+
+Without explicit leadership transfer, draining a leader node before maintenance causes one election (150–300 ms unavailability) per leader migrated. On a multi-Raft system with thousands of groups, this is unacceptable.
+
+**`TimeoutNow`** solves it: the current leader sends a `TimeoutNow` message to a designated target follower, which immediately starts an election. Because no other follower has timed out yet, the target almost always wins. The current leader steps down. User-visible unavailability is under 10 ms. CockroachDB and TiKV expose leadership-transfer endpoints for exactly this use case in rolling deploys.
+
+## Multi-Raft and sharding
+
+A single Raft group's throughput is bounded by the slowest replica's fsync plus the network round-trip. For high-throughput systems, the architecture is **Multi-Raft**: many independent Raft groups in parallel, each owning a shard of the keyspace.
+
+- **CockroachDB:** partitions the keyspace into ~512 MB "ranges," one Raft group per range.
+- **TiKV:** same with ~100 MB "regions."
+- **Kafka KRaft:** one Raft group per metadata topic partition.
+
+**Heartbeat coalescing** makes Multi-Raft viable at scale: instead of 50,000 groups × 1 heartbeat/50 ms = 1M heartbeats/s, a 5-node cluster with 50,000 groups sends 10 physical packets per 50 ms (one per node pair), each containing all group heartbeats in a compact bitmap. That is 200 packets/s instead of 1M.
+
+## Minimum viable Raft dashboard
+
+| Metric | Alert threshold | Root cause when triggered |
+|--------|----------------|--------------------------|
+| `leader_changes_total` per minute | &gt;1/min | Flapping leadership — check disk or heartbeat RTT |
+| `wal_fsync_duration_seconds` p99 | &gt;50 ms | Disk too slow — move to NVMe |
+| `commit_latency_seconds` p99 | &gt;100 ms | Disk, network, or follower lag |
+| `follower_lag_entries` | &gt;1000 | Follower falling behind — may need snapshot soon |
+| `raft_term` growth rate | &gt;2/min | Repeated elections — check network + pre-vote |
+
+Etcd ships `etcd_server_leader_changes_seen_total`, `etcd_disk_wal_fsync_duration_seconds`, and `etcd_network_peer_round_trip_time_seconds` by default.
+
+## Three real production postmortems
+
+**GitHub October 2018.** A network blip between datacenters caused etcd to trigger a failover. A misconfigured external sync wrote to both regions during a brief window — Raft was correct, the orchestrator above it was not. Lesson: Raft guarantees consensus within the cluster; it cannot protect against a misconfigured operator layer writing around the cluster.
+
+**Datadog 2023.** A TiKV cluster experienced repeated leader elections under high write load. Root cause: pre-vote was disabled in an older version. Under write pressure, network jitter caused spurious elections, each one causing hundreds of milliseconds of unavailability. Enabling pre-vote resolved the issue. Lesson: pre-vote is a correctness feature, not a nicety.
+
+**Kubernetes etcd 2020.** An admin removed a node from a 3-node cluster without using the membership change API (manually deleted the data dir and reconfigured). The remaining two nodes had disagreeing stored configurations and cycled between leader and candidate. Fix required stopping the cluster, manually editing configs, and restarting. Lesson: never manipulate Raft state outside the protocol's own membership change path.
+
+<DebugLog
+  id="raft-sr-debug1"
+  lessonSlug="06-raft-production-ops"
+  lang="en"
+  title="Diagnose the Raft log — what is wrong with follower D?"
+  output={`2026-05-13T15:42:08Z INFO  raft: leader=A term=12 commit=400123
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> B success
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> C success
+2026-05-13T15:42:08Z INFO  raft: AppendEntries -> D failure (mismatch at idx=400100 term=12 vs follower idx=400100 term=11)
+2026-05-13T15:42:09Z INFO  raft: AppendEntries -> D retry prevIdx=400050 (decremented)
+2026-05-13T15:42:09Z INFO  raft: AppendEntries -> D failure (mismatch at idx=400050 term=12 vs follower idx=400050 term=10)
+2026-05-13T15:42:10Z INFO  raft: AppendEntries -> D retry prevIdx=399000 (decremented)
+2026-05-13T15:42:10Z INFO  raft: AppendEntries -> D failure (mismatch at idx=399000 term=12 vs follower idx=399000 term=8)
+2026-05-13T15:42:11Z WARN  raft: D has diverged extensively; consider InstallSnapshot`}
+  outputLang="log"
+  question="The leader keeps decrementing nextIndex for D. What is the diagnosis and the correct operational fix?"
+  hint="Look at the term gap: D has term 8 at index 399000, the leader claims term 12. How many leadership generations did D miss?"
+  answer="Follower D has been offline or partitioned long enough to miss at least 4 leadership generations (term 8 vs term 12). The AppendEntries consistency-check is correctly walking back one index at a time, but D diverges over hundreds of thousands of entries — continuing to decrement one-by-one would take minutes and generate enormous network traffic. The correct fix is to trigger InstallSnapshot: the leader ships its current state machine snapshot, D loads it as its starting state, then catches up the recent tail via normal AppendEntries. Most Raft libraries do this automatically once nextIndex falls below the leader's snapshot boundary. Prevention: alert on follower_lag_entries > 1000 so an offline follower is detected before the leader compacts past its last known index."
+/>
+
+<TradeoffMatrix
+  id="raft-sr-tradeoff1"
+  lessonSlug="06-raft-production-ops"
+  lang="en"
+  prompt="A startup needs a strongly consistent KV store for service discovery. Pick the consensus implementation that best balances correctness, latency, and operational burden."
+  options={[
+    { name: "Self-hosted 3-node etcd across 3 AZs", summary: "Industry default.", correct: true, justification: "Etcd is the reference Raft implementation; well-documented, monitored at scale by Kubernetes operators worldwide. 3-AZ deployment tolerates one AZ failure with 2–10 ms intra-region commits. Operational burden is real but bounded." },
+    { name: "Hand-rolled Multi-Paxos in Go", summary: "Maximum control, maximum risk.", justification: "Almost certainly introduces subtle bugs: membership change, log compaction, snapshot installation, crash recovery with partial fsync. Industry shows DIY consensus fails in production within months. Pick this only if publishing a paper, not running a service." },
+    { name: "Cloud-managed (AWS DynamoDB strong, GCP Spanner)", summary: "Zero ops, opaque cost and lock-in.", justification: "Correct, removes operational burden. 2–5x more expensive than self-hosted, vendor lock-in, harder to debug deep latency. Reasonable for teams without on-call expertise; expensive for high-throughput config workloads." },
+    { name: "Eventually consistent KV (Cassandra, DynamoDB eventual)", summary: "Wrong consistency model.", justification: "Service discovery needs read-after-write: a newly registered instance must appear immediately. Eventual consistency returns stale endpoints to clients. Strong consistency is non-negotiable here." },
+  ]}
+/>
+
+<Quiz
+  id="raft-sr-q3"
+  lessonSlug="06-raft-production-ops"
+  lang="en"
+  question="Why does a naive single-step config swap (adding 3 nodes at once without joint consensus) risk split brain?"
+  choices={[
+    { label: "Because new nodes have empty logs and temporarily slow commits", misconception: "Slow commits are a performance concern, not a split-brain risk. The safety issue is the config discontinuity window." },
+    { label: "Because different nodes applying the config at different times can briefly have two non-overlapping majorities", correct: true },
+    { label: "Because etcd does not support adding more than one node at a time", misconception: "The constraint is a safety discipline, not a library limitation. Some libraries do allow multi-node adds, but joint consensus must cover them." },
+    { label: "Because new nodes cannot vote until they receive their first heartbeat", misconception: "Vote eligibility is not the issue. The issue is the intersection property of quorums during config transition." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Membership change requires joint consensus (double-quorum transition) to prevent split brain. Multi-Raft scales throughput via parallel Raft groups with heartbeat coalescing. The minimum viable dashboard is five metrics: leader changes, WAL fsync p99, commit p99, follower lag, and term growth rate. Every production Raft incident traces to one of: bypassed membership protocol, disabled pre-vote, or wrong disk type.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="raft-sr-retrieval2"
+  lang="en"
+  questions={[
+    { q: "Explain why joint consensus prevents the split-brain risk in membership change.", a: "Joint consensus requires commits during the transition phase to reach a majority of BOTH the old configuration and the new configuration simultaneously. Any two valid quorums in this phase — one from C_old, one from C_new — must overlap (because each is a majority of a set that includes the other). No two leaders can both commit during the transition: they would each need overlapping majorities that agree on a leader. Once C_old_new is committed cluster-wide, the cluster moves to C_new alone, and the overlap property is again provided by C_new's single majority rule." },
+    { q: "A CockroachDB cluster runs 50,000 Raft groups. Why does this not collapse under 1M heartbeats per second?", a: "Heartbeat coalescing: per node-pair, the system sends one physical UDP/TCP packet every 50 ms that contains the heartbeat status for ALL Raft groups sharing that pair. A 5-node cluster (10 unique node pairs) with 50,000 groups sends 10 packets per 50 ms = 200 packets per second total. Each packet's body is a compact bitmap of group leader/follower status. Additionally, idle groups (no recent writes) can suppress heartbeats entirely until activity resumes, further reducing baseline traffic." },
+    { q: "What is the minimum set of Raft metrics you would alert on, and what does each one diagnose?", a: "Five metrics: (1) leader_changes_total/min > 1 diagnoses flapping leadership — check disk fsync and heartbeat RTT; (2) wal_fsync_duration p99 > 50 ms diagnoses disk too slow — move to NVMe; (3) commit_latency p99 > 100 ms diagnoses disk, network, or follower lag; (4) follower_lag_entries > 1000 diagnoses a follower falling behind, likely needing a snapshot soon; (5) raft_term growth > 2/min diagnoses repeated elections — check network jitter and whether pre-vote is enabled." },
+  ]}
+/>
+
+<Recap lang="en">
+Safe membership change requires joint consensus — a two-quorum transition phase that prevents any window where two non-overlapping majorities could elect concurrent leaders. Leadership transfer via TimeoutNow reduces unavailability during rolling deploys from hundreds of milliseconds to under 10 ms. Multi-Raft scales a single cluster's throughput via parallel groups with coalesced heartbeats. The minimum viable Raft dashboard tracks five metrics: leader changes, WAL fsync latency, commit latency, follower lag, and term growth rate. Every real production incident with Raft traces to one of three root causes: a membership change that bypassed joint consensus, a pre-vote that was disabled, or a WAL on a slow cloud volume. Fix all three preventively and you cover 90% of production Raft failures.
+</Recap>

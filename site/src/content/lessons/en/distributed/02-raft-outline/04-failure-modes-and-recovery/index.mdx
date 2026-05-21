@@ -1,0 +1,140 @@
+---
+slug: 04-failure-modes-and-recovery
+lang: en
+track: distributed
+unit: 02-raft-outline
+order: 4
+title: "Raft in the real world: partitions, slow disks, and client routing"
+summary: "What Raft guarantees under partition (CP, not AP), how client writes reach the leader, and the three production failure modes — slow disk, network jitter, and clock drift — that cause most real incidents."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - distributed/02-raft-outline/03-leader-election-in-depth
+deepensInto:
+  - distributed/02-raft-outline/05-advanced-extensions
+spiral: ["statefulness", "multiplexing"]
+concepts: ["cp-consistency", "client-routing", "fsync-latency", "network-partition", "clock-drift"]
+sources:
+  - https://raft.github.io/raft.pdf
+  - https://developer.hashicorp.com/consul/docs/concept/consensus
+  - https://www.yugabyte.com/blog/how-does-consensus-based-replication-work-in-distributed-databases/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+A network partition splits your 5-node etcd cluster: 3 nodes in DC A, 2 nodes in DC B. Clients start throwing write errors on one side. Is that a bug? Or is it Raft working exactly as designed?
+</Hook>
+
+<Crux>Raft is CP: under partition, the minority side halts progress rather than risk split brain — unavailability is the feature, not the bug.</Crux>
+
+<Explanation>
+
+## Partition behavior: the minority halts
+
+When a partition isolates a minority of nodes (fewer than a majority), those nodes cannot commit or elect a leader. They cycle through failed elections, returning errors to any client that connects to them. The majority side continues normally.
+
+This is **CP behavior** in the CAP sense: Raft picks consistency over availability. The minority side refuses to serve rather than risk two concurrent leaders both committing conflicting writes.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Side | Nodes | Can elect? | Can commit? | Client sees |
+|------|-------|-----------|-------------|-------------|
+| Majority (DC A) | 3 of 5 | Yes | Yes | Normal |
+| Minority (DC B) | 2 of 5 | No | No | Errors / timeouts |
+
+</div>
+
+On partition heal: the minority's stale nodes see a higher term in the first message from the majority side, step down to follower, update their term, and catch up their logs via AppendEntries. Any uncommitted entries from a phantom leadership attempt are overwritten. No data loss, no split state.
+
+## Partition trace: leader in the minority
+
+A more subtle scenario: the leader itself gets partitioned to the minority side.
+
+<TraceScenario
+  id="raft-mid-trace2"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="en"
+  scenario="Trace a partition where the current leader is isolated on the minority side."
+  steps={[
+    { prompt: "5-node cluster A, B, C, D, E. A is leader at term 4. Partition: A and B isolated from C, D, E.", reveal: "A still sees B; tries to commit by replicating to B (1 follower). Quorum (3 of 5) unreachable. A's writes pile up uncommitted. A keeps sending heartbeats to B only." },
+    { prompt: "On the C, D, E side, what happens?", reveal: "Heartbeats from A stop reaching C, D, E. Their election timers fire. C starts an election at term 5, collects votes from D and E (3 of 5 = majority). C becomes leader." },
+    { prompt: "State during partition: two 'leaders' exist?", reveal: "C is the real leader (can commit, has quorum). A is a stale leader (cannot commit, cannot reach quorum). A's term-4 writes never complete. No split brain: only C can actually commit." },
+    { prompt: "Partition heals. A's heartbeat reaches C.", reveal: "A sends AppendEntries at term=4. C replies with current term=5. A sees higher term, steps down to follower, updates term to 5. A's uncommitted term-4 entries are overwritten by C's log via the AppendEntries consistency check." },
+    { prompt: "What did clients experience?", reveal: "Clients on A got timeouts or 'unable to commit' during the partition. Clients on C, D, E continued normally. After heal, A's clients redirect to C. Raft was correct throughout — one side halted, the other continued." },
+  ]}
+/>
+
+## Client routing
+
+Only the leader can commit writes. Client routing strategies:
+
+1. **Redirect:** any follower that receives a write replies with the current leader's address. Client retries against that address. Common pattern in etcd, Consul, TiKV.
+2. **Leader cache:** clients cache the last known leader and go there directly; fall back to any node on failure.
+3. **Proxy:** a load balancer tracks the leader via the cluster's health API.
+
+The redirect latency is typically 1–5 ms on the rare miss. In steady state, writes go directly to the leader.
+
+**Read consistency:** linearizable reads must go through the leader (via ReadIndex or lease — covered in the next lesson). Eventually-consistent reads can go to any follower. The application layer chooses per query.
+
+## Three production failure modes
+
+**1. Slow disk fsync.** Every committed entry requires at least one fsync on the leader and one on each acknowledging follower. On NVMe with battery-backed cache, fsync is 50–100 µs. On cloud volumes (EBS gp3, GCP balanced PD), it can be 1–3 ms. If the leader's fsync starts exceeding the heartbeat interval, followers time out before the leader acknowledges their AppendEntries and start an election. The new leader hits the same disk and the cycle repeats. Fix: dedicated NVMe for the Raft WAL, never shared cloud volumes.
+
+**2. Network jitter.** A brief congestion or packet-loss event drops heartbeats and triggers an election, even though the cluster is mostly healthy. The cluster experiences 150–300 ms unavailability for no lasting reason. Pre-vote (covered in the next lesson) mitigates this by requiring a dry-run before incrementing the term.
+
+**3. Clock drift on lease reads.** If the leader's clock runs ahead of followers, it may over-extend its lease window past the actual heartbeat round and serve reads that have lost the lease — stale data returned as fresh. NTP-syncing all nodes is a correctness requirement for lease reads, not just hygiene.
+
+<Quiz
+  id="raft-mid-q4"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="en"
+  question="A Raft cluster's leader disk fsync starts taking 2 seconds (instead of the normal 50 µs). What is the observable symptom, and why?"
+  choices={[
+    { label: "Writes start returning stale data", misconception: "Stale data is a read consistency issue. The disk problem affects commit latency and heartbeat timing." },
+    { label: "Followers time out and trigger elections because heartbeats are blocked during the long fsync", correct: true },
+    { label: "The cluster silently slows down but keeps committing", misconception: "If fsync exceeds the election timeout, followers restart elections, causing repeated leader churn." },
+    { label: "The leader starts serving reads from stale log entries", misconception: "Read stale-ness is tied to the commit index, not disk latency directly." },
+  ]}
+/>
+
+<Quiz
+  id="raft-mid-q5"
+  lessonSlug="04-failure-modes-and-recovery"
+  lang="en"
+  question="Raft is described as CP, not AP. What does this mean in practice during a network partition?"
+  choices={[
+    { label: "Both partitions keep serving writes — Raft is always available", misconception: "That would be AP behavior (Dynamo/Cassandra). Raft explicitly halts the minority side to preserve consistency." },
+    { label: "The minority side refuses writes and the majority side continues — unavailability is intentional", correct: true },
+    { label: "Raft replicates writes to both sides and merges them after partition heal", misconception: "Raft has no merge mechanism. It prevents conflicting commits by requiring majority quorum." },
+    { label: "Raft pauses all writes during a partition and resumes when connectivity is restored", misconception: "Only the minority side pauses. The majority side with quorum continues normally." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Under partition, Raft sacrifices availability on the minority side to preserve consistency — that is the CP guarantee. The three most common real-world triggers of unexpected elections are slow disk fsyncs, network jitter, and (for lease reads) clock drift.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="raft-mid-retrieval3"
+  lang="en"
+  questions={[
+    { q: "A 5-node Raft cluster has 2 nodes in DC A and 3 in DC B. The inter-DC link goes down for 5 minutes. What do clients connected to DC A experience?", a: "DC A (2 of 5 nodes) cannot form a majority, cannot elect a leader, and cannot commit. Clients on DC A see errors or timeouts for all writes during the 5-minute partition. After the link heals, DC A's nodes step down, catch up their logs from DC B's leader, and service resumes. Clients on DC B (majority side) experienced no disruption." },
+    { q: "Why is 'slow disk' on the leader worse than slow disk on a follower?", a: "The leader's fsync must complete before it can acknowledge AppendEntries and send the next heartbeat. If the leader's fsync takes longer than the election timeout, followers assume the leader is dead and start elections. A follower's slow fsync delays its own acknowledgement, which may slow commit latency but does not trigger elections — the leader can still acknowledge other followers and reach quorum as long as the majority responds." },
+    { q: "What is the correct fix for a Raft cluster that experiences elections every 30–60 seconds?", a: "First, check etcd_disk_wal_fsync_duration_seconds p99. If it is high (above 50 ms), the root cause is disk latency: the leader cannot send heartbeats fast enough. Fix: move Raft WAL to dedicated local NVMe. If fsync latency is normal, check etcd_network_peer_round_trip_time_seconds — a high RTT causes the same symptom from the network side. As a temporary mitigation, increase the election timeout (e.g. 1s to 5s) to tolerate the slow heartbeats while the root cause is fixed." },
+  ]}
+/>
+
+<Recap lang="en">
+Raft is CP: under partition, the minority side refuses commits rather than risk split brain. The majority side continues normally; on heal, stale nodes catch up via the AppendEntries consistency check. Clients route writes to the leader, using redirect or a cached leader address. The three most common production failures are slow disk fsync on the leader (triggers elections by blocking heartbeats), network jitter (drops heartbeats spuriously), and clock drift (breaks lease-read correctness). Each has a known fix: dedicated NVMe, pre-vote, and NTP sync respectively.
+</Recap>

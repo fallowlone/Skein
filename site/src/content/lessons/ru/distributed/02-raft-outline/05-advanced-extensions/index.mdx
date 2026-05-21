@@ -1,0 +1,158 @@
+---
+slug: 05-advanced-extensions
+lang: ru
+track: distributed
+unit: 02-raft-outline
+order: 5
+title: "Расширения Raft: pre-vote, learner, snapshot и линеаризуемые чтения"
+summary: "Четыре критичных для production расширения — pre-vote против инфляции term, learner для безопасного масштабирования, snapshot для компрессии лога, ReadIndex и lease read для быстрых линеаризуемых запросов."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - distributed/02-raft-outline/04-failure-modes-and-recovery
+deepensInto:
+  - distributed/02-raft-outline/06-raft-production-ops
+spiral: ["statefulness"]
+concepts: ["pre-vote", "learner", "install-snapshot", "readindex", "leader-lease", "log-compaction"]
+sources:
+  - https://raft.github.io/raft.pdf
+  - https://raft.github.io/
+  - https://www.pingcap.com/article/understanding-raft-consensus-in-distributed-systems-with-tidb/
+  - https://developer.hashicorp.com/consul/docs/concept/consensus
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Твой etcd-кластер имеет 50 000 чтений в секунду, но только 200 записей в секунду. Если каждое чтение требует раунда консенсуса, кластер тратит в 250 раз больше работы на чтения, чем на записи. Но если обслуживать чтения с stale-follower-а, теряется линеаризуемость. Как production Raft-реализации обслуживают чтения с sub-миллисекундной latency, не жертвуя корректностью?
+</Hook>
+
+<Crux>Pre-vote, learner, snapshot и ReadIndex/lease read превращают учебный Raft в production-систему.</Crux>
+
+<Explanation>
+
+## Pre-vote: предотвращение паразитных выборов
+
+Когда нода возвращается после долгого partition, она всё это время увеличивала счётчик term. Её RequestVote приходит с очень высоким term, вынуждая здоровые follower-ы обновить свои term и понизить текущего лидера — хотя никакого реального отказа не было. Кластер терпит ненужные выборы.
+
+**Pre-vote** добавляет необязательный dry-run перед любыми реальными выборами. Прежде чем увеличить term, candidate шлёт сообщение `PreVote`. Ноды отвечают "я бы за тебя проголосовал" или "нет", не меняя никакого персистентного состояния. Только если большинство ответило бы "да", candidate реально увеличивает term и запускает настоящие выборы.
+
+Цена: один дополнительный RPC round при реально нужных выборах. Выгода: ноль паразитных смен лидера от возвращающихся нод. Pre-vote теперь стандарт в etcd, TiKV и Hashicorp Raft.
+
+## Learner: безопасное масштабирование кластера
+
+Добавлять новую ноду напрямую как voter опасно: она стартует с пустым логом, и её медленный catch-up деградирует commit latency при каждой записи до догонки. В 3-нодовом кластере добавление 4-го voter-а также временно снижает fault-tolerance (кворум теперь 3 из 4 вместо 2 из 3).
+
+**Learner-ы** (не голосующие члены) решают это. Learner получает AppendEntries и реплицирует лог как follower, но не учитывается в кворумах и не голосует в выборах. Оператор промоутит learner-а в voter только после того, как лаг его лога снижается до порога (обычно под 1000 entry позади). Промоуция — это single-server membership change, безопасная и прозрачная.
+
+Learner-ы также используются etcd, Consul и Yugabyte для замены нод после отказа: новая нода учится, догоняет, промоутится, затем мёртвая нода удаляется. Availability никогда не падает ниже исходного кворума в процессе замены.
+
+## Snapshot и log compaction
+
+Лог Raft неограниченно растёт. Однолетний кластер с 10k записей/с записал 315 миллиардов entry — лог занял бы терабайты, а его воспроизведение после краша заняло бы дни.
+
+**Snapshot** компрессирует лог: периодически каждая нода сериализует полное состояние state machine плюс тройку `(lastIncludedIndex, lastIncludedTerm)` на диск, затем удаляет все log entry до этого index. Если follower отстал настолько, что лидер уже скомпрессировал нужные ему entry, лидер шлёт RPC `InstallSnapshot` вместо пропущенных AppendEntries — follower грузит snapshot как начальное состояние, затем воспроизводит только недавний хвост лога.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Система | Дефолтный interval snapshot |
+|---------|---------------------------|
+| etcd | Каждые 10 000 entry |
+| CockroachDB | Каждые несколько секунд на range |
+| TiKV | Настраиваемый, дефолт 200 МБ |
+
+</div>
+
+Частота snapshot — настраиваемый tradeoff: слишком часто амплифицирует fsync; слишком редко растит лог и замедляет recovery. Snapshot должен включать актуальную конфигурацию membership — забыть об этом классический баг в DIY Raft реализациях.
+
+## ReadIndex: линеаризуемые чтения без записи в лог
+
+Наивный подход к линеаризуемым чтениям: лидер коммитит no-op log entry ради чтения, затем возвращает данные. Это сериализует чтения в лог — дорого (один полный раунд консенсуса на чтение).
+
+**ReadIndex** устраняет запись в лог. При приходе чтения:
+
+1. Лидер запоминает текущий `commitIndex`.
+2. Лидер шлёт heartbeat большинству follower-ов, подтверждая, что он всё ещё активный лидер (предотвращает stale-лидера от обслуживания чтений после partition).
+3. Как только state machine лидера применяет entry до `commitIndex`, лидер возвращает результат.
+
+Цена: один heartbeat round-trip (обычно 1–5 мс intra-region). Никакого нового log entry. Чтения масштабируются независимо от throughput записей.
+
+## Lease read: sub-миллисекундная latency
+
+ReadIndex всё ещё платит за сетевой round-trip на каждое чтение. **Lease read** идёт дальше: лидер держит **lease** — временное окно, в котором он гарантированно является единственным лидером (потому что никакие выборы не могут завершиться в течение lease duration). В период lease лидер обслуживает чтения из своей текущей state machine без RPC.
+
+Lease duration обычно `election_timeout × 0.9` (например 9 мс при election timeout 10 мс), оставляя 10% буфер для clock skew.
+
+**Условие корректности:** lease read безопасен только если clock skew между лидером и follower-ами ограничен. Если часы лидера бегут значительно быстрее follower-ов, lease может истечь у follower-а до того, как лидер думает — follower стартует новые выборы, пока старый лидер ещё обслуживает чтения. Поэтому **NTP/PTP-синхронизация — требование корректности** для lease read, а не просто гигиеническая практика.
+
+<Misconception id="mc-raft-bft">
+  <p><strong>"Raft делает систему неуязвимой для взлома".</strong> Нет. Raft — CFT, не BFT. Скомпрометированная нода может лгать или слать corrupted log — Raft это не покрывает. Для adversarial-участников используй PBFT, HotStuff или Tendermint. Для datacenter (сбои, а не злонамеренные операторы) CFT достаточно.</p>
+</Misconception>
+
+<NumbersCard
+  id="card-raft-sr-numbers"
+  title="Числа расширений Raft"
+  stats={[
+    { label: "fsync latency, NVMe + BBU", value: "50–100 мкс" },
+    { label: "fsync latency, cloud SSD (EBS gp3)", value: "1–3 мс" },
+    { label: "ReadIndex latency (intra-region)", value: "1–5 мс" },
+    { label: "Lease read latency", value: "менее 1 мс" },
+    { label: "Interval snapshot etcd (дефолт)", value: "10 000 entry" },
+    { label: "TimeoutNow leadership transfer", value: "менее 10 мс недоступности" },
+  ]}
+/>
+
+<Quiz
+  id="raft-sr-q1"
+  lessonSlug="05-advanced-extensions"
+  lang="ru"
+  question="Почему lease read считается чувствительным к корректности, а ReadIndex — нет?"
+  choices={[
+    { label: "Lease read используют небезопасный RPC-путь", misconception: "Оба используют те же каналы. Разница во времени vs сетевом round-trip для подтверждения." },
+    { label: "Lease read зависят от bounded clock skew — wall-clock синхронизация (NTP/PTP) становится требованием корректности", correct: true },
+    { label: "ReadIndex полностью пропускает state machine", misconception: "ReadIndex ждёт, пока state machine применит entry до commitIndex. Он ничего не пропускает." },
+    { label: "Lease read медленнее", misconception: "Lease read БЫСТРЕЕ (sub-ms). Именно эта скорость делает их привлекательными — и их tradeoff по корректности реальным." },
+  ]}
+/>
+
+<Quiz
+  id="raft-sr-q2"
+  lessonSlug="05-advanced-extensions"
+  lang="ru"
+  question="Новая нода добавляется в 3-нодовый Raft-кластер напрямую как voter. Почему это может временно деградировать commit latency?"
+  choices={[
+    { label: "Пустой лог новой ноды вызывает failover всех AppendEntries до dogona", misconception: "Catch-up лога происходит независимо; новая нода может ack entry по мере получения, но стартует очень сзади." },
+    { label: "Новая нода учитывается в кворуме (теперь нужно 3 из 4), и её медленный catch-up означает, что она может быть bottleneck для quorum acknowledgement", correct: true },
+    { label: "Добавление voter-а всегда требует рестарта кластера", misconception: "Membership change — online-операция. Рестарт не требуется." },
+    { label: "Новая нода триггерит выборы лидера при join", misconception: "Присоединение как voter не триггерит выборы. Существующий лидер продолжает." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Pre-vote останавливает паразитные выборы от возвращающихся нод; learner-ы позволяют новым нодам догнать лог до учёта в кворуме; snapshot ограничивает размер лога и ускоряет recovery; ReadIndex и lease read обеспечивают линеаризуемые чтения без раундов консенсуса — lease read sub-миллисекундный, но требует bounded NTP clock skew как условие корректности.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="raft-sr-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Нода возвращается после 30 минут offline. Без pre-vote что происходит с кластером?", a: "Возвращающаяся нода всё время partition увеличивала счётчик term (каждый неудачный RequestVote форсировал увеличение). Её RequestVote приходит с очень высоким term. Здоровые follower-ы обновляют свои term до соответствия, что вынуждает текущего лидера понизиться, триггеря ненужные выборы. С pre-vote нода сначала шлёт необязательный PreVote; follower-ы отвечают 'я бы не стал голосовать за тебя — твой лог stale.' Нода не увеличивает term, и текущий лидер не беспокоится." },
+    { q: "Какую информацию должен включать Raft snapshot помимо сериализованной state machine?", a: "Как минимум: (1) lastIncludedIndex — log index последнего entry, применённого к snapshot; (2) lastIncludedTerm — term этого entry; (3) текущая конфигурация membership кластера. Пропуск конфигурации membership означает, что нода, установившая snapshot от другой версии кластера, будет иметь неверный voter set — классический источник багов при membership change в DIY Raft реализациях." },
+    { q: "ReadIndex описывается как требующий 'одного heartbeat round-trip на чтение'. Почему лидер не может пропустить это и сразу обслуживать чтения из своего текущего состояния?", a: "После восстановления partition может быть краткое окно, где старый лидер ещё не знает, что его заменили. Без свежего heartbeat-подтверждения большинства stale-лидер мог бы обслуживать чтения из своей локальной state machine — которая может отставать от закоммиченного состояния нового лидера. Heartbeat round подтверждает, что лидер всё ещё авторитетен, перед тем как он обслуживает чтение, предотвращая возврат stale-данных как актуальных." },
+  ]}
+/>
+
+<Recap lang="ru">
+Четыре расширения заполняют пробел между учебным Raft и production-системами. Pre-vote устраняет паразитные выборы, требуя dry-run до увеличения term. Learner-ы позволяют безопасно масштабироваться, давая новым нодам догнать лог до учёта в кворуме. Snapshot ограничивает рост лога, периодически создавая checkpoint state machine и позволяя InstallSnapshot для отстающих follower-ов. ReadIndex обеспечивает линеаризуемые чтения с одним heartbeat round-trip вместо полной записи в лог; lease read доводит это до sub-миллисекунды, ограничивая авторитет лидера по времени, но требует NTP-синхронизации как предусловия корректности. Все четыре стандартны в etcd, TiKV и Hashicorp Raft.
+</Recap>
