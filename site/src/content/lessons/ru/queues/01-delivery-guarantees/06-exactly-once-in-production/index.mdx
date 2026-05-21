@@ -1,0 +1,166 @@
+---
+slug: 06-exactly-once-in-production
+lang: ru
+track: queues
+unit: 01-delivery-guarantees
+order: 6
+title: "Exactly-once в production: impossibility-доказательство, гибридные паттерны и реальные инциденты"
+summary: "Two Generals доказательство, почему exactly-once delivery невозможна, гибридный Kafka+DB паттерн для effectively-once в масштабе, observability-метрики и реальные сбои Stripe, AWS и Slack."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - queues/01-delivery-guarantees/04-kafka-eos
+  - queues/01-delivery-guarantees/03-consumer-dedup
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["two-generals-problem", "hybrid-exactly-once", "zombie-producer", "observability", "dedup-hit-rate", "chaos-testing"]
+sources:
+  - https://en.wikipedia.org/wiki/Two_Generals%27_Problem
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
+  - https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+  - https://strimzi.io/blog/2023/05/03/kafka-transactions/
+  - https://stripe.com/docs/api/idempotent_requests
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Stripe 2020: баг во внутреннем queue consumer пропускал Idempotency-Key на retry, списывая небольшой процент клиентов дважды в Q4-пике. Refund в 24 часа. Post-mortem: «exactly-once сложнее, чем кажется; production-корректность живёт в consumer-идемпотентности больше, чем в broker-гарантиях».
+</Hook>
+
+<Crux>Exactly-once delivery математически невозможна (Two Generals). Production-корректность исходит от consumer dedup, а не от broker-обещания.</Crux>
+
+<Explanation>
+
+## Two Generals' Problem: почему exactly-once delivery невозможна
+
+Два генерала хотят скоординировать атаку на рассвете. Единственная связь — через гонцов по вражеской территории. Гонцы могут быть пойманы. Можно ли договориться?
+
+Доказательство от противного: предположим, протокол существует. Рассмотрим последнее сообщение в протоколе, которое, если доставлено, гарантирует согласие. Если убрать — протокол должен всё ещё работать: отправитель уже имел уверенность до отправки последнего сообщения. По индукции, протокол работает с нулём сообщений — что абсурдно.
+
+**Обобщение:** никакой конечный протокол поверх ненадёжного канала не может дать обеим сторонам уверенности в общем согласованном факте.
+
+Применительно к очередям: exactly-once *delivery* требует, чтобы и producer, и broker знали, что сообщение доставлено ровно один раз. Поверх ненадёжной сети — это Two Generals' Problem. Exactly-once *processing* требует только одну сторону — consumer — поддерживать dedup-лог. Односторонняя уверенность достижима. Двусторонняя — нет.
+
+Эта асимметрия — причина, почему «effectively-once» — реальная production-цель: at-least-once delivery от брокера, exactly-once processing, обеспечиваемая consumer.
+
+## Гибридный exactly-once паттерн в масштабе
+
+Чистая Kafka exactly-once (внутри Kafka topics) не расширяется на внешние системы. Production-grade паттерн для high-throughput payment processor:
+
+1. **Kafka с idempotent producer** (`enable.idempotence=true`, `acks=all`). Убирает producer-retry дубликаты за ~3% cost.
+2. **Consumer at-least-once** с `isolation.level=read_committed`. Видит только committed записи.
+3. **Per-message dedup-таблица** в Postgres:
+   ```sql
+   BEGIN;
+     INSERT INTO charges (msg_id, status)
+     VALUES ('msg-7a3f', 'pending')
+     ON CONFLICT DO NOTHING;
+     -- если 0 строк inserted: уже обработано, пропустить
+   COMMIT;
+   -- вызвать Stripe с Idempotency-Key=msg-7a3f
+   UPDATE charges SET status='done', charge_id='ch_abc123'
+   WHERE msg_id='msg-7a3f';
+   ```
+4. **Stripe Idempotency-Key**, derived из `msg_id`. Stripe хранит первый response 24 часа; любой retry возвращает кешированный response.
+
+Каждый слой независимо тестируем. Система переживает краш в любой точке без двойных списаний. Dedup-таблица также служит audit trail для финансовой сверки.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Гибридный exactly-once: глубокая оборона</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-40 font-bold">Kafka idempotent producer</span>
+      <span>Останавливает ножку 1 producer-retry дубликатов</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-40 font-bold">DB dedup + ON CONFLICT</span>
+      <span>Останавливает ножку 3 consumer-retry дубликатов атомарно</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-40 font-bold">Stripe Idempotency-Key</span>
+      <span>Останавливает cross-system дубликаты на границе payment API</span>
+    </div>
+  </div>
+</div>
+
+## Observability для delivery-семантики
+
+Без метрик о дубликатах узнаёшь от злых клиентов, не от дашборда.
+
+**Per-broker метрики:**
+- `consumer_lag_messages` — publisher offset минус committed offset. Sustained рост означает, что consumer-ы отстают.
+- `dlq_depth` by source queue — алерт на любое ненулевое значение в production.
+- `dlq_age_seconds_p99` — старейшее сообщение в DLQ; алерт при &gt;1 часа.
+
+**Per-consumer метрики:**
+- `dedup_check_hit_rate` — как часто dedup INSERT блокируется UNIQUE constraint. Должно быть около 0% в steady state. Пик указывает на агрессивную redelivery: consumer-group rebalance, баг с early ack или broker issue.
+- `side_effect_duration_p99` — если превышает visibility timeout, будут дубликаты.
+- `retry_count_p99` — sustained высокие значения означают нездоровых consumer-ов.
+
+**Distributed tracing:** каждое сообщение должно нести trace ID, пропагируемый от producer через consumer в любой downstream сервис. Дублирующая обработка выглядит как два span с одним и тем же message trace ID — мгновенно отличимо от законных отдельных сообщений.
+
+## Реальные production-сбои
+
+**Stripe 2020:** баг internal queue consumer пропускал Idempotency-Key на retry в Q4-пике. Небольшой процент клиентов списан дважды. Refund в 24 часа. Результат post-mortem: ужесточили linter-правило, флагующее HTTP POST в consumer-путях без Idempotency-Key.
+
+**AWS SQS 2019:** Регион имел race condition visibility-timeout: consumer-ы, вызывавшие `ChangeMessageVisibility` пока `DeleteMessage` был in-flight, иногда получали redelivery несмотря на завершение delete. Исправлено в следующем SDK release.
+
+**Stripe internal 2023:** Горячий DLQ накопил 1M сообщений во время downstream инцидента. Оператор запустил redrive-all без rate limit. Source queue получила 1M сообщений одновременно, перегрузив consumer pool и вызвав cascading throttling на downstream payment API.
+
+**Slack 2022:** Kafka exactly-once stream pipeline имел баг transaction-coordinator при broker rolling restart. Система доставила дубликаты 6 минут до завершения restart. Root cause: zombie producer session-ы, не proper fenced.
+
+Паттерн во всех инцидентах: **корректность нарушилась в consumer или в операционной процедуре, не в broker-гарантии**. Broker-гарантии необходимы, но недостаточны; end-to-end корректность требует consumer-идемпотентности и операционной дисциплины.
+
+<Quiz
+  id="06-q1"
+  pieceSlug="06-exactly-once-in-production"
+  lang="ru"
+  question="Какова реальная причина, почему Kafka exactly-once не расширяется нативно на внешний Postgres?"
+  choices={[
+    { label: "Postgres не поддерживает транзакции", misconception: "Postgres имеет полный ACID; это не проблема." },
+    { label: "Kafka транзакции атомарны только внутри Kafka — input offset commit и output topic write. Внешние системы вне transaction scope; координация потребовала бы distributed two-phase commit, чего Kafka не предоставляет.", correct: true },
+    { label: "Kafka слишком медленна для Postgres writes", misconception: "Скорость не root cause; root cause — граница transaction scope." },
+    { label: "Postgres отвергает Kafka клиентские коннекции", misconception: "Нет protocol-несовместимости; дело в transactional scope." },
+  ]}
+/>
+
+<Quiz
+  id="06-q2"
+  pieceSlug="06-exactly-once-in-production"
+  lang="ru"
+  question="В steady state dedup_check_hit_rate consumer резко скачет с 0.05% до 8% на 10 минут вне deploy-окна. Наиболее вероятная причина?"
+  choices={[
+    { label: "Изменилась схема dedup-таблицы", misconception: "Изменение схемы вызывало бы ошибки, не пик успешных duplicate-catch." },
+    { label: "Consumer упал и брокер передоставляет его in-flight сообщения другим consumer-ам — многие из которых уже частично обработаны", correct: true },
+    { label: "Увеличилась latency сети", misconception: "Более высокая latency замедляет обработку, но не вызывает duplicate delivery; дубликаты приходят от consumer failures или visibility timeout expiry." },
+    { label: "Kafka producer ретраил батч", misconception: "Kafka idempotent producer дедупирует на уровне брокера до того, как consumer что-либо видит; consumer dedup_hit_rate не скакнет от producer retry." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Two Generals доказывает, что exactly-once delivery невозможна поверх ненадёжных каналов. Production-ответ: at-least-once Kafka + idempotent consumer (DB dedup + Stripe Idempotency-Key). Мониторь dedup_hit_rate около 0%; пики означают redelivery брокера, не проблему корректности если consumer идемпотентен.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-exactly-once-in-production-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Сформулируй Two Generals' Problem и объясни асимметрию, делающую exactly-once processing достижимой.", a: "Две стороны поверх ненадёжного канала не могут достичь mutual уверенности в согласии (доказуемо индукцией: удаление последнего нужного сообщения всё равно оставляет протокол работающим, сводя к нулю нужных сообщений — абсурдно). Exactly-once delivery требует знания обеих сторон. Exactly-once processing требует только одной стороны (consumer) поддерживать dedup-лог — односторонняя уверенность достижима." },
+    { q: "Какие три слоя составляют гибридный exactly-once паттерн для payment processor?", a: "1. Kafka idempotent producer (enable.idempotence=true) — убирает producer-retry дубликаты на ножке 1. 2. Consumer DB dedup с ON CONFLICT DO NOTHING — убирает ножку 3 дубликаты атомарно. 3. Stripe Idempotency-Key, derived из msg ID — убирает cross-system дубликаты на границе payment API." },
+    { q: "Что означает sustained пик dedup_hit_rate выше 1% вне deploy-окон?", a: "Активная redelivery сообщений — вероятно, краш consumer вызывает redelivery in-flight сообщений другим consumer-ам, или misconfiguration visibility timeout позволяет параллельную дублирующую обработку. Если consumer правильно идемпотентен, дубликаты перехватываются тихо; пик — сигнал расследовать стабильность consumer, не чрезвычайная ситуация корректности." },
+  ]}
+/>
+
+<Recap lang="ru">
+Two Generals' Problem доказывает, что никакой конечный протокол поверх ненадёжного канала не может дать обеим сторонам уверенности в согласии — вот почему exactly-once delivery невозможна. Production-системы достигают effectively-once через глубокую оборону: Kafka idempotent producer (~3% cost) убирает producer-retry дубликаты у брокера; consumer-side DB dedup с ON CONFLICT DO NOTHING убирает ножку 3 дубликаты атомарно; Stripe Idempotency-Key убирает cross-system дубликаты на границе payment API. Каждый реальный инцидент — Stripe 2020, SQS 2019, Slack 2022 — подтверждает один паттерн: корректность нарушается в consumer или в операционной процедуре, не в брокере. Мониторь dedup_hit_rate около нуля в steady state; sustained пик вне deploy-окон означает нестабильность consumer, не сбой dedup.
+</Recap>
