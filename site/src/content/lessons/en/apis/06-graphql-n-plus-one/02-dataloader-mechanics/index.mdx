@@ -1,0 +1,163 @@
+---
+slug: 02-dataloader-mechanics
+lang: en
+track: apis
+unit: 06-graphql-n-plus-one
+order: 2
+title: "DataLoader mechanics: tick-boundary batching"
+summary: "DataLoader waits for the current event-loop tick to finish, then fires one batched query for every key queued across all resolvers — turning N per-item SQL calls into one."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - apis/06-graphql-n-plus-one/01-why-graphql-gets-nplus1
+  - performance/05-n-plus-one/04-dataloader-pattern
+deepensInto:
+  - apis/06-graphql-n-plus-one/03-batch-function-contracts
+spiral: ["statefulness"]
+concepts: ["dataloader", "event-loop-tick", "request-scope-cache", "batch-dedup", "per-request-instance"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://www.apollographql.com/docs/apollo-server/data/fetching-data
+  - https://shopify.engineering/solving-the-n-1-problem-for-graphql-through-batching
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+
+<Hook>
+After wiring DataLoader, Sven's 51-query page drops to 2 queries — without changing the schema or the client request. The GraphQL document and all the resolver functions stay exactly the same. Only the fetcher changes.
+</Hook>
+
+<Crux>DataLoader batches all .load(id) calls from the same event-loop tick into one query. Per-request scope keeps it safe.</Crux>
+
+<Explanation>
+
+## What DataLoader does
+
+DataLoader is a small library, originally extracted from Facebook's GraphQL implementation and maintained under the GraphQL Foundation. It provides `new DataLoader(batchLoadFn, options)` where `batchLoadFn(keys: Array<K>): Promise<Array<V | Error>>` is your batched fetcher.
+
+Resolvers call `loader.load(key)` and receive a Promise. Under the hood:
+
+1. Each `.load(key)` queues the key into an internal array. No query runs yet.
+2. When the current synchronous JavaScript turn ends — specifically when the microtask queue starts draining — DataLoader takes all queued keys and calls `batchLoadFn` once with the full array.
+3. `batchLoadFn` runs one `WHERE id IN (...)` query and returns the values in the same order as the input keys.
+4. DataLoader resolves each waiting Promise with its value.
+
+The tick boundary is the natural join point: GraphQL's execution engine finishes walking one level of the query synchronously. All 50 `Post.author` resolver calls queue their IDs during that level-traversal. DataLoader's microtask fires after, when every ID has been collected.
+
+## Why a fixed time window would be worse
+
+A 5 ms buffer would either add 5 ms of latency per request (waiting unnecessarily) or fire too early under load (capturing fewer than all IDs). The tick boundary fires at the earliest possible moment when all IDs for the current level are queued — zero unnecessary wait.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+```
+Event-loop tick (GraphQL resolves level 2):
+  Post.author(post1) → loader.load(7)   // queued
+  Post.author(post2) → loader.load(9)   // queued
+  Post.author(post3) → loader.load(7)   // dedup: already queued
+
+Microtask (tick ends):
+  batchLoadFn([7, 9])
+  → SELECT id, name FROM users WHERE id IN (7, 9)
+  → resolves: 7→Bea, 9→Sven
+
+All three Post.author Promises resolve: post1→Bea, post2→Sven, post3→Bea
+```
+
+</div>
+
+## Deduplication inside one request
+
+If `loader.load(7)` is called twice in the same request, DataLoader returns the same Promise both times — the key appears only once in the batch. This is useful when the same entity is referenced from multiple paths in one document (e.g. a post's author and a comment's author resolving to the same user). Opt out with `options.cache = false` if you need fresh reads within one request (rare: write-after-read patterns).
+
+## The per-request instance rule
+
+A DataLoader instance is a cache. Its lifetime must be the request, not the server process. A module-scope DataLoader shared across all requests:
+
+- Returns stale data: Request A loads user 7, the row is updated, Request B loads user 7 from the cache and gets the pre-update row.
+- Leaks across tenants: Request A and B belong to different tenants. Tenant B sees Tenant A's cached row for the same ID.
+
+The discipline: instantiate DataLoaders inside the request-context factory (the function Apollo Server calls per request), attach them to `context`, and let GC reclaim them when the request ends.
+
+```javascript
+// Apollo Server context factory — correct
+context: async ({ req }) => ({
+  loaders: {
+    author: new DataLoader(batchAuthors),
+    tags:   new DataLoader(batchTags),
+  },
+})
+
+// Resolver — correct
+Post: {
+  author: (post, _args, ctx) => ctx.loaders.author.load(post.authorId),
+}
+```
+
+<Inset kind="warning" lang="en">
+A global DataLoader saves memory in theory. In practice it leaks data across tenants and serves stale rows. Apollo's docs are explicit: "DataLoader instances are per-request — if you use a DataLoader in your data source, ensure you create a new instance with every request."
+</Inset>
+
+<Quiz
+  id="dl-mechanics-q1"
+  lessonSlug="02-dataloader-mechanics"
+  lang="en"
+  question="DataLoader is invoked twice for the same key in the same request. What happens?"
+  choices={[
+    { label: "Two batch calls fire, one per .load()", misconception: "DataLoader deduplicates: the second call returns the same Promise as the first." },
+    { label: "The second .load() returns the same Promise as the first; the batch function sees the key once", correct: true },
+    { label: "The loader throws an error on the duplicate", misconception: "Duplicate keys are normal and expected; deduplication is designed." },
+    { label: "The cache is bypassed because of nondeterminism", misconception: "There is no nondeterminism — same key, same Promise within one request." },
+  ]}
+/>
+
+<Quiz
+  id="dl-mechanics-q2"
+  lessonSlug="02-dataloader-mechanics"
+  lang="en"
+  question="Why does DataLoader batch on the event-loop tick boundary instead of a fixed 5 ms window?"
+  choices={[
+    { label: "A fixed window would add 5 ms of latency to every request or fire too early under load; the tick boundary is the earliest moment when all IDs for the current query level are queued", correct: true },
+    { label: "5 ms windows are not supported by Node.js", misconception: "Node supports setImmediate and setTimeout — DataLoader could use them. It chooses not to for latency reasons." },
+    { label: "The tick boundary is faster because it uses less memory", misconception: "Memory is not the reason — the batch size determines memory use. Latency is the reason." },
+    { label: "Fixed windows would cause resolver order to change", misconception: "Resolver order is not affected by the dispatch timing." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="dl-mechanics-metaphor"
+  lessonSlug="02-dataloader-mechanics"
+  lang="en"
+  setup="Fill in the blank: DataLoader gathers all .load() calls made in the same event-loop _______, then fires one batch."
+  accepted={["tick", "frame", "cycle"]}
+  canonical="tick (also: frame, cycle — one synchronous JavaScript turn)"
+  explanation="DataLoader's rule: any .load() call made before the microtask queue drains is part of the same batch. The batch fires at the earliest possible moment when GraphQL has queued all loads for the current level."
+/>
+
+</Explanation>
+
+<KeyTakeaway>DataLoader queues IDs, fires one batch per tick, deduplicates within a request, and must be instantiated per-request. A global instance leaks tenant data and serves stale rows.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="dl-mechanics-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must a DataLoader instance be created per request, not once at server start?", a: "A module-scope DataLoader shares its cache across all requests. Tenant A's row for user 7 is returned to Tenant B's request for user 7. A row updated after Request A's load is never re-fetched for Request B. Both are data-correctness bugs, not just staleness. Instantiate in the context factory so each request has a clean, isolated cache." },
+    { q: "When does DataLoader fire the batch function relative to the resolver calls?", a: "After the current synchronous JavaScript turn ends and the microtask queue starts draining. This is the tick boundary — the moment when GraphQL has finished calling all resolvers for one level of the query and queued all their IDs. No timer is involved." },
+  ]}
+/>
+
+<Recap lang="en">
+DataLoader moves the fetch out of each resolver and into a per-request batch. Every resolver calls `loader.load(id)` and gets a Promise. DataLoader holds all queued IDs until the event-loop tick ends, then fires one `WHERE id IN (...)` query for the full set. Keys are deduplicated within the batch, so `loader.load(7)` called from two different paths in one document fires one SQL lookup, not two. The instance must be created per request — a global instance leaks tenant data and returns stale rows.
+</Recap>
