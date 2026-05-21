@@ -169,19 +169,29 @@ by following a connected path of lessons. Practice is deferred (theory first).
      — Phase A infra → B content (51 units) → C stubs (81) → D teardown; per-task and
      per-unit checkboxes track progress.
    - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
-   Phase A COMPLETE (2026-05-19) — A1-A10 done, 8 commits `9437c70`..`bf07038`, build
-   1977 pages, lint 0/0, 66 migration tests pass. Phase B IN PROGRESS — **42/51 units
-   done — networking (12/12) + browser (8/8) + databases (8/8) + observability (8/8)
-   COMPLETE; performance (6/8) IN PROGRESS**. Build 2433 pages, lint 0/0.
-   **RESUME at `performance/06-batching`** (next: performance 06-08, then 7 lone
-   ready pieces: apis/06-graphql-n-plus-one, backend/05-idempotency-retries,
-   caching/03-stampede, distributed/02-raft-outline, frontend/02-data-fetching,
-   queues/01-delivery-guarantees, security/02-oauth-oidc). A fresh chat resumes from
-   CONTINUE-PROMPT.md + the plan's progress dashboard. Per-unit procedure: dispatch a
-   sonnet implementer subagent with the full per-unit prompt (plan §"Procedure (per
-   unit)"), then tick the plan checklist + bump the dashboard, commit a
-   `docs(open-atlas): Phase B progress` line. Build gate every unit: `cd site && bun
-   run build`, lint must end 0/0.
+   Phase A COMPLETE (2026-05-19). Phase B COMPLETE 2026-05-21 — **51/51 units done**:
+   5 ready pillars (networking 12, browser 8, databases 8, observability 8,
+   performance 8) + 7 lone ready pieces (apis/06-graphql-n-plus-one, backend/05-
+   idempotency-retries, caching/03-stampede, distributed/02-raft-outline, frontend/02-
+   data-fetching, queues/01-delivery-guarantees, security/02-oauth-oidc). Build 2525+
+   pages, lint 0/0. Final Phase B commits today (2026-05-21):
+   `2343423` performance/07-bundle-budgets, `59ce342` performance/08-putting-it-together
+   (unit slug `08-putting-it-together-perf` to dedupe across tracks), `d53f177`
+   apis/06-graphql-n-plus-one, `d3b79c5` backend/05-idempotency-retries, `d2c9cc6`
+   caching/03-stampede, `c850410` distributed/02-raft-outline, `fc631b6` frontend/02-
+   data-fetching, `45d9acc` queues/01-delivery-guarantees, `ef6a37a` security/02-
+   oauth-oidc.
+   **RESUME at Phase C** — 81 stub units across 11 pillars (ai-llm 8, apis 7, backend
+   7, caching 7, data-engineering 8, deployment 8, distributed 7, engineering-practice
+   8, frontend 7, queues 7, security 7). Per-pillar batch: dispatch one sonnet
+   subagent per pillar — for each stub piece (a) add unit entry to
+   `site/src/content/units.json` (title/crux from stub piece frontmatter; `lessons:
+   ["01-overview"]`), (b) create `site/src/content/lessons/{en,ru}/<pillar>/<unit>/
+   01-overview/index.mdx` frontmatter-only (`status: stub`, `lessonType: topic`,
+   `level: junior`), (c) `git rm -r` the source piece. Build gate `cd site && bun run
+   build` lint 0/0 (lessons linter skips `status: stub`). One commit per pillar:
+   `content(<pillar>): stub units migrated to lesson model`. Bump plan dashboard +
+   commit `docs(open-atlas): Phase C progress` after each pillar.
    **Traps learned during Phase B (encode into every subagent prompt):**
    - MDX parses `<1`, `<2`, `<5` etc as JSX → build fails. Use `&lt;1` or "under 1".
    - Bare `>` in prose → `&gt;`.
