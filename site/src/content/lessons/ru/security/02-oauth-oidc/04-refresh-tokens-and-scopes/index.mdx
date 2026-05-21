@@ -1,0 +1,150 @@
+---
+slug: 04-refresh-tokens-and-scopes
+lang: ru
+track: security
+unit: 02-oauth-oidc
+order: 4
+title: "Ротация refresh-токенов и scope-based least privilege"
+summary: "Как ротация refresh-токенов OAuth 2.1 обнаруживает украденные токены через replay, почему гранулярные scope ограничивают breach radius, и разница между introspection и local JWT validation."
+estMin: 9
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - security/02-oauth-oidc/03-id-token-validation
+deepensInto:
+  - security/02-oauth-oidc/05-sender-constrained-tokens
+  - security/02-oauth-oidc/06-oauth-production
+spiral: ["statefulness"]
+concepts: ["refresh-token", "token-rotation", "scope", "least-privilege", "token-introspection", "jwt-validation"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9700
+  - https://openid.net/specs/openid-connect-core-1_0.html
+  - https://auth0.com/docs/secure/tokens/refresh-tokens/refresh-token-rotation
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Refresh-токен утекает через log entry. Без ротации атакующий тихо обновляет новые access-токены месяцами — пока refresh-токен не истечёт естественно. С ротацией — первый раз, когда либо атакующий, либо легитимный клиент использует токен после своего counterpart, сервер обнаруживает replay, инвалидирует всю цепочку и форсирует re-аутентификацию.
+</Hook>
+
+<Crux>Ротация превращает кражу токена из неограниченного вреда в window обнаружения — следующий refresh триггерит тревогу.</Crux>
+
+<Explanation>
+
+## Как работает ротация refresh-токенов
+
+OAuth 2.1 мандатит, что каждое использование refresh-токена выдаёт новый refresh-токен и инвалидирует старый. Сервер отслеживает, какой refresh-токен заменил какой.
+
+**Нормальный flow:**
+1. Клиент держит `RT1`. Представляет на `/token`. Сервер выдаёт `access_token_2` + `RT2`. Помечает `RT1` как used, linked to `RT2`. Клиент сохраняет `RT2`.
+
+**Под атакой:**
+1. Атакующий крадёт `RT1` (через log leak, network capture и т.д.).
+2. Атакующий использует `RT1` первым → получает `access_token_A` + `RT2`. `RT1` теперь помечен used.
+3. Легитимный клиент позже представляет `RT1` (не зная о краже) → сервер видит `RT1` уже used → **replay detected**.
+4. Сервер отзывает всю цепочку (`RT1`, `RT2`, все descendants). Оба — атакующий и легитимный клиент — теряют доступ. Пользователь вынужден re-аутентифицироваться.
+
+Без ротации: украденный `RT1` работает до absolute expiry — дни или месяцы.
+С ротацией: window вреда ограничен rotation interval — обычно минуты-часы до следующего легитимного refresh.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-3 text-ink-2 text-xs uppercase tracking-wider">Ротация refresh-токена под атакой</div>
+  <div class="space-y-2 text-xs">
+    <div class="text-ink-2">Атакующий крадёт RT1 из log файла</div>
+    <div class="flex gap-2"><span class="text-red-500 font-bold">ATK</span><span>POST /token &#123; refresh_token: RT1 &#125; → получает RT2 + access_token_A (RT1 помечен used)</span></div>
+    <div class="flex gap-2"><span class="text-blue-500 font-bold">CLI</span><span>POST /token &#123; refresh_token: RT1 &#125; → <span class="text-red-600 font-bold">REPLAY DETECTED</span></span></div>
+    <div class="flex gap-2"><span class="text-orange-500 font-bold">SRV</span><span>Отзывает RT1 + RT2 + все descendants. Возвращает invalid_grant: token replay detected.</span></div>
+    <div class="text-ink-2 mt-1">Оба — атакующий и клиент — должны re-аутентифицироваться.</div>
+  </div>
+</div>
+
+## Scope и least privilege
+
+Каждый access-токен несёт claim `scope` — точные разрешения, выданные на consent-этапе. Приложение запрашивает scope-set на `/authorize`; пользователь видит consent-экран и одобряет или отклоняет.
+
+**Почему гранулярные scope важны:**
+- `read:photos` vs `read:everything` — photo-printing app должен видеть только фото, не email или календарь.
+- **Blast radius:** если приложение скомпрометировано, атакующие могут делать только то, что выданные scope разрешают. `read:photos` позволяет атакующему скачивать фото. `write:photos delete:photos` — ещё и уничтожать их.
+- **User trust:** consent-экран с `read:photos` разумен. С full account access — тревожен, и пользователи правильно делают, что отказывают.
+
+Промышленный паттерн: read-scope выдаются свободно; write-scope требуют явного per-action consent; admin-scope никогда не появляются в third-party flow. RFC 9396 (Rich Authorization Requests) расширяет это, позволяя запросы вроде "перевести до $500 на счёт 12345" вместо просто `write:transfers`.
+
+## Introspection vs JWT validation: реальный tradeoff
+
+Когда resource server получает access-токен, он должен его верифицировать. Два подхода:
+
+**Token introspection** (`/oauth/introspect`): real-time вызов к IdP на каждый запрос. Всегда актуален — знает об отзывах немедленно. Стоит один extra round-trip на запрос (~5–50ms latency). Требуется для opaque токенов.
+
+**Local JWT validation**: токен — signed JWT. Resource server валидирует подпись через JWKS. Быстро — микросекунды. Масштабируется до миллионов RPS. Недостаток: не видит отзывы до истечения токена. Отозванный JWT продолжает работать до оставшегося TTL.
+
+**Production паттерн:** local JWT validation для hot path + короткий access token TTL (5–15 минут, принимая что отзывы распространяются в этом окне). Для sensitive writes (transfers, deletes) — introspection поверх. Маленький server-side кеш "recently introspected tokens" (TTL 30с) амортизирует cost introspection.
+
+<Quiz
+  id="04-q1"
+  pieceSlug="04-refresh-tokens-and-scopes"
+  lang="ru"
+  question="Атакующий украл refresh-токен. С включённой ротацией каков максимальный window вреда?"
+  choices={[
+    { label: "До absolute expiry (недели или месяцы)", misconception: "Ротация инвалидирует старый токен при каждом использовании — окно absolute expiry больше не применяется." },
+    { label: "До следующего использования refresh-токена легитимным клиентом — что триггерит replay detection и убивает всю цепочку", correct: true },
+    { label: "Навечно — refresh-токены нельзя отозвать", misconception: "Refresh-токены можно отозвать через /revoke в любое время; ротация автоматизирует обнаружение." },
+    { label: "Ровно 5 минут по спецификации", misconception: "Нет фиксированного 5-минутного окна; timing зависит от того, когда легитимный клиент в следующий раз обновится." },
+  ]}
+/>
+
+<Quiz
+  id="04-q2"
+  pieceSlug="04-refresh-tokens-and-scopes"
+  lang="ru"
+  question="Почему local JWT validation проблематична для high-sensitivity write endpoints вроде 'перевести деньги'?"
+  choices={[
+    { label: "JWT не может нести financial scope claims", misconception: "JWT несёт любые scope claims, которые ты в него положишь." },
+    { label: "Local validation не видит отзывы — токен, отозванный 3 минуты назад, всё ещё проходит local checks до истечения claim exp", correct: true },
+    { label: "JWT validation слишком медленная для write paths", misconception: "JWT validation — микросекунды; это самый быстрый вариант валидации." },
+    { label: "Write endpoints требуют mTLS, не JWT", misconception: "mTLS — sender-constraint механизм; он не заменяет валидацию токенов." },
+  ]}
+/>
+
+<DragOrder
+  id="04-drag-1"
+  pieceSlug="04-refresh-tokens-and-scopes"
+  lang="ru"
+  prompt="Поставь события rotation-based stolen-token detection в порядке:"
+  items={[
+    "Атакующий получает refresh-токен RT1 из leaked log",
+    "Атакующий представляет RT1 на /token — сервер выдаёт RT2, помечает RT1 как used",
+    "Легитимный клиент представляет RT1 на следующем scheduled refresh",
+    "Сервер обнаруживает RT1 был уже использован — replay detected",
+    "Сервер отзывает всю цепочку: RT1, RT2 и все descendants",
+    "Оба — атакующий и легитимный клиент — получают ошибку invalid_grant",
+    "Пользователь вынужден re-аутентифицироваться; атакующий теряет доступ",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Ротация refresh-токенов превращает обнаружение кражи из пассивного expiry в активный replay alarm. Гранулярные scope ограничивают breach radius. Short-lived JWT плюс local validation — high-throughput дефолт; introspection — вариант strong consistency для sensitive writes.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-refresh-tokens-and-scopes-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Как ротация refresh-токенов обнаруживает украденный refresh-токен?", a: "При каждом использовании сервер выдаёт новый refresh-токен и помечает старый как used. Если старый токен представлен снова (атакующим или легитимным клиентом) — это replay: сервер инвалидирует всю цепочку, и оба теряют доступ. Окно обнаружения равно интервалу между легитимными refresh." },
+    { q: "Почему использовать гранулярные scope вроде read:photos вместо широкого scope?", a: "Гранулярные scope ограничивают blast radius: скомпрометированное приложение может делать только то, что разрешает его scope. Они также улучшают user trust на consent-экране. Consent с read:photos разумен; full account access — тревожен, и пользователи правильно отказывают. Промышленный паттерн: read-scope свободно, write-scope явный consent, admin-scope никогда в third-party." },
+    { q: "Когда resource server должен использовать introspection вместо local JWT validation?", a: "Для sensitive write операций (переводы, удаление аккаунта), где важно знать об отзывах немедленно. Local JWT validation не видит отзывы до expiry. Introspection real-time, но добавляет один round-trip на запрос. Гибрид: local JWT для reads (быстро), introspection для writes (корректно), короткий access token TTL (5–15 мин) как backstop." },
+  ]}
+/>
+
+<Recap lang="ru">
+Ротация refresh-токенов (обязательная в OAuth 2.1) превращает украденный токен из неограниченного credential в timed detection window: следующий легитимный refresh-вызов видит replay и убивает цепочку. Гранулярные scope применяют least privilege — consent-экран показывает что приложение может делать, и токен это применяет. Валидация токенов предлагает два режима: local JWT validation быстрая, но не видит отзывы; introspection real-time, но добавляет latency. Production системы используют local validation для read paths, introspection для sensitive writes, и короткие TTL (5–15 мин) как backstop.
+</Recap>
