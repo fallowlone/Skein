@@ -1,0 +1,190 @@
+---
+slug: 07-v8-pipeline-and-priorities
+lang: ru
+track: performance
+unit: 07-bundle-budgets
+order: 7
+title: "V8 JIT-пайплайн, HTTP-приоритеты и безопасность bundle"
+summary: "Четыре уровня компиляции V8, HTTP/3 Extensible Priorities (RFC 9218), 103 Early Hints и Subresource Integrity — senior-уровень bundle delivery: механизмы, объясняющие, почему меньший bundle всё равно варьируется в 2-3x в зависимости от способа доставки."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["07-bundle-budgets/06-ci-enforcement"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["v8-jit-tiers", "http3-priorities", "rfc-9218", "103-early-hints", "sri", "csp", "bundle-observability"]
+sources:
+  - https://v8.dev/blog/cost-of-javascript-2019
+  - https://web.dev/articles/preload-critical-assets
+  - https://web.dev/articles/optimize-vitals-lighthouse
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Два приложения с одинаковым homepage bundle 100 КБ. У одного LCP 1,4 с; у другого 2,3 с. Размеры bundle'ов идентичны. Разница — в способе доставки bundle: resource priorities, Early Hints и достигают ли критичные функции оптимизированных тиров V8 до interactive страницы.
+</Hook>
+
+<Crux>Bundle размер — пол. V8 JIT-тиры, HTTP/3 приоритеты, 103 Early Hints решают: на полу ты или в 2x выше.</Crux>
+
+<Explanation>
+
+## Многоуровневый пайплайн компиляции V8
+
+V8 компилирует JavaScript через четыре прогрессивных уровня, меняя compile-стоимость на скорость выполнения.
+
+**Ignition** — bytecode-интерпретатор. Каждая функция начинает здесь. Compile-стоимость минимальна; выполнение в ~5-10 раз медленнее оптимизированного native кода. Код, запускающийся только раз (module-level инициализация), обычно остаётся в Ignition.
+
+**Sparkplug** (Chrome 91, 2021) — неоптимизирующий baseline JIT. Компилирует bytecode в machine code без inlining или type speculation. Compile-стоимость похожа на Ignition; выполнение в ~5x быстрее. Функции автоматически повышаются до Sparkplug после примерно 100 запусков.
+
+**Maglev** (Chrome 117, 2023) — mid-tier оптимизирующий JIT с некоторым inlining и type speculation. Повышается после большего числа итераций.
+
+**TurboFan** — топ-tier оптимизирующий компилятор. Полный inlining, escape analysis, type speculation, loop unrolling. Compile-стоимость высока (10-100 мс per hot функция), но выполнение приближается к native speed. Функции достигают TurboFan только после доказанного hot статуса.
+
+**Implications для bundle budgets**: total parse-стоимость пропорциональна байтам bundle — каждый байт парсится один раз независимо от уровня. Initial compile-стоимость пропорциональна коду, реально запускаемому при старте. Код, никогда не запускающийся, парсится но никогда не компилируется (lazy compilation V8). Размер bundle важнее всего для parse и initial compile; скорость выполнения hot функций зависит больше от формы кода (type stability, allocation patterns), чем от размера bundle.
+
+**Ловушки деоптимизации**: V8 спекулятивно оптимизирует функции на основе наблюдаемых типов. Если функция, скомпилированная с предположением, что аргумент всегда `number`, получает `string`, V8 деоптимизирует её — выбрасывает TurboFan-версию и откатывается к Sparkplug или Ignition. Deopt-цикл — функция, которая оптимизируется, деоптимизируется и повторно оптимизируется — может жечь CPU даже при маленьком bundle. Диагноз через Chrome DevTools Performance tab; ищи события «Deoptimize».
+
+## HTTP/3 Extensible Priorities (RFC 9218)
+
+HTTP/1.1 и HTTP/2 не имеют надёжной client-to-server сигнализации приоритетов. HTTP/3 (over QUIC) реализует RFC 9218: браузеры шлют заголовок `Priority` с каждым запросом. Серверы и CDN, реализующие его, отдают критичные ресурсы первыми, даже если они были запрошены последними.
+
+```
+Priority: u=1          # Высокая срочность (0=наибольшая, 7=наименьшая)
+Priority: u=3, i       # Средняя срочность, инкрементальная доставка
+```
+
+Браузеры автоматически назначают приоритеты: CSS в `<head>` получает urgency 0; lazy-loaded images — urgency 5-6. Маленький критичный bundle, конкурирующий с большим deferred vendor chunk за bandwidth, отдаётся первым при правильной поддержке CDN.
+
+**Риск мисконфигурации**: неверно настроенный HTTP/3 priority может стереть 20-30% преимуществ code-splitting, если CDN шлёт большой deferred chunk первым несмотря на browser priority hints. Проверь в Chrome Network panel под колонкой «Priority».
+
+## 103 Early Hints (RFC 8297)
+
+Сервер, знающий, что собирается отдать `index.html`, также знает критичные ресурсы, которые нужны этой странице — критичный JS chunk, основной шрифт, hero image. С `103 Early Hints` сервер шлёт информационный `103` ответ с заголовками `Link: ...; rel=preload` до завершения генерации HTML. Браузер начинает загружать критичные ресурсы пока сервер ещё строит ответ.
+
+```
+HTTP/2 103 Early Hints
+Link: </static/app.abc123.js>; rel=preload; as=script
+Link: </fonts/inter.woff2>; rel=preload; as=font; crossorigin
+```
+
+Типичный выигрыш: 100-500 мс в доставке критичных ресурсов, в зависимости от времени генерации HTML на сервере и network latency. Cloudflare, Fastly и Vercel поддерживают 103. Большинство production-команд пока не используют Early Hints; это senior-уровень оптимизация, проявляющаяся в 95th-percentile LCP улучшениях.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Техника</th>
+        <th class="border border-border px-3 py-2 text-left">Механизм</th>
+        <th class="border border-border px-3 py-2 text-left">Типичный выигрыш</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">HTTP/3 RFC 9218 priorities</td>
+        <td class="border border-border px-3 py-2">Критичный chunk отдаётся до deferred</td>
+        <td class="border border-border px-3 py-2">Предотвращает потерю 20-30% split-преимущества</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">103 Early Hints</td>
+        <td class="border border-border px-3 py-2">Preload заголовки до готовности HTML</td>
+        <td class="border border-border px-3 py-2">100-500 мс LCP улучшение</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">modulepreload</td>
+        <td class="border border-border px-3 py-2">Download + parse-compile ESM модуль заблаговременно</td>
+        <td class="border border-border px-3 py-2">Убирает parse-стоимость с critical path</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Subresource Integrity и CSP
+
+**Subresource Integrity (SRI)**: атрибут `integrity` на тегах `<script>` и `<link>` включает hash ожидаемого содержимого файла. Если CDN или third-party хост скомпрометирован и отдаёт изменённый скрипт, браузер вычисляет hash и отклоняет файл.
+
+```html
+<script src="https://cdn.example.com/lib.js"
+        integrity="sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC"
+        crossorigin="anonymous"></script>
+```
+
+Без SRI компромисс CDN тихо шлёт вредоносный JS всем пользователям. С SRI браузер отказывается от скрипта. Production-grade: SRI на все third-party script теги; build tooling автоматически генерирует SRI hashes для first-party ассетов.
+
+**CSP + bundle delivery**: `script-src 'self' https://cdn.example.com` ограничивает origins, от которых могут грузиться скрипты. Частая мисконфигурация: `'unsafe-inline'` разрешает inline scripts, сводя на нет защиту от XSS-injected скриптов. Используй nonces или hashes для намеренных inline scripts.
+
+## Production observability: bundle size как RUM метрика
+
+Помимо LCP/INP/CLS, senior-команды трекают gzip'd bundle size per route как custom RUM метрику. При деградации LCP первая корреляция для проверки — изменился ли размер bundle в том же деплое. Некоторые платформы (Vercel Analytics, Sentry Performance) предоставляют это автоматически; другие требуют custom beacon.
+
+Паттерны production-отказов: Pinterest 2017 (один большой bundle → 12 с блокировки main thread, переписан на chunks → bounce -40%); Tinder 2019 (admin panel на consumer routes → 200 КБ удалено → конверсия +5%); Stripe 2020 (Stripe.js 80 КБ на каждом checkout → маленький loader + lazy → TTI -35%). Паттерн всегда структурный: split, lazy, replace — не compress-more.
+
+<Inset kind="why" lang="ru">
+Почему deopt-цикл важен для bundle budgets? Деоптимизация происходит когда V8 обнаруживает, что его type assumptions были неверны и откатывается к более медленным уровням. Если deopt в часто вызываемой функции (например, render loop), CPU overhead мультипликативный — функция повторно JIT-компилируется. Bundle 50 КБ с deopt-циклом в hot функции может казаться медленнее bundle 200 КБ без него. Bundle analysis и --trace-deopt — разные диагностические оси; senior performance работа использует обе.
+</Inset>
+
+<Quiz
+  id="07-quiz-1"
+  lessonSlug="07-v8-pipeline-and-priorities"
+  lang="ru"
+  question="Команда профилирует V8 и находит: render-функция деоптимизируется 50 раз в секунду. Bundle — 90 КБ. Что исправить, и помогает ли уменьшение bundle?"
+  choices={[
+    { label: "Исправить type instability в hot функции — стабилизировать форму объекта или обеспечить консистентные типы аргументов. Уменьшение bundle не помогает; стоимость — per-call CPU от deopt-циклов, не parse-стоимость.", correct: true },
+    { label: "Уменьшить bundle — меньше bundle меньше деоптимизируют.", misconception: "Деоптимизации вызываются type instability в hot функциях, не размером bundle. Bundle 10 КБ может деоптимизироваться так же как 1 МБ bundle." },
+    { label: "Переключиться на более лёгкий фреймворк.", misconception: "Размер фреймворка нерелевантен для deopt-паттерна конкретной функции. Диагностируй и исправь type instability в самой функции." },
+    { label: "Использовать brotli compression.", misconception: "Compression влияет на wire bytes и download time. Deopt — runtime CPU проблема — compression нерелевантен." },
+  ]}
+/>
+
+<Quiz
+  id="07-quiz-2"
+  lessonSlug="07-v8-pipeline-and-priorities"
+  lang="ru"
+  question="Команда включает code splitting, но их CDN неверно настроен с равными HTTP/3 приоритетами для всех chunks. Какой вероятный performance impact?"
+  choices={[
+    { label: "Deferred большой vendor chunk конкурирует на равных за bandwidth с маленьким critical app chunk. Критичный chunk может прийти поздно несмотря на меньший размер — стирая до 20-30% преимущества split.", correct: true },
+    { label: "Нет эффекта — HTTP/3 изначально быстрее HTTP/2.", misconception: "HTTP/3 быстрее для определённых паттернов, но неверно настроенные приоритеты означают, что browser hints игнорируются и bandwidth делится поровну." },
+    { label: "Vendor chunk скачивается первым, потому что он больше.", misconception: "Без приоритетов порядок недетерминирован. С правильными приоритетами маленький critical chunk отдаётся первым. С неверными — возможен любой порядок." },
+    { label: "Code splitting не взаимодействует с HTTP/3 приоритетами.", misconception: "Code splitting создаёт несколько chunks, конкурирующих за bandwidth. Порядок priority определяет, какие приходят первыми — напрямую влияет на LCP." },
+  ]}
+/>
+
+<Quiz
+  id="07-quiz-3"
+  lessonSlug="07-v8-pipeline-and-priorities"
+  lang="ru"
+  question="Script tag без атрибута integrity грузит скрипт с third-party CDN. CDN скомпрометирован и отдаёт изменённый скрипт. Что происходит без SRI и с ним?"
+  choices={[
+    { label: "Без SRI: изменённый скрипт выполняется, потенциально exfiltrating данные юзера. С SRI: браузер вычисляет hash отданного файла, видит несоответствие ожидаемому hash и отказывается выполнять скрипт.", correct: true },
+    { label: "Без SRI: браузер обнаруживает tampering и блокирует.", misconception: "Без SRI у браузера нет способа проверить целостность файла. Он выполняет всё что отдаёт CDN." },
+    { label: "С SRI: скрипт выполняется медленнее.", misconception: "SRI hash верификация — криптографическая проверка при download — пренебрежимый overhead. Не влияет на скорость выполнения." },
+    { label: "SRI работает только для first-party скриптов.", misconception: "SRI специально разработан для third-party скриптов с внешних CDN. First-party скрипты, отдаваемые с твоего origin, неявно доверенны." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Четыре JIT-уровня V8 (Ignition → Sparkplug → Maglev → TurboFan) прогрессивно компилируют hot функции — bundle size задаёт parse-стоимость, но deopt-циклы в hot функциях могут доминировать execution-стоимостью независимо. HTTP/3 RFC 9218 priorities обеспечивают правильный порядок прихода split-чанков. 103 Early Hints даёт браузеру 100-500 мс фору на критичные ресурсы. SRI + CSP защищают доставку от компрометации CDN.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опиши четыре уровня компиляции V8 и что каждый даёт.", a: "Ignition: bytecode-интерпретатор, минимальная compile-стоимость, медленное выполнение (~5-10x ниже native). Sparkplug: baseline неоптимизирующий JIT, быстро компилируется, ~5x быстрее Ignition. Maglev: mid-tier оптимизирующий JIT, некоторый inlining и type speculation. TurboFan: топ-tier, полный inlining и speculative оптимизация, 10-100 мс compile per функция, near-native выполнение. Функции повышаются по уровням по мере роста количества запусков. Размер bundle влияет на parse и Ignition compile; выполнение hot функций зависит от достижения TurboFan и удержания там." },
+    { q: "Что определяет RFC 9218 и почему это важно для code-split bundles?", a: "RFC 9218 определяет Extensible Prioritization Scheme for HTTP — стандартный заголовок Priority, позволяющий браузерам сигнализировать urgency (0=наибольшая, 7=наименьшая) и incremental flag per resource request. Серверы и CDN, реализующие его, отдают high-urgency ресурсы (критичный JS chunk) до low-urgency (большой deferred vendor chunk) даже при одновременном запросе. Без него bandwidth делится поровну и критичный chunk может прийти поздно, стирая преимущества split." },
+    { q: "PR вводит функцию, обрабатывающую и strings и numbers. После деплоя RUM показывает INP регрессию на конкретном route. Вероятный диагноз и fix?", a: "Вероятно деоптимизация V8. Функция была оптимизирована для одного типа (например number), потом вызвана с string, вызвав deopt и TurboFan перекомпиляцию. Если эта функция на interaction hot path (вызывается при каждом клике), каждый вызов в deopt-период медленный. Fix: стабилизировать тип — обработать два типа в отдельных функциях или нормализовать ввод до hot функции. Диагноз через Chrome Performance tab, ищи события Deoptimize, коррелирующие с медленными interactions." },
+  ]}
+/>
+
+<Recap lang="ru">
+Размер bundle задаёт parse-стоимость, но ceiling определяется способом доставки и компиляции bundle. Четыре JIT-уровня V8 прогрессивно компилируют hot функции от Ignition до TurboFan — байты bundle влияют на parse, но type-нестабильные hot функции вызывают deopt-циклы, доминирующие execution-временем независимо от размера. HTTP/3 RFC 9218 priorities обеспечивают правильный порядок прихода code-split чанков; неверно настроенный CDN стирает до 30% преимуществ split. 103 Early Hints даёт браузеру 100-500 мс фору на критичные ресурсы до прихода HTML. Subresource Integrity и CSP защищают доставку от компрометации CDN. Вместе они формируют senior performance-слой: разницу между теоретически корректным bundle budget и тем, который реально доставляет performance, обещанный измерениями.
+</Recap>
