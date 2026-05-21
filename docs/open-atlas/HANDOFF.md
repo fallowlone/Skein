@@ -160,38 +160,41 @@ by following a connected path of lessons. Practice is deferred (theory first).
 
 ## Work queue (in order)
 
-1. **Migration: 3-tier → single-level lessons** — IN PROGRESS (started 2026-05-19).
-   Convert all 16 pillars from the 3-tier `book/` model to single-level connected
-   lessons. Scope expanded from networking-only to all 16 pillars by user decision
-   (the repo had 5 fully-authored pillars, not 1). Brainstorm + spec + plan DONE:
+1. **Migration: 3-tier → single-level lessons** — COMPLETE 2026-05-21. The
+   3-tier `book/` model is fully retired. All 16 pillars now expose single-level
+   connected lessons (open-atlas Model A) via `lessons/{en,ru}/<track>/<unit>/<lesson>/`.
    - Spec: `docs/superpowers/specs/2026-05-19-tier-to-single-level-migration-design.md`
    - Plan: `docs/superpowers/plans/2026-05-19-tier-to-single-level-migration.md`
-     — Phase A infra → B content (51 units) → C stubs (81) → D teardown; per-task and
-     per-unit checkboxes track progress.
-   - Autonomous resume prompt: `docs/open-atlas/CONTINUE-PROMPT.md`.
-   Phase A COMPLETE (2026-05-19). Phase B COMPLETE 2026-05-21 — **51/51 units done**:
-   5 ready pillars (networking 12, browser 8, databases 8, observability 8,
-   performance 8) + 7 lone ready pieces (apis/06-graphql-n-plus-one, backend/05-
-   idempotency-retries, caching/03-stampede, distributed/02-raft-outline, frontend/02-
-   data-fetching, queues/01-delivery-guarantees, security/02-oauth-oidc). Build 2525+
-   pages, lint 0/0. Final Phase B commits today (2026-05-21):
-   `2343423` performance/07-bundle-budgets, `59ce342` performance/08-putting-it-together
-   (unit slug `08-putting-it-together-perf` to dedupe across tracks), `d53f177`
-   apis/06-graphql-n-plus-one, `d3b79c5` backend/05-idempotency-retries, `d2c9cc6`
-   caching/03-stampede, `c850410` distributed/02-raft-outline, `fc631b6` frontend/02-
-   data-fetching, `45d9acc` queues/01-delivery-guarantees, `ef6a37a` security/02-
-   oauth-oidc.
-   **RESUME at Phase C** — 81 stub units across 11 pillars (ai-llm 8, apis 7, backend
-   7, caching 7, data-engineering 8, deployment 8, distributed 7, engineering-practice
-   8, frontend 7, queues 7, security 7). Per-pillar batch: dispatch one sonnet
-   subagent per pillar — for each stub piece (a) add unit entry to
-   `site/src/content/units.json` (title/crux from stub piece frontmatter; `lessons:
-   ["01-overview"]`), (b) create `site/src/content/lessons/{en,ru}/<pillar>/<unit>/
-   01-overview/index.mdx` frontmatter-only (`status: stub`, `lessonType: topic`,
-   `level: junior`), (c) `git rm -r` the source piece. Build gate `cd site && bun run
-   build` lint 0/0 (lessons linter skips `status: stub`). One commit per pillar:
-   `content(<pillar>): stub units migrated to lesson model`. Bump plan dashboard +
-   commit `docs(open-atlas): Phase C progress` after each pillar.
+   - Phase A (additive infra) COMPLETE 2026-05-19.
+   - Phase B (content: 51 ready units) COMPLETE 2026-05-21. 5 ready pillars
+     (networking 12, browser 8, databases 8, observability 8, performance 8) +
+     7 lone ready pieces (apis/06-graphql-n-plus-one, backend/05-idempotency-retries,
+     caching/03-stampede, distributed/02-raft-outline, frontend/02-data-fetching,
+     queues/01-delivery-guarantees, security/02-oauth-oidc).
+   - Phase C (stubs: 81 units) COMPLETE 2026-05-21. Per-pillar batches: `bfda814`
+     ai-llm, `944d8d5` data-engineering, `a94c7d5` deployment, `4d850f4`
+     engineering-practice, `432fd8f` apis, `389a87d` backend, `0ec500f` caching,
+     `232e42a` distributed, `5a0eaa5` frontend, `b240a74` queues, `2f2ef86` security.
+   - Phase D (teardown) COMPLETE 2026-05-21. `01add9f` D1 piece-only lint rules
+     dropped (`depth-checkpoints`, `tier-accordion`, `tier-word-budgets`,
+     `exercise-counts`; `EXERCISE_COMPONENTS` moved to shared `exercise-components.ts`).
+     `f5d9c46` D2 piece routes removed; `Chapter.astro` deleted, `Topic.astro` kept
+     (still imported by Lesson/glossary/settings/threads/learn pages). `2cac861` D3
+     `book`/`pillars`/`chapters` collections + data files retired, orphan nav components
+     cleaned, `PillarGrid`/`GlobalSearch`/home page repointed at tracks/lessons.
+     `e1f4520` D4 `TierAccordion.astro` + `3-tier-piece.mdx` + `tier-persist.spec.ts`
+     deleted. `378f43e` D5 final cleanup of piece-era orphan components + dead CSS;
+     stale-reference grep clean.
+   - **Final state**: build 2359 pages, lint 0/0. 19 tracks (3 foundations + 16
+     fullstack pillars). 132 units (51 ready + 81 stub). On branch
+     `interesting-antonelli-002bf7`, NOT yet merged to main; separate merge task.
+
+   Carry-forward notes (still relevant for future work):
+   - `08-putting-it-together` slug recurs across many tracks; performance dedupes
+     with `-perf` suffix in `units.json` to avoid collision. Other tracks left as-is —
+     non-fatal slug warning at build time.
+   - `personas.json` is still used (`PersonaTag`, `PersonaLegend`, lint rule) — not
+     deleted in D3.
    **Traps learned during Phase B (encode into every subagent prompt):**
    - MDX parses `<1`, `<2`, `<5` etc as JSX → build fails. Use `&lt;1` or "under 1".
    - Bare `>` in prose → `&gt;`.
