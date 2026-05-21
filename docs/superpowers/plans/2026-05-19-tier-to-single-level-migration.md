@@ -390,7 +390,12 @@ Offload research + authoring + translation to subagents. After each unit, tick i
   - [x] 05-third-party-scripts (middle)
   - [x] 06-ci-enforcement (middle)
   - [x] 07-v8-pipeline-and-priorities (senior)
-- [ ] 08-putting-it-together
+- [x] 08-putting-it-together → 5 lessons, commit `59ce342` (unit slug `08-putting-it-together-perf` to dedupe across tracks)
+  - [x] 01-the-performance-loop (junior)
+  - [x] 02-classify-and-fix-families (middle)
+  - [x] 03-observability-stack-and-gates (middle)
+  - [x] 04-incident-to-enforcement (middle)
+  - [x] 05-culture-economics-and-scale (senior)
 
 ### Checklist — 7 lone ready pieces
 
