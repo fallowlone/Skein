@@ -1,0 +1,183 @@
+---
+slug: 03-consumer-dedup
+lang: ru
+track: queues
+unit: 01-delivery-guarantees
+order: 3
+title: "Consumer-side dedup: самый дешёвый путь к exactly-once processing"
+summary: "Как оборачивать side effect и dedup INSERT в одну DB-транзакцию, почему INSERT должен быть первым и паттерн Stripe Idempotency-Key для внешних API."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - queues/01-delivery-guarantees/02-failure-modes
+deepensInto:
+  - queues/01-delivery-guarantees/04-kafka-eos
+  - queues/01-delivery-guarantees/06-exactly-once-in-production
+spiral: ["statefulness", "encapsulation"]
+concepts: ["idempotency", "dedup-table", "transactional-dedup", "stripe-idempotency-key", "outbox-pattern"]
+sources:
+  - https://stripe.com/docs/api/idempotent_requests
+  - https://docs.confluent.io/kafka/design/delivery-semantics.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Ты добавил dedup-проверку в payment consumer — быстрый SELECT перед списанием. Дубликаты упали с десятков в неделю до нуля. Потом, три недели спустя, истощение пула DB-коннекций вызвало тихий сбой проверки, и списание прошло дважды снова. Проверка была вне транзакции. Одна строка не в том месте.
+</Hook>
+
+<Crux>Dedup INSERT и side effect должны коммититься атомарно. Вне транзакции любое crash-окно вновь открывает дубликат.</Crux>
+
+<Explanation>
+
+## Наивный dedup-паттерн и почему он не работает
+
+Первый инстинкт — двухшаговая проверка:
+
+```sql
+SELECT 1 FROM processed WHERE msg_id = 'msg-7a3f';
+-- если найдено: пропустить
+-- если нет: вызвать Stripe, потом INSERT в processed
+```
+
+Это ломается при конкурентной доставке. Два consumer-а получают одно сообщение одновременно (возможно при rebalance или после visibility timeout). Оба делают SELECT в один момент, оба видят «не найдено», оба вызывают Stripe. Race condition. Два списания.
+
+## Правильный паттерн: INSERT первым, одна транзакция
+
+Фикс: dedup INSERT и side effect в одной атомарной DB-транзакции, и INSERT *первым*:
+
+```sql
+BEGIN;
+  INSERT INTO processed (msg_id, created_at)
+  VALUES ('msg-7a3f', now());
+  -- при UNIQUE violation: ROLLBACK и пропустить
+  -- если insert успешен: выполнить side effect
+  UPDATE orders SET status = 'paid' WHERE id = 'O-123';
+COMMIT;
+```
+
+При unique-constraint violation транзакция откатывается — side effect никогда не выполняется. При commit обе записи — dedup-row и side effect — пишутся вместе. Нет crash-окна между ними.
+
+Ключевое свойство: если consumer падает после commit DB-транзакции, но до ack брокера, брокер передоставляет. Следующий consumer пытается INSERT `msg-7a3f` снова, попадает на unique constraint, откатывается, ack-ит брокер. Side effect уже был выполнен один раз; дубликат тихо отбрасывается.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Структура транзакции: INSERT dedup-row первым</div>
+  <div class="flex flex-col gap-1 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">1</span>
+      <span>BEGIN транзакции</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 font-bold">2</span>
+      <span>INSERT INTO processed (msg_id) — UNIQUE constraint</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300 font-bold">2a</span>
+      <span>UNIQUE violation? → ROLLBACK. Лог «дубликат пропущен». Ack брокер.</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">3</span>
+      <span>Выполнить side effect (UPDATE orders, отправить email job и т.д.)</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">4</span>
+      <span>COMMIT транзакции</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-8 text-center rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 font-bold">5</span>
+      <span>Ack брокер — сообщение удалено из очереди</span>
+    </div>
+  </div>
+</div>
+
+## Внешние API: Stripe Idempotency-Key
+
+Трюк с транзакцией работает только когда side effect — DB-запись внутри той же транзакции. А внешние API — Stripe, SES, Twilio? HTTP-вызов нельзя включить в Postgres-транзакцию.
+
+Паттерн для внешних API: передавай `Idempotency-Key` header, derived из msg ID.
+
+```http
+POST /v1/charges
+Idempotency-Key: msg-7a3f
+```
+
+Stripe хранит ключ и первый response 24 часа. Если вызвать Stripe снова с тем же ключом (потому что брокер передоставил), Stripe возвращает кешированный response без повторного списания. PayPal, Square и большинство payment API следуют той же конвенции.
+
+Когда внешний API поддерживает idempotency keys, паттерн:
+
+1. INSERT pending-строку: `INSERT INTO stripe_intents (msg_id, status='pending')` — в транзакции. Это intent-лог.
+2. Вызвать внешний API с `Idempotency-Key = msg_id`.
+3. При успехе: UPDATE строку в `status='completed', charge_id=...`.
+
+Если consumer падает между шагами 2 и 3, redelivery снова вызывает Stripe с тем же ключом (Stripe возвращает кешированный `charge_id`), потом завершает UPDATE. Двойного списания нет.
+
+<Quiz
+  id="03-q1"
+  pieceSlug="03-consumer-dedup"
+  lang="ru"
+  question="Почему dedup INSERT должен быть в той же транзакции, что и side effect?"
+  choices={[
+    { label: "Транзакции быстрее отдельных запросов", misconception: "Производительность — побочный профит; причина корректности — atomicity: оба должны успешны или оба провалиться вместе." },
+    { label: "Если INSERT коммититься отдельно и side effect потом падает, сообщение помечено обработанным, но работа не сделана — и redelivery пропустит его навсегда", correct: true },
+    { label: "INSERT нужен return value side effect", misconception: "INSERT нужен только msg ID, который известен до side effect." },
+    { label: "UNIQUE constraints работают только внутри транзакций", misconception: "UNIQUE constraints работают независимо; проблема в crash-окне между раздельным INSERT и side effect." },
+  ]}
+/>
+
+<Quiz
+  id="03-q2"
+  pieceSlug="03-consumer-dedup"
+  lang="ru"
+  question="Consumer использует Stripe Idempotency-Key, но без локального DB dedup. Stripe-вызов успешен, consumer падает до ack. На redelivery что происходит?"
+  choices={[
+    { label: "Stripe снова списывает — Idempotency-Key per-request, не persisted", misconception: "Stripe хранит ключ и response 24 часа; второй вызов с тем же ключом возвращает кешированный response." },
+    { label: "Stripe возвращает кешированный response для того же ключа — второго списания нет", correct: true },
+    { label: "Брокер отбрасывает redelivery, потому что ключ уже существует", misconception: "Брокер ничего не знает о Stripe idempotency keys; он только управляет visibility сообщения." },
+    { label: "Consumer получает ошибку от Stripe и должен обработать вручную", misconception: "Stripe возвращает HTTP 200 с кешированным response на дубликате." },
+  ]}
+/>
+
+<DragOrder
+  id="03-drag-1"
+  pieceSlug="03-consumer-dedup"
+  lang="ru"
+  prompt="Поставь шаги корректного идемпотентного consumer-а с внешним payment API:"
+  items={[
+    "Получить msg-7a3f от брокера",
+    "BEGIN DB-транзакцию",
+    "INSERT INTO payment_intents (msg_id, status='pending') — unique на msg_id",
+    "COMMIT pending-строку",
+    "Вызвать Stripe с Idempotency-Key=msg-7a3f",
+    "UPDATE payment_intents SET status='done', charge_id=ch_abc123",
+    "Ack брокер — сообщение удалено из очереди",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Оберни dedup INSERT и side effect в одну транзакцию; INSERT первым. Для внешних API — передавай Idempotency-Key, derived из msg ID. Stripe хранит ключ и возвращает кешированный response 24 часа.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-consumer-dedup-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какое crash-окно делает SELECT-then-act небезопасным для dedup?", a: "Если два consumer-а получают одно сообщение конкурентно (при rebalance или после visibility timeout), оба делают SELECT, оба видят 'не найдено' и оба выполняют side effect. SELECT и INSERT не атомарны, поэтому любая конкурентная доставка открывает race." },
+    { q: "Если consumer падает после DB COMMIT, но до ack брокера, что происходит на redelivery?", a: "Брокер передоставляет. Consumer пробует INSERT снова — попадает на UNIQUE constraint — откатывается — ack-ит. Side effect уже был committed первым прогоном; дубликат тихо отбрасывается. Корректность сохранена." },
+    { q: "Каков Stripe Idempotency-Key TTL и что происходит после истечения?", a: "24 часа. После истечения Stripe считает ключ новым и снова выполнит списание. Это значит dedup-механизм должен ретраить в пределах 24 часов или переключиться на постоянную локальную запись. На практике очереди передоставляют за минуты, не дни." },
+  ]}
+/>
+
+<Recap lang="ru">
+Consumer-side dedup — самый дешёвый путь к effectively exactly-once processing: веди таблицу обработанных сообщений с UNIQUE constraint на msg ID, BEGIN транзакцию, INSERT dedup-строку первым, выполни side effect, COMMIT. UNIQUE violation на redelivery откатывает всю транзакцию, поэтому side effect никогда не повторяется. Для внешних API, живущих вне DB-транзакции, derive Idempotency-Key из msg ID и передавай с каждым вызовом — Stripe, PayPal и Square поддерживают эту конвенцию и кешируют первый response минимум 24 часа, делая retry безопасно идемпотентными через границу брокера.
+</Recap>

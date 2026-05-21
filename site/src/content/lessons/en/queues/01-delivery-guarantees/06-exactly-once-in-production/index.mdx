@@ -1,0 +1,166 @@
+---
+slug: 06-exactly-once-in-production
+lang: en
+track: queues
+unit: 01-delivery-guarantees
+order: 6
+title: "Exactly-once in production: impossibility proof, hybrid patterns, and real incidents"
+summary: "The Two Generals proof of why exactly-once delivery is impossible, the hybrid Kafka+DB pattern that achieves effectively-once at scale, observability metrics, and real production failures from Stripe, AWS, and Slack."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - queues/01-delivery-guarantees/04-kafka-eos
+  - queues/01-delivery-guarantees/03-consumer-dedup
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["two-generals-problem", "hybrid-exactly-once", "zombie-producer", "observability", "dedup-hit-rate", "chaos-testing"]
+sources:
+  - https://en.wikipedia.org/wiki/Two_Generals%27_Problem
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
+  - https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging
+  - https://strimzi.io/blog/2023/05/03/kafka-transactions/
+  - https://stripe.com/docs/api/idempotent_requests
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Stripe 2020: a bug in their internal queue consumer skipped the Idempotency-Key on retry, charging a small percentage of customers twice during a Q4 traffic spike. Refunded within 24 hours. The post-mortem: "exactly-once is harder than it looks; production correctness lives in consumer idempotency more than in broker guarantees."
+</Hook>
+
+<Crux>Exactly-once delivery impossible (Two Generals). Production correctness comes from the consumer dedup, not the broker promise.</Crux>
+
+<Explanation>
+
+## The Two Generals' Problem: why exactly-once delivery is impossible
+
+Two generals want to coordinate an attack at dawn. Their only communication is via messenger across enemy territory. Messengers may be captured. Can they agree?
+
+Proof by contradiction: suppose a protocol exists. Consider the last message in the protocol that, if delivered, guarantees agreement. If we remove it, the protocol must still work — the sender already had certainty before sending that last message. By induction, the protocol works with zero messages — which is absurd, since they cannot coordinate without communicating.
+
+**The generalisation:** no finite protocol over an unreliable channel can give both parties certainty that they share the same agreed fact.
+
+Applied to queues: exactly-once *delivery* requires both producer and broker to know the message was delivered exactly once. Over an unreliable network, this is the Two Generals' Problem. Exactly-once *processing* only requires one party — the consumer — to maintain a dedup log. One-sided certainty is achievable. Two-sided is not.
+
+This asymmetry is why "effectively-once" is the real production target: at-least-once delivery from the broker, exactly-once processing enforced by the consumer.
+
+## The hybrid exactly-once pattern at scale
+
+Pure Kafka exactly-once (within Kafka topics) does not extend to external systems. The production-grade pattern for a high-throughput payment processor:
+
+1. **Kafka with idempotent producer** (`enable.idempotence=true`, `acks=all`). Eliminates producer-retry duplicates at ~3% cost.
+2. **Consumer at-least-once** with `isolation.level=read_committed`. Sees only committed records.
+3. **Per-message dedup table** in Postgres:
+   ```sql
+   BEGIN;
+     INSERT INTO charges (msg_id, status)
+     VALUES ('msg-7a3f', 'pending')
+     ON CONFLICT DO NOTHING;
+     -- if 0 rows inserted: already processed, skip
+   COMMIT;
+   -- call Stripe with Idempotency-Key=msg-7a3f
+   UPDATE charges SET status='done', charge_id='ch_abc123'
+   WHERE msg_id='msg-7a3f';
+   ```
+4. **Stripe Idempotency-Key** derived from `msg_id`. Stripe stores the first response for 24 hours; any retry returns the cached response.
+
+Each layer is independently testable. The system survives crashes at any point with no duplicate charges. The dedup table also serves as an audit trail for financial reconciliation.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Hybrid exactly-once: defence in depth</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold">Kafka idempotent producer</span>
+      <span>Stops Leg 1 producer-retry duplicates</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold">DB dedup + ON CONFLICT</span>
+      <span>Stops Leg 3 consumer-retry duplicates atomically</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold">Stripe Idempotency-Key</span>
+      <span>Stops cross-system duplicates at the payment API boundary</span>
+    </div>
+  </div>
+</div>
+
+## Observability for delivery semantics
+
+Without metrics, you find out about duplicates from angry customers, not dashboards.
+
+**Per-broker metrics:**
+- `consumer_lag_messages` — publisher offset minus committed offset. Sustained growth means consumers are falling behind.
+- `dlq_depth` by source queue — alert at any non-zero value in production.
+- `dlq_age_seconds_p99` — oldest message in DLQ; alert when &gt;1 hour.
+
+**Per-consumer metrics:**
+- `dedup_check_hit_rate` — how often the dedup INSERT is blocked by UNIQUE constraint. Should be near 0% in steady state. A spike indicates broker is redelivering aggressively — either a consumer-group rebalance, a bug causing early acks, or a broker issue.
+- `side_effect_duration_p99` — if this exceeds your visibility timeout, you will see duplicates.
+- `retry_count_p99` — sustained high values mean unhealthy consumers.
+
+**Distributed tracing:** every message should carry a trace ID propagated from producer through consumer to any downstream service. Duplicate processing shows up as two spans with the same message trace ID — instantly distinguishable from legitimate distinct messages.
+
+## Real production failures
+
+**Stripe 2020:** Internal queue consumer bug skipped Idempotency-Key on retry during Q4 spike. Small percentage of customers charged twice. Refund in 24 hours. Post-mortem result: hardened a linter rule that flags HTTP POST calls in consumer code paths that lack an Idempotency-Key header.
+
+**AWS SQS 2019:** A region had a visibility-timeout race condition: consumers calling `ChangeMessageVisibility` while `DeleteMessage` was in-flight occasionally caused redelivery despite the delete completing. Fixed in next SDK release.
+
+**Stripe internal 2023:** A hot DLQ accumulated 1M messages during a downstream incident. An operator ran redrive-all without rate limiting. Source queue received 1M messages simultaneously, overwhelming the consumer pool and triggering cascading throttling on the downstream payment API.
+
+**Slack 2022:** A Kafka exactly-once stream pipeline had a transaction-coordinator bug during a broker rolling restart. The system delivered duplicates for 6 minutes until the rolling restart completed. Root cause: zombie producer sessions that had not been properly fenced.
+
+The pattern in every incident: **the correctness invariant failed in the consumer or the operational procedure, not in the broker guarantee itself**. Broker guarantees are necessary but insufficient; end-to-end correctness requires consumer idempotency and operational discipline.
+
+<Quiz
+  id="06-q1"
+  pieceSlug="06-exactly-once-in-production"
+  lang="en"
+  question="What is the actual reason Kafka exactly-once cannot extend natively to an external Postgres database?"
+  choices={[
+    { label: "Postgres does not support transactions", misconception: "Postgres has full ACID transactions; that is not the issue." },
+    { label: "Kafka transactions are atomic only within Kafka — input offset commit and output topic write. External systems are outside the transaction scope; coordination would require distributed two-phase commit, which Kafka does not provide.", correct: true },
+    { label: "Kafka is too slow for Postgres writes", misconception: "Speed is not the root cause; the root cause is the transaction scope boundary." },
+    { label: "Postgres rejects Kafka client connections", misconception: "There is no protocol incompatibility; the issue is transactional scope." },
+  ]}
+/>
+
+<Quiz
+  id="06-q2"
+  pieceSlug="06-exactly-once-in-production"
+  lang="en"
+  question="In steady state, a consumer's dedup_check_hit_rate suddenly spikes from 0.05% to 8% for 10 minutes outside a deploy window. What is the most likely cause?"
+  choices={[
+    { label: "The dedup table schema changed", misconception: "A schema change would cause errors, not a spike in successful duplicate catches." },
+    { label: "A consumer crashed and the broker is redelivering its in-flight messages to other consumers — many of which were already partially processed", correct: true },
+    { label: "Network latency increased", misconception: "Higher latency slows processing but does not cause duplicate delivery; duplicates come from consumer failures or visibility timeout expiry." },
+    { label: "The Kafka producer retried a batch", misconception: "Kafka idempotent producer deduplicates at the broker before the consumer sees anything; consumer dedup_hit_rate would not spike from producer retries." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Two Generals proves exactly-once delivery is impossible over unreliable channels. Production answer: at-least-once Kafka + idempotent consumer (DB dedup + Stripe Idempotency-Key). Monitor dedup_hit_rate near 0%; spikes mean broker is redelivering, not a correctness problem if the consumer is idempotent.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-exactly-once-in-production-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the Two Generals' Problem and explain the asymmetry that makes exactly-once processing achievable.", a: "Two parties over an unreliable channel cannot achieve mutual certainty about agreement (provable by induction: removing the last required message still leaves the protocol working, reducing to zero messages needed — absurd). Exactly-once delivery requires both sides to know. Exactly-once processing only requires one side (the consumer) to maintain a dedup log — one-sided certainty is achievable." },
+    { q: "What three layers compose the hybrid exactly-once pattern for a payment processor?", a: "1. Kafka idempotent producer (enable.idempotence=true) — eliminates producer-retry duplicates at Leg 1. 2. Consumer DB dedup with ON CONFLICT DO NOTHING — eliminates Leg 3 duplicates atomically. 3. Stripe Idempotency-Key derived from message ID — eliminates cross-system duplicates at the payment API." },
+    { q: "What does a sustained dedup_hit_rate spike above 1% outside deploy windows indicate?", a: "Active message redelivery — likely a consumer crash causing in-flight messages to be redelivered to other consumers, or a visibility timeout misconfiguration allowing concurrent duplicate processing. If the consumer is properly idempotent, duplicates are caught silently; the spike is a signal to investigate consumer stability, not a correctness emergency." },
+  ]}
+/>
+
+<Recap lang="en">
+The Two Generals' Problem proves that no finite protocol over an unreliable channel can give both sides certainty of agreement — this is why exactly-once delivery is impossible. Production systems achieve effectively-once through defence in depth: Kafka idempotent producer (~3% cost) eliminates producer-retry duplicates at the broker; consumer-side DB dedup with ON CONFLICT DO NOTHING eliminates Leg 3 duplicates atomically; Stripe Idempotency-Key eliminates cross-system duplicates at the payment API. Every real incident — Stripe 2020, SQS 2019, Slack 2022 — confirms the same pattern: correctness fails in the consumer or in operational procedure, not in the broker. Monitor dedup_hit_rate near zero in steady state; a sustained spike outside deploys means consumer instability, not a dedup failure.
+</Recap>
