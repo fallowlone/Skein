@@ -1,0 +1,216 @@
+---
+slug: 04-client-cache-swr
+lang: en
+track: frontend
+unit: 02-data-fetching
+order: 4
+title: "Client-side cache: TanStack Query, SWR, and stale-while-revalidate"
+summary: "How TanStack Query and SWR implement shared caches with stale-while-revalidate semantics, optimistic updates, and cache invalidation strategies for post-mount interactive fetching."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - frontend/02-data-fetching/03-rsc-and-streaming
+deepensInto:
+  - frontend/02-data-fetching/05-lcp-and-critical-path
+  - frontend/02-data-fetching/06-senior-internals
+spiral: ["statefulness"]
+concepts: ["TanStack-Query", "SWR", "stale-while-revalidate", "optimistic-update", "cache-invalidation", "single-flight", "queryKey"]
+sources:
+  - https://tanstack.com/query/v5/docs/framework/react/guides/request-waterfalls
+  - https://tanstack.com/query/v5/docs/react/guides/optimistic-updates
+  - https://datatracker.ietf.org/doc/html/rfc5861
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A user opens a product page, navigates away, and comes back 10 seconds later. With plain `useEffect`, they wait for the full fetch again. With TanStack Query, the page shows the cached result instantly while a background refresh quietly checks for updates. Same data, radically different experience.
+</Hook>
+
+<Crux>TanStack Query / SWR cache by queryKey. Stale-while-revalidate: instant cached return, background re-fetch. Revisits feel instant.</Crux>
+
+<Explanation>
+
+## The stale-while-revalidate pattern
+
+**Stale-while-revalidate** is a cache freshness strategy from RFC 5861: serve cached data immediately even if it might be stale, then re-fetch in the background. The user sees content without waiting; the UI updates when fresh data arrives if it changed.
+
+Both TanStack Query and SWR implement this:
+
+```typescript
+// TanStack Query
+const { data, isLoading } = useQuery({
+  queryKey: ['product', id],
+  queryFn: () => fetchProduct(id),
+  staleTime: 30_000,   // data is "fresh" for 30s — no background refetch
+  gcTime: 300_000,     // unused cache entries live for 5min before GC
+});
+```
+
+First visit: `isLoading=true`, fetch fires, data arrives, `isLoading=false`.  
+Second visit (within gcTime): `data` returns instantly from cache. Background fetch updates it if `staleTime` has elapsed.
+
+The queryKey is the cache key. `['product', id]` is a separate cache entry from `['product', otherId]`. Arrays of primitives work; TanStack Query serialises them deterministically.
+
+## Single-flight deduplication
+
+When multiple components mount at the same time and all call `useQuery(['products'])`, TanStack Query fires only **one** network request. All components share the result. This is called **single-flight de-duplication** — it collapses N identical in-flight requests into one, avoiding both wasted bandwidth and cache races.
+
+```typescript
+// 10 <ProductCard> components on the page, each calling:
+useQuery({ queryKey: ['products'], queryFn: fetchProducts });
+// → exactly ONE network request fires
+```
+
+SWR does the same. This makes library-based caching dramatically safer than rolling your own `useState + useEffect` per component.
+
+## Optimistic updates
+
+For actions that should feel instant — Like, Bookmark, Mark as Read — apply the change locally before the server confirms it, then roll back on error.
+
+```typescript
+const mutation = useMutation({
+  mutationFn: (postId: string) => likePost(postId),
+  onMutate: async (postId) => {
+    // 1. Cancel any outgoing refetches to avoid overwriting optimistic update
+    await queryClient.cancelQueries({ queryKey: ['post', postId] });
+    // 2. Snapshot the current value
+    const previous = queryClient.getQueryData(['post', postId]);
+    // 3. Optimistically update
+    queryClient.setQueryData(['post', postId], (old) => ({ ...old, liked: true, likeCount: old.likeCount + 1 }));
+    return { previous };
+  },
+  onError: (err, postId, context) => {
+    // Roll back to snapshot on failure
+    queryClient.setQueryData(['post', postId], context.previous);
+  },
+  onSettled: (postId) => {
+    // Invalidate to get canonical server state
+    queryClient.invalidateQueries({ queryKey: ['post', postId] });
+  },
+});
+```
+
+The pattern: apply the expected server response shape locally, let the real response replace it. If the shapes match, the replacement is a no-op and the user sees no flicker.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Optimistic update lifecycle</div>
+  <div class="flex flex-col gap-2">
+    <div class="flex items-center gap-2">
+      <div class="rounded bg-amber-100 dark:bg-amber-900/30 px-2 py-1 text-xs">T=0</div>
+      <span>User clicks Like → onMutate: snapshot + setQueryData(liked:true) → UI updates instantly</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-1 text-xs">T=200ms</div>
+      <span>Server responds OK → onSettled: invalidate → background refetch confirms</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <div class="rounded bg-red-100 dark:bg-red-900/30 px-2 py-1 text-xs">On error</div>
+      <span>Server returns 429 → onError: setQueryData(snapshot) → UI rolls back</span>
+    </div>
+  </div>
+</div>
+
+## Cache invalidation strategies
+
+When a mutation succeeds, stale queries must be refreshed. Three approaches:
+
+**invalidateQueries** — mark queries stale, trigger refetch on next observer. Safest; guaranteed canonical server data.
+
+```typescript
+queryClient.invalidateQueries({ queryKey: ['posts', userId] });
+```
+
+**setQueryData** — write the mutation response directly into the cache. Cheapest; no extra network call. Only correct when the mutation response includes the complete new state.
+
+```typescript
+queryClient.setQueryData(['post', id], serverResponse);
+```
+
+**refetchQueries** — force immediate fetch. Use when you need fresh data now and cannot trust the mutation response.
+
+Most production code uses both: `setQueryData` for the directly-mutated entity (if the API returns it), `invalidateQueries` for listing queries that reference it.
+
+<Inset kind="why" lang="en">
+TanStack Query v5 renamed `cacheTime` to `gcTime` to clarify what it controls — not how long data is cached (that's `staleTime`) but how long unused entries live before garbage collection. If `staleTime` is 0 and `gcTime` is 300s, the cache entry lives for 5min but is re-fetched on every access. If `staleTime` is 60s, no re-fetch happens for 60s after the last successful fetch.
+</Inset>
+
+<NumbersCard
+  id="client-cache-numbers"
+  title="TanStack Query vs SWR"
+  stats={[
+    { label: "TanStack Query v5 size", value: "~16 KB gzipped" },
+    { label: "SWR size", value: "~5 KB gzipped" },
+    { label: "Default staleTime (both)", value: "0ms (always stale)" },
+    { label: "Default gcTime (TanStack Query)", value: "5 minutes" },
+    { label: "RFC 5861 (stale-while-revalidate)", value: "HTTP analog" },
+  ]}
+/>
+
+<Quiz
+  id="04-q1"
+  pieceSlug="04-client-cache-swr"
+  lang="en"
+  question="A useQuery returns isLoading=false and data. The user navigates away and back to the same page. What is the default UX?"
+  choices={[
+    { label: "Spinner shows, then data re-fetches from scratch", misconception: "Spinner only appears when the cache is empty. Revisit hits the cache." },
+    { label: "Cached data shows instantly; background refetch may update if staleTime has elapsed", correct: true },
+    { label: "Empty page — useQuery always re-fetches on mount", misconception: "Default behaviour returns cached data immediately while optionally refetching." },
+    { label: "The query throws an error because data is stale", misconception: "Stale data is served; staleness triggers a background refetch, not an error." },
+  ]}
+/>
+
+<Quiz
+  id="04-q2"
+  pieceSlug="04-client-cache-swr"
+  lang="en"
+  question="Why does TanStack Query implement single-flight de-duplication?"
+  choices={[
+    { label: "HTTP/2 requires it", misconception: "HTTP/2 multiplexes streams; it does not deduplicate same-key queries at the library level." },
+    { label: "Multiple components mounting simultaneously often want the same data — single-flight collapses N requests with the same queryKey into one network call", correct: true },
+    { label: "To reduce memory usage", misconception: "Memory savings are marginal; the main goal is network efficiency and consistency." },
+    { label: "Browsers throttle concurrent fetches", misconception: "Browsers limit per-origin connections, but single-flight is a library-level semantic deduplication." },
+  ]}
+/>
+
+<Quiz
+  id="04-q3"
+  pieceSlug="04-client-cache-swr"
+  lang="en"
+  question="An optimistic Like update works, but the like count un-likes itself a moment later. Most likely cause?"
+  choices={[
+    { label: "The server rejected the request", misconception: "A rejection triggers onError rollback, which would revert to the pre-liked state, not flicker." },
+    { label: "onMutate set liked:true but forgot to increment likeCount — the server's response replaced the partial optimistic state with a correctly-shaped object that differed", correct: true },
+    { label: "staleTime is too low", misconception: "staleTime controls re-fetch timing, not optimistic update correctness." },
+    { label: "React batched the state update", misconception: "Batching affects re-renders, not mutation callback ordering." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>TanStack Query and SWR cache query results by key with stale-while-revalidate: instant cached return, background refresh. Single-flight deduplication makes it safe to call the same query from N components. Optimistic updates require full state snapshots in onMutate to avoid rollback bugs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does staleTime control in TanStack Query?", a: "How long fetched data is considered fresh. While fresh, no background refetch fires on mount. After staleTime elapses, the next component mount triggers a background refetch. Default is 0 — data is immediately stale after fetching." },
+    { q: "What is the canonical optimistic update pattern in TanStack Query?", a: "onMutate: cancel outgoing queries, snapshot current data via getQueryData, apply full optimistic state via setQueryData, return snapshot. onError: restore snapshot. onSettled: invalidate to get canonical server state. The optimistic shape must match the server's response shape to avoid flicker." },
+    { q: "When should you use invalidateQueries vs setQueryData after a mutation?", a: "setQueryData when the mutation response includes the complete new entity state — writes it directly to cache with no extra fetch. invalidateQueries for listing/collection queries that reference the mutated entity — marks them stale and triggers a refetch to get canonical data. Most production code uses both: setQueryData for the entity, invalidateQueries for its lists." },
+  ]}
+/>
+
+<Recap lang="en">
+TanStack Query and SWR manage a shared cache keyed by queryKey arrays with stale-while-revalidate semantics: staleTime controls freshness (default 0), gcTime controls entry lifetime (default 5min). Multiple components calling the same query key get one network request via single-flight deduplication. Optimistic updates apply the expected mutation result locally using setQueryData with a snapshot for rollback; the onMutate snapshot must mirror the complete server response shape or the UI flickers when the real data arrives. After mutations, invalidateQueries ensures listing caches reflect changes; setQueryData handles direct entity cache writes when the mutation response is available.
+</Recap>

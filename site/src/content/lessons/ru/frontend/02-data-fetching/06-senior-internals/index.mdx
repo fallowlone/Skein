@@ -1,0 +1,231 @@
+---
+slug: 06-senior-internals
+lang: ru
+track: frontend
+unit: 02-data-fetching
+order: 6
+title: "Senior internals: RSC payload, слои кэша и production падения"
+summary: "Формат RSC Payload по wire, Server Functions как типобезопасные API endpoints, инвалидация многослойного кэша, hydration несоответствия и реальные production падения от Vercel, Spotify и Linear."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - frontend/02-data-fetching/05-lcp-and-critical-path
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["RSC-payload", "server-functions", "hydration-mismatch", "cache-layers", "edge-runtime", "service-worker", "observability"]
+sources:
+  - https://react.dev/reference/rsc/server-components
+  - https://vercel.com/blog/understanding-react-server-components
+  - https://web.dev/articles/optimize-lcp
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+После RSC миграции у Vercel, TTFB клиента регрессировал со 100ms до 2.5s. Дерево компонентов выглядело корректно. Data fetching выглядел корректно. Виновник: Server Component который fetch'ил 50 элементов в последовательном цикле вместо Promise.all. Паттерн невидимый на code review, но катастрофический в production.
+</Hook>
+
+<Crux>RSC Payload — стримящийся row-протокол. Server Functions — типизированный RPC. Кэш-слои требуют скоординированной инвалидации.</Crux>
+
+<Explanation>
+
+## Формат RSC Payload по wire
+
+Когда React рендерит дерево Server Component'ов, вывод — не HTML и не JSON. Это **RSC Payload** — кастомный стримящийся формат разработанный для инкрементальной обработки по мере прихода по сети.
+
+Формат использует row-prefix коды:
+- `M` — module reference (URL bundle клиентского компонента)
+- `J` — JSON literal (сериализованные props или данные)
+- `H` — hint (директива браузера типа `prefetch`)
+
+Каждая строка ссылается на предыдущие строки по ID, инкрементально строя React-дерево. Пример:
+
+```
+0:["$","div",null,{"children":[["$","h1",null,{"children":"Товар"}]]}]
+1:{"id":42,"name":"Товар","price":29.99}
+```
+
+React клиент браузера обрабатывает эти строки по мере их прихода, включая то же "стримить HTML, рендерить что есть" поведение описанное в уроке про Suspense — но для обновлений React-дерева, не только начального HTML.
+
+RSC Payload — механизм за Next.js client-side навигацией: вместо загрузки новой HTML страницы, клиент fetch'ит RSC Payload для нового роута и применяет к существующему React-дереву. Это делает навигации мгновенными потому что шелл (лэйаут, nav) никогда не перерисовывается.
+
+## Server Functions: типобезопасный RPC через HTTP
+
+React 19 вводит **Server Functions** — async функции помеченные `'use server'` которые могут вызываться из Client Components, но выполняются на сервере. Фреймворк генерирует стабильный POST endpoint для каждой; client-side вызов становится типизированным `fetch`.
+
+```tsx
+// actions.ts
+'use server';
+export async function likePost(postId: string) {
+  await db.post.update({ where: { id: postId }, data: { likes: { increment: 1 } } });
+  revalidatePath('/posts');
+}
+
+// PostCard.tsx — Client Component
+'use client';
+import { likePost } from './actions';
+export function PostCard({ postId }) {
+  return <button onClick={() => likePost(postId)}>Лайк</button>;
+}
+```
+
+TypeScript видит `likePost` как обычную типизированную функцию. Не нужно определять REST роут, типы request/response или форму обработки ошибок. Аргументы сериализуются автоматически; тело функции никогда не попадает в клиент.
+
+В сочетании с form actions (`<form action={serverFunc}>`), Server Functions включают progressive enhancement: форма работает без JavaScript потому что браузер сабмитит на сгенерированный endpoint напрямую.
+
+**Ограничения**: аргументы должны быть сериализуемы (нет class instances, нет функций). Аутентификация должна быть явной внутри функции. Никогда не доверять client-предоставленным ID для проверок владения без повторной валидации на сервере.
+
+## Слои кэша и координированная инвалидация
+
+Современное Next.js 15 приложение имеет минимум пять слоёв кэширования:
+
+1. **CDN edge кэш** — по URL, секунды до часов. Обслуживает статический контент без обращения к origin.
+2. **Next.js fetch кэш** — вызовы RSC `fetch()` кэшируются по умолчанию с настраиваемым `revalidate` периодом.
+3. **Database query кэш** — Redis или in-memory, перед базой данных.
+4. **Браузерный HTTP кэш** — контролируется Cache-Control заголовками.
+5. **Client library кэш** — TanStack Query / SWR, по queryKey.
+
+Мутация изменяющая данные должна инвалидировать нужные слои:
+
+```typescript
+// На сервере (Server Function или route handler)
+revalidatePath('/products');      // Next.js кэш + CDN если настроен
+revalidateTag('product-42');      // гранулярная tag-based CDN очистка
+
+// На клиенте
+queryClient.invalidateQueries({ queryKey: ['product', 42] });
+```
+
+Пропуск любого слоя оставляет пользователей смотреть на устаревшие данные. Самый распространённый баг: серверный кэш инвалидирован, но клиентский TanStack Query кэш продолжает отдавать старый ответ следующие 5 минут.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Каскад инвалидации кэша при мутации</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">1</span>
+      <span>POST /api/products/42 мутация завершена</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">2</span>
+      <span>Сервер: revalidateTag('product-42') → Next.js кэш + CDN очистка</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">3</span>
+      <span>Клиент: queryClient.invalidateQueries(['product', 42]) → refetch</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">4</span>
+      <span>Клиент: invalidateQueries(['products']) → listing кэш обновляется</span>
+    </div>
+  </div>
+</div>
+
+## Hydration несоответствия: тихие баги интерактивности
+
+React's hydration предполагает что server-rendered DOM точно совпадает с тем что клиент бы отрендерил с теми же props. Когда они расходятся, reconciler React'а пытается исправить DOM, но его модель того, какие event handlers принадлежат каким DOM узлам, теперь несогласована — клики могут срабатывать на неправильном handler'е или тихо теряться.
+
+Распространённые причины:
+- `Date.now()` или `Math.random()` рендерятся с обеих сторон — разные значения
+- Условный рендеринг на основе `window.innerWidth` — сервер не имеет `window`
+- Чтение `localStorage` на уровне модуля
+
+Видимый вывод выглядит корректно, потому что и сервер и клиент рендерят валидный HTML. Но биндинги event handler'ов не согласованы.
+
+Паттерны фикса:
+- **useEffect для client-only логики**: рендерить безопасное начальное состояние с обеих сторон; изменять на client-specific состояние после завершения hydration
+- **suppressHydrationWarning**: валидно для genuinely расходящихся листьев (timestamps с locale)
+- **Client Components** для контента который фундаментально client-specific
+
+React 19 улучшил сообщения об ошибках hydration для локализации несовпадающего элемента; до React 19 сообщение было generic. Production команды инструментируют hydration ошибки через error boundaries отправляющие в Sentry — стабильный ненулевой rate сигнализирует о накапливающихся несоответствиях до того как они всплывут как user-reported баги.
+
+## Edge runtime для data fetching
+
+**Edge runtime** (Next.js Edge, Cloudflare Workers, Vercel Edge) запускает серверный код на CDN узлах вместо центрального дата-центра. Задержка до пользователя: единицы ms vs сотни для традиционных серверов.
+
+Лучшее применение: глобально-реплицированные источники данных (Cloudflare D1, Turso, PlanetScale) где edge сервер fetch'ит из ближнего реплики. Edge-rendered RSC даёт первый paint за 50–100ms независимо от географии.
+
+Ограничения: ограниченные API (нет Node.js fs, нет нативных модулей), только Web-стандартные API (fetch, crypto.subtle), меньшие лимиты памяти на запрос.
+
+<Inset kind="why" lang="ru">
+Формат RSC Payload задокументирован в RFC репозитории React и намеренно не является JSON — он разработан для инкрементального парсинга по мере прихода байт. JSON требует полную строку перед парсингом. Формат RSC позволяет React начать строить дерево компонентов с первых байт, соответствуя стримящейся модели chunked HTTP transfer. Авторы фреймворков (Next.js, Remix, Waku) реализуют серверный эмиттер; React DOM реализует клиентский консьюмер.
+</Inset>
+
+## Реальные production падения
+
+**Vercel 2024 — server-side waterfall**: RSC миграция клиента регрессировала TTFB со 100ms до 2.5s. Корневая причина: Server Component fetch'ил 50 товаров в последовательном цикле `for...await` вместо `Promise.all`. Обнаружено observability dashboards зафиксировавшими спайк p95 TTFB; исправлено оборачиванием в `Promise.all`. Урок: последовательный `await` в Server Components — server-side waterfall с той же ценой что и client-side — он блокирует Suspense boundary от стриминга.
+
+**Spotify Web Player 2023 — неполный optimistic snapshot**: Optimistic update для "добавить в плейлист" использовал `setQueryData`, но `onMutate` не делал snapshot предыдущего состояния. Когда сервер отклонил запрос, откат установил значение кэша в `undefined` вместо реального предыдущего состояния — плейлисты визуально исчезали на несколько секунд. Исправлено каноническим паттерном: всегда вызывать `queryClient.getQueryData` в `onMutate` перед optimistic update'ом.
+
+**Linear 2024 — потеря сообщений при SSE переподключении**: Server-Sent Events based real-time синхронизация использовала client-generated схему message ID. При переподключении клиент пропускал сообщения отправленные во время окна отключения — пользователи видели как карточки "отпрыгивают" после drag операций. Исправлено server-assigned монотонными ID и протоколом возобновления на основе `Last-Event-ID` который сервер использует для повтора пропущенных сообщений.
+
+<Misconception id="mc-edge-always-faster">
+  <p><strong>"Edge runtime всегда быстрее традиционного сервера."</strong> Только когда источник данных тоже на edge. Edge функция к single-region Postgres идёт CDN → DB → CDN — добавляя 2x hop против co-located сервера. Edge выигрывает только с глобально-реплицированными данными. Сначала измерить.</p>
+</Misconception>
+
+<NumbersCard
+  id="senior-numbers"
+  title="Senior-tier числа data fetching"
+  stats={[
+    { label: "Cold start edge runtime", value: "меньше 50 ms" },
+    { label: "Размер RSC Payload (типичная страница)", value: "10–50 KB" },
+    { label: "HTTP/2 max concurrent streams (по умолчанию)", value: "100" },
+    { label: "Next.js 15 App Router по умолчанию", value: "RSC + App Router" },
+    { label: "Стабильный релиз React 19 RSC", value: "Q4 2024" },
+  ]}
+/>
+
+<Quiz
+  id="06-q1"
+  pieceSlug="06-senior-internals"
+  lang="ru"
+  question="Команда мигрирует с CSR на RSC. Bundle уменьшается с 240KB до 60KB, но время JS evaluation на мобильном остаётся тем же. Почему?"
+  choices={[
+    { label: "RSC генерирует больше JS чем SSR", misconception: "RSC отправляет меньше JS, а не больше." },
+    { label: "RSC Payload всё равно нуждается в парсинге и применении клиентом — на слабых CPU это занимает 100–300ms, сопоставимо с сэкономленным временем парсинга JS. Реальный выигрыш — размер загрузки и распределение нагрузки на main thread, а не сырое evaluation время.", correct: true },
+    { label: "Браузер кэшировал старый bundle", misconception: "Cache busting при деплое обеспечивает раздачу нового bundle." },
+    { label: "React 19 медленнее React 18", misconception: "React 19 не медленнее; парсинг RSC Payload — новая стоимость, а не регрессия." },
+  ]}
+/>
+
+<Quiz
+  id="06-q2"
+  pieceSlug="06-senior-internals"
+  lang="ru"
+  question="Почему hydration несоответствия тихо ломают интерактивность даже когда видимый HTML выглядит корректно?"
+  choices={[
+    { label: "Несоответствие всегда выбрасывает JavaScript ошибку", misconception: "React логирует предупреждение в development, но не выбрасывает в production — и видимый HTML может выглядеть корректно." },
+    { label: "Reconciler React'а маппит event handler'ы к DOM узлам на основе ожидаемого дерева. Несоответствие рассогласовывает эти маппинги — клики могут срабатывать на неправильных handler'ах или тихо теряться.", correct: true },
+    { label: "Серверный HTML удаляется при несоответствии", misconception: "React пытается исправить DOM вместо того чтобы отбросить и перерендерить с нуля." },
+    { label: "Hydration несоответствия влияют только на стили, не на события", misconception: "Несоответствия влияют на внутреннее fiber дерево которое контролирует делегирование событий — стили отдельны." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RSC Payload — инкрементальный стримящийся протокол включающий навигацию без полной перезагрузки. Server Functions заменяют ad-hoc REST роуты типобезопасным RPC. Многослойная инвалидация кэша должна координировать серверную revalidation и клиентский queryClient.invalidateQueries. Hydration несоответствия тихо разрушают биндинги event handler'ов — инструментируй и исправляй до того как они всплывут как пользовательские баги.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое RSC Payload и почему он не JSON?", a: "Кастомный стримящийся row-протокол представляющий React дерево компонентов и ссылки на bundle клиентских компонентов. Не JSON потому что JSON требует полную строку перед парсингом; формат RSC включает инкрементальный парсинг по мере прихода байт, соответствуя chunked HTTP стримингу. Браузер может начать строить React дерево с первых байт." },
+    { q: "Объясни 5 слоёв кэширования в Next.js 15 приложении и какой API обрабатывает каждый.", a: "CDN edge кэш (revalidateTag / CDN конфиг), Next.js fetch кэш (revalidatePath / revalidateTag), database query кэш (Redis или in-memory, код приложения), браузерный HTTP кэш (Cache-Control заголовки), client library кэш (queryClient.invalidateQueries). Мутация должна инвалидировать все релевантные слои — пропуск одного оставляет пользователей с устаревшими данными." },
+    { q: "Что такое баг optimistic update Spotify Web Player и каков фикс?", a: "Callback onMutate применял optimistic состояние, но не вызывал getQueryData для snapshot'а предыдущего состояния. Когда сервер отклонил мутацию, onError пытался откатить к context.previous, который был undefined — плейлист исчезал. Фикс: всегда делать snapshot через queryClient.getQueryData в onMutate и возвращать его как context перед применением optimistic update'а." },
+  ]}
+/>
+
+<Recap lang="ru">
+RSC Payload — стримящийся row-протокол, не HTML и не JSON, позволяющий React инкрементально строить дерево компонентов по мере прихода байт, включая навигацию без полной перезагрузки страниц. Server Functions генерируют стабильные типизированные POST endpoints из `'use server'`-помеченных async функций, заменяя вручную написанные API роуты. Многослойная инвалидация кэша охватывает пять слоёв — CDN, Next.js fetch кэш, DB query кэш, HTTP кэш и client library кэш — каждый требует явной инвалидации при мутациях. Hydration несоответствия разрушают биндинги event handler'ов тихо; исправлять откладывая client-only логику в useEffect и мониторя hydration ошибки в production. Edge runtime сокращает first-paint до 50ms но только когда источник данных глобально реплицирован — edge функции обращающиеся к single-region базе добавляют round-trip'ы, а не убирают.
+</Recap>
