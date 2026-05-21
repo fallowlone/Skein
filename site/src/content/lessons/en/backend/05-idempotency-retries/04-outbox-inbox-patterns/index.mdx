@@ -1,0 +1,194 @@
+---
+slug: 04-outbox-inbox-patterns
+lang: en
+track: backend
+unit: 05-idempotency-retries
+order: 4
+title: "Outbox and inbox: effectively-once across the dual-write boundary"
+summary: "Direct dual-write to DB + Kafka breaks in either order. The outbox pattern writes the event inside the DB transaction; the inbox pattern deduplicates on the consumer side. Together they give effectively-once delivery."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/05-idempotency-retries/01-why-idempotency
+deepensInto:
+  - backend/05-idempotency-retries/06-idempotency-senior
+spiral: ["statefulness"]
+concepts: ["dual-write", "outbox-pattern", "inbox-pattern", "CDC", "debezium", "dead-letter-queue", "effectively-once"]
+sources:
+  - https://event-driven.io/en/outbox_inbox_patterns_and_delivery_guarantees_explained/
+  - https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html
+  - https://stripe.com/blog/idempotency
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+An order service writes the order row to Postgres, then publishes an "order.created" event to Kafka. Between the commit and the publish, the pod crashes. The order exists in the database. The downstream inventory service never sees the event. The order is stuck.
+</Hook>
+
+<Crux>Exactly-once is impossible. Outbox (event in DB txn) + relay (at-least-once) + inbox (consumer dedup) = effectively-once in production.</Crux>
+
+<Explanation>
+
+## Why dual-write always fails
+
+Any sequence of "write to database, then publish to message broker" has a crash window between the two:
+
+| Sequence | Crash point | Result |
+|---|---|---|
+| Write DB → publish Kafka | After DB, before Kafka | DB updated, Kafka silent — consumers miss the event |
+| Publish Kafka → write DB | After Kafka, before DB | Phantom event in Kafka — consumers see a write that never happened |
+
+Both sequences are broken. There is no version of "two separate writes" that is atomic.
+
+## The outbox pattern: use the database as the broker
+
+**Key insight:** write the event *to the database*, inside the same transaction as the business write. The database becomes the single source of truth.
+
+```sql
+BEGIN;
+  -- Business write
+  INSERT INTO orders (id, customer_id, total) VALUES ($1, $2, $3);
+
+  -- Outbox write (same transaction)
+  INSERT INTO outbox (id, event_type, payload, published)
+  VALUES (gen_random_uuid(), 'order.created', $payload, false);
+COMMIT;
+-- Kafka publish happens AFTER the transaction commits
+```
+
+A separate **outbox-relay process** polls the `outbox` table (or tails the Write-Ahead Log via Debezium) and publishes unpublished rows to Kafka, marking them published on broker ACK.
+
+**Crash scenarios are now safe:**
+- Crash before COMMIT → transaction rolls back. Neither the order nor the outbox row exists. No phantom event.
+- Crash after COMMIT, before relay publishes → order exists, outbox row `published=false`. Relay picks it up on next poll.
+- Kafka is down → relay retries. Outbox accumulates. Order is safe in DB.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Approach | Crash-safe? | Kafka required? | Pattern |
+|---|---|---|---|
+| DB then Kafka | No — silent event loss | Yes | Anti-pattern |
+| Kafka then DB | No — phantom event | Yes | Anti-pattern |
+| Outbox (DB only) | Yes | No (async relay) | Correct |
+
+</div>
+
+## Relay implementations
+
+**Poll-based relay:** queries `WHERE published = false ORDER BY id LIMIT 1000` every few seconds. Simple, adds latency equal to poll interval (typically 1–5 s).
+
+**Debezium (CDC relay):** tails the Postgres Write-Ahead Log via logical replication. Publishes as soon as the row commits. Sub-second lag. No polling overhead. Production standard for high-throughput services.
+
+**AWS SAM variant:** DynamoDB Streams → Lambda → EventBridge — managed CDC without running a relay process.
+
+## The inbox pattern: deduplicate on the consumer
+
+The relay delivers at-least-once (it may publish twice if it restarts after publishing but before marking the row). The consumer must be idempotent.
+
+**Inbox pattern:** before applying the event's business effect, write the event's `id` into a `processed_events` table inside the same transaction as the business write.
+
+```sql
+BEGIN;
+  -- Check if already processed
+  INSERT INTO processed_events (event_id) VALUES ($1)
+    ON CONFLICT (event_id) DO NOTHING;
+
+  -- If 0 rows affected, this event was already processed — skip
+  IF found THEN
+    UPDATE inventory SET reserved = reserved - $qty WHERE sku = $sku;
+  END IF;
+COMMIT;
+```
+
+If the event arrives twice, the second attempt hits the UNIQUE constraint on `event_id` and the business write is skipped. Effectively-once behavior from the consumer's perspective.
+
+**Inbox table maintenance:** partition by `event_timestamp` and drop partitions older than the broker's retention window (7–14 days). Without cleanup, the inbox grows forever.
+
+## Dead-letter queues: handling unrecoverable failures
+
+Not every failure is recoverable by retry. Malformed data, schema breaks, or violated business invariants are **poison messages** — no amount of retry will fix them.
+
+After N processing attempts (typically 3–5), move the message to a **dead-letter queue (DLQ)**. The main pipeline keeps flowing; humans review the DLQ.
+
+```
+Main queue → [N retry attempts] → DLQ → human review
+                                       → manual replay (after fix)
+                                       → formal rejection (business rule)
+```
+
+Production settings: N = 3–5 attempts, DLQ retention 7–30 days, alert on DLQ depth growth. A growing DLQ is a compliance liability — every entry is a record of an operation that may have partial effects.
+
+<Inset kind="why" lang="en">
+Why is the outbox-relay's at-least-once delivery acceptable even for payment events? Because the consumer runs the inbox pattern — it deduplicates by event ID before applying any business effect. The composition is: Postgres atomicity (guarantees the outbox row exists if and only if the business write committed) + at-least-once relay + idempotent consumer = effectively-once. No single component needs to be exactly-once; the guarantee emerges from the composition.
+</Inset>
+
+<Quiz
+  id="outbox-q1"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="en"
+  question="Why is the outbox pattern necessary if the application can publish to Kafka directly from the API handler?"
+  choices={[
+    { label: "Kafka cannot accept synchronous writes", misconception: "Kafka producers are synchronous from the caller's perspective. The pattern is not about transport." },
+    { label: "It makes the database transaction and the message publish atomic by serializing them through one durable medium", correct: true },
+    { label: "It is required by the AMQP standard", misconception: "AMQP is a separate protocol. Outbox is a pattern, not a protocol mandate." },
+    { label: "It encrypts events end-to-end", misconception: "Encryption is unrelated. Outbox solves dual-write atomicity." },
+  ]}
+/>
+
+<DragOrder
+  id="outbox-drag1"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="en"
+  prompt="Put the outbox publish flow in correct order:"
+  items={[
+    "Application opens a database transaction",
+    "Application performs the business write (e.g., insert order row)",
+    "Same transaction inserts an outbox row recording the event-to-be-published",
+    "Application commits — business write and outbox row visible atomically",
+    "Outbox-relay process scans for unpublished outbox rows and publishes to Kafka",
+    "Relay marks the outbox row as published after receiving broker ACK",
+  ]}
+/>
+
+<Quiz
+  id="outbox-q2"
+  lessonSlug="04-outbox-inbox-patterns"
+  lang="en"
+  question="The outbox relay crashes after publishing to Kafka but before marking the outbox row as published. What happens when the relay restarts?"
+  choices={[
+    { label: "The event is lost — Kafka already received it but the outbox row is stuck", misconception: "Kafka already has the event. The relay will publish it again — at-least-once is a feature, not a bug, because the consumer's inbox pattern deduplicates." },
+    { label: "The relay re-publishes the event; the consumer's inbox deduplicates and applies the business effect only once", correct: true },
+    { label: "The relay detects the duplicate via Kafka's message ID and skips it", misconception: "The relay does not query Kafka for existing messages. It trusts the outbox row's published flag." },
+    { label: "The transaction rolls back and the order row is also deleted", misconception: "The transaction already committed. Rolling back is not possible after a commit." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Outbox: write the event inside the DB transaction so crash-safety is Postgres's job. Relay delivers at-least-once. Inbox: dedup by event ID inside the consumer's transaction. Together: effectively-once without exactly-once delivery.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="outbox-retrieval"
+  lang="en"
+  questions={[
+    { q: "A team wants exactly-once delivery to Kafka from a Postgres write. They consider: (a) write Postgres then publish, (b) publish then write Postgres, (c) outbox. Why is (c) correct?", a: "(a) Crash between write and publish leaves Postgres updated but Kafka silent — consumers miss the event. (b) Crash between publish and write leaves a phantom event in Kafka — consumers see a write that never happened. (c) Outbox writes the event to a Postgres outbox table in the SAME transaction as the business write — atomicity is now Postgres's job. A relay publishes at-least-once; the consumer's inbox deduplicates. The composition of Postgres atomicity + at-least-once relay + idempotent consumer = effectively-once." },
+    { q: "What is the inbox pattern and what does it protect against?", a: "The inbox pattern writes the event ID into a processed_events table inside the same transaction as the consumer's business write. If the event arrives a second time (because the relay re-published after a crash), the INSERT ON CONFLICT DO NOTHING returns 0 rows and the business write is skipped. This makes consumer processing effectively-once without coordinating with the broker. The inbox table must be partitioned and old partitions dropped to prevent unbounded growth." },
+    { q: "When should a message go to the dead-letter queue instead of being retried?", a: "When the failure is not transient — malformed payload, schema violation, or an invariant the business will never allow (e.g., trying to reserve inventory for a product that was deleted). After N attempts (3–5) the message moves to the DLQ. The main pipeline keeps flowing. Humans review DLQ entries, fix the upstream cause, and replay or formally reject them. A growing DLQ depth is an alert signal — it means permanent failures are accumulating." },
+  ]}
+/>
+
+<Recap lang="en">
+The dual-write problem — writing to two systems atomically — cannot be solved by sequencing the writes. The outbox pattern solves it by writing the event into the database as an outbox row inside the same transaction as the business write, making atomicity the database's responsibility. A relay (poll-based or Debezium CDC) delivers events at-least-once to Kafka. The consumer uses the inbox pattern — deduplicating by event ID within its own transaction — to achieve effectively-once processing. Poison messages that cannot be processed go to a dead-letter queue after N attempts; the main pipeline continues.
+</Recap>

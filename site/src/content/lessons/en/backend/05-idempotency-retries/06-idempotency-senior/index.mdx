@@ -1,0 +1,174 @@
+---
+slug: 06-idempotency-senior
+lang: en
+track: backend
+unit: 05-idempotency-retries
+order: 6
+title: "Observability, production failures, and global-scale design"
+summary: "Minimum viable idempotency dashboard, production failure stories from Stripe/Knight Capital/AWS S3/GitHub, cross-protocol patterns, and a global-anycast design exercise."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/05-idempotency-retries/05-concurrency-and-cache
+  - backend/05-idempotency-retries/04-outbox-inbox-patterns
+  - backend/05-idempotency-retries/03-retry-strategies
+spiral: ["statefulness", "latency"]
+concepts: ["idempotency-observability", "retry-observability", "outbox-lag", "middleware-library", "cross-protocol-dedup", "anycast-cache"]
+sources:
+  - https://stripe.com/blog/idempotency
+  - https://brandur.org/idempotency-keys
+  - https://en.wikipedia.org/wiki/Thundering_herd_problem
+  - https://event-driven.io/en/outbox_inbox_patterns_and_delivery_guarantees_explained/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Your payment API starts returning 422 on 10% of POST /charge requests. The symptom appeared after an SDK release. No double charges yet — but the signal is a client bug that, if left unfixed, will cause them. The dashboard needs to surface this before it becomes a production incident.
+</Hook>
+
+<Crux>Idempotency without observability is belief. A 422 spike or attempt-3 surge precedes outage by minutes — canary fails before users notice.</Crux>
+
+<Explanation>
+
+## Minimum viable observability dashboard
+
+Every production idempotency + retry system needs six metrics:
+
+**1. `idempotency_key_total` sliced by outcome:**
+- `new` — first-time keys (healthy baseline)
+- `replay` — successful retries (expected under transient failures)
+- `in_flight` (409) — concurrent racing requests
+- `mismatch` (422) — client reusing key with different intent (bug signal)
+
+A rate of `mismatch > 0.1%` of total POSTs pages on-call. It means clients have a key-generation bug.
+
+**2. `retry_attempt_total` sliced by attempt number (1, 2, 3, 4+):**
+A spike in attempt-3 retries precedes an outage by minutes — the most persistent clients are already paying the cost of an underlying degradation before it becomes user-visible.
+
+**3. `retry_delay_seconds_bucket`** — histogram of actual wait times. A bimodal distribution (lots of retries at 0s and at 30s) suggests jitter is not applied.
+
+**4. `outbox_lag_seconds`** — how stale is the outbox relay? Alert at lag &gt; 30s. A growing lag means the relay or downstream broker is failing.
+
+**5. `dead_letter_queue_depth`** — alert on growth. A growing DLQ is a permanently failing pipeline — poison messages are accumulating.
+
+**6. `http_request_outcome` sliced by status class** — 2xx / 4xx / 5xx / timeout. The 4xx / 5xx split distinguishes client bugs from server failures.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Metric | Alert threshold | What it signals |
+|---|---|---|
+| `idempotency_key_total{outcome="mismatch"}` | &gt; 0.1% of POSTs | Client SDK key-reuse bug |
+| `retry_attempt_total{attempt="3"}` | Spike above baseline | Early signal of downstream degradation |
+| `outbox_lag_seconds` | &gt; 30 s | Relay or broker failure |
+| `dead_letter_queue_depth` | Any growth | Permanent pipeline failure |
+
+</div>
+
+## Production failure stories
+
+**Stripe 2017:** switching the idempotency cache from one Redis cluster to another briefly lost in-flight keys. A handful of double charges resulted. Stripe added Postgres as the permanent authoritative backing store — Redis is now only the hot-path cache.
+
+**Knight Capital 2012:** an absent feature flag plus aggressive retries against an exchange feed turned a deployment glitch into $440M in unintended trades in 45 minutes. Root cause: at-least-once delivery without idempotent consumers.
+
+**AWS S3 September 2017:** an internal subsystem returned 500s during an outage. Aggressive retry policies without jitter in clients amplified the failure across the region until AWS published guidance requiring jitter for all SDK retries.
+
+**GitHub 2018:** a database failover lost the lease on an outbox-relay process. Events accumulated in the outbox for 2 minutes, then all flushed at once — a self-inflicted thundering herd on the consumer side. Mitigation: rate-limit the relay's publish rate during catch-up (e.g., 500 events/s) to flatten the spike.
+
+Every story has the same root: at-least-once delivery without idempotent consumers, OR retries without jitter.
+
+## Cross-protocol: HTTP, gRPC, Kafka
+
+The **idempotency token** concept is universal across protocols:
+
+| Protocol | Token | Where |
+|---|---|---|
+| HTTP | `Idempotency-Key` header | RFC draft `draft-ietf-httpapi-idempotency-key-header` |
+| gRPC | `grpc-retry-pushback-ms` trailer | Service-config `retryPolicy` JSON |
+| Kafka | `enable.idempotence=true` producer | Per-partition sequence numbers |
+| AWS SQS FIFO | `MessageDeduplicationId` | Queue-level dedup window (5 min) |
+
+**Kafka idempotent producer:** `enable.idempotence=true` assigns a Producer ID and sequence number to each message. The broker rejects duplicates within a session. For cross-partition atomicity: Kafka transactions.
+
+## Deployment: middleware, not hand-rolled
+
+Hand-rolling idempotency in every endpoint produces inconsistent fingerprint formulas and incompatible TTLs. Middleware libraries do it once:
+
+- `express-idempotency` (Node.js)
+- `django-idempotency-key` (Python/Django)
+- `fastapi-idempotency` (Python/FastAPI)
+- `AspNetCore.Idempotency` (.NET)
+- Stripe's `idempotent-requests` (open-sourced)
+
+At the infrastructure layer: **AWS API Gateway** has built-in idempotency since 2023 (TTL up to 10 minutes per stage). **Envoy/Istio** expose retry policy per route with retry budgets shared across the cluster.
+
+<Inset kind="why" lang="en">
+Why did the IETF take until 2024 to formalize the Idempotency-Key header? Stripe published the pattern in 2014; adoption was widespread before standardization. The IETF process (draft-ietf-httpapi-idempotency-key-header through multiple revisions) exists to interoperably specify the header semantics — especially TTL negotiation and fingerprint behavior — so that API gateways and client SDKs can implement it consistently without reading Stripe's blog post.
+</Inset>
+
+<Quiz
+  id="senior-q1"
+  lessonSlug="06-idempotency-senior"
+  lang="en"
+  question="Your payment service's `idempotency_key_total{outcome='mismatch'}` rises to 10% of all POST /charge requests. What is the most likely root cause?"
+  choices={[
+    { label: "The idempotency cache is full and evicting keys", misconception: "Cache eviction would cause 'new' outcomes, not 'mismatch'. Mismatch requires a row to exist with a different fingerprint." },
+    { label: "A client SDK version is generating the same key for different operations (e.g., key cached at initialization rather than per-operation)", correct: true },
+    { label: "The Postgres cleanup job is running too frequently and deleting live keys", misconception: "Deleted keys produce 'new' outcomes on retry, not 'mismatch'. Mismatch requires an existing row with a different fingerprint." },
+    { label: "The server's SHA-256 fingerprint implementation changed", misconception: "A server-side fingerprint change would produce mismatches for all retries, not just 10% — and would be correlated with a deploy, not an SDK release." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q2"
+  lessonSlug="06-idempotency-senior"
+  lang="en"
+  question="The outbox relay has 18,000 unpublished rows after a Kafka broker failure. The broker recovers. What risk does the relay face when it resumes publishing at full speed?"
+  choices={[
+    { label: "The relay will generate duplicate idempotency keys", misconception: "The outbox rows have their own event IDs. The relay does not generate idempotency keys — it publishes pre-written events." },
+    { label: "An 18,000-event burst will hit consumers simultaneously — a self-inflicted thundering herd on the consumer side", correct: true },
+    { label: "Kafka will reject the backlog because the partition offset is stale", misconception: "Kafka accepts new messages regardless of how long the producer was offline, as long as the producer's offset is valid." },
+    { label: "The relay will deadlock waiting for consumer ACKs", misconception: "The relay does not wait for consumer processing — it waits only for broker ACK (message written to Kafka partition)." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q3"
+  lessonSlug="06-idempotency-senior"
+  lang="en"
+  question="A global anycast payment API needs idempotency keys to survive a single-region failure. Which architecture satisfies this requirement?"
+  choices={[
+    { label: "Single Postgres primary in one region with async replicas in others", misconception: "An async replica in another region may lag by seconds. During a failover, recently written keys can be lost — potential double charge." },
+    { label: "Redis Cluster with active-active cross-region replication, backed by a Postgres ledger written via outbox in the same transaction", correct: true },
+    { label: "In-memory dedup per pod, refreshed every 30 seconds from a central store", misconception: "30-second refresh window means a retry within that window to a different pod sees no record — potential double charge." },
+    { label: "Rely on the client capping retries at 3 attempts — the probability of a double charge is low enough", misconception: "Capping retries reduces the probability but does not eliminate it. A legal liability for double charges requires an architectural guarantee, not a probabilistic one." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Minimum observability: key outcome (new/replay/409/422), retry attempt distribution, outbox lag, DLQ depth. A 422 spike or attempt-3 surge precedes a production incident by minutes. Use middleware, not hand-rolled per-endpoint implementations.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="senior-retrieval"
+  lang="en"
+  questions={[
+    { q: "What six metrics form the minimum viable idempotency + retry dashboard, and what does each signal?", a: "1) idempotency_key_total by outcome: 422 mismatch spikes signal client SDK bugs. 2) retry_attempt_total by attempt number: attempt-3 spikes are early outage signals. 3) retry_delay_seconds_bucket: bimodal distribution signals missing jitter. 4) outbox_lag_seconds: growing lag signals relay or broker failure — alert at >30s. 5) dead_letter_queue_depth: any growth signals permanent pipeline failures. 6) http_request_outcome by status class: the 4xx/5xx split distinguishes client bugs from server failures." },
+    { q: "Explain the design of a global-anycast idempotency cache with double-charge probability ≤ 10⁻⁹ and 30-day key retention.", a: "Two-tier cache. Hot path: Redis Cluster with active-active cross-region replication (e.g., Redis Enterprise or CRDT-based layer), SETNX with 30-day TTL. If a region fails, another region's replica already has the key — no lost key, no double charge. Cold path: Postgres ledger written async via the outbox pattern. On request: SETNX on Redis; if new, process and write Postgres async; if conflict, read Redis for the cached response; if Redis miss (rare crash), fall through to Postgres. Retry budget: client capped at 3 attempts with full jitter. Server enforces 409 on in-flight + 422 on fingerprint mismatch. Compliance: 30-day TTL satisfies Stripe v2 audit requirements." },
+    { q: "What is the root cause shared by all four production failure stories (Stripe 2017, Knight Capital 2012, AWS S3 2017, GitHub 2018)?", a: "Every story is a combination of at-least-once delivery without idempotent consumers, OR retries without jitter. Stripe 2017: Redis cache migration lost keys — at-least-once retry hit the now-keyless server and processed again. Knight Capital 2012: aggressive retries without idempotent consumer turned a deploy glitch into runaway trades. AWS S3 2017: retries without jitter amplified a localized failure region-wide. GitHub 2018: outbox backlog flush created a self-inflicted thundering herd on consumers that were not rate-limited. The fix pattern is always the same: idempotent consumers + jittered retries + rate-limited relay catch-up." },
+  ]}
+/>
+
+<Recap lang="en">
+A production idempotency + retry system needs six observability metrics — key outcome distribution, retry attempt distribution, outbox lag, DLQ depth, and HTTP status class breakdown. A 422 mismatch spike above 0.1% signals a client SDK key-reuse bug. A retry attempt-3 surge is an early downstream degradation signal. All four major production failures (Stripe 2017, Knight Capital 2012, AWS S3 2017, GitHub 2018) share the same root: at-least-once delivery without idempotent consumers, or retries without jitter. At global scale, the cache needs active-active cross-region replication so a region failure does not lose keys and create double charges. Use middleware libraries rather than hand-rolling per endpoint — inconsistent fingerprint formulas are how bugs hide.
+</Recap>
