@@ -1,16 +1,11 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { EXERCISE_COMPONENTS } from "./exercise-components";
 
 const MATH_SECTIONS = ["hook", "goal", "worked-example", "check", "recap"] as const;
 const ALGO_SECTIONS = ["hook", "goal", "idea", "code", "trace", "complexity", "check", "recap"] as const;
 const BASECS_CODING_SECTIONS = ["hook", "goal", "idea", "code", "trace", "check", "recap"] as const;
 const TOPIC_SECTIONS = ["hook", "crux", "explanation", "key-takeaway", "recap"] as const;
-
-const EXERCISE_COMPONENTS = new Set([
-  "Quiz", "FadedExample", "RetrievalDrawer", "TraceScenario", "DebugLog",
-  "TradeoffMatrix", "DragOrder", "MetaphorComplete", "RFCQuiz", "DesignPrompt",
-  "AnimationStep", "NumberDrill", "Sandbox", "RequestBudgetSandbox",
-]);
 const ISLAND_COMPONENT_RE = /<astro-island[^>]*component-url="[^"]*\/([A-Za-z]+)\.[^"]+\.js"/g;
 
 function countExerciseWidgets(html: string): number {
