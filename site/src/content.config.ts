@@ -1,6 +1,6 @@
 import { defineCollection, z } from "astro:content";
 import { glob, file } from "astro/loaders";
-import { TRACKS } from "../types";
+import { TRACKS } from "./types";
 
 const Lang = z.enum(["en", "ru"]);
 const Status = z.enum(["stub", "draft", "ready"]);
