@@ -19,7 +19,7 @@
   - [x] A4 connections-index `315b798` · A5 connected-lessons `1e085e2` · A6 checkTopicLesson `b86bc06`
   - [x] A7 connection-integrity `2d7a902` · A8 /infographic `bf07038` · A9 routes already generic · A10 gate passed
 - [x] **Phase B** — content migration COMPLETE (51/51). 5 ready pillars + 7 lone pieces. Next: Phase C (81 stub units → lesson stubs).
-- [ ] **Phase C** — stub conversion (81 stub units)
+- [x] **Phase C** — stub conversion COMPLETE (81/81 across 11 pillars). Commits: `bfda814` ai-llm, `944d8d5` data-engineering, `a94c7d5` deployment, `4d850f4` engineering-practice, `432fd8f` apis, `389a87d` backend, `0ec500f` caching, `232e42a` distributed, `5a0eaa5` frontend, `b240a74` queues, `2f2ef86` security. `book/` collection now empty.
 - [ ] **Phase D** — teardown
 
 **Carry-forward facts:**
@@ -423,7 +423,7 @@ The 81 stub pieces carry no real content. Convert each to a unit + one lesson st
 
 ### Checklist — 81 stub units (by pillar)
 
-- [ ] **ai-llm** (8): 01-prompt-caching, 02-tool-calls, 03-rag-architecture, 04-streaming, 05-cost-budgets, 06-agents, 07-evals, 08-putting-it-together
+- [x] **ai-llm** (8) — commit `bfda814`
 - [ ] **data-engineering** (8): 01-oltp-vs-olap, 02-elt-vs-etl, 03-parquet, 04-materialized-views, 05-event-sourcing, 06-search, 07-vectors, 08-putting-it-together
 - [ ] **deployment** (8): 01-image-layers, 02-compose-vs-k8s, 03-k8s-objects, 04-rollout-strategies, 05-iac, 06-lb-levels, 07-secrets-at-deploy, 08-putting-it-together
 - [ ] **engineering-practice** (8): 01-tdd-property, 02-contract-testing, 03-code-review, 04-trunk-based, 05-feature-flags, 06-postmortems, 07-on-call, 08-putting-it-together
