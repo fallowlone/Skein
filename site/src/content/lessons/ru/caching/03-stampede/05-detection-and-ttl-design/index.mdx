@@ -1,0 +1,197 @@
+---
+slug: 05-detection-and-ttl-design
+lang: ru
+track: caching
+unit: 03-stampede
+order: 5
+title: "Детектирование stampede и дизайн TTL для продакшена"
+summary: "Observability-отпечаток cache stampede, минимально-жизнеспособные dashboard-метрики, TTL jitter для размазывания границ, negative caching и стратегии pre-warming для выживания при cold-start перезапусках."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/04-stale-while-revalidate
+deepensInto:
+  - caching/03-stampede/06-stampede-senior
+spiral: ["statefulness", "encapsulation"]
+concepts: ["ttl-jitter", "negative-caching", "cache-pre-warming", "stampede-observability", "periodic-spikes", "miss-rate-sawtooth"]
+sources:
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+  - https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt
+  - https://datatracker.ietf.org/doc/html/rfc5861
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Команда деплоит single-flight и локи. Три недели спустя срабатывает on-call алерт: CPU БД спайкует каждые 5 минут. Защита на месте — но она защищает не те ключи. Спайк идёт от другого ключа с TTL=300 с, который никто не инструментировал.
+</Hook>
+
+<Crux>Stampede без observability невидим до outage. Отпечаток — периодические спайки БД, совпадающие со значением TTL.</Crux>
+
+<Explanation>
+
+## Observability-отпечаток
+
+Cache stampede оставляет характерную сигнатуру в метриках:
+
+- **Ставка запросов к БД:** пилообразный паттерн — почти нуль между TTL-границами, резкий спайк на каждой границе. Ширина спайка равна длительности rebuild.
+- **Периодичность:** спайки повторяются с интервалами, совпадающими с TTL. TTL=60 с → спайки каждые 60 с. TTL=300 с → каждые 5 минут.
+- **p99 латентность:** спайки на тех же интервалах, что и ставка запросов к БД.
+- **cache_miss_total rate:** резкие периодические увеличения на границах вместо ровного низкого baseline.
+
+Без этих метрик stampede выглядит как общая «медленная БД» без очевидной причины.
+
+## Минимально-жизнеспособный dashboard
+
+Шесть метрик покрывают все stampede-сценарии:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Метрика | Условие алерта | Что сигнализирует |
+|---|---|---|
+| `cache_miss_total` rate | Периодические спайки &gt; 5× steady-state | Stampede в процессе |
+| `db_query_rate` p99 | Пилообразный паттерн | Downstream stampede от кеш-границ |
+| `cache_rebuild_duration_seconds` p99 | Длинный хвост на границах | Contention при rebuild |
+| `cache_lock_wait_seconds` p99 | Выше rebuild p99 | Очередь лока растёт — голодание ожидающих |
+| `singleflight_subscriber_count` p99 | &gt; 1 (coalescing активен) | Single-flight срабатывает — нормально под нагрузкой |
+| `cache_swr_stale_serve_total` | Ненулевой на границах | SWR поглощает истечение — ожидаемо |
+
+</div>
+
+Алерт 1: `cache_miss_total` rate выше 5× steady-state → stampede формируется.
+Алерт 2: `db_query_rate` p99 выше 10× p50 → пилообразная нагрузка БД → boundary-спайки.
+Алерт 3: `cache_lock_wait_seconds` p99 выше длительности rebuild → глубина очереди лока растёт.
+
+## TTL jitter
+
+Single-flight и локи обрабатывают per-key stampede. Но что, если 1 000 ключей имеют TTL=300 с и все были закешированы одновременно? Все истекают вместе, производя 1 000 одновременных per-key stampede — single-flight корректно обрабатывает каждый, но сумма 1 000 параллельных rebuild — спайк БД.
+
+**TTL jitter:** вместо фиксированного TTL использовать случайное значение в диапазоне:
+
+```
+ttl = base_ttl * (1 + jitter_fraction * (rand() - 0.5))
+# Пример: base=300, jitter=0.25 → TTL в диапазоне [225, 375]
+```
+
+Флот из 1 000 ключей с ±25% jitter размазывает истечения на 150 с вместо одновременного срабатывания. Нагрузка БД становится плавной низкой кривой вместо спайка.
+
+Большинство кеш-библиотек поддерживают jitter нативно (Caffeine в Java, Redis через application-level вычисление). Стандартный ±15–25% достаточен для большинства нагрузок.
+
+## Негативное кеширование
+
+Та же stampede-форма применима, когда БД отвечает «нет такой строки». Если приложение не кеширует null-результаты, каждый запрос несуществующего ключа бьёт в БД — и под высокой параллельностью это miss-storm, перегружающий БД так же полно, как положительный stampede.
+
+**Фикс: кешировать sentinel "missing" с коротким TTL.**
+
+```
+# При DB miss:
+SET key:missing "" EX 10  # 10 с негативный TTL
+
+# При чтении:
+val = GET key
+if val == "":
+  return NOT_FOUND  # из кеша, без обращения к БД
+```
+
+Короткий негативный TTL (5–30 с) ограничивает расход памяти. Положительный TTL может быть намного длиннее (60–300 с). Write-through invalidation должна удалять негативную запись при INSERT реальной строки.
+
+**Замечание по безопасности:** без негативного кеширования атакующий может чеканить случайные несуществующие ключи (случайные UUID в URL-пути) для амплификации нагрузки БД на порядки — задокументированный паттерн, поразивший CDN-сайты в 2024.
+
+## Pre-warming после перезапусков
+
+Кеш, перезапущенный холодным (deploy, eviction, отказ машины), стартует пустым. Каждый входящий запрос промахивается и бьёт в БД — полный origin-спайк. При перезапуске на пиковом трафике этот спайк равен по величине полному stampede.
+
+**Процедура pre-warming:**
+1. До приёма публичного трафика проиграть топ-N наиболее accessed ключей из audit-лога или access-лога.
+2. Прогреть кеш сначала, затем переключить трафик.
+3. Для blue-green деплоев: прогреть green кеш-инстанс до steady-state перед переключением load balancer.
+
+Edge-ноды Cloudflare pre-warm-ятся из соседних POP. Redis-backed сервисы используют startup-скрипт, читающий «топ 1 000 ключей» из audit-таблицы. Правило: никогда не перезапускать кеш под живым трафиком без pre-warming.
+
+<Inset kind="why" lang="ru">
+Pre-warming — наиболее часто пропускаемый шаг в runbook-ах апгрейда кеш-tier. Команды тестируют логику лока и SWR, но пренебрегают cold-start окном. Cold-start stampede обычно в 3–10 раз хуже нормального TTL-boundary stampede, потому что 100% ключей холодные одновременно. Runbook-и должны включать шаг «прогреть новый кеш перед роутингом трафика» как жёсткий gate.
+</Inset>
+
+<Quiz
+  id="detect-q1"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="ru"
+  question="Ставка запросов к БД сервиса показывает резкие спайки каждые 60 секунд с почти нулевой нагрузкой между ними. Какова наиболее вероятная причина?"
+  choices={[
+    { label: "У БД есть scheduled cleanup job, запускающийся каждые 60 с", misconception: "Cleanup job проявился бы на стороне БД, не как application request-спайки. Пилообразный паттерн — канонический отпечаток stampede." },
+    { label: "Горячий ключ кеша с TTL=60 с stampede-ит — каждое истечение заливает БД параллельными rebuild", correct: true },
+    { label: "Приложение имеет rate limit в 1 запрос в минуту", misconception: "Rate limits производят стабильный низкий throughput, не пилообразные спайки. Паттерн здесь совпадает с TTL-границами." },
+    { label: "Load balancer ротирует бэкенды каждые 60 с", misconception: "Ротация load balancer не создаёт этот паттерн. Спайк — параллельность на TTL истечении, не изменения роутинга." },
+  ]}
+/>
+
+<Quiz
+  id="detect-q2"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="ru"
+  question="Кеш хранит 5 000 product-страниц, все закешированных одновременно с TTL=300 с. Что происходит на секунде 300, даже с single-flight защитой?"
+  choices={[
+    { label: "Ничего — single-flight предотвращает все stampede", misconception: "Single-flight обрабатывает per-key параллельность. Он не может предотвратить одновременное истечение 5 000 ключей — каждый запускает свой rebuild, производя 5 000 параллельных rebuild." },
+    { label: "5 000 одновременных per-key rebuild бьют в БД — single-flight сериализует стадо каждого ключа, но не координирует между ключами", correct: true },
+    { label: "Первые 50 ключей rebuild-ятся; остальные ждут, пока те завершатся", misconception: "Никакой cross-key очереди нет. Каждый ключ запускает свой rebuild независимо." },
+    { label: "Все 5 000 ключей используют один лок и rebuild-ятся последовательно", misconception: "Локи per-key. Лок для product:123 не блокирует rebuild для product:456." },
+  ]}
+/>
+
+<DragOrder
+  id="detect-drag1"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="ru"
+  prompt="Поставь шаги диагностики и фикса 60-секундного периодического DB спайка:"
+  items={[
+    "Проверить ставку запросов к БД по времени — подтвердить пилообразный паттерн с 60-секундной периодичностью",
+    "Определить ключи кеша с TTL=60 с на горячем пути",
+    "Задеплоить in-process single-flight как первую митигацию",
+    "Проверить, что спайки падают с 4 000 QPS до 50 QPS (один rebuild на ноду × 50 нод)",
+    "Добавить TTL jitter ±20% для десинхронизации будущих истечений",
+    "Добавить dashboard-алерт: cache_miss_total rate выше 5× steady-state",
+    "Запустить синтетический stampede-тест в CI: впрыснуть 5 000 misses, asserting db_query_count под порогом",
+  ]}
+/>
+
+<Quiz
+  id="detect-q3"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="ru"
+  question="Сервис кеширует lookups профилей пользователей на 5 минут. Атакующий запрашивает 100 000 случайных несуществующих user ID в секунду. Что происходит без негативного кеширования?"
+  choices={[
+    { label: "Кеш заполняется и вытесняет реальные профили", misconception: "Кеш действительно загрязняется, но более непосредственная проблема — каждый miss бьёт в БД." },
+    { label: "Каждый miss достигает БД — 100 000 QPS lookups несуществующих ID перегружают её, аналогично positive-key stampede", correct: true },
+    { label: "Атакующий получает доступ на чтение к закешированным данным пользователей", misconception: "Атакующий не читает закешированные данные — он генерирует misses. Угроза — перегрузка БД, не раскрытие данных." },
+    { label: "Ничего — кеш автоматически отклоняет запросы несуществующих ключей", misconception: "Стандартный кеш не может заранее знать, существует ли ключ. Каждый miss приводит к lookup в БД." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Сигнатура stampede: периодические спайки БД, совпадающие с TTL-интервалом. TTL jitter размазывает 1 000 одновременных границ на плавное окно. Негативное кеширование предотвращает miss-storm amplification атаки. Pre-warming предотвращает cold-start stampede после перезапусков. Инструментируй все шесть метрик до деплоя в продакшен.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="detect-retrieval"
+  lang="ru"
+  questions={[
+    { q: "У команды задеплоены single-flight и Redis локи. Что означает cache_lock_wait_seconds p99 выше rebuild p99, и каков правильный фикс?", a: "Это означает, что очередь ожидания лока растёт: больше запросов ждут лока, чем оправдывает длительность rebuild. Ожидающие стоят друг за другом в очереди. Фикс в двух частях: (1) проверить, что EX лока установлен корректно — если EX слишком короткий, происходят параллельные acquire лока (дублирующие rebuild, большее эффективное ожидание); (2) добавить stale fallback, чтобы ожидающие не блокировались — вернуть предыдущее закешированное значение, пока rebuild в полёте. Комбинация держит латентность ограниченной: лок сериализует rebuild, но ни один запрос не должен ждать дольше длительности rebuild перед получением ответа." },
+    { q: "Объясни, почему pre-warming — наиболее важный шаг перед переключением трафика при blue-green деплое кеша, и что происходит, если его пропустить.", a: "Холодный кеш означает, что каждый запрос промахивается и бьёт в БД. Во время переключения входящая ставка запросов — полный production-трафик. Cold-start stampede хуже нормального TTL-boundary stampede, потому что 100% ключей холодные одновременно — БД видит полную нагрузку для каждого типа запроса, а не только одного ключа. Длительность cold-start окна зависит от кривой warming cache hit ratio, которая обычно логарифмическая: многие ключи прогреваются быстро, но длинный хвост занимает минуты. Пропуск pre-warming гарантирует post-deploy outage, пропорциональный тому, насколько агрессивно БД была под-provisioned под кешированную нагрузку (часто в 20–50 раз)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Детектирование cache stampede в продакшене требует инструментированных метрик: пилообразный `db_query_rate` паттерн с периодичностью, совпадающей с TTL — канонический отпечаток. Минимально-жизнеспособная observability включает шесть метрик: miss rate, DB query rate, rebuild duration, lock wait, single-flight subscriber count и SWR stale serve count. TTL jitter (±15–25%) предотвращает синхронизированное multi-key истечение, размазывая границы по времени. Негативное кеширование (short-TTL sentinel для пустых строк) предотвращает miss-storm amplification атаки. Pre-warming кеша перед приёмом живого трафика после перезапуска предотвращает cold-start stampede. Вместе эти operational практики закрывают разрыв между «митигации задеплоены» и «stampede реально предотвращены в продакшене».
+</Recap>

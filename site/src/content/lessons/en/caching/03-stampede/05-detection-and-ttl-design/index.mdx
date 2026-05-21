@@ -1,0 +1,197 @@
+---
+slug: 05-detection-and-ttl-design
+lang: en
+track: caching
+unit: 03-stampede
+order: 5
+title: "Detecting stampedes and designing TTL for production"
+summary: "The observability fingerprint of a cache stampede, minimum-viable dashboard metrics, TTL jitter to spread boundaries, negative caching, and pre-warming strategies to survive cache-cold restarts."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/04-stale-while-revalidate
+deepensInto:
+  - caching/03-stampede/06-stampede-senior
+spiral: ["statefulness", "encapsulation"]
+concepts: ["ttl-jitter", "negative-caching", "cache-pre-warming", "stampede-observability", "periodic-spikes", "miss-rate-sawtooth"]
+sources:
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+  - https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt
+  - https://datatracker.ietf.org/doc/html/rfc5861
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A team deploys single-flight and locks. Three weeks later an on-call alert fires: DB CPU spiking every 5 minutes. The protection is in place — but it is protecting the wrong keys. The spike is coming from a different key with TTL=300 s that nobody instrumented.
+</Hook>
+
+<Crux>A stampede without observability is invisible until it causes an outage. The fingerprint is periodic DB spikes matching the TTL value.</Crux>
+
+<Explanation>
+
+## The observability fingerprint
+
+Cache stampedes leave a distinctive signature in metrics:
+
+- **DB query rate:** a sawtooth pattern — near zero between TTL boundaries, a sharp spike at each boundary. The spike width equals the rebuild duration.
+- **Periodicity:** spikes recur at intervals matching the TTL. TTL=60 s → spikes every 60 s. TTL=300 s → spikes every 5 minutes.
+- **p99 latency:** spikes at the same intervals as the DB query rate.
+- **cache_miss_total rate:** sharp periodic increases at boundaries instead of a smooth low baseline.
+
+Without these instrumented, a stampede looks like a general "DB slowness" incident with no obvious cause.
+
+## Minimum-viable dashboard
+
+Six metrics cover all stampede scenarios:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Metric | Alert condition | What it signals |
+|---|---|---|
+| `cache_miss_total` rate | Periodic spikes &gt; 5× steady-state | Stampede in progress |
+| `db_query_rate` p99 | Sawtooth pattern | Downstream stampede from cache boundaries |
+| `cache_rebuild_duration_seconds` p99 | Long tail at boundaries | Rebuild contention |
+| `cache_lock_wait_seconds` p99 | Above rebuild p99 | Lock queue building — waiter starvation |
+| `singleflight_subscriber_count` p99 | &gt; 1 (coalescing active) | Single-flight firing — normal under load |
+| `cache_swr_stale_serve_total` | Non-zero during boundaries | SWR is absorbing expiry — expected |
+
+</div>
+
+Alert 1: `cache_miss_total` rate above 5× steady-state → stampede forming.
+Alert 2: `db_query_rate` p99 above 10× p50 → sawtooth DB load → boundary spikes.
+Alert 3: `cache_lock_wait_seconds` p99 above rebuild duration → lock queue depth growing.
+
+## TTL jitter
+
+Single-flight and locks handle per-key stampedes. But what if 1,000 keys all have TTL=300 s and they were all cached at the same time? They all expire together, producing 1,000 simultaneous per-key stampedes — single-flight correctly handles each one, but the sum of 1,000 concurrent rebuilds is a DB spike.
+
+**TTL jitter:** instead of a fixed TTL, use a random value in a range:
+
+```
+ttl = base_ttl * (1 + jitter_fraction * (rand() - 0.5))
+# Example: base=300, jitter=0.25 → TTL in range [225, 375]
+```
+
+A fleet of 1,000 keys with ±25% jitter spreads expiries over 150 s instead of all firing at once. DB load becomes a smooth low curve instead of a spike.
+
+Most cache libraries support jitter natively (Caffeine in Java, Redis via application-level calculation). The default ±15–25% is sufficient for most workloads.
+
+## Negative caching
+
+The same stampede shape applies when the database answers "no such row." If the application does not cache null results, every request for a non-existent key hits the DB — and under high concurrency this is a miss-storm that overloads the DB as fully as a positive-key stampede.
+
+**Fix: cache the "missing" sentinel with a short TTL.**
+
+```
+# On DB miss:
+SET key:missing "" EX 10  # 10 s negative TTL
+
+# On read:
+val = GET key
+if val == "":
+  return NOT_FOUND  # from cache, no DB hit
+```
+
+Short negative TTL (5–30 s) bounds memory churn. The positive TTL can be much longer (60–300 s). Write-through invalidation must delete the negative entry when a real row is inserted.
+
+**Security note:** without negative caching, an attacker can mint random non-existent keys (random UUIDs in a URL path) to amplify DB load by orders of magnitude — a documented pattern that affected CDN-backed sites in 2024.
+
+## Pre-warming after restarts
+
+A cache that restarts cold (deploy, eviction, machine failure) starts empty. Every incoming request misses and hits the DB — a full-traffic origin spike. If restarted at peak traffic, this spike is equal in magnitude to a full stampede.
+
+**Pre-warming procedure:**
+1. Before accepting public traffic, replay the top-N most-accessed keys from an audit log or access log.
+2. Warm the cache first, then cut traffic.
+3. For blue-green deploys: warm the green cache instance to steady-state before switching the load balancer.
+
+Cloudflare edges pre-warm from neighbouring POPs. Redis-backed services use a startup script reading "top 1,000 keys" from an audit table. The rule: never restart a cache under live traffic without pre-warming.
+
+<Inset kind="why" lang="en">
+Pre-warming is the most common missed step in cache tier upgrade runbooks. Teams test the lock and SWR logic, but neglect the cold-start window. The cold-start stampede is usually 3–10× worse than a normal TTL-boundary stampede because 100% of keys are cold simultaneously. Runbooks must include a "warm the new cache before routing traffic" step as a hard gate.
+</Inset>
+
+<Quiz
+  id="detect-q1"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="en"
+  question="A service's DB query rate shows sharp spikes every 60 seconds with near-zero load between spikes. What is the most likely cause?"
+  choices={[
+    { label: "The database has a scheduled cleanup job running every 60 s", misconception: "A cleanup job would show on the DB side, not as application request spikes. The sawtooth pattern is the canonical stampede fingerprint." },
+    { label: "A hot cache key with TTL=60 s is stampeding — every expiry floods the DB with concurrent rebuilds", correct: true },
+    { label: "The application has a rate limit of 1 request per minute", misconception: "Rate limits produce steady low throughput, not sawtooth spikes. The pattern here matches TTL boundaries." },
+    { label: "The load balancer rotates backends every 60 s", misconception: "Load balancer rotation does not create this pattern. The spike is concurrency at TTL expiry, not routing changes." },
+  ]}
+/>
+
+<Quiz
+  id="detect-q2"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="en"
+  question="A cache stores 5,000 product pages, all cached at the same moment with TTL=300 s. What happens at second 300, even with single-flight protection?"
+  choices={[
+    { label: "Nothing — single-flight prevents all stampedes", misconception: "Single-flight handles per-key concurrency. It cannot prevent 5,000 keys expiring simultaneously — each key triggers its own single rebuild, producing 5,000 concurrent rebuilds." },
+    { label: "5,000 simultaneous per-key rebuilds hit the DB — single-flight serialises each key's herd but cannot coordinate across keys", correct: true },
+    { label: "The first 50 keys rebuild; the rest wait until those finish", misconception: "There is no cross-key queuing. Each key runs its own rebuild independently." },
+    { label: "All 5,000 keys share one lock and rebuild sequentially", misconception: "Locks are per-key. A lock for product:123 does not block rebuilds for product:456." },
+  ]}
+/>
+
+<DragOrder
+  id="detect-drag1"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="en"
+  prompt="Order the steps to diagnose and fix a 60-second-periodic DB spike:"
+  items={[
+    "Check DB query rate over time — confirm sawtooth pattern with 60-second periodicity",
+    "Identify the cache key(s) with TTL=60 s on the hot path",
+    "Deploy in-process single-flight as the first mitigation",
+    "Verify spikes drop from 4,000 QPS to 50 QPS (one rebuild per node × 50 nodes)",
+    "Add TTL jitter ±20% to desynchronise future expiries",
+    "Add dashboard alert: cache_miss_total rate above 5× steady-state",
+    "Run a synthetic stampede test in CI: inject 5,000 misses, assert DB query count stays under threshold",
+  ]}
+/>
+
+<Quiz
+  id="detect-q3"
+  lessonSlug="05-detection-and-ttl-design"
+  lang="en"
+  question="A service caches user profile lookups for 5 minutes. An attacker requests 100,000 random non-existent user IDs per second. What happens without negative caching?"
+  choices={[
+    { label: "The cache fills up and evicts real profiles", misconception: "The cache would indeed be polluted, but the more immediate problem is every miss hitting the DB." },
+    { label: "Every miss reaches the DB — 100,000 QPS of non-existent-ID lookups overload it, similar to a positive-key stampede", correct: true },
+    { label: "The attacker gains read access to cached user data", misconception: "The attacker is not reading cached data — they are generating misses. The threat is DB overload, not data exposure." },
+    { label: "Nothing — the cache rejects requests for non-existent keys automatically", misconception: "A standard cache has no way to know in advance whether a key exists. Every miss results in a DB lookup." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Stampede signature: periodic DB spikes matching TTL interval. TTL jitter spreads 1,000 simultaneous boundaries over a smooth window. Negative caching prevents miss-storm amplification attacks. Pre-warming prevents cold-start stampede after restarts. Instrument all six metrics before deploying to production.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="detect-retrieval"
+  lang="en"
+  questions={[
+    { q: "A team has single-flight and Redis locks deployed. What does cache_lock_wait_seconds p99 above the rebuild p99 indicate, and what is the correct fix?", a: "It means the lock wait queue is growing: more requests are waiting for the lock than the rebuild duration justifies. Waiters are queueing behind each other. The fix has two parts: (1) check whether the lock EX is set correctly — if EX is too short, concurrent lock acquisitions happen (duplicate rebuilds, longer effective wait); (2) add a stale fallback so waiters do not block — return the previous cached value while the rebuild is in flight. The combination keeps latency bounded: the lock serialises rebuilds, but no request ever has to wait more than a rebuild duration before seeing a response." },
+    { q: "Explain why pre-warming is the most important step before traffic cutover in a blue-green cache deployment, and what happens if it is skipped.", a: "A cold cache means every request misses and hits the DB. During the cutover the incoming request rate is at full production traffic. A cold-start stampede is worse than a normal TTL-boundary stampede because 100% of keys are cold simultaneously — the DB sees the full traffic load for every request type, not just one key's worth. The duration of the cold-start window depends on the cache hit ratio warming curve, which is typically logarithmic: many keys warm quickly, but the long tail takes minutes. Skipping pre-warming guarantees a post-deploy outage proportional to how aggressively the DB was sized for cached load (often 20–50× under-provisioned for raw traffic)." },
+  ]}
+/>
+
+<Recap lang="en">
+Detecting a cache stampede in production requires instrumented metrics: a sawtooth `db_query_rate` pattern with periodicity matching the TTL is the canonical fingerprint. Minimum viable observability includes six metrics: miss rate, DB query rate, rebuild duration, lock wait, single-flight subscriber count, and SWR stale serve count. TTL jitter (±15–25%) prevents synchronized multi-key expiry by spreading boundaries across time. Negative caching (short-TTL sentinel for missing rows) prevents miss-storm amplification attacks. Pre-warming the cache before accepting live traffic after a restart prevents cold-start stampede. Together these operational practices close the gap between "mitigations deployed" and "stampedes actually prevented in production."
+</Recap>
