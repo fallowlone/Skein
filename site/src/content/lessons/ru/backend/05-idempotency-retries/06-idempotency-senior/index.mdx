@@ -1,0 +1,174 @@
+---
+slug: 06-idempotency-senior
+lang: ru
+track: backend
+unit: 05-idempotency-retries
+order: 6
+title: "Наблюдаемость, production-инциденты и дизайн для глобального масштаба"
+summary: "Минимально жизнеспособный dashboard, production failure stories от Stripe/Knight Capital/AWS S3/GitHub, cross-protocol паттерны и упражнение на дизайн для global anycast."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/05-idempotency-retries/05-concurrency-and-cache
+  - backend/05-idempotency-retries/04-outbox-inbox-patterns
+  - backend/05-idempotency-retries/03-retry-strategies
+spiral: ["statefulness", "latency"]
+concepts: ["idempotency-observability", "retry-observability", "outbox-lag", "middleware-library", "cross-protocol-dedup", "anycast-cache"]
+sources:
+  - https://stripe.com/blog/idempotency
+  - https://brandur.org/idempotency-keys
+  - https://en.wikipedia.org/wiki/Thundering_herd_problem
+  - https://event-driven.io/en/outbox_inbox_patterns_and_delivery_aguarantees_explained/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Твой платёжный API начинает возвращать 422 на 10% запросов POST /charge. Симптом появился после SDK release. Двойных списаний пока нет — но сигнал о клиентском баге, который без фикса их вызовет. Dashboard должен поймать это раньше, чем станет production-инцидентом.
+</Hook>
+
+<Crux>Без observability идемпотентность — вера. Всплеск 422 или attempt-3 предшествует outage на минуты — канарейка падает раньше пользователей.</Crux>
+
+<Explanation>
+
+## Минимально жизнеспособный observability dashboard
+
+Каждая production idempotency + retry система нуждается в шести метриках:
+
+**1. `idempotency_key_total` по outcome:**
+- `new` — первичные ключи (здоровый baseline)
+- `replay` — успешные retry (ожидаемо при transient сбоях)
+- `in_flight` (409) — конкурентные гоночные запросы
+- `mismatch` (422) — клиент переиспользует ключ с другим намерением (сигнал бага)
+
+Rate `mismatch > 0.1%` от total POST — pages on-call. Означает баг генерации ключей у клиентов.
+
+**2. `retry_attempt_total` по номеру попытки (1, 2, 3, 4+):**
+Всплеск на attempt-3 предшествует outage на минуты — самые persistent клиенты уже платят цену underlying деградации до того, как она стала заметной пользователям.
+
+**3. `retry_delay_seconds_bucket`** — гистограмма реальных задержек. Бимодальное распределение (много retry на 0с и на 30с) говорит, что jitter не применяется.
+
+**4. `outbox_lag_seconds`** — насколько устарел outbox relay? Алерт на lag &gt; 30с. Растущий lag означает сбой relay или downstream брокера.
+
+**5. `dead_letter_queue_depth`** — алерт на рост. Растущий DLQ — постоянно падающий конвейер: накапливаются poison messages.
+
+**6. `http_request_outcome` по классу статуса** — 2xx / 4xx / 5xx / timeout. Разрез 4xx / 5xx отличает клиентские баги от серверных сбоев.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Метрика | Порог алерта | Что сигнализирует |
+|---|---|---|
+| `idempotency_key_total{outcome="mismatch"}` | &gt; 0.1% от POST | Баг переиспользования ключа в SDK |
+| `retry_attempt_total{attempt="3"}` | Всплеск выше baseline | Ранний сигнал деградации downstream |
+| `outbox_lag_seconds` | &gt; 30 с | Сбой relay или брокера |
+| `dead_letter_queue_depth` | Любой рост | Постоянный сбой конвейера |
+
+</div>
+
+## Production failure stories
+
+**Stripe 2017:** переключение idempotency-кеша с одного Redis-кластера на другой ненадолго потеряло in-flight ключи. Несколько двойных списаний. Stripe добавил Postgres как постоянный авторитетный backing store — Redis теперь только hot-path cache.
+
+**Knight Capital 2012:** отсутствующий feature flag плюс агрессивные retry против биржевого фида превратили deploy-глитч в $440M непреднамеренных торгов за 45 минут. Корень: at-least-once без идемпотентных консумеров.
+
+**AWS S3 сентябрь 2017:** внутренняя подсистема возвращала 500 во время outage. Агрессивные retry без jitter у клиентов усилили сбой по всему региону, пока AWS не опубликовал guideline по обязательному jitter.
+
+**GitHub 2018:** failover базы потерял lease на outbox-relay. События копились в outbox 2 минуты, потом флашились разом — само-нанесённый thundering herd на стороне консумера. Митигация: rate-limit relay при catch-up (например, 500 событий/с) для сглаживания спайка.
+
+Все истории об одном корне: at-least-once без идемпотентных консумеров ИЛИ retry без jitter.
+
+## Cross-protocol: HTTP, gRPC, Kafka
+
+Концепция **idempotency token** универсальна для протоколов:
+
+| Протокол | Токен | Где |
+|---|---|---|
+| HTTP | `Idempotency-Key` header | RFC draft `draft-ietf-httpapi-idempotency-key-header` |
+| gRPC | трейлер `grpc-retry-pushback-ms` | Service-config `retryPolicy` JSON |
+| Kafka | `enable.idempotence=true` producer | Per-partition sequence numbers |
+| AWS SQS FIFO | `MessageDeduplicationId` | Queue-level dedup window (5 мин) |
+
+**Kafka idempotent producer:** `enable.idempotence=true` присваивает Producer ID и sequence number каждому сообщению. Брокер отбрасывает дубликаты в рамках сессии. Для cross-partition атомарности: Kafka транзакции.
+
+## Деплой: middleware, а не ручная реализация
+
+Ручная реализация idempotency в каждом эндпоинте порождает несогласованные формулы fingerprint и несовместимые TTL. Middleware-библиотеки делают это один раз:
+
+- `express-idempotency` (Node.js)
+- `django-idempotency-key` (Python/Django)
+- `fastapi-idempotency` (Python/FastAPI)
+- `AspNetCore.Idempotency` (.NET)
+- Stripe `idempotent-requests` (open-source)
+
+На инфраструктурном уровне: **AWS API Gateway** со встроенной идемпотентностью с 2023 года (TTL до 10 минут per-stage). **Envoy/Istio** выставляют retry policy per-route с retry budget по кластеру.
+
+<Inset kind="why" lang="ru">
+Почему IETF только к 2024 году формализовал заголовок Idempotency-Key? Stripe опубликовал паттерн в 2014-м; adoption был широким до стандартизации. Процесс IETF (draft-ietf-httpapi-idempotency-key-header через несколько ревизий) существует для interoperably-специфицирования семантики заголовка — особенно TTL negotiation и fingerprint поведения — чтобы API gateway и client SDK могли реализовать его согласованно без чтения блога Stripe.
+</Inset>
+
+<Quiz
+  id="senior-q1"
+  lessonSlug="06-idempotency-senior"
+  lang="ru"
+  question="`idempotency_key_total{outcome='mismatch'}` растёт до 10% от всех POST /charge. Наиболее вероятная root cause?"
+  choices={[
+    { label: "Idempotency cache заполнен и вытесняет ключи", misconception: "Вытеснение кеша порождает 'new' исходы, не 'mismatch'. Mismatch требует существующей строки с другим fingerprint." },
+    { label: "Версия клиентского SDK генерирует одинаковый ключ для разных операций (например, ключ кешируется при инициализации, а не per-operation)", correct: true },
+    { label: "Postgres cleanup job удаляет живые ключи слишком часто", misconception: "Удалённые ключи порождают 'new' исходы при retry, не 'mismatch'. Mismatch требует существующей строки с другим fingerprint." },
+    { label: "SHA-256 fingerprint реализация сервера изменилась", misconception: "Изменение fingerprint на стороне сервера вызвало бы mismatch для всех retry, не только 10% — и было бы скоррелировано с деплоем, а не с SDK release." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q2"
+  lessonSlug="06-idempotency-senior"
+  lang="ru"
+  question="Outbox relay накопил 18 000 неопубликованных строк после сбоя Kafka-брокера. Брокер восстановился. Какой риск у relay при возобновлении публикации на полной скорости?"
+  choices={[
+    { label: "Relay сгенерирует дублирующиеся idempotency keys", misconception: "Outbox-строки имеют свои event ID. Relay не генерирует idempotency keys — он публикует заранее написанные события." },
+    { label: "18 000-event burst попадёт на консумеров одновременно — само-нанесённый thundering herd на стороне консумера", correct: true },
+    { label: "Kafka отклонит backlog, потому что partition offset устарел", misconception: "Kafka принимает новые сообщения независимо от того, сколько продюсер был offline, пока offset валиден." },
+    { label: "Relay зависнет в ожидании consumer ACK", misconception: "Relay не ждёт обработки консумером — только broker ACK (сообщение записано в Kafka-партицию)." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q3"
+  lessonSlug="06-idempotency-senior"
+  lang="ru"
+  question="Global anycast платёжный API требует, чтобы idempotency keys переживали сбой одного региона. Какая архитектура удовлетворяет это требование?"
+  choices={[
+    { label: "Один Postgres primary в одном регионе с async репликами в других", misconception: "Async реплика в другом регионе может отставать на секунды. При failover недавно записанные ключи могут быть потеряны — потенциальное двойное списание." },
+    { label: "Redis Cluster с active-active cross-region репликацией, backed by Postgres ledger через outbox в той же транзакции", correct: true },
+    { label: "In-memory дедупликация per pod, обновляемая каждые 30 секунд из центрального хранилища", misconception: "30-секундное окно обновления означает: retry в этом окне на другой pod не увидит записи — потенциальное двойное списание." },
+    { label: "Полагаться на ограничение retry клиентом до 3 попыток — вероятность двойного списания достаточно мала", misconception: "Ограничение retry снижает вероятность, но не устраняет её. Юридическая ответственность за двойные списания требует архитектурной гарантии, а не вероятностной." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Минимальная наблюдаемость: distribution outcome ключей (new/replay/409/422), распределение retry-попыток, outbox lag, DLQ depth. Всплеск 422 или attempt-3 предшествует production-инциденту на минуты. Используй middleware, а не ручную per-endpoint реализацию.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="senior-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какие шесть метрик составляют минимально жизнеспособный idempotency + retry dashboard, и что сигнализирует каждая?", a: "1) idempotency_key_total по outcome: 422 mismatch spike сигнализирует баг генерации ключей в SDK. 2) retry_attempt_total по номеру попытки: всплеск attempt-3 — ранний сигнал деградации downstream. 3) retry_delay_seconds_bucket: бимодальное распределение сигнализирует отсутствие jitter. 4) outbox_lag_seconds: растущий lag сигнализирует сбой relay или брокера — алерт на >30с. 5) dead_letter_queue_depth: любой рост сигнализирует постоянные сбои конвейера. 6) http_request_outcome по классу статуса: разрез 4xx/5xx отличает клиентские баги от серверных сбоев." },
+    { q: "Опиши дизайн global-anycast idempotency cache с вероятностью двойного списания ≤ 10⁻⁹ и 30-дневным retention ключей.", a: "Двухуровневый кеш. Hot path: Redis Cluster с active-active cross-region репликацией (Redis Enterprise или CRDT-слой), SETNX с TTL 30 дней. При сбое региона другой регион уже имеет ключ — потерь нет, двойных списаний нет. Cold path: Postgres ledger, записываемый async через outbox. На запрос: SETNX на Redis; если новый — обрабатывать и писать Postgres async; если конфликт — читать Redis; если Redis miss (crash) — провалиться в Postgres. Retry budget: клиент ограничен 3 попытками с full jitter. Сервер форсирует 409 на in-flight + 422 на fingerprint mismatch. Compliance: TTL 30 дней соответствует требованиям Stripe v2 для аудита." },
+    { q: "Какова общая root cause во всех четырёх production failure stories (Stripe 2017, Knight Capital 2012, AWS S3 2017, GitHub 2018)?", a: "Каждая история — комбинация at-least-once без идемпотентных консумеров ИЛИ retry без jitter. Stripe 2017: миграция Redis-кеша потеряла ключи — at-least-once retry попал на сервер без ключа и обработал снова. Knight Capital 2012: агрессивные retry без идемпотентного консумера превратили deploy-глитч в неуправляемые торги. AWS S3 2017: retry без jitter усилил локальный сбой до масштаба региона. GitHub 2018: flush backlog outbox создал само-нанесённый thundering herd у консумеров без rate-limiting. Паттерн фикса везде одинаковый: идемпотентные консумеры + jittered retry + rate-limited relay catch-up." },
+  ]}
+/>
+
+<Recap lang="ru">
+Production idempotency + retry система нуждается в шести observability-метриках — distribution outcome ключей, распределение retry-попыток, outbox lag, DLQ depth и разрез HTTP статус-классов. Всплеск mismatch выше 0.1% сигнализирует баг переиспользования ключа в SDK. Всплеск retry attempt-3 — ранний сигнал деградации downstream. Все четыре major production failure (Stripe 2017, Knight Capital 2012, AWS S3 2017, GitHub 2018) имеют одну root cause: at-least-once без идемпотентных консумеров или retry без jitter. На глобальном масштабе кеш нуждается в active-active cross-region репликации — сбой региона не должен терять ключи и создавать двойные списания. Используй middleware-библиотеки, а не ручную реализацию — несогласованные fingerprint формулы прячут баги.
+</Recap>

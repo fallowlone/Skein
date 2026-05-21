@@ -1,0 +1,186 @@
+---
+slug: 02-lock-and-single-flight
+lang: ru
+track: caching
+unit: 03-stampede
+order: 2
+title: "Лок и single-flight: ограничение параллельных rebuild"
+summary: "Redis SETNX-лок сериализует rebuild через весь флот; in-process single-flight схлопывает per-node стадо до одного Promise без сетевых затрат. Нужны оба слоя последовательно."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/01-what-is-stampede
+deepensInto:
+  - caching/03-stampede/03-xfetch-probabilistic
+spiral: ["statefulness", "encapsulation"]
+concepts: ["setnx-lock", "single-flight", "lock-ttl", "singleflight-group", "distributed-lock", "thundering-herd"]
+sources:
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+  - https://pdos.csail.mit.edu/6.824/papers/memcache-faq.txt
+  - https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+На границе TTL 100 000 запросов бьют во флот из 50 нод. Каждая нода запускает in-process single-flight. Сколько запросов к БД происходит? Не 100 000 — но и не 1. Ответ показывает ровно то, где каждый слой митигации помогает, а где нет.
+</Hook>
+
+<Crux>Single-flight схлопывает per-process стадо до одного Promise; Redis lock схлопывает per-fleet стадо до одного rebuild. Используй оба.</Crux>
+
+<Explanation>
+
+## Митигация 1: распределённый лок с SETNX
+
+Простейшая cross-node митигация: перед запуском rebuild захватить лок. Redis-примитив:
+
+```
+SET lock:key uuid EX 30 NX
+```
+
+- `NX` — установить, только если ключ не существует (set-if-not-exists).
+- `EX 30` — авто-истечение через 30 с (страховка от упавших rebuilder-ов).
+- `uuid` — уникальный токен захватывающего процесса (используется для fencing, рассматривается в старшем уроке).
+
+**Что происходит на истечении:**
+
+1. Запрос-1 приходит. Делает `SET lock:homepage:v1 uuid-A EX 30 NX` → успех. Запускает rebuild.
+2. Запросы 2–N приходят. Делают тот же SET → провал (NX). Видят, что лок занят.
+3. Вариант А: каждый ожидающий перепроверяет кеш через короткое ожидание (50–200 мс). К тому моменту rebuild может завершиться.
+4. Вариант Б: каждый ожидающий немедленно возвращает fallback (stale-значение, дефолт-страницу, пустой 204).
+5. Запрос-1 завершает rebuild. Пишет новое значение. Удаляет лок.
+
+EX=30 — не TTL кеша, а страховка. Если rebuilder падает на шаге 1 без удаления лока, лок авто-истекает через 30 с. EX должен быть больше rebuild p99, но достаточно коротким, чтобы падение не глушило трафик надолго. Типичная цель: 3× среднее время rebuild.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Сценарий | Без лока | С SETNX локом |
+|---|---|---|
+| 10-нодный флот, 2 000 promis/нода | 20 000 параллельных запросов к БД | 10 запросов к БД (1 на ноду) или 1 с cross-node локом |
+| Rebuilder падает в середине работы | Стадо повторяется каждый TTL | Лок авто-истекает после EX секунд |
+| EX лока слишком короткий | N/A | Второй rebuilder гонится — дублирование записей |
+
+</div>
+
+## Митигация 2: in-process single-flight
+
+Распределённые локи координируют через флот; single-flight координирует внутри одного процесса. Никакого Redis, никакого сетевого round-trip — только in-process map.
+
+**Паттерн:**
+```
+type SingleFlight struct { mu sync.Mutex; inflight map[string]*call }
+```
+
+1. Запрос приходит; cache miss.
+2. Проверить in-process map по ключу. Если `Promise` / `call` уже существует → подписаться на него, ждать resolve, вернуть общий результат.
+3. Если нет записи → создать новую (Promise), запустить rebuild, добавить в map.
+4. Когда rebuild завершается → resolve Promise, удалить из map. Все подписчики получают результат одновременно.
+
+Стандартная библиотека Go поставляет это как `singleflight.Group.Do`. Эквиваленты Node.js: `p-memoize` или ручной паттерн `Map<key, Promise>`.
+
+**Стоимость:** O(1) lookup в памяти процесса. Без сети. Без acquire лока.
+
+**Область действия:** только per-process. Флот из 50 нод имеет 50 независимых in-process map. На границе TTL с 100 000 параллельными запросами, равномерно распределёнными, single-flight в одиночку даёт 50 запросов к БД (1 на ноду), не 100 000. Добавь распределённый лок, чтобы перейти от 50 к 1.
+
+<Inset kind="why" lang="ru">
+Facebook «memcache leases» (Nishtala et al., NSDI 2013) реализуют ту же идею на уровне кеша: при miss кеш возвращает 64-битный lease-токен. Только клиент, держащий токен, может писать обратно. Параллельные miss-клиенты получают null без токена и им говорят ждать. Результат: пиковый QPS БД упал с 17 000 до 1 300 — примерно 13× — на одном hot-key кластере.
+</Inset>
+
+## Композиция обоих слоёв
+
+Ни один слой не достаточен сам по себе:
+
+- Только single-flight: 50-нодный флот всё равно шлёт 50 параллельных rebuild.
+- Только распределённый лок: ожидающие (все кроме 1 lock-holder-а) ничего не получают, пока rebuild идёт — добавляет латентность каждому запросу на границе.
+
+**Совмещённый стек:**
+
+1. Проверить in-process map → если Promise в полёте, подписаться и ждать.
+2. Promise нет → попробовать `SET lock:key uuid EX 30 NX`.
+3. Лок захвачен → зарегистрировать Promise, запустить rebuild, записать значение, удалить лок, resolve Promise.
+4. Лок НЕ захвачен → ретрай GET кеша через 50 мс. Вернуть stale fallback, если всё ещё пусто.
+
+<DragOrder
+  id="lock-sf-drag1"
+  lessonSlug="02-lock-and-single-flight"
+  lang="ru"
+  prompt="Поставь шаги, которые делает запрос в single-flight + Redis-lock стеке:"
+  items={[
+    "Cache GET возвращает nil (miss)",
+    "Проверить in-process singleflight map — если Promise существует, подписаться на него",
+    "Promise нет: попробовать SET lock:key uuid EX 30 NX",
+    "Лок захвачен: зарегистрировать новый Promise и запустить rebuild",
+    "Rebuild завершён: записать значение в кеш с TTL, удалить Redis-лок, resolve Promise",
+    "Все in-process подписчики получают результат через общий Promise",
+    "Лок НЕ захвачен: ждать 50 мс, перепроверить кеш, вернуть stale fallback если всё ещё пусто",
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q1"
+  lessonSlug="02-lock-and-single-flight"
+  lang="ru"
+  question="Флот из 50 нод использует только in-process single-flight. На границе TTL приходит 100 000 параллельных misses. Сколько rebuild к БД?"
+  choices={[
+    { label: "1 — single-flight схлопывает всё в один rebuild", misconception: "Single-flight — per-process. 50 нод = 50 независимых in-process map = до 50 параллельных rebuild." },
+    { label: "100 000 — single-flight только дедуплицирует чтения кеша, не rebuild", misconception: "Single-flight — именно rebuild-coalescer; он срабатывает здесь, просто per-node." },
+    { label: "50 — один rebuild на ноду, потому что у каждой свой in-process map", correct: true },
+    { label: "Зависит от скорости БД", misconception: "Скорость БД не влияет на счёт. Область координации (per-process) определяет его." },
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q2"
+  lessonSlug="02-lock-and-single-flight"
+  lang="ru"
+  question="Какова роль значения EX в SETNX-based локе?"
+  choices={[
+    { label: "Устанавливает, как часто обновляется ключ кеша", misconception: "TTL кеша и TTL лока независимы. EX — о безопасности лока, не о свежести кеша." },
+    { label: "Ограничивает, как долго упавший rebuilder может блокировать систему — должен быть больше rebuild p99, но достаточно коротким, чтобы падение не глушило трафик надолго", correct: true },
+    { label: "Совпадает с TTL кеша, чтобы оба истекали вместе", misconception: "Сделать их равными ломает систему. Кеш TTL=60 с и лок EX=60 с означают: rebuild длиннее 60 с оставляет лок истёкшим и запускает дублирующий rebuild." },
+    { label: "Ротирует ключ лока, чтобы предотвратить залипание", misconception: "EX — чисто страховка от залипания. Ротация ключей — отдельная концепция." },
+  ]}
+/>
+
+<Quiz
+  id="lock-sf-q3"
+  lessonSlug="02-lock-and-single-flight"
+  lang="ru"
+  question="Лок кеша использует EX=10 с. Rebuild занимает 12 с. Что происходит?"
+  choices={[
+    { label: "Rebuild отменяется через 10 с", misconception: "Redis не отменяет rebuilder. Он только удаляет ключ лока через 10 с." },
+    { label: "Лок авто-истекает, второй запрос захватывает лок и запускает параллельный rebuild — оба в итоге пишут в ключ кеша (дублирование записей)", correct: true },
+    { label: "Rebuild ставится в очередь и выполняется после истечения лока", misconception: "Никакой очереди rebuild нет. Второй запрос просто видит отсутствующий лок и начинает свой rebuild." },
+    { label: "Ничего — EX только рекомендательный", misconception: "EX исполняется Redis. Через 10 с ключ лока исчезает и следующий NX-acquire успешен." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Single-flight = бесплатное per-process coalescing; Redis lock = cross-node сериализация с сетевой ценой. 50-нодный флот нуждается в обоих: single-flight схлопывает 2 000 per-node в 1, лок схлопывает 50 нод в 1. Пара лок + stale fallback так, чтобы ожидающие никогда не голодали.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="lock-sf-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какая практическая разница между in-process single-flight и Redis distributed lock, и когда использовать каждый?", a: "Single-flight живёт в памяти процесса: O(1) lookup, без сетевых затрат. Использовать первым — схлопывает N запросов на процесс до 1 бесплатно. Распределённый лок живёт в общем store (Redis, etcd): каждый acquire — сетевой round-trip (~1 мс). Использовать вторым — после того, как single-flight схлопнул N до 1 на ноду, лок схлопывает M нод до 1. Композиция: single-flight первый (быстрый, бесплатный), распределённый лок второй (медленный, разделяемый). Добавь SWR или stale fallback, чтобы ожидающие всегда что-то получали, пока rebuild в полёте." },
+    { q: "Facebook memcache leases (NSDI 2013) снизили пиковый QPS БД с 17 000 до 1 300. Какой механизм этого достигает?", a: "Lease — 64-битный токен, возвращаемый вместе с cache miss. Только держатель токена может писать обратно. Параллельные miss-клиенты получают null без токена и им говорят ждать и повторить GET. Дополнительно: кеш-сервер выдаёт не более одного lease на ключ за 10 с — throttle поверх ограничения единственного записывающего. Комбинация означает: только один клиент пишет за 10-секундное окно независимо от числа параллельных misses." },
+    { q: "Почему EX лока должен быть установлен больше rebuild p99, а не просто среднего?", a: "Если EX равен среднему времени rebuild, примерно половина всех rebuild переживёт лок. Каждый такой случай запускает гонку: лок авто-истекает, второй запрос захватывает его, начинает параллельный rebuild, и оба пишут в ключ кеша. EX должен превышать самый медленный реалистичный rebuild (p99.9 лучше p99), чтобы лок всё ещё удерживался, когда rebuild завершается, и rebuilder мог явно его удалить. Общая цель: 3× среднее время rebuild." },
+  ]}
+/>
+
+<Recap lang="ru">
+Два механизма ограничивают параллельные rebuild без изменения TTL кеша. In-process single-flight поддерживает per-process map in-flight Promise-ов; каждый запрос, приходящий пока rebuild запущен, подписывается на тот же Promise вместо нового rebuild — нулевые сетевые затраты, нулевая координация. Redis SETNX distributed lock сериализует rebuild через весь флот с помощью `SET key uuid EX N NX` acquire и явного удаления по завершении. Композиция обоих снижает 100 000 параллельных misses на 50-нодном флоте до 1 запроса к БД. EX лока должен превышать rebuild p99; пара лок + stale fallback так, чтобы ожидающие никогда не блокировались бесконечно.
+</Recap>

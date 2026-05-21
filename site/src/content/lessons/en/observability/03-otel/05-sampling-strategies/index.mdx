@@ -1,0 +1,186 @@
+---
+slug: 05-sampling-strategies
+lang: en
+track: observability
+unit: 03-otel
+order: 5
+title: "Sampling strategies: head, tail, and parent-based"
+summary: "Head sampling is cheap and predictable; tail sampling is expensive but curated. ParentBased(TraceIdRatioBased(0.2)) at the SDK plus tail sampling on the gateway — 100% errors and slow tails, 1% baseline — is the textbook production combination."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/03-otel/04-collector-pipeline"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["head-sampling", "tail-sampling", "parent-based-sampler", "traceidratiobased", "sticky-routing", "sampling-cost"]
+sources:
+  - https://opentelemetry.io/docs/specs/otel/overview/
+  - https://opentelemetry.io/docs/collector/
+  - https://opentelemetry.io/docs/concepts/components/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+At 10k requests per second, recording 100% of traces fills a backend in hours and generates a five-figure monthly bill. But if you drop 99% of traces, you lose exactly the errors and slow requests you need for debugging. Sampling is the tradeoff between cost and fidelity.
+</Hook>
+
+<Crux>Head sampling is cheap but blind. Tail is curated but stateful. Combine: 20% head, tail keeps 100% errors and slow tails, 1% baseline.</Crux>
+
+<Explanation>
+
+## Head sampling: decide early, cheaply
+
+The SDK's Sampler runs on the very first span of a trace (the root span) and decides whether to record the trace. The decision is propagated to downstream services via the W3C `traceparent` header's `sampled` flag.
+
+**AlwaysOn** — records every trace. Full fidelity, maximum cost.
+
+**AlwaysOff** — records nothing. Useful for a canary or a service under load test.
+
+**TraceIdRatioBased(p)** — records a random p-fraction based on a hash of the `trace_id`. Deterministic across services: if two services both use `TraceIdRatioBased(0.1)`, they independently make the same decision for the same trace because the hash is of the trace_id, which is shared across the request. At p=0.1, 10% of traces are recorded.
+
+**ParentBased** — defers to the parent span's sampling decision (via `traceparent.sampled`). When an upstream service decides to sample, all downstream services follow. When upstream does not sample, downstream typically does not, unless the local sampler overrides. Prevents inconsistent partial traces.
+
+**Production combination**: `ParentBased(root=TraceIdRatioBased(0.2))`. The root span samples 20% of traces. All downstream spans inherit the decision. The result: either the full trace is recorded or nothing is — no partial traces with orphaned child spans.
+
+## Tail sampling: decide late, expensively
+
+Tail sampling runs in the Collector **after all spans of a trace have arrived** and the trace is complete (or close enough). It can examine the full trace context: final status code, total latency, presence of error spans anywhere in the tree, business attributes on any span.
+
+**Typical tail sampling policies**:
+- `status_code=ERROR` — keep 100% of traces with any ERROR span
+- `latency > 1000ms` — keep 100% of slow traces
+- `probabilistic 1%` — keep 1% of everything else as a baseline
+
+The combination covers all interesting traffic (errors, slowness) and provides a cost-bounded baseline for normal traffic.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Approach</th>
+        <th class="border border-border px-3 py-2 text-left">Decision time</th>
+        <th class="border border-border px-3 py-2 text-left">Can see errors?</th>
+        <th class="border border-border px-3 py-2 text-left">Cost</th>
+        <th class="border border-border px-3 py-2 text-left">Stateful?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Head (TraceIdRatioBased)</td>
+        <td class="border border-border px-3 py-2">At root span start</td>
+        <td class="border border-border px-3 py-2">No — decides before error happens</td>
+        <td class="border border-border px-3 py-2">Low (SDK, &lt;1 μs)</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Tail (Collector processor)</td>
+        <td class="border border-border px-3 py-2">After trace complete</td>
+        <td class="border border-border px-3 py-2">Yes — sees full trace context</td>
+        <td class="border border-border px-3 py-2">High (buffers spans in RAM)</td>
+        <td class="border border-border px-3 py-2">Yes — must see all spans</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">ParentBased head</td>
+        <td class="border border-border px-3 py-2">At each span start</td>
+        <td class="border border-border px-3 py-2">No — same limitation as head</td>
+        <td class="border border-border px-3 py-2">Low</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The sticky-routing constraint
+
+Tail sampling **requires that every span of a trace arrive at the same Collector gateway instance**. If spans of one trace land on two different instances, neither can evaluate the full trace context and the sampling decision is wrong.
+
+The OTel Collector's `loadbalancing` exporter on the agent tier solves this: it hashes by `trace_id` and routes deterministically to the same gateway pod for all spans of a trace.
+
+**Tradeoff**: the gateway becomes stateful. A pod restart or scale-up event reshuffles the hash ring and loses in-flight traces. Production mitigations:
+- Pre-warm new pods before they enter the load-balancing ring
+- Use conservative scaling policies (avoid frequent scale-up/down during traffic peaks)
+- Size the gateway's `num_traces` buffer for peak rate × `decision_wait` × safety factor (~2x)
+
+## Numbers
+
+- **Tail sampling buffer**: ~1-2 GB per 50k active traces (100 spans each at ~1 KB/span)
+- **decision_wait**: 30-60 seconds (must exceed p99 trace duration)
+- **num_traces**: size for `peak_rate × decision_wait × 2` — at 2,000 traces/sec and 30s window: ~120k
+- **Head sampling baseline**: 10-20% in production
+- **Tail sampling keeps**: 100% errors + 100% slow (threshold 1s) + 1-5% baseline
+- **Net retained**: ~3-5% of total traffic, 100% of interesting traffic
+
+<Inset kind="why" lang="en">
+Why not tail sample 100% without head sampling? Because tail sampling buffers every span in RAM until the decision_wait window closes. At 10k RPS × 50 spans per request × 30s window, that is 15 million spans in memory — several GB. Head sampling reduces the in-flight buffer proportionally. At 20% head + tail-curated, the buffer is 20% of the full volume, and all errors and slow tails are preserved because the tail sampler always overrides to keep. The combination gives you cost control (head) and fidelity (tail) with a bounded and predictable memory footprint.
+</Inset>
+
+<Quiz
+  id="05-sampling-quiz-1"
+  lessonSlug="05-sampling-strategies"
+  lang="en"
+  question="Why is ParentBased(TraceIdRatioBased(0.2)) the standard head-sampler combination for distributed systems?"
+  choices={[
+    { label: "Lower CPU than other samplers", misconception: "Sampler CPU is negligible at &lt;1 μs; this is about decision consistency, not CPU." },
+    { label: "Ensures downstream services follow the upstream sampling decision (via W3C traceparent sampled flag), preventing partial traces with orphaned child spans", correct: true },
+    { label: "Required by the OTel specification", misconception: "It is a recommended pattern, not a specification requirement." },
+    { label: "Improves accuracy of latency histograms", misconception: "Latency histograms come from metrics pipelines, not sampling decisions." },
+  ]}
+/>
+
+<Quiz
+  id="05-sampling-quiz-2"
+  lessonSlug="05-sampling-strategies"
+  lang="en"
+  question="Tail sampling on the gateway requires all spans of a trace to land on the same Collector instance. What mechanism ensures this in the agent-to-gateway pattern?"
+  choices={[
+    { label: "Round-robin load balancing — statistically keeps most spans together", misconception: "Round-robin splits traces across replicas randomly; it does not keep spans of one trace together." },
+    { label: "The loadbalancing exporter on the agent tier hashes by trace_id, routing all spans with the same trace_id deterministically to the same gateway replica", correct: true },
+    { label: "The tail_sampling processor detects split traces and re-routes them", misconception: "The tail_sampling processor does not re-route spans; it only evaluates traces that have already arrived." },
+    { label: "W3C traceparent propagation keeps spans together automatically", misconception: "traceparent propagates sampling decisions, not routing decisions. Different replicas can each receive spans from the same trace even with traceparent." },
+  ]}
+/>
+
+<DragOrder
+  id="05-sampling-drag-1"
+  lessonSlug="05-sampling-strategies"
+  lang="en"
+  prompt="Order the events in tail sampling from span creation to keep/drop decision:"
+  items={[
+    { id: "a", label: "Application emits spans to the agent Collector" },
+    { id: "b", label: "Agent's loadbalancing exporter hashes trace_id, routes to deterministic gateway replica" },
+    { id: "c", label: "Gateway buffers spans in the tail_sampling processor (num_traces buffer, in RAM)" },
+    { id: "d", label: "After decision_wait (30-60s), the full trace context is evaluated" },
+    { id: "e", label: "Policy check: ERROR status? Latency over 1s? Probabilistic baseline?" },
+    { id: "f", label: "Keep or drop — kept traces are forwarded to the exporter; dropped are discarded" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Head sampling (ParentBased + TraceIdRatioBased) is cheap and stateless — decide at the root span, propagate downstream. Tail sampling at the Collector is stateful and expensive but curated: keep 100% of errors and slow tails, 1% baseline. Combine both: 20% head reduces buffer volume, tail preserves all interesting traces. Tail sampling requires sticky trace_id routing to one gateway replica — the loadbalancing exporter provides this.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-sampling-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the key difference between head sampling and tail sampling, and when does each fail?", a: "Head sampling decides at the start of the root span — before the trace completes — so it cannot see whether the trace will produce an error or be slow. It fails for error-capture fidelity: a randomly-sampled 10% will miss 90% of errors. Tail sampling decides after the full trace arrives — it can see the final status, total latency, and any error span — so it can keep 100% of interesting traces. Tail sampling fails under memory pressure: the buffer of in-flight spans can grow to several GB at high RPS, and a pod restart or hash-ring reshuffle loses in-flight traces." },
+    { q: "Why must tail sampling use sticky routing by trace_id, and what breaks if spans of one trace land on two gateway replicas?", a: "Tail sampling evaluates the full trace context — final status, total latency, presence of error spans in the tree. To do this, the processor must see every span of the trace. If spans land on two replicas, neither replica has the full tree. Replica A might see only successful child spans and decide to drop; replica B might see only partial timing information and also decide to drop — both drop a trace that might have had an error span that neither saw. Alternatively, both might keep partial copies independently, doubling cost without correct trace data. The loadbalancing exporter's trace_id hash ensures one replica owns all spans of one trace, so the decision is always made on complete information." },
+    { q: "How do you size the tail_sampling buffer (num_traces), and what happens if you under-size it?", a: "Size for peak_rate × decision_wait × safety_factor (~2x). At 2,000 traces/sec and decision_wait=30s: 2000 × 30 × 2 = 120,000. If you set num_traces=50,000 (sized for baseline, not peak), the buffer fills during a traffic spike. The tail_sampling processor starts dropping traces before the decision window closes — these traces are lost with no sampling decision applied. Combined with memory_limiter which drops at the receiver before spans even enter the processor, an under-sized configuration loses traces at two points during a spike. Monitor otelcol_processor_tail_sampling_count_traces_on_memory vs your num_traces ceiling; alert when it exceeds 80%." },
+  ]}
+/>
+
+<Recap lang="en">
+Sampling is the tradeoff between cost and fidelity. Head sampling (TraceIdRatioBased, AlwaysOn, ParentBased) decides at the root span start — cheap (&lt;1 μs), stateless, but blind to errors and latency. ParentBased ensures all spans of a trace follow the root's decision, preventing partial traces. Tail sampling in the Collector decides after the full trace arrives — it can keep 100% of ERROR traces and all traces over 1s latency, plus 1% baseline. It requires a stateful in-memory buffer (size for peak_rate × 30s × 2 safety factor, typically 1-2 GB per 50k active traces) and sticky trace_id routing via the loadbalancing exporter. Production pattern: ParentBased(TraceIdRatioBased(0.2)) at the SDK reduces the buffer volume by 80%, while the tail sampler preserves all interesting traffic. Net result: ~3-5% of total volume retained, 100% of interesting traces captured.
+</Recap>

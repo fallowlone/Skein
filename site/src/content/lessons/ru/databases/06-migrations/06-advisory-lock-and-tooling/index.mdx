@@ -1,0 +1,213 @@
+---
+slug: 06-advisory-lock-and-tooling
+lang: ru
+track: databases
+unit: 06-migrations
+order: 6
+title: "Advisory-блокировки, инструменты миграций и координация деплоя"
+summary: "pg_advisory_lock сериализует конкурентные запуски миграций; выбор инструмента (Atlas, pgroll, Prisma, Drizzle) определяет, сколько безопасности автоматизировано, а сколько делается вручную."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/06-migrations/05-expand-contract"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["advisory_lock", "pg-advisory-lock", "migration-tooling", "Atlas", "pgroll", "deploy-coordination", "DDL-transaction-semantics"]
+sources:
+  - https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS
+  - https://github.com/xataio/pgroll
+  - https://atlasgo.io/
+  - https://squawkhq.com/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Kubernetes-деплоймент масштабируется с нуля до трёх реплик одновременно. Все три пода запускаются и каждый пытается выполнить ожидающую миграцию. Без координации все три применяют её параллельно — один успешно, два падают с ошибками дублирования constraint, приложение запускается наполовину в неизвестном состоянии.
+</Hook>
+
+<Crux>pg_advisory_lock сериализует конкурентные запуски; инструментарий кодирует lock_timeout, повторы, lint и контроль деплоя.</Crux>
+
+<Explanation>
+
+## Транзакционная семантика DDL в Postgres
+
+Большинство DDL в Postgres **транзакционный**: `BEGIN; CREATE TABLE; ALTER TABLE; COMMIT;` либо всё выполняется, либо всё откатывается атомарно. Конкурентные сессии видят изменение только после `COMMIT` (изоляция снимком MVCC).
+
+Исключения, которые не могут выполняться внутри блока транзакции:
+- `CREATE INDEX CONCURRENTLY`
+- `REINDEX CONCURRENTLY`
+- `ALTER TYPE ... ADD VALUE` (в PG 11 и ниже; транзакционный начиная с PG 12+)
+
+Инструменты миграций по умолчанию оборачивают каждую миграцию в транзакцию. Любая миграция с `CONCURRENT`-операцией требует аннотации **нетранзакционного режима**. Большинство инструментов поддерживают это:
+
+- Atlas: `-- atlas:txmode none`
+- golang-migrate: `-- migrate:notransaction`
+- Prisma: не поддерживается нативно; используйте `prisma db execute` с raw SQL-файлом
+
+Если вы смешиваете CONCURRENT-операцию с другим DDL в одном файле миграции — разбейте их на два файла.
+
+## Паттерн advisory-блокировки для сериализации запуска миграций
+
+Несколько серверов приложения, запускающихся одновременно, могут каждый попытаться выполнить ожидающие миграции. Без координации два процесса могут применить одну и ту же миграцию дважды или конфликтовать на таблице `schema_migrations`.
+
+Стандартное решение — **advisory-блокировка** Postgres в начале миграции:
+
+```sql
+-- Берётся перед выполнением любых миграций:
+SELECT pg_advisory_lock(12345);  -- 12345 = стабильный целочисленный ключ для этого приложения
+
+-- Здесь выполняются миграции ...
+
+-- Освобождается после завершения всех миграций:
+SELECT pg_advisory_unlock(12345);
+```
+
+`pg_advisory_lock` блокируется до получения блокировки. Первый сервер получает её и выполняет миграции; последующие ждут. Когда первый завершает и освобождает блокировку, следующий сервер получает её — но обнаруживает все миграции уже применёнными и ничего не делает.
+
+Большинство инструментов миграций реализуют это автоматически:
+- **golang-migrate**: берёт `pg_advisory_lock(hashInt64(databaseName))` при запуске.
+- **Prisma**: использует таблицу `_prisma_migrations` с блокировкой на уровне строк.
+- **Atlas**: использует `pg_advisory_lock` с настраиваемым ключом.
+
+Для неблокирующего поведения при запуске используйте `pg_try_advisory_lock` с циклом повторов:
+
+```sql
+-- Возвращает true при успешном получении, false если уже занята
+SELECT pg_try_advisory_lock(12345);
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Инструмент</th>
+        <th class="border border-border px-3 py-2 text-left">lock_timeout</th>
+        <th class="border border-border px-3 py-2 text-left">Повторы</th>
+        <th class="border border-border px-3 py-2 text-left">DDL-lint</th>
+        <th class="border border-border px-3 py-2 text-left">Нетранз. режим</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Atlas</td>
+        <td class="border border-border px-3 py-2">Да (конфиг)</td>
+        <td class="border border-border px-3 py-2">Да (экспоненциальный откат)</td>
+        <td class="border border-border px-3 py-2">Да (встроен + Squawk)</td>
+        <td class="border border-border px-3 py-2">Да (txmode none)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">pgroll</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Через безопасность view-слоя</td>
+        <td class="border border-border px-3 py-2">Н/Д (обрабатывает CONCURRENT внутренне)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Prisma Migrate</td>
+        <td class="border border-border px-3 py-2">Вручную (SET в SQL)</td>
+        <td class="border border-border px-3 py-2">Вручную</td>
+        <td class="border border-border px-3 py-2">Squawk (отдельный CI-шаг)</td>
+        <td class="border border-border px-3 py-2">Ограничен</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">golang-migrate</td>
+        <td class="border border-border px-3 py-2">Вручную (SET в SQL)</td>
+        <td class="border border-border px-3 py-2">Внешний</td>
+        <td class="border border-border px-3 py-2">Squawk (отдельный CI-шаг)</td>
+        <td class="border border-border px-3 py-2">Да (notransaction)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Flyway</td>
+        <td class="border border-border px-3 py-2">Вручную (SET в SQL)</td>
+        <td class="border border-border px-3 py-2">Вручную</td>
+        <td class="border border-border px-3 py-2">Только Pro-версия</td>
+        <td class="border border-border px-3 py-2">Да</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Координация деплоя: миграция до раскатки подов
+
+Три распространённых паттерна:
+
+1. **Pre-deploy job (рекомендован)**: k8s Job или CI-шаг запускает `migrate up` против продакшна до rolling deploy. Деплой кода заблокирован успехом миграции. Старые поды обрабатывают трафик во время миграции; схема аддитивна (только expand). Это чистейший паттерн — чёткое разделение ответственности.
+
+2. **Init container на каждом поде**: каждый новый под запускает `migrate up` при запуске; advisory-блокировка их сериализует. Просто, но медленно — каждый под ждёт проверки миграции, даже если ничего не ожидает.
+
+3. **Отдельный pipeline миграций**: миграция запускается вручную или в собственном ритме, полностью отвязана от деплоя кода. Требует человеческой координации; ненадёжна в масштабе.
+
+**Старший дефолт 2026**: отдельный pre-deploy job (паттерн 1), заблокированный на успехе миграции. Задание миграции выдаёт метрики; любой сбой страницует on-call и блокирует раскатку кода.
+
+<NumbersCard
+  id="card-migration-tooling-ru"
+  title="Ландшафт инструментов миграций (2026)"
+  stats={[
+    { label: "Atlas (рекомендован для Postgres-команд)", value: "Декларативный + lint + повторы + dry-run" },
+    { label: "pgroll (нулевой простой через виртуальные схемы)", value: "Views + триггеры, PG 14+" },
+    { label: "Prisma Migrate (стеки TS/Node)", value: "Schema-first, генерирует SQL миграций" },
+    { label: "Drizzle (TS/Node, лёгкий)", value: "Schema-first, похож на Prisma" },
+    { label: "golang-migrate (независим от языка)", value: "Простые up/down SQL-файлы" },
+    { label: "Squawk (линтер)", value: "CI: ловит небезопасный DDL в PR" },
+    { label: "Advisory lock при запуске", value: "Стандарт в golang-migrate, Atlas" },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему pgroll использует views вместо прямой схемы? Цель pgroll — сделать декларативную миграцию, переименовывающую колонку, похожей для разработчика на одношаговую операцию. Под капотом нужно одновременно поддерживать совместимость для старого и нового кода — views с триггерами — единственный нативный механизм Postgres для представления двух разных имён колонок, поддерживаемых одним хранилищем, без изменений приложения для управления dual-write вручную. Цена — операционная сложность: отладка инцидента миграции требует понимания view-слоя.
+</Inset>
+
+<Quiz
+  id="06-advisory-lock-and-tooling-quiz-1"
+  lessonSlug="06-advisory-lock-and-tooling"
+  lang="ru"
+  question="Три k8s-пода запускаются одновременно и каждый пытается выполнить ожидающие миграции. Без advisory-блокировки каков наиболее вероятный режим сбоя?"
+  choices={[
+    { label: "Два или более пода применяют одну миграцию параллельно — один успешно, другие падают с ошибками constraint или дублирования, оставляя приложение в несогласованном состоянии", correct: true },
+    { label: "Все три пода успешно выполняются, потому что каждая миграция идемпотентна по умолчанию", misconception: "Миграции не идемпотентны по умолчанию; CREATE TABLE или ADD COLUMN падает при повторном запуске на той же базе." },
+    { label: "Postgres ставит миграции в очередь и выполняет их по одной", misconception: "Postgres не знает, что миграции логически связаны; каждая сессия выдаёт DDL независимо и они гонятся." },
+    { label: "Второй и третий поды пропускают миграцию, потому что schema_migrations уже показывает её применённой", misconception: "Без блокировки несколько подов могут одновременно проверить таблицу, оба видят миграцию как ожидающую и оба пытаются её применить." },
+  ]}
+/>
+
+<Quiz
+  id="06-advisory-lock-and-tooling-quiz-2"
+  lessonSlug="06-advisory-lock-and-tooling"
+  lang="ru"
+  question="Какой инструмент миграций предлагает встроенный DDL-lint, конфигурацию lock_timeout, повторы и нетранзакционный режим для Postgres в 2026?"
+  choices={[
+    { label: "Atlas (atlasgo.io) — декларативная схема + встроенный lint, lock_timeout, повторы с экспоненциальным откатом и аннотации txmode", correct: true },
+    { label: "golang-migrate — простые up/down SQL-файлы, без встроенного lint или повторов", misconception: "golang-migrate надёжен для простых случаев, но требует ручного SET lock_timeout в SQL и внешней логики повторов." },
+    { label: "Flyway — зрелый инструмент экосистемы Java, lint только в Pro-версии", misconception: "Lint Flyway — платная функция, он не конфигурирует lock_timeout автоматически." },
+    { label: "Squawk — ловит небезопасные DDL-паттерны", misconception: "Squawk — линтер, не запускатель миграций. Он не применяет миграции и не управляет lock_timeout." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>pg_advisory_lock сериализует конкурентные запуски миграций (стандарт в Atlas и golang-migrate). Atlas автоматизирует lock_timeout, повторы, lint и dry-run. Продакшн-паттерн деплоя — pre-deploy job миграции, заблокированный до раскатки кода, с наблюдаемостью по длительности и повторам.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-advisory-lock-and-tooling-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Как pg_advisory_lock предотвращает дублирующееся выполнение миграций конкурентными подами и как инструменты это реализуют?", a: "pg_advisory_lock(key) — блокировка уровня сессии Postgres, не привязанная к таблице или строке. Первая сессия, вызвавшая её, получает блокировку; последующие блокируются до её освобождения. Инструменты миграций вызывают её первым действием: первый под, получивший блокировку, выполняет все ожидающие миграции и освобождает её; последующие поды получают блокировку (ничего не ожидает) и освобождают. golang-migrate использует pg_advisory_lock(hashInt64(databaseName)); Atlas — настраиваемый ключ; Prisma — блокировку на уровне строк в таблице _prisma_migrations. Advisory-блокировка должна удерживаться в течение всего запуска миграций, а не только в начале — проверка pg_locks во время тестовой миграции это подтверждает." },
+    { q: "Каков рекомендованный паттерн координации деплоя для k8s-приложения и почему он предпочтительнее выполнения миграций при запуске пода?", a: "Рекомендован: pre-deploy job миграции (k8s Job или CI-шаг) запускает migrate up до rolling deploy. Раскатка кода заблокирована на успехе миграции — если миграция падает, деплой прерывается и on-call страницуется. Преимущества: (1) чёткое разделение ответственности — жизненный цикл миграции не привязан к запуску пода; (2) упавшая миграция не оставляет поды в бесконечных restart-петлях; (3) задание миграции можно независимо мониторить, повторять и откатывать. Миграция при запуске пода (init container) проще, но медленнее — каждый новый под ждёт проверки миграции даже когда ничего не ожидает, и долгая миграция при масштабировании задерживает проверки готовности пода." },
+    { q: "Почему CREATE INDEX CONCURRENTLY должен выполняться вне транзакции и как это настроить в инструментах миграций?", a: "CONCURRENTLY строит индекс в два этапа сканирования через несколько транзакций. Первый этап сканирует и строит снимок-индекс при продолжающемся трафике; второй нагоняет записи первого этапа. При обёртке в BEGIN..COMMIT Postgres удерживал бы одну транзакцию открытой через оба этапа — другие транзакции не могли бы видеть свои собственные записи как закоммиченные во время второго этапа, ломая логику нагона. Postgres это обеспечивает: выдаёт ошибку при попытке CONCURRENTLY внутри транзакции. Инструменты обрабатывают это аннотациями на уровне миграции: Atlas использует `-- atlas:txmode none`, golang-migrate — `-- migrate:notransaction`, Prisma требует raw SQL-файла через `prisma db execute`. Любой файл миграции с CONCURRENTLY должен быть так помечен." },
+  ]}
+/>
+
+<Recap lang="ru">
+DDL в Postgres транзакционный — `BEGIN; ALTER TABLE; COMMIT;` откатывается атомарно при сбое — за исключением `CREATE INDEX CONCURRENTLY` и нескольких других операций, которые должны выполняться вне блока транзакции и требуют аннотации на уровне инструмента. Когда несколько подов запускаются одновременно, все могут попытаться выполнить ожидающие миграции; `pg_advisory_lock` сериализует их, позволяя в момент времени работать только одной сессии. Atlas (декларативная схема, встроенный lint, lock_timeout, повторы, dry-run) — наиболее полный инструмент миграций Postgres в 2026; pgroll добавляет виртуально-схемный нулевой простой для команд с частыми ломающими изменениями; Prisma/Drizzle предоставляют schema-first эргономику для TS-стеков. Рекомендованный паттерн деплоя — pre-deploy job миграции, заблокированный до rolling deploy подов, с CI-lint Squawk, блокирующим небезопасные PR до слияния.
+</Recap>

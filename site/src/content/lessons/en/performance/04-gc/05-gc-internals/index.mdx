@@ -1,0 +1,197 @@
+---
+slug: 05-gc-internals
+lang: en
+track: performance
+unit: 04-gc
+order: 5
+title: "GC internals: tri-color invariant, write barriers, and per-runtime deep-dives"
+summary: "Tri-color marking is the formal core of every concurrent GC. Write barriers maintain the invariant. Go's pacer, ZGC's colored pointers, and V8 Orinoco each implement the same ideas differently — knowing the implementation shapes how you write allocation-safe hot paths."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/04-gc/02-gc-algorithms
+  - performance/04-gc/04-gc-tuning
+deepensInto: []
+spiral: ["latency"]
+concepts: ["tri-color-marking", "write-barrier", "satb", "go-pacer", "zgc-colored-pointers", "v8-orinoco"]
+sources:
+  - https://go.dev/blog/ismmkeynote
+  - https://openjdk.org/jeps/333
+  - https://openjdk.org/jeps/377
+  - https://v8.dev/blog/concurrent-marking
+  - https://go.googlesource.com/proposal/+/master/design/44167-gc-pacer-redesign.md
+  - https://shipilev.net/jvm/anatomy-quarks/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A JVM service migrates from G1 to ZGC. Pauses drop from 60 ms to sub-millisecond on a 16 GB heap — but throughput drops 12% and memory use climbs 18%. Understanding why requires knowing what colored pointers are and what load barriers cost.
+</Hook>
+
+<Crux>Tri-color marking is the invariant every concurrent GC enforces. Write barriers and colored pointers are runtime bets on the same tradeoff.</Crux>
+
+<Explanation>
+
+## Tri-color marking and the write barrier
+
+Tri-color abstraction (Dijkstra 1978) is the formal foundation of concurrent GC. Objects are classified into three colors:
+
+- **White** — not yet visited; candidate for collection if marking ends while still white.
+- **Grey** — visited, but children not yet fully scanned.
+- **Black** — visited, all children scanned; considered live.
+
+Marking moves grey objects to black by scanning their children and greying each unvisited child. When no grey objects remain, all white objects are unreachable and may be reclaimed.
+
+**The fundamental invariant:** a black object must never directly reference a white object. If a mutator thread writes a reference from a black object into a white object's field *after* the black was scanned, that white object becomes unreachable in the GC's view but reachable in the program's. The collector would reclaim live memory — silent heap corruption.
+
+### SATB vs incremental-update barriers
+
+The write barrier prevents invariant violations by intercepting every reference write:
+
+**Snapshot-at-the-beginning (SATB):** the barrier marks the *old* reference about to be overwritten, ensuring it survives this cycle. The collector behaves as if it snapshotted the heap at GC start. Used by G1, Shenandoah, ZGC, and Go's hybrid Yuasa-style barrier.
+
+**Incremental-update (Dijkstra-style):** the barrier marks the *new* reference being written into a black object, ensuring the newly pointed-to object is scanned before the cycle ends. Used by CMS and classic V8 mark-compact.
+
+SATB is more conservative — it may preserve objects that became garbage during the cycle (floating garbage, reclaimed in the next cycle). But it gives stronger guarantees about marking termination and is simpler to reason about. Incremental-update may require a re-marking phase to fix up changes missed during concurrent marking.
+
+Both cost **2–10% CPU** on every reference write — the price of concurrent marking without stop-the-world pauses.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Barrier type</th>
+        <th class="border border-border px-3 py-2 text-left">What it marks</th>
+        <th class="border border-border px-3 py-2 text-left">Used by</th>
+        <th class="border border-border px-3 py-2 text-left">Side effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">SATB</td>
+        <td class="border border-border px-3 py-2">Old reference (pre-write)</td>
+        <td class="border border-border px-3 py-2">G1, Shenandoah, ZGC, Go</td>
+        <td class="border border-border px-3 py-2">Floating garbage (one cycle delay)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Incremental-update</td>
+        <td class="border border-border px-3 py-2">New reference (post-write)</td>
+        <td class="border border-border px-3 py-2">CMS, classic V8</td>
+        <td class="border border-border px-3 py-2">May need re-mark phase</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Write barriers matter for write-heavy hot paths. A service that writes millions of references per second (e.g. updating a large in-memory graph) pays the barrier cost on every write. On most CRUD services this is negligible; on graph-mutation or event-sourcing workloads it shows up in profiles as `runtime.wbBufFlush` (Go) or similar GC frame names. Know your write pattern before claiming the barrier is free.
+</Inset>
+
+## Go's pacer redesign
+
+Go 1.18's GC pacer rewrite (proposal 44167, by Michael Knyszek) replaced heuristics with a closed-loop control system. The old pacer estimated when to start the next GC cycle so it would finish just before the heap doubled; it had instability at high allocation rates and made poor decisions on cgo-heavy workloads.
+
+The new pacer uses a **PI controller** (proportional-integral) on two signals: heap-growth rate and GC CPU utilisation. The controller targets GC finishing just before the heap reaches the goal (GOGC-derived), with integral feedback preventing sustained drift.
+
+`GOMEMLIMIT` (added Go 1.19) integrates into the pacer: as the process approaches the limit, the pacer pulls GC forward — accepting higher GC CPU — to prevent OOM. When the limit is respected, the pacer backs off.
+
+**Senior production advice:** set `GOMEMLIMIT` to ~90% of the container's memory limit; leave `GOGC` at the default 100 unless profiling shows a specific reason to change it. `GOGC=off` is only safe for memory-bounded batch jobs that deallocate via process exit.
+
+The redesign reduced pause variance by ~50% on real workloads. Reading: Knyszek's GopherCon 2022 talk on the pacer redesign.
+
+## ZGC and colored pointers
+
+ZGC (JEP 333, JDK 11 experimental; production in JDK 15 via JEP 377) achieves sub-millisecond pauses on heaps up to 16 TB using two innovations:
+
+**Colored pointers** pack metadata bits into the 64-bit pointer itself. ZGC uses bits 0–41 for the address (capping the heap at ~4 TB), and bits 42–45 for marking state — "good" colors vs "bad" colors indicating relocation or pending work.
+
+**Load barriers** intercept every heap load (every pointer dereference). If the color is "bad," the barrier triggers a slow path to update the pointer in-place. Because the barrier runs inline on every load, the application participates in GC's work incrementally instead of waiting for a big stop-the-world phase.
+
+The result: marking, relocation, and reference processing all happen concurrently. STW phases are limited to root scanning — sub-millisecond even on multi-TB heaps.
+
+**The tradeoff:** load barriers cost ~5–15% CPU on read-heavy workloads. ZGC also requires multi-mapped heaps for fast relocation, inflating virtual memory significantly (though not physical RSS). The 12% throughput drop and 18% memory increase in the hook scenario are expected ZGC costs — not bugs.
+
+**Generational ZGC** (JEP 439, JDK 21+) adds a young generation, closing most of the throughput gap with G1. Production teams on JDK 21+ should evaluate generational ZGC when migrating.
+
+## V8 Orinoco
+
+V8's Orinoco project (2017+) moved V8's GC from mostly stop-the-world to mostly concurrent. Key pieces:
+
+- **Concurrent marking:** marking runs on a background thread alongside JavaScript execution. Write barriers (SATB-style) maintain consistency with the mutator.
+- **Parallel compaction:** multiple threads move objects in parallel during the STW compaction phase, reducing its duration.
+- **Young-gen scavenger parallelism:** multiple threads evacuate the young heap in parallel.
+
+Result: typical web workloads see pauses ≤10 ms, with most marking work hidden in the background. Memory overhead: ~5–15% for marking infrastructure (write barriers, marking worklist).
+
+Node.js inherits Orinoco by default. Tuning is via `--max-old-space-size` (old heap cap) and `--max-semi-space-size` (young heap, affects minor GC frequency). Major Orinoco changes can shift performance characteristics across Node versions — engineering teams should track V8 release notes when upgrading Node.
+
+<Quiz
+  id="05-gc-internals-quiz-1"
+  lessonSlug="05-gc-internals"
+  lang="en"
+  question="A service migrated from G1 to ZGC sees pauses drop from 60 ms to <1 ms but throughput drops 12% and RSS grows 18%. Is this expected?"
+  choices={[
+    { label: "Yes — ZGC's load barriers (on every heap read) cost ~5–15% CPU, and its multi-mapped heap inflates virtual memory. The trade is pause time for throughput and memory. Generational ZGC (JDK 21+) partially closes the throughput gap.", correct: true },
+    { label: "No — ZGC should improve all three metrics simultaneously", misconception: "The GC three-way tradeoff is fundamental. ZGC buys pause time at the cost of throughput and memory. No collector improves all three at once." },
+    { label: "The ZGC migration was done incorrectly", misconception: "The numbers (12% throughput, 18% memory) are within normal ZGC overhead ranges for the non-generational variant. The migration appears correct." },
+    { label: "Throughput and memory are not affected by collector choice", misconception: "Write/load barriers and per-collector bookkeeping overhead directly affect CPU throughput. Colored pointers and multi-mapping inflate memory." },
+  ]}
+/>
+
+<Quiz
+  id="05-gc-internals-quiz-2"
+  lessonSlug="05-gc-internals"
+  lang="en"
+  question="Why does Go's GC use a SATB write barrier instead of an incremental-update barrier?"
+  choices={[
+    { label: "SATB marks the old reference, ensuring the previously-pointed-to object survives the current cycle. It provides stronger guarantees about marking termination and is simpler to reason about — at the cost of some floating garbage that will be reclaimed in the next cycle.", correct: true },
+    { label: "Incremental-update is not supported in Go", misconception: "Incremental-update is used in other runtimes (CMS, classic V8 mark-compact). Go chose SATB for its termination properties, not because the alternative is impossible." },
+    { label: "SATB uses less memory than incremental-update", misconception: "SATB may use slightly more memory (remembered sets for old references) but the choice is about termination guarantees and implementation simplicity, not memory." },
+    { label: "SATB does not require a write barrier", misconception: "SATB is implemented via a write barrier that fires before overwriting a reference to mark the old value." },
+  ]}
+/>
+
+<DragOrder
+  id="05-gc-internals-drag-1"
+  lessonSlug="05-gc-internals"
+  lang="en"
+  prompt="Order the steps a ZGC load barrier takes when reading a pointer with a 'bad' color:"
+  items={[
+    { id: "a", label: "Mutator reads a heap reference (pointer dereference)" },
+    { id: "b", label: "Inline load barrier checks the pointer's color bits" },
+    { id: "c", label: "Color is 'bad' — object has been relocated or is pending work" },
+    { id: "d", label: "Barrier triggers slow path: looks up the forwarding table" },
+    { id: "e", label: "Barrier updates the pointer in-place to the new address" },
+    { id: "f", label: "Mutator proceeds with the corrected (healed) pointer" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Tri-color marking + write barriers are the invariant every concurrent GC enforces. SATB marks old references; incremental-update marks new ones. ZGC trades throughput and memory for sub-ms pauses via colored pointers + load barriers. Know which barrier your runtime uses — it shapes write-heavy hot paths.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-gc-internals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the tri-color invariant and the role of the write barrier in maintaining it during concurrent marking.", a: "Tri-color marking classifies every heap object as white (unvisited), grey (visited, children pending), or black (fully scanned). The marking loop greys children of grey objects and moves them to black; when no grey objects remain, all white objects are unreachable and can be freed. The invariant is: a black object must never directly reference a white object. If the mutator (application thread) writes a white-object reference into a black object's field after the black was scanned, the white object becomes invisible to the GC — the collector would free live memory, silently corrupting the program. The write barrier prevents this by intercepting every reference write. SATB (snapshot-at-the-beginning): fires before the overwrite, marks the OLD reference so it is treated as live for this cycle. Used by G1, Shenandoah, ZGC, Go. Incremental-update (Dijkstra): fires after the write, marks the NEW reference so it will be scanned. Used by CMS, classic V8. Both maintain the invariant; SATB is more conservative (some floating garbage one cycle longer) but simpler for proving termination. The cost is 2–10% CPU on every reference write — paid in exchange for avoiding stop-the-world marking pauses on multi-GB heaps." },
+    { q: "What problem did Go 1.18's pacer redesign solve, and what is GOMEMLIMIT's role?", a: "The old Go pacer was heuristic-based: it estimated when to start the next GC cycle so it would finish before the heap doubled. It had two documented failure modes: (1) instability at high allocation rates where the estimate could diverge, leading to GC storms or under-collection; (2) poor decisions on cgo-heavy workloads where Go heap statistics did not capture native memory. The redesign (proposal 44167) replaced the heuristic with a PI (proportional-integral) controller that blends heap-growth rate and GC CPU share into a feedback loop. The integral term absorbs sustained error, preventing drift. The result was ~50% reduction in pause variance on real workloads. GOMEMLIMIT (Go 1.19) integrates into the controller: it represents a soft cap on total runtime memory. As the process approaches the limit, the pacer pulls GC cycles forward — accepting higher GC CPU — to keep the process below the cap. This lets containerised Go services set GOMEMLIMIT=90%*container_limit and be protected from OOM kills without manual GOGC tuning. When memory usage is well below the limit, the pacer uses the standard GOGC-derived goal and backs off on GC CPU." },
+  ]}
+/>
+
+<Recap lang="en">
+Tri-color marking classifies objects as white, grey, or black and maintains the invariant that no black object directly references a white one. The write barrier enforces this invariant during concurrent marking by intercepting every reference write: SATB marks the old reference (used by Go, G1, ZGC); incremental-update marks the new one (used by CMS, classic V8). Both cost 2–10% CPU. ZGC extends this with colored pointers — metadata bits packed into 64-bit pointers — and load barriers that heal stale pointers inline, achieving sub-millisecond pauses at the cost of ~5–15% throughput and elevated memory. Go's pacer redesign (1.18) replaced heuristics with a PI controller; GOMEMLIMIT (1.19) gives containerised services a soft memory cap the pacer respects. V8 Orinoco brought concurrent marking and parallel compaction to reduce JavaScript GC pauses to ≤10 ms. Knowing which barrier your runtime uses shapes how you write write-heavy hot paths.
+</Recap>

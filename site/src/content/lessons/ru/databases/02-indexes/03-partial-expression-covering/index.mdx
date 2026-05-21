@@ -1,0 +1,247 @@
+---
+slug: 03-partial-expression-covering
+lang: ru
+track: databases
+unit: 02-indexes
+order: 3
+title: "Partial, expression и covering-индексы"
+summary: "Partial-индексы строятся только над строками, соответствующими WHERE-условию, что значительно уменьшает их размер. Expression-индексы позволяют делать быстрыми функциональные запросы. INCLUDE создаёт covering-индексы для index-only scan."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["02-leading-column-rule"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["partial-index", "expression-index", "covering-index", "include-clause", "index-only-scan", "unique-partial-index"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-partial.html
+  - https://www.postgresql.org/docs/current/indexes-expressional.html
+  - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+Таблица tasks: 100M строк, 95% из них status = 'done'. Дашборд показывает только открытые задачи. Полный B-tree индекс на status обслуживает 100M записей, большинство из которых никогда не запрашиваются горячо. Partial-индекс `WHERE status = 'open'` содержит 5M записей — в 20 раз меньше, в 20 раз дешевле по write-cost, в 20 раз меньше на диске. Это один из самых недоиспользованных рычагов производительности в Postgres.
+</Hook>
+
+<Crux>Partial-индекс: меньше размер и write-cost. Expression-индекс: ключ на derived value. INCLUDE: projection-столбцы в leaf-страницах.</Crux>
+
+<Explanation>
+
+## Partial-индексы
+
+Partial-индекс — это B-tree (или другой тип), построенный только над строками, соответствующими WHERE-условию.
+
+```sql
+-- Только pending-orders — обычно малая доля таблицы
+CREATE INDEX ON orders(user_id) WHERE status = 'pending';
+
+-- Только активные пользователи (soft-delete паттерн)
+CREATE INDEX ON users(email) WHERE deleted_at IS NULL;
+
+-- Feature flag — только включённые строки
+CREATE INDEX ON subscriptions(plan_id) WHERE feature_x_enabled = true;
+```
+
+Преимущества:
+- **Меньший размер**: если 5% строк соответствуют предикату, индекс занимает ~5% от полного.
+- **Меньше write-overhead**: индекс трогается только при изменении строк, соответствующих предикату.
+- **Быстрее поиск**: меньше leaf-страниц для сканирования.
+
+Ограничение: запросы ОБЯЗАНЫ включать WHERE-условие, идентичное предикату индекса (или более строгое), чтобы планировщик использовал partial-индекс. `WHERE user_id = $1 AND status = 'pending'` использует индекс; `WHERE user_id = $1` — нет.
+
+**Partial unique индексы** — мощный паттерн:
+
+```sql
+-- Email уникален среди не-удалённых пользователей
+CREATE UNIQUE INDEX ON users (email) WHERE deleted_at IS NULL;
+-- Позволяет soft-delete пользователя и re-register того же email
+-- Невозможно с простым UNIQUE constraint на email
+```
+
+## Expression-индексы
+
+Expression-индекс строится на результате функции, применённой к столбцу, а не на самом столбце.
+
+```sql
+-- Без индекса: LOWER() применяется к каждой строке, индекс не используется
+SELECT * FROM users WHERE LOWER(email) = 'alice@x.com';
+
+-- С expression-индексом: планировщик использует его
+CREATE INDEX ON users (LOWER(email));
+```
+
+Распространённые паттерны:
+- **Case-insensitive поиск**: `LOWER(email)`, `UPPER(name)`
+- **Truncation даты**: `DATE_TRUNC('day', created_at)` для группировки по дням
+- **JSON path extraction**: `(payload->>'event_type')` для JSONB-полей
+- **Вычисляемые значения**: любое выражение, совпадающее с формой запроса
+
+Expression-индексы — способ сделать быстрыми функциональные запросы без изменения схемы.
+
+## Covering-индексы с INCLUDE
+
+INCLUDE (Postgres 11+) добавляет столбцы в leaf-страницы индекса без включения их в ключ сортировки. Результат: индекс становится "covering" для запросов, которым нужны эти столбцы в projection, что позволяет index-only scan (без fetch из heap).
+
+```sql
+-- Ключевые столбцы: workspace_id, created_at DESC (sort key)
+-- INCLUDE: id, total_cents (payload для projection — не в sort key)
+CREATE INDEX CONCURRENTLY idx_orders_ws_recent
+  ON orders (workspace_id, created_at DESC)
+  WHERE status = 'pending'
+  INCLUDE (id, total_cents);
+```
+
+Запрос `SELECT id, total_cents FROM orders WHERE workspace_id = $1 AND status = 'pending' ORDER BY created_at DESC LIMIT 50` отвечается только из индекса. Нет fetch из heap. Только 50 leaf-записей.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Модификатор</th>
+        <th class="border border-border px-3 py-2 text-left">Для чего</th>
+        <th class="border border-border px-3 py-2 text-left">Ограничение</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">WHERE (partial)</td>
+        <td class="border border-border px-3 py-2">Уменьшить размер; снизить write-cost</td>
+        <td class="border border-border px-3 py-2">Запрос должен включать предикат</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Выражение в ключе</td>
+        <td class="border border-border px-3 py-2">Поддержать функциональные запросы</td>
+        <td class="border border-border px-3 py-2">Запрос должен точно совпадать с выражением</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">INCLUDE</td>
+        <td class="border border-border px-3 py-2">Покрыть projection для index-only scan</td>
+        <td class="border border-border px-3 py-2">Требуется актуальный Visibility Map (VACUUM)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<NumbersCard
+  id="03-partial-numbers"
+  title="Partial и covering-индексы: числа"
+  stats={[
+    { label: "Partial-индекс (5% строк соответствуют)", value: "~5% от размера полного B-tree" },
+    { label: "Write-overhead (partial, 5% matching)", value: "~5% от full-index write-cost" },
+    { label: "Index-only scan vs index scan", value: "10-100x быстрее на hot reads" },
+    { label: "INCLUDE поддерживается с версии Postgres", value: "11 (2018)" },
+    { label: "Overhead INCLUDE на leaf-страницах", value: "размер включённых столбцов × кол-во строк" },
+    { label: "Partial unique: паттерн soft-delete", value: "UNIQUE WHERE deleted_at IS NULL" },
+    { label: "Expression-индекс: требование совпадения", value: "точное совпадение выражения в запросе" },
+    { label: "Partial-индекс для B2B SaaS 'open tasks'", value: "обычно 5-20% таблицы — огромная экономия" },
+    { label: "Limit 50 на index-only scan (50M строк)", value: "~1 мс (только 50 leaf-записей)" },
+    { label: "Тот же запрос без covering: heap fetch", value: "178k heap fetch → секунды" },
+  ]}
+/>
+
+<FadedExample
+  client:load
+  id="03-partial-faded-1"
+  lessonSlug="03-partial-expression-covering"
+  lang="ru"
+  title="Выбрать правильный индекс под hot dashboard-запрос"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Запрос (на каждом page-load дашборда, ~50/сек):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT id, total_cents, created_at
+FROM orders
+WHERE workspace_id = $1
+  AND status = 'pending'
+ORDER BY created_at DESC
+LIMIT 50;`}</code></pre>
+        <p><strong>Правильный индекс:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`CREATE INDEX CONCURRENTLY idx_orders_workspace_pending_recent
+ON orders (workspace_id, created_at DESC)
+WHERE status = 'pending'
+INCLUDE (id, total_cents);`}</code></pre>
+        <p><strong>Зачем каждый выбор:</strong> Leading workspace_id (всегда присутствует; tenant-граница). Sort created_at DESC (матчит ORDER BY — без лишнего Sort-шага). Partial WHERE status = 'pending' (~5% таблицы, ~20x дешевле поддержка). INCLUDE (id, total_cents) — covering для projection → index-only scan, нет heap fetch. Ожидаемый план: Index Only Scan, 50 строк, &lt;1мс на 100M-таблице.</p>
+      </div>
+    ),
+    semi: {
+      prompt: "Если второй запрос WHERE workspace_id = $1 AND status = 'shipped' ORDER BY created_at DESC, поможет ли этот partial-индекс? (yes/no)",
+      blanks: [
+        { id: "answer", expected: "no", placeholder: "yes/no" },
+      ],
+    },
+    blank: {
+      prompt: "Почему composite (workspace_id, created_at DESC) работает, а (created_at DESC, workspace_id) нет?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>Leading-column rule. Дашборд всегда фильтрует по workspace_id первым (multi-tenant — каждый запрос scope'ится одним workspace). С workspace_id как leading индекс мгновенно narrow'ит до строк этого workspace, и secondary sort by created_at DESC даёт планировщику нужный порядок бесплатно. С created_at DESC как leading — индекс глобально отсортирован по времени через все workspace; чтобы найти recent orders одного workspace, планировщик сканирует все recent orders и фильтрует — выбрасывает большинство.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "answer:yes": "Partial-индексы помогают только запросам, точно совпадающим с WHERE. status='shipped' не совпадает с WHERE status='pending', планировщик не использует этот индекс.",
+  }}
+/>
+
+<Quiz
+  id="03-partial-quiz-1"
+  lessonSlug="03-partial-expression-covering"
+  lang="ru"
+  question="Почему LOWER(email) = 'alice@x.com' не использует обычный B-tree индекс на email?"
+  choices={[
+    { label: "Потому что LOWER() — медленная функция", misconception: "Скорость функции не проблема; проблема в том, что индекс хранит оригинальные значения, а не их результат LOWER()." },
+    { label: "LOWER() применяется к каждой строке; индекс хранит оригинальные значения и не может ответить на это сравнение", correct: true },
+    { label: "Postgres не поддерживает функции в WHERE", misconception: "Postgres поддерживает функции в WHERE, но без expression-индекса они не могут использовать обычный индекс на столбец." },
+    { label: "Индексы на text-столбцах не работают с equality", misconception: "B-tree на text работает отлично для equality без функций." },
+  ]}
+/>
+
+<Quiz
+  id="03-partial-quiz-2"
+  lessonSlug="03-partial-expression-covering"
+  lang="ru"
+  question="Чем INCLUDE отличается от добавления столбцов в ключ сортировки composite-индекса?"
+  choices={[
+    { label: "INCLUDE столбцы участвуют в сортировке и помогают с ORDER BY", misconception: "INCLUDE столбцы хранятся только в leaf-страницах и НЕ участвуют в сортировке." },
+    { label: "INCLUDE хранит столбцы в leaf-страницах без влияния на порядок сортировки, позволяя index-only scan без изменения того, какие запросы индекс обслуживает для фильтрации/сортировки", correct: true },
+    { label: "INCLUDE делает индекс частичным", misconception: "Partial-индекс создаётся через WHERE в CREATE INDEX, не через INCLUDE." },
+    { label: "INCLUDE ускоряет INSERT потому что меньше столбцов обновляется", misconception: "INCLUDE столбцы тоже хранятся в индексе и обновляются при изменении." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему partial-индексы так редко используются в продакшне, несмотря на огромную выгоду? Потому что требуют понимания распределения данных. Команды знают «добавить индекс на столбец», но не знают «добавить индекс только на горячее подмножество». Признак возможного partial-индекса: таблица с историческими данными (95% cold), но горячий путь запрашивает только свежие или определённые status. Аудит: проверь, какую долю таблицы занимает hot подмножество — если меньше 20%, partial-индекс почти всегда выгоднее полного.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Partial-индексы (WHERE-предикат в CREATE INDEX) строятся только над горячим подмножеством — если 5% строк hot, индекс в 20x меньше и в 20x дешевле на запись. Expression-индексы (функция в ключе) позволяют LOWER(email), DATE_TRUNC(), JSON-path использовать индекс. INCLUDE добавляет projection-столбцы в leaf без влияния на sort key — enabling index-only scan. Три модификатора часто комбинируются: (workspace_id, created_at DESC) WHERE status='pending' INCLUDE (id, total_cents).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-partial-retrieval"
+  lang="ru"
+  questions={[
+    { q: "В чём разница между partial-индексом, expression-индексом и covering-индексом (INCLUDE)? Дай практический пример каждого.", a: "Partial-индекс: строится только над строками, соответствующими WHERE. Пример: CREATE INDEX ON orders(user_id) WHERE status = 'pending' — индексирует только pending-orders, ~5% таблицы. Выгода: в 20x меньше размер и write-cost. Expression-индекс: строится на функции от столбца. Пример: CREATE INDEX ON users(LOWER(email)) — позволяет WHERE LOWER(email) = 'alice@x.com' использовать индекс. Без него LOWER() на каждой строке отключает индекс. Covering-индекс (INCLUDE): хранит дополнительные столбцы в leaf-страницах без влияния на sort key. Пример: CREATE INDEX ON orders(workspace_id, created_at DESC) INCLUDE (id, total_cents) — запрос SELECT id, total_cents WHERE workspace_id = $1 ORDER BY created_at отвечается только из индекса (index-only scan). Часто комбинируются все три: partial + правильный composite key + INCLUDE для covering." },
+    { q: "Команда хочет обеспечить уникальность email среди активных пользователей, разрешив повторное использование email после soft-delete. Как это сделать?", a: "Использовать partial unique index: CREATE UNIQUE INDEX ON users (email) WHERE deleted_at IS NULL. Это обеспечивает уникальность email только среди строк, где deleted_at IS NULL (активные пользователи). После soft-delete (UPDATE users SET deleted_at = now() WHERE id = $1) строка больше не входит в предикат индекса — её email освобождается. Новый пользователь с тем же email может быть зарегистрирован. Простой UNIQUE constraint на email сделал бы это невозможным — он проверяет все строки независимо от deleted_at. Partial unique index — самый элегантный способ обеспечить uniqueness в soft-delete паттерне." },
+    { q: "Запрос EXPLAIN ANALYZE показывает Index Only Scan с Heap Fetches: 2000 на 50 результирующих строк. Что это означает и как исправить?", a: "Heap Fetches: 2000 означает: для 2000 matching TIDs Visibility Map-бит был сброшен — Postgres не мог подтвердить видимость из VM без обращения к heap. Это почти уничтожает выгоду index-only scan — 2000 heap fetch вместо 50. Причина: Visibility Map устарела из-за недостаточного VACUUM (n_dead_tup высокий). Fix: (1) немедленно — VACUUM table_name, затем снова EXPLAIN ANALYZE — Heap Fetches должен упасть до 0 или близко к 0; (2) долгосрочно — настроить autovacuum: ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05) чтобы autovacuum запускался чаще; (3) мониторинг — следить за pg_stat_user_tables.n_dead_tup как leading indicator VM freshness." },
+  ]}
+/>
+
+<Recap lang="ru">
+Три продвинутых модификатора индексов расширяют B-tree модель. Partial-индексы (WHERE в CREATE INDEX) строятся только над строками, соответствующими предикату — если горячее подмножество 5% таблицы, индекс в 20x меньше и в 20x дешевле на запись. Expression-индексы (функция в ключе) позволяют LOWER(email), DATE_TRUNC(), JSON-path использовать индекс — без них функция на каждой строке отключает индекс. INCLUDE добавляет payload-столбцы в leaf-страницы без влияния на sort key — enabling index-only scan без heap fetch.
+
+Все три часто комбинируются: (workspace_id, created_at DESC) WHERE status='pending' INCLUDE (id, total_cents) — composite для filter/sort, partial для экономии, INCLUDE для covering. Partial unique indexes решают проблему uniqueness в soft-delete паттернах. EXPLAIN ANALYZE — единственный способ убедиться, что индекс работает как задумано.
+</Recap>

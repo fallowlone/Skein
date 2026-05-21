@@ -1,0 +1,242 @@
+---
+slug: 03-cache-lines-and-false-sharing
+lang: ru
+track: performance
+unit: 03-cache-vs-bigo
+order: 3
+title: "Cache lines и false sharing: когда параллелизм замедляет код"
+summary: "False sharing — когда два thread пишут в разные переменные одной cache line, MESI протокол ping-pong-ит line между cores на 30–50 циклов per ping. Canonical баг 'сделал parallel, но стало медленнее'."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["performance/03-cache-vs-bigo/01-memory-hierarchy"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["cache-line", "false-sharing", "mesi-protocol", "struct-layout", "struct-splitting", "padding"]
+sources:
+  - https://en.wikipedia.org/wiki/CPU_cache
+  - https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec25-locality/lec25.html
+  - https://ivoroshilin.wordpress.com/2013/02/06/know-your-locality-of-reference-some-techniques-for-keeping-data-in-the-cpu-cache/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Два thread. Каждый пишет в свою переменную. Нет shared state. Нет mutex. Нет contention — по крайней мере, так кажется из кода. Параллельная версия в три раза медленнее однопоточной.
+</Hook>
+
+<Crux>Cache line — 64 байта. Запись в любой байт invalidates её для всех cores. MESI ping-pong = 30–50 циклов. Это false sharing.</Crux>
+
+<Explanation>
+
+## Cache lines: единица transfer
+
+Data не двигается между RAM и cache по одному байту. Единица — **cache line** (64 байта на x86 и большинстве ARM, 128 байт на некоторых Apple Silicon и ARM server cores).
+
+Читаешь байт на адресе X — CPU грузит байты X до X+63 в cache, все сразу. Поэтому sequential access так быстр: первый read грузит 8 doubles за раз; следующие 7 — бесплатные L1-хиты.
+
+## MESI протокол
+
+В multi-core системе каждое ядро имеет свой L1/L2 cache. Чтобы данные были согласованы, hardware использует **MESI протокол**: каждая cache line находится в одном из четырёх состояний:
+
+- **M (Modified)** — только у этого core, изменена (dirty).
+- **E (Exclusive)** — только у этого core, не изменена.
+- **S (Shared)** — у нескольких cores, read-only.
+- **I (Invalid)** — копия устарела, нужно re-fetch.
+
+Когда **core A пишет** в line, MESI отправляет invalidation всем cores, у которых есть копия. Их line переходит в состояние **I**. При следующем обращении они должны re-fetch.
+
+## False sharing
+
+**False sharing** случается, когда два thread пишут в *разные переменные*, случайно находящиеся в *одной cache line*.
+
+```cpp
+struct Counters {
+    int64_t thread0_count;  // байты 0–7
+    int64_t thread1_count;  // байты 8–15
+    // обе переменные в одной 64-байтной cache line
+};
+```
+
+Thread 0 пишет `thread0_count`, thread 1 пишет `thread1_count`. С точки зрения кода — нет shared state. С точки зрения MESI — каждая запись invalidates cache другого thread. Line ping-pong-ит между cores:
+
+```
+T=0: Core 0 пишет → line в M (Core 0)
+T=1: Core 1 пишет → Core 0's copy становится I → Core 1 re-fetch → 30–50 циклов
+T=2: Core 0 пишет снова → Core 1's copy становится I → Core 0 re-fetch → ещё 30–50 циклов
+...
+```
+
+Параллельная работа становится serialized ожиданием cache coherency.
+
+**Фикс: padding до 64 байт.**
+
+```cpp
+struct Counters {
+    alignas(64) int64_t thread0_count;  // занимает собственную cache line
+    alignas(64) int64_t thread1_count;  // занимает собственную cache line
+};
+```
+
+Или padding вручную:
+```cpp
+struct Counter {
+    int64_t value;
+    char padding[56];  // 8 + 56 = 64 байта ровно
+};
+```
+
+## Struct layout и struct splitting
+
+Cache line behaviour влияет не только на multi-threading. **Struct layout** критичен и для single-threaded hot loops.
+
+Рассмотрим:
+```cpp
+struct Entity {
+    float x, y, z;       // 12 байт — горячие, нужны каждый кадр
+    char name[64];        // 64 байта — холодные, нужны редко
+    float health;         // 4 байта — горячие
+    // total: 80 байт = 2 cache lines
+};
+```
+
+Hot loop, обрабатывающий 10 000 entity каждый кадр, читает только `x, y, z, health` — 16 байт. Но загружает 80 байт (2 cache lines) per entity, потому что `name` засоряет cache.
+
+**Struct splitting** (field shuffling): разделяй горячие и холодные поля.
+
+```cpp
+struct EntityHot {
+    float x, y, z, health;  // 16 байт — 4 элемента per cache line
+};
+struct EntityCold {
+    char name[64];           // редко нужен
+};
+EntityHot hot_data[N];  // dense array
+EntityCold cold_data[N]; // accessed by index
+```
+
+Теперь hot loop грузит 4 `EntityHot` per cache line вместо 1 `Entity` per 2 lines. Cache pressure в 8x ниже.
+
+<NumbersCard
+  id="03-numbers"
+  title="Cache line и MESI числа"
+  stats={[
+    { label: "Cache line size (x86, ARM)", value: "64 байта" },
+    { label: "Cache line size (Apple M3)", value: "128 байт" },
+    { label: "False sharing ping-pong cost", value: "30–50 циклов per ping" },
+    { label: "L1 hit latency", value: "~1 нс (3–5 циклов)" },
+    { label: "RAM latency (DDR5)", value: "~70–100 нс" },
+  ]}
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Симптом</th>
+        <th class="border border-border px-3 py-2 text-left">False sharing</th>
+        <th class="border border-border px-3 py-2 text-left">Lock contention</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Код выглядит lock-free</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Нет (mutex виден в коде)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Масштабирование threads</td>
+        <td class="border border-border px-3 py-2">Хуже с ростом threads</td>
+        <td class="border border-border px-3 py-2">Хуже с ростом threads</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Инструмент диагностики</td>
+        <td class="border border-border px-3 py-2"><code>perf c2c</code> (cache-line contention)</td>
+        <td class="border border-border px-3 py-2"><code>perf lock</code>, mutex profiler</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Фикс</td>
+        <td class="border border-border px-3 py-2">Padding до 64 байт</td>
+        <td class="border border-border px-3 py-2">Lock-free структуры, шире scope</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+Реальные примеры false sharing: Linux kernel scheduler per-CPU stats — 2017 (фикс: атрибут `cacheline_aligned`), Go `sync.WaitGroup` struct (фикс: padding добавлен в 1.13). Это canonical «я сделал алгоритм parallel, но он стал медленнее» баг.
+</Inset>
+
+<Misconception id="03-mc-threads">
+  <p><strong>«Если нет shared state между threads, false sharing невозможен.»</strong> Ложь. False sharing — hardware-уровень, не software-уровень. Переменные могут быть logically independent, но если они физически сидят в одной 64-байтной cache line, MESI протокол всё равно invalidates копии других cores на каждую запись.</p>
+</Misconception>
+
+<Quiz
+  id="03-quiz-1"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="ru"
+  question="Tight цикл сканирует array из 1М структур, каждая содержит 6 полей всего 48 байт. Cache lines — 64 байта. Сколько структур влезает per cache line?"
+  choices={[
+    { label: "1 (с 16 байтами потраченного padding) или 1.33, если структуры пересекают line boundaries", correct: true },
+    { label: "1 — каждая структура занимает одну line", misconception: "48 байт меньше 64; одна структура не заполняет line полностью." },
+    { label: "6 — каждое поле одна line", misconception: "Поля делят lines; 6 полей всего 48 байт влезают в одну line." },
+    { label: "Зависит от OS", misconception: "Cache line size — hardware-determined; OS не меняет." },
+  ]}
+/>
+
+<Quiz
+  id="03-quiz-2"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="ru"
+  question="У тебя два thread, каждый incrementируя свой счётчик в tight loop. Struct: { int64_t a; int64_t b; }. Thread 0 пишет a, thread 1 пишет b. Оба в одной 64-байтной cache line. Что произойдёт?"
+  choices={[
+    { label: "Каждая запись одного thread invalidates L1-копию другого через MESI. Line ping-pong-ит между cores. Эффективная throughput падает до single-threaded latency.", correct: true },
+    { label: "Ничего плохого — переменные разные", misconception: "С точки зрения software — разные. С точки зрения MESI — одна cache line; каждая запись invalidates все копии." },
+    { label: "Данные corrupted из-за race condition", misconception: "Данные корректны (разные адреса), но производительность деградирует из-за cache coherency overhead." },
+    { label: "Компилятор автоматически добавляет padding", misconception: "Компилятор не знает о threading patterns; padding нужно добавлять вручную или через alignas(64)." },
+  ]}
+/>
+
+<DragOrder
+  id="03-drag-1"
+  lessonSlug="03-cache-lines-and-false-sharing"
+  lang="ru"
+  prompt="Поставь шаги MESI invalidation при false sharing (два cores пишут в разные переменные одной cache line):"
+  items={[
+    { id: "a", label: "Core 0 пишет в переменную A в cache line X" },
+    { id: "b", label: "MESI отправляет invalidation message всем другим cores с копией line X" },
+    { id: "c", label: "Core 1's копия line X переходит в состояние Invalid" },
+    { id: "d", label: "Core 1 пишет в переменную B в той же line X" },
+    { id: "e", label: "Core 1 должен сначала re-fetch line X из Core 0 или памяти — 30–50 циклов" },
+    { id: "f", label: "Core 0's копия становится Invalid — следующий доступ Core 0 снова ждёт" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache line — 64 байта: hardware unit of transfer. False sharing = два thread пишут в разные переменные одной line → MESI invalidates copies → line ping-pong-ит между cores → throughput деградирует. Фикс: alignas(64) или padding до 64 байт. Диагностика: perf c2c. Struct splitting — тот же принцип для single-threaded hot loops: выноси холодные поля из горячей array.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, как cache coherency (MESI) создаёт 'false sharing' как multi-thread performance баг, и как детектировать и фиксить.", a: "MESI — cache-coherency протокол: каждая cache line в одном из четырёх состояний — Modified (exclusive write этого core), Exclusive (только этот core, unwritten), Shared (multiple cores read-only), Invalid. Когда core A пишет в line, все copies других cores становятся Invalid; они должны re-fetch на следующий access. False sharing случается, когда два thread пишут в разные variables, случайно делящие одну cache line. С точки зрения каждого thread — independent data; с точки зрения MESI — каждая запись invalidates cache другого thread. Line ping-pong-ит между cores на 30–50 циклов per ping. Detection: perf c2c на Linux reports cache-line contention. Симптом: parallel workload, масштабирующийся намного хуже ожидаемого, high LLC-loads и low IPC. Фикс: align hot per-thread variables в separate cache lines — alignas(64) в C++ или padding[56] после 8-byte field." },
+  ]}
+/>
+
+<Recap lang="ru">
+Cache line — 64 байта (x86 / большинство ARM): unit of transfer между RAM и cache. В multi-core системе MESI протокол держит согласованность: когда core пишет в line, все other copies становятся Invalid. False sharing — hardware-level баг: два thread пишут в разные переменные, разделяющие одну cache line. MESI ping-pong-ит line между cores на 30–50 циклов per ping, serializing что должно быть параллельным. Фикс: alignas(64) или padding. Struct splitting — то же в single-threaded контексте: выноси холодные поля из hot loops в отдельные arrays.
+</Recap>

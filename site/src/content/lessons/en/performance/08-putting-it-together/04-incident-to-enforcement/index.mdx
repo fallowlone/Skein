@@ -1,0 +1,246 @@
+---
+slug: 04-incident-to-enforcement
+lang: en
+track: performance
+unit: 08-putting-it-together-perf
+order: 4
+title: "Incident to enforcement: SLO burn to verified fix in 35 minutes"
+summary: "A complete worked example: an /checkout p99 SLO burn, diagnosed via continuous profiling and distributed traces, fixed in 35 minutes, and armoured with enforcement gates so the class of regression cannot return."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/08-putting-it-together/03-observability-stack-and-gates
+  - performance/05-n-plus-one/01-what-is-n-plus-one
+  - performance/04-gc/01-gc-pause-anatomy
+deepensInto:
+  - performance/08-putting-it-together/05-culture-economics-and-scale
+spiral: ["latency", "statefulness"]
+concepts: ["incident-loop", "root-cause-analysis", "enforcement-gates", "postmortem"]
+sources:
+  - https://sre.google/sre-book/eliminating-toil/
+  - https://github.com/grafana/pyroscope
+  - https://opentelemetry.io/docs/specs/otel/profiles/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+An SLO burn alert fires at 10:47 am. Without continuous profiling and distributed traces, the on-call spends the afternoon guessing. With them, she has a root cause and a fix deployed by 11:22 am. The 35-minute window is not luck — it is the previous investment in observability paying off under pressure.
+</Hook>
+
+<Crux>With the stack in place, profile-classify-trace-fix-verify-enforce resolves a SLO burn in under an hour. Without it: hours, then recurs.</Crux>
+
+<Explanation>
+
+## The incident: /checkout p99 burns the SLO
+
+At 10:47 am, an alert fires: "checkout SLO p99 burn rate 14x — 12 hours of error budget consumed in 6 hours."
+
+The on-call engineer opens the unified dashboard. No deploys in the last hour. Traffic at baseline. This is not a spike — something changed in a downstream service.
+
+## Step 1: Observe — 60 seconds
+
+Prometheus: /checkout p99 jumped from 240 ms to 1.4 s. Started approximately two hours ago. RPS flat. Error rate flat. Pure latency degradation.
+
+RUM: client-side LCP unaffected. This is a server-side problem, not a bundle regression.
+
+## Step 2: Profile — 90 seconds
+
+Pyroscope filtered to /checkout over the last two hours:
+
+```
+runtime.scanobject:   22%   (baseline: 4%)
+runtime.mallocgc:      9%   (baseline: 2%)
+encoding/json.Marshal: 24%  (baseline: 4%)
+handlers.Checkout:      6%
+pgx.Query:             12%
+```
+
+GC frames jumped from 6% to 31%. JSON Marshal jumped from 4% to 24%. Something is producing much more garbage and serialising much larger payloads than before.
+
+## Step 3: Classify — 60 seconds
+
+Allocation-bound (family: GC / piece 04), with the serialisation overhead pointing at an unusually large response being produced, not just processed. This is the N+1 family pattern (piece 05) applied to inter-service payloads: something upstream started returning bulk data where a summary was sufficient.
+
+Amdahl on the combined GC + Marshal frames (55%): `1 / (1 - 0.55) = 2.2x`. That would bring p99 from 1.4 s to 636 ms — still above the 200 ms SLO. The root cause is not just "GC is hot"; it is whatever is *causing* the GC and Marshal pressure.
+
+## Step 4: Trace correlation — 5 minutes
+
+Open Tempo, filter to slow /checkout traces in the last two hours. The waterfall shows:
+
+```
+[span] handle_request          1820ms
+  [span] auth_check               5ms
+  [span] order_query             340ms   (baseline: 12ms)
+  [span] inventory_check         850ms   (baseline: 80ms)
+  [span] payment_call            280ms   (baseline: 90ms)
+  [span] serialise_response      340ms   (baseline: 8ms)
+```
+
+Every downstream span and the serialisation step degraded by the same multiplier. This is the pattern of an upstream service returning a response that is much larger than expected — every consumer step inflates proportionally.
+
+Check deploy history: inventory-service rolled out at 10:31 am — 16 minutes before the SLO burn started. Diff: added `include_full_sku_details: true` to the /inventory response. Previously returned SKU IDs only; now returns full SKU objects. Response payload: 8 KB → 85 KB per call.
+
+The /checkout service receives 85 KB, deserialises it (more allocations), selects 0.1% of the data it needs, then serialises its own response including the inflated inventory data. All three cost centres — GC, Marshal, downstream latency — trace to a single cause.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Signal</th>
+        <th class="border border-border px-3 py-2 text-left">Observation</th>
+        <th class="border border-border px-3 py-2 text-left">Implication</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Pyroscope GC frames</td>
+        <td class="border border-border px-3 py-2">6% → 31%</td>
+        <td class="border border-border px-3 py-2">Much more garbage produced per request</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Pyroscope json.Marshal</td>
+        <td class="border border-border px-3 py-2">4% → 24%</td>
+        <td class="border border-border px-3 py-2">Much larger payload being serialised</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Tempo: inventory_check span</td>
+        <td class="border border-border px-3 py-2">80ms → 850ms</td>
+        <td class="border border-border px-3 py-2">Upstream service much slower or returning more</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Deploy log: inventory-service</td>
+        <td class="border border-border px-3 py-2">10:31 am deploy</td>
+        <td class="border border-border px-3 py-2">Payload grew 8 KB → 85 KB per call</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Combined</td>
+        <td class="border border-border px-3 py-2">All degraded spans correlate</td>
+        <td class="border border-border px-3 py-2">Single root cause: inventory-service deploy</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Step 5: Fix — 15 minutes
+
+Two parallel actions:
+
+1. Roll back the inventory-service deploy via the deploy console.
+2. Add a defensive check in /checkout: reject any inventory response over 64 KB with an error before processing.
+
+Both ship within 15 minutes.
+
+## Step 6: Verify — 10 minutes
+
+Pyroscope after rollback: `scanobject` returns to 4%, `mallocgc` to 2%, `json.Marshal` to 4%. Profile baseline restored.
+
+Prometheus: /checkout p99 at 235 ms within 5 minutes of the rollback completing. SLO burn rate drops to 0.1x.
+
+Both the local profile AND the headline metric confirmed.
+
+## Step 7: Enforce — the sprint after
+
+Three enforcement actions, all taken in the following sprint:
+
+**A. PR gate: inter-service response size.** Any PR to any service that changes a response schema must pass a contract test asserting the body size does not exceed 2x the current median. PRs that grow a response by more than 2x require explicit SRE review.
+
+**B. Production alert: per-endpoint payload size p99.** Add a metric tracking p99 response body bytes per downstream call. Alert if it grows more than 50% week-over-week. First time this class of regression fires, the alert routes to the responsible team's on-call before the SLO burns.
+
+**C. Runbook entry.** "p99 spike on /checkout with all spans degraded proportionally → check upstream deploys in the last 2 hours for response-schema changes. Check inventory-service specifically." The next on-call resolves this in under 5 minutes instead of starting from scratch.
+
+**Total elapsed from page to fix:** 35 minutes.
+**Total elapsed to enforcement:** one sprint (1 week).
+**Engineer-hours: incident response + postmortem + enforcement:** 6 hours.
+**Without continuous profiling + traces:** estimated 4 to 8 hours for the incident alone.
+
+<Inset kind="why" lang="en">
+The enforcement step is what separates discipline from firefighting. The incident consumed 35 minutes. Without the gate, the exact same class of regression — a different service's response growing unexpectedly — will consume another 35 minutes in 3 to 6 months. With the gate, every future PR that changes a response schema is checked. The one-time cost of adding the gate is under 4 engineer-hours. The recurring cost it prevents is 35+ minutes per incident, potentially dozens of times.
+</Inset>
+
+<NumbersCard
+  id="04-incident-numbers"
+  title="Incident loop numbers"
+  stats={[
+    { label: "Time from page to verified fix (with full stack)", value: "35 minutes" },
+    { label: "Time from page to root cause (without continuous profiling)", value: "4–8 hours" },
+    { label: "Inventory-service response payload growth", value: "8 KB → 85 KB" },
+    { label: "p99 degradation on /checkout", value: "240ms → 1820ms" },
+    { label: "p99 after rollback (within 5 min)", value: "235ms" },
+    { label: "Engineer-hours to add enforcement gates", value: "~4 hours" },
+    { label: "Average incidents prevented per enforcement gate", value: "3–8 per year" },
+  ]}
+  data-lesson-visual
+/>
+
+<Quiz
+  id="04-incident-quiz-1"
+  lessonSlug="04-incident-to-enforcement"
+  lang="en"
+  question="In the /checkout incident, the profile showed GC and json.Marshal both spiking. A naive response would fix the allocation hotspot. Why is that wrong?"
+  choices={[
+    { label: "GC and Marshal are both symptoms of a root cause upstream. Fixing allocations in /checkout leaves the bloated response payload from inventory-service in place — the same pressure returns with the next request.", correct: true },
+    { label: "GC hotspots cannot be fixed", misconception: "GC hotspots are fixable via pool reuse, reduced allocations, and lazy serialisation. But fixing the symptom without the root cause means the symptom returns." },
+    { label: "Marshal is not a bottleneck", misconception: "Marshal at 24% of CPU is a significant bottleneck. The point is that it is a symptom — caused by the larger payload from inventory-service." },
+    { label: "The profile data is unreliable", misconception: "Continuous profiling data is accurate. The issue is the interpretation: both frames are effects of the same cause." },
+  ]}
+/>
+
+<Quiz
+  id="04-incident-quiz-2"
+  lessonSlug="04-incident-to-enforcement"
+  lang="en"
+  question="Why does the enforcement step (adding CI gates and runbook entries) matter more than the fix itself?"
+  choices={[
+    { label: "The fix resolves one incident. The enforcement gate resolves the entire class of incidents forever. A gate added after one incident prevents the same class from occurring for all future engineers working on all future PRs.", correct: true },
+    { label: "The fix might have been wrong", misconception: "The fix was confirmed by the Verify step. Enforcement matters because future fixes need to prevent recurrence, not because the current fix is suspect." },
+    { label: "Enforcement is faster to implement", misconception: "Enforcement typically takes more time than the fix itself. Its value is in preventing dozens of future incidents." },
+    { label: "Management requires it", misconception: "Enforcement is not bureaucratic — it is the mechanism that converts incident cost into systemic protection." },
+  ]}
+/>
+
+<DragOrder
+  id="04-incident-drag-1"
+  lessonSlug="04-incident-to-enforcement"
+  lang="en"
+  prompt="Order the diagnostic steps in the /checkout incident from first observation to confirmed root cause:"
+  items={[
+    { id: "a", label: "SLO alert: p99 at 1.4s, RPS flat, RUM unaffected — server-side only" },
+    { id: "b", label: "Profile shows GC frames 6% → 31%, json.Marshal 4% → 24%" },
+    { id: "c", label: "Classify: allocation-bound + serialisation-bound; root cause must be upstream" },
+    { id: "d", label: "Trace: every downstream span degraded proportionally — upstream bulk payload" },
+    { id: "e", label: "Deploy log: inventory-service shipped at 10:31am with full SKU details in response" },
+    { id: "f", label: "Rollback inventory-service; profile and p99 return to baseline within 5 minutes" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A complete performance incident — page to fix to enforcement — runs in under an hour when the five-signal stack is in place. The key insight: profile symptoms pointed at a cross-service root cause that no single fix to /checkout would have resolved. Enforcement converts the local fix into a systemic gate that prevents the entire class from returning.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-incident-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how each of the five observability signals contributed to resolving the /checkout incident.", a: "Metrics (Prometheus): the SLO burn alert fired, quantifying the severity and naming /checkout as the affected service. Without this, the team might have noticed the slowdown hours later via user complaints. Traces (Tempo): showed all downstream spans degrading proportionally, with inventory_check growing from 80ms to 850ms. This ruled out a localised /checkout bug and pointed at an upstream cause. Profiles (Pyroscope): showed GC and json.Marshal both spiking, confirming allocation pressure from a much larger payload. Connected to the trace evidence, this identified the mechanism: bigger payload → more allocations → more GC → higher latency everywhere. Logs: deploy history log confirmed the inventory-service deploy at 10:31am. RUM: confirmed the issue was server-side, not client-side, narrowing the search space from the start. All five signals together resolved the incident in 35 minutes. Any one signal alone would have given partial information and likely led to misdiagnosis." },
+    { q: "The /checkout incident combined family 04 (GC) and family 05 (N+1/bulk payload). How does cross-family identification change the fix strategy?", a: "If the engineer only identified GC (family 04), the fix would be to reduce allocations in /checkout — correct but insufficient. The GC pressure would return with every request after the rollback was eventually reverted, or manifest again when another service grew its response. If the engineer only identified the upstream payload (family 05), the fix would be to roll back inventory-service — correct and sufficient as an immediate fix, but without addressing the systemic risk of other services making the same change. Identifying both families together leads to three actions: immediate rollback (family 05 mitigation), defensive check in /checkout (family 04 mitigation by limiting payload size), and PR gate for future response-size regressions across all services (systemic prevention). The compound identification gives a more complete defence." },
+    { q: "What are the three enforcement actions taken after the /checkout incident, and what class of regression does each prevent?", a: "1. PR gate on inter-service response size: prevents any future PR from growing a response payload by more than 2x without SRE review. Catches the entire class of 'upstream service starts returning more data than callers expect.' 2. Production alert on per-endpoint payload size p99: catches the same class when it slips through CI — for example, a config change or feature flag that grows a response at runtime rather than via a code change. Alerts before the SLO burns. 3. Runbook entry for 'p99 spike with all spans proportionally degraded': ensures the next on-call resolves the same diagnostic pattern in under 5 minutes instead of 35. The runbook is institutional memory encoded as a procedure. Together, the three actions prevent the regression at PR time (gate), catch it quickly if it slips through (alert), and reduce MTTR if it manifests anyway (runbook)." },
+  ]}
+/>
+
+<Recap lang="en">
+The /checkout incident ran from page to verified fix in 35 minutes because the five-signal observability stack was in place. Metrics named the service and severity. RUM ruled out client-side causes. Profiles showed GC and serialisation pressure — two effects of one cause. Traces showed all downstream spans degrading proportionally, pointing at an upstream service. Deploy history confirmed the inventory-service payload grew from 8 KB to 85 KB 16 minutes before the SLO burn. The fix was a rollback plus a defensive size check. The enforcement step — PR gate, payload-size alert, runbook entry — prevents the entire class of upstream payload regressions from becoming incidents in the future. This is what distinguishes a discipline from firefighting: the incident retro ends with a gate, not just a fix.
+</Recap>

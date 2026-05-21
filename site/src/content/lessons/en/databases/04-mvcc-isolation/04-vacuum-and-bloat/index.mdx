@@ -1,0 +1,203 @@
+---
+slug: 04-vacuum-and-bloat
+lang: en
+track: databases
+unit: 04-mvcc-isolation
+order: 4
+title: "Vacuum and bloat: keeping the storage tax bounded"
+summary: "Autovacuum reclaims dead tuple slots but cannot shrink the file; a long transaction or orphan replication slot pins everything it touched. Understanding the mechanics is the difference between 20 GB and 200 GB tables."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/04-mvcc-isolation/02-row-versions-and-snapshots"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["autovacuum", "bloat", "dead-tuple", "oldest-xmin", "vacuum-full", "pg-repack", "hot-standby-feedback", "backend-xmin"]
+sources:
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/mvcc.html
+  - https://postgrespro.com/blog/pgsql/5967910
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+An autovacuum worker ran for 30 minutes on your orders table, removed zero dead tuples, and logged "287 million are not yet removable." The table keeps growing. This is not an autovacuum configuration problem — it is a snapshot pinning problem, and knowing which is which determines the fix.
+</Hook>
+
+<Crux>VACUUM marks dead slots reusable but never shrinks the file; a long transaction or orphan replication slot pins those rows until it ends.</Crux>
+
+<Explanation>
+
+## Where the cost is paid
+
+Each UPDATE creates one fresh tuple plus marks the old tuple dead — both on disk, both in the heap, both eligible for index entries. Until VACUUM clears the dead tuples, every sequential scan walks past them and every page is bigger than the strict minimum.
+
+A common rule of thumb at production scale: target dead-tuple ratio **below 20%** for tables above 50 GB. Smaller tables tolerate higher bloat (30–50%) because the absolute waste is small.
+
+VACUUM **never physically shrinks the file** — it just marks space reusable inside the file. Reclaiming disk back to the operating system requires:
+- `VACUUM FULL` — rewrites the whole table while holding an `ACCESS EXCLUSIVE` lock, blocking every reader and writer
+- `pg_repack` extension — rewrites concurrently, swaps at the end (covered in lesson 07)
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Operation</th>
+        <th class="border border-border px-3 py-2 text-left">What it reclaims</th>
+        <th class="border border-border px-3 py-2 text-left">Blocks reads/writes?</th>
+        <th class="border border-border px-3 py-2 text-left">Shrinks file?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Regular VACUUM / autovacuum</td>
+        <td class="border border-border px-3 py-2">Dead tuple slots → reusable</td>
+        <td class="border border-border px-3 py-2">No (SHARE UPDATE EXCLUSIVE)</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">VACUUM FULL</td>
+        <td class="border border-border px-3 py-2">Rewrites whole table</td>
+        <td class="border border-border px-3 py-2">Yes (ACCESS EXCLUSIVE)</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">pg_repack</td>
+        <td class="border border-border px-3 py-2">Rewrites concurrently</td>
+        <td class="border border-border px-3 py-2">Brief swap only</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How autovacuum actually decides to run
+
+Autovacuum is a background process pool (3 workers by default) that wakes every minute and inspects every table for two threshold conditions:
+
+- **Dead-tuple threshold**: `autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × n_live_tup` (default: 50 + 20% of live tuples)
+- **Insert threshold**: similar formula for fresh inserts that need ANALYZE
+
+When a table crosses a threshold, autovacuum dispatches a worker. The worker takes a `SHARE UPDATE EXCLUSIVE` lock — strong enough to block other VACUUMs and schema changes, **weak enough to let regular reads and writes proceed in parallel**.
+
+The worker computes the **global oldest xmin** across all sessions (the cap on reclaimable tuples), scans the heap, identifies dead tuples whose `t_xmax` is older than oldest xmin, marks their slots reusable, walks each index to remove stale pointers, and rebuilds the table's free-space map.
+
+Throughout, autovacuum is rate-limited by a cost-based delay: every page read costs a few units, every page write costs more units, and once the worker exceeds `autovacuum_vacuum_cost_limit`, it sleeps for `autovacuum_vacuum_cost_delay` milliseconds.
+
+<DragOrder
+  id="04-vacuum-drag-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  prompt="Put the steps of an autovacuum run on a bloated table in order:"
+  items={[
+    { id: "a", label: "Scheduler wakes up; checks pg_stat_all_tables.n_dead_tup vs autovacuum_vacuum_threshold + scale_factor × n_live_tup" },
+    { id: "b", label: "Worker connects to the database; acquires a SHARE UPDATE EXCLUSIVE lock on the table (concurrent reads + writes continue)" },
+    { id: "c", label: "Worker computes the oldest xmin across all sessions (pg_stat_activity.backend_xmin) — only tuples older than this can be removed" },
+    { id: "d", label: "Heap scan: visit each page, identify dead tuples whose t_xmax < oldest xmin" },
+    { id: "e", label: "Mark dead tuple slots reusable inside each page; rebuild the page's free-space map entry" },
+    { id: "f", label: "Index cleanup: walk each index and remove entries pointing at reclaimed heap slots" },
+    { id: "g", label: "Update pg_class.relfrozenxid + pg_stat_all_tables counters; release lock" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+## What pins the oldest xmin
+
+The most common cause of bloat that autovacuum cannot reclaim: **a long-running transaction or orphan replication slot is holding back the global oldest xmin**.
+
+Diagnose with:
+```sql
+SELECT pid, backend_xmin, now() - xact_start AS duration
+FROM pg_stat_activity
+WHERE backend_xmin IS NOT NULL
+ORDER BY backend_xmin LIMIT 5;
+
+SELECT slot_name, xmin FROM pg_replication_slots WHERE xmin IS NOT NULL;
+```
+
+Fix: terminate the long transaction (`SELECT pg_terminate_backend(pid)`) or drop the unused slot (`SELECT pg_drop_replication_slot('name')`). The very next autovacuum cycle then reclaims the pinned bloat.
+
+**Prevention**: set `idle_in_transaction_session_timeout` to 5–15 minutes in production. This kills sessions that have an open transaction without activity, preventing them from pinning xmin indefinitely.
+
+<Misconception id="mc-bloat">
+  <p><strong>"VACUUM cleans dead rows."</strong> Wrong half-right. VACUUM marks slots reusable inside the file — does not shrink it, does not return space to the OS, cannot remove tuples still visible to any older snapshot. A long transaction pins every row it touched; diagnose via <code>pg_stat_activity.backend_xmin</code>.</p>
+</Misconception>
+
+## The hot_standby_feedback wrinkle
+
+Streaming replicas can be configured with `hot_standby_feedback = on`, which sends the replica's oldest active xmin back to the primary so the primary's autovacuum knows not to reclaim tuples a replica still needs. Without it, a long analytical query on a replica can fail with `canceling statement due to conflict with recovery`.
+
+With it, the primary's bloat is held hostage by the replica's longest-running query. Most production setups choose **off** on the replica and accept the occasional query cancellation, because pinning primary bloat indefinitely is the worse failure mode. The alternative is to route long analytics to a logical replica that maintains its own snapshot policy independently.
+
+<Inset kind="why" lang="en">
+The cost model for autovacuum's IO throttle was designed for spinning disks. On NVMe storage the cost delay can safely be set to 0 — the disk can absorb continuous VACUUM IO without impacting foreground queries. On spinning disks, keep cost_delay &gt; 0.
+</Inset>
+
+<Quiz
+  id="04-vacuum-quiz-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  question="A long-running batch job has accumulated 10 GB of dead tuples on an orders table. Autovacuum has been running but n_dead_tup is not dropping. What is the likely cause and how do you confirm?"
+  choices={[
+    { label: "autovacuum_vacuum_cost_limit is too low; raise it", misconception: "Cost limit affects autovacuum speed, not what it is allowed to remove. The issue is that oldest xmin is pinned." },
+    { label: "A long-running transaction or orphan replication slot is pinning the global oldest xmin", correct: true },
+    { label: "VACUUM FULL needs to be run first to enable regular autovacuum", misconception: "VACUUM FULL is for file reclamation. Regular autovacuum works independently and does not need VACUUM FULL first." },
+    { label: "The table needs an index rebuild before autovacuum can clean it", misconception: "Autovacuum cleans the heap first, then index entries. No manual index rebuild is needed." },
+  ]}
+/>
+
+<Quiz
+  id="04-vacuum-quiz-2"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  question="After VACUUM (not VACUUM FULL) runs successfully on a 200 GB table with 40% bloat, what happens to the file size?"
+  choices={[
+    { label: "The file shrinks to roughly 120 GB (60% of original)", misconception: "Regular VACUUM never shrinks the file. It only marks dead slot space as reusable inside the existing file." },
+    { label: "The file stays at 200 GB but new inserts can reuse the freed slot space", correct: true },
+    { label: "The file grows temporarily during VACUUM then shrinks", misconception: "Regular VACUUM does not cause the file to grow or shrink — it only updates metadata and marks slots." },
+    { label: "The file is deleted and rebuilt from scratch", misconception: "That would be VACUUM FULL, which does rewrite the file but requires ACCESS EXCLUSIVE and blocks all readers/writers." },
+  ]}
+/>
+
+<Quiz
+  id="04-vacuum-quiz-3"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  question="hot_standby_feedback = on on a replica sends what information to the primary, and what is the risk?"
+  choices={[
+    { label: "The replica's query throughput; risk is miscounting total cluster load", misconception: "hot_standby_feedback sends the replica's oldest active xmin, not query throughput." },
+    { label: "The replica's oldest active xmin; risk is that the primary's autovacuum cannot reclaim dead tuples needed by the replica, causing primary bloat", correct: true },
+    { label: "Replica lag in bytes; risk is confusing the primary about replication progress", misconception: "Replication lag is tracked separately. hot_standby_feedback specifically prevents autovacuum from removing tuples the replica's queries still need." },
+    { label: "The replica's disk pressure; risk is the primary over-running VACUUM", misconception: "hot_standby_feedback is purely about snapshot pinning, not disk pressure signals." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Autovacuum reclaims dead tuple slots (marks space reusable) but never shrinks the file — VACUUM FULL or pg_repack do that with downtime costs. The most common bloat-not-dropping cause is a long transaction or orphan replication slot pinning the global oldest xmin; diagnose via pg_stat_activity.backend_xmin and fix by killing the transaction or dropping the slot.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-vacuum-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the global oldest xmin, where does it come from, and why does it matter for autovacuum?", a: "The global oldest xmin is the minimum backend_xmin value across all active sessions in the cluster (also constrained by replication slot xmin values). It represents the oldest snapshot any running transaction holds. Autovacuum can only reclaim dead tuples whose t_xmax is older than this value — any tuple whose deletion might still be visible to the oldest snapshot must stay. A long-running transaction with a very old backend_xmin pins every dead tuple it ever touched." },
+    { q: "What is the autovacuum dead-tuple threshold formula, and what does each parameter do?", a: "autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × n_live_tup. autovacuum_vacuum_threshold (default 50) is a fixed minimum number of dead tuples before autovacuum kicks in. autovacuum_vacuum_scale_factor (default 0.2 = 20%) is a fraction of live tuples added to the threshold. For a 10M-row table, autovacuum triggers at 50 + 0.2 × 10M = 2,000,050 dead tuples. On very large tables the 20% default is too loose — per-table override to 2-5% is common." },
+    { q: "What lock does autovacuum take, and what does it block?", a: "SHARE UPDATE EXCLUSIVE. This blocks other VACUUMs and DDL (ALTER TABLE, CREATE INDEX CONCURRENTLY) but NOT regular SELECT, INSERT, UPDATE, or DELETE. This is intentional — autovacuum is designed to be transparent to the application under normal conditions. The exception is VACUUM FULL, which takes ACCESS EXCLUSIVE and blocks everything." },
+  ]}
+/>
+
+<Recap lang="en">
+Every UPDATE leaves a dead tuple on disk; autovacuum reclaims those slots by marking them reusable — but never shrinks the file. VACUUM FULL or pg_repack are needed to return bytes to the OS, with their respective downtime costs. Autovacuum triggers when `n_dead_tup` exceeds a per-table threshold, takes a non-blocking SHARE UPDATE EXCLUSIVE lock, and can only reclaim tuples older than the cluster's global oldest xmin. A long-running transaction or orphan replication slot pins that xmin and makes autovacuum's work silently futile; diagnose with `pg_stat_activity.backend_xmin` and fix by terminating the session or dropping the slot. Setting `idle_in_transaction_session_timeout` prevents this at the infrastructure level.
+</Recap>

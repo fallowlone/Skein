@@ -1,0 +1,170 @@
+---
+slug: 03-mvcc-pool-migrations
+lang: ru
+track: databases
+unit: 08-putting-it-together-db
+order: 3
+title: "Акты 4–6 в глубину: MVCC bloat, connection pooling и безопасные миграции"
+summary: "Одна долгая транзакция может вырастить таблицу 200 MB до 80 GB. Surge cold-start pods может превратить 4 мс запросы в 4 с таймауты. Один ALTER TABLE может заморозить production на восемь минут. Все три сбоя имеют одну первопричину: нехватка ресурсов из-за неограниченной операции."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/02-schema-indexes-plans
+  - databases/04-mvcc-isolation/04-vacuum-and-bloat
+  - databases/05-pooling/02-pgbouncer-modes
+  - databases/06-migrations/03-lock-queue-incident
+deepensInto:
+  - databases/08-putting-it-together/04-sharding-and-tradeoffs
+spiral: ["statefulness", "latency"]
+concepts: ["xmin-horizon", "bloat", "pool-sizing-math", "expand-contract", "lock-queue"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://www.cybertec-postgresql.com/en/postgresql-vacuum-and-bloat/
+  - https://www.pgbouncer.org/config.html
+  - https://pgroll.com/docs/latest/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Nightly report runner держит одну транзакцию открытой четыре часа. Он читает снапшот — никаких writes, ничего вредного. Но VACUUM не может вернуть мёртвые tuples ниже xmin-горизонта. Таблица вздувается с 200 MB до 80 GB. Новые строки не вставлялись. Report runner — единственный виновник.
+</Hook>
+
+<Crux>Акты 4–6 падают от одной неограниченной операции: долгая транзакция блокирует vacuum, лишние backends голодят пул, ALTER блокирует всё.</Crux>
+
+<Explanation>
+
+## Акт 4 — MVCC и xmin-горизонт
+
+Каждая строка в Postgres несёт `xmin` (transaction id создания) и `xmax` (transaction id удаления). `DELETE` не освобождает строку — он устанавливает `xmax`. `VACUUM` возвращает строки, чей `xmax` старше глобального `xmin`-горизонта — самого старого активного transaction ID, видимого по всему кластеру.
+
+Если одна аналитическая сессия оставляет транзакцию открытой на часы, горизонт не продвигается. Ни один мёртвый tuple, созданный после этого горизонта, не может быть возвращён. Таблица вздувается; запросы, сканирующие таблицу, замедляются, потому что читают мёртвые строки вместе с живыми.
+
+Исправление операционное:
+1. Убить long transaction (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query_start &lt; now() - interval '5 minutes'`).
+2. Установить `idle_in_transaction_session_timeout = 60s` — любая сессия, удерживающая транзакцию без выполнения запроса 60 секунд, завершается.
+3. Запустить `pg_repack` для возврата диска без AccessExclusiveLock (`VACUUM FULL` берёт его).
+4. Постоянное исправление: перенести отчётность на read replica; xmin-горизонт на replica не блокирует vacuum на primary при `hot_standby_feedback = off`.
+
+При 1B строк одна idle-сессия может раздуть таблицу на 10% за один день. Bloat замедляет каждый последующий запрос, потому что heap pages содержат мёртвые tuples рядом с живыми, заставляя sequential scanner читать и пропускать их.
+
+## Акт 5 — Математика размера connection pool
+
+Каждый Postgres backend — это fork-процесс ОС со своим memory footprint (~5–10 MB RSS). Сервер с 32 GB RAM может поддерживать примерно 2000–3000 backends до того, как kernel scheduler начнёт трасить и latency запросов деградирует.
+
+При 50 app pods по 20 workers каждый cold-start или pod-rollout открывает 1000 backends одновременно. Запросы, ранее занимавшие 4 мс, занимают 4 с не из-за объёма данных, а потому что ОС-scheduler не может эффективно time-slice 1000 процессов.
+
+PgBouncer в transaction-mode:
+- 100 server-side backends (вписывается в sweet spot kernel scheduler).
+- 10000 client connections мультиплексированы на эти 100 backends.
+- Каждый backend используется только во время активной транзакции, затем возвращается в пул.
+
+**Математика размера пула:**
+```
+pool_size = active_concurrent_transactions × safety_factor
+```
+Не `max_app_workers`. Важное число — сколько транзакций одновременно достигает базы, а не общее число workers. Для 16-ядерного SSD-only сервера 30–60 server-side backends обычно sweet spot.
+
+**Ловушка с prepared statements в transaction-mode:** PgBouncer в transaction-mode перепривязывает соединения после каждой транзакции, так что server-side prepared statements (`PREPARE foo AS SELECT ...`) теряются между транзакциями. PgBouncer 1.21+ поставляется с `server_prepared_statements = on`, который кешируёт plan IDs server-side и реплицирует их — без этого app frameworks, автоматически готовящие statements, платят re-prepare overhead при каждой транзакции.
+
+## Акт 6 — Lock matrix и expand-contract
+
+`ALTER TABLE` берёт `AccessExclusiveLock` по умолчанию — несовместимый со всеми другими режимами блокировки, включая чтения. Пока он ждёт блокировку, каждый новый запрос ждёт позади него. Пока он удерживает блокировку, каждый запрос ждёт.
+
+Короткий ALTER под низкой нагрузкой завершается за миллисекунды. ALTER позади долгого запроса (как в Акте 4) ждёт, строит очередь, и очередь замораживает базу. Одна 60-секундная блокировка на горячей таблице может каскадироваться в 10-минутный инцидент из-за connection timeout и app-level retry storms.
+
+**Рецепт expand-contract** для безопасного добавления колонки `tenant_id BIGINT NOT NULL`:
+1. `ALTER TABLE users ADD COLUMN tenant_id BIGINT` — nullable, без default. Нет перезаписи.
+2. Backfill: `UPDATE users SET tenant_id = 0 WHERE tenant_id IS NULL LIMIT 10000` — батчами, низкое lock pressure.
+3. `ALTER TABLE users ADD CONSTRAINT chk_tenant_id CHECK (tenant_id IS NOT NULL) NOT VALID` — не сканирует таблицу.
+4. `ALTER TABLE users VALIDATE CONSTRAINT chk_tenant_id` — сканирует под `ShareUpdateExclusiveLock`, совместимым с чтениями и записями.
+5. `ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL` — только metadata после успешной валидации, миллисекунды.
+6. `ALTER TABLE users DROP CONSTRAINT chk_tenant_id` — очистка.
+
+Инструменты как `pgroll` и `Atlas` кодифицируют этот рецепт. Без него наивный `ADD COLUMN ... NOT NULL DEFAULT` на Postgres 10 и ранее вызывает полную перезапись таблицы; на Postgres 11+ это metadata-change для константных defaults, но блокировка всё равно ставит в очередь все запросы.
+
+<NumbersCard
+  id="card-acts-4-6-numbers"
+  title="Акты 4–6: стоимость и пороги"
+  stats={[
+    { label: "Bloat rate на write-heavy таблице, без autovacuum tuning", value: "1–10% в месяц" },
+    { label: "Bloat rate с bagом idle-in-transaction", value: "50%+ в неделю" },
+    { label: "pg_repack для таблицы 80 GB", value: "30–90 мин онлайн" },
+    { label: "PgBouncer transaction-mode sweet spot, 16-ядерный SSD-сервер", value: "30–60 backends" },
+    { label: "AccessExclusiveLock на горячей таблице → длительность инцидента", value: "до 10 мин" },
+    { label: "expand-contract: SET NOT NULL после VALIDATE CONSTRAINT", value: "миллисекунды" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="ru">
+Почему `idle_in_transaction_session_timeout` важнее `statement_timeout`? Сессия в состоянии `idle in transaction` не выполняет запрос — `statement_timeout` никогда не сработает. Но сессия удерживает транзакцию и тем самым фиксирует `xmin`-горизонт. Установка transaction-idle timeout завершает сессию прежде чем она сможет заморозить прогресс vacuum на часы.
+</Inset>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-1"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="ru"
+  question="Долгая аналитическая сессия держит транзакцию открытой четыре часа. За это время не вставлялись и не удалялись данные. Почему таблица растёт на диске?"
+  choices={[
+    { label: "Мёртвые tuples от предыдущих записей не могут быть возвращены VACUUM, потому что сессия фиксирует xmin-горизонт ниже них", correct: true },
+    { label: "Аналитический запрос вставляет временные строки", misconception: "Удержание транзакции открытой не вставляет строки. Рост происходит от мёртвых tuples, которые VACUUM не может вернуть." },
+    { label: "VACUUM требует эксклюзивного доступа для работы, и аналитический запрос его блокирует", misconception: "VACUUM (не FULL) не требует эксклюзивного доступа — он работает конкурентно. Bloat вызван xmin-горизонтом, предотвращающим возврат, а не VACUUM, заблокированным от запуска." },
+    { label: "База буферизует результаты запроса на диск", misconception: "Postgres не буферизует result sets запросов в heap. Рост таблицы — bloat от невозвращённых мёртвых tuples." },
+  ]}
+/>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-2"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="ru"
+  question="50 app pods по 20 workers. При pod-rollout latency запросов прыгает с 4 мс до 4 с. Первопричина?"
+  choices={[
+    { label: "1000 конкурентных OS-процессов перегружают kernel scheduler; scheduler не может эффективно time-slice их, и context switches доминируют CPU-время", correct: true },
+    { label: "1000 backends все выполняют один медленный запрос", misconception: "При rollout большинство backends idle или только подключаются — они не выполняют медленных запросов. Латентность от давления scheduler, не от содержимого запросов." },
+    { label: "Postgres имеет жёсткий лимит 100 соединений", misconception: "У Postgres нет жёсткого лимита в 100 соединений. max_connections по умолчанию 100, но настраиваемо; реальная проблема — давление OS scheduler, не лимит Postgres." },
+    { label: "Сеть перегружена 1000 одновременными connection handshakes", misconception: "Network handshake — малая часть стоимости. Доминирующая стоимость — OS scheduler, неспособный эффективно time-slice 1000 процессов на машине, рассчитанной на 30–60 активных." },
+  ]}
+/>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-3"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="ru"
+  question="Миграция выполняет ALTER TABLE ADD COLUMN ... NOT NULL в период, когда pg_dump-сессия держит AccessShareLock на таблице. Что происходит?"
+  choices={[
+    { label: "ALTER ждёт AccessExclusiveLock позади pg_dump AccessShareLock — и каждый новый запрос ставится в очередь позади ожидающего ALTER, замораживая production", correct: true },
+    { label: "pg_dump и ALTER работают параллельно — AccessShareLock совместим с AccessExclusiveLock", misconception: "AccessExclusiveLock несовместим со всеми другими режимами блокировки, включая AccessShareLock. ALTER должен ждать." },
+    { label: "ALTER немедленно падает с ошибкой lock timeout", misconception: "Без установленного lock_timeout ALTER ждёт бесконечно. Строящаяся позади него очередь — вот что вызывает инцидент." },
+    { label: "pg_dump автоматически отменяется, чтобы дать миграции продолжить", misconception: "Postgres не отменяет автоматически работающие сессии для DDL-выражений. Миграция ждёт; все новые запросы ждут позади неё." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Акт 4: одна долгая транзакция может раздуть таблицу с 200 MB до 80 GB — рычаг: idle_in_transaction_session_timeout и pg_repack. Акт 5: pool_size = active_concurrent_transactions × safety_factor, не max_app_workers — 30–60 server-side backends лучше 1000. Акт 6: AccessExclusiveLock ставит в очередь всё; expand-contract разбивает блокирующий ALTER на шесть lock-cheap шагов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-mvcc-pool-migrations-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни xmin-горизонт: что это такое, как долгая транзакция его фиксирует и каковы операционные последствия?", a: "xmin-горизонт — это самый старый transaction ID, всё ещё видимый по всему кластеру — минимум всех значений backend_xmin в pg_stat_activity. VACUUM может возвращать только мёртвые tuples, чей xmax старше этого горизонта. Если одна аналитическая сессия открывает транзакцию (даже read-only) и держит её часами, горизонт фиксируется на снапшоте этой сессии. Любой мёртвый tuple, созданный после этой точки, не может быть возвращён до освобождения транзакции сессией. Операционное последствие: таблицы раздуваются непрерывно на протяжении долгой транзакции. При 1B строк одна idle-сессия может раздуть таблицу на 10% за один день. Исправление: idle_in_transaction_session_timeout для автоматического завершения idle транзакций." },
+    { q: "Почему pool_size = active_concurrent_transactions × safety_factor — это правильная формула размера, а не max_app_workers?", a: "App workers большую часть времени ждут network I/O, обрабатывают HTTP-запросы или простаивают между запросами — они не все одновременно выполняют database queries. Важная метрика — сколько транзакций активны в базе в один момент. 16-ядерный сервер может эффективно планировать 30–60 OS-процессов; сверх этого context switching доминирует CPU-время. max_app_workers (например, 1000 для 50 pods × 20 workers) резко переоценивает реальный конкурентный спрос базы. Размер на основе active_concurrent_transactions с safety factor даёт пул, достаточный для пиков без перегрузки OS scheduler." },
+    { q: "Пройди рецепт expand-contract для добавления NOT NULL колонки и объясни, почему каждый шаг lock-cheap.", a: "Шаг 1: ADD COLUMN nullable без default — heap pages не перезаписываются, нет блокировки кроме metadata update (миллисекунды). Шаг 2: batch UPDATE backfill — маленькие батчи берут короткие row-level блокировки, нет table-wide блокировки. Шаг 3: ADD CONSTRAINT ... NOT VALID — добавляет ограничение без сканирования существующих строк, нет полной блокировки. Шаг 4: VALIDATE CONSTRAINT — сканирует под ShareUpdateExclusiveLock (совместим с чтениями и большинством writes), позволяет конкурентные запросы. Шаг 5: ALTER COLUMN SET NOT NULL — только metadata после успешной валидации, миллисекунды. Шаг 6: DROP CONSTRAINT — очистка, только metadata. Суммарное lock exposure близко к нулю для каждого шага; наивный одношаговый ALTER брал бы AccessExclusiveLock на всю длительность полного сканирования таблицы." },
+  ]}
+/>
+
+<Recap lang="ru">
+Акты 4–6 каждый падают от одной неограниченной операции — долгая транзакция фиксирует xmin-горизонт и не даёт VACUUM возвращать мёртвые tuples, вызывая неограниченный рост таблицы; слишком много OS-level Postgres backends перегружают kernel scheduler и превращают 4 мс запросы в 4 с таймауты; и ALTER TABLE, ожидающий AccessExclusiveLock, ставит в очередь каждый последующий запрос позади себя. Рычаги: `idle_in_transaction_session_timeout = 60s` и `pg_repack` для bloat; connection pool, размер которого рассчитан на active concurrent transactions (не max workers), для connection storms; и рецепт expand-contract для каждого изменения схемы, которое иначе держало бы эксклюзивную блокировку. Эти три акта требуют операционной дисциплины — мониторинга, алертов, runbooks — а не разовых исправлений. Команды, пропускающие их, обнаруживают failure modes в худший возможный момент: пиковый трафик, середина деплоя или крупная batch-миграция.
+</Recap>

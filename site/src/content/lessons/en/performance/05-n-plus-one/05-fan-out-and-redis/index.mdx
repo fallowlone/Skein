@@ -1,0 +1,207 @@
+---
+slug: 05-fan-out-and-redis
+lang: en
+track: performance
+unit: 05-n-plus-one
+order: 5
+title: "Cross-protocol N+1: HTTP fan-out and Redis MGET"
+summary: "The N+1 shape appears in HTTP microservice fan-out, Redis key lookups, and gRPC streaming — the fix family is the same: collect, batch, send once."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+deepensInto: []
+spiral: ["latency"]
+concepts: ["http-fanout", "mget", "parallel-dispatch", "promise-all", "serial-vs-parallel"]
+sources:
+  - https://redis.io/docs/latest/commands/mget/
+  - https://shopify.engineering/improving-graphql-performance
+  - https://blog.cloudflare.com/scaling-up-or-out/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A REST endpoint assembles a user profile by calling 8 downstream microservices — one for preferences, one for posts, one for notifications, one for billing, and four more. Each call takes 30 ms. Total latency: 240 ms. No single call is slow. The problem is that they are all serial.
+</Hook>
+
+<Crux>N+1 is not just SQL. HTTP fan-out, Redis per-key GET loops, and gRPC per-row calls all pay N round-trips. Batch or parallelise.</Crux>
+
+<Explanation>
+
+## The shape appears in every protocol
+
+The N+1 pattern is not a database-only problem. Anywhere a program makes multiple small round-trips where one larger operation would suffice, the same cost multiplier applies.
+
+The per-round-trip overhead differs by protocol and distance: Postgres on localhost ~0.5 ms, Redis same-host ~0.1 ms, HTTP intra-DC ~2 ms, HTTP cross-region ~50 ms. But the math is the same: N calls × per-call overhead = serial wall-clock dominates.
+
+## HTTP fan-out: call services in parallel
+
+A profile aggregator calling 8 services serially:
+
+```javascript
+// Serial — pays 8 × RTT in sequence:
+const user = await userService.get(userId);
+const posts = await postsService.get(userId);
+const notifs = await notifService.get(userId);
+// ... 5 more calls
+// Total: ~240 ms if each call is 30 ms
+```
+
+```javascript
+// Parallel — wall-clock = max(latencies):
+const [user, posts, notifs, ...rest] = await Promise.all([
+  userService.get(userId),
+  postsService.get(userId),
+  notifService.get(userId),
+  // ... 5 more
+]);
+// Total: ~35 ms (slowest call + small coordination overhead)
+```
+
+`Promise.all` (Node/JS), `errgroup.Wait` (Go), `CompletableFuture.allOf` (Java), `asyncio.gather` (Python) — the pattern is identical across runtimes.
+
+**The wall-clock changes from sum(latencies) to max(latencies).**
+
+For 8 calls at 30 ms each: 240 ms serial vs 35 ms parallel — a 7× improvement with one structural change.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Protocol</th>
+        <th class="border border-border px-3 py-2 text-left">N+1 pattern</th>
+        <th class="border border-border px-3 py-2 text-left">Batch fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">SQL / ORM</td>
+        <td class="border border-border px-3 py-2">Lazy load per row</td>
+        <td class="border border-border px-3 py-2">JOIN / IN / preload / DataLoader</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">HTTP microservices</td>
+        <td class="border border-border px-3 py-2">Serial service calls</td>
+        <td class="border border-border px-3 py-2">Promise.all / errgroup / gather</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Redis</td>
+        <td class="border border-border px-3 py-2">GET in a loop</td>
+        <td class="border border-border px-3 py-2">MGET / pipeline</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">gRPC</td>
+        <td class="border border-border px-3 py-2">Unary call per row</td>
+        <td class="border border-border px-3 py-2">Batch RPC / server streaming</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">File I/O</td>
+        <td class="border border-border px-3 py-2">open/read/close per file</td>
+        <td class="border border-border px-3 py-2">io_uring batched submission</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Redis: MGET instead of GET in a loop
+
+A cache layer that fetches 100 items one by one:
+
+```ruby
+# 100 round-trips — GET in a loop:
+items = keys.map { |k| redis.get(k) }
+
+# One round-trip — MGET:
+items = redis.mget(*keys)
+
+# Or pipeline for conditional logic per item:
+results = redis.pipelined { keys.each { |k| redis.get(k) } }
+```
+
+Redis RTT on the same host is typically 0.1–0.5 ms. A loop of 100 GETs costs 10–50 ms. One MGET costs 0.5–2 ms. The fix is a single command.
+
+For conditional logic (where you need to act on each result before deciding to fetch the next), use pipelining instead of MGET: send all commands at once, receive all responses at once.
+
+## Service call dependencies — DAG dispatch
+
+Some service calls depend on others. You cannot fully parallelize a dependency chain:
+
+```javascript
+// Sequential dependency: posts need userId first
+const userId = await authService.resolveToken(token);
+// Then these can all run in parallel:
+const [posts, notifs, billing] = await Promise.all([
+  postsService.get(userId),
+  notifService.get(userId),
+  billingService.get(userId),
+]);
+```
+
+The structure is a DAG (directed acyclic graph). Services with no dependencies start immediately; services that depend on earlier results wait only for their direct parents. Most fan-out APIs have shallow DAGs (1–2 dependency levels). Fully serial call chains are usually accidental and can be unwound by tracing the actual dependency relationships.
+
+<Inset kind="why" lang="en">
+The LinkedIn 2023 feed-aggregator incident: the service was calling 8 downstream microservices serially, ~60 ms each. p99 was 480 ms. After parallelising with errgroup, p99 dropped to ~80 ms — the slowest single call plus coordination overhead. This is the same class of fix as adding `.includes` to an ORM query, applied one protocol level up.
+</Inset>
+
+## Governance: preventing serial fan-out from returning
+
+Static analysis can catch the pattern before it ships:
+
+- **JavaScript/Node:** lint rule rejecting `await` inside a `for` loop over service calls.
+- **Code review checklist item:** "does this function call a remote service N times in a loop? If yes, flag it."
+- **Observability:** per-service dashboard panel showing "fan-out factor" (downstream calls per inbound request). Alert when it grows.
+- **Load-test assertions:** trace assertions in load tests can fail PRs that increase fan-out beyond a threshold.
+
+<Quiz
+  id="05-fan-out-and-redis-quiz-1"
+  lessonSlug="05-fan-out-and-redis"
+  lang="en"
+  question="A REST endpoint calls 8 downstream microservices serially, each taking 30 ms. Total p99 is 240 ms. What is the most direct structural fix?"
+  choices={[
+    { label: "Parallelise the downstream calls using Promise.all / errgroup / asyncio.gather. Total becomes max(latencies) — roughly 35 ms instead of 240 ms.", correct: true },
+    { label: "Switch to a faster RPC protocol", misconception: "Protocol changes give incremental wins. Parallelisation gives the structural fix: from 8x serial cost to 1x parallel cost." },
+    { label: "Cache the downstream responses", misconception: "Caching helps if data is reusable across requests. The immediate fix for serial fan-out is parallel dispatch." },
+    { label: "Reduce the number of microservices", misconception: "Service consolidation is a valid architectural choice but a heavy lift. Parallelisation is the per-request fix available now." },
+  ]}
+/>
+
+<Quiz
+  id="05-fan-out-and-redis-quiz-2"
+  lessonSlug="05-fan-out-and-redis"
+  lang="en"
+  question="A loop calls redis.get(key) for each of 100 items. What is the Redis-native single-trip fix?"
+  choices={[
+    { label: "MGET — one command that fetches multiple keys in a single round-trip. Or pipelining for conditional logic per item.", correct: true },
+    { label: "Switch to disk-backed Redis", misconception: "Storage mode does not affect the round-trip count. You are paying for 100 round-trips regardless of storage." },
+    { label: "Use Lua scripting", misconception: "Lua scripts are good for atomic multi-step operations. MGET is the simpler solution for batched reads." },
+    { label: "Add a Redis index", misconception: "Redis does not have SQL-style indexes. The fix is reducing round-trip count." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The N+1 shape repeats across HTTP fan-out (serial service calls), Redis (GET in a loop), and gRPC (unary call per row). The fix family is always: collect, batch, send once, distribute results. For HTTP: Promise.all / errgroup. For Redis: MGET. For gRPC: server streaming or batch RPC. The protocol changes; the pattern does not.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-fan-out-and-redis-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why Promise.all reduces HTTP fan-out latency and describe the wall-clock change.", a: "Serial service calls pay the latency of each call in sequence: call 1 waits, then call 2 waits, then call 3 waits. Total wall-clock is sum(latencies). With Promise.all, all calls are dispatched simultaneously. Each awaits its response in parallel. The wall-clock becomes max(latencies) plus a small coordination overhead. For 8 calls at 30 ms each: 240 ms serial vs ~35 ms parallel. The same structural change that reduces SQL N+1 from N round-trips to 1 reduces HTTP fan-out from sum to max." },
+    { q: "What is the Redis equivalent of SQL eager loading, and when would you use pipelining instead?", a: "MGET is the Redis equivalent: one command that fetches multiple keys in a single round-trip, the same way a SQL IN clause fetches multiple rows in one query. Use MGET when you need all values and do not need to make decisions based on intermediate results. Use pipelining when you need conditional logic per item: pipeline sends all commands at once but you receive responses for each independently and can act on them. Pipelining does not save network round-trips like MGET does — it reduces the overhead of the request-response cycle for each command in the pipeline, not the total count of round-trips." },
+  ]}
+/>
+
+<Recap lang="en">
+N+1 is a protocol-agnostic pattern: serial HTTP microservice calls, Redis GET in a loop, and gRPC unary call per row all pay round-trip overhead N times. For HTTP fan-out, Promise.all and its equivalents change serial sum(latencies) into parallel max(latencies). For Redis, MGET fetches multiple keys in one command. For gRPC, server streaming or batch RPC replaces per-row unary calls. The fix family is always the same: identify serial round-trips, collect the IDs or calls, send once, distribute results. The protocol changes; the shape and fix family do not.
+</Recap>

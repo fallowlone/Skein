@@ -1,0 +1,179 @@
+---
+slug: 07-worker-pools-and-observability
+lang: en
+track: browser
+unit: 04-workers
+order: 7
+title: "Worker pools, Comlink, and production observability"
+summary: "Pool N workers sized to hardwareConcurrency − 1, dispatch jobs via a priority queue with backpressure, wrap with Comlink for ergonomics — but postMessage task-hops still cost, and every worker thread needs its own telemetry."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["browser/04-workers/02-web-worker-mechanics", "browser/04-workers/03-structured-clone-and-transfer"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["worker-pool", "backpressure", "priority-queue", "Comlink", "postMessage-latency", "task-hop", "worker-observability", "DOM-bottleneck"]
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API
+  - https://developer.mozilla.org/en-US/docs/Web/API/Navigator/hardwareConcurrency
+  - https://github.com/GoogleChromeLabs/comlink
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+You moved the 400 ms image job to a worker. Then users start clicking rapidly and the page accumulates fifty pending jobs, each spawning a new worker that never gets cleaned up. The browser tab now uses 400 MB and is being killed on mobile.
+</Hook>
+
+<Crux>Pool workers at hardwareConcurrency − 1 with backpressure and priority routing; DOM mutation stays on the main thread no matter what.</Crux>
+
+<Explanation>
+
+## When workers pay off — and when they do not
+
+Spawning a worker is not free: a new realm, a new event loop, a fresh copy of any imported scripts — typically **5–20 ms of startup** plus a few MB of memory. A worker is worth it when:
+- The task is **long** (tens of ms or more), so startup is amortised.
+- The result-transfer cost is **small** relative to the compute.
+
+It is a net loss when the task is short — the postMessage round-trip and clone overhead can exceed the work itself.
+
+For repeated small jobs: maintain a **worker pool** rather than spawning per job.
+
+## The worker pool
+
+A pool amortises startup cost and bounds memory:
+
+```
+pool size = navigator.hardwareConcurrency − 1  // leave one core for main thread
+```
+
+Components:
+1. **N workers**, created once and reused.
+2. **A job queue** — pending work waiting for a free worker.
+3. **A dispatcher** — on job arrival: if a worker is free, send it; otherwise enqueue.
+
+The pool pattern eliminates repeated startup cost and bounds total worker memory.
+
+**Backpressure.** Without a queue cap, the queue grows unboundedly under load. Two options:
+- Drop the oldest enqueued jobs.
+- Reject new jobs (return a rejected promise) so callers can back off.
+
+**Priority routing.** Not all jobs are equal — a filter preview the user is waiting for right now outranks background thumbnail generation. Use a priority-tagged queue: interactive jobs skip background ones.
+
+**Cancellation.** If the user scrolls away before a job completes, cancel it. For a queued job: remove it. For an in-progress job: the clean way is an atomic cancellation flag in a SharedArrayBuffer — the worker checks it periodically and exits early, keeping itself alive for the next job. The blunt way is `worker.terminate()` — but that destroys the worker, forcing a new spawn for the next job (back to paying startup cost).
+
+<NumbersCard
+  id="card-pool-numbers"
+  title="Worker pool design"
+  data-lesson-visual
+  stats={[
+    { label: "Pool size rule of thumb", value: "hardwareConcurrency − 1" },
+    { label: "Worker startup", value: "5–20 ms + script parse" },
+    { label: "postMessage task-hop latency", value: "~1 ms each direction" },
+    { label: "Empty worker memory", value: "A few MB" },
+    { label: "Worker + large library", value: "Tens of MB" },
+    { label: "Leaked worker (forgotten terminate)", value: "Persists until tab close" },
+  ]}
+/>
+
+## The DOM-in-a-worker mistake
+
+The single most common worker mistake is architectural: teams reach for a worker to "speed up rendering" and discover the worker cannot touch the DOM at all. A worker can compute *what* should render but never *render* it — the result must be posted back and applied by the main thread.
+
+If the bottleneck is DOM mutation itself (10 000 nodes inserted, a giant React reconciliation), a worker does not help — the expensive part has to happen on the main thread regardless. Workers help when the bottleneck is **pure computation** that produces a small result:
+
+- Parse 5 MB JSON (worker) → post back 200-row array (cheap) → main thread renders 200 rows (fast). ✓
+- React reconciliation of 10 000 nodes (bottleneck is the commit, not derivation) — worker cannot help. ✗
+
+The exception: `OffscreenCanvas`. Canvas rendering *can* be done from a worker. Transfer an `OffscreenCanvas` and the worker draws 2D or WebGL entirely off the main thread.
+
+## Comlink and the RPC illusion
+
+[Comlink](https://github.com/GoogleChromeLabs/comlink) makes `await worker.heavyCompute(data)` look like a local call by wrapping a worker in a Proxy. This is ergonomic, but the abstraction hides two costs that still matter:
+
+1. **Every argument is structured-cloned** unless explicitly wrapped with `Comlink.transfer`.
+2. **Every call is a task hop each way** — a round-trip message between threads.
+
+The illusion breaks for chatty interfaces — a worker API with many small methods called in a tight loop pays a task hop per call and serialises the program on the round-trips. Design worker interfaces **coarse**: one call that does a batch of work and returns a batch of results, not many fine-grained calls. Same principle as network API design: minimise round-trips, maximise work per round-trip.
+
+## Production observability
+
+Each worker and each service worker is a **separate context in DevTools**. Web workers appear in the Sources panel thread list. Service workers have a dedicated panel under Application → Service Workers.
+
+**Telemetry across threads:**
+- Instrument both sides of every postMessage with timestamps. Measure real task-hop latency and clone cost in production — local dev on a fast machine systematically understates both.
+- Track service worker `fetch`-handler duration. A slow handler delays every navigation and resource load on the page, and because it runs before the main thread sees the response, a regression there is invisible to ordinary main-thread profiling.
+
+**Worker leak detection:**
+- A component that creates a worker in `useEffect` without terminating in the cleanup function leaks a worker on every remount. After a dozen navigations, you accumulate a pool of dead workers that nobody created intentionally.
+- Profile with DevTools → Performance → Threads to see all active workers. Unexpected idle threads are leaks.
+
+<TradeoffMatrix
+  id="card-worker-cost"
+  lessonSlug="07-worker-pools-and-observability"
+  lang="en"
+  prompt="You need to run a 400 ms image-processing job triggered by a button click, without freezing the page. Pick the approach."
+  options={[
+    { name: "Transfer the ImageBitmap to a pooled web worker, process, transfer the result back", summary: "Off-main-thread, O(1) data hand-off.", correct: true, justification: "Image data is binary and large — transferables move it in constant time with no clone tax. A worker pool amortises the 5–20 ms startup across many jobs. The main thread stays at 60 fps for the full 400 ms; the result transfers back cheaply. This is the canonical fit for worker offload: long compute, small or transferable I/O." },
+    { name: "Run it on the main thread, but break it into 50 ms chunks with scheduler.yield()", summary: "Works, but still steals main-thread time.", justification: "Chunking keeps input responsive, but the 400 ms of work still competes with rendering and input on the one thread — total wall-clock grows and every frame during the job is tighter. Acceptable as a fallback when workers are unavailable, not the first choice when the work is cleanly offloadable." },
+    { name: "Structured-clone the raw pixel array to a worker by value", summary: "Offloads compute but pays a clone tax.", justification: "The compute moves off-main-thread, but copying a multi-MB pixel array by value blocks the sender for tens of ms on the clone — twice (send and receive). Correct destination, wrong transport: use transferables for the ArrayBuffer, not a by-value copy." },
+    { name: "Spawn a fresh worker per click", summary: "Repeated startup cost.", justification: "Each click pays 5–20 ms of worker startup plus memory churn. For a button users click repeatedly, a persistent pooled worker eliminates that cost. Per-job spawning is only acceptable for genuinely one-off work." },
+  ]}
+/>
+
+<DesignPrompt
+  id="sr-design-pool-1"
+  lessonSlug="07-worker-pools-and-observability"
+  lang="en"
+  prompt="Design the threading architecture for a browser-based video editor: a 4K timeline, real-time filter previews, and export. It must stay at 60 fps during scrubbing and never freeze the UI."
+  constraints={[
+    "Main thread reserved for DOM, input, and the timeline UI only.",
+    "Filter previews must update within 100 ms of a parameter change.",
+    "Export of a multi-minute clip must not block the UI and must show progress.",
+    "Large frame buffers must cross threads without per-frame clone cost.",
+    "The app must load instantly on repeat visits and survive a page reload mid-edit.",
+    "Multithreaded WASM is used for the codec.",
+  ]}
+  canonical="Layer the threads by job. (1) Main thread: timeline DOM, input, and orchestration only — no pixel work ever. (2) A web worker pool sized to navigator.hardwareConcurrency − 1 for filter processing; frames cross as transferable ImageBitmap / ArrayBuffer so there is no per-frame clone cost. (3) An OffscreenCanvas transferred to a render worker draws the preview canvas off the main thread, so scrubbing never competes with the timeline UI. (4) The codec runs as multithreaded WASM — which requires the document to be cross-origin isolated: ship COOP: same-origin + COEP: require-corp, audited via report-only first, with all CDN assets serving CORP. Inside the WASM, a SharedArrayBuffer holds the frame ring buffer and Atomics coordinate producer/consumer between codec threads. (5) Export runs in its own dedicated worker, posting progress messages every ~500 ms; the UI shows a progress bar fed by those messages. (6) A service worker precaches the app shell and the WASM binary with cache-first content-hashed assets, giving instant repeat loads; in-progress edit state is checkpointed to IndexedDB so a reload mid-edit restores. Verify: scrub a 4K timeline for 30 s in DevTools Performance — main thread shows only UI work, zero long tasks; confirm crossOriginIsolated is true; confirm frames move as transfers (no large structured-clone entries)."
+  keyPoints={[
+    "Reserve the main thread for DOM/input; all pixel work goes to workers.",
+    "Move frame buffers as transferables or via SharedArrayBuffer — never by-value clone.",
+    "OffscreenCanvas lets canvas rendering itself run off the main thread.",
+    "Multithreaded WASM needs cross-origin isolation: COOP + COEP, with every cross-origin asset serving CORP.",
+    "A service worker gives instant repeat loads; IndexedDB checkpoints survive a reload.",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is `navigator.hardwareConcurrency − 1` the pool size rule? Using all N cores for workers starves the main thread — rendering, input, and your JS all run there. Leaving one core free for the main thread keeps 60 fps animation and input handling smooth while the worker pool runs at full utilisation. On a device with 2 cores the pool is 1 worker; on an 8-core machine it is 7. This is the same reasoning as leaving one CPU for the OS scheduler in server deployments. The `− 1` is heuristic, not law — workloads with very short tasks may benefit from a smaller pool (less contention per core); workloads with I/O-bound workers may benefit from a larger one. Profile first.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Pool workers at hardwareConcurrency − 1, add backpressure and priority routing, use Comlink for ergonomics but keep interfaces coarse to avoid task-hop serialisation. Workers cannot help DOM mutation — only pure compute. Instrument both sides of every postMessage for production latency visibility.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-worker-pools-and-observability-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate proposes moving a slow React re-render into a web worker to fix jank. Explain why this will not work and what actually will.", a: "A web worker has no DOM — no document, no window, no elements. React's commit phase mutates real DOM nodes, and that can only happen on the main thread. Workers can help if the slowness is data derivation (filter, sort, aggregate a large dataset before rendering) — move that to a worker, return a small prepared result, and React renders quickly. If the slowness is the reconciliation and commit themselves, the fix is on the main thread: virtualise the list, use concurrent React (useTransition) to time-slice the reconciliation, and memoise to cut wasted re-renders." },
+    { q: "What is the Comlink task-hop problem and how do you design around it?", a: "Comlink wraps a worker in a Proxy, making remote calls look like local async functions. But every call is still a round-trip postMessage — two task hops. A chatty interface with many small method calls in a loop serialises the program on task-hop latency. Design around it by making worker interfaces coarse: one call that does a batch of work and returns a batch of results. Same as minimising network round-trips." },
+    { q: "How do you detect and prevent worker leaks in a React application?", a: "Worker leaks happen when a component creates a worker in useEffect but does not terminate it in the cleanup function. On every remount, a new worker is created while the old one persists until the tab closes. Prevention: always call worker.terminate() in the useEffect cleanup. Detection: DevTools Performance → Threads shows all active workers — unexpected idle threads are leaks." },
+  ]}
+/>
+
+<Recap lang="en">
+Worker pools amortise the 5–20 ms startup cost and bound memory — size the pool to `navigator.hardwareConcurrency − 1`. Add backpressure (cap the queue, reject or drop when full) and priority routing (interactive jobs before background). Comlink removes postMessage boilerplate but hides clone and task-hop costs — keep worker APIs coarse to minimise round-trips. Workers cannot help DOM mutation — only pure computation. In production, instrument postMessage timestamps on both sides to measure real latency; track service worker fetch-handler duration as it is invisible to main-thread profiling; watch for worker leaks in SPA components.
+</Recap>

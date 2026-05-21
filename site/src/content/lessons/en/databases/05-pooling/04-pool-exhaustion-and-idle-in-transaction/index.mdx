@@ -1,0 +1,200 @@
+---
+slug: 04-pool-exhaustion-and-idle-in-transaction
+lang: en
+track: databases
+unit: 05-pooling
+order: 4
+title: "Pool exhaustion and idle-in-transaction: the 3 AM failure mode"
+summary: "Pool exhaustion is almost always a hold-time problem, not a sizing problem; idle-in-transaction is the silent killer that drains a pool in seconds and also blocks VACUUM."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/05-pooling/03-pool-sizing-math"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["pool-exhaustion", "idle-in-transaction", "outbox_pattern", "PgBouncer"]
+sources:
+  - https://www.pgbouncer.org/faq.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://www.crunchydata.com/blog/prepared-statements-in-transaction-mode-for-pgbouncer
+  - https://node-postgres.com/guides/pool-sizing
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+At 02:14 the PgBouncer alert fires: pool = 24, cl_waiting = 180. The app is returning 503s. pg_stat_activity shows 19 backends in state "idle in transaction" with max age 8 minutes. The pool was sized correctly this morning.
+</Hook>
+
+<Crux>Exhaustion is a hold-time problem, not a size problem. Idle-in-transaction drains the pool and blocks VACUUM. Find the hold; fix the hold.</Crux>
+
+<Explanation>
+
+## What pool exhaustion actually means
+
+Pool exhaustion happens when every backend in the pool is checked out and no new connection can be borrowed. At the application layer: `pool.acquire()` times out or is rejected. At the Postgres layer: the backends behind those checked-out connections are in one of these states:
+
+- `active` — running a slow query or waiting on a lock
+- `idle in transaction` — between statements inside a BEGIN that has not COMMITted or ROLLBACKed
+- `idle` — genuinely idle (then why is the pool full? answer: wrong pool_size setting or connection leak)
+
+The pool is exhausted in the sense that no slot is free. The database is not exhausted — it is waiting on the application.
+
+## Four root causes
+
+1. **Long-running queries** — a missing index makes a query take 5 s; at 1,000 QPS that is 5,000 connections in flight. Fix: EXPLAIN ANALYZE, add the index, paginate large scans.
+
+2. **Idle-in-transaction** — the most common. An application opened a transaction (BEGIN) and did not COMMIT or ROLLBACK: an unhandled exception, an external API call inside the transaction, a missing try/finally. The backend sits "idle in transaction" holding locks, an MVCC snapshot, and a pool slot.
+
+3. **Traffic burst** — demand exceeds steady-state pool sizing. Fix: reserve_pool_size in PgBouncer, autoscaling at the application layer, or queue-and-degrade (return 503 with Retry-After before pool exhaustion).
+
+4. **External dependency inside a transaction** — a Stripe charge call, an S3 upload, a webhook delivery all inside BEGIN...COMMIT. The transaction holds open for the duration of the external call. If that service slows down, every in-flight transaction holds a pool slot for seconds to minutes.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Root cause</th>
+        <th class="border border-border px-3 py-2 text-left">pg_stat_activity signal</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Missing index / slow query</td>
+        <td class="border border-border px-3 py-2">Many rows in state=active with old query_start</td>
+        <td class="border border-border px-3 py-2">EXPLAIN ANALYZE + add index</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Idle-in-transaction bug</td>
+        <td class="border border-border px-3 py-2">Many rows in state=idle in transaction with old xact_start</td>
+        <td class="border border-border px-3 py-2">Fix code path + idle_in_transaction_session_timeout</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">External API inside transaction</td>
+        <td class="border border-border px-3 py-2">state=idle in transaction, last query = BEGIN</td>
+        <td class="border border-border px-3 py-2">Move call outside transaction; use outbox pattern</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Lock contention</td>
+        <td class="border border-border px-3 py-2">SELECT * FROM pg_locks WHERE NOT granted</td>
+        <td class="border border-border px-3 py-2">Find and terminate blocking backend; review DDL</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Idle-in-transaction is a double failure
+
+An `idle in transaction` backend holds:
+1. **A pool slot** — visible immediately; causes pool exhaustion
+2. **Row locks** — any locked rows cannot be written by other transactions
+3. **An MVCC snapshot** — VACUUM cannot clean dead tuples older than this backend's xmin; tables bloat
+
+One bug that opens a transaction and forgets to commit on an error path can drain a 20-connection pool in seconds *and* cause table bloat that develops over hours.
+
+## Diagnosing pool exhaustion in five steps
+
+<TraceScenario
+  id="04-pool-exhaustion-trace-1"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="en"
+  scenario="Pool exhaustion alarm fires at 02:14. Walk the diagnosis."
+  steps={[
+    { prompt: "Step 1: what does PgBouncer SHOW POOLS tell you?", reveal: "Look at cl_active (clients with assigned backend), cl_waiting (clients waiting for a backend), sv_active (backends running queries), sv_idle (idle in pool). High cl_waiting + sv_active all at pool_size = pool is full, queries are running long. High sv_used or sv_login = backend churn. Run: psql -h pgbouncer-admin -p 6432 -U pgbouncer pgbouncer -c 'SHOW POOLS;'" },
+    { prompt: "Step 2: what does pg_stat_activity show?", reveal: "SELECT state, count(*), max(now()-xact_start) AS max_age FROM pg_stat_activity WHERE backend_type='client backend' GROUP BY state ORDER BY count DESC. If many rows are 'idle in transaction' with old xact_start — app is holding transactions open. If many are 'active' with old query_start — slow queries or lock waits." },
+    { prompt: "Step 3: identify the offending queries.", reveal: "For idle-in-transaction: SELECT pid, query_start, xact_start, state, query FROM pg_stat_activity WHERE state = 'idle in transaction' ORDER BY xact_start LIMIT 10. Cross-reference application logs for what that worker was doing before the stuck transaction. For slow queries: SELECT query, mean_exec_time, calls FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 10." },
+    { prompt: "Step 4: check lock contention.", reveal: "SELECT * FROM pg_locks WHERE NOT granted — any rows = blocking. Then: SELECT pg_blocking_pids(pid) FROM pg_stat_activity WHERE wait_event_type='Lock'. A long DDL (ALTER TABLE without CONCURRENTLY) can block the whole queue. Terminate the blocker with pg_terminate_backend(pid)." },
+    { prompt: "Step 5: durable mitigations.", reveal: "Immediate: pg_terminate_backend(pid) for each stuck backend. Tactical: SET idle_in_transaction_session_timeout = '60s' in postgresql.conf; reload. Strategic: code review to find BEGIN..await-external-call..COMMIT patterns; add lint rule; introduce outbox pattern for write-then-event; add observability (alert on idle-in-transaction age > 30s, PgBouncer cl_waiting > 0)." },
+  ]}
+/>
+
+## The safety net: idle_in_transaction_session_timeout
+
+Setting this Postgres GUC kills any backend that stays in `idle in transaction` past the threshold:
+
+```sql
+ALTER SYSTEM SET idle_in_transaction_session_timeout = '60s';
+SELECT pg_reload_conf();
+```
+
+With this set, the Stripe outage scenario from the hook becomes: Stripe timeouts cause individual transaction aborts (logged, alertable) rather than pool exhaustion. The pool survives; the application logs the 504s and retries.
+
+This is a **free safety net**. Every production Postgres deployment should have it. Set it to a value above your slowest legitimate transaction (typically 30–120 s for OLTP).
+
+<Inset kind="why" lang="en">
+Why does idle-in-transaction also block VACUUM? MVCC (04-mvcc-isolation) showed that each transaction holds an xmin snapshot — the horizon before which VACUUM cannot clean dead tuples. A backend stuck idle-in-transaction holds that snapshot indefinitely. One forgotten COMMIT in a rarely-executed code path can prevent VACUUM from cleaning a hot table for hours, causing unbounded bloat. The pool exhaustion is the visible symptom; the table bloat is the silent one that compounds over time.
+</Inset>
+
+<NumbersCard
+  id="card-exhaustion-safety"
+  title="Idle-in-transaction safety numbers"
+  stats={[
+    { label: "idle_in_transaction_session_timeout recommended", value: "30–60 s" },
+    { label: "statement_timeout recommended", value: "10–30 s" },
+    { label: "lock_timeout recommended", value: "5 s" },
+    { label: "PgBouncer query_wait_timeout", value: "10–30 s" },
+    { label: "Alert: idle-in-tx age threshold", value: "&gt; 30 s" },
+    { label: "Alert: cl_waiting sustained", value: "&gt; 0 for 60 s" },
+  ]}
+/>
+
+<Misconception id="mc-raise-pool">
+  <p><strong>"Pool exhausted? Raise pool_size."</strong> Almost always wrong. Exhaustion means connections are held too long — slow query, idle-in-transaction, external API inside a transaction. Raising pool_size moves the symptom: more backends fight the same locks, more shared-memory contention. Find the hold; fix the hold.</p>
+</Misconception>
+
+<Quiz
+  id="04-pool-exhaustion-quiz-1"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="en"
+  question="What is the most common root cause of PgBouncer pool exhaustion in production?"
+  choices={[
+    { label: "The application holds transactions open across slow operations such as external API calls — backends stay 'idle in transaction' while real work is blocked", correct: true },
+    { label: "Pool_size is always too small and needs to be doubled", misconception: "Sometimes pool_size is too small, but the dominant root cause is hold-time — the connections are held open too long, not that there are too few of them." },
+    { label: "Postgres is rejecting queries due to a bug in the planner", misconception: "Postgres works correctly; the issue is application patterns that hold backends open." },
+    { label: "TCP connection exhaustion from the operating system", misconception: "TCP is rarely the bottleneck at typical application scales. Pool exhaustion is almost always a hold-time issue." },
+  ]}
+/>
+
+<Quiz
+  id="04-pool-exhaustion-quiz-2"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="en"
+  question="An application calls a third-party payment API inside a BEGIN...COMMIT block. The payment API starts timing out at 30 s. What happens to the connection pool?"
+  choices={[
+    { label: "Each in-flight payment holds a backend in 'idle in transaction' for up to 30 s; under any real load this drains the pool entirely", correct: true },
+    { label: "PgBouncer detects the slow API and releases the backend early", misconception: "PgBouncer cannot release a backend mid-transaction — it only gets the connection back after COMMIT or ROLLBACK." },
+    { label: "Postgres automatically rolls back transactions idle for more than 10 s", misconception: "By default idle_in_transaction_session_timeout = 0 (disabled); Postgres does not auto-rollback unless explicitly configured." },
+    { label: "The pool queues the requests and serves them after the API recovers", misconception: "The pool queues new requests, but backends are already checked out for the hung transactions — the queue grows until query_wait_timeout fires." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Pool exhaustion is hold-time, not size. idle_in_transaction_session_timeout = 60s is free insurance: one stuck external-API call inside a transaction silently drains a pool; with the timeout set, it aborts and logs instead. Never call external APIs inside a Postgres transaction.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-pool-exhaustion-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through what pool exhaustion means at each layer — application, pooler, Postgres — and why raising pool_size usually fails.", a: "At the application layer, pool.acquire() times out or is rejected immediately (PoolExhaustedError, 'connection timeout'). At the pooler layer, PgBouncer cl_waiting counter rises — clients are queued waiting for a free backend. At the Postgres layer, the in-use backends are doing something: running long queries (state=active, old query_start), or sitting idle-in-transaction (state=idle in transaction, old xact_start). Raising pool_size from 24 to 100 makes 100 backends available — but the backends are still doing the same long-hold work. If each transaction holds for 10 seconds, 100 backends × 10 QPS = 100 held connections at steady state, same as before but now with more Postgres context-switch overhead. The root cause (hold time) is unaddressed; throughput drops further. Fix the hold first." },
+    { q: "Why does an idle-in-transaction backend harm more than just the pool?", a: "Three simultaneous harms: (1) Pool slot occupied — that backend cannot serve another client, reducing effective pool capacity. (2) Row locks held — any rows locked by the stuck transaction cannot be written by others; under contention this can cascade into lock wait queues. (3) MVCC snapshot pinned — VACUUM cannot clean dead tuples with xmin older than this backend's snapshot horizon (backend_xmin in pg_stat_activity). A single idle-in-transaction backend from a transaction that started an hour ago prevents VACUUM from reclaiming dead tuples for the entire hour, causing table bloat that grows silently. Pool exhaustion is the fast symptom; table bloat is the slow one that accumulates until queries start doing large seq scans through dead tuples." },
+    { q: "What Postgres and PgBouncer settings act as safety nets against idle-in-transaction exhaustion?", a: "Postgres: idle_in_transaction_session_timeout (e.g., 60s) — kills any backend stuck in idle-in-transaction past this threshold, aborting the transaction and returning the backend to the pool. statement_timeout (e.g., 30s) — kills runaway individual queries. lock_timeout (e.g., 5s) — avoids DDL lock storms. These are GUCs; set with ALTER SYSTEM SET ... + SELECT pg_reload_conf(). PgBouncer: query_wait_timeout (e.g., 10s) — rejects clients that have waited longer than this for a backend, making failures fast and observable instead of piling up. server_idle_timeout (600s) — recycles idle backends to prevent stale connection accumulation. Together these ensure that failures surface as errors within seconds rather than compounding into cascades." },
+  ]}
+/>
+
+<Recap lang="en">
+Pool exhaustion fires when every backend is checked out and no new slot is available. The dominant root cause is hold-time: a transaction held open across a slow query, lock wait, or external API call keeps the backend occupied. Raising `pool_size` does not fix hold-time — it buys more in-flight transactions at the same hold, adding Postgres contention. The correct sequence is: identify the hold via `pg_stat_activity` and `SHOW POOLS`; fix the cause (index, move API call outside transaction, add `COMMIT/ROLLBACK` on error paths); add `idle_in_transaction_session_timeout = 60s` as a permanent safety net; alert on `cl_waiting > 0` and idle-in-transaction age `> 30s`. A backend stuck idle-in-transaction also pins an MVCC snapshot, silently blocking `VACUUM` and growing table bloat — pool exhaustion and MVCC bloat share the same root cause.
+</Recap>

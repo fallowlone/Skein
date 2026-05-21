@@ -1,0 +1,171 @@
+---
+slug: 03-use-on-linux
+lang: en
+track: observability
+unit: 04-red-use
+order: 3
+title: "USE on Linux: CPU, memory, disk, network, and PSI"
+summary: "How to collect utilization, saturation, and error signals for every Linux resource — and why Pressure Stall Information (PSI, kernel 4.20+) is the modern saturation signal that replaces load averages."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - "observability/04-red-use/01-red-and-use-overview"
+deepensInto: []
+spiral: ["latency"]
+concepts: ["use-method", "psi", "node-exporter", "linux-performance", "saturation"]
+sources:
+  - https://www.brendangregg.com/usemethod.html
+  - https://www.brendangregg.com/USEmethod/use-linux.html
+  - https://docs.kernel.org/accounting/psi.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A Stripe webhook worker stalled for 11 minutes in 2024. Free-RAM dashboards showed plenty of available memory. The actual cause was kernel memory pressure at 90% — the kernel was thrashing reclaim. PSI caught the next incident in 30 seconds. Free-RAM dashboards still showed nothing.
+</Hook>
+
+<Crux>Per Linux resource: U (busy%), S (PSI or queue depth), E (ECC/EIO/drops). PSI gives alertable saturation without guessing thresholds.</Crux>
+
+<Explanation>
+
+## The USE resource checklist for Linux
+
+Brendan Gregg's original USE checklist for Linux covers roughly 30 resource × U/S/E cells. In node_exporter + Prometheus, the key ones are:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Resource</th>
+        <th class="border border-border px-3 py-2 text-left">Utilization metric</th>
+        <th class="border border-border px-3 py-2 text-left">Saturation metric</th>
+        <th class="border border-border px-3 py-2 text-left">Error metric</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">CPU</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_cpu_seconds_total (mode=idle subtracted)</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_pressure_cpu_waiting_seconds_total (PSI) or vmstat r column</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">MCE errors (rare)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Memory</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">1 - node_memory_MemAvailable / node_memory_MemTotal</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_pressure_memory_waiting_seconds_total (PSI) or vmstat si/so</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">ECC errors, node_memory_HardwareCorrupted</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Disk I/O</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_io_time_seconds_total rate (%util)</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_io_time_weighted_seconds_total (queue depth) + PSI io</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_read_errors_total, EIO</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Network</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_transmit_bytes_total / link speed</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_transmit_drop_total, TCP retransmits</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_receive_errs_total, CRC errors</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## PSI: Pressure Stall Information
+
+PSI was merged into Linux 4.20 (December 2018) by Johannes Weiner at Facebook, solving a long-standing observability gap: pre-PSI you had to infer pressure from load averages, vmstat's `r` column, and `iowait` — none of which scale correctly across many cores or capture transient saturation.
+
+PSI exposes at `/proc/pressure/{cpu,memory,io}` a six-value report per resource:
+
+```
+some avg10=5.20 avg60=3.11 avg300=1.02 total=1234567
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+```
+
+- **some**: at least one task was stalled waiting for this resource, averaged over 10s / 60s / 300s.
+- **full**: _all_ non-idle tasks were stalled. This is the critical signal — if `full > 0` for memory or I/O for more than 10 seconds, you almost certainly have a crunch even if free-RAM looks plentiful (the kernel is thrashing reclaim).
+
+PSI overhead: sub-1% (kernel-side counters, no per-task tracing).
+
+node_exporter exposes PSI as `node_pressure_cpu_waiting_seconds_total`, `node_pressure_memory_waiting_seconds_total`, and `node_pressure_io_waiting_seconds_total`.
+
+## Why PSI beats load average
+
+Load average mixes runnable and uninterruptible tasks, scales oddly with core count, and is a 1-minute exponential moving average — a transient 5-second CPU crunch barely registers. On a 64-core host, a load average of 10 is fine; on a 2-core host it is a disaster. PSI normalises by wall-clock time and is independent of core count.
+
+Production alert thresholds:
+
+- `rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0.1` (10% of time stalled on CPU) → warning
+- `rate(node_pressure_memory_stalled_seconds_total[5m]) > 0` for 10 min → memory crunch, page immediately
+- `rate(node_pressure_io_stalled_seconds_total[5m]) > 0` for 5 min → I/O crunch
+
+Kubernetes 1.27+ uses PSI internally for eviction decisions for the same reason.
+
+## How USE signals look under failure
+
+**CPU-bound workload:** Utilization climbs toward 100%, saturation (run-queue length) rises above the core count. This is the correct signal that scaling out will help. CPU per request stays flat — it is volume, not regression.
+
+**Memory leak:** Utilization climbs slowly with `si/so` (swap-in / swap-out) eventually non-zero. PSI memory `full` goes from 0 to non-zero — the kernel is thrashing reclaim to free pages.
+
+**Disk-bound workload:** `%util` near 100% on one or more disks, queue depth growing, PSI io `some` rising. This is what killed the Stripe worker above — visible in PSI, invisible in free-RAM.
+
+**Network-bound:** TCP retransmits rising (`node_netstat_Tcp_RetransSegs`), NIC drops rising, bandwidth at negotiated maximum.
+
+<Inset kind="why" lang="en">
+Why does PSI memory `full` fire even when free RAM looks plentiful? Because the kernel's reclaim system runs in the background to keep a free-page reserve, and when that reclaim cannot keep pace with allocation, it starts blocking allocating tasks. This manifests as PSI memory `full` — tasks stalled waiting for the kernel to free pages — while `MemAvailable` still shows hundreds of megabytes. The free-RAM metric measures what is available right now; PSI measures what the kernel had to do to provide it.
+</Inset>
+
+<Quiz
+  id="03-use-on-linux-quiz-1"
+  lessonSlug="03-use-on-linux"
+  lang="en"
+  question="A pod's CPU utilization is 40% but real user requests are experiencing delays. What PSI signal confirms the CPU is actually causing stalls?"
+  choices={[
+    { label: "node_cpu_seconds_total in mode=iowait", misconception: "iowait is CPU time spent idle while waiting for I/O — it does not measure CPU saturation." },
+    { label: "rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0 — PSI cpu some > 0 means at least one task was stalled waiting for CPU cycles, regardless of average utilization.", correct: true },
+    { label: "node_load1 > number_of_cores", misconception: "Load average mixes runnable and uninterruptible tasks and scales oddly with core count — PSI is the modern replacement." },
+    { label: "node_memory_MemAvailable < 10%", misconception: "That is a memory metric. CPU saturation is shown by PSI cpu, not memory." },
+  ]}
+/>
+
+<Quiz
+  id="03-use-on-linux-quiz-2"
+  lessonSlug="03-use-on-linux"
+  lang="en"
+  question="PSI memory 'full' is non-zero for 15 seconds. What does this mean, even if MemAvailable shows 500 MB free?"
+  choices={[
+    { label: "It is a false positive — 500 MB free means there is no memory pressure", misconception: "PSI full means all non-idle tasks were stalled waiting for memory — the kernel is thrashing reclaim even though MemAvailable still shows a number." },
+    { label: "All non-idle tasks were stalled waiting for memory. The kernel cannot free pages fast enough; MemAvailable shows what is available now, not the reclaim pressure.", correct: true },
+    { label: "500 MB is below the kernel's minimum reserve, so OOM is imminent", misconception: "OOM depends on the specific allocation, not a fixed threshold. PSI full is the stall signal, not an OOM predictor directly." },
+    { label: "The metric is measuring swap, not RAM", misconception: "PSI memory measures all task stalls on memory allocation, not just swap activity." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>USE on Linux: collect CPU/memory/disk/network each as utilization (busy%), saturation (queue depth or PSI), and errors. PSI (kernel 4.20+) replaces load average as the saturation signal because it measures wall-clock task stall time regardless of core count — 'full' &gt; 0 on memory or I/O is a page-grade incident signal.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-use-on-linux-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is PSI's 'some' vs 'full' distinction, and which is more severe?", a: "'some' means at least one task was stalled waiting for the resource — the system is degraded but not halted. 'full' means all non-idle tasks were stalled — no useful work was possible during that window. 'full' is more severe: if memory or I/O 'full' is non-zero for more than 10 seconds, you almost certainly have a crunch even if free-RAM or disk utilization looks plentiful." },
+    { q: "Why is PSI cpu some > 20% a better alert than CPU utilization > 80%?", a: "Utilization is busy-time; pressure is stall-time. A pod at 90% CPU utilization can be perfectly healthy if no work is queued (e.g. a single-thread workload). A pod at 40% utilization with severe scheduler contention, cgroup throttling, or noisy neighbours can be making users wait — and the utilization alert is silent. PSI cpu some > 20% means real user-facing work was stalled on cycles 20% of the time, regardless of utilization. Kubernetes uses PSI for eviction decisions." },
+    { q: "Name the four Linux resources in the USE checklist and one node_exporter metric for each's saturation.", a: "CPU: node_pressure_cpu_waiting_seconds_total. Memory: node_pressure_memory_waiting_seconds_total (or vmstat si/so for swap). Disk I/O: node_disk_io_time_weighted_seconds_total (queue depth) + PSI io. Network: node_network_transmit_drop_total + node_netstat_Tcp_RetransSegs." },
+  ]}
+/>
+
+<Recap lang="en">
+The USE method on Linux covers four main resource groups: CPU, memory, disk I/O, and network — each with a utilization metric (average % busy), a saturation metric (queue depth or stall time), and an error metric (ECC, EIO, NIC drops). Before kernel 4.20, saturation had to be inferred from load averages and vmstat columns, which scale poorly. Linux's Pressure Stall Information (PSI), introduced by Johannes Weiner at Facebook and merged December 2018, exposes at `/proc/pressure/{cpu,memory,io}` the percentage of wall-clock time during which tasks were stalled on each resource. PSI `some` means at least one task stalled; PSI `full` means all non-idle tasks stalled — if `full` is non-zero for more than 10 seconds on memory or I/O, you have a crunch even if free-RAM looks plentiful. node_exporter exposes PSI as `node_pressure_*` metrics; alerting on their rate is the modern replacement for load-average thresholds.
+</Recap>

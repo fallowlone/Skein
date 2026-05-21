@@ -1,0 +1,198 @@
+---
+slug: 06-async-context-and-mesh
+lang: en
+track: observability
+unit: 06-trace-propagation
+order: 6
+title: "Async context per language, service mesh, B3 migration, and security"
+summary: "Every runtime has a context substrate — Node AsyncLocalStorage, Python contextvars, Java thread-local, Go context.Context — each with distinct failure modes. Mesh propagates headers for HTTP not queues. traceparent in browsers is a privacy risk unless scope-limited."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/06-trace-propagation/05-sampling-consistency-and-collector"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["async-local-storage", "contextvars", "go-context", "b3-migration", "service-mesh-tracing", "traceparent-privacy"]
+sources:
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+  - https://github.com/openzipkin/b3-propagation
+  - https://www.w3.org/TR/trace-context/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A Java service migrates from thread-pool-based request handling to Project Loom virtual threads. After the migration, 30% of traces are orphans. The OTel SDK version didn't change. What broke?
+</Hook>
+
+<Crux>Node ALS, Python contextvars, Java Scope, Go ctx — each has a different failure mode when you cross an async boundary without context.</Crux>
+
+<Explanation>
+
+## Async context propagation: language by language
+
+Each runtime has its own mechanism for "what is the current execution context?" — and OTel hooks into that mechanism. When you cross a primitive the runtime doesn't carry context through automatically, context is silently lost.
+
+**Node.js:** `AsyncLocalStorage` (built into Node 12+) is the substrate. OTel hooks into it for in-process propagation. Pitfalls: `setTimeout`, `setImmediate`, `queueMicrotask`, and any third-party promise wrapping that creates a new AsyncLocalStorage context can lose trace context. OTel auto-instrumentation patches the common ones, but custom libraries break it. Fix: `context.bind(ctx, fn)` before passing a callback to any async boundary.
+
+**Python:** `contextvars` from PEP 567 is the substrate; works automatically for asyncio but not threading without `ContextVar.copy()`. If you spawn threads manually, the OTel context from the parent thread is not inherited. Fix: pass the current context to the child thread and set it via `context.attach(ctx)` on entry.
+
+**Java:** traditional `ThreadLocal` plus a `Span.makeCurrent()` try-with-resources block. Project Loom virtual threads are mostly transparent for simple cases, but require careful `Scope` nesting — if a virtual thread is created inside a `Scope`, the scope must outlive the virtual thread, otherwise the context is closed while the thread is still running. Fix: structure virtual-thread creation to happen inside the scope, not outside it.
+
+**Go:** explicit `context.Context` plumbing — every function takes `ctx`, every span lives in `ctx`. Go made the right architectural choice early; context never flows implicitly. The failure mode in Go is not losing context accidentally, but forgetting to thread `ctx` through a function call chain. Fix: pass `ctx` everywhere; use `go vet` and `staticcheck` to flag missing context parameters.
+
+**Browsers:** zone.js (Angular's solution for patching async primitives), or the TC39 `AsyncContext` proposal; OTel-JS supports both via plugins. Service workers and Web Workers require explicit context pass-through.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Runtime</th>
+        <th class="border border-border px-3 py-2 text-left">Context substrate</th>
+        <th class="border border-border px-3 py-2 text-left">Common failure mode</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Node.js</td>
+        <td class="border border-border px-3 py-2">AsyncLocalStorage</td>
+        <td class="border border-border px-3 py-2">setTimeout / custom async wrappers</td>
+        <td class="border border-border px-3 py-2">context.bind(ctx, fn)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Python</td>
+        <td class="border border-border px-3 py-2">contextvars (PEP 567)</td>
+        <td class="border border-border px-3 py-2">Manual threading bypasses asyncio</td>
+        <td class="border border-border px-3 py-2">ContextVar.copy() on thread spawn</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Java</td>
+        <td class="border border-border px-3 py-2">ThreadLocal + Scope</td>
+        <td class="border border-border px-3 py-2">Loom virtual threads outlive Scope</td>
+        <td class="border border-border px-3 py-2">Create virtual thread inside Scope; use context-aware executor</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2">Explicit context.Context</td>
+        <td class="border border-border px-3 py-2">ctx not threaded through a function</td>
+        <td class="border border-border px-3 py-2">Pass ctx everywhere; vet/staticcheck</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## B3 vs W3C: the migration story and safe sequence
+
+Before W3C Trace Context, Twitter's Zipkin/Brave used B3, with two variants: B3 multi-header (`X-B3-TraceId`, `X-B3-SpanId`, `X-B3-Sampled` as separate headers) and B3 single-header (all three combined in one). B3's original trace-id was 64-bit; it was extended to 128-bit for W3C compatibility.
+
+**Safe migration sequence:**
+
+1. **Audit:** identify every service still emitting B3-only headers.
+2. **Deploy composite propagator everywhere:** register W3C TraceContext + B3 multi + B3 single at every service. Write outbound W3C only; extract inbound from both. This is the "read-both, write-W3C" phase.
+3. **Verify:** confirm orphan-span rate doesn't regress.
+4. **Phase out B3 outbound:** after downstream services are confirmed to read W3C, disable B3 outbound at each upstream.
+5. **Remove B3 extractor:** after a quarter at zero B3 inbound, replace the composite propagator with W3C-only.
+
+**What goes wrong if steps are skipped:**
+- Skipping step 2: upstream sends W3C while downstream only reads B3 → traces split.
+- Skipping step 3: a propagation regression goes silent for weeks.
+- Skipping step 5: double header bytes per request indefinitely.
+
+## Trace context across service mesh
+
+Envoy, Linkerd, Istio, Cilium data planes participate in tracing two ways:
+1. **Pass-through (always):** the sidecar forwards `traceparent`/`tracestate`/`baggage` headers on every HTTP and gRPC request transparently.
+2. **Emit their own spans (optional but recommended):** when enabled, the sidecar creates a span for the network hop, showing sidecar latency, connection pooling, and TLS handshake timing distinct from application latency.
+
+**Configuration:** the mesh proxy needs the tracing-collector address and the sampling decision (usually inherit the incoming flag). The mesh's sampling decision must agree with the application's; mismatched rates produce inconsistent traces.
+
+**The limit:** service mesh only handles HTTP and gRPC. Queue consumers, timers, and fire-and-forget callbacks still require explicit application-level propagation. The mesh is not a substitute for OTel SDK instrumentation; it adds a network-hop span, it does not replace application spans.
+
+<Inset kind="why" lang="en">
+When the mesh emits its own span, you gain a three-span view of one HTTP call: client app, mesh sidecar, server app. This lets you distinguish "the application was slow" from "the mesh was slow" — a critical distinction during incidents involving sidecar upgrades, connection pool exhaustion, or mTLS certificate renewal storms.
+</Inset>
+
+## Security: the trace-id as a tracking identifier
+
+Trace-ids are unique per request, 128 bits of entropy, propagated in HTTP headers and visible to anyone who can inspect traffic between the client and the origin. This makes them powerful debugging tools and equally powerful potential trackers.
+
+**The risk:** if a third party (a CDN, a marketing pixel, a CSP-allowed analytics service) can read the `traceparent` header from the user's outbound requests, it can correlate user activity across sites that share the same tracing infrastructure.
+
+**Mitigations:**
+- The W3C spec recommends that user-facing services do not propagate `traceparent` in responses (responses are to the user, not part of an upstream call).
+- Browser-side OTel SDKs should limit propagation to same-origin and explicitly-allowed CORS origins (`TraceContextPropagator.allowedOrigins` list).
+- Production teams maintain an allowlist of downstream hostnames that receive `traceparent` and audit it quarterly.
+- Baggage applies identically — anything in baggage is observable by every downstream including third parties.
+
+<Misconception id="mc-baggage-pii">
+  <p><strong>"Baggage is a private channel between my services."</strong> No. Baggage flows on every outbound hop, including to third-party APIs, SaaS integrations, CDNs that read headers. Anything in baggage is semi-public within and beyond your engineering org. Never put PII or secrets there.</p>
+</Misconception>
+
+<NumbersCard
+  id="06-async-numbers"
+  title="Senior-tier trace propagation numbers"
+  stats={[
+    { label: "Default OTel propagator", value: "TraceContext + Baggage composite" },
+    { label: "B3 single-header trace-id width (original)", value: "64 bits (later extended to 128)" },
+    { label: "Service-mesh sidecar tracing overhead", value: "~1–2% extra CPU" },
+    { label: "Per-request header bytes (traceparent + tracestate small)", value: "~80–200 bytes" },
+    { label: "W3C Trace Context Level 1", value: "Recommendation 2020-02" },
+    { label: "W3C Trace Context Level 2", value: "Recommendation 2024" },
+  ]}
+/>
+
+<Quiz
+  id="06-async-quiz-1"
+  lessonSlug="06-async-context-and-mesh"
+  lang="en"
+  question="A team migrates from B3 to W3C propagation. They deploy W3C-write on upstream services before deploying W3C-read on downstream services. What happens?"
+  choices={[
+    { label: "Upstream services send W3C traceparent; downstream services only extract B3 headers — they don't find a trace-id and start fresh traces, splitting every trace at that boundary", correct: true },
+    { label: "Downstream services automatically detect and parse both formats", misconception: "Unless a composite propagator (W3C + B3) is configured, downstream services only run their registered extractor. If only B3 is registered, W3C headers are ignored." },
+    { label: "The new traceparent header is ignored by older services and the B3 header takes precedence", misconception: "If downstream services don't write B3 on inbound requests (because they migrated to W3C-write already), and if upstream already dropped B3-write, there is no B3 header for the downstream to read." },
+    { label: "Both formats coexist safely because they carry the same trace-id", misconception: "They carry the same trace-id conceptually, but the extraction is format-specific. A B3-only extractor will not parse a W3C traceparent header." },
+  ]}
+/>
+
+<Quiz
+  id="06-async-quiz-2"
+  lessonSlug="06-async-context-and-mesh"
+  lang="en"
+  question="A service mesh (Envoy) is configured to propagate traceparent and emit its own mesh-hop spans. After enabling it, the team still sees orphan traces for some Kafka consumers. Why?"
+  choices={[
+    { label: "The service mesh only handles HTTP and gRPC. Kafka consumers cross a process boundary via message headers and require application-level inject/extract — the mesh doesn't touch Kafka wire formats.", correct: true },
+    { label: "Envoy does not support the W3C traceparent header", misconception: "Envoy has native W3C Trace Context support. The issue is scope: mesh sidecars intercept HTTP/gRPC traffic, not Kafka or other queue protocols." },
+    { label: "The orphans are caused by the mesh emitting duplicate trace-ids", misconception: "Envoy reuses the incoming trace-id and creates a child span with a new span-id. It does not emit duplicate trace-ids." },
+    { label: "Mesh-hop spans require a separate sampling policy that is not yet configured", misconception: "Sampling affects whether spans are kept, not whether traceparent is propagated. Kafka orphans are a propagation gap, not a sampling gap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every runtime's context substrate has its own failure mode: Node AsyncLocalStorage drops across setTimeout, Python contextvars requires manual copy across threads, Java thread-local breaks with Loom scope misuse, Go requires explicit ctx threading. B3 migration requires read-both before write-W3C. The service mesh handles HTTP but not queues. traceparent in browser fetch calls must be scope-limited to prevent cross-site correlation.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-async-retrieval"
+  lang="en"
+  questions={[
+    { q: "A Java service migrates to Project Loom virtual threads and orphan-span rate spikes to 30%. Diagnose and fix.", a: "Project Loom virtual threads are backed by carrier threads, and OTel's Java SDK uses thread-local storage for the current Span. The issue: if a virtual thread is created outside a Span.makeCurrent() Scope — or if the Scope is closed (the try-with-resources block exits) while the virtual thread is still running — the virtual thread's ThreadLocal no longer has the Span. The virtual thread starts with an empty context and emits orphan spans. Diagnosis: check where virtual threads are spawned relative to Scope blocks. Fix: either (a) spawn the virtual thread inside the try-with-resources Scope so the Scope lifetime covers the thread's work, or (b) switch to a CurrentTraceContext-aware executor that propagates the OTel context when threads are submitted. Datadog reported a similar issue in 2024 affecting a large Java workload where 80% of background tasks were orphans for this exact reason." },
+    { q: "Describe the safe 5-step sequence for migrating from B3 to W3C TraceContext and what breaks if you skip step 2.", a: "Step 1: audit — find every service still emitting B3-only headers. Step 2: deploy composite propagator everywhere (W3C + B3 multi + B3 single) — write outbound W3C only, extract inbound from both (read-both, write-W3C phase). Step 3: verify orphan-span rate doesn't regress over 2 weeks. Step 4: disable B3 outbound at each service after confirming its downstreams read W3C. Step 5: remove B3 extractors after a quarter at zero B3 inbound. If you skip step 2 and push W3C-write before deploying W3C-read downstream: upstream services send traceparent; downstream services only run their B3 extractor; they find no B3 header and generate a fresh trace-id; every trace splits at that service boundary. The regression is silent — dashboards show traces, just not the right ones." },
+    { q: "What is the traceparent privacy risk in browser applications and what are the three mitigations?", a: "Risk: traceparent is a unique per-request 128-bit identifier. If the browser OTel SDK propagates it on cross-origin fetch calls (to third-party CDNs, analytics services, ad pixels, or SaaS APIs), those third parties can observe the trace-id and correlate the user's request to the originating service. Combined with other headers, this enables cross-site tracking. Mitigation 1: configure the OTel-JS fetch instrumentation with an explicit allowlist of origins that should receive traceparent (same origin + owned APIs only). Mitigation 2: the W3C spec recommends not propagating traceparent in server-to-browser responses — the response goes to the end user, not to an upstream service. Mitigation 3: audit baggage quarterly and ensure no user-identifying data flows to third-party endpoints — the same CORS and origin-scoping rules apply to baggage." },
+  ]}
+/>
+
+<Recap lang="en">
+Context propagation in each runtime hooks into a different substrate: Node's `AsyncLocalStorage`, Python's `contextvars`, Java's `ThreadLocal` plus `Scope`, Go's explicit `context.Context`. Each has its own failure mode when you cross a primitive the runtime doesn't auto-carry — the fix is always explicit context binding at that boundary. B3 migration to W3C requires read-both before write-W3C, verified by orphan-rate monitoring. Service mesh passes `traceparent` for HTTP/gRPC transparently and can emit mesh-hop spans, but does not instrument queue consumers — those still require application-level inject/extract. The `traceparent` header in browser requests is a tracking vector if propagated to cross-origin third parties; restrict it to same-origin and explicitly-allowed CORS origins.
+</Recap>

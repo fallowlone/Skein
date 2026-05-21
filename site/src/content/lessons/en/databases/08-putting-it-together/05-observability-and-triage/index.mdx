@@ -1,0 +1,190 @@
+---
+slug: 05-observability-and-triage
+lang: en
+track: databases
+unit: 08-putting-it-together-db
+order: 5
+title: "Observability, anti-patterns, and production triage"
+summary: "USE + RED maps which lever to pull; pg_stat_statements, pg_stat_activity, and pg_stat_user_tables are the eyes. An inherited Postgres at 200M rows, 600 backends, and 40 GB bloat has a three-week triage order — the seven-act model doubles as an emergency protocol."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - databases/08-putting-it-together/04-sharding-and-tradeoffs
+  - databases/04-mvcc-isolation/06-ssi-and-production-tuning
+  - databases/05-pooling/07-pooler-landscape-and-failure-modes
+deepensInto: []
+spiral: ["statefulness", "latency", "multiplexing"]
+concepts: ["USE-RED-postgres", "diagnostic-tooling", "triage-order", "xid-wraparound", "anti-pattern-catalogue"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://www.cybertec-postgresql.com/en/postgresql-vacuum-and-bloat/
+  - https://www.pgmustard.com/blog/postgres-row-estimates-misleading
+  - https://docs.citusdata.com/en/stable/
+  - https://prometheus.io/docs/introduction/overview/
+  - https://github.com/prometheus-community/postgres_exporter
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+You inherit a Postgres at 200M rows, p95 1500 ms, 600 concurrent backends, 40 GB bloat, no pooler, single node. Three weeks to stabilize. The seven-act model is not just a growth story — it is also the triage protocol. Work from the most acute failure mode to the most structural one, not the other way around.
+</Hook>
+
+<Crux>USE + RED for Postgres tells you which act you are in; triage order: Act 4 → Act 5 → Act 3 → Act 2; structural Acts 1 and 7 come last.</Crux>
+
+<Explanation>
+
+## USE + RED for Postgres
+
+The **USE method** (Utilization, Saturation, Errors) maps to Postgres signals:
+- **Utilization**: backend count vs `max_connections` (`pg_stat_activity`), CPU from `pg_stat_bgwriter.checkpoints_req` ratio, buffer cache hit rate (`pg_buffercache`).
+- **Saturation**: autovacuum lag (`pg_stat_user_tables.last_autovacuum`), replication lag (`pg_stat_replication.replay_lag`), connection queue depth (PgBouncer `SHOW STATS`).
+- **Errors**: deadlock count (`pg_stat_database.deadlocks`), checksum failures, replication errors from server logs.
+
+The **RED method** (Rate, Errors, Duration) on top of `pg_stat_statements`:
+- Queries/second per `queryid`.
+- Error rate from app logs (timeouts, deadlocks).
+- p95/p99 duration per `queryid`.
+
+Together they tell you which lever to pull:
+
+| Signal | Likely act |
+|---|---|
+| High backend count, low CPU | Act 5 (pooling problem) |
+| High dead tuples, stable row count | Act 4 (vacuum/bloat problem) |
+| Specific queryid with rising duration | Act 2 or 3 (index or stats problem) |
+| Rising p95 + one tenant's shards hot | Act 7 (hot shard problem) |
+
+## Diagnostic tooling per act
+
+- **Act 1 (schema)**: no good tooling — read the table definition and trace migrations. `\d+ tablename` in psql.
+- **Act 2 (indexes)**: `pg_indexes` for existence; `pg_stat_user_indexes` (`idx_scan` column) to find unused indexes — an index with 0 scans after a week of traffic is a write-overhead tax.
+- **Act 3 (planning)**: `pg_stat_statements` for top-N queries by total time; `EXPLAIN (ANALYZE, BUFFERS)` for the actual plan; `auto_explain.log_min_duration = '500ms'` for tail-latency triage.
+- **Act 4 (bloat)**: `pg_stat_user_tables.n_dead_tup` vs `n_live_tup`; `pg_table_size(relname)` for actual disk; `pgstattuple` for precise bloat percentage without a full scan.
+- **Act 5 (pooling)**: `pg_stat_activity` for backend count, `state` distribution, `idle in transaction` sessions; PgBouncer `SHOW STATS` for queue depth and avg query time.
+- **Act 6 (migrations)**: `pg_locks` joined to `pg_stat_activity` to detect lock contention and blockers before running ALTER.
+- **Act 7 (sharding)**: application-level metrics — tail latency per shard, write variance across shards, cross-shard join frequency. Missing or misinterpreted tooling is why teams skip acts: "We can't see the bloat" means autovacuum visibility is off, not that bloat does not exist.
+
+## The three-week triage order
+
+You inherit a Postgres at 200M rows, p95 1500 ms, 600 concurrent backends, 40 GB bloat, no pooler:
+
+**Week 1 — stop the bleeding:**
+1. Kill long transactions: `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query_start &lt; now() - interval '5 minutes'`.
+2. Set `idle_in_transaction_session_timeout = 60s` so the problem cannot recur overnight.
+3. Deploy PgBouncer in transaction-mode in front of Postgres. Size the pool on active concurrent transactions, not worker count (step 1 reveals actual concurrency).
+4. Run `pg_repack` on the bloated tables online — no AccessExclusiveLock required.
+
+**Week 2 — re-establish plan quality:**
+1. `ANALYZE` on the most-queried tables.
+2. `CREATE STATISTICS` for the top correlated column pairs from `pg_stat_statements` slow queries.
+3. Review `pg_stat_statements` top-N by total_time; drop unused indexes (`idx_scan = 0`); add obviously-missing ones.
+
+**Week 3 — capacity assessment:**
+1. Measure actual single-node ceiling with the pool in place. Plot p95 vs QPS curve.
+2. If single node cannot keep up at expected load: evaluate declarative partitioning (single node, fewer ops) before sharding.
+3. Only then plan Act 7 — with shard key, co-location, and online resharding rehearsed in staging.
+
+## XID wraparound and autovacuum freeze
+
+Every row carries a 32-bit transaction ID (`xmin`). Once the cluster reaches 2^31 transactions (~2.1 billion), IDs wrap around and rows can appear to be "from the future." Postgres protects against this by freezing old rows (rewriting `xmin` to a special "frozen" value) before wraparound. `autovacuum_freeze_max_age` controls the trigger.
+
+On a write-heavy cluster at 10K TPS, that is ~864M transactions per day — the freeze runs every ~2.5 days. A misconfiguration (very high `autovacuum_freeze_max_age`) can lead to anti-wraparound emergency vacuums that hold an exclusive lock on the table.
+
+Monitor: `SELECT datname, age(datfrozenxid) FROM pg_database;` — alert at 80% of `autovacuum_freeze_max_age`.
+
+## The anti-pattern catalogue when an act is skipped
+
+- **Skip Act 1**: a year later you spend three weeks renaming a column because the schema lacks a surrogate key and every FK must change.
+- **Skip Act 2**: every dashboard query is a 30-second seq-scan; the app team adds caches everywhere; the cache becomes the new source of truth and goes inconsistent.
+- **Skip Act 3**: you have indexes, but the planner ignores them half the time; you write a runbook that says "if slow, restart Postgres" because that flushes the plan cache.
+- **Skip Act 4**: the OOM-killer takes Postgres down on Friday; the postmortem says "we'll add monitoring"; it never happens.
+- **Skip Act 5**: every deploy triggers a connection storm; CI now spreads pod rollouts across 10 minutes "as a workaround."
+- **Skip Act 6**: migrations only run during a quarterly maintenance window because nothing else is safe; the queue of pending migrations grows to 40 entries.
+- **Skip Act 7**: you spend six months explaining to leadership that one tenant is using 40% of capacity and the only fix is a re-architecture.
+
+<NumbersCard
+  id="card-observability-numbers"
+  title="Key Postgres observability thresholds"
+  stats={[
+    { label: "Cache hit ratio — alert threshold", value: "below 95–99%" },
+    { label: "n_dead_tup / n_live_tup — bloat alert", value: "above 20%" },
+    { label: "age(datfrozenxid) — wraparound alert", value: "80% of autovacuum_freeze_max_age" },
+    { label: "PgBouncer SHOW STATS: avg_wait_time alert", value: "above 5 ms sustained" },
+    { label: "pg_stat_statements total_time alert", value: "queries &gt; 1s consuming &gt; 5% of total" },
+    { label: "Replication lag alert", value: "above 30 seconds on async replica" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="en">
+The seven-act model is both a growth framework (design levers in order) and a triage framework (apply fixes in reverse of failure acuteness). During an outage, you do not blame the schema (Act 1); you kill long transactions (Act 4), then deploy a pooler (Act 5), then optimize queries (Act 2–3). Once stability is restored, you postmortem and write runbooks for each act to prevent the next incident. The order of acts is not just a design constraint — it is an emergency protocol.
+</Inset>
+
+<Quiz
+  id="05-observability-and-triage-quiz-1"
+  lessonSlug="05-observability-and-triage"
+  lang="en"
+  question="pg_stat_user_tables shows n_dead_tup = 80M on a table with n_live_tup = 100M. What is the correct diagnosis and first lever?"
+  choices={[
+    { label: "44% dead-tuple ratio indicates severe bloat — the first lever is finding and terminating long transactions that pin the xmin horizon, then setting idle_in_transaction_session_timeout", correct: true },
+    { label: "The table needs a VACUUM FULL to reclaim space", misconception: "VACUUM FULL takes an AccessExclusiveLock and rewrites the entire table — it blocks all concurrent queries for the duration. The first lever is killing the xmin-pinning sessions and running regular VACUUM (or pg_repack for online compaction)." },
+    { label: "The high dead-tuple count means indexes are outdated and need rebuilding", misconception: "Dead tuples are unreclaimed deleted rows, not index state. They cause bloat and slow sequential scans, not index corruption." },
+    { label: "n_dead_tup = 80M means 80M rows were deleted — normal for a write-heavy table", misconception: "80% dead-tuple ratio (80M dead vs 100M live) is not normal — it indicates that autovacuum is falling behind or is blocked by a long transaction. Normal dead-tuple ratios are under 1% with proper autovacuum tuning." },
+  ]}
+/>
+
+<Quiz
+  id="05-observability-and-triage-quiz-2"
+  lessonSlug="05-observability-and-triage"
+  lang="en"
+  question="What is the role of backend_xmin in pg_stat_activity for diagnosing bloat?"
+  choices={[
+    { label: "It is the oldest transaction ID this backend can still see; the cluster xmin horizon is the minimum of all such values across active backends", correct: true },
+    { label: "It is the transaction ID of the next query this backend will execute", misconception: "backend_xmin reflects the oldest visible transaction, not a future query. It is the snapshot lower bound for this session." },
+    { label: "It is the WAL position this backend has replicated to", misconception: "WAL position is tracked in pg_stat_replication, not backend_xmin. backend_xmin is a transaction visibility concept, not a replication concept." },
+    { label: "It is the timestamp of the last query this backend ran", misconception: "backend_xmin is a transaction ID, not a timestamp. The query timestamp is query_start in pg_stat_activity." },
+  ]}
+/>
+
+<Quiz
+  id="05-observability-and-triage-quiz-3"
+  lessonSlug="05-observability-and-triage"
+  lang="en"
+  question="Why does hot_standby_feedback = on shift bloat from the replica to the primary?"
+  choices={[
+    { label: "The replica pushes its oldest snapshot xmin up to the primary, preventing primary VACUUM from reclaiming rows still needed for replica reads — bloat accumulates on the primary instead", correct: true },
+    { label: "hot_standby_feedback enables synchronous replication which slows writes on the primary", misconception: "hot_standby_feedback is about visibility, not replication mode. It propagates the replica's xmin to the primary; synchronous replication is a separate setting." },
+    { label: "hot_standby_feedback causes the replica to vacuum more aggressively, clearing bloat faster", misconception: "The flag has no direct effect on vacuum frequency. It prevents the primary from reclaiming rows the replica needs — the opposite of reducing bloat." },
+    { label: "hot_standby_feedback disables vacuum on the replica to reduce I/O contention", misconception: "Vacuum on a standby is recovery-driven and controlled by its own autovacuum configuration. hot_standby_feedback propagates xmin from replica to primary and is unrelated to replica vacuum." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>USE + RED maps Postgres signals to acts: high backends = Act 5, high dead tuples = Act 4, rising queryid duration = Act 2–3, hot shard = Act 7. Triage runs Act 4 → 5 → 3 → 2; structural Acts 1 and 7 come last. Monitor age(datfrozenxid) — XID wraparound is a correctness cliff, not a performance issue.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-observability-and-triage-retrieval"
+  lang="en"
+  questions={[
+    { q: "Map the USE method to the Postgres signals that indicate each of the seven acts.", a: "Act 1 (schema): no runtime signal — only visible in slow join plans and migration durations. Act 2 (indexes): pg_stat_user_indexes.idx_scan = 0 for unused indexes; EXPLAIN showing seq-scan on an indexed column for missing indexes. Act 3 (stats): pg_stat_statements showing a queryid with a rising plan_change event or unstable duration — run EXPLAIN to confirm wrong plan. Act 4 (bloat): pg_stat_user_tables n_dead_tup / n_live_tup above 20%; pg_stat_activity showing backend_xmin far behind the current transaction ID. Act 5 (pooling): pg_stat_activity connection count near max_connections; PgBouncer SHOW STATS showing avg_wait_time above 5 ms. Act 6 (migrations): pg_locks showing AccessExclusiveLock acquisition with a long wait_start; application timeouts during deploy windows. Act 7 (sharding): application-level tail latency per shard diverging — one shard at high CPU while others are idle." },
+    { q: "You inherit a production Postgres at 200M rows, p95 1500 ms, 600 backends, 40 GB bloat, no pooler. Give the triage order for the first three weeks and justify each step.", a: "Week 1, stop the bleeding: (1) Kill idle-in-transaction sessions — they pin xmin and prevent vacuum from reclaiming the 40 GB bloat. (2) Set idle_in_transaction_session_timeout = 60s so the problem cannot recur overnight. (3) Deploy PgBouncer in transaction-mode — size pool on active_concurrent_transactions, not 600 workers; this alone can drop p95 significantly. (4) Run pg_repack online to reclaim the 40 GB without blocking reads. Week 2, plan quality: run ANALYZE; inspect pg_stat_statements top-N; add missing indexes; drop unused ones. Week 3, capacity assessment: measure the true single-node ceiling with the pool in place; only then evaluate sharding — and only if single-node cannot handle expected load. The order is: stop bleeding (Act 4) → stabilize connections (Act 5) → reclaim query quality (Acts 3, 2) → structural decisions (Acts 1, 7)." },
+    { q: "What is XID wraparound, why is it a correctness cliff (not a performance issue), and how do you monitor it?", a: "Postgres uses 32-bit transaction IDs (XIDs). Once the cluster reaches 2^31 transactions, IDs wrap around. Without protection, old rows would appear to be in the 'future' relative to the current XID, violating snapshot consistency — queries would return wrong results, not just slow results. This is a correctness cliff: it does not degrade gracefully, it corrupts visibility. Postgres prevents this by freezing rows before wraparound — rewriting xmin to a special 'frozen' value that is always visible. autovacuum_freeze_max_age triggers preventive freezing. Monitor: SELECT datname, age(datfrozenxid) FROM pg_database; — alert at 80% of autovacuum_freeze_max_age. On a write-heavy cluster at 10K TPS (864M transactions/day), this can happen every 2.5 days; a misconfigured high freeze_max_age leads to emergency anti-wraparound vacuum that holds an exclusive table lock." },
+  ]}
+/>
+
+<Recap lang="en">
+The USE + RED framework maps directly to the seven acts: high backend count is Act 5, high dead-tuple ratio is Act 4, a specific query's rising duration is Act 2 or 3, and diverging per-shard tail latency is Act 7. Each act has its diagnostic tool — `pg_stat_user_tables` for bloat, `pg_stat_activity` for connection storms, `pg_stat_statements` for slow queries, `pg_locks` for migration blockers, and application-level shard metrics for Act 7. When inheriting a degraded Postgres, the correct triage order is Act 4 first (kill long transactions, stop bleeding), then Act 5 (deploy pooler), then Acts 3 and 2 (plan quality), then structural Acts 1 and 7. XID wraparound is a correctness cliff — it does not slow queries, it corrupts them — monitor `age(datfrozenxid)` per database and alert at 80% of `autovacuum_freeze_max_age`. The seven-act model is simultaneously a growth framework and an emergency protocol: the order of acts is the order of triage when everything is on fire.
+</Recap>

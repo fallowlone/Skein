@@ -1,0 +1,169 @@
+---
+slug: 05-gc-orinoco
+lang: en
+track: browser
+unit: 03-v8-internals
+order: 5
+title: "Orinoco GC: parallel scavenger, concurrent marking, and write barriers"
+summary: "How V8's Orinoco garbage collector separates young and old generation, runs minor GC in parallel, moves major GC marking to a background thread, and uses write barriers to stay correct while JS executes."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-what-v8-is"]
+deepensInto: ["07-production-perf"]
+spiral: ["statefulness"]
+concepts: ["young generation", "old generation", "scavenger", "Mark-Compact", "concurrent marking", "write barrier", "tri-color marking", "GC pause", "incremental marking"]
+sources:
+  - https://v8.dev/blog/orinoco-parallel-scavenger
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/concurrent-marking
+  - https://github.com/thlorenz/v8-perf/blob/master/gc.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Node.js service runs fine for a week, then every 60 seconds there is a 5ms pause that shows up in p99 latency. The application code changed nothing. The GC cycle crossed an old-generation threshold. Understanding Orinoco is the difference between guessing and diagnosing.
+</Hook>
+
+<Crux>Orinoco runs minor GC in parallel and major GC marking on a background thread — cutting main-thread pauses from hundreds of ms to &lt;1ms.</Crux>
+
+<Explanation>
+
+## The heap layout
+
+The V8 heap is divided into two generations:
+
+- **Young generation** — newly allocated objects, typically 1–8 MB. Collected frequently (minor GC).
+- **Old generation** — long-lived objects, can be hundreds of MB. Collected infrequently (major GC).
+
+Objects start in young gen. Those that survive two minor GCs are **promoted** to old gen. This generational design exploits the observation that most objects die young — minor GC can be fast because the live set is small.
+
+## Minor GC: the parallel Scavenger
+
+The scavenger uses a **copying collector** with two semispaces:
+1. From-space holds live objects; to-space is empty.
+2. On collection, V8 walks roots (stack, globals, registers), copies reachable young objects to to-space, updates pointers.
+3. Dead objects are abandoned in from-space.
+4. Survivors of two minor GCs are promoted to old generation.
+
+The scavenger has been parallel since Orinoco's first phase (V8 6.2, 2017): multiple worker threads share the work via **dynamic work-stealing**. Main-thread pauses are ~1ms because the young-gen live set is small and parallelism keeps wall-clock time low.
+
+## Major GC: Mark-Compact with concurrent marking
+
+Old-generation collection traces all live objects, sweeps dead ones, and compacts survivors to reduce fragmentation. Pre-Orinoco this was a **stop-the-world** operation lasting hundreds of ms on large heaps.
+
+Orinoco's key innovation: **concurrent marking** — a background thread walks the heap while JavaScript executes on the main thread. The main thread pays a brief final-marking pause (single-digit ms) plus the sweep/compact phase (parallel across worker threads but still blocking). Result: main-thread pause reduced ~50% on WebGL-heavy workloads.
+
+<NumbersCard
+  id="card-gc-numbers"
+  title="Orinoco GC numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Minor GC (Scavenger) pause", value: "<1 ms typical" },
+    { label: "Concurrent marking pause reduction", value: "~50% on WebGL" },
+    { label: "Orinoco parallel scavenger shipped", value: "V8 6.2 (2017)" },
+    { label: "Young gen heap size", value: "1–8 MB" },
+    { label: "Promotion threshold", value: "survives 2 minor GCs" },
+    { label: "GC pause goal at 60fps", value: "<16.6 ms per frame" },
+  ]}
+/>
+
+## Write barriers
+
+For concurrent marking to be correct while JS simultaneously mutates the heap, V8 uses **write barriers**: small code emitted at every property write that may cross from a black (already-marked) object to a white (not-yet-visited) object.
+
+V8 uses **snapshot-at-the-beginning** (Yuasa) semantics: when the main thread overwrites a reference to a white object, the barrier shades the **original** (overwritten) referent grey so the marker will still visit it. This preserves the invariant "every object reachable at marking start will be visited", even as the main thread races ahead. The write barrier costs ~3–5 cycles per write; V8 invests heavily in keeping it cheap.
+
+Modern V8 uses **tri-color marking** (white/grey/black) with snapshot-at-the-beginning semantics and hybrid concurrent + incremental scheduling. Incremental marking amortises GC work across JS execution with no observable single pause.
+
+<DragOrder
+  id="mid-drag-gc"
+  pieceSlug="gc-orinoco"
+  lang="en"
+  prompt="Order the steps of a parallel minor GC (Scavenger) cycle:"
+  items={[
+    "Allocation triggers young-gen heap full",
+    "Main thread initiates Scavenger, worker threads join",
+    "Walk roots: stack, globals, registers — find live young objects",
+    "Copy live objects from from-space to to-space using work-stealing",
+    "Update pointers across heap to point to new locations",
+    "Objects that survived two GC cycles are promoted to old gen",
+    "From-space is declared empty, to-space becomes the new from-space",
+  ]}
+  correctOrder={["0", "1", "2", "3", "4", "5", "6"]}
+/>
+
+<TraceScenario
+  id="mid-trace-gc"
+  pieceSlug="gc-orinoco"
+  lang="en"
+  scenario="A Node.js process consumes 4GB RAM after a week of uptime. Trace the GC pattern."
+  steps={[
+    { prompt: "Step 1: 4GB after a week means slow leak, not crash. What V8 observable will show the trend?", reveal: "Run process with --trace-gc — every GC event logs heap-before/heap-after. Plot over time. If old-gen size grows monotonically with weekly periodicity, it is a leak. If it oscillates around a stable mean, GC is keeping up." },
+    { prompt: "Step 2: heap-after is steadily climbing 50MB/day. What kind of leak?", reveal: "Objects are surviving promotion to old gen but never becoming unreachable. Common causes: caches without TTL, event listeners never removed, closures holding references in long-lived callbacks, request scopes leaking into module scope." },
+    { prompt: "Step 3: how to find the leak source?", reveal: "Heap snapshot via Chrome DevTools (connect to Node via --inspect). Take snapshots at days 1, 4, 7. Diff them. Look for object types whose count grew unbounded. Common: dozens of new 'Closure' or 'Detached HTMLDivElement' nodes per day pointing to old scope. The retainer path shows what is holding them." },
+    { prompt: "Step 4: leak found — an LRU cache without max size. Fix?", reveal: "Cap cache size to N entries or N MB. Add eviction. Use lru-cache or similar — handles the bookkeeping. The leak goes away the next time the cache hits the cap and evicts." },
+    { prompt: "Step 5: prevent recurrence?", reveal: "Heap-snapshot-on-deploy as a perf-CI step: deploy → wait N hours → snapshot. Compare to baseline. Object-count regressions fail the deploy. Mostly catches the 'I added a Map() but never deleted entries' pattern that is the leading cause of slow Node leaks." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-gc-1"
+  pieceSlug="gc-orinoco"
+  lang="en"
+  question="Orinoco's scavenger reduces young-gen GC pause times via parallel work-stealing. Why is old-gen Mark-Compact still the harder problem?"
+  choices={[
+    { label: "Old gen has more pointer chasing and is larger; marking the entire reachable graph cannot finish in <1ms even concurrently", correct: true },
+    { label: "Old gen has no garbage", misconception: "Old gen accumulates garbage from long-lived objects becoming unreachable; it definitely needs collection." },
+    { label: "Scavenger is slower than Mark-Compact", misconception: "Reverse: scavenger is faster per-byte due to copying a small live set." },
+    { label: "Old gen does not need GC", misconception: "All generations need GC; the old gen GC just has more work to do." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-gc-2"
+  pieceSlug="gc-orinoco"
+  lang="en"
+  question="Why does concurrent marking need write barriers?"
+  choices={[
+    { label: "To prevent two GC threads from visiting the same object twice", misconception: "Work-stealing handles duplicate visits; write barriers are about correctness when the mutator (JS) modifies references during marking." },
+    { label: "Because the JS main thread may overwrite a reference to an unvisited object while the GC thread is marking — without barriers the GC would never visit that object and would falsely collect it", correct: true },
+    { label: "To speed up the marking phase", misconception: "Write barriers add cost (~3-5 cycles per write) — they ensure correctness, not speed." },
+    { label: "To handle old-gen-to-young-gen pointers", misconception: "That is remembered sets / card tables — a different mechanism for pointer tracking." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is there a generational split at all? Most allocated objects die quickly — a temporary buffer, a promise, a React element per render. Collecting only the young generation (which is small) is much cheaper than scanning the whole heap. The old generation only needs collection infrequently. This "generational hypothesis" is empirically true for most programs and is why generational GCs became the industry standard in the 1990s.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Orinoco separates GC into parallel minor (young-gen, &lt;1ms) and concurrent major (old-gen, mark background, compact parallel). The tradeoff: write barriers cost 3–5 cycles per property write but eliminate hundreds-of-ms stop-the-world pauses.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="gc-orinoco-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the minor GC (Scavenger) cycle in V8.", a: "Scavenger uses a copying collector with two semispaces (from-space and to-space). On collection, V8 walks roots (stack, globals, registers), copies reachable young objects to to-space, and updates pointers. Objects surviving two minor GCs are promoted to old gen. Dead objects are abandoned in from-space with no explicit cleanup. The scavenger is parallel (multiple worker threads via work-stealing) since V8 6.2. Typical pause: <1ms because the young-gen live set is small." },
+    { q: "How does concurrent marking in Orinoco avoid corrupting the heap?", a: "With write barriers. When the main thread overwrites a reference, V8's write barrier shades the previously-referenced (overwritten) object grey so the marker will still visit it. This preserves the snapshot-at-the-beginning invariant: every object reachable at marking start will be visited, even if the main thread modifies references mid-mark. After concurrent marking, a brief stop-the-world pause re-marks roots that changed, then sweep/compact runs in parallel. Total main-thread pause goes from hundreds-of-ms (stop-the-world) to single-digit ms." },
+    { q: "What is the most common cause of a slow Node.js memory leak, and how do you find it?", a: "Caches, maps, or sets that accumulate entries without TTL or max-size eviction. Long-lived module-scope variables holding request-scoped data. Event listeners that are registered but never removed. To find: take heap snapshots at intervals (day 1, 4, 7) via --inspect + DevTools Memory panel. Diff the snapshots. Look for object types growing unbounded. The retainer path shows which object is holding them. Fix: add eviction, cap cache size, remove listeners on cleanup." },
+  ]}
+/>
+
+<Recap lang="en">
+Orinoco is V8's generational garbage collector. New objects land in the young generation (~1–8 MB); survivors of two minor GC cycles are promoted to old generation. Minor GC uses a copying scavenger that runs in parallel across worker threads — pauses are typically under 1ms. Major GC (old gen) uses mark-compact; concurrent marking moves the object-graph traversal to a background thread while JS runs, reducing main-thread pauses by ~50% on WebGL-heavy workloads. Write barriers at every property write keep the concurrent marker correct when the JS thread modifies references mid-cycle. Incremental marking further amortises work across JS execution. The fundamental tradeoff: 3–5 cycles per write (barrier overhead) in exchange for eliminating hundreds-of-millisecond stop-the-world pauses that were the norm before Orinoco.
+</Recap>

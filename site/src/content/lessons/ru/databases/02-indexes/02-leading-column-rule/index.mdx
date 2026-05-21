@@ -1,0 +1,202 @@
+---
+slug: 02-leading-column-rule
+lang: ru
+track: databases
+unit: 02-indexes
+order: 2
+title: "Leading-column rule: почему порядок столбцов в composite-индексе важен"
+summary: "Composite B-tree индекс на (a, b, c) ускоряет запросы, фильтрующие по a, a+b или a+b+c — но не запросы только по b или c. Это самое нарушаемое правило в продакшн-индексировании."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-index-anatomy"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["leading-column-rule", "composite-index", "b-tree-internals", "index-selectivity"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-multicolumn.html
+  - https://use-the-index-luke.com/sql/where-clause/the-equals-operator/concatenated-keys
+  - https://www.postgresql.org/docs/current/indexes-ordering.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Дашборд фильтрует задачи по `workspace_id` и `status`. Команда добавляет индекс `(status, workspace_id)`. В staging работает быстро. В продакшне с 50M строк запрос со временем начинает делать seq scan, потому что фильтр `WHERE workspace_id = $1` без `status` не использует leading-столбец. Один неправильный порядок столбцов — seq scan на 50M строк.
+</Hook>
+
+<Crux>Composite B-tree: ключ по leading-столбцу первым. Без его фильтра индекс не используется. Выбирай leading-столбец под самый частый фильтр.</Crux>
+
+<Explanation>
+
+## Как устроен B-tree внутри
+
+B-tree — сбалансированное дерево, где каждый узел — disk page (8KB) с отсортированным списком ключей. Для composite-индекса `(a, b, c)` ключ — это кортеж (a, b, c), отсортированный лексикографически: сначала по a, при равных a — по b, при равных (a, b) — по c.
+
+Для поиска по индексу планировщик должен начать с leading-столбца. Только зная значение a, он может перейти к правой ветке дерева. Без значения a вся структура бесполезна — как искать в телефонной книге, зная только второе имя, но не фамилию.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Фильтр запроса</th>
+        <th class="border border-border px-3 py-2 text-left">Индекс (a, b, c) работает?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">WHERE a = $1</td>
+        <td class="border border-border px-3 py-2">Да — только leading-столбец</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">WHERE a = $1 AND b = $2</td>
+        <td class="border border-border px-3 py-2">Да — leading prefix a, b</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">WHERE a = $1 AND b = $2 AND c = $3</td>
+        <td class="border border-border px-3 py-2">Да — полное использование</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">WHERE a = $1 AND c = $3 (нет b)</td>
+        <td class="border border-border px-3 py-2">Частично — сужает по a, затем фильтрует c без индекса</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">WHERE b = $2</td>
+        <td class="border border-border px-3 py-2">Нет — b не leading-столбец</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">WHERE c = $3</td>
+        <td class="border border-border px-3 py-2">Нет — c не leading-столбец</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Проектирование composite-индексов
+
+Правило: leading-столбец должен быть столбцом, который присутствует в фильтре большинства горячих запросов. Затем вторичные столбцы — по убыванию частоты фильтрации.
+
+**Пример: tenant-scoped дашборд**
+
+```sql
+-- Запрос: список задач в проекте
+SELECT id, title FROM tasks
+WHERE workspace_id = $1 AND status = 'open'
+ORDER BY created_at DESC;
+
+-- Правильный индекс: workspace_id — tenant-граница (всегда присутствует)
+CREATE INDEX ON tasks (workspace_id, status, created_at DESC);
+
+-- Неправильный: status первым — только небольшая часть запросов фильтрует ТОЛЬКО по status
+CREATE INDEX ON tasks (status, workspace_id, created_at DESC);
+```
+
+**Один composite vs два single-column индекса**
+
+Один composite `(a, b)` обычно лучше двух single `(a)` и `(b)`:
+- Меньше overhead на запись (одна структура вместо двух).
+- Меньше суммарный размер.
+- Composite обслуживает запросы по `a` (использует только leading-часть) И запросы по `a, b`.
+
+Два single-column нужны, когда: запросы часто фильтруют только по `a` ИЛИ только по `b` (не вместе). Тогда ни один composite не обслуживает оба.
+
+## Кардинальность не определяет порядок
+
+Распространённое заблуждение: «ставь столбец с большей кардинальностью первым». Это неверно. Порядок определяется паттерном запросов:
+- Если `workspace_id` (5 значений) всегда присутствует в фильтре, он идёт первым.
+- Если `user_id` (1M значений) встречается в фильтре редко, он идёт последним или в отдельный индекс.
+
+Единственный источник правды — `EXPLAIN ANALYZE` на реальных запросах с реалистичными параметрами.
+
+<Misconception id="02-lc-mc-1">
+<strong>«Multi-column-индекс на (a, b, c) покрывает запросы по любому из a, b, c.»</strong> Нет. Multi-column B-tree покрывает только запросы по leading-префиксу (a; a, b; a, b, c). Запрос только по b или c не ускоряется. Проектируй composites под доминантный запрос.
+</Misconception>
+
+<TraceScenario
+  id="02-lc-trace-1"
+  lessonSlug="02-leading-column-rule"
+  lang="ru"
+  scenario="Команда добавляет индекс (status, workspace_id) для дашборда. Проследи проблему."
+  steps={[
+    { prompt: "Шаг 1: дашборд фильтрует по workspace_id = $1. Какой plan?", reveal: "EXPLAIN показывает Seq Scan на orders. Индекс (status, workspace_id) требует, чтобы запрос фильтровал по leading-столбцу status. Запрос WHERE workspace_id = $1 не фильтрует по status — планировщик не может использовать индекс. Seq Scan на всей таблице." },
+    { prompt: "Шаг 2: как исправить не переписывая запрос?", reveal: "Создать новый индекс с workspace_id как leading-столбцом: CREATE INDEX CONCURRENTLY ON orders (workspace_id, status, created_at DESC). Теперь запрос WHERE workspace_id = $1 использует leading-часть. Планировщик переключается на Index Scan. Старый индекс (status, workspace_id) можно оставить, если есть запросы, фильтрующие только по status — иначе удалить (экономия места и write-overhead)." },
+    { prompt: "Шаг 3: как убедиться, что новый индекс используется?", reveal: "EXPLAIN ANALYZE SELECT id, total_cents FROM orders WHERE workspace_id = 42 ORDER BY created_at DESC LIMIT 50. Должен показывать Index Scan или Index Only Scan (если INCLUDE добавлен). Проверяй actual rows vs estimated rows — при большом расхождении нужен ANALYZE для обновления статистики. Мониторь idx_scan в pg_stat_user_indexes после деплоя — должен быстро расти для нового индекса." },
+  ]}
+/>
+
+<Quiz
+  id="02-lc-quiz-1"
+  lessonSlug="02-leading-column-rule"
+  lang="ru"
+  question="Индекс: CREATE INDEX ON events (tenant_id, event_type, created_at). Какой запрос его использует?"
+  choices={[
+    { label: "WHERE event_type = 'login'", misconception: "event_type не leading-столбец. Индекс не ускорит этот запрос." },
+    { label: "WHERE tenant_id = $1 AND event_type = 'login' ORDER BY created_at DESC", correct: true },
+    { label: "WHERE created_at > now() - interval '1 day'", misconception: "created_at третий столбец; без leading tenant_id индекс не работает." },
+    { label: "WHERE tenant_id = $1 ORDER BY event_type", misconception: "Использует leading tenant_id, но ORDER BY event_type не из индекса — потребуется отдельная сортировка." },
+  ]}
+/>
+
+<Quiz
+  id="02-lc-quiz-2"
+  lessonSlug="02-leading-column-rule"
+  lang="ru"
+  question="Команда проводит аудит индексов. Находит (user_id) и (user_id, created_at DESC). Что делать?"
+  choices={[
+    { label: "Оставить оба — они покрывают разные запросы", misconception: "Composite (user_id, created_at DESC) покрывает оба: запросы только по user_id используют leading-часть. Одиночный (user_id) избыточен." },
+    { label: "Удалить (user_id) — composite (user_id, created_at DESC) покрывает его как prefix", correct: true },
+    { label: "Удалить (user_id, created_at DESC) — он сложнее", misconception: "Сложность структуры не причина для удаления. Composite сэкономит write-overhead по сравнению с двумя отдельными индексами." },
+    { label: "Объединить оба в один индекс на три столбца", misconception: "Это добавит новый индекс, не уберёт дублирование." },
+  ]}
+/>
+
+<DragOrder
+  id="02-lc-drag-1"
+  lessonSlug="02-leading-column-rule"
+  lang="ru"
+  prompt="Упорядочи шаги проектирования composite-индекса под hot query:"
+  items={[
+    { id: "a", label: "Определи hot queries и их фильтр-паттерны" },
+    { id: "b", label: "Найди столбец, который всегда присутствует в фильтре — это leading-столбец" },
+    { id: "c", label: "Добавь secondary столбцы по убыванию частоты фильтрации" },
+    { id: "d", label: "Убедись, что ORDER BY столбцы идут после filter-столбцов" },
+    { id: "e", label: "Добавь INCLUDE для столбцов только в SELECT projection" },
+    { id: "f", label: "CREATE INDEX CONCURRENTLY и проверь EXPLAIN ANALYZE" },
+    { id: "g", label: "Удали одиночные индексы, которые стали prefix нового composite" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Composite B-tree на (a, b, c) ускоряет запросы с фильтром по a, по a+b или по a+b+c — но НЕ запросы только по b или c. Проектируй leading-столбец под самый частый фильтр (обычно tenant_id или workspace_id в multi-tenant приложениях). Один composite часто заменяет несколько одиночных индексов. EXPLAIN ANALYZE — единственный источник правды о том, какой план выбирает планировщик.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-lc-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни детально, почему leading-column rule существует и какие продакшн-паттерны помогают его обойти.", a: "Composite B-tree на (a, b, c) отсортирован первично по a, затем по b внутри каждого a-значения, затем по c. Записи индекса образуют единую упорядоченную последовательность. Чтобы использовать индекс для запроса, движок должен идти по дереву используя порядок сортировки — значит leading-столбец должен присутствовать в фильтре, иначе нельзя сузить до любого поддерева. Запрос только по b — это как искать в библиотеке, отсортированной по автор-затем-название: нужен первый автор. Паттерны обхода: (1) отдельные индексы для каждого leading-столбца — composite обслуживает одну форму запроса; другой composite или одиночный для другой; (2) поменять порядок — если горячи (a, b) и (b, a), строить оба; (3) для нишевых случаев — pg_trgm и bloom индексы без строгого leading-column constraint, с более высокой ценой; (4) ставь наиболее-фильтруемый столбец leading независимо от кардинальности." },
+    { q: "Почему CREATE INDEX CONCURRENTLY — продакшн-дефолт, несмотря на медлительность, и каковы его failure mode?", a: "CREATE INDEX берёт ACCESS EXCLUSIVE блокировку на всю таблицу на всё время построения — каждое чтение и запись заблокированы. На продакшн-таблице с активным трафиком это неприемлемо; даже 5-минутная блокировка — инцидент. CREATE INDEX CONCURRENTLY использует многофазное построение: сканирует таблицу дважды и ждёт in-flight транзакций между фазами, без эксклюзивной блокировки. Результат: нет воздействия на трафик приложения, ценой 2-3x медленнее и невозможности обернуть в транзакцию. Failure mode: (1) если построение падает (например, уникальный индекс находит дубликат или процесс убивается), индекс остаётся INVALID — pg_indexes.indisvalid=false. Приложение видит индекс как несуществующий. Fix: DROP INDEX CONCURRENTLY и повторить. (2) Long-running транзакции могут застопорить build, потому что он ждёт их. (3) Build может упасть из-за нехватки дискового пространства. (4) Replication lag может увеличиться на standby во время build." },
+    { q: "Один composite дешевле двух одиночных индексов — объясни почему, и когда два одиночных лучше.", a: "Composite (a, b) — одна физическая структура, занимающая примерно столько же, сколько одиночный (a) плюс небольшой overhead для b в каждой leaf-записи (обычно 30-50% больше, чем (a) один). Два одиночных (a) и (b) — две физических структуры, стоящие примерно сумму размеров (2x размер (a) в среднем). Write-cost меньше у одного composite: каждый insert трогает один индекс, не два. Два одиночных выгодны когда: (1) запросы часто фильтруют только по a ИЛИ только по b (не вместе) — ни один composite порядок не обслуживает оба; (2) столбцы имеют очень разные кардинальности и update rates — composite (a, b) обновляется при каждом изменении b, даже если b редко используется в фильтре; (3) планировщик выбирает Bitmap Index Scan, объединяя два одиночных (возможно при высокой независимости столбцов)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Composite B-tree на (a, b, c) отсортирован лексикографически: сначала по a, затем по b, затем по c. Запросы, которые не фильтруют по leading-столбцу a, не могут использовать индекс — планировщик не имеет точки входа в дерево. Это самое нарушаемое правило в продакшн-индексировании: команды добавляют composite не задумываясь о порядке и получают seq scan.
+
+Правило проектирования: leading-столбец — это столбец, присутствующий в фильтре большинства горячих запросов (обычно tenant-scope вроде workspace_id). Secondary столбцы — по убыванию частоты фильтрации. ORDER BY столбцы — после filter-столбцов в ключе. Столбцы только для projection — в INCLUDE.
+
+Один хорошо спроектированный composite часто заменяет 3-5 одиночных индексов: меньше write-overhead, меньше суммарный размер. EXPLAIN ANALYZE — единственный способ убедиться, что планировщик действительно использует индекс.
+</Recap>

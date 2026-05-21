@@ -1,0 +1,306 @@
+---
+slug: 07-cache-oblivious-and-pgo
+lang: en
+track: performance
+unit: 03-cache-vs-bigo
+order: 7
+title: "Cache-oblivious algorithms, PGO, and production failures"
+summary: "Cache-oblivious recursion, profile-guided optimisation, real regressions from Discord/Mojang/Bun, and the full perf-stat observability toolkit that ties it all together."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/03-cache-vs-bigo/06-hardware-prefetcher-and-tlb"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["cache-oblivious", "pgo", "struct-layout", "ecs", "perf-stat", "ipc", "mlp", "production-failure"]
+sources:
+  - https://en.wikipedia.org/wiki/CPU_cache
+  - https://en.algorithmica.org/hpc/pipelining/branching/
+  - https://www.cs.cornell.edu/courses/cs3110/2012sp/lectures/lec25-locality/lec25.html
+  - https://ivoroshilin.wordpress.com/2013/02/06/know-your-locality-of-reference-some-techniques-for-keeping-data-in-the-cpu-cache/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+
+<Hook>
+A Rust struct refactor moved one hot field to the end of a 96-byte struct. No algorithmic change. No added work. p99 latency on the message-render path grew 40%. A production outage disguised as a code cleanup.
+</Hook>
+
+<Crux>Cache-oblivious algorithms win at every level. PGO bakes profiles into layout. A struct reorder silently crosses a line — p99 weeks later.</Crux>
+
+<Explanation>
+
+## Cache-oblivious algorithms
+
+A cache-oblivious algorithm performs well at every cache level — L1, L2, L3 — without knowing the specific sizes. The canonical example is recursive blocked matrix multiply.
+
+The naive three-nested-loop matrix multiply has poor cache behaviour because the inner loop exhausts a cache level before moving on. The recursive blocked version divides the matrix into four sub-matrices and recurses until a base case. At each recursion level, the active sub-matrix fits in *some* cache level naturally, even though the algorithm doesn't know which one. The hardware adapts.
+
+The same principle applies to:
+- **Cache-oblivious mergesort**: recursive halving keeps active data in the smallest available cache level.
+- **Cache-oblivious B-trees**: van Emde Boas layout arranges tree levels so that each half-tree fits in a cache level — no pointer chasing past the level boundary.
+- **FFT**: recursive Cooley-Tukey naturally aligns butterfly groups with cache lines.
+- **Matrix transposition**: naive transposition is cache-hostile; recursive blocked transposition achieves good spatial locality at all levels.
+
+The 2–4x speedup over naive iteration often dominates whatever code complexity the recursion adds.
+
+## Profile-guided optimisation (PGO)
+
+Compilers improve dramatically when given runtime frequency data. The process:
+
+1. Build with instrumentation (`-fprofile-generate` / `clang -fprofile-instr-generate`).
+2. Run a representative workload — this populates a `.profdata` file.
+3. Rebuild with the profile (`-fprofile-use` / `-fprofile-instr-use`).
+
+What PGO changes:
+- **Inlining decisions**: inline hot callees, don't inline cold ones. Without PGO, compilers inline based on code size heuristics and often get it wrong.
+- **Branch layout**: predicted-taken branches are placed sequentially in memory. Non-taken branches jump forward. This keeps the hot path contiguous in the instruction cache.
+- **Basic block reordering**: hot basic blocks are grouped in nearby pages, improving I-cache hit rate for the common path.
+- **Function placement**: functions called together are placed near each other in the binary — fewer I-TLB misses.
+
+Real workload speedups from PGO:
+
+- Chrome: 10–15% on typical pages.
+- Firefox: 12–18% on JIT warmup.
+- Postgres: 8–15% on OLTP benchmarks.
+- Linux kernel (BOLT post-link optimisation, similar concept): 3–8%.
+
+PGO cost: build pipeline complexity and the need for a representative profiling workload. The profiling workload must match production traffic — a toy benchmark gives bad profiles and can hurt performance.
+
+## Real production failures
+
+These failures all share the same shape: a "small" code change moved bytes around without changing the algorithm. The CPU noticed.
+
+**Discord 2023 — struct field reorder.** A Rust struct refactor moved a hot field (`message_timestamp`) from byte offset 0 to byte offset 72 in a 96-byte struct. The field crossed a cache-line boundary. Every render of a message list — the hottest path in the client — now loaded two cache lines instead of one to get that field. p99 latency on the message-render path grew 40%. Rollback confirmed the cause. Fix: reorder struct fields so the hot fields live in the first 64 bytes (one cache line). Rule of thumb: profile your struct access patterns and put the top-3 most-read fields first.
+
+**Mojang Minecraft Java Edition 2018 — HashMap → contiguous array.** The internal entity tracker used a `HashMap<EntityID, EntityData>` to store all world entities. Entity simulation (movement, AI, collision) accessed these entries in a tight game-tick loop. The HashMap's chained buckets scattered `EntityData` structs across the heap — each entity lookup was a pointer chase to a random allocation. Replacing the entity store with a contiguous array (Entity Component System architecture, ECS) gave 3–5x throughput on the game-tick loop. Every entity's component data was now sequential; the prefetcher loaded the next entity's data while the CPU processed the current one. Discord's 2024 game-server work extended this pattern to SIMD-aware ECS structs: further 2x on certain simulation paths.
+
+**Bun 2024 — startup cold-path regression.** A new dependency added a `HashMap` initialised at module load time. Due to allocation order during JIT warmup, the HashMap's backing array landed in the middle of the hot-code region, evicting frequently-used JIT-compiled functions from L1 during startup. The symptom was a 30ms startup regression — invisible in micro-benchmarks, visible in automated startup regression tests. Fix: lazy-init the HashMap (create on first use, not at module load). Pattern: anything allocated on a cold path that grows over time can pollute cache for the hot path. Lazy-init is the standard mitigation.
+
+**The structural pattern.** In all three cases:
+1. A "refactor" changed byte offsets or allocation timing — the algorithm was identical.
+2. The hot path silently crossed a cache-line or TLB boundary.
+3. The regression appeared as p99 growth or throughput drop, not as a crash or obvious error.
+4. Root cause required `perf c2c` or `perf stat` to surface; code review would not have caught it.
+
+## Observability for cache and branch performance
+
+The essential `perf stat` invocation:
+
+```bash
+perf stat -e \
+  cache-misses,cache-references,\
+  branch-misses,branches,\
+  cycles,instructions \
+  -- ./your_binary
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Metric</th>
+        <th class="border border-border px-3 py-2 text-left">Healthy</th>
+        <th class="border border-border px-3 py-2 text-left">Problem threshold</th>
+        <th class="border border-border px-3 py-2 text-left">Likely cause</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">IPC (instructions / cycles)</td>
+        <td class="border border-border px-3 py-2">2.0–4.0</td>
+        <td class="border border-border px-3 py-2">&lt;1.0</td>
+        <td class="border border-border px-3 py-2">Memory stalls or branch mispredicts</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">L1 miss rate (cache-misses / refs)</td>
+        <td class="border border-border px-3 py-2">&lt;1%</td>
+        <td class="border border-border px-3 py-2">&gt;10%</td>
+        <td class="border border-border px-3 py-2">Bad spatial/temporal locality</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">LLC miss rate</td>
+        <td class="border border-border px-3 py-2">&lt;5%</td>
+        <td class="border border-border px-3 py-2">&gt;20%</td>
+        <td class="border border-border px-3 py-2">Working set exceeds L3, or pointer chasing</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Branch miss rate (branch-misses / branches)</td>
+        <td class="border border-border px-3 py-2">1–2%</td>
+        <td class="border border-border px-3 py-2">&gt;5%</td>
+        <td class="border border-border px-3 py-2">Unpredictable data-dependent branch in hot path</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Further tools:
+
+- **`perf record` + `perf annotate`**: sample hot lines with source annotation. Shows which load instruction accumulates the most cycles.
+- **`perf c2c`**: reports cache-line contention between cores — the direct tool for false sharing.
+- **`perf top`**: live per-symbol miss attribution.
+- **Intel VTune / AMD uProf**: per-line attribution, memory access patterns, NUMA topology view. Requires platform-specific tools.
+- **BCC `cachestat` / `llcstat`**: BPF-based, zero-instrumentation, production-safe sampling. Reports L1/LLC hit rates system-wide or per-process without rebuilding the binary.
+- **ARM PMU + Apple Instruments**: same metrics on ARM; Instruments has "CPU Counters" template with `MEMORY_CYCLES` and `LAST_LEVEL_CACHE_MISS`.
+
+The performance-engineering loop:
+
+1. **Measure** with `perf stat` — get IPC, miss rates, branch miss rate.
+2. **Identify** dominant cost: cache miss (layout problem), branch miss (prediction problem), low IPC from bandwidth (data volume problem), low IPC from instruction issue (SIMD opportunity).
+3. **Choose matching fix**: layout → SoA / struct split; branches → sort / branchless; bandwidth → non-temporal stores / compression; SIMD → AoS-to-SoA + autovectorise.
+4. **Re-measure** — confirm improvement, check for new bottleneck.
+
+<Inset kind="why" lang="en">
+Big-O remains the right model for scalability with N. It is silent on constant factors that vary 100x with layout. Production reality: constants dominate well into millions for many problem sizes. The performance-engineering loop starts with measurement, not with algorithm selection.
+</Inset>
+
+<NumbersCard
+  id="07-numbers-senior"
+  title="Senior-tier cache and CPU numbers"
+  stats={[
+    { label: "TLB miss page walk", value: "5–50 cycles" },
+    { label: "Huge page (x86)", value: "2 MB / 1 GB" },
+    { label: "L1 cache associativity", value: "typ. 8-way" },
+    { label: "MLP outstanding misses", value: "8–16 typical" },
+    { label: "PGO typical speedup", value: "10–30%" },
+    { label: "Non-temporal store bandwidth gain", value: "20–30% streaming" },
+    { label: "Apple M3 pipeline depth", value: "~10 stages" },
+    { label: "DDR5-6000 bandwidth", value: "~50 GB/s per channel" },
+  ]}
+/>
+
+<Misconception id="07-mc-prefetch-magic">
+  <p><strong>"The prefetcher handles everything; cache locality is a relic."</strong> No. The prefetcher only helps with predictable patterns: sequential, simple strides. Pointer chasing and irregular indexing defeat it. Layout still matters — the prefetcher amplifies good layout but cannot rescue bad layout.</p>
+</Misconception>
+
+<TraceScenario
+  id="07-trace-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  scenario="A perf-critical service has IPC of 0.6 and L3 miss rate of 30%. Trace the optimisation path."
+  steps={[
+    { prompt: "Step 1: IPC 0.6, L3 miss 30%. What does this mean?", reveal: "Heavily memory-bound. The CPU is stalled on memory loads most of the time. 30% L3 miss rate means most loads go to RAM (100 ns each); even a few per loop iteration tanks IPC." },
+    { prompt: "Step 2: where to look first?", reveal: "Top 5 functions by sample count in perf record. Find the loop body that consumes the most cycles. Inspect data structures it touches: are they AoS where SoA would help? Are they linked structures where arrays would help?" },
+    { prompt: "Step 3: hot function operates on a vector<MyStruct> where MyStruct has 200 bytes (mix of hot and cold fields). What's the diagnosis?", reveal: "Hot loop accesses only 24 bytes per struct, but each iteration loads 200 bytes. Cache pressure is 8x higher than necessary. Split struct: hot fields in array, cold fields in parallel array indexed the same. 'Struct splitting' or 'field shuffling'." },
+    { prompt: "Step 4: after splitting, IPC up to 1.5. Still memory-bound. Next step?", reveal: "Check if the hot field array fits in L2 now. If yes, IPC will rise more. If no (still exceeds L2), look at access pattern: is it sequential? If yes, prefetcher should help. If random, use manual __builtin_prefetch a few iterations ahead of the access." },
+    { prompt: "Step 5: long-term governance?", reveal: "Add an IPC + cache-miss watchdog in production. Profile-guided builds (PGO) running weekly on real traffic samples. Code review checklist for hot paths: SoA-vs-AoS, struct size, access pattern. Performance regression tests gating PRs that touch the hot path." },
+  ]}
+/>
+
+<DebugLog
+  id="07-debug-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  title="Diagnose the perf stat output — what is the bottleneck?"
+  output={`Performance counter stats for './hot_loop':
+
+       5,238,194,672      cycles
+       2,094,127,491      instructions             #  0.40 insn per cycle
+         413,824,917      branches
+         105,209,832      branch-misses            # 25.42% of all branches
+         684,283,194      cache-references
+         287,401,952      cache-misses             # 41.99% of all cache refs
+          12,498,373      LLC-loads
+           5,927,491      LLC-load-misses          # 47.43% of all LL-cache hits
+
+           2.851 seconds time elapsed`}
+  outputLang="log"
+  question="IPC is 0.40, branch miss rate 25%, cache miss rate 42%, LLC miss 47%. What is the dominant bottleneck and how do you fix it?"
+  hint="Multiple problems present. Order them by typical fix difficulty and impact."
+  answer="Three problems, all severe. First (worst): 47% LLC misses — almost half of L3 lookups go to RAM. This indicates a hot loop whose working set doesn't fit in L3, or a pointer-chasing access pattern. Likely cause: AoS layout, scattered allocations, or random memory access. Fix: restructure data into SoA, pack hot fields into contiguous arrays, ensure working set fits in L3 (use cache-tiled iteration if not). Second: 25% branch miss rate — unpredictable branches in the hot path. Likely an if-statement on data-dependent values. Fix: sort the data first if possible (turns unpredictable into predictable), replace branch with branchless arithmetic (cmov or arithmetic select), or hoist the branch out of the inner loop. Third: IPC 0.40 — the consequence of #1 and #2. CPU is mostly stalled, executing less than half an instruction per cycle. Fixing #1 and #2 should bring IPC to 2–3x. Order of attack: fix the layout first (biggest win, largest single fix), then the branches, then check IPC. Expected final state: IPC &gt; 2.0, cache miss &lt;10%, branch miss &lt;5%. Speedup of 3–5x is realistic on this starting profile."
+/>
+
+<TradeoffMatrix
+  id="07-tradeoff-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  prompt="Pick the data structure for a perf-critical lookup table with 1M entries, mostly reads, occasional inserts, no range queries."
+  options={[
+    { name: "Open-addressing hashmap with small inline keys", summary: "Best for pure lookup.", correct: true, justification: "O(1) average lookup; with good hash function, one or two cache misses per access. Open addressing keeps keys + values inline rather than via pointer-chasing, beating chaining. Small key (8 bytes) keeps table dense — millions fit in a few MB of L3. Production-grade: Abseil flat_hash_map, F14, Rust HashMap." },
+    { name: "Sorted array + binary search", summary: "Bad for inserts.", justification: "Cache-friendly access (binary search on a contiguous array hits 5–6 cache lines for 1M entries), but each insert is O(N) — must shift the tail. Acceptable if inserts are rare or batched; otherwise hashmap wins." },
+    { name: "Tree-based map (std::map / BTreeMap)", summary: "Pointer chasing.", justification: "O(log N) lookup but each level is a cache miss. For 1M entries that is ~20 cache misses per lookup vs ~2 for hashmap. Tree is correct when ordered iteration is needed; otherwise hashmap is better." },
+    { name: "Linked list", summary: "Wrong choice.", justification: "O(N) lookup, worst cache behaviour. Never use as a primary lookup structure unless N is tiny (under 100 elements) where cache effects dominate everything else." },
+  ]}
+/>
+
+<Quiz
+  id="07-quiz-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  question="Why does the hardware prefetcher fail on graph traversals even when the graph is small enough to fit in L2?"
+  choices={[
+    { label: "Each node visit's next address is data-dependent — the prefetcher cannot predict the next address without doing the load itself, so it does not help", correct: true },
+    { label: "Graphs are too big for the prefetcher", misconception: "The question states the graph fits in L2. Size is not the issue; unpredictability is." },
+    { label: "Prefetcher only handles sequential reads", misconception: "Modern prefetchers handle strides, not just sequential access. The block is data-dependent unpredictability." },
+    { label: "Compilers disable hardware prefetch on graph code", misconception: "Compilers do not control hardware prefetch; the hardware decides what to fetch." },
+  ]}
+/>
+
+<RFCQuiz
+  id="07-rfc-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  question="Which specification defines the cache-coherency protocols (MESI / MOESI) used by modern multi-core x86 CPUs?"
+  choices={[
+    { rfc: "Intel SDM (Software Developer's Manual)", title: "Vol 3, System Programming Guide — chapter on cache coherency", correct: true },
+    { rfc: "RFC 6824", title: "MPTCP — not cache coherency" },
+    { rfc: "POSIX 2017", title: "OS-level API, no cache coherency definition" },
+    { rfc: "ARM ARM", title: "ARM Architecture Reference Manual — defines ARM memory model, but Intel SDM is the canonical x86 reference here" },
+  ]}
+/>
+
+<DesignPrompt
+  id="07-design-1"
+  lessonSlug="07-cache-oblivious-and-pgo"
+  lang="en"
+  prompt="Design the data layer for a real-time analytics service: 100M rows of telemetry data, p99 query latency under 10ms, 99% read, 1% write, mostly aggregation queries over column subsets."
+  constraints={[
+    "Working set: 100M rows × 200 bytes = 20 GB.",
+    "Server has 256 GB RAM, so dataset fits in memory.",
+    "Most queries touch 1–3 columns out of 20.",
+    "Need to support compressed-on-disk + uncompressed-in-RAM.",
+    "Throughput target: 100k queries/sec.",
+  ]}
+  canonical="Column-store layout: one contiguous array per column (SoA). Each column is sized to fit in L3 if possible (256 KB - 32 MB depending on column). Queries touching N columns load only those N arrays, leaving the other 17 untouched — 5-10x less memory bandwidth than row-store. SIMD-friendly: a sum over a column is a tight loop over a contiguous float array, AVX2 / AVX-512 vectorises to 4-8 elements per cycle. Cache prefetcher loves it. For aggregations: cache the results of common queries in a separate small structure (sub-MB), L1-resident. For writes: append-only into a small write buffer, periodically merge into the main column arrays via a compaction job. Branch prediction: most query paths are predictable (one column type, one comparison), but type-dispatch can be unpredictable — use SIMD masks or templates to specialise per type. Observability: per-query latency p50/p99, L3 miss rate, branch miss rate; alert if either exceeds baseline. This is the architecture of ClickHouse, DuckDB, and modern OLAP engines."
+  keyPoints={[
+    "Column-store (SoA) reduces memory bandwidth 5-10x for narrow queries.",
+    "Each column sized to fit in L3 keeps hot data cache-resident.",
+    "SIMD operations on contiguous columns achieve near-peak throughput.",
+    "Append-only writes + compaction balances read perf with write throughput.",
+    "Observability ties IPC + cache miss rate to query latency dashboards.",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache-oblivious recursion wins at every cache level without knowing sizes. PGO bakes branch layout into the binary for 10–30% free speedup. Production failures from Discord, Mojang, and Bun all share one shape: a "small" code change silently crossed a cache-line boundary. The fix loop: perf stat → identify (cache miss / branch miss / bandwidth) → matching fix → re-measure.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how cache coherency (MESI/MOESI) creates 'false sharing' as a multi-thread performance bug, and how to detect and fix it.", a: "MESI is the cache-coherency protocol: each cache line is in one of four states — Modified (this core's exclusive write), Exclusive (this core only, unwritten), Shared (multiple cores read-only), Invalid. When core A writes to a line, all other cores' copies become Invalid; they must re-fetch on next access. False sharing happens when two threads write to different variables that happen to share one cache line. From each thread's perspective they're working on independent data; from MESI's perspective, every write invalidates the other thread's cache. The line ping-pongs between cores at 30–50 cycles per ping. Detection: perf c2c on Linux reports cache-line contention. Symptom: a parallel workload that scales much worse than expected, often showing as high LLC-loads and low IPC. Fix: align hot per-thread variables to separate cache lines using padding (typical: 64-byte alignment + 56 bytes of padding for an 8-byte field) or alignas(64) in C++. Real examples: Linux kernel scheduler's per-CPU stats hit this in 2017 (fix: cacheline_aligned attribute), Go's sync.WaitGroup had it (fix: padding added in 1.13). False sharing is the canonical 'I made the algorithm parallel but it got slower' bug." },
+    { q: "A 'fast' O(log N) algorithm performs worse than a 'slow' O(N) one in production. List the diagnostic steps to confirm cache-locality is the cause.", a: "Step 1: measure both. Use real input, real environment, hot-cache and cold-cache cases. Wall-clock alone won't show the cause. Step 2: run with perf stat -e cache-references,cache-misses,instructions,cycles,branches,branch-misses. Compare IPC and cache miss rate. The O(N) version likely shows IPC near 3–4 and miss rate under 1%. The O(log N) version likely shows IPC near 0.5–1 and miss rate above 20%. Step 3: profile with perf record and inspect hot lines with annotated source. The tree-traversal version will show samples concentrated on pointer-dereference lines; the array version on the arithmetic. Step 4: confirm by varying N. As N grows, the array eventually stops fitting in cache; the cross-over point is where algorithms reverse rank. If the cross-over is at N=10M but production data is N=100k, the array wins decisively. Step 5: trace memory layout. valgrind --tool=massif shows heap allocation patterns; tree nodes scattered across heap confirm bad locality. Step 6: if cache-locality is confirmed, try (a) packing tree nodes into a contiguous arena, (b) replacing the tree with a sorted array if writes are rare, or (c) using a cache-friendly tree variant (B-tree with high fanout). Re-measure. Production fix is usually one of these three; expected improvement 2–10x." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache-oblivious algorithms (recursive blocked matrix multiply, van Emde Boas trees, recursive mergesort) achieve good cache behaviour at every level simultaneously without knowing cache sizes. PGO turns a representative runtime profile into inlining decisions, branch layout, and function placement — typically 10–30% speedup with no code changes. Real production failures share one shape: a struct reorder (Discord, +40% p99), a HashMap replacing contiguous arrays (Mojang, 3–5x throughput drop), or a cold-path HashMap polluting cache during warmup (Bun startup regression). The observability loop is: perf stat for IPC and miss rates, perf c2c for false sharing, perf record + annotate for per-line attribution, BPF tools (cachestat, llcstat) in production. IPC below 1.0 means memory-bound; branch miss rate above 5% means an unpredictable hot branch. Fix matches the bottleneck type: layout for cache misses, sort/branchless for branches, non-temporal stores for streaming bandwidth. Big-O is the right scalability model; cache constants are the right performance model.
+</Recap>

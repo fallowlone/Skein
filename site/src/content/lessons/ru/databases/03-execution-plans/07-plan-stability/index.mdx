@@ -1,0 +1,188 @@
+---
+slug: 07-plan-stability
+lang: ru
+track: databases
+unit: 03-execution-plans
+order: 7
+title: "Производственные режимы отказа и стабильность планов"
+summary: "Восемь реальных режимов отказа — устаревшая статистика, ловушка общего плана, коррелированные колонки, неверная настройка SSD, накладные расходы JIT, сброс work_mem, дрейф random_page_cost и перескоки — плюс стратегия обнаружения и предотвращения регрессий планов между деплоями."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["06-plan-cache-and-tuning"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["plan-stability", "plan-regression", "pg-hint-plan", "auto-explain", "plan-cache", "plan-audit", "autovacuum-analyze", "stale-statistics"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Dashboard заказов B2B SaaS-продукта деградирует каждое воскресенье утром. Ко вторнику всё в порядке. Паттерн: пакетный импорт запускается в воскресенье ночью, сдвигая распределения данных; autovacuum не успевает запустить ANALYZE к понедельнику; планировщик выбирает Nested Loop с недооценкой соединения в 1000×. ANALYZE в хуке после пакетной обработки навсегда устраняет инцидент.
+</Hook>
+
+<Crux>Восемь режимов отказа: свежая статистика, CREATE STATISTICS, plan_cache_mode, auto_explain, ANALYZE в хуке деплоя.</Crux>
+
+<Explanation>
+
+## Восемь реальных производственных режимов отказа
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Режим отказа</th>
+        <th class="border border-border px-3 py-2 text-left">Симптом</th>
+        <th class="border border-border px-3 py-2 text-left">Исправление</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Каскад устаревшей статистики</td>
+        <td class="border border-border px-3 py-2">Внезапное замедление после массовой вставки; rows-estimated резко отличается от actual</td>
+        <td class="border border-border px-3 py-2">ANALYZE в post-batch хуке; снизить autovacuum_analyze_scale_factor</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Ловушка общего плана</td>
+        <td class="border border-border px-3 py-2">Высокое stddev_exec_time; бимодальная задержка на подготовленном операторе</td>
+        <td class="border border-border px-3 py-2">plan_cache_mode = force_custom_plan для роли</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Взрыв коррелированных колонок</td>
+        <td class="border border-border px-3 py-2">Nested Loop с 1M итераций; rows-estimated ~1000× ниже</td>
+        <td class="border border-border px-3 py-2">CREATE STATISTICS (dependencies, mcv); ANALYZE</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Неверная настройка random_page_cost (SSD)</td>
+        <td class="border border-border px-3 py-2">Планировщик выбирает Seq Scan там, где должен был бы Index Scan; запросы читают целые таблицы</td>
+        <td class="border border-border px-3 py-2">SET random_page_cost = 1.1 в postgresql.conf</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Накладные расходы JIT на OLTP</td>
+        <td class="border border-border px-3 py-2">Короткие запросы медленнее ожидаемого; время компиляции JIT превышает экономию выполнения</td>
+        <td class="border border-border px-3 py-2">Поднять jit_above_cost до 500000 или SET jit = off для OLTP-роли</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Сброс work_mem</td>
+        <td class="border border-border px-3 py-2">Sort Method: external merge; Hash Batches &gt; 1; медленные запросы при соединениях/сортировках</td>
+        <td class="border border-border px-3 py-2">SET work_mem = '32MB' на сессию; не глобально без проверки бюджета памяти</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Слишком малый effective_cache_size</td>
+        <td class="border border-border px-3 py-2">Планировщик предпочитает Seq Scan даже на SSD с большой RAM, потому что предполагает холодные данные</td>
+        <td class="border border-border px-3 py-2">SET effective_cache_size = '24GB' (~75% общей RAM)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Перескоки плана при смене фазы нагрузки</td>
+        <td class="border border-border px-3 py-2">Один и тот же запрос получает разные планы в разное время; autovacuum в конце концов восстанавливает баланс</td>
+        <td class="border border-border px-3 py-2">pg_hint_plan для критических путей; иначе принять вариативность и алертить на неё</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Стабильность планов между деплоями
+
+Наиболее распространённая операционная боль: деплой с новыми таблицами, новыми данными или другими объёмами вызывает регрессии планов на неизменённых запросах.
+
+**Пятиуровневая стратегия:**
+
+**Уровень 1 — настройка константных стоимостей (один раз):** Установите `random_page_cost = 1.1`, `effective_cache_size` в 75% RAM, `work_mem = 16-32MB`. Проверьте через EXPLAIN на top-20 запросах. Это обеспечивает правильную ментальную модель вашего железа у планировщика.
+
+**Уровень 2 — свежесть статистики:** Снизьте `autovacuum_analyze_scale_factor = 0.02` на горячих таблицах. Добавьте `ANALYZE critical_tables` в каждый deploy-хук. Создайте объекты `CREATE STATISTICS` для коррелированных групп колонок, выявленных через EXPLAIN.
+
+**Уровень 3 — кеш планов для косых нагрузок:** Установите `plan_cache_mode = 'force_custom_plan'` на ролях, выполняющих параметризованные запросы с косыми распределениями параметров (выявлены через высокое `stddev_exec_time`).
+
+**Уровень 4 — наблюдаемость:** Настройте `auto_explain` (log_min_duration = 500мс, log_analyze = true, log_buffers = true, log_format = json, sample_rate = 0.05). Архивируйте `pg_stat_statements` еженедельно (reset + сохранить в файл/S3).
+
+**Уровень 5 — процедура деплоя:** Перед каждым деплоем делайте снимок `pg_stat_statements` + `EXPLAIN` top-20 запросов в JSON. После деплоя: ANALYZE критических таблиц, подождать 5 минут, повторный снимок. Diff ключевых метрик. Флажить любой запрос, чья структура плана изменилась или чей `mean_exec_time` вырос более чем на 50%.
+
+<TraceScenario
+  id="07-stability-trace-1"
+  lessonSlug="07-plan-stability"
+  lang="ru"
+  scenario="Старший инженер настраивает Postgres 16 OLTP базу данных на NVMe SSD (32 ГБ RAM, 500 ГБ БД, ~5k QPS), задеплоенную с настройками планировщика по умолчанию."
+  steps={[
+    { prompt: "Шаг 1: базовая линия.", reveal: "Сделать снимок pg_stat_statements: top запросы по total_exec_time, mean_exec_time, stddev. Захватить EXPLAIN (ANALYZE, BUFFERS) для top-20. Отметить: какие используют Seq Scan на больших таблицах? Какие сбрасываются (Hash Batches > 1, Sort Method: external merge)? Какие имеют большой разрыв rows-estimated vs actual? Какие имеют высокое stddev? Сохранить планы как JSON для последующего сравнения." },
+    { prompt: "Шаг 2: настройка стоимостей для SSD.", reveal: "ALTER SYSTEM SET random_page_cost = 1.1; ALTER SYSTEM SET effective_cache_size = '24GB'; SELECT pg_reload_conf(); Проверить: SHOW random_page_cost. Повторно запустить EXPLAIN на top-20. Ожидать, что некоторые планы сдвинутся с Seq Scan на Index Scan — это правильно на SSD. Для любого сдвига, выглядящего как регрессия, инспектировать per-query перед продолжением." },
+    { prompt: "Шаг 3: обновление и расширение статистики.", reveal: "ANALYZE; -- вся база данных. Для высококосых колонок: ALTER TABLE ... ALTER COLUMN ... SET STATISTICS 1000. Для коррелированных групп колонок: CREATE STATISTICS (dependencies, mcv) ON col1, col2 FROM tbl. Повторно ANALYZE. Повторный EXPLAIN top запросов; rows-estimated должен отслеживать rows-actual в пределах 2x на большинстве узлов." },
+    { prompt: "Шаг 4: память и JIT.", reveal: "SET work_mem = '16MB' в postgresql.conf (с бюджетом max_connections: 200 × 16MB = 3.2GB в худшем случае). Снизить autovacuum_analyze_scale_factor на горячих таблицах. Для только-OLTP нагрузок: ALTER SYSTEM SET jit_above_cost = 500000 или SET jit = off для роли приложения." },
+    { prompt: "Шаг 5: наблюдаемость.", reveal: "Настроить auto_explain (log_min_duration = '500ms', log_analyze = true, log_buffers = true, sample_rate = 0.05). Настроить еженедельный pg_stat_statements_reset() с архивированием снимка предыдущей недели. Настроить алерты: любой top-20 запрос mean_exec_time > 50мс, или stddev_exec_time > 10x mean. Задокументировать все настройки с обоснованием — каждое не-дефолтное значение требует комментария." },
+  ]}
+/>
+
+<Misconception id="07-stability-mc-1">
+<strong>«Если планировщик ошибается, задайте план хинтами.»</strong> pg_hint_plan — последнее средство. Принудительный план перестаёт адаптироваться. Сначала исправьте причину (статистика, индексы, форма запроса). Хинты — для 1-3 запросов, где план постоянно фиксирован.
+</Misconception>
+
+<TradeoffMatrix
+  id="07-stability-tradeoff-1"
+  lessonSlug="07-plan-stability"
+  lang="ru"
+  prompt="Команде нужно стабилизировать планы выполнения между деплоями для top-20 OLTP запросов. Выберите стратегию."
+  options={[
+    { name: "Статистика прежде всего: агрессивный ANALYZE в post-deploy + расширенная статистика + алертинг auto_explain", summary: "Стандартная производственная дисциплина.", correct: true, justification: "Правильный ответ для ~90% случаев. Свежая, точная статистика позволяет планировщику принимать верные решения даже при росте данных. CREATE STATISTICS для коррелированных колонок устраняет самый большой класс ошибок оценки строк. auto_explain автоматически улавливает регрессии. Стоимость: несколько ANALYZE в post-deploy хуке + конфигурация auto_explain + еженедельный просмотр дельт pg_stat_statements. Сохраняет способность планировщика адаптироваться при изменении форм данных." },
+    { name: "Хинтовое закрепление через pg_hint_plan для top-20 запросов", summary: "Жёсткая фиксация планов.", justification: "Правильно для критически важных по стабильности запросов, где стоимость регрессии > выгоды адаптации (финансовая отчётность, эндпоинты с фиксированным SLA). Встройте хинты в SQL: /*+ IndexScan(orders idx_x) HashJoin(orders customers) */. Торгует адаптивностью планировщика на предсказуемость — завтрашняя форма данных может сделать сегодняшний хинт неверным. Резервируйте для 1-3 запросов, которые абсолютно не могут деградировать; для остального используйте статистику-прежде-всего." },
+    { name: "Глобальное отключение переупорядочивания: SET from_collapse_limit = 1; SET join_collapse_limit = 1;", summary: "Опция закрытия.", justification: "Заставляет Postgres уважать явный порядок JOIN в SQL — полезно когда разработчики вручную настроили запросы и хотят сохранить настройку при изменении данных. Глобальный флаг — кувалда; устанавливает для каждого запроса. Лучше как per-session или per-role для аналитических нагрузок. Побочный эффект: большие OLTP-запросы могут пропустить оптимальный порядок соединений. Используйте избирательно, не глобально." },
+    { name: "Кешировать планы снаружи и воспроизводить их через пользовательский исполнитель", summary: "Нестандартный и экзотический.", justification: "Иногда встречается в установках с экстремальным масштабированием. Неверный по умолчанию. Изобретение кеширования планов вне Postgres добавляет операционную сложность, ломает инструментарий и плохо стареет. Используйте только когда ни один нативный механизм Postgres (хинты, статистика, plan_cache_mode) не достаточен — что редко." },
+  ]}
+/>
+
+<Quiz
+  id="07-stability-quiz-1"
+  lessonSlug="07-plan-stability"
+  lang="ru"
+  question="Пакетное задание вставляет 20M строк в таблицу orders каждое воскресенье ночью. Каждое понедельное утро запросы, быстрые в пятницу, медленные. Ко вторнику снова нормально. Какова корневая причина и исправление?"
+  choices={[
+    { label: "Статистика устарела после массовой вставки; autovacuum не успел запустить ANALYZE к понедельному утру. Исправление: добавить ANALYZE orders в post-batch хук, чтобы статистика была актуальна до возобновления трафика.", correct: true },
+    { label: "Таблица выросла слишком большой для использования индексов; исправление через REINDEX", misconception: "Полезность индекса зависит от селективности, а не только от размера таблицы. Проблема — в устаревшей статистике, а не в раздутости индексов." },
+    { label: "Понедельный трафик тяжелее пятничного; исправление через вертикальный масштаб базы данных", misconception: "Паттерн (медленно в понедельник, нормально ко вторнику) соответствует dogоняющему autovacuum, а не разнице трафика." },
+    { label: "Пакетное задание оставляет блокировки, мешающие запросам", misconception: "Конкуренция за блокировки проявляется как ожидающие запросы, а не медленные. И разрешается когда транзакция завершается, а не ко вторнику." },
+  ]}
+/>
+
+<Quiz
+  id="07-stability-quiz-2"
+  lessonSlug="07-plan-stability"
+  lang="ru"
+  question="Запрос показывает `Sort Method: external merge Disk: 450MB` в EXPLAIN ANALYZE. Каковы интерпретация и исправление?"
+  choices={[
+    { label: "Сортировка превысила work_mem (умолчание 4MB) и сбросила 450MB на диск; исправление через SET work_mem = '512MB' для этой сессии или шаблона запросов", correct: true },
+    { label: "Сортировка распределена по 450MB shared_buffers — это нормально", misconception: "External merge означает, что данные не поместились в work_mem и Postgres использовал диск — это проблема производительности, не норма." },
+    { label: "Отсутствует индекс сортировки; добавьте индекс на колонку ORDER BY", misconception: "Индекс иногда может устранить сортировку, но симптом external merge — про work_mem, а не наличие индекса." },
+    { label: "Повреждение диска; запустите pg_check для проверки", misconception: "External merge — это запланированная сортировка на диске, а не симптом повреждения." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Восемь режимов отказа, один сценарий: свежая статистика (ANALYZE в каждом deploy-хуке), расширенная статистика для коррелированных колонок, force_custom_plan для косых подготовленных операторов, random_page_cost = 1.1 на SSD, work_mem per-session для тяжёлых запросов, auto_explain + pg_stat_statements для наблюдаемости и хинты только для 1-3 запросов, которые не должны деградировать никогда.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-stability-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните, почему разрыв между rows-estimated и rows-actual на каждом узле плана является единственным наиболее важным диагностическим показателем в Postgres.", a: "Работа планировщика — выбрать дешевейший план. «Дешевейший» вычисляется с использованием оценок строк на каждом узле — они входят в формулу стоимости на каждом уровне и определяют выбор между альтернативными планами на уровне выше. Плохая оценка на листовом узле (например, сканирование, выдающее в 1000× больше строк, чем предсказано) распространяется вверх: соединение выше выбирает неверный алгоритм (потому что ожидает меньший ввод); сортировка выше выбирает неверный метод (потому что ожидает меньше данных); Limit выше не проталкивается вниз (потому что планировщик думает, нужно сначала прочитать все строки). Результат — не «одно неверное число», а «каждое решение в дереве выше этого узла неверно». Вот почему старший Postgres-тюнинг начинается с оценок строк, а не с алгоритмов соединения или типов сортировки — корень причины всегда upstream в статистике. Систематический процесс: для каждого узла плана вычислить rows-actual / rows-estimated. Флажить узлы с отношением > 10× как подозрительные; > 100× как срочные. Трассировать предикат, выявить причину (устаревшая статистика, коррелированные колонки, несаргабельное выражение) и исправить. Выбор плана скорректируется сам." },
+    { q: "Спроектируйте стратегию стабильности планов для B2B SaaS Postgres 16 базы данных на NVMe SSD (32 ГБ RAM, 500 ГБ БД, 5k OLTP QPS). Top-20 запросов выявлены через pg_stat_statements. 3 из 20 — тяжёлые агрегации.", a: "Пять уровней. Уровень 1 — константные стоимости: random_page_cost = 1.1, seq_page_cost = 1.0, effective_cache_size = '24GB', work_mem = '16MB' (с max_connections=200, суммарный бюджет 3.2 ГБ). Уровень 2 — статистика: autovacuum_analyze_scale_factor = 0.02 на горячих таблицах; CREATE STATISTICS (dependencies, mcv) для коррелированных групп колонок, выявленных через EXPLAIN; SET STATISTICS 1000 на косых колонках; ANALYZE в post-deploy хуке. Уровень 3 — кеш планов: plan_cache_mode = 'force_custom_plan' на роли отчётности для 3 тяжёлых агрегационных запросов (косые параметры, высокое stddev_exec_time); оставить OLTP роль на умолчании 'auto'. Уровень 4 — наблюдаемость: auto_explain (log_min_duration = '500ms', log_analyze = true, log_buffers = true, log_format = json, sample_rate = 0.05); еженедельный архив pg_stat_statements + reset. Уровень 5 — процедура деплоя: предварительный снимок pg_stat_statements + EXPLAIN top-20; после деплоя ANALYZE, 5-минутное ожидание, повторный снимок + diff; алерт на любой запрос mean_exec_time > 50мс или изменение структуры плана. Резервировать pg_hint_plan максимум для 1-3 критически важных отчётных запросов с постоянно верной формой плана." },
+  ]}
+/>
+
+<Recap lang="ru">
+Восемь производственных режимов отказа покрывают большинство регрессий планов Postgres: устаревшая статистика после массовых операций (ANALYZE в post-batch хуке), ловушка общего плана на подготовленных операторах с косыми параметрами (plan_cache_mode = force_custom_plan), ошибки оценки строк для коррелированных колонок (CREATE STATISTICS dependencies + mcv), неверная настройка SSD (random_page_cost = 1.1), накладные расходы JIT на OLTP (поднять jit_above_cost), сброс work_mem (сортировка/хеш сбрасываются на диск — исправить per-session), несоответствие effective_cache_size и перескоки планов при смене фазы данных. Операционная стратегия имеет пять уровней: откалиброванные под SSD константные стоимости, агрессивное обслуживание статистики, избирательные переопределения plan_cache_mode, наблюдаемость auto_explain + pg_stat_statements и процедура деплоя, сравнивающая планы и метрики до и после каждого деплоя. Используйте pg_hint_plan только для 1-3 запросов, где план должен быть закреплён и правильная форма плана постоянно известна; давайте планировщику адаптироваться ко всему остальному.
+</Recap>

@@ -1,0 +1,177 @@
+---
+slug: 06-oauth-production
+lang: ru
+track: security
+unit: 02-oauth-oidc
+order: 6
+title: "OAuth в production: audience атаки, observability и реальные провалы"
+summary: "Audience confusion атаки, хранение токенов по типу клиента, observability метрики для обнаружения компрометации и четыре реальных OAuth провала, стоивших миллионы."
+estMin: 11
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - security/02-oauth-oidc/05-sender-constrained-tokens
+deepensInto:
+  - security/03-jwt-pitfalls
+spiral: ["statefulness", "encapsulation"]
+concepts: ["audience-attack", "aud-claim", "resource-indicators", "token-storage", "oauth-observability", "refresh-replay"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9700
+  - https://datatracker.ietf.org/doc/html/rfc8705
+  - https://openid.net/specs/fapi-security-profile-2_0-final.html
+  - https://workos.com/blog/dpop-rfc-9449-explained
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+JWT-валидатор логирует WARN, когда aud claim не содержит ожидаемое значение, затем всё равно принимает токен — "aud содержит client_id вызывающего". Токен был выпущен для другого приложения. Валидатор только что принял чужой токен — audience bypass, реальный CVE паттерн, замеченный в Microsoft Azure AD в ноябре 2024.
+</Hook>
+
+<Crux>aud должен совпадать с твоим hard-coded идентификатором — не с любым валидным. Каждый OAuth breach начинается с одной пропущенной проверки.</Crux>
+
+<Explanation>
+
+## Audience атаки
+
+Когда один authorization server выдаёт токены для нескольких resource server (API-A и API-B), валидатор, принимающий любой валидный `aud`, может быть эксплуатирован: атакующий, получивший токен для API-A, представляет его API-B.
+
+Правильная проверка `aud`: содержит ли `aud` claim токена **hard-coded идентификатор этого resource server**? Не "содержит ли aud любой известный client_id?" — логическая инверсия, обходящая защиту.
+
+**RFC 8707 — Resource Indicators:** Клиент указывает `resource` параметр в `/token` запросе, называя target resource server. IdP выдаёт токен только с этой audience. Если клиенту нужны токены для обоих API-A и API-B, он вызывает `/token` дважды с разными `resource` значениями. Неудобно, но корректно.
+
+**Token Exchange (RFC 8693):** Resource server, которому нужно вызвать downstream сервис, может представить свой incoming токен и запросить новый токен, валидный у downstream, с суженной audience. Это "least privilege" для service-to-service hop.
+
+Claim `cnf` (confirmation) сужает привязку дальше: DPoP устанавливает `cnf.jkt` в thumbprint публичного ключа. Токен с `cnf` можно использовать только с proof, подписанным соответствующим приватным ключом — audience binding плюс sender binding вместе.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm">
+  <div class="mb-3 text-ink-2 text-xs uppercase tracking-wider">aud check: правильно vs неправильно</div>
+  <div class="grid grid-cols-2 gap-4 text-xs">
+    <div class="rounded border border-red-400 bg-red-50 dark:bg-red-950 p-3">
+      <div class="font-bold text-red-700 dark:text-red-300 mb-2">НЕПРАВИЛЬНО — audience bypass</div>
+      <div class="font-mono">if token.aud.includes(request.client_id) &#123; accept &#125;</div>
+      <div class="mt-2 text-ink-2">Принимает любой токен где aud содержит ЛЮБОЙ известный client_id, включая из другого приложения.</div>
+    </div>
+    <div class="rounded border border-green-400 bg-green-50 dark:bg-green-950 p-3">
+      <div class="font-bold text-green-700 dark:text-green-300 mb-2">ПРАВИЛЬНО</div>
+      <div class="font-mono">const EXPECTED = "acme-api-public";<br/>if token.aud.includes(EXPECTED) &#123; accept &#125;</div>
+      <div class="mt-2 text-ink-2">Hard-coded ожидаемая audience. Никакой request-derived логики. Регресс-тест: токен с aud=["other-api"] должен быть отклонён.</div>
+    </div>
+  </div>
+</div>
+
+## Хранение токенов по типу клиента
+
+Где живут токены — определяет поверхность компрометации:
+
+**Browser SPA:**
+- Access-токен: только JavaScript память (closure или React state). Никогда `localStorage` — XSS-readable.
+- Refresh-токен: `httpOnly; Secure; SameSite=Strict` cookie — недоступен из JS.
+- При page reload: `prompt=none` silent `/authorize` round, используя refresh-токен cookie.
+
+**Native mobile app:**
+- Access-токен: OS keychain (iOS Keychain, Android Keystore). Не process memory.
+- Refresh-токен: OS keychain, никогда в `SharedPreferences` или незащищённом storage.
+
+**Server-side приложение:**
+- Access-токен: server session (in-memory или Redis, не клиент).
+- Refresh-токен: server session. Клиент никогда не видит ни одного токена.
+
+**Machine-to-machine (CI/CD, сервис):**
+- Использовать `client_credentials` grant, не user-delegated токены.
+- Никогда не embed user access-токены в CI pipelines.
+
+## Production observability
+
+Минимально-жизнеспособный OAuth observability dashboard:
+
+| Метрика | Условие alert |
+|---|---|
+| `refresh_replay_detected_total` | Любое ненулевое значение — вероятная компрометация |
+| `id_token_validation_failure_total` по reason | Spike на `sig/kid` → JWKS rotation issue |
+| `token_introspection_latency_p99` | Выше 200ms → IdP перегружен |
+| `jwks_cache_hit_ratio` | Падение ниже 90% → слишком короткий cache TTL |
+| `dpop_proof_failure_total` по reason | Spike на `iat_skew` → clock drift в mobile клиентах |
+| `token_request_total` по outcome | Spike на `invalid_grant` → атака или misconfigured клиент |
+
+`refresh_replay_detected_total > 0` — самый actionable alert: означает что хотя бы один refresh-токен был использован двумя различными клиентами — кто-то украл токен.
+
+## Четыре реальных OAuth провала
+
+**Facebook, сентябрь 2018.** Баг в фиче "View As" утёк 50 миллионов access-токенов. Атакующие могли имперсонировать любого из этих пользователей в любом Facebook OAuth клиенте (Spotify, Tinder, Instagram). Fix: инвалидация 90 миллионов токенов.
+
+**Slack, февраль 2017.** Misconfigured OAuth redirect URI в third-party Slack app позволил атакующему фишингом украсть authorization code workspace owner. Атакующий эскалировал до full admin access. Fix: URI валидация, enforcement exact-match redirect URI на уровне IdP.
+
+**GitHub Enterprise, 2021.** Баг в PKCE verification позволил downgrade атаки против старых клиентов. Исправлено в patch release.
+
+**Microsoft Azure AD, ноябрь 2024.** Token-validation cache poisoning уязвимость позволила crafted токену обойти `aud` валидацию ~30 минут на cached negative response. Fix за несколько часов. Root cause: negative-response кеш не различал "aud не найден" от "aud явно отклонён".
+
+Паттерн: каждый инцидент вовлекал одну пропущенную или buggy обязательную проверку. Industry ответ на все четыре был одинаков — больше обязательных проверок, короче TTL, шире observability.
+
+<Quiz
+  id="06-q1"
+  pieceSlug="06-oauth-production"
+  lang="ru"
+  question="Команда хочет делить один access-токен между двумя resource server (API-A и API-B) для удобства. Почему это опасно?"
+  choices={[
+    { label: "Shared токены всегда истекшие", misconception: "Expiry не связан с token sharing." },
+    { label: "Sharing требует ослабления aud check — любая компрометация API-A даёт атакующему валидный токен для API-B", correct: true },
+    { label: "Оба API должны использовать одинаковый client_id", misconception: "client_id — идентификатор клиента, не resource server. Проблема в aud валидации." },
+    { label: "Refresh-токены не могут быть shared", misconception: "Проблема в audience scope access-токенов, не в refresh-токен механике." },
+  ]}
+/>
+
+<Quiz
+  id="06-q2"
+  pieceSlug="06-oauth-production"
+  lang="ru"
+  question="Почему access-токены нельзя хранить в localStorage в browser SPA?"
+  choices={[
+    { label: "localStorage слишком медленный", misconception: "Производительность localStorage нормальная; проблема в безопасности." },
+    { label: "localStorage читается любым JavaScript на странице — включая инжектированные скрипты от XSS или supply-chain атак", correct: true },
+    { label: "localStorage не сохраняется при перезагрузке", misconception: "localStorage сохраняется; sessionStorage нет. Проблема в JS-читаемости." },
+    { label: "OAuth спецификация запрещает localStorage", misconception: "OAuth спецификация не упоминает localStorage; проблема в XSS threat model." },
+  ]}
+/>
+
+<DragOrder
+  id="06-drag-1"
+  pieceSlug="06-oauth-production"
+  lang="ru"
+  prompt="Поставь шаги диагностики spike id_token validation failures в порядке:"
+  items={[
+    "Проверить dimension failure_reason на id_token_validation_failure_total",
+    "Если reason 'sig' или 'kid-not-found' — подозревать JWKS key rotation",
+    "Проверить jwks_cache_hit_ratio — падение указывает на stale cache от rotation",
+    "Подтвердить, опубликовал ли IdP новый signing key недавно",
+    "Триггернуть немедленный JWKS refresh на всех инстансах",
+    "Уменьшить JWKS cache TTL до 5–10 минут и добавить on-cache-miss refresh как backstop",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>aud должен валидироваться против hard-coded ожидаемого значения — не любого client_id. Хранение токенов по типу клиента: JS память для SPA, OS keychain для native, server session для server-side. refresh_replay_detected_total выше нуля — сигнал компрометации, не предупреждение.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-oauth-production-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни audience confusion атаку и правильную aud check, предотвращающую её.", a: "Audience confusion: атакующий получает токен для API-A и представляет его API-B. Если aud check API-B — 'содержит ли aud любой известный client_id?', он принимает токен. Правильная check: hard-code ожидаемую audience для ЭТОГО resource server и верифицировать что aud токена содержит ровно это значение. Регресс-тест: токен с aud=['other-api'] должен быть отклонён." },
+    { q: "Почему refresh_replay_detected_total > 0 — сигнал компрометации, а не безвредная ошибка?", a: "Replay возможен только если два различных клиента представили одинаковый refresh-токен на /token — один был легитимный клиент, второй — атакующий с украденной копией. Это не ошибка конфигурации или expiry race; это свидетельство что refresh-токен был в двух руках одновременно. Security команды должны относиться к этому как к вероятной краже токена." },
+    { q: "Какой observability gap решает короткий access token TTL (5–15 мин)?", a: "Local JWT validation не может обнаружить отзывы — отозванный токен проходит local checks до срабатывания claim exp. Короткий TTL означает худший случай для украденного-и-отозванного токена — это TTL окно (5–15 мин), а не часы или дни. Он не устраняет окно, но ограничивает его до операционно приемлемого диапазона для большинства read-path нагрузок." },
+  ]}
+/>
+
+<Recap lang="ru">
+Валидация audience — hard-coded identity check, не membership check — `aud` токена должен содержать конкретный идентификатор этого resource server, никогда не выводимый из запроса. Хранение токенов следует threat model клиента: JS память для SPA, OS keychain для native, server session для server-side. Production observability должна раскрывать `refresh_replay_detected_total` (сигнал компрометации), JWKS cache hit ratio (готовность к ротации) и introspection latency (здоровье IdP). Четыре крупных OAuth инцидента — Facebook 2018, Slack 2017, GitHub Enterprise 2021, Azure AD 2024 — каждый следовал из одной пропущенной или buggy обязательной проверки. OAuth безопасность — проблема полного набора: каждая проверка должна проходить, каждый раз.
+</Recap>

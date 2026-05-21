@@ -1,0 +1,206 @@
+---
+slug: 04-inline-caches
+lang: ru
+track: browser
+unit: 03-v8-internals
+order: 4
+title: "Inline caches, состояния IC и деоптимизация"
+summary: "Как per-call-site inline caches V8 отслеживают hidden classes, конечный автомат monomorphic/polymorphic/megamorphic, триггеры деоптимизации и FadedExample перехода hidden class, ломающего горячий IC."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-what-v8-is", "03-hidden-classes"]
+deepensInto: ["06-turbofan-and-deopt"]
+spiral: ["statefulness"]
+concepts: ["inline cache", "monomorphic", "polymorphic", "megamorphic", "FeedbackVector", "deoptimization", "guard", "IC state machine"]
+sources:
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://v8.dev/blog/maglev
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Одна строка кода — `p.x` — может выполниться за 1 такт CPU или за 100 тактов в зависимости от того, сколько разных форм объектов через неё прошло. Структура, принимающая это решение, называется inline cache, и её состояние — самое важное число производительности, которое DevTools по умолчанию не показывает.
+</Hook>
+
+<Crux>Состояние IC (mono → poly → megamorphic) определяет: жёсткое смещение или общий хеш-поиск в 10–50 раз медленнее.</Crux>
+
+<Explanation>
+
+## Как работают inline caches
+
+Каждый доступ к свойству в JS — полиморфная операция: объект может быть любой формы. V8 генерирует крохотный кэш для каждой точки вызова: когда строка выполняется первый раз, V8 записывает увиденный hidden class и смещение свойства для него. В следующий раз, когда та же строка выполняется с объектом того же hidden class, V8 читает свойство по записанному смещению напрямую — **5–10 тактов CPU**. Никаких хеш-поисков, проверок типов, одна инструкция MOV.
+
+## Конечный автомат IC
+
+Состояние IC живёт в слоте FeedbackVector для этой строки источника. Переходы односторонние — в сторону megamorphic:
+
+| Состояние | Увиденных hidden classes | Стоимость | Примечания |
+| --- | --- | --- | --- |
+| `uninitialized` | 0 | — | Первое выполнение |
+| `monomorphic` | 1 | 5–10 тактов | Быстрый прямой доступ |
+| `polymorphic` | 2–4 | Линейная цепочка веток | Всё ещё быстро |
+| `megamorphic` | 5+ | Общий поиск, ~50–100 тактов | В 10–50 раз медленнее |
+
+Функция может иметь сотни IC-слотов. Один megamorphic-сайт не убивает всю функцию, но горячий цикл с megamorphic доступом к свойству убивает тело своего цикла.
+
+<NumbersCard
+  id="card-ic-numbers"
+  title="Стоимость состояний IC"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic доступ", value: "5–10 тактов" },
+    { label: "Порог megamorphic", value: "≥5 форм на IC-слот" },
+    { label: "Замедление megamorphic", value: "10–50× vs monomorphic" },
+    { label: "Размер IC-слота в FeedbackVector", value: "16 байт (8Б класс + 8Б хендлер)" },
+    { label: "Стоимость общего поиска", value: "50–100 тактов" },
+  ]}
+/>
+
+## Деоптимизация
+
+Когда TurboFan оптимизирует функцию, он встраивает предположения: «этот аргумент всегда smi», «свойство z этого объекта всегда число», «этот цикл никогда не переполняет 32-битные индексы». **Защита (guard)** вставляется при каждом предположении. Если во время выполнения защита не срабатывает, V8 **деоптимизирует**: выбрасывает скомпилированный код, восстанавливает состояние интерпретатора из оптимизированного стека кадра и возобновляет выполнение в Ignition (или Sparkplug). Функция может позже подняться снова, но сам deopt стоит ~микросекунды.
+
+**Частые триггеры deopt:**
+- Передача другого типа в ранее типизированный аргумент
+- Индексирование за пределами массива
+- Получение NaN в числовой операции
+- Доступ к удалённому свойству
+
+Флаги Chrome DevTools `--trace-opt --trace-deopt` показывают deopt'ы. `%OptimizationStatus(fn)` при `--allow-natives-syntax` в d8 показывает текущий уровень.
+
+<FadedExample
+  client:load
+  id="fe-v8-1"
+  pieceSlug="inline-caches"
+  lang="ru"
+  title="Трасса одного перехода hidden class, ломающего IC"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Сетап:</strong> Функция <code>getX(p) = p.x</code> вызывается 10000 раз в горячем цикле. Объекты приходят из разных путей кода.</p>
+        <p><strong>Шаг 1: прогрев (первые 1000 вызовов).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>Каждый вызов передаёт объект <code>Point</code>, созданный через <code>new Point(x, y)</code>. Все Points разделяют hidden class HC1.</li>
+          <li>Ignition выполняет, записывает «IC для строки 1: HC1, смещение 8» в FeedbackVector.</li>
+          <li>После 1000 вызовов Sparkplug компилирует базовую JIT-версию. IC всё ещё monomorphic.</li>
+        </ul>
+        <p><strong>Шаг 2: TurboFan продвигает (вызов 5000).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>TurboFan компилирует getX с предположением «p имеет hidden class HC1, .x на смещении 8». Генерирует одну инструкцию MOV: <code>mov rax, [rdi+8]</code> — 1 такт.</li>
+          <li>Функция теперь на максимальной скорости.</li>
+        </ul>
+        <p><strong>Шаг 3: переход hidden class (вызов 6000).</strong></p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>Вызывающий делает <code>point.z = 5</code> на одном из points после создания. Этот point переходит в новый hidden class HC2 с .z на смещении 16.</li>
+          <li>Изменённый point передаётся в getX. Защита TurboFan проверяет hidden class против HC1, не срабатывает.</li>
+          <li>Деоптимизация: код TurboFan выброшен, выполнение откатывается на Sparkplug. IC видит HC2; переходит с monomorphic-HC1 на polymorphic-HC1-HC2.</li>
+          <li>Функция работает ~в 2× медленнее, пока не переоптимизируется. Если придут новые формы — IC становится megamorphic и остаётся медленным.</li>
+        </ul>
+      </div>
+    ),
+    semi: {
+      prompt: "Если вызывающий добавляет .z КО ВСЕМ points до вызова getX, каково итоговое состояние IC?",
+      blanks: [
+        { id: "ic_state", expected: "monomorphic", placeholder: "состояние IC" },
+      ],
+    },
+    blank: {
+      prompt: "Если функция принимает объекты из 8 разных конструкторов (8 hidden classes), какое состояние IC она достигает и какова стоимость производительности?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p><strong>Megamorphic.</strong> Как только IC видел больше 4 hidden classes, V8 перестаёт отслеживать их по отдельности и помечает сайт megamorphic. С этого момента каждый доступ к свойству откатывается к общему поиску: пройти цепочку переходов hidden class, найти свойство, вернуть смещение — ~50–100 тактов на доступ вместо 1–2.</p>
+          <p>Для горячего цикла, выполняющего этот доступ миллионы раз в секунду, переход в megamorphic превращает 1мс цикл в 30–50мс цикл. Решение: унифицировать форму (один конструктор, все свойства объявлены заранее) или разбить цикл на под-циклы по форме, где каждый остаётся monomorphic.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "ic_state:megamorphic": "Megamorphic требует 5+ форм. Если все points разделяют .z, они все вместе переходят на HC2 — всё ещё одна форма — обратно monomorphic.",
+    "ic_state:polymorphic": "Polymorphic — 2-4 формы. Если все points имеют одинаковую форму (с .z), это одна форма — monomorphic.",
+  }}
+/>
+
+<Misconception id="mc-megamorphic">
+  <p><strong>«Полиморфизм нормален.»</strong> До 4 форм V8 генерирует цепочку веток. При 5+ (megamorphic) V8 сдаётся — общий поиск в 10–50 раз медленнее. Одна лишняя форма пересекает границу.</p>
+</Misconception>
+
+<Quiz
+  id="mid-quiz-ic-1"
+  pieceSlug="inline-caches"
+  lang="ru"
+  question="Горячий цикл обрабатывает объекты из 6 разных конструкторов. Какое состояние IC достигает точка доступа к свойству?"
+  choices={[
+    { label: "Polymorphic — 6 всё ещё в управляемом диапазоне", misconception: "Polymorphic ограничен 4 формами. 6 классов превышает порог — сайт становится megamorphic." },
+    { label: "Megamorphic — 6 классов превышают лимит polymorphic в 4 класса", correct: true },
+    { label: "Monomorphic — V8 выбирает самый частый класс", misconception: "V8 не выбирает победителя — он отслеживает все наблюдаемые классы до порога, затем переходит в megamorphic." },
+    { label: "Uninitialized — слишком много классов для отслеживания", misconception: "V8 переходит через uninitialized → monomorphic → polymorphic → megamorphic по мере наблюдения новых классов." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-ic"
+  pieceSlug="inline-caches"
+  lang="ru"
+  prompt="Упорядочите шаги доступа к свойству в monomorphic IC, скомпилированном TurboFan:"
+  items={[
+    "TurboFan-скомпилированная функция получает указатель на объект в регистре",
+    "Загрузить указатель hidden class из заголовка объекта",
+    "Сравнить загруженный hidden class с ожидаемым из времени компиляции",
+    "Если равно: прочитать свойство по заранее вычисленному смещению — 1 MOV",
+    "Если не равно: деоптимизировать, откатиться на нижний уровень",
+    "Нижний уровень записывает новый hidden class, IC может сменить состояние",
+    "Функция может быть повторно оптимизирована с обновлённым feedback",
+  ]}
+  correctOrder={["0", "1", "2", "3", "4", "5", "6"]}
+/>
+
+<Quiz
+  id="mid-quiz-ic-2"
+  pieceSlug="inline-caches"
+  lang="ru"
+  question="Функция была TurboFan-скомпилирована и работала за 5мкс. После рефакторинга теперь работает за 250мкс. Какова наиболее вероятная причина на уровне V8?"
+  choices={[
+    { label: "GC увеличил размер кучи", misconception: "Нагрузка GC влияет на частоту пауз, а не на пропускную способность конкретной функции." },
+    { label: "Deopt: защита сработала и функция откатилась на Ignition, IC теперь megamorphic поэтому повторная оптимизация не может восстановить полную скорость", correct: true },
+    { label: "TurboFan был отключён в этой сборке", misconception: "TurboFan нельзя избирательно отключить для одной функции в production сборках." },
+    { label: "Файл был повторно разобран, очистив FeedbackVector", misconception: "Повторный разбор не происходит во время выполнения; FeedbackVector сохраняется между вызовами." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему порог megamorphic равен 5, а не какому-то другому числу? Polymorphic IC хендлер V8 может встроить до 4 проверок классов с ветками прежде, чем код становится слишком большим и сложным для управления. При 5+, накладные расходы хендлера превышают пользу любой специализации, поэтому V8 откатывается к общему поиску, обрабатывающему все формы единообразно. Число 4 — константа реализации, настроенная для среднего JS-рабочего процесса; это не фундаментальный аппаратный предел.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Состояния IC переходят в одну сторону: mono → poly → mega. Monomorphic — 5–10 тактов; megamorphic — 50–100. Удержание точек вызова monomorphic — самая высокоэффективная привычка производительности в V8.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="inline-caches-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опишите конечный автомат IC: что вызывает каждый переход?", a: "Uninitialized → monomorphic: первый вызов, наблюдается один hidden class. Monomorphic → polymorphic: второй различный hidden class на той же точке вызова (IC расширяется до 2-4 пар класс/хендлер). Polymorphic → megamorphic: 5-й различный hidden class — V8 отказывается от per-class отслеживания, заменяет IC хендлер общим поиском. Переходы односторонние: V8 никогда не возвращает сайт из megamorphic в polymorphic." },
+    { q: "Что такое защита (guard) при деоптимизации и когда она срабатывает?", a: "TurboFan вставляет инструкцию защиты перед каждым спекулятивным предположением — 'это значение всегда smi', 'этот объект всегда имеет hidden class HC1'. Если условие защиты ложно во время выполнения, V8 деоптимизирует: отбрасывает скомпилированный код, восстанавливает состояние интерпретатора из оптимизированного стека кадра и возобновляет в Ignition. Стоимость: ~микросекунды для deopt плюс задержка повторной компиляции при последующем продвижении функции. Один deopt переживаем; deopt на каждый вызов (deopt-loop) катастрофичен." },
+    { q: "Точка вызова видела 3 hidden class. Как вернуть её в monomorphic?", a: "Вернуть существующий IC из polymorphic нельзя — состояние односторонее. Исправление идёт выше по потоку: убедитесь, что все вызывающие конструируют объекты из одного конструктора с одинаковым порядком свойств, чтобы IC видел только один класс в будущем. После деоптимизации и повторного прогрева функции новый feedback покажет один класс, и V8 повторно оптимизирует с monomorphic IC. Старый polymorphic IC код отбрасывается при повторном продвижении функции." },
+  ]}
+/>
+
+<Recap lang="ru">
+Inline cache — это per-call-site заглушка, записывающая hidden class, который V8 видел, и смещение свойства для него. Когда тот же hidden class приходит снова, свойство читается по заранее вычисленному смещению за 5–10 тактов — никаких поисков. Конечный автомат IC переходит от uninitialized → monomorphic → polymorphic → megamorphic по мере наблюдения новых классов. Megamorphic (5+ классов) вынуждает к общему поиску стоимостью 50–100 тактов на доступ — в 10–50 раз медленнее monomorphic. Деоптимизация происходит, когда защита TurboFan не срабатывает во время выполнения; скомпилированный код выбрасывается, выполнение откатывается на Ignition. Единичный deopt дорог, но переживаем; deopt-loop — где TurboFan перекомпилирует одну функцию только чтобы deopt'нуть её на каждом вызове — катастрофически снижает пропускную способность.
+</Recap>

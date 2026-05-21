@@ -1,0 +1,185 @@
+---
+slug: 06-schema-based-and-alternatives
+lang: en
+track: databases
+unit: 07-sharding
+order: 6
+title: "Schema-based sharding and multi-tenancy alternatives"
+summary: "Citus 12 schema-based sharding, database-per-tenant, application-level routing, and RLS are four valid multi-tenancy architectures — each with a specific tenant count and isolation-requirement range."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/07-sharding/05-hot-shard-failure"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["schema-based-sharding", "database-per-tenant", "app-level-routing", "row-level-security", "multi-tenancy-tradeoffs"]
+sources:
+  - https://www.citusdata.com/blog/2023/07/18/citus-12-schema-based-sharding-for-postgres/
+  - https://learn.microsoft.com/en-us/azure/cosmos-db/postgresql/concepts-sharding-models
+  - https://www.crunchydata.com/blog/designing-your-postgres-database-for-multi-tenancy
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A B2B SaaS with 200 enterprise customers needs contractual data isolation — each customer's data must never be co-mingled in the same table. Row-based Citus sharding puts multiple tenants in the same physical shard. The product team asks: is there a stronger isolation model that Postgres can provide?
+</Hook>
+
+<Crux>Row-based, schema-based, and database-per-tenant offer three isolation levels — each serves a different tenant-count range.</Crux>
+
+<Explanation>
+
+## Four multi-tenancy architectures
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Architecture</th>
+        <th class="border border-border px-3 py-2 text-left">Isolation unit</th>
+        <th class="border border-border px-3 py-2 text-left">Tenant count</th>
+        <th class="border border-border px-3 py-2 text-left">Operational cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">RLS on single Postgres</td>
+        <td class="border border-border px-3 py-2">Row-level (policy enforcement)</td>
+        <td class="border border-border px-3 py-2">Unlimited until single-PG saturates</td>
+        <td class="border border-border px-3 py-2">Low; policy bugs silently expose data</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Citus row-based sharding</td>
+        <td class="border border-border px-3 py-2">Shard (multiple tenants per shard)</td>
+        <td class="border border-border px-3 py-2">Thousands to tens of thousands</td>
+        <td class="border border-border px-3 py-2">Medium; Citus handles routing</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Citus schema-based (12+)</td>
+        <td class="border border-border px-3 py-2">Schema (one per tenant)</td>
+        <td class="border border-border px-3 py-2">Low thousands (ceiling)</td>
+        <td class="border border-border px-3 py-2">Medium; schema is the deployment unit</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Database-per-tenant</td>
+        <td class="border border-border px-3 py-2">Full Postgres database</td>
+        <td class="border border-border px-3 py-2">Dozens to ~500</td>
+        <td class="border border-border px-3 py-2">High; N backups, N upgrades, N pools</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Citus 12 schema-based sharding
+
+Introduced in July 2023, Citus 12 added schema-based sharding: each tenant gets a dedicated Postgres **schema**, and Citus distributes schemas across workers.
+
+```sql
+-- Tenant onboarding: create a schema, Citus assigns it to a worker
+CREATE SCHEMA acme;
+CREATE TABLE acme.orders (id BIGINT, ...);
+CREATE TABLE acme.users  (id BIGINT, ...);
+
+-- Application: scope connection to tenant's schema
+SET search_path TO acme, public;
+-- All subsequent table references resolve within acme's schema
+-- Citus routes to acme's worker transparently
+```
+
+Benefits over row-based sharding:
+1. **No shared distribution key column required**: any query within the schema runs on its worker — joins between any tables in the same schema are always local.
+2. **Schema is the deployment unit**: `CREATE SCHEMA` for onboarding, `DROP SCHEMA CASCADE` for offboarding, move schema between workers for rebalancing.
+3. **Clean tenant isolation**: table names are different per schema — one tenant cannot accidentally read another's data.
+4. **Per-tenant migrations**: `ALTER TABLE acme.orders ADD COLUMN ...` only touches that schema.
+
+Limits:
+- **Tenant count ceiling**: Citus recommends fewer than a few thousand schemas. Schema metadata is loaded into the planner on every query; thousands of schemas slow planning.
+- **Cross-tenant queries are still cross-shard**: analytics across multiple tenants still require fan-out.
+- **Reference tables do not apply within schemas**: lookup tables need to be in each schema or accessed from a shared schema.
+
+**Sweet spot**: B2B SaaS with 50–2000 enterprise tenants where contractual or regulatory data isolation is required.
+
+## Application-level routing
+
+Skip Citus entirely: your application code maintains a **shard map** (a table or service mapping `tenant_id → connection_string`) and routes queries explicitly.
+
+```typescript
+// Example: routing layer reads tenant from request context
+const shard = await shardMap.get(req.tenantId);
+const db = connectionPool(shard.connectionString);
+return db.query('SELECT * FROM orders WHERE ...', [req.tenantId]);
+```
+
+Pros: explicit, no extra database product, maximum control, per-tenant routing logic (region, plan tier).
+Cons: every cross-shard concern becomes app code — joins, transactions, fan-out, rebalancing, failover. The routing layer is critical-tier-1 infrastructure that you now own.
+
+Common when shard count is small (10–100) and queries are highly tenant-scoped. At 5000 tenants with complex queries, Citus is usually less engineering effort over a multi-year horizon.
+
+## Database-per-tenant
+
+Each tenant gets a dedicated Postgres database (or instance). Maximum isolation: tenants literally cannot share any infrastructure at the database level.
+
+Operational model:
+- PgBouncer pool per `(tenant, database)`
+- Backups per tenant database
+- Postgres minor and major upgrades per tenant database
+- Schema migrations deployed per tenant (or batched)
+
+Practical ceiling: ~100–500 tenants before operational overhead dominates. Below that, database-per-tenant is often simpler than Citus for regulated industries (financial, healthcare) where contractual isolation is hard requirement.
+
+<Inset kind="why" lang="en">
+Why does Citus recommend fewer than a few thousand schemas for schema-based sharding? The planner loads schema metadata (pg_namespace, pg_class entries) into working memory at planning time. With 10 schemas this is negligible. With 10,000 schemas, every query plan includes processing thousands of namespace entries, adding 10–50ms to planning time — dominating OLTP query execution. This is why schema-based sharding has a ceiling and row-based sharding (which does not load per-tenant metadata into the planner) scales to tens of thousands of tenants.
+</Inset>
+
+<Quiz
+  id="06-schema-based-and-alternatives-quiz-1"
+  lessonSlug="06-schema-based-and-alternatives"
+  lang="en"
+  question="A B2B SaaS has 200 tenants, contractual data isolation per customer is required, and the engineering team has no Citus expertise. Which architecture fits best?"
+  choices={[
+    { label: "Database-per-tenant: each tenant gets a dedicated Postgres database — maximum isolation, manageable at 200 tenants, and straightforward to operate without Citus knowledge", correct: true },
+    { label: "Citus row-based sharding by tenant_id — it is the production default", misconception: "Row-based sharding puts multiple tenants in the same shard, which does not meet contractual per-tenant isolation. And it requires Citus operational expertise the team does not have." },
+    { label: "RLS on a single Postgres — it provides isolation without any sharding complexity", misconception: "RLS provides logical isolation through policy enforcement, not physical isolation. A policy bug silently exposes data across tenants, which typically fails contractual isolation requirements. And with 200 enterprise tenants, single-Postgres may be insufficient for capacity." },
+    { label: "Citus schema-based sharding — always the best for isolation", misconception: "Schema-based is excellent for isolation at this scale, but it requires Citus expertise. Database-per-tenant at 200 tenants is operationally feasible and simpler if the team lacks Citus experience." },
+  ]}
+/>
+
+<Quiz
+  id="06-schema-based-and-alternatives-quiz-2"
+  lessonSlug="06-schema-based-and-alternatives"
+  lang="en"
+  question="What is the main tenant-count ceiling of Citus schema-based sharding and why?"
+  choices={[
+    { label: "Low thousands — each schema's metadata is loaded into the planner on every query, and beyond a few thousand schemas, planning overhead adds 10–50ms per query", correct: true },
+    { label: "Exactly 1000 tenants — Citus has a hard-coded limit", misconception: "Citus does not have a hard-coded schema count limit. The practical limit comes from planner performance degradation, not a configuration maximum." },
+    { label: "Unlimited — schema-based and row-based sharding scale identically", misconception: "Row-based sharding does not load per-tenant metadata at planning time; schema-based does. They have very different scaling characteristics at high tenant counts." },
+    { label: "100 tenants — the same ceiling as database-per-tenant", misconception: "Database-per-tenant's ceiling is operational (~100–500 tenants). Schema-based sharding's ceiling is higher (low thousands) because tenants share workers and connection pools." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Choose the isolation level that matches tenant count and contractual requirements: RLS until single-PG saturates, Citus row-based for thousands of tenants, schema-based for low-thousands needing strict isolation, database-per-tenant for dozens to 500 with hard isolation requirements. Match the architecture to the constraints — there is no universal right answer.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-schema-based-and-alternatives-retrieval"
+  lang="en"
+  questions={[
+    { q: "What did Citus 12 (July 2023) add and what problem does it solve that row-based sharding does not?", a: "Citus 12 added schema-based sharding: each tenant gets a dedicated Postgres schema, and Citus distributes schemas across workers transparently. Row-based sharding puts multiple tenants' rows in the same physical shard — with careful RLS or application logic required to prevent cross-tenant access. Schema-based sharding provides structural isolation: table names are per-schema, so one tenant literally cannot see another's tables. It also eliminates the need for a shared distribution key column — any query within a schema runs locally on its assigned worker. The ceiling is low thousands of tenants." },
+    { q: "For a 5000-tenant B2B SaaS where the top 5% generate 80% of traffic and all queries carry tenant_id, which multi-tenancy architecture is most likely the right choice and why?", a: "Citus row-based sharding by tenant_id with dedicated shards for large tenants. Row-based handles tens of thousands of tenants (schema-based ceilings at low thousands). All queries carry tenant_id, so co-location works perfectly — 99% of queries stay single-shard. The top 5% generating 80% of traffic means outlier isolation automation is essential (isolate_tenant_to_new_shard for tenants above 5% cluster load). Schema-based would hit its planner overhead ceiling at 5000 tenants; database-per-tenant at 5000 instances is operationally unsustainable." },
+    { q: "When is application-level routing (custom shard map) the right choice over Citus?", a: "Application-level routing works best when: (1) shard count is small (10–100 shards); (2) queries are highly tenant-scoped with no complex joins needed across tenants; (3) the team needs special routing logic (per-region placement, per-plan-tier infrastructure, gradual rollout); (4) adding another database product (Citus) is not justified. At 5000 tenants with complex query patterns, Citus is typically less total engineering effort over years. App-level routing makes every cross-shard concern your responsibility — joins, transactions, fan-out, rebalancing, failover — so it only wins when the routing is genuinely simple and the team wants explicit control." },
+  ]}
+/>
+
+<Recap lang="en">
+Four multi-tenancy architectures exist on Postgres, each fitting a different tenant count and isolation requirement: RLS on single Postgres (unlimited tenants, logical isolation until capacity hits), Citus row-based sharding (thousands to tens of thousands, shard-level isolation), Citus schema-based sharding (low thousands, per-schema structural isolation, introduced Citus 12/July 2023), and database-per-tenant (dozens to ~500, maximum isolation, highest operational cost). Schema-based sharding eliminates the need for a shared distribution key and provides clean per-tenant table namespacing, but its planner overhead ceiling is a few thousand schemas. Application-level routing with a custom shard map is a viable alternative for small shard counts with simple routing needs. The choice must match tenant count, isolation requirement, and operational maturity.
+</Recap>

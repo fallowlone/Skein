@@ -1,0 +1,161 @@
+---
+slug: 04-federation-and-lookahead
+lang: en
+track: apis
+unit: 06-graphql-n-plus-one
+order: 4
+title: "Federation and lookahead: batching beyond DataLoader"
+summary: "Apollo Federation gives you cross-subgraph batching for free via _entities; you still owe the intra-subgraph DataLoader. Lookahead joins collapse multi-level nesting at the cost of resolver isolation."
+estMin: 11
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - apis/06-graphql-n-plus-one/02-dataloader-mechanics
+deepensInto:
+  - apis/06-graphql-n-plus-one/06-graphql-api-senior
+spiral: ["statefulness", "encapsulation"]
+concepts: ["apollo-federation", "entities-batch", "resolve-reference", "resolver-lookahead", "info-ast"]
+sources:
+  - https://www.apollographql.com/docs/graphos/schema-design/guides/handling-n-plus-one
+  - https://www.apollographql.com/docs/graphos/schema-design/federated-schemas/reference/subgraph-spec
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A federated graph routes a query across the users subgraph and the posts subgraph. The supergraph router batches the 50 user lookups into one `_entities` call automatically. Inside the users subgraph, the `__resolveReference` implementation loops over 50 representations and queries the database 50 times. Federation handed you the network batch for free; you still owe the database batch yourself.
+</Hook>
+
+<Crux>Federation's _entities batches cross-subgraph refs at the router. Each subgraph still needs DataLoader in __resolveReference for DB trips.</Crux>
+
+<Explanation>
+
+## How Apollo Federation batches across subgraphs
+
+In a federated schema, each subgraph that owns an entity type exposes a `__resolveReference(representation)` resolver. When a query crosses subgraph boundaries — say the posts subgraph returns `Post.author: User` and the users subgraph owns `User` — the supergraph router:
+
+1. Gathers all `User` references that arose while resolving the query (e.g. 50 posts each referencing an author).
+2. Sends one `_entities(representations: [_Any!]!)` call to the users subgraph with all 50 representations.
+3. The users subgraph's `__resolveReference` is called for each representation.
+
+The cross-subgraph batch is automatic and free. The router does the work.
+
+## What you still owe inside __resolveReference
+
+The naive implementation:
+
+```javascript
+// users subgraph — naive, N+1 inside _entities
+User: {
+  __resolveReference: async (rep) => {
+    return db.users.findById(rep.id); // One query per representation
+  }
+}
+```
+
+With 50 representations, this fires 50 SQL queries inside the single `_entities` call. You have to add DataLoader:
+
+```javascript
+// users subgraph — correct
+User: {
+  __resolveReference: (rep, ctx) => ctx.loaders.user.load(rep.id),
+}
+```
+
+The loader batches all 50 `.load(rep.id)` calls from the 50 `__resolveReference` invocations into one `WHERE id IN (...)` query.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+```
+Supergraph router:
+  posts subgraph → 50 posts, each with authorId
+  → one _entities([{__typename:"User", id:7}, ...x50]) call to users subgraph
+
+users subgraph (naive):
+  __resolveReference({id:7})  → SELECT * FROM users WHERE id=7   (1 SQL)
+  __resolveReference({id:9})  → SELECT * FROM users WHERE id=9   (1 SQL)
+  ... × 50                                                       (50 SQL)
+
+users subgraph (with DataLoader):
+  __resolveReference({id:7})  → loader.load(7)   (queued)
+  __resolveReference({id:9})  → loader.load(9)   (queued)
+  ... × 50                    → batchFn([7,9,...]) → 1 SQL
+```
+
+</div>
+
+## Lookahead: collapsing multi-level nesting
+
+DataLoader fixes the "N queries for one column" shape. If the client asks for `posts { author { profile { bio } } }`, you still have three levels of resolution — DataLoader buffers each level independently, resulting in three trips, not one.
+
+**Resolver lookahead** reads the `info` argument's GraphQL AST inside the top-level resolver to see which child fields the client requested, then joins them in one SQL query.
+
+```javascript
+Query: {
+  posts: (_, __, ctx, info) => {
+    const wantsAuthor = selectionSetContains(info, 'author');
+    const query = wantsAuthor
+      ? 'SELECT posts.*, users.name AS author_name FROM posts JOIN users...'
+      : 'SELECT * FROM posts';
+    return db.query(query);
+  }
+}
+```
+
+Libraries like Pothos, TypeGraphQL's `@Query` with `SelectQueryBuilder`, and Hasura implement this by mapping the AST to a SQL query planner.
+
+<Inset kind="why" lang="en">
+The tradeoff: lookahead resolvers know about the entire subtree. The top-level resolver is no longer isolated — it changes behaviour depending on which child fields the client selected. This breaks one of GraphQL's key design properties (per-field isolation). Use lookahead only when DataLoader at each level leaves observable latency after measurement.
+</Inset>
+
+<Quiz
+  id="federation-q1"
+  lessonSlug="04-federation-and-lookahead"
+  lang="en"
+  question="A federated supergraph receives a query that references 50 users across two subgraphs. What does the router do, and what does the users subgraph still need?"
+  choices={[
+    { label: "The router sends 50 individual requests to the users subgraph; no DataLoader needed", misconception: "The router batches all 50 user references into one _entities call automatically." },
+    { label: "The router sends one _entities call with all 50 representations; the subgraph still needs DataLoader inside __resolveReference to batch its database queries", correct: true },
+    { label: "The router merges the subgraphs and runs a single SQL query across both databases", misconception: "Subgraphs do not share databases; the router communicates via HTTP, not SQL." },
+    { label: "The supergraph automatically uses DataLoader so the subgraph doesn't need one", misconception: "The supergraph batches at the HTTP level; intra-subgraph N+1 is still your responsibility." },
+  ]}
+/>
+
+<Quiz
+  id="federation-q2"
+  lessonSlug="04-federation-and-lookahead"
+  lang="en"
+  question="What is the main tradeoff of resolver lookahead compared to DataLoader?"
+  choices={[
+    { label: "Lookahead is slower than DataLoader for most queries", misconception: "Lookahead can be faster by reducing trips, but performance depends on join complexity." },
+    { label: "Lookahead breaks per-field resolver isolation — the top-level resolver must know which child fields were selected, coupling it to descendant schema structure", correct: true },
+    { label: "Lookahead requires a different database driver", misconception: "Lookahead is a GraphQL-level technique using the info AST, not a database driver concern." },
+    { label: "Lookahead cannot work with Apollo Federation", misconception: "Lookahead works in any GraphQL server, including federated subgraphs." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Federation's _entities batches cross-subgraph network calls for free; each subgraph still needs DataLoader inside __resolveReference. Lookahead collapses multi-level nesting by reading the AST at the cost of resolver isolation.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="federation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does Apollo Federation's _entities batching not eliminate the need for DataLoader inside subgraphs?", a: "_entities batches at the network level: the router sends one HTTP call with 50 representations instead of 50 HTTP calls. Inside the subgraph, __resolveReference is still called once per representation. If those calls each query the database directly, you get 50 SQL queries within the single _entities call. DataLoader batches those 50 SQL calls into one." },
+    { q: "When would you choose lookahead over DataLoader?", a: "When three or more levels of nested fields cause measurable latency after DataLoader has already been applied at each level. Lookahead collapses the levels into one JOIN at the cost of coupling the top-level resolver to descendant field selection. Measure first; lookahead is a last resort because it breaks per-field isolation." },
+  ]}
+/>
+
+<Recap lang="en">
+Apollo Federation handles cross-subgraph batching at the router: all user references in a query become one `_entities` call to the users subgraph. Inside the subgraph, `__resolveReference` is still called once per representation, and DataLoader is still required to batch those into one SQL query. For queries that traverse multiple levels of nesting, lookahead reads the client's AST selection set at the top level and issues one joined SQL query — collapsing three DataLoader trips into one at the cost of per-field isolation.
+</Recap>

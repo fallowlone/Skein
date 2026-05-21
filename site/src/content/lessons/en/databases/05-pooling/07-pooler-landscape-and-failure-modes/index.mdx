@@ -1,0 +1,208 @@
+---
+slug: 07-pooler-landscape-and-failure-modes
+lang: en
+track: databases
+unit: 05-pooling
+order: 7
+title: "Pooler landscape 2026, serverless connection storms, and the full failure-mode taxonomy"
+summary: "PgBouncer vs Odyssey vs PgCat vs Supavisor — when to reach for each; serverless cold-start connection storms; the eight failure modes and how to detect each one."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["databases/05-pooling/06-postgres-process-model"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["PgBouncer", "outbox_pattern", "multiplexing", "connection-pool", "idle-in-transaction"]
+sources:
+  - https://github.com/supabase/supavisor
+  - https://www.pgbouncer.org/features.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.crunchydata.com/blog/prepared-statements-in-transaction-mode-for-pgbouncer
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A B2B SaaS on Postgres hits 5,000 QPS peak. Should it use PgBouncer, Odyssey, PgCat, Supavisor, or RDS Proxy? The answer depends on whether the bottleneck is single-threaded throughput, serverless cold starts, multi-tenant scale, or read-replica routing.
+</Hook>
+
+<Crux>PgBouncer is the default (1.21+ fixes prepared statements). Odyssey for QPS ceiling; PgCat for routing; Supavisor for edge.</Crux>
+
+<Explanation>
+
+## The 2026 pooler landscape
+
+**PgBouncer** is still the production workhorse: single-threaded C, ~2 KB per pooled connection, battle-tested over a decade, 1.21+ closes the prepared-statement gap. Use when you need a minimal, well-understood pooler colocated with Postgres. Limitation: single-threaded means one CPU core ceiling on PgBouncer throughput; at very high QPS through a single instance you need multiple PgBouncers behind HAProxy.
+
+**Odyssey** (by Yandex/Tarantool team): multi-threaded C, natively supports prepared statements, shows the lowest CPU overhead at high concurrency in benchmarks. Use when one PgBouncer node becomes a CPU bottleneck (over ~100k QPS through a single pooler). Trade: smaller community, fewer operators familiar with it.
+
+**PgCat** (Rust): multi-threaded, adds query routing (read replicas, sharding) on top of pooling. Use when you want one component to handle pool, replica load balancing, and query routing. Younger codebase.
+
+**Supavisor** (Supabase, Elixir/Erlang): cloud-native, designed for serverless and multi-tenant SaaS, handles millions of inbound connections via Erlang-style lightweight processes. Use when inbound connection counts are massive — serverless cold starts, edge functions, B2B SaaS with thousands of tenant databases.
+
+**pgpool-II**: traditional choice combining HA, read load balancing, and pooling. Heavier and more complex; used in legacy deployments but less popular in greenfield.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Pooler</th>
+        <th class="border border-border px-3 py-2 text-left">Threading</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+        <th class="border border-border px-3 py-2 text-left">Trade</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">PgBouncer 1.21+</td>
+        <td class="border border-border px-3 py-2">Single-threaded</td>
+        <td class="border border-border px-3 py-2">Default OLTP</td>
+        <td class="border border-border px-3 py-2">CPU ceiling at very high QPS</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Odyssey</td>
+        <td class="border border-border px-3 py-2">Multi-threaded</td>
+        <td class="border border-border px-3 py-2">&gt;100k QPS single node</td>
+        <td class="border border-border px-3 py-2">Smaller community</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">PgCat</td>
+        <td class="border border-border px-3 py-2">Multi-threaded (Rust)</td>
+        <td class="border border-border px-3 py-2">Pooling + routing</td>
+        <td class="border border-border px-3 py-2">Young codebase</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Supavisor</td>
+        <td class="border border-border px-3 py-2">BEAM (Erlang/Elixir)</td>
+        <td class="border border-border px-3 py-2">Serverless, edge, millions of conns</td>
+        <td class="border border-border px-3 py-2">Operator complexity</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Serverless and edge: connection storms
+
+Serverless platforms (Lambda, Vercel Functions, Cloudflare Workers) cold-start hundreds to thousands of workers under load. Each cold start opens one or more Postgres connections — a **connection storm**. Even with client-side pools, each cold start opens a new connection before the pool is warm.
+
+Mitigation patterns:
+
+1. **Always front Postgres with a pooler**: RDS Proxy on AWS, Supavisor in front of Supabase, PgBouncer on a persistent node. The pooler absorbs the connection storm; Postgres sees a bounded backend count.
+
+2. **HTTP-based driver for edge**: Neon's serverless driver and Cloudflare Hyperdrive dispatch queries over stateless HTTP to a pooler endpoint — no persistent connections from edge workers to origin. Each query is one HTTP request; the pooler behind it maintains the real Postgres connections.
+
+3. **Aggressive idle timeouts**: serverless workers are short-lived; idle client connections from dead workers must be reclaimed quickly. Set `idle_client_timeout` on the pooler and `tcp_keepalives_idle` in Postgres to detect dead connections.
+
+The architectural lesson: persistent-connection pools assume long-lived clients. Serverless violates that. Design for stateless query dispatch; defer the persistent connection management to a colocated pooler.
+
+## Failure-mode taxonomy
+
+<TradeoffMatrix
+  id="sr-tradeoff-1"
+  lessonSlug="07-pooler-landscape-and-failure-modes"
+  lang="en"
+  prompt="A team running Postgres at 5k QPS picks a pooling architecture for 2026. Choose."
+  options={[
+    { name: "PgBouncer 1.21+ (transaction mode, max_prepared_statements=1000) colocated with Postgres + per-worker client pool", summary: "Production default.", correct: true, justification: "Right answer in ~80% of cases. PgBouncer is battle-tested, tiny memory footprint, well-understood operationally. 1.21+ closes the prepared-statement gap. Colocate to keep latency low; one PgBouncer handles tens of thousands of QPS single-threaded. Add per-worker client pools (5–20 conns per worker) for in-process caching. Re-evaluate when PgBouncer single-thread CPU is the measured bottleneck." },
+    { name: "Odyssey or PgCat as multi-threaded replacement for PgBouncer", summary: "Higher single-node throughput.", justification: "Right when one PgBouncer is a measured CPU bottleneck (over 100k QPS). Odyssey is multi-threaded C; PgCat adds replica routing in Rust. Pick after measuring that PgBouncer single-thread is the actual bottleneck — not before." },
+    { name: "Supavisor or RDS Proxy for serverless/multi-tenant SaaS", summary: "Cloud-native scale-out poolers.", justification: "Right when inbound connections are massive (serverless cold starts, edge functions, thousands of tenant DBs). Supavisor handles millions of inbound connections; RDS Proxy is the managed equivalent. Trade: more moving parts." },
+    { name: "Direct connection to Postgres with large max_connections", summary: "Naive choice.", justification: "Almost always wrong past a few application workers. max_connections = 1000 degrades Postgres throughput and exhausts shared memory before benefits arrive." },
+  ]}
+/>
+
+The eight failure modes:
+
+**(a) Pool exhaustion from slow queries**: a missing index makes a query take 5 s; at 1,000 QPS that is 5,000 in-flight backends, exceeding any pool. Fix: index the query, paginate large scans.
+
+**(b) Idle-in-transaction draining the pool**: unhandled exception or external API call inside BEGIN leaves backends `idle in transaction`. Fix: `idle_in_transaction_session_timeout = 60s`; code review for missing try/finally; outbox pattern for write-then-event.
+
+**(c) External API inside a transaction**: BEGIN → Stripe charge (timeout = 120 s) → COMMIT. Every in-flight request holds a backend for up to 120 s. Fix: commit before calling; use the outbox pattern.
+
+**(d) NAT/firewall silently drops idle TCP**: backend looks idle to PgBouncer but the TCP socket is dead. New queries get RST or timeout. Fix: `tcp_keepalives_idle = 60s` in postgresql.conf; `tcp_keepalives_interval = 10s`; `client_connection_check_interval = 30s` (Postgres 14+).
+
+**(e) Prepared-statement collisions (pre-PgBouncer 1.21)**: legacy code with SQL-level PREPARE + transaction mode = "prepared statement does not exist" at random. Fix: upgrade to PgBouncer 1.21+ + `max_prepared_statements > 0`; or rewrite to driver protocol-level prepared statements.
+
+**(f) State leaking between clients (DISCARD ALL not firing)**: a SET without LOCAL leaks from one client to the next via the pool. Fix: `server_reset_query = DISCARD ALL` in pgbouncer.ini; audit for bare SET.
+
+**(g) Pool sized wrong for spike vs steady-state**: pool sized for steady-state; bursts exhaust it. Fix: `reserve_pool_size` ~25% of `pool_size`; autoscaling at the application layer; queue-and-degrade (return 503 with Retry-After before full exhaustion).
+
+**(h) PgBouncer single-thread CPU bottleneck at extreme QPS**: at very high QPS a single PgBouncer node pegs one CPU core. Fix: horizontal-scale PgBouncer behind HAProxy/keepalived for VIP failover; or migrate to Odyssey/PgCat.
+
+<Inset kind="why" lang="en">
+Why is the architecture (client pool → PgBouncer → Postgres) layered rather than just one pooler? The client pool handles connection caching inside one process — free on hot paths, no socket setup, sub-millisecond checkout. PgBouncer handles multiplexing across processes. Removing the client pool means every query opens a TCP connection to PgBouncer per request — still fast (PgBouncer is local) but not free. Removing PgBouncer means client pools connect directly to Postgres — fine for small apps, fatal at scale when worker count exceeds max_connections.
+</Inset>
+
+<NumbersCard
+  id="card-pooler-landscape"
+  title="Pooler selection criteria"
+  stats={[
+    { label: "PgBouncer: memory per client conn", value: "~2 KB" },
+    { label: "PgBouncer: single-thread QPS ceiling", value: "~100k QPS" },
+    { label: "Odyssey: advantage over PgBouncer", value: "Multi-threaded, lower CPU at high concurrency" },
+    { label: "Supavisor: inbound connection target", value: "Millions (Erlang/Elixir)" },
+    { label: "PgBouncer HA pattern", value: "Multiple instances behind HAProxy" },
+    { label: "Serverless pattern", value: "HTTP-based driver + colocated pooler" },
+    { label: "tcp_keepalives_idle recommended", value: "60 s" },
+  ]}
+/>
+
+<Misconception id="mc-one-pooler">
+  <p><strong>"One pooler per cluster is enough."</strong> At extreme QPS, a single PgBouncer is a single-threaded bottleneck. The HA pattern is two PgBouncer instances behind HAProxy with keepalived for VIP failover. Each handles its own pool; HAProxy balances clients. This also enables zero-downtime config restarts.</p>
+</Misconception>
+
+<Quiz
+  id="07-pooler-landscape-quiz-1"
+  lessonSlug="07-pooler-landscape-and-failure-modes"
+  lang="en"
+  question="A team is building a multi-tenant B2B SaaS on Postgres where each tenant has its own database. 10,000 tenants × 50 concurrent users each. Which pooler architecture is most appropriate?"
+  choices={[
+    { label: "Supavisor (or RDS Proxy) — designed for millions of inbound connections from multi-tenant workloads, handles per-tenant routing and multiplexing at Erlang/Elixir scale", correct: true },
+    { label: "One PgBouncer per tenant database", misconception: "10,000 separate PgBouncer instances is an operational nightmare; Supavisor is designed to handle this case." },
+    { label: "PgBouncer with max_client_conn = 500,000", misconception: "PgBouncer is single-threaded; 500,000 clients through one process is not viable. Supavisor handles massive inbound counts." },
+    { label: "Direct connections — the databases are small", misconception: "10,000 tenants × 50 users = 500,000 potential connections; even if most are idle, direct connections to that many Postgres backends is not sustainable." },
+  ]}
+/>
+
+<Quiz
+  id="07-pooler-landscape-quiz-2"
+  lessonSlug="07-pooler-landscape-and-failure-modes"
+  lang="en"
+  question="Serverless functions cold-start under load and each opens a Postgres connection. What happens without a colocated pooler?"
+  choices={[
+    { label: "Each cold start opens a real Postgres backend (~10 MB each); under burst load this exhausts max_connections and Postgres rejects the excess with FATAL errors", correct: true },
+    { label: "Serverless platforms cache connections between invocations automatically", misconception: "Function instances are spun up fresh on cold starts; connection caching requires explicit pooler infrastructure." },
+    { label: "Lambda keeps TCP connections alive between invocations via keep-alive headers", misconception: "TCP keep-alive is for HTTP connections to a load balancer, not for database connections from Lambda to Postgres." },
+    { label: "Postgres has a serverless mode that adjusts max_connections automatically", misconception: "There is no serverless mode in standard Postgres; max_connections is a fixed compile-time/startup parameter." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>PgBouncer is the default for 2026 OLTP. Reach for Odyssey/PgCat when the single-thread ceiling is measured, Supavisor when you have millions of inbound connections from serverless/edge. Serverless cold starts require a colocated pooler plus HTTP-based driver or Hyperdrive for edge. The eight failure modes all have explicit fixes; observability (cl_waiting, idle-in-tx age, pool-checkout latency) is what separates "we noticed before it paged" from "3 AM incident".</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-pooler-landscape-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare PgBouncer and Odyssey — when would you choose Odyssey over PgBouncer?", a: "PgBouncer is single-threaded C — it handles connections on one event loop, consuming one CPU core regardless of load. For most OLTP stacks, one core is sufficient: PgBouncer can push ~100k simple QPS single-threaded, and Postgres throughput peaks well before that. PgBouncer's advantages: minimal, battle-tested, ~2 KB per client connection, well-understood operationally by most Postgres DBA teams, 1.21+ now supports prepared statements. Odyssey is multi-threaded C, natively supporting prepared statements from earlier versions, with lower CPU overhead at high concurrency in benchmarks. Choose Odyssey when: (1) you have measured that a single PgBouncer node is CPU-saturated and is the limiting factor, and (2) horizontal-scaling PgBouncer behind HAProxy is operationally undesirable. Do not choose Odyssey speculatively — smaller community, fewer operators, less tooling." },
+    { q: "Describe the serverless connection-storm problem and the correct architectural response.", a: "Serverless platforms (Lambda, Vercel, Cloudflare Workers) spin up function instances on demand. Each cold start is a new OS process that opens fresh connections. Under bursty load — a traffic spike or a deployment — hundreds of cold starts may occur simultaneously, each attempting to open one or more Postgres connections. With direct connections, each attempt forks a Postgres backend (~10 MB, ~5 ms startup). Even 200 simultaneous cold starts × 1 connection each = 200 new backends — close to max_connections = 100. Architecture: (1) Always front Postgres with a persistent-node pooler (PgBouncer, Supavisor, RDS Proxy). The pooler absorbs the connection burst; Postgres sees a bounded backend count regardless of how many Lambda invocations are live. (2) For edge/Cloudflare Workers where persistent TCP to origin is not viable, use an HTTP-based Postgres driver (Neon's driver, Hyperdrive, Supavisor HTTP endpoint) — each query is a stateless HTTP request to a pooler; the pooler holds the real connections. (3) Set aggressive idle timeouts on the pooler so dead worker connections are reclaimed quickly between bursts." },
+    { q: "Name and describe four failure modes in the pooling taxonomy and the diagnostic signal for each.", a: "(1) Pool exhaustion from slow queries — queries running 5s+ pile up in the pool under load; pg_stat_activity shows many rows state=active with old query_start; fix: EXPLAIN ANALYZE + add the index, paginate large scans. (2) Idle-in-transaction draining the pool — BEGIN left open by bug or external API; pg_stat_activity shows many rows state=idle in transaction with xact_start minutes ago; fix: idle_in_transaction_session_timeout = 60s + code audit. (3) NAT/firewall silent TCP drop — PgBouncer thinks backend is idle but TCP socket is dead; queries return RST or timeout; fix: tcp_keepalives_idle = 60s in postgresql.conf + client_connection_check_interval. (4) PgBouncer single-thread CPU ceiling — PgBouncer process pegs one core; PgBouncer CPU = 100% in system metrics while cl_waiting is non-zero; fix: add a second PgBouncer instance behind HAProxy (active-active) or migrate to Odyssey/PgCat." },
+  ]}
+/>
+
+<Recap lang="en">
+The pooler landscape in 2026: PgBouncer 1.21+ is the default for most OLTP stacks — battle-tested, minimal, and now fully compatible with prepared statements in transaction mode. Odyssey and PgCat add multi-threaded throughput and query routing for teams that outgrow PgBouncer's single-thread ceiling. Supavisor and RDS Proxy address the serverless and multi-tenant scale problem where inbound connection counts reach millions. Serverless cold starts are a distinct problem — the architectural fix is a colocated pooler that absorbs the burst plus an HTTP-based driver for true stateless edge. The eight failure modes (pool exhaustion from slow queries, idle-in-transaction, external API inside transaction, NAT TCP drop, prepared-statement collision, state leak, wrong spike sizing, PgBouncer CPU ceiling) each have an explicit signal and a systematic fix. Observability — `cl_waiting`, idle-in-transaction age, pool-checkout latency — turns "3 AM incident" into "pre-deploy alert".
+</Recap>

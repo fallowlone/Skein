@@ -1,0 +1,194 @@
+---
+slug: 03-lock-queue-incident
+lang: ru
+track: databases
+unit: 06-migrations
+order: 3
+title: "Режим отказа очереди блокировок: почему мгновенный DDL может заморозить базу"
+summary: "Ожидающий ALTER TABLE блокирует каждый последующий SELECT на таблице — FIFO-очередь блокировок превращает один медленный запрос в полный простой таблицы."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/06-migrations/02-add-column-safely"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["AccessExclusiveLock", "lock-queue-FIFO", "lock_timeout", "lock-matrix", "migration-incident"]
+sources:
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://xata.io/blog/migrations-and-exclusive-locks
+  - https://postgres.ai/blog/20210923-zero-downtime-postgres-schema-migrations-lock-timeout-and-retries
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Команда запускает `ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'` в 14:00. На PG 16 этот запрос занимает 8 мс. Тем не менее таблица `users` недоступна 90 секунд, connection pool исчерпан, и сайт возвращает 503. Сама миграция была мгновенной. Что же произошло?
+</Hook>
+
+<Crux>Очередь блокировок Postgres — FIFO: ожидающий ALTER TABLE блокирует все новые SELECT. Один медленный запрос плюс миграция = заморозка.</Crux>
+
+<Explanation>
+
+## Матрица блокировок Postgres
+
+Каждая операция с таблицей берёт блокировку. Существует восемь режимов блокировки от слабейшего к сильнейшему:
+
+`ACCESS SHARE` → `ROW SHARE` → `ROW EXCLUSIVE` → `SHARE UPDATE EXCLUSIVE` → `SHARE` → `SHARE ROW EXCLUSIVE` → `EXCLUSIVE` → `ACCESS EXCLUSIVE`
+
+Ключевые факты:
+- `SELECT` берёт `ACCESS SHARE` (слабейший).
+- Большинство DDL (`ALTER TABLE`, `DROP TABLE`, `TRUNCATE`) берёт `ACCESS EXCLUSIVE` (сильнейший — конфликтует со всем).
+- `CREATE INDEX CONCURRENTLY` и `VALIDATE CONSTRAINT` берут `SHARE UPDATE EXCLUSIVE` — не блокируют обычный DML.
+
+Матрица блокировок определяет, что может выполняться параллельно. `ACCESS EXCLUSIVE` конфликтует **с каждым другим режимом блокировки**, включая `ACCESS SHARE`. Это означает: любой DDL с `ACCESS EXCLUSIVE` должен ждать завершения всех текущих читателей — и блокирует всех новых читателей, пока ждёт.
+
+## FIFO-очередь блокировок — реальный режим отказа
+
+Postgres выдаёт блокировки в порядке поступления (FIFO для объекта). Это создаёт классический инцидент с миграцией:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Время</th>
+        <th class="border border-border px-3 py-2 text-left">Событие</th>
+        <th class="border border-border px-3 py-2 text-left">Состояние блокировки на users</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">T=0с</td>
+        <td class="border border-border px-3 py-2">Медленный аналитический SELECT начинается (ожидаемо: 60с)</td>
+        <td class="border border-border px-3 py-2">ACCESS SHARE выдана</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">T=10с</td>
+        <td class="border border-border px-3 py-2">Миграция запускает ALTER TABLE (lock_timeout по умолчанию = 0)</td>
+        <td class="border border-border px-3 py-2">ACCESS EXCLUSIVE ждёт — конфликтует с удерживаемой ACCESS SHARE</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">T=10с+</td>
+        <td class="border border-border px-3 py-2">Новые SELECT поступают (API-запросы, фоновые задачи)</td>
+        <td class="border border-border px-3 py-2">ACCESS SHARE ждёт — в очереди ПОСЛЕ запроса ALTER на ACCESS EXCLUSIVE</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">T=70с</td>
+        <td class="border border-border px-3 py-2">Медленный SELECT завершается</td>
+        <td class="border border-border px-3 py-2">ALTER получает блокировку, выполняется за 8 мс, коммит. Очередь дренируется.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Итоговый ущерб</td>
+        <td class="border border-border px-3 py-2">60с без новых запросов к users. Connection pool исчерпан. 503.</td>
+        <td class="border border-border px-3 py-2">—</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Критическое понимание: новые SELECT встают в очередь **после** ожидающего ALTER, потому что выдача им блокировок не по порядку лишила бы ALTER шанса когда-либо дождаться своей очереди. Запрос ALTER на `ACCESS EXCLUSIVE` уже в очереди; менеджер блокировок отказывается выдавать более лёгкие блокировки поздним прибывшим, конфликтующим с ним. Таблица заморожена для всех новых запросов на полные 60 секунд медленного SELECT — даже несмотря на то, что сама миграция выполняется за 8 мс.
+
+## Решение: SET lock_timeout
+
+```sql
+-- В начале каждой сессии миграции:
+SET lock_timeout = '2s';
+SET statement_timeout = '30s';
+```
+
+С `lock_timeout = '2s'`:
+- Миграция ждёт блокировку не более 2 секунд.
+- Если блокировка не получена, миграция **чисто завершается с ошибкой** и освобождает своё место в очереди.
+- Новые SELECT немедленно получают свои более лёгкие блокировки — таблица разморожена.
+- Инструмент миграции повторяет попытку с экспоненциальным откатом (1с, 2с, 4с, 8с...).
+- В конечном счёте медленный SELECT завершается или открывается тихое окно, и миграция успешно выполняется.
+
+Без `lock_timeout` (умолчание Postgres = 0 — ждать вечно): один медленный запрос может заморозить таблицу на всё своё время выполнения.
+
+<NumbersCard
+  id="card-lock-queue-numbers-ru"
+  title="Числа инцидента с очередью блокировок"
+  stats={[
+    { label: "Умолчание lock_timeout в Postgres", value: "0 (ждать вечно)" },
+    { label: "Рекомендованный lock_timeout для миграций", value: "1–5 с" },
+    { label: "Рекомендованный statement_timeout для DDL", value: "30–60 с" },
+    { label: "Количество повторных попыток миграции", value: "3–5 с экспоненциальным откатом" },
+    { label: "Длительность заморозки таблицы без lock_timeout", value: "= длительность блокирующего запроса" },
+    { label: "Заморозка с lock_timeout = 2с", value: "2 с, затем очередь очищается" },
+  ]}
+/>
+
+<Misconception id="mc-instant-ddl-safe-ru">
+  <p><strong>&quot;Моя миграция меняет только метаданные — она ничего не блокирует.&quot;</strong> Неверно. Мгновенный ALTER TABLE всё равно нуждается в AccessExclusiveLock; долгий запрос с ACCESS SHARE заставит его ждать, и каждый новый запрос встанет в очередь за ним. Всегда устанавливайте lock_timeout.</p>
+</Misconception>
+
+<Inset kind="why" lang="ru">
+Почему Postgres не позволяет более лёгким блокировкам пропустить вперёд ожидающую ACCESS EXCLUSIVE? Потому что это могло бы морить DDL-запрос голодом бесконечно — на занятой таблице ACCESS SHARE блокировки поступают непрерывно и никогда не освобождаются все одновременно. FIFO гарантирует, что DDL в конечном счёте получит свою очередь. Операционное следствие: нужно ограничивать время ожидания.
+</Inset>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-1"
+  lessonSlug="03-lock-queue-incident"
+  lang="ru"
+  question="Миграция запускает ALTER TABLE на занятой таблице. Идёт долгий SELECT. Что происходит с новыми SELECT, которые поступают?"
+  choices={[
+    { label: "Они встают в очередь после ALTER TABLE в FIFO-очереди блокировок и ждут, пока и долгий SELECT, и ALTER TABLE не завершатся — фактически таблица заморожена для новых запросов", correct: true },
+    { label: "Они выполняются немедленно, потому что им нужен только ACCESS SHARE", misconception: "ALTER стоит перед ними в очереди с конфликтующим запросом; новые запросы ACCESS SHARE встают за ним." },
+    { label: "Postgres приоритизирует короткие запросы над DDL", misconception: "Очередь блокировок работает по FIFO — только порядок поступления. Нет приоритета для коротких запросов." },
+    { label: "Они немедленно завершаются с ошибкой блокировки", misconception: "Они ждут, а не получают ошибку — часто до тех пор, пока не истечёт собственный statement_timeout." },
+  ]}
+/>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-2"
+  lessonSlug="03-lock-queue-incident"
+  lang="ru"
+  question="Вы установили `SET lock_timeout = '2s'` на сессию миграции. Миграция не может получить блокировку в течение 2 секунд. Что происходит?"
+  choices={[
+    { label: "Миграция завершается с ошибкой; освобождает позицию в очереди; новые SELECT получают блокировки немедленно; инструмент миграции повторяет с откатом", correct: true },
+    { label: "Миграция ждёт ещё 2 секунды, затем принудительно получает блокировку", misconception: "lock_timeout завершает с ошибкой — никогда не получает принудительно; просто отказывается и повторяет попытку." },
+    { label: "Postgres убивает блокирующий запрос, чтобы пропустить миграцию", misconception: "Postgres никогда не убивает другие сессии ради миграции; lock_timeout влияет только на текущую сессию." },
+    { label: "Сессия миграции переподключается и пробует снова автоматически", misconception: "Сессия получает ошибку; логика повторных попыток находится в инструменте миграции, а не в Postgres." },
+  ]}
+/>
+
+<Quiz
+  id="03-lock-queue-incident-quiz-3"
+  lessonSlug="03-lock-queue-incident"
+  lang="ru"
+  question="Какую блокировку берёт CREATE INDEX CONCURRENTLY, и почему это безопаснее для продакшна?"
+  choices={[
+    { label: "SHARE UPDATE EXCLUSIVE — не конфликтует с INSERT, UPDATE, DELETE или SELECT, поэтому обычный трафик продолжается во время построения индекса", correct: true },
+    { label: "ACCESS SHARE — такой же, как у SELECT, полностью совместим со всем", misconception: "CREATE INDEX CONCURRENTLY берёт SHARE UPDATE EXCLUSIVE, что легче AccessExclusive, но не так слабо, как ACCESS SHARE." },
+    { label: "ACCESS EXCLUSIVE — такой же, как у ALTER TABLE, блокирует весь трафик", misconception: "ACCESS EXCLUSIVE берёт обычный CREATE INDEX; CONCURRENTLY явно избегает этого, используя более лёгкую блокировку." },
+    { label: "Никакой блокировки — строится полностью в фоне", misconception: "Он берёт SHARE UPDATE EXCLUSIVE для координации. Полностью безблокировочное построение индексов в Postgres невозможно." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Очередь блокировок Postgres работает по FIFO: ожидающий ALTER TABLE блокирует все новые SELECT за собой. Устанавливайте SET lock_timeout = '2s' в каждой сессии миграции, чтобы неудавшаяся попытка чисто завершилась и разблокировала очередь — затем инструмент миграции повторяет.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-lock-queue-incident-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните точно, почему мгновенный ALTER TABLE может заморозить продакшн-таблицу на 60+ секунд.", a: "В T=0 медленный SELECT получает ACCESS SHARE на целевой таблице. В T=10с миграция выдаёт ALTER TABLE, которому нужен ACCESS EXCLUSIVE — он конфликтует с удерживаемой ACCESS SHARE и встаёт в очередь ожидания. Postgres использует FIFO: никакой более поздний запрос блокировки не может пропустить ожидающий ALTER. Каждый новый SELECT, поступающий после T=10с, тоже нуждается в ACCESS SHARE, но обнаруживает запрос ALTER на ACCESS EXCLUSIVE перед собой в очереди — они тоже ждут. Таблица заморожена для всех новых запросов до тех пор, пока медленный SELECT не освободит ACCESS SHARE в T=70с. Только тогда ALTER получает блокировку, выполняется за 8 мс и делает коммит. Очередь дренируется. Итог: 60 секунд заблокированного трафика, исчерпание connection pool, ошибки 503 — из-за 8-миллисекундной миграции." },
+    { q: "Объясните точную роль lock_timeout в предотвращении заморозки очереди блокировок и что делает инструмент миграции после таймаута.", a: "lock_timeout (умолчание 0 — ждать вечно) устанавливает максимальное время ожидания сессии для получения блокировки. С lock_timeout = '2s': если ALTER TABLE не может получить ACCESS EXCLUSIVE в течение 2 секунд, Postgres завершает транзакцию миграции с ошибкой LockNotAvailable. Миграция немедленно освобождает позицию в очереди. Новые SELECT, ожидавшие за ней, теперь могут получить блокировки ACCESS SHARE — таблица размораживается максимум через 2 секунды вместо 60+. Инструмент миграции перехватывает ошибку и повторяет попытку с экспоненциальным откатом (1с, 2с, 4с, 8с, 16с). В конечном счёте медленный SELECT завершается или открывается тихое окно, миграция получает блокировку в своём 2-секундном окне и успешно выполняется." },
+    { q: "В чём разница между lock_timeout и statement_timeout, и почему сессии миграции нужны оба?", a: "lock_timeout ограничивает, как долго сессия ждёт *получения* блокировки — если очередь заблокирована, сессия сдаётся по таймауту. statement_timeout ограничивает, как долго запрос может *выполняться* после получения блокировки — если сама миграция (например, UPDATE для бэкфила данных) выполняется дольше ожидаемого, она убивается. Сессии миграции нужны оба: lock_timeout предотвращает режим отказа заморозки очереди (прерваться, если не удаётся быстро получить блокировку); statement_timeout предотвращает неконтролируемую миграцию, удерживающую блокировку бесконечно долго. Вместе они превращают &quot;миграция замораживает базу&quot; в &quot;миграция логирует ошибку, повторяет попытку и в конечном счёте успешно выполняется&quot;." },
+  ]}
+/>
+
+<Recap lang="ru">
+Матрица блокировок Postgres назначает `ACCESS EXCLUSIVE` большинству DDL и `ACCESS SHARE` для `SELECT`. Они конфликтуют, поэтому ожидающий `ALTER TABLE` блокирует все новые `SELECT` на той же таблице через FIFO-очередь блокировок — даже если сама миграция выполнится за миллисекунды. На занятой таблице с запущенным медленным аналитическим запросом это может заморозить таблицу на всё время его выполнения. Обязательное решение — `SET lock_timeout = '2s'` в каждой сессии миграции: если блокировка недоступна в течение 2 секунд, миграция чисто завершается с ошибкой, очередь разблокируется, и инструмент миграции повторяет попытку с откатом. `CREATE INDEX CONCURRENTLY` и `VALIDATE CONSTRAINT` берут `SHARE UPDATE EXCLUSIVE` вместо `ACCESS EXCLUSIVE` и поэтому безопасны для DML в продакшне.
+</Recap>

@@ -1,0 +1,198 @@
+---
+slug: 04-head-and-tail-sampling
+lang: ru
+track: observability
+unit: 06-trace-propagation
+order: 4
+title: "Head sampling и tail sampling: кто решает, какие трейсы выживают"
+summary: "Head sampling дёшев, но слеп: решение принимается до знания исхода. Tail sampling видит весь трейс, ловя ошибки и медленные запросы ценой RAM collector'а и дисциплины роутинга."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/06-trace-propagation/03-baggage-and-async-boundaries"]
+deepensInto: []
+spiral: []
+concepts: ["head-sampling", "tail-sampling", "trace-flags", "sampled-flag", "otel-collector", "trace-cost"]
+sources:
+  - https://opentelemetry.io/docs/concepts/sampling/
+  - https://opentelemetry.io/blog/2022/tail-sampling/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Сервис обрабатывает 10 000 запросов в секунду. Хранить каждый трейс непомерно дорого. Но при случайном sampling в 1% один медленный запрос, вызвавший жалобу клиента, с вероятностью 99% будет тихо выброшен.
+</Hook>
+
+<Crux>Head sampling дёшев, но слеп к исходам. Tail sampling ловит ошибки ценой RAM и sticky-роутинга по trace-id.</Crux>
+
+<Explanation>
+
+## Head-based sampling
+
+Решение keep/drop принимается на старте трейса — кодируется в бите `01` (sampled) trace-flags заголовка `traceparent`. Решение пропагируется на все downstream-сервисы, которые уважают его по умолчанию.
+
+**Типовые стратегии:**
+- **Вероятностная:** хранить N% трейсов (1–5% типично). Простая, предсказуемая, масштабируется линейно с трафиком.
+- **Rate-limiting:** хранить не более K трейсов в секунду независимо от объёма трафика.
+
+**Стоимость:** дёшево — решение принимается один раз на root span, до выполнения какой-либо работы. Несэмплированные запросы не генерируют span'ов вообще, экономя CPU, сеть и хранение.
+
+**Недостаток:** решение слепо к исходу. Медленный или error-запрос, попавший в несэмплированные 99%, невидим в tracing-backend. Если инцидент затрагивает 0.5% трафика, а sampling 1% — сохранишь примерно половину инцидентных трейсов; но можешь не сохранить ни одного, если инцидент кратковременный.
+
+**Sampled-флаг:** когда флаг `01`, downstream-сервисы записывают и экспортируют span'ы. Когда `00`, OTel SDK создают span'ы внутри, но по умолчанию не экспортируют. Это consistent sampling: либо весь трейс хранится, либо ничего — никогда фрагмент. Downstream-сервис может переопределить входящий флаг (например, всегда сэмплировать свои ошибки), но частичные переопределения дают фрагментарные трейсы, почти бесполезные для отладки.
+
+## Tail-based sampling
+
+OTel Collector буферизует все span'ы для trace-id в течение настраиваемого decision-окна (30с–5мин), затем решает, хранить ли трейс, по policy:
+- **Есть ошибка** → хранить 100%.
+- **Duration > порог** → хранить 100%.
+- **Конкретный атрибут** (например `user.tier=premium`) → хранить 100%.
+- **Вероятностный top-up** → хранить 1% остального для базовой видимости.
+
+**Преимущества:**
+- Ловит каждый error-трейс даже при 0.1% трафика.
+- Ловит каждый медленный трейс выше latency-порога.
+- Даёт избирательность, делающую tail sampling доминирующим паттерном у high-traffic-сервисов.
+
+**Стоимость:** collector обязан держать все span'ы каждого трейса в RAM до decision-time.
+
+Модель памяти: `active_traces × avg_spans_per_trace × bytes_per_span`. При 50 000 in-flight трейсов × 100 span'ов × 1 KB на span = 5 GB RAM. Decision-окно напрямую управляет RAM-footprint'ом.
+
+**Требование load-balancing exporter:** с несколькими репликами collector'а случайное распределение span'ов разбрасывает span'ы одного трейса по разным instance'ам. Каждый видит только фрагменты и не может принять корректное решение. Решение — load-balancing exporter, хэширующий по trace-id и направляющий все span'ы одного трейса на один и тот же collector instance. Это обязательно для корректной работы tail sampling.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Параметр</th>
+        <th class="border border-border px-3 py-2 text-left">Head sampling</th>
+        <th class="border border-border px-3 py-2 text-left">Tail sampling</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Момент решения</td>
+        <td class="border border-border px-3 py-2">На старте трейса (head)</td>
+        <td class="border border-border px-3 py-2">После завершения всех span'ов (tail)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Видит исход?</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Да (ошибка, latency, атрибуты)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">RAM collector'а</td>
+        <td class="border border-border px-3 py-2">Минимальная</td>
+        <td class="border border-border px-3 py-2">Пропорционально active_traces × span'ы × размер span'а</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Требование роутинга</td>
+        <td class="border border-border px-3 py-2">Нет (stateless)</td>
+        <td class="border border-border px-3 py-2">Load-balancing exporter (хэш по trace-id)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Пропускает error-трейсы?</td>
+        <td class="border border-border px-3 py-2">Да (с частотой 1 − sample%)</td>
+        <td class="border border-border px-3 py-2">Нет (если error policy = 100%)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Гибридный паттерн (доминирует в production)
+
+Head-sample на 100% (каждый запрос входит в pipeline), затем tail-sample по policy:
+- Error-трейсы → хранить 100%.
+- Latency > 99-й перцентиль → хранить 100%.
+- Всё остальное → 1% вероятностно.
+
+Это даёт volume-контроль head sampling и избирательность tail sampling, за счёт одной дополнительной инфры: tier tail-sampling Collector с load-balancing exporter и достаточной RAM.
+
+При 10k req/s с 30с decision-окном, 10 span'ами/трейс, 1 KB/span:
+`10 000 × 30 × 10 × 1 024 B ≈ 3 GB` RAM collector'а. Реализуемо с 4–8 репликами collector'а.
+
+<Inset kind="why" lang="ru">
+Гибридный паттерн — это почему «нужно хранить все error-трейсы» и «нельзя хранить всё» не взаимоисключающие. Head sampling пропускает каждый запрос без коммита хранения; tail-sampling tier затем применяет policy 100% для ошибок. Инженеры, пытающиеся решить это только head sampling, либо хранят всё (дорого), либо пропускают ошибки (ненадёжно). Двухуровневый дизайн разрешает оба ограничения.
+</Inset>
+
+<NumbersCard
+  id="04-sampling-numbers"
+  title="Референсные числа по стоимости sampling"
+  stats={[
+    { label: "Типичная частота head sampling", value: "0.5–5% трейсов" },
+    { label: "Типичное decision-окно tail sampling", value: "30с–5 мин" },
+    { label: "RAM tail-sampler при 50k трейсов × 100 span × 1 KB", value: "~5 GB" },
+    { label: "RAM tail-sampler при 10k req/s, 30с окно, 10 span, 1 KB", value: "~3 GB" },
+    { label: "Load-balancing exporter: ключ роутинга", value: "хэш по trace-id" },
+    { label: "Consistent sampling: трейс хранится/дропается", value: "100% или 0% — никогда фрагмент" },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-1"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="ru"
+  question="Команда выбирает tail-based sampling, чтобы хранить все error-трейсы. Какой операционный подвох нужно учесть?"
+  choices={[
+    { label: "Все span'ы одного трейса должны попасть на один collector instance в decision-окне; нужен load-balancing exporter с хэшем по trace-id, и collector нуждается в RAM пропорционально in-flight-трейсам × span/трейс × размер span'а", correct: true },
+    { label: "Tail sampling не поддерживается в OpenTelemetry", misconception: "Поддерживается в OTel Collector через tail_sampling-процессор." },
+    { label: "Стоит дороже head sampling на трейс", misconception: "Стоимость на трейс сопоставима; разница — в RAM collector'а и сложности роутинга." },
+    { label: "Несовместимо с W3C traceparent", misconception: "Sampling и propagation ортогональны; W3C работает и с head, и с tail." },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-2"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="ru"
+  question="traceparent приходит с sampled-флагом `00`. Что должен делать принимающий сервис по умолчанию?"
+  choices={[
+    { label: "Создавать span'ы, но не экспортировать их — consistent sampling значит: весь трейс либо хранится, либо нет, а upstream уже решил: drop", correct: true },
+    { label: "Игнорировать флаг и всегда экспортировать span'ы", misconception: "Переопределение upstream-флага даёт частичные трейсы — одни сервисы экспортируют, другие нет — почти бесполезные для отладки." },
+    { label: "Отвергнуть запрос", misconception: "Sampled-флаг — hint для sampling, не механизм контроля доступа. Запрос обрабатывается нормально." },
+    { label: "Сгенерировать новый trace-id с sampled=01", misconception: "Регенерация trace-id ломает propagation — трейс в backend'е больше не будет связан с upstream-span'ами." },
+  ]}
+/>
+
+<Quiz
+  id="04-sampling-quiz-3"
+  lessonSlug="04-head-and-tail-sampling"
+  lang="ru"
+  question="Tail-sampling Collector OOM'ит каждые несколько часов. Метрики показывают стабильное число трейсов, но растущее число span'ов на трейс. Вероятная причина?"
+  choices={[
+    { label: "Long-running трейс (batch-job, рекурсивный worker) накапливает тысячи span'ов, каждый держится в RAM до закрытия decision-окна", correct: true },
+    { label: "Collector получает дублированные span'ы", misconception: "Дубликаты увеличивали бы число span'ов по всем трейсам, не концентрировали бы per-trace на конкретных long-running трейсах." },
+    { label: "W3C-заголовок traceparent содержит неверный trace-id", misconception: "Невалидные trace-id заставили бы collector стартовать свежие трейсы, увеличивая число трейсов, не per-trace span'ов." },
+    { label: "Decision-окно слишком короткое — расширить для фикса OOM", misconception: "Расширение decision-окна увеличивает объём данных в RAM — ухудшает OOM, не улучшает." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Head sampling решает на старте трейса — дёшево, но слепо к ошибкам и медленным запросам. Tail sampling буферизует все span'ы до завершения трейса и применяет policy (хранить все ошибки, хранить всё медленное, 1% остального). Гибридный head-100% + tail-policy — production-стандарт; требует load-balancing exporter и RAM collector'а пропорционально числу активных трейсов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-sampling-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему head sampling пропускает error-трейсы и какова частота пропуска?", a: "Head sampling принимает решение keep/drop на старте трейса, до выполнения какого-либо downstream-сервиса. В тот момент нет ошибки для наблюдения. 1% head sampling дропает 99% всех трейсов без разбора — ошибки и успехи вместе. Если инцидент вызывает сбой 0.5% запросов при sampling 1%, сохранишь примерно 0.5% × 1% = 0.005% error-трейсов — почти ноль. Единственный способ надёжно ловить ошибки — принимать sampling-решение после наблюдения исхода, что и делает tail sampling." },
+    { q: "Объясни load-balancing exporter и почему tail sampling ломается без него.", a: "Tail-sampling Collector обязан видеть все span'ы данного trace-id до применения policy keep/drop. С несколькими репликами Collector'а и случайным распределением span'ов, трейс из 10 span'ов может попасть на 10 разных реплик — ни одна не видит полный трейс и не может принять корректное решение. Load-balancing exporter (встроен в OTel Collector) хэширует trace-id каждого span'а на детерминированную реплику, направляя все span'ы одного трейса на один instance. Без него tail sampler принимает решения по фрагментам, и корректность его policy деградирует к head sampling, но с overhead'ом tail sampling — худшее из обоих подходов." },
+    { q: "Опиши гибридный паттерн head-100% + tail-policy и когда действует каждый уровень.", a: "Уровень 1 (head, на SDK): sample при 100% — каждый запрос генерирует span'ы и экспортирует их. Sampled-флаг всегда 01. Полный объём span'ов течёт из приложения в collector. Здесь никаких решений о хранении не принимается. Уровень 2 (tail, на Collector): после decision-окна (30с–5мин) применяй policy: хранить все трейсы с любым error span'ом (статус 2 = ERROR), хранить все трейсы где длительность root span превышает p99-порог, хранить 1% вероятностного sample остального. Остальное дропать. Результат: error и медленные трейсы всегда хранятся; фоновые baseline-трейсы сэмплируются на 1%. Head tier стоит CPU, но не хранение; tail tier стоит RAM, но позволяет policy-driven retention. Оба уровня независимы — масштабирование collector'а обрабатывает больше трафика без изменения SDK-конфигурации." },
+  ]}
+/>
+
+<Recap lang="ru">
+Head sampling принимает решение keep/drop на старте трейса, используя sampled-флаг `traceparent`, пропагируя решение на все downstream-сервисы. Дёшево — несэмплированные запросы не генерируют span'ов вообще — но слепо к исходам: 1% head rate дропает 99% error-трейсов вместе с 99% нормальных. Tail sampling буферизует все span'ы в OTel Collector до закрытия decision-окна (30с–5мин), затем применяет policy: хранить все ошибки, хранить все медленные, хранить 1% baseline. Стоимость — RAM collector'а (active_traces × span'ы/трейс × байт/span) и обязательный load-balancing exporter, маршрутизирующий все span'ы одного трейса на один collector instance. Гибридный head-100% + tail-policy — production-стандарт: head при 100% подаёт всё в pipeline; tail tier решает, что персистировать.
+</Recap>

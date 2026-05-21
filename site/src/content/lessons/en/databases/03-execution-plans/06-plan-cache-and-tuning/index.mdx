@@ -1,0 +1,227 @@
+---
+slug: 06-plan-cache-and-tuning
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 6
+title: "Plan cache, cost-constant tuning, and planner internals"
+summary: "Prepared statements switch to a generic plan after 5 executions — a trap for skewed parameters. SSD systems need random_page_cost = 1.1. GEQO handles large joins. JIT helps CPU-bound queries. Each mechanism has a specific failure mode and fix."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["05-extended-statistics"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["generic-plan", "custom-plan", "plan-cache-mode", "random-page-cost", "geqo", "jit-compilation", "effective-cache-size", "from-collapse-limit", "join-collapse-limit"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-prepare.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A parameterised query has been fast for months. One day it starts showing P99 latency of 4 seconds. Mean is still 3ms. The same query, different parameters — the distribution is skewed. After 5 executions Postgres switched to a generic plan that does not know the parameter values. One `ALTER ROLE` line fixes it.
+</Hook>
+
+<Crux>Statements go generic after 5 executions — trap for skewed params. Fix: plan_cache_mode = force_custom_plan. SSD: random_page_cost = 1.1.</Crux>
+
+<Explanation>
+
+## The planner's internal structure
+
+For each query the planner builds **paths** — lightweight, partial plans for portions of the query (single-table scans, joins of small relation sets). Paths are compared by cost; only the cheapest path per "relation set + sort order" is retained (the rest are pruned). For multi-relation joins, it considers all combinations using dynamic programming — exhaustively up to `geqo_threshold` (default 12) relations, then switches to the Genetic Query Optimizer (heuristic search) above that threshold.
+
+The senior mental model: when you see a surprising plan, ask "what other paths did the planner consider, and why were they pruned?" The answer is almost always a cost difference driven by row estimates.
+
+## Generic vs custom plans (prepared statements)
+
+Every parameterised query from a driver (`$1`, `$2`, ...) and every PL/pgSQL function with parameters goes through plan caching. The lifecycle:
+
+1. **First 5 executions**: Postgres plans each with the actual parameter values — **custom plans**, optimal for that specific parameter.
+2. **After 5th execution**: Postgres computes the average cost of the 5 custom plans and compares it to the cost of a **generic plan** (parameter-agnostic).
+3. **If generic cost is within ~10% of the average custom cost**: Postgres switches permanently to the generic plan for the lifetime of the prepared statement.
+
+The switch is invisible to the application. For uniformly distributed parameters, the generic plan is usually fine. For **skewed distributions** (workspace_id where some workspaces have 8% of rows and others have 0.01%), the generic plan optimises for a "typical" parameter and is catastrophically wrong for outliers.
+
+**Symptoms**: high `stddev_exec_time` in `pg_stat_statements` (bimodal latency — fast for common parameters, slow for outliers).
+
+**Diagnosis** (PG 16+): `EXPLAIN (GENERIC_PLAN)` on the prepared form — shows exactly what plan all executions after the switch get.
+
+**Fix**:
+```sql
+ALTER ROLE app SET plan_cache_mode = 'force_custom_plan';
+```
+Every execution replans with the actual parameter. Planning cost: ~0.4–2ms per execution — negligible when the alternative is 4-second tail latency.
+
+<DebugLog
+  id="06-cache-debug-1"
+  lessonSlug="06-plan-cache-and-tuning"
+  lang="en"
+  title="A prepared statement that was fast is now slow — diagnose"
+  output={`# pg_stat_statements row for the offending query:
+query: "SELECT * FROM orders WHERE workspace_id = $1 AND status = $2 ORDER BY created_at DESC LIMIT 50"
+calls: 482,910
+total_exec_time: 1,852,400 ms
+mean_exec_time: 3.84 ms
+stddev_exec_time: 412.6 ms   # HUGE stddev -- symptom of plan switching
+min_exec_time: 0.8 ms
+max_exec_time: 4,290 ms
+
+# EXPLAIN (ANALYZE, BUFFERS) on the SAME query with workspace_id=42 (high-volume):
+Limit (cost=0..14.2 rows=50) (actual time=2.1..2.3 rows=50 loops=1)
+  -> Index Scan using idx_orders_workspace_status_created on orders
+       (cost=0..14000 rows=50000) (actual time=2.1..2.3 rows=50 loops=1)
+       Index Cond: ((workspace_id=42) AND (status='pending'::text))
+       Buffers: shared hit=12
+Planning Time: 0.4 ms
+Execution Time: 2.4 ms
+
+# EXPLAIN (GENERIC_PLAN, BUFFERS) on the prepared form (PG 16+):
+Limit (cost=0.43..28.5 rows=50)
+  -> Index Scan using idx_orders_created on orders
+       (cost=0.43..15000.0 rows=27000)
+       Filter: ((workspace_id = $1) AND (status = $2))
+Planning Time: 0.2 ms
+
+# Context:
+# workspace_id distribution: workspace 1 has 0.01% of rows; workspace 42 has 8%.
+# status distribution: 'pending' 15%, 'shipped' 80%, 'cancelled' 5%.`}
+  outputLang="log"
+  question="Why does the same prepared statement show 3.84ms mean but 412ms stddev? What is the immediate fix?"
+  hint="Compare the explicit plan (using a real parameter) to the GENERIC_PLAN output. Note which index each uses."
+  answer="Cause: the prepared-statement generic-plan trap. The first 5 executions used custom plans (optimal for the actual parameters). From execution 6 onward, Postgres compared average custom-plan cost (~14 cost units) to generic-plan cost (~28 units). Because 28 is within ~2x of 14, Postgres switched to the generic plan. The generic plan does not know workspace_id or status at plan time, so it cannot use idx_orders_workspace_status_created (which requires knowing both values). Instead it picks idx_orders_created (just created_at) and applies workspace_id + status as a Filter. For low-volume workspaces (0.01% of rows) this is fast — the ORDER BY created_at index terminates early when 50 rows match the Filter. For high-volume workspaces (8% of rows, status='shipped' which is 80% of rows) it must scan deep into the created_at index before finding 50 rows that match both filters. Latency is bimodal: fast for rare parameters, slow for common ones. The stddev_exec_time spike is the diagnostic signal. Immediate fix: ALTER ROLE app SET plan_cache_mode = 'force_custom_plan'. Effect: every execution replans with the actual parameters. Planning cost ~0.4ms, negligible vs 412ms tail. Verify: reconnect with the new role setting, re-run EXPLAIN ANALYZE — plan should use idx_orders_workspace_status_created for all parameter combinations."
+/>
+
+## SSD cost-constant tuning
+
+Postgres ships with `random_page_cost = 4.0` and `seq_page_cost = 1.0` — calibrated for spinning HDDs where random reads are 4× slower than sequential. On NVMe SSDs the ratio is 1.5–2×; on working-set-fits-in-RAM systems it approaches 1.0.
+
+```sql
+-- In postgresql.conf for SSD-backed systems:
+random_page_cost = 1.1
+seq_page_cost    = 1.0
+
+-- Tell the planner how much data is cached by the OS:
+effective_cache_size = '24GB'  -- ~75% of total RAM
+```
+
+Effect: the planner becomes more willing to use Index Scan and Index Only Scan over Seq Scan — which is the right bias for modern hardware. This is the single highest-leverage planner setting on any SSD-backed Postgres.
+
+`effective_cache_size` is not a memory allocation — it is a hint telling the planner how much OS page-cache + shared_buffers is available. Setting it correctly makes the cost difference between cached index pages and uncached heap pages more accurate.
+
+## GEQO and large joins
+
+For queries joining more than `geqo_threshold` (default 12) relations, the planner switches from exhaustive dynamic programming to the **Genetic Query Optimizer** — a heuristic that is fast but not guaranteed optimal. The heuristic is randomised — same query can produce different plans on different runs.
+
+For analytic queries with 15–30 joined tables, GEQO can produce inconsistent plans. Workarounds:
+
+```sql
+-- Force exhaustive search (slower planning, stable plans):
+SET geqo = off;
+
+-- Lock the JOIN order to the SQL's explicit order:
+SET from_collapse_limit = 1;
+SET join_collapse_limit = 1;
+```
+
+The `from_collapse_limit = 1` trick is useful when you have hand-tuned a complex query's JOIN order and want it to stay tuned across data changes.
+
+## JIT compilation
+
+PG 11+ supports JIT compilation of expression evaluation (filter predicates, projections, aggregation). JIT kicks in when a plan's total cost exceeds `jit_above_cost` (default 100,000).
+
+JIT helps CPU-bound queries on big scans (millions of rows, complex expressions) by 10–30%. For short OLTP queries, it adds overhead — compilation time exceeds saved execution time.
+
+```sql
+-- For OLTP workloads where JIT hurts more than it helps:
+SET jit_above_cost = 500000;
+-- Or disable entirely for OLTP roles:
+SET jit = off;
+```
+
+Use `EXPLAIN (ANALYZE, JIT)` to see JIT timings per phase and decide whether to tune the thresholds.
+
+<NumbersCard
+  id="06-cache-numbers"
+  title="Plan cache and planner tuning numbers"
+  stats={[
+    { label: "Custom plans before generic kicks in", value: "5" },
+    { label: "Generic plan cost tolerance vs custom avg", value: "~10%" },
+    { label: "geqo_threshold (default)", value: "12 relations" },
+    { label: "jit_above_cost (default)", value: "100,000" },
+    { label: "jit_inline_above_cost (default)", value: "500,000" },
+    { label: "from_collapse_limit / join_collapse_limit", value: "8 / 8" },
+    { label: "Planning time per execution (typical OLTP)", value: "0.4-2 ms" },
+    { label: "random_page_cost (SSD-tuned)", value: "1.1" },
+    { label: "effective_cache_size recommendation", value: "~75% of total RAM" },
+  ]}
+/>
+
+<Quiz
+  id="06-cache-quiz-1"
+  lessonSlug="06-plan-cache-and-tuning"
+  lang="en"
+  question="A prepared statement has been running fast for 5 executions. On the 6th execution it becomes slow. What is the most likely cause?"
+  choices={[
+    { label: "Postgres switched from a custom plan (optimised for the actual parameters) to a generic plan (parameter-agnostic), and the generic plan is suboptimal for this parameter value", correct: true },
+    { label: "The connection pool recycled the connection, clearing prepared statements", misconception: "Connection recycling would cause a re-prepare, which would start the 5-execution custom-plan cycle again from scratch." },
+    { label: "Postgres ran out of memory for the plan cache", misconception: "Plan cache eviction causes a re-plan from scratch, not a plan switch at a fixed execution count." },
+    { label: "The query regressed due to data growth hitting a tipping point", misconception: "Data growth causes gradual degradation, not a sudden switch on the 6th execution." },
+  ]}
+/>
+
+<Quiz
+  id="06-cache-quiz-2"
+  lessonSlug="06-plan-cache-and-tuning"
+  lang="en"
+  question="Which PostgreSQL 16 feature lets you inspect what plan all prepared-statement executions after the 6th will receive, without actually running 5 executions?"
+  choices={[
+    { label: "EXPLAIN (GENERIC_PLAN)", correct: true },
+    { label: "EXPLAIN (VERBOSE)", misconception: "VERBOSE adds column lists per node, not generic-plan inspection." },
+    { label: "EXPLAIN (SETTINGS)", misconception: "SETTINGS shows non-default GUCs, not the generic plan." },
+    { label: "pg_prepared_statements", misconception: "pg_prepared_statements lists active prepared statements but does not show their plans." },
+  ]}
+/>
+
+<Quiz
+  id="06-cache-quiz-3"
+  lessonSlug="06-plan-cache-and-tuning"
+  lang="en"
+  question="You set random_page_cost = 1.1 on an SSD-backed Postgres. What happens to plans for queries with selective predicates?"
+  choices={[
+    { label: "The planner switches more queries from Seq Scan to Index Scan and Index Only Scan, because random I/O is now correctly priced at 1.1x sequential instead of 4x", correct: true },
+    { label: "All queries switch to Seq Scan because the cost difference is now smaller", misconception: "Lower random_page_cost makes index scans cheaper relative to sequential scans — the planner prefers index scans more, not less." },
+    { label: "No effect — random_page_cost only affects writes", misconception: "random_page_cost is used by the planner to estimate read costs for random-access patterns, which is exactly what index scans use." },
+    { label: "Postgres disables all indexes to avoid the overhead", misconception: "Postgres never disables indexes based on cost constants; it uses the constants to choose between available access paths." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Prepared statements switch to a generic plan after 5 executions; force_custom_plan is the fix for skewed-parameter workloads. On SSD set random_page_cost = 1.1 — the single highest-leverage planner setting on modern hardware. JIT helps large scans; disable it for short OLTP queries. GEQO handles large joins heuristically — lock join order with join_collapse_limit = 1 for critical analytic queries.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-cache-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full lifecycle of how Postgres picks a plan for a parameterised query, from first execution to the generic-plan switch.", a: "When a driver executes a parameterised query, Postgres goes through the PREPARE / BIND / EXECUTE protocol. PREPARE parses and rewrites the query, then plans it generically (parameter values unknown). The first 5 EXECUTE calls discard this generic plan and replan with the actual parameter values — custom plans, optimal for that specific parameter. After the 5th execution, Postgres averages the cost of the 5 custom plans and compares it to the generic plan's cost. If the generic cost is within ~10% of the average custom cost (with some overhead for planning time), Postgres switches to the generic plan for all subsequent executions of this prepared statement. The switch is per-prepared-statement, not per-connection. The motivation: planning time is non-trivial (0.5-2ms), and amortising it across many executions saves wall time when one generic plan is 'good enough'. The failure mode: with skewed parameter distributions, the average custom cost may not represent outlier parameters. The generic plan optimised for a 'typical' parameter is wrong for outlier parameters — manifesting as bimodal latency. Diagnosis: stddev_exec_time > 10x mean in pg_stat_statements; EXPLAIN (GENERIC_PLAN) on the prepared form. Fix: plan_cache_mode = force_custom_plan for that role." },
+    { q: "Why is effective_cache_size important for the planner even though it does not allocate any memory?", a: "effective_cache_size is a hint to the planner about how much data is likely cached in the OS page cache plus Postgres shared_buffers. The planner uses it when estimating whether a random page fetch will need disk I/O (expensive) or just a memory read (cheap). If effective_cache_size is 25GB and a table is 10GB, the planner infers that most of the table is likely cached — and adjusts its cost estimates accordingly, making index scans cheaper relative to sequential scans. If effective_cache_size is set to the default 4GB but the server actually has 64GB of RAM, the planner underestimates cache presence, overestimates random I/O cost, and may prefer Seq Scan more than it should. The recommendation is ~75% of total RAM. It does not reserve that memory — it only tells the planner what to assume about the environment. Setting it correctly is especially important on systems where the working set fits mostly in RAM." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres plan caching has a specific failure mode: after 5 executions of a prepared statement, Postgres compares the average custom-plan cost to a generic plan and may switch permanently to the generic plan. For skewed parameter distributions, the generic plan is optimal for a "typical" parameter and catastrophically slow for outliers — producing bimodal latency (low mean, high stddev). Diagnose with `stddev_exec_time` in `pg_stat_statements` and `EXPLAIN (GENERIC_PLAN)` (PG 16+). Fix with `plan_cache_mode = 'force_custom_plan'` for the role. For SSD-backed systems, set `random_page_cost = 1.1` — the planner will correctly prefer Index Scan over Seq Scan for selective predicates. Set `effective_cache_size` to ~75% of total RAM. Disable or raise JIT thresholds for OLTP workloads. Use `join_collapse_limit = 1` to pin the explicit JOIN order for complex analytic queries that GEQO might destabilise.
+</Recap>

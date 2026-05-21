@@ -1,0 +1,250 @@
+---
+slug: 07-deployment-and-cpu
+lang: en
+track: networking
+unit: 10-quic-internals
+order: 7
+title: "Deployment tradeoffs and CPU cost"
+summary: "QUIC's user-space packet processing costs 15–30% more CPU per byte than kernel TCP, drops up to 45% goodput on fast links, and requires mandatory HTTP/2 fallback for the 3–5% of networks that block UDP."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "10-quic-internals/05-loss-detection-and-cc"
+  - "10-quic-internals/06-0rtt-and-encryption"
+deepensInto: []
+spiral: ["performance", "latency"]
+concepts: ["udp-gso", "nic-offload", "alt-svc", "http3-fallback", "quic-cpu-cost", "quic-observability", "pluggable-cc"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9000
+  - https://datatracker.ietf.org/doc/html/rfc9114
+  - https://blog.cloudflare.com/the-road-to-quic/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Your CDN rolls out HTTP/3. CPU utilization on edge servers spikes 25%, goodput on 1 Gbps paths drops by nearly half, and 4% of clients fall back silently to HTTP/2 with no error visible anywhere. QUIC is genuinely better for latency — and genuinely expensive to operate.
+</Hook>
+
+<Crux>QUIC costs 15–30% more CPU per byte than TCP — up to 45% goodput loss on fast links; UDP-blocked networks require HTTP/2 fallback.</Crux>
+
+<Explanation>
+
+## CPU cost: why user-space transport is expensive
+
+QUIC runs in user space — every packet goes through application code, not the kernel's NIC-to-socket fast path. The cost components are:
+
+1. **Per-packet AES-GCM encryption** — ~15–20 cycles per byte on modern CPUs. Kernel TCP offloads this to the NIC (TLS offload, kTLS). QUIC cannot — the NIC doesn't speak QUIC yet.
+2. **Variable-length integer decoding** — packet numbers, stream IDs, and frame lengths use QUIC's VarInt encoding. Each decode is a conditional branch in user space.
+3. **Payload framing** — STREAM, CRYPTO, and ACK frames are serialized/deserialized per packet in user space. Retransmitted frames must be re-serialized with new packet numbers.
+4. **Syscall overhead** — without batching, each UDP `sendmsg()` is a syscall. At 1 Gbps with 1500-byte packets that's ~83 k syscalls/s per core.
+
+**Measured impact:** On a 1 Gbps LAN link at full rate, QUIC saturates a CPU core before the link fills. Goodput drops **up to ~45% vs HTTP/2** on TCP. On slow or lossy paths (typical mobile) the network — not CPU — is the bottleneck, so the overhead is unmeasurable.
+
+<div data-lesson-visual class="rounded-lg border border-slate-200 bg-slate-50 p-4 my-4 text-sm space-y-3">
+  <div class="font-semibold text-slate-700 mb-1">QUIC CPU cost: path matters</div>
+  <div class="grid grid-cols-3 gap-3 text-xs">
+    <div class="border border-slate-200 rounded p-2 space-y-1">
+      <div class="font-semibold text-slate-600">Fast LAN (1 Gbps)</div>
+      <div class="text-red-600">CPU bottleneck first</div>
+      <div>Goodput −45% vs TCP</div>
+      <div>HoL benefit: negligible</div>
+      <div class="font-semibold text-slate-500 pt-1">Use TCP</div>
+    </div>
+    <div class="border border-slate-200 rounded p-2 space-y-1">
+      <div class="font-semibold text-slate-600">WAN / API (100 ms RTT)</div>
+      <div class="text-amber-600">Network bottleneck</div>
+      <div>CPU overhead: invisible</div>
+      <div>Handshake save: +100 ms</div>
+      <div class="font-semibold text-green-700 pt-1">Use QUIC</div>
+    </div>
+    <div class="border border-slate-200 rounded p-2 space-y-1">
+      <div class="font-semibold text-slate-600">Mobile 4G (lossy)</div>
+      <div class="text-amber-600">Network bottleneck</div>
+      <div>CPU overhead: invisible</div>
+      <div>HoL save: 575× at 0.5% loss</div>
+      <div class="font-semibold text-green-700 pt-1">Use QUIC</div>
+    </div>
+  </div>
+</div>
+
+## Mitigations: UDP GSO, NIC offload, core affinity
+
+**UDP Generic Segmentation Offload (UDP GSO):** Instead of one `sendmsg()` per 1500-byte packet, batch up to 64 KB of QUIC payload in a single syscall with a GSO hint. The kernel segments it into individual UDP datagrams before NIC DMA. Result: ~3–4 syscalls per 64 KB instead of 43. Cloudflare reports **~20% CPU gain from GSO alone**.
+
+**NIC QUIC offload (Intel E810 and newer):** Parse QUIC long/short headers in silicon, route packets to the correct QUIC stream without involving user-space demux. Reduces per-packet interrupt overhead. Still experimental as of 2026 but available in cloud-optimized NICs.
+
+**Core affinity:** Keep the QUIC process on the same physical core. QUIC state (connection table, cc windows, key material) fits in L3 cache. Cross-core migrations flush cache lines, adding ~50 ns per packet.
+
+With GSO + affinity, per-byte CPU cost drops from **30% to 15–20%** overhead vs kernel TCP.
+
+<Quiz
+  id="07-mid-quiz-1"
+  lessonSlug="07-deployment-and-cpu"
+  lang="en"
+  question="Why does QUIC's CPU overhead hurt throughput on a 1 Gbps LAN but not on a 10 Mbps mobile link?"
+  choices={[
+    { label: "LAN packets are larger, making VarInt decoding more expensive per packet", misconception: "VarInt cost scales with packet count, not size. The key is whether CPU or the network saturates first." },
+    { label: "On 1 Gbps the CPU saturates before the link does; on a 10 Mbps mobile link the network is the bottleneck so CPU slack is never consumed", correct: true },
+    { label: "LAN servers do not support UDP GSO, making kernel bypass unavailable", misconception: "UDP GSO is a kernel feature available on most modern Linux servers regardless of link speed." },
+    { label: "Mobile NICs have hardware QUIC offload that LAN NICs lack", misconception: "NIC QUIC offload is a server-side feature and still experimental; it is not a mobile-side technology." },
+  ]}
+/>
+
+## UDP blocking and mandatory HTTP/2 fallback
+
+**~3–5% of networks block UDP outright** — corporate proxies, certain ISP gateways, some LTE contexts. When QUIC is silently dropped (no ICMP error, just lost packets) the client's only signal is a timeout — typically 1–3 seconds before fallback to TCP.
+
+**Browser racing:** Modern browsers start both QUIC (UDP 443) and TCP (443) simultaneously. Whichever handshake completes first wins. This limits the UX penalty from UDP blocking to zero — TCP wins and QUIC gracefully loses the race. The downside: wasted effort on every connection if QUIC is consistently blocked on a path.
+
+**Alt-Svc discovery:** HTTP/3 is advertised via `Alt-Svc: h3=":443"; ma=3600` in the HTTP/2 response. The browser caches this and attempts QUIC on the next connection. First-time connections always fall back to TCP, discover the header, and upgrade on subsequent requests.
+
+**RFC 9000 mandate:** Implementations MUST support fallback to HTTP/2 over TCP. A deployment that doesn't is non-compliant and will break in blocked networks.
+
+<Misconception
+  id="quic-silent-block"
+  title="Heads-up: blocked UDP looks like latency, not an error"
+>
+  Silently dropped UDP makes QUIC time out with no error code. Modern browsers race
+  QUIC and TCP so the penalty is minimal, but you cannot distinguish UDP-blocking from
+  a slow path without per-client QUIC fallback metrics or deep packet inspection.
+</Misconception>
+
+<Quiz
+  id="07-mid-quiz-2"
+  lessonSlug="07-deployment-and-cpu"
+  lang="en"
+  question="A user on a corporate network reports that loading your site is 2 seconds slower than usual. QUIC is enabled. What is the most likely cause and how do you verify?"
+  choices={[
+    { label: "The QUIC handshake is slower than TCP+TLS on corporate networks due to longer round-trips", misconception: "QUIC is 1-RTT, faster than TCP+TLS. Slower handshake is not a realistic explanation." },
+    { label: "UDP is blocked on the corporate firewall; the client waits for PTO timeout before falling back to TCP. Verify by checking Alt-Svc fallback rate in server metrics or tcpdump for missing QUIC responses", correct: true },
+    { label: "Corporate networks always block TLS 1.3, which QUIC requires, causing handshake failure", misconception: "TLS 1.3 runs over TCP too and corporate networks rarely block it. The issue is UDP, not TLS 1.3." },
+    { label: "QUIC's 15–30% CPU overhead is higher on corporate servers, adding 2 seconds of processing time", misconception: "CPU overhead manifests as goodput loss, not per-connection latency. A 2-second delay is a timeout symptom." },
+  ]}
+/>
+
+## Deployment reality 2026
+
+**~21% of web traffic runs HTTP/3.** ~35–40% of major sites advertise it via Alt-Svc. Adoption is bimodal:
+
+- **Mobile browsers** default-enable HTTP/3 — latency and HoL elimination matter on cellular.
+- **Desktop/LAN** still races QUIC vs TCP; TCP often wins because round-trips are short and HoL blocking is rare on fast paths.
+
+Major CDNs (Cloudflare, Google, Akamai, Fastly) enable HTTP/3 by default. Browsers (Chrome, Safari, Firefox) support it. The adoption curve will steepen as UDP blocking becomes rarer, hardware offload reduces CPU cost, and fallback racing becomes universal.
+
+<DebugLog
+  id="07-debug-1"
+  lessonSlug="07-deployment-and-cpu"
+  lang="en"
+  title="QUIC packet trace — diagnose encryption-level and loss issues"
+  output={`$ quictrace capture.pcapng | head -20
+timestamp=0.000 dcid=12345678 type=Initial pkt_num=0 frames=[Crypto[0..120], Padding]
+timestamp=0.045 dcid=12345678 type=Initial pkt_num=1 frames=[Crypto[120..240], Padding] # Retransmit (no ACK in time)
+timestamp=0.051 scid=87654321 dcid=12345678 type=Initial pkt_num=0 frames=[Crypto[0..200], Ack[0], Padding]
+timestamp=0.052 dcid=87654321 type=Handshake pkt_num=0 frames=[Crypto[200..350]]
+timestamp=0.100 scid=87654321 dcid=12345678 type=Handshake pkt_num=0 frames=[Crypto[350..400], Finished]
+timestamp=0.101 dcid=87654321 type=1RTT pkt_num=0 frames=[Stream(0, fin, 4096 bytes)]
+timestamp=0.151 scid=87654321 dcid=12345678 type=1RTT pkt_num=0 frames=[Stream(0, fin, [all bytes 0..4095], Ack[0])]`}
+  outputLang="log"
+  question="The client sees one Initial retransmit before the server's Initial arrives. The Handshake then flows normally. What does this indicate?"
+  hint="Look at the timestamps. The client sends pkt_num=0 at t=0, then retransmits at t=0.045 (before the server's ACK arrives at t=0.051). Why would the client retransmit an ACK'd packet?"
+  answer="The client's retransmit at t=0.045 is a PTO probe — the Probe Timeout fires (~45 ms for a 20–30 ms RTT path) before the server's ACK arrives. The server's ACK at t=0.051 acknowledges the first send (pkt_num=0). The retransmit was spurious. This is normal behavior — many Initial retransmits or lost Handshake packets would indicate a flaky network. The ~50 ms round-trip visible in the trace confirms a 20–25 ms RTT path."
+/>
+
+## Observability gaps
+
+QUIC's encryption prevents packet inspection — `tcpdump` shows only opaque blobs. Traditional network monitoring (per-flow HTTP request counts, slow client detection, misbehavior at flow level) breaks.
+
+**Adapting the stack:**
+- Applications export QUIC traces via JSON (RFC 9312 qlog format) — connection lifecycle, packet numbers, CC events.
+- Browsers report `PerformanceResourceTiming.nextHopProtocol = "h3"` for HTTP/3 connections.
+- Cloud providers (AWS, GCP) are adding QUIC-aware flow metrics.
+- eBPF probes on userspace QUIC sockets can reconstruct packet timing without decryption.
+
+The trade-off is intrinsic: encryption buys privacy and security at the cost of operational opacity.
+
+<TradeoffMatrix
+  id="07-tradeoff-1"
+  lessonSlug="07-deployment-and-cpu"
+  lang="en"
+  prompt="A CDN must choose between deploying QUIC for a latency-sensitive API (small request/response, intercontinental) vs. a high-throughput static asset service (1 Gbps, LAN clients)."
+  options={[
+    { name: "QUIC for both API and static assets", summary: "Unified protocol, same deployment tooling.", justification: "Static assets on fast LAN see ~45% goodput loss from QUIC's CPU cost. There is no HoL benefit on fast paths. CPU becomes the bottleneck before the link fills. Wrong choice for throughput-sensitive paths." },
+    { name: "QUIC for API (latency), TCP for static assets (throughput)", summary: "Protocol per use case.", correct: true, justification: "The API benefits from QUIC's 1-RTT handshake (100+ ms saved intercontinental) and HoL elimination. Static assets on fast LAN use TCP kernel offload (hardware crypto, GSO, RSS) for maximum throughput. Clients negotiate HTTP/3 for the API and HTTP/2 for assets. This is what major CDNs do." },
+    { name: "TCP only; rely on keep-alive and connection pooling", summary: "Skip QUIC entirely.", justification: "For the API, keep-alive amortizes the TCP handshake but not for new sessions. On intercontinental routes with 150 ms RTT and cold sessions you pay a 150 ms handshake cost that QUIC saves. This leaves latency on the table." },
+    { name: "QUIC for both with UDP GSO and NIC QUIC offload", summary: "Invest in hardware.", justification: "With modern NICs and core affinity the CPU cost drops to 15%. But hardware offload is not available in all environments (cloud, containers), is expensive, and requires operational skill. Future-state option, not mainstream yet." },
+  ]}
+/>
+
+<DesignPrompt
+  id="07-design-1"
+  lessonSlug="07-deployment-and-cpu"
+  lang="en"
+  prompt="Design the deployment strategy for rolling out HTTP/3 and QUIC to a global CDN serving both mobile (90% traffic) and desktop (10% traffic), with current HTTP/2 TCP infrastructure."
+  constraints={[
+    "Existing HTTP/2 deployment is stable and well-tuned; no breaking changes to TCP paths.",
+    "Mobile clients are diverse (iOS 14+, Android 5+, various browsers); some networks are QUIC-blocked.",
+    "CPU budget for QUIC: no more than 20% overhead vs. current HTTP/2.",
+    "Observability: measure QUIC adoption rate, fallback rate, and latency improvement per client device.",
+  ]}
+  canonical="Phase 1 (Month 1–3): Enable QUIC on edge servers in non-blocking networks (APAC, US, EU datacenters). Advertise HTTP/3 via Alt-Svc to mobile browsers only (Alt-Svc: h3=':443'; ma=3600). Measure: Alt-Svc discovery rate, QUIC connection rate, fallback rate. Expect 10–20% adoption on first browser restart. Phase 2 (Month 4–6): Deploy UDP GSO on all edge servers; drop CPU overhead to 15%. Expand QUIC advertisement to all clients but race QUIC and TCP in the browser (both initiate, first-to-connect wins). Measure: QUIC win rate, latency improvement (expect 30–55% on mobile due to HoL fix; 5–10% on desktop due to handshake save). Phase 3 (Month 7–12): Monitor fallback rate from QUIC-blocked networks (expect 3–5%). For blocked paths add explicit HTTP/2 fallback after a 2-second QUIC timeout (shorter than browser default 1-minute timeout). Redirect blocked clients to a HTTP/2-only Alt-Svc to prevent repeated failures. Phase 4 (Month 13+): QUIC becomes the default; TCP remains for fallback and legacy clients. Steady-state: ~60–70% QUIC, ~30–40% TCP. Observability: track (1) Alt-Svc adoption, (2) QUIC-to-TCP fallback rate (alert if > 8%), (3) p50/p99 latency by protocol by client device, (4) CPU cost per protocol."
+  keyPoints={[
+    "Mobile benefits from QUIC's latency; desktop from TCP's throughput + familiarity. Different tiers get different protocols.",
+    "Alt-Svc discovery requires a prior HTTP/2 request; race both protocols in parallel for new clients to avoid fallback latency.",
+    "QUIC-blocked networks exist; explicit fallback after a short timeout (2–3s) avoids hanging the user.",
+    "UDP GSO is critical for CPU cost control. Without it, QUIC is too expensive for high-throughput CDNs.",
+    "Measure fallback rate continuously. If > 5%, investigate whether it is genuine UDP blocking or a deployment bug.",
+    "Connection semantics differ: HTTP/2 over TCP has persistent TCP state; HTTP/3 over QUIC moves state to QUIC. Ensure your load balancer and observability stack understand both.",
+  ]}
+/>
+
+<NumbersCard
+  id="07-deployment-numbers"
+  title="QUIC deployment reality 2026"
+  stats={[
+    { label: "CPU overhead vs kernel TCP", value: "15–30% per byte" },
+    { label: "Goodput loss on 1 Gbps fast links", value: "up to ~45% vs HTTP/2" },
+    { label: "UDP GSO CPU gain (Cloudflare)", value: "~20% per connection" },
+    { label: "Networks blocking UDP", value: "~3–5%" },
+    { label: "Web traffic running HTTP/3 (2026)", value: "~21%" },
+    { label: "Major sites advertising HTTP/3", value: "~35–40%" },
+    { label: "Browser QUIC+TCP racing timeout", value: "1–3 s before TCP wins" },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+**Why not add QUIC to the kernel?** Linux has experimental in-kernel QUIC patches, but the community is divided. Kernel TCP benefits from NIC offload (kTLS, GRO, RSS) built over decades. Replicating this for QUIC would take years and couples QUIC's evolution to the kernel release cycle — the opposite of what RFC 9000 intended. User-space QUIC can ship new CC algorithms weekly; kernel QUIC cannot. The CPU cost is the price of agility.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>QUIC costs 15–30% more CPU per byte than kernel TCP; on fast links goodput drops up to 45%. UDP GSO recovers ~20%. Deploy QUIC for latency-sensitive WAN/mobile paths; keep TCP for high-throughput LAN. Plan for 3–5% UDP-blocked clients with HTTP/2 fallback.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-deployment-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does QUIC's CPU overhead hurt 1 Gbps LAN throughput but not 10 Mbps mobile throughput?", a: "On a 1 Gbps LAN, QUIC's user-space packet processing (per-packet AES-GCM, VarInt decode, frame serialization, per-packet syscalls) saturates a CPU core before the link fills. Goodput drops up to ~45% vs HTTP/2. On a 10 Mbps mobile link the network is the bottleneck — even with 30% CPU overhead there is plenty of CPU headroom to keep the link saturated. The CPU overhead only shows when the link speed is high enough that packet rate × per-packet CPU cost exceeds one core's capacity." },
+    { q: "What is UDP GSO and why does Cloudflare report ~20% CPU gain from it?", a: "UDP Generic Segmentation Offload (GSO) lets a QUIC process batch up to 64 KB of payload in a single sendmsg() syscall with a GSO size hint. The kernel splits it into individual 1500-byte UDP datagrams before NIC DMA. Without GSO, each packet requires its own syscall — at 1 Gbps with 1500-byte packets that is ~83 k syscalls/s per core. GSO reduces this to ~3–4 syscalls per 64 KB, cutting syscall overhead. Cloudflare reports ~20% CPU reduction from this batching alone." },
+    { q: "A CDN sees 4% of QUIC connections fail silently with no error. What is the likely cause and fix?", a: "~3–5% of networks block UDP outright. When blocked, QUIC packets are silently dropped — no ICMP error, no RST, just timeout. The client's PTO fires (1–3 seconds), then the client falls back to TCP via HTTP/2. Fix: (1) enable browser-side QUIC+TCP racing so TCP wins immediately if UDP is blocked; (2) after repeated fallback from a client, serve a HTTP/2-only Alt-Svc header to stop attempting QUIC on that client; (3) expose per-client QUIC fallback rate in observability to detect blocked paths proactively." },
+  ]}
+/>
+
+<Recap lang="en">
+QUIC's user-space architecture delivers latency and HoL wins at a real CPU cost: 15–30% more per byte than kernel TCP, rising to ~45% goodput loss on fast 1 Gbps links where CPU — not the network — is the bottleneck. UDP GSO batches syscalls and recovers ~20% CPU; NIC offload and core affinity push it further. About 3–5% of networks block UDP silently, requiring browser-side TCP racing and mandatory HTTP/2 fallback. As of 2026, ~21% of web traffic runs HTTP/3 with bimodal adoption — mobile benefits clearly, desktop races TCP and often loses to it. QUIC encryption breaks traditional packet inspection; qlog (RFC 9312), browser timing APIs, and eBPF probes are the replacement observability stack. The right deployment strategy: QUIC for latency-sensitive WAN and mobile paths, TCP for high-throughput LAN and static assets.
+</Recap>

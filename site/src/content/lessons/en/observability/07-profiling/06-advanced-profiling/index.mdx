@@ -1,0 +1,182 @@
+---
+slug: 06-advanced-profiling
+lang: en
+track: observability
+unit: 07-profiling
+order: 6
+title: "Linux perf, eBPF internals, PGO, and the limits of sampling"
+summary: "perf_event_open is the kernel foundation under every profiler; BPF programs filter and aggregate in-kernel; PGO feeds profiles back to the compiler for 2-7% speedups; and sampling has blind spots engineers must know."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/07-profiling/05-reading-flame-graphs"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["perf-event-open", "ebpf-profiling", "jit-stack-unwinding", "profile-guided-optimization", "sampling-bias", "off-cpu-depth"]
+sources:
+  - https://docs.kernel.org/admin-guide/perf-security.html
+  - https://www.brendangregg.com/offcpuanalysis.html
+  - https://www.brendangregg.com/flamegraphs.html
+  - https://queue.acm.org/detail.cfm?id=2927301
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A flame graph shows 8% of total fleet CPU in a third-party profiler's own stack-walking code. The profiler is profiling itself. This is not a bug — it is a symptom of deep stacks and misconfigured symbol resolution, two of the senior-level edge cases that production profiling routinely surfaces.
+</Hook>
+
+<Crux>Every profiler sits on perf_event_open + BPF. The kernel foundation explains the edge cases — JIT frames, NUMA skew, PGO loops.</Crux>
+
+<Explanation>
+
+## Linux perf: the kernel foundation
+
+Linux's `perf` subsystem is the foundation under most profilers. The kernel exposes `perf_event_open(2)`, which lets user space request sampling on CPU cycles, hardware events, cache misses, or software events. When the configured number of events fires, the kernel captures the current PID, the user-space stack pointer, and writes them to a ring buffer. User space reads the buffer and reconstructs stacks.
+
+Kernel-side cost: ~1-5 microseconds per sample including the stack walk. Modern Linux (5.x+) supports BPF programs attached to perf events, letting user space customise what is captured — filter by PID, attach metadata, do statistical processing in-kernel. This is the engine under Pyroscope eBPF, Parca, BCC's `profile.bt`, and any eBPF-based continuous profiler.
+
+The security implication: `perf_event_open` requires capabilities (`CAP_PERFMON` in newer kernels, or root historically). Production deployments use kernel-side cgroup permissions to restrict what each container can observe.
+
+## eBPF and JIT stack-unwinding nuances
+
+The kernel can walk user-space stacks easily for compiled binaries (Go, Rust, C++) — frame pointers or DWARF unwind info on the stack. For JIT runtimes (V8, JVM, .NET CLR), the stack contains JIT-compiled code addresses that do not correspond to stable symbols.
+
+Profilers handle this with **perf maps**: JITs emit `/tmp/perf-PID.map` files mapping address ranges to function names, which the profiler ingests. JVM async-profiler bypasses this by hooking into `AsyncGetCallTrace` — a JVM API that returns Java stack frames directly. V8 supports `--perf-prof` / `--perf-basic-prof` flags.
+
+The challenges:
+- Maps can lag behind recompilations — hot functions get re-JIT'd and the old map entry is stale.
+- Stack unwinding can fail through certain JIT frames, leaving gaps.
+- Production profilers handle 90-95% of stacks accurately; the rest show as `[unknown]`.
+
+Mysterious `[unknown]` gaps in a flame graph almost always indicate a JIT-frame unwinding issue, not a bug in the application code.
+
+## Off-CPU profiling: the scheduler hook
+
+Brendan Gregg's 2013 work on off-CPU analysis identified the gap that CPU profiles leave. eBPF made off-CPU profiling cheap by hooking the kernel scheduler's switch events (`sched_switch` tracepoint). When the scheduler removes a thread from CPU (it blocks on I/O, sleeps, waits on a lock), the kernel's BPF program captures the thread's stack and records the timestamp. When the thread comes back on CPU, elapsed time is attributed to the captured stack.
+
+Production usage: off-CPU profiling is essential for I/O-bound services (databases, network gateways) where CPU profiles show ~5% of time and the real work happens waiting. Cost: comparable to CPU profiling (~2-5%) when sampling; unsampled (every scheduler switch) can be expensive on highly-switching workloads. Production deployments cap to ~99 Hz for off-CPU as well.
+
+## Profile-guided optimisation (PGO)
+
+Profilers do not just diagnose — they feed back into compilation. PGO workflow:
+
+1. Compile a binary with instrumentation (or use sampling profiles from CPU profiler).
+2. Run the binary under representative load to collect a profile.
+3. Recompile with the profile as compiler input.
+
+The compiler now knows which branches are hot vs cold, which functions to inline aggressively, how to lay out basic blocks for CPU cache locality. Real-world PGO improvements: Go 1.21+ PGO gives 2-7% speedup on typical workloads (Go's CPU pprof profile is directly consumable as PGO input). Chrome saw 10%+ from PGO + LTO. PostgreSQL benchmarks 5-15%.
+
+Continuous profiling backends increasingly support exporting profiles in PGO-compatible formats, enabling automated "profile → recompile → validate" pipelines in CI.
+
+## Sampling biases and blind spots
+
+Sampling has limits that senior engineers must know:
+
+**Short hot paths**: functions whose entire runtime is shorter than the sample interval (10 ms at 100 Hz) can be missed. A function called 1 million times for 5 microseconds each (5 s total CPU) might never be sampled — each call ends before the timer fires. Mitigation: longer profiling windows, higher sample rates, or instrumentation for that specific path.
+
+**NUMA / multi-CPU asymmetry**: profilers usually sample uniformly across CPUs. If work is unevenly distributed (common on NUMA systems or with thread affinity set wrong), the hot CPU's bottleneck dominates and the profile looks skewed. Use per-CPU profile views to see imbalance.
+
+**Statistical accuracy at low sample counts**: at 100 Hz for 10 seconds you have 1,000 samples. A function using 1% CPU appears in ~10 samples — enough to notice, insufficient for precise estimates. Standard error is ~30% for functions under 10% CPU. For sub-1% regressions, a longer capture (60-300 s) or differential profile is required.
+
+<NumbersCard
+  id="card-advanced-numbers"
+  title="Advanced profiling: kernel and compiler numbers"
+  stats={[
+    { label: "Flame graph paper", value: "Brendan Gregg, ACM Queue 2016" },
+    { label: "perf_event_open kernel cost", value: "~1-5 μs / sample" },
+    { label: "Go PGO speedup (real workloads)", value: "2-7%" },
+    { label: "JIT stack-unwind success rate", value: "~90-95% typical" },
+    { label: "Off-CPU sampling cap in production", value: "~99 Hz" },
+    { label: "Pyroscope 2.0 release", value: "April 2026" },
+    { label: "OTel profile signal status", value: "Beta as of 2026" },
+  ]}
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Edge case</th>
+        <th class="border border-border px-3 py-2 text-left">Symptom</th>
+        <th class="border border-border px-3 py-2 text-left">Mitigation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Very short hot functions</td>
+        <td class="border border-border px-3 py-2">Function never appears in samples</td>
+        <td class="border border-border px-3 py-2">Longer capture, higher rate, or instrumention</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JIT frame unwinding failure</td>
+        <td class="border border-border px-3 py-2">[unknown] frames in flame graph</td>
+        <td class="border border-border px-3 py-2">Enable JIT perf maps or use native profiler</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Deep middleware stacks</td>
+        <td class="border border-border px-3 py-2">Profiler overhead 3-4x higher than claimed</td>
+        <td class="border border-border px-3 py-2">Cap max-depth to 64; trim middleware chain</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">NUMA CPU imbalance</td>
+        <td class="border border-border px-3 py-2">Hotspot on one NUMA node invisible in fleet-avg</td>
+        <td class="border border-border px-3 py-2">Use per-CPU profile views</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="06-advanced-profiling-quiz-1"
+  lessonSlug="06-advanced-profiling"
+  lang="en"
+  question="A Go service that uses heavy cgo (C bindings) shows unexpectedly high profiler overhead at the default sample rate. What is the likely cause?"
+  choices={[
+    { label: "cgo-heavy paths require the profiler to walk both C and Go frame stacks separately at each sample, roughly doubling the stack-walk cost per sample", correct: true },
+    { label: "cgo disables pprof", misconception: "cgo does not disable pprof; it complicates stack walking." },
+    { label: "The profiler has a bug with cgo", misconception: "This is expected behaviour, not a bug — cgo creates mixed Go/C stacks." },
+    { label: "cgo always adds 10% overhead regardless of profiling", misconception: "cgo overhead exists but the profiler's extra cost comes specifically from walking mixed stacks." },
+  ]}
+/>
+
+<Quiz
+  id="06-advanced-profiling-quiz-2"
+  lessonSlug="06-advanced-profiling"
+  lang="en"
+  question="A function is called 1 million times per second for 5 μs each (5 CPU-seconds per second). At 100 Hz sampling, how reliably will it appear in the profile?"
+  choices={[
+    { label: "Poorly — each call completes in 5 μs, which is much shorter than the 10 ms sample interval, so most calls finish before any sample fires. Mitigation: much longer capture window or much higher sample rate.", correct: true },
+    { label: "Very reliably because it uses a lot of CPU", misconception: "Sample-based profiling catches execution at the sample moment; if each individual call is shorter than the interval, many go unsampled." },
+    { label: "Exactly as reliably as any other function", misconception: "Short-lived hot functions are a known blind spot of sampling profilers; they can be systematically underrepresented." },
+    { label: "It will appear at 50% of samples because it uses 50% of CPU", misconception: "The statistical property holds on average but requires enough samples where the function happens to be running. With 5-μs calls, the chance of any single sample hitting the function is low." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every profiler sits on perf_event_open + BPF. JIT runtimes need perf maps or native hooks for accurate symbols; deep stacks inflate overhead; very short hot functions can evade sampling. PGO feeds CPU profiles back to the compiler for 2-7% speedups. Know the blind spots before trusting the absence of a flame graph peak as evidence of no bottleneck.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-advanced-profiling-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does perf_event_open work mechanically, and why does it require special capabilities?", a: "perf_event_open(2) is a kernel syscall that requests sampling on a hardware or software event — commonly CPU cycles. When the configured event count fires, the kernel captures the current thread's PID and user-space stack pointer, writing them to a ring buffer that user space reads. Modern Linux attaches BPF programs at the sample point, allowing in-kernel filtering and aggregation before data ever reaches user space. Capabilities are required (CAP_PERFMON in 5.8+, or CAP_SYS_ADMIN historically) because perf can observe any process on the system, including other users' processes or kernel internals — a security-sensitive capability. Production deployments scope this via cgroup-based permissions so a container's profiler agent can only see that container's stacks." },
+    { q: "Explain how PGO works and why it is applicable only to specific workloads.", a: "Profile-Guided Optimisation feeds a CPU profile from a representative production run back to the compiler as a 'hot path' map. The compiler uses it to: inline aggressively on hot call sites that would normally exceed the inline budget, reorder basic blocks so hot code is cache-contiguous, and mark cold branches as unlikely for branch predictor hints. Go 1.21+ accepts pprof CPU profiles directly with -pgo=cpu.pprof. The 2-7% speedup applies to workloads where the compiler's default assumptions are wrong — e.g., deeply recursive hot paths, large switch statements with skewed case distribution, or hot functions that the inliner normally skips. PGO is not effective for already-optimised tight loops (the compiler already handles those well) or for I/O-bound services where CPU is not the bottleneck. The workflow cost: requires gathering a representative profile, automating the recompile, and validating the result. Large-scale production systems (Google, Meta) run automated PGO loops per release." },
+    { q: "A flame graph shows [unknown] frames in the middle of a Java service's call chain. Walk through the diagnosis and fix.", a: "Likely cause: the JVM's JIT compiler has compiled code whose address range is not in the profiler's symbol map. The profiler captures stack frames as addresses and resolves them to function names using the JVM's AsyncGetCallTrace API (async-profiler) or /tmp/perf-PID.map files (for perf-based profilers). [unknown] frames appear when: the JIT compiled or recompiled a function after the map was loaded; the service was started without JIT map emission flags; or the profiler is an eBPF-based tool that is not JVM-aware. Diagnosis: check if async-profiler is attached (most reliable for JVM — it hooks AsyncGetCallTrace natively). If using eBPF-only: add -agentlib:async-profiler to JVM flags and use its flame graph output instead, or enable JVM's JIT perf map emission with -XX:+PrintAssembly or -Xss. The fix is always to use a JVM-aware profiler (async-profiler) or enable JIT symbol emission. [unknown] in Go is different: usually stripped DWARF; fix with GOFLAGS=-ldflags=-w=0 to preserve debug info." },
+  ]}
+/>
+
+<Recap lang="en">
+All profilers sit on the Linux `perf_event_open` kernel interface, with BPF programs doing in-kernel aggregation and filtering. JIT runtimes (JVM, V8, .NET) require extra support — perf maps or native hooks like `AsyncGetCallTrace` — because their code addresses are not statically mapped to function names; absent this, stacks show as `[unknown]`. Off-CPU profiling uses the `sched_switch` kernel hook to capture stacks at the moment a thread is descheduled, attributing wait time to the blocking call site. PGO feeds CPU profiles back to the compiler for 2-7% speedups. Sampling blind spots include very-short-lived hot functions (shorter than the sample interval), NUMA imbalance, and deep middleware chains that inflate per-sample overhead. Knowing these limits is what separates a senior engineer who trusts a flame graph from one who knows when to mistrust it.
+</Recap>

@@ -1,0 +1,239 @@
+---
+slug: 05-index-only-scans-and-visibility
+lang: ru
+track: databases
+unit: 02-indexes
+order: 5
+title: "Index-only scan, Visibility Map и INCLUDE"
+summary: "Index-only scan возвращает данные прямо из индекса без обращения к heap — но только когда Visibility Map подтверждает видимость строки. Урок охватывает VM, VACUUM, настройку autovacuum и INCLUDE-clause для covering-индексов."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-index-types"]
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["index-only-scan", "visibility-map", "vacuum", "autovacuum", "covering-index", "include-clause", "heap-fetch", "dead-tuples"]
+sources:
+  - https://www.postgresql.org/docs/current/indexes-index-only-scans.html
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/sql-createindex.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+`EXPLAIN ANALYZE` показывает "Index Only Scan" на одном запросе и "Index Scan" на другом — одинаковый индекс, разные таблицы. Разница не в индексе. Она в Visibility Map. Одна таблица была VACUUMed вчера; другая имеет 12% мёртвых tuple. Понимание причины — это разница между 1 мс и 10 мс запросом на тех же данных.
+</Hook>
+
+<Crux>Index-only scan пропускает heap, если VM помечает страницу all-visible. VACUUM поддерживает VM актуальной. INCLUDE: проекция в leaf.</Crux>
+
+<Explanation>
+
+## Что стоит index scan vs index-only scan
+
+Обычный **index scan** для запроса `SELECT id, status FROM orders WHERE user_id = 42`:
+
+1. Проход B-tree до matching leaf-записей — O(log n), несколько page reads.
+2. Для каждого matching TID — fetch heap-строки для получения `id` и `status` — один heap page read на строку, если строки разбросаны.
+
+Шаг 2 — узкое место при масштабе. Для 10 000 matching строк на 10 000 разбросанных heap-страницах это 10 000 случайных I/O операций.
+
+**Index-only scan** полностью устраняет шаг 2. Если индекс содержит все нужные запросу столбцы, Postgres читает только leaf-страницы индекса. Для плотных диапазонов (1000 строк на 10 leaf-страницах) I/O падает с тысяч до десятков.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип scan</th>
+        <th class="border border-border px-3 py-2 text-left">I/O паттерн</th>
+        <th class="border border-border px-3 py-2 text-left">Когда используется</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Index scan</td>
+        <td class="border border-border px-3 py-2">Index walk + heap fetch на строку</td>
+        <td class="border border-border px-3 py-2">Не все нужные столбцы в индексе</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Bitmap heap scan</td>
+        <td class="border border-border px-3 py-2">Index walk + sorted heap read (batched)</td>
+        <td class="border border-border px-3 py-2">Много строк; снижает random I/O</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Index only scan</td>
+        <td class="border border-border px-3 py-2">Только index leaves — нет heap</td>
+        <td class="border border-border px-3 py-2">Все нужные столбцы в индексе И VM-биты установлены</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Sequential scan</td>
+        <td class="border border-border px-3 py-2">Полное чтение heap</td>
+        <td class="border border-border px-3 py-2">Нет подходящего индекса или низкая селективность</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Visibility Map: почему index-only scan требует её
+
+Postgres использует MVCC — каждая строка может иметь несколько версий (старые и новые tuple от параллельных обновлений). Чтобы определить видимость строки текущей транзакции, Postgres обычно читает системные столбцы строки (`xmin`, `xmax`, биты статуса транзакции). Эти столбцы находятся в heap, не в индексе.
+
+Index-only scan не читает heap. Как тогда определить видимость?
+
+**Visibility Map (VM)** — per-table bitmap с одним битом на heap-страницу. Бит устанавливается в 1 («all visible»), когда каждый tuple на странице виден каждой текущей и будущей транзакции — то есть нет pending параллельных обновлений или удалений. VACUUM устанавливает эти биты после очистки мёртвых tuple. Любая запись, затрагивающая страницу, сбрасывает бит.
+
+При index-only scan для matching TID:
+- Если VM-бит для этой страницы установлен: строка гарантированно видима без чтения heap. Нет heap fetch.
+- Если VM-бит сброшен: Postgres должен получить heap-страницу для проверки видимости. Это heap fetch, считаемый в `EXPLAIN ANALYZE` как «Heap Fetches: N».
+
+Высокий счётчик «Heap Fetches» в index-only scan означает, что VM не актуальна — «index-only» scan фактически делает heap fetch для большинства строк.
+
+## VACUUM поддерживает VM актуальной
+
+VACUUM освобождает мёртвые tuple и устанавливает VM-биты. Autovacuum запускает его автоматически (когда мёртвые tuple превышают `autovacuum_vacuum_scale_factor` × размер таблицы, дефолт 20%). Для таблиц, зависящих от index-only scan:
+
+- 20% мёртвых tuple — слишком мягкий порог. Установи `autovacuum_vacuum_scale_factor = 0.05` и `autovacuum_analyze_scale_factor = 0.02`.
+- Long-running транзакции блокируют VACUUM от освобождения tuple — одна транзакция, открытая часами, может блокировать VM-обновления на это время.
+- Мониторь `pg_stat_user_tables.n_dead_tup` как leading indicator свежести VM.
+
+```sql
+-- Настройка autovacuum per-table на горячих OLTP-таблицах
+ALTER TABLE orders SET (
+  autovacuum_vacuum_scale_factor = 0.05,
+  autovacuum_analyze_scale_factor = 0.02
+);
+```
+
+## INCLUDE-clause: covering-индексы
+
+Postgres 11+ поддерживает `CREATE INDEX ... INCLUDE (cols)` — INCLUDE-столбцы хранятся в leaf-страницах индекса, но не являются частью sort key. Результат: индекс становится «covering» для запросов, которым нужны эти дополнительные столбцы в SELECT-projection.
+
+```sql
+-- Ключевые столбцы: workspace_id, created_at DESC (sort key)
+-- INCLUDE: id, total_cents (payload projection — не в sort key)
+CREATE INDEX CONCURRENTLY idx_orders_ws_recent_covering
+  ON orders (workspace_id, created_at DESC)
+  INCLUDE (id, total_cents);
+```
+
+Запрос `SELECT id, total_cents FROM orders WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 50` теперь обслуживается только из индекса. Нет heap fetch. Читается 50 leaf-записей в порядке.
+
+Цена: INCLUDE-столбцы увеличивают размер индекса (хранятся в каждой leaf-записи). Большие INCLUDE payload могут приближать размер индекса к размеру таблицы. Включай только столбцы projection реально нужные горячему запросу.
+
+## Concurrency и timing построения индекса
+
+`CREATE INDEX CONCURRENTLY` на 100M-строк таблице занимает 10-30 минут. Во время построения:
+1. Postgres сканирует таблицу дважды.
+2. Между фазами ждёт завершения всех текущих транзакций.
+3. Индекс реплицируется на standby через WAL.
+
+Последствия:
+- Long-running аналитические запросы на той же таблице могут застопорить build часами.
+- Несколько concurrent builds на одной БД конкурируют за I/O — планируй большие builds в low-traffic окна.
+- После build проверяй `pg_indexes.indisvalid` — упавший build оставляет INVALID-индекс.
+
+```sql
+-- Проверка INVALID-индексов после CONCURRENTLY-build
+SELECT indexrelid::regclass, indisvalid
+FROM pg_index
+WHERE NOT indisvalid;
+```
+
+Recovery из INVALID: `DROP INDEX CONCURRENTLY idx_name;` затем повторить.
+
+<NumbersCard
+  id="05-visibility-numbers"
+  title="Index-only scan и VACUUM: числа"
+  stats={[
+    { label: "Выигрыш index-only scan vs index scan", value: "10-100x на hot reads" },
+    { label: "Heap Fetches: 0 в EXPLAIN ANALYZE", value: "идеально — VM актуальна" },
+    { label: "autovacuum_vacuum_scale_factor default", value: "20% мёртвых tuple" },
+    { label: "Рекомендуемый scale_factor для IOS-зависимых таблиц", value: "5%" },
+    { label: "INCLUDE поддерживается с", value: "Postgres 11 (2018)" },
+    { label: "Long-running транзакция и VM", value: "блокирует установку VM-бит для затронутых страниц" },
+    { label: "CREATE INDEX CONCURRENTLY на 100M строк", value: "~10-30 минут" },
+    { label: "INVALID-индекс после упавшего CONCURRENTLY", value: "невидим планировщику; занимает место" },
+    { label: "Мониторинг: n_dead_tup в pg_stat_user_tables", value: "leading indicator свежести VM" },
+  ]}
+/>
+
+<Misconception id="05-ios-mc-1">
+<strong>«Index Only Scan в EXPLAIN — значит heap не читается.»</strong> Неверно. Он читает heap для страниц, чей VM-бит сброшен. На таблице с устаревшей VM «Heap Fetches: 4000» делает план медленнее bitmap heap scan.
+</Misconception>
+
+<TraceScenario
+  id="05-ios-trace-1"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="ru"
+  scenario="Аналитический запрос на таблице orders показывает Index Only Scan с Heap Fetches: 12,000. Диагностируй и исправь."
+  steps={[
+    { prompt: "Шаг 1: что означает Heap Fetches: 12,000?", reveal: "Для 12 000 matching TID VM-бит был сброшен — Postgres не мог подтвердить видимость из VM без обращения к heap. Это превращает то, что должно быть I/O только по leaf-страницам индекса, в heap I/O, нивелируя большую часть выигрыша index-only scan. Корень проблемы — устаревшая VM." },
+    { prompt: "Шаг 2: как проверить здоровье VM?", reveal: "SELECT n_dead_tup, last_autovacuum, last_autoanalyze, n_live_tup FROM pg_stat_user_tables WHERE relname = 'orders'. Если n_dead_tup большой (более 5-10% от n_live_tup) или last_autovacuum давний (дни) — autovacuum не справляется. Также проверь long-running транзакции: SELECT pid, now() - query_start AS duration, query FROM pg_stat_activity WHERE state = 'active' ORDER BY duration DESC — транзакция открытая часами блокирует VACUUM." },
+    { prompt: "Шаг 3: что исправить?", reveal: "Немедленно: VACUUM orders вручную (устанавливает VM-биты, освобождает мёртвые tuple). Затем снова EXPLAIN ANALYZE — Heap Fetches должен упасть до 0 или близко. Долгосрочно: ALTER TABLE orders SET (autovacuum_vacuum_scale_factor = 0.05, autovacuum_analyze_scale_factor = 0.02). Это делает autovacuum срабатывающим при 5% мёртвых tuple вместо 20%. Если long-running транзакции — блокировщик, определи и укороти их или установи statement_timeout / idle_in_transaction_session_timeout." },
+    { prompt: "Шаг 4: как убедиться в долгосрочном исправлении?", reveal: "Мониторь pg_stat_user_tables.n_dead_tup со временем — должен держаться под 5% живых строк. Снова запусти EXPLAIN (ANALYZE, BUFFERS) — 'Index Only Scan' с 'Heap Fetches: 0' и низкими 'Buffers: shared hit'. Проверяй pg_stat_user_tables.last_autovacuum — должен показывать запуски несколько минут назад на занятой таблице." },
+  ]}
+/>
+
+<Quiz
+  id="05-ios-quiz-1"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="ru"
+  question="Запрос показывает 'Index Only Scan' с Heap Fetches: 8,000 в EXPLAIN ANALYZE. Вероятная причина?"
+  choices={[
+    { label: "В индексе нет всех нужных запросу столбцов", misconception: "Если столбцов не хватало бы, план показывал бы 'Index Scan', не 'Index Only Scan'." },
+    { label: "Visibility Map-биты сброшены для многих страниц — VACUUM не запускался недавно", correct: true },
+    { label: "Индекс INVALID", misconception: "INVALID-индекс не используется планировщиком вообще — план показывал бы Seq Scan." },
+    { label: "Слишком много результирующих строк для index-only scan", misconception: "Количество строк не определяет heap fetches — это определяет состояние VM." },
+  ]}
+/>
+
+<Quiz
+  id="05-ios-quiz-2"
+  lessonSlug="05-index-only-scans-and-visibility"
+  lang="ru"
+  question="Зачем нужен INCLUDE в CREATE INDEX?"
+  choices={[
+    { label: "Добавляет дополнительные условия фильтрации в индекс", misconception: "Условия фильтрации добавляются через WHERE (partial-индекс), не через INCLUDE." },
+    { label: "Хранит дополнительные столбцы в leaf-страницах индекса без включения их в sort key, позволяя index-only scan для запросов, которым нужны эти столбцы в projection", correct: true },
+    { label: "Включает индекс в планирование запросов даже при устаревшей статистике", misconception: "INCLUDE о хранении столбцов в индексе, не о подсказках планировщику." },
+    { label: "Форсирует планировщик использовать этот индекс", misconception: "Postgres не имеет index hints; INCLUDE о covering projection-столбцов." },
+  ]}
+/>
+
+<Inset kind="warning" lang="ru">
+Метка плана «Index Only Scan» вводит в заблуждение, когда Heap Fetches высок. Название node плана отражает задуманный тип scan — реальное поведение зависит от состояния VM во время выполнения. Всегда проверяй `Heap Fetches` в выводе `EXPLAIN ANALYZE`, не только тип scan. Запрос, «отлично работающий в staging», может деградировать в продакшне при худшем расписании autovacuum.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Index-only scan пропускает heap и возвращает данные прямо из leaf-страниц индекса — но только когда Visibility Map подтверждает видимость каждой строки без heap fetch. VACUUM устанавливает VM-биты; устаревшая VM вызывает деградацию index-only scan до heap-fetching scan. Используй INCLUDE для добавления projection-столбцов в leaf без влияния на sort key. Настраивай autovacuum_vacuum_scale_factor до 0.05 на таблицах, зависящих от index-only scan. После любого CREATE INDEX CONCURRENTLY проверяй pg_index.indisvalid.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-ios-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, почему index-only scan требует Visibility Map и какая операционная дисциплина обеспечивает его правильную работу в продакшне.", a: "Запись индекса содержит значения индексированных столбцов и TID (физический адрес строки в heap). Чтобы подтвердить видимость строки текущей транзакции, Postgres обычно читает системные столбцы строки из heap (xmin, xmax, ID транзакций, создавших и удаливших её). Index-only scan пропускает heap — но всё равно нужно подтвердить видимость. Вместо этого использует Visibility Map: per-table bitmap, где установленный бит означает 'все tuple на этой странице видны каждой транзакции'. VACUUM устанавливает биты после очистки мёртвых tuple; любая запись на страницу сбрасывает бит. Когда VM-бит установлен — index-only scan пропускает heap (Heap Fetches: 0). Когда бит сброшен — fetch heap-страницы. Операционная дисциплина: (1) autovacuum_vacuum_scale_factor = 0.05 для IOS-критических таблиц; (2) мониторинг n_dead_tup — держать под 5%; (3) kill или укорочение long-running транзакций; (4) после bulk write — ручной VACUUM; (5) проверка EXPLAIN (ANALYZE, BUFFERS) что Heap Fetches близко к 0." },
+    { q: "Когда использовать INCLUDE vs добавление столбцов в sort key composite-индекса?", a: "Добавляй в sort key когда: запросы фильтруют или сортируют по этому столбцу (например ORDER BY, range predicates). Столбец как key означает, что индекс по нему отсортирован, что ускоряет эти операции. INCLUDE когда: столбец нужен только в SELECT projection, не для фильтрации или сортировки. INCLUDE хранит столбец только в leaf-страницах — не влияет на порядок сортировки. Практическое правило: key-столбцы = фильтрация/сортировка; INCLUDE-столбцы = только projection. Пример: индекс (workspace_id, created_at DESC) INCLUDE (id, total_cents). Key обслуживает WHERE workspace_id = $1 ORDER BY created_at DESC. INCLUDE обслуживает SELECT id, total_cents. Если добавить id и total_cents как key, порядок сортировки стал бы workspace_id → created_at → id → total_cents, что больше и не обслуживает дополнительных фильтрующих запросов." },
+    { q: "Что происходит при падении CREATE INDEX CONCURRENTLY и как восстановиться?", a: "CREATE INDEX CONCURRENTLY — многофазное построение. При падении любой фазы (уникальный индекс находит дубликат, процесс убивается, нехватка места) — индекс остаётся INVALID. В pg_index, indisvalid = false. Планировщик рассматривает его как несуществующий (запросы не используют), но структура занимает место и всё равно получает write-overhead. Recovery: (1) подтвердить INVALID: SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid; (2) удалить: DROP INDEX CONCURRENTLY idx_name — CONCURRENTLY чтобы не блокировать; (3) повторить. Перед повтором исследуй причину: дубликаты (уникальный индекс), место на диске (df -h), blocking-транзакции (pg_stat_activity). Продакшн-runbook: всегда проверяй INVALID-индексы после миграции с CREATE INDEX CONCURRENTLY." },
+  ]}
+/>
+
+<Recap lang="ru">
+Index-only scan читает значения столбцов прямо из leaf-страниц индекса, полностью минуя heap — сокращая I/O в 10-100x для запросов, обращающихся только к индексированным столбцам. Visibility Map делает это возможным: per-table bitmap, где установленный бит означает, что все tuple на странице видны без heap-проверки. VACUUM устанавливает VM-биты; записи сбрасывают их. Устаревшая VM вызывает деградацию: «Index Only Scan» с высоким Heap Fetches — симптом недостаточного vacuuming.
+
+INCLUDE-clause добавляет projection-столбцы в leaf-страницы без включения в sort key. Это создаёт «covering-индекс», отвечающий на запросы целиком из индекса в сочетании с актуальными VM-битами.
+
+Операционные правила: autovacuum_vacuum_scale_factor = 0.05 на таблицах, зависящих от index-only scan; мониторинг n_dead_tup в pg_stat_user_tables; kill long-running транзакций, блокирующих VACUUM. После CREATE INDEX CONCURRENTLY проверяй indisvalid = true в pg_index перед завершением миграции.
+</Recap>

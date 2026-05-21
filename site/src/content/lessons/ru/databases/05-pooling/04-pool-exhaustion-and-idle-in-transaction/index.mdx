@@ -1,0 +1,200 @@
+---
+slug: 04-pool-exhaustion-and-idle-in-transaction
+lang: ru
+track: databases
+unit: 05-pooling
+order: 4
+title: "Исчерпание пула и idle-in-transaction: сценарий отказа в 3 ночи"
+summary: "Исчерпание пула почти всегда — проблема времени удержания, а не размера пула; idle-in-transaction — тихий убийца, который опустошает пул за секунды и одновременно блокирует VACUUM."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/05-pooling/03-pool-sizing-math"]
+deepensInto: []
+spiral: ["statefulness", "latency"]
+concepts: ["pool-exhaustion", "idle-in-transaction", "outbox_pattern", "PgBouncer"]
+sources:
+  - https://www.pgbouncer.org/faq.html
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+  - https://www.crunchydata.com/blog/prepared-statements-in-transaction-mode-for-pgbouncer
+  - https://node-postgres.com/guides/pool-sizing
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+В 02:14 срабатывает алерт PgBouncer: pool = 24, cl_waiting = 180. Приложение возвращает 503. pg_stat_activity показывает 19 backend'ов в состоянии "idle in transaction" с максимальным возрастом 8 минут. Пул был правильно настроен этим утром.
+</Hook>
+
+<Crux>Исчерпание пула — это удержание, а не размер. Idle-in-transaction опустошает пул и блокирует VACUUM. Найдите удержание; исправьте удержание.</Crux>
+
+<Explanation>
+
+## Что на самом деле означает исчерпание пула
+
+Исчерпание пула происходит, когда каждый backend в пуле занят и новое соединение не может быть получено. На уровне приложения: `pool.acquire()` таймаутит или отклоняется. На уровне Postgres: backend'ы за этими занятыми соединениями находятся в одном из состояний:
+
+- `active` — выполняет медленный запрос или ждёт блокировки
+- `idle in transaction` — между операторами внутри BEGIN, который не был COMMIT или ROLLBACK
+- `idle` — действительно простаивает (тогда почему пул полон? ответ: неверный pool_size или утечка соединений)
+
+Пул исчерпан в смысле отсутствия свободных слотов. База данных не исчерпана — она ждёт приложение.
+
+## Четыре корневые причины
+
+1. **Долгие запросы** — отсутствующий индекс делает запрос за 5 с; при 1 000 QPS это 5 000 соединений в полёте. Исправление: EXPLAIN ANALYZE, добавить индекс, пагинировать большие сканы.
+
+2. **Idle-in-transaction** — самая частая. Приложение открыло транзакцию (BEGIN) и не выполнило COMMIT или ROLLBACK: необработанное исключение, внешний API-вызов внутри транзакции, отсутствие try/finally. Backend сидит "idle in transaction", удерживая блокировки, MVCC-снапшот и слот пула.
+
+3. **Всплеск трафика** — спрос превышает размер пула при стабильной нагрузке. Исправление: reserve_pool_size в PgBouncer, автомасштабирование на уровне приложения, или очередь с деградацией (возвращать 503 с Retry-After до исчерпания пула).
+
+4. **Внешняя зависимость внутри транзакции** — вызов Stripe, загрузка в S3, доставка вебхука — всё внутри BEGIN...COMMIT. Транзакция остаётся открытой на время внешнего вызова. Если тот сервис замедляется, каждая транзакция в полёте удерживает слот пула секунды или минуты.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Корневая причина</th>
+        <th class="border border-border px-3 py-2 text-left">Сигнал в pg_stat_activity</th>
+        <th class="border border-border px-3 py-2 text-left">Исправление</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Отсутствующий индекс / медленный запрос</td>
+        <td class="border border-border px-3 py-2">Много строк state=active со старым query_start</td>
+        <td class="border border-border px-3 py-2">EXPLAIN ANALYZE + добавить индекс</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Баг idle-in-transaction</td>
+        <td class="border border-border px-3 py-2">Много строк state=idle in transaction со старым xact_start</td>
+        <td class="border border-border px-3 py-2">Исправить код + idle_in_transaction_session_timeout</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Внешний API внутри транзакции</td>
+        <td class="border border-border px-3 py-2">state=idle in transaction, последний запрос = BEGIN</td>
+        <td class="border border-border px-3 py-2">Вынести вызов за транзакцию; использовать outbox-паттерн</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Конкуренция за блокировки</td>
+        <td class="border border-border px-3 py-2">SELECT * FROM pg_locks WHERE NOT granted</td>
+        <td class="border border-border px-3 py-2">Найти и завершить блокирующий backend; пересмотреть DDL</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Idle-in-transaction — двойной сбой
+
+Backend в состоянии `idle in transaction` удерживает:
+1. **Слот пула** — виден немедленно; вызывает исчерпание пула
+2. **Блокировки строк** — заблокированные строки не могут быть изменены другими транзакциями
+3. **MVCC-снапшот** — VACUUM не может очистить мёртвые кортежи старше xmin этого backend'а; таблицы раздуваются
+
+Один баг, открывающий транзакцию и забывающий COMMIT на пути ошибки, может опустошить 20-соединённый пул за секунды *и* вызвать раздутие таблиц, нарастающее часами.
+
+## Диагностика исчерпания пула за пять шагов
+
+<TraceScenario
+  id="04-pool-exhaustion-trace-1"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="ru"
+  scenario="Алерт об исчерпании пула сработал в 02:14. Пройдите диагностику."
+  steps={[
+    { prompt: "Шаг 1: что показывает PgBouncer SHOW POOLS?", reveal: "Смотрите cl_active (клиенты с назначенным backend), cl_waiting (клиенты в очереди), sv_active (backend'ы выполняющие запросы), sv_idle (простаивающие в пуле). Высокий cl_waiting + sv_active все при pool_size = пул заполнен, запросы долго выполняются. Высокий sv_used или sv_login = чрезмерная ротация backend'ов. Команда: psql -h pgbouncer-admin -p 6432 -U pgbouncer pgbouncer -c 'SHOW POOLS;'" },
+    { prompt: "Шаг 2: что показывает pg_stat_activity?", reveal: "SELECT state, count(*), max(now()-xact_start) AS max_age FROM pg_stat_activity WHERE backend_type='client backend' GROUP BY state ORDER BY count DESC. Если много строк 'idle in transaction' со старым xact_start — приложение держит транзакции открытыми. Если много 'active' со старым query_start — медленные запросы или ожидание блокировок." },
+    { prompt: "Шаг 3: найдите проблемные запросы.", reveal: "Для idle-in-transaction: SELECT pid, query_start, xact_start, state, query FROM pg_stat_activity WHERE state = 'idle in transaction' ORDER BY xact_start LIMIT 10. Перекрёстная проверка с логами приложения — что делал воркер перед зависшей транзакцией. Для медленных запросов: SELECT query, mean_exec_time, calls FROM pg_stat_statements ORDER BY mean_exec_time DESC LIMIT 10." },
+    { prompt: "Шаг 4: проверьте конкуренцию за блокировки.", reveal: "SELECT * FROM pg_locks WHERE NOT granted — любые строки = блокировка. Затем: SELECT pg_blocking_pids(pid) FROM pg_stat_activity WHERE wait_event_type='Lock'. Долгий DDL (ALTER TABLE без CONCURRENTLY) может заблокировать всю очередь. Завершите блокирующий backend через pg_terminate_backend(pid)." },
+    { prompt: "Шаг 5: долгосрочные меры.", reveal: "Немедленно: pg_terminate_backend(pid) для каждого зависшего backend'а. Тактически: SET idle_in_transaction_session_timeout = '60s' в postgresql.conf; перезагрузить. Стратегически: code review для поиска паттернов BEGIN..await-external-call..COMMIT; добавить lint-правило; внедрить outbox-паттерн для write-then-event; добавить наблюдаемость (алерт при возрасте idle-in-transaction > 30 с, PgBouncer cl_waiting > 0)." },
+  ]}
+/>
+
+## Страховочная сеть: idle_in_transaction_session_timeout
+
+Этот Postgres GUC убивает любой backend, который остаётся в `idle in transaction` дольше порогового значения:
+
+```sql
+ALTER SYSTEM SET idle_in_transaction_session_timeout = '60s';
+SELECT pg_reload_conf();
+```
+
+При таком значении сценарий со Stripe из хука превращается в: таймауты Stripe вызывают прерывание отдельных транзакций (залогированных, алертируемых), а не исчерпание пула. Пул выживает; приложение логирует 504 и повторяет попытку.
+
+Это **бесплатная страховочная сеть**. Каждое production-развёртывание Postgres должно её иметь. Устанавливайте значение выше вашей самой долгой легитимной транзакции (обычно 30–120 с для OLTP).
+
+<Inset kind="why" lang="ru">
+Почему idle-in-transaction также блокирует VACUUM? MVCC (04-mvcc-isolation) показал, что каждая транзакция удерживает xmin-снапшот — горизонт, ранее которого VACUUM не может очищать мёртвые кортежи. Backend в состоянии idle-in-transaction удерживает этот снапшот бесконечно. Один забытый COMMIT в редко выполняемом коде может не давать VACUUM чистить горячую таблицу часами, вызывая безграничное раздутие. Исчерпание пула — видимый симптом; раздутие таблицы — тихий, нарастающий со временем.
+</Inset>
+
+<NumbersCard
+  id="card-exhaustion-safety"
+  title="Числа безопасности для idle-in-transaction"
+  stats={[
+    { label: "Рекомендованный idle_in_transaction_session_timeout", value: "30–60 с" },
+    { label: "Рекомендованный statement_timeout", value: "10–30 с" },
+    { label: "Рекомендованный lock_timeout", value: "5 с" },
+    { label: "PgBouncer query_wait_timeout", value: "10–30 с" },
+    { label: "Алерт: порог возраста idle-in-tx", value: "&gt; 30 с" },
+    { label: "Алерт: устойчивый cl_waiting", value: "&gt; 0 на протяжении 60 с" },
+  ]}
+/>
+
+<Misconception id="mc-raise-pool">
+  <p><strong>«Пул исчерпан? Поднять pool_size.»</strong> Почти всегда неправильно. Исчерпание — соединения удерживаются слишком долго: медленный запрос, idle-in-transaction, внешний API внутри транзакции. Увеличение pool_size смещает симптом: больше backend'ов борются за те же блокировки. Найдите удержание; исправьте удержание.</p>
+</Misconception>
+
+<Quiz
+  id="04-pool-exhaustion-quiz-1"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="ru"
+  question="Какова наиболее частая корневая причина исчерпания пула PgBouncer в production?"
+  choices={[
+    { label: "Приложение держит транзакции открытыми во время медленных операций (например, внешних API-вызовов) — backend'ы остаются в 'idle in transaction', блокируя реальную работу", correct: true },
+    { label: "Pool_size всегда слишком мал и его нужно удвоить", misconception: "Иногда pool_size действительно мал, но доминирующая причина — время удержания: соединения удерживаются слишком долго, а не их слишком мало." },
+    { label: "Postgres отклоняет запросы из-за бага в планировщике", misconception: "Postgres работает корректно; проблема в паттернах приложения, удерживающих backend'ы открытыми." },
+    { label: "Исчерпание TCP-соединений на уровне ОС", misconception: "TCP редко является узким местом при типичных нагрузках приложений. Исчерпание пула почти всегда проблема времени удержания." },
+  ]}
+/>
+
+<Quiz
+  id="04-pool-exhaustion-quiz-2"
+  lessonSlug="04-pool-exhaustion-and-idle-in-transaction"
+  lang="ru"
+  question="Приложение вызывает сторонний платёжный API внутри блока BEGIN...COMMIT. Платёжный API начинает таймаутить через 30 с. Что произойдёт с пулом соединений?"
+  choices={[
+    { label: "Каждый платёж в полёте удерживает backend в 'idle in transaction' до 30 с; при любой реальной нагрузке это полностью истощает пул", correct: true },
+    { label: "PgBouncer обнаружит медленный API и досрочно освободит backend", misconception: "PgBouncer не может освободить backend посреди транзакции — он получает соединение обратно только после COMMIT или ROLLBACK." },
+    { label: "Postgres автоматически откатывает транзакции, простаивающие более 10 с", misconception: "По умолчанию idle_in_transaction_session_timeout = 0 (отключён); Postgres не выполняет автоматический откат без явной настройки." },
+    { label: "Пул ставит запросы в очередь и обслуживает их после восстановления API", misconception: "Пул ставит новые запросы в очередь, но backend'ы уже заняты зависшими транзакциями — очередь растёт до срабатывания query_wait_timeout." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Исчерпание пула — время удержания, а не размер. idle_in_transaction_session_timeout = 60s — бесплатная страховка: один зависший внешний API-вызов внутри транзакции тихо опустошит пул; с таймаутом он прерётся и залогируется. Никогда не вызывайте внешние API внутри Postgres-транзакции.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-pool-exhaustion-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опишите, что означает исчерпание пула на каждом уровне — приложение, пулер, Postgres — и почему увеличение pool_size обычно не помогает.", a: "На уровне приложения pool.acquire() таймаутит или сразу отклоняется (PoolExhaustedError, 'connection timeout'). На уровне пулера счётчик PgBouncer cl_waiting растёт — клиенты в очереди ожидают свободного backend'а. На уровне Postgres занятые backend'ы что-то делают: выполняют долгие запросы (state=active, старый query_start) или сидят idle-in-transaction (state=idle in transaction, старый xact_start). Увеличение pool_size с 24 до 100 делает 100 backend'ов доступными — но они по-прежнему выполняют ту же работу с долгим удержанием. Если каждая транзакция держится 10 секунд, 100 backend'ов × 10 QPS = 100 занятых соединений при стабильной нагрузке, как и раньше, но теперь с бо́льшими накладными расходами переключения контекста Postgres. Корневая причина (время удержания) не устранена; пропускная способность падает дальше. Сначала исправьте удержание." },
+    { q: "Почему backend в idle-in-transaction вредит больше, чем просто занимает пул?", a: "Три одновременных вреда: (1) Слот пула занят — backend не может обслуживать другого клиента, уменьшая эффективную ёмкость пула. (2) Блокировки строк удерживаются — любые строки, заблокированные зависшей транзакцией, не могут быть изменены другими; при конкуренции это может каскадно создавать очереди ожидания блокировок. (3) MVCC-снапшот закреплён — VACUUM не может очищать мёртвые кортежи с xmin старше горизонта снапшота этого backend'а (backend_xmin в pg_stat_activity). Один backend в idle-in-transaction из транзакции часовой давности не даёт VACUUM восстанавливать мёртвые кортежи весь час, вызывая раздутие таблицы нарастающее незаметно. Исчерпание пула — быстрый симптом; раздутие таблицы — медленный, накапливающийся до больших seq scan через мёртвые кортежи." },
+    { q: "Какие настройки Postgres и PgBouncer защищают от исчерпания из-за idle-in-transaction?", a: "Postgres: idle_in_transaction_session_timeout (например, 60 с) — убивает любой backend, зависший в idle-in-transaction дольше порога, прерывает транзакцию и возвращает backend в пул. statement_timeout (например, 30 с) — убивает сбежавшие отдельные запросы. lock_timeout (например, 5 с) — предотвращает DDL lock-шторм. Это GUC; задаётся через ALTER SYSTEM SET ... + SELECT pg_reload_conf(). PgBouncer: query_wait_timeout (например, 10 с) — отклоняет клиентов, ждавших backend'а дольше этого порога, делая сбои быстрыми и наблюдаемыми вместо нарастающих каскадов. server_idle_timeout (600 с) — перерабатывает простаивающие backend'ы для предотвращения накопления устаревших соединений. Вместе они обеспечивают проявление сбоев в виде ошибок за секунды, а не нарастание в каскады." },
+  ]}
+/>
+
+<Recap lang="ru">
+Исчерпание пула срабатывает, когда все backend'ы заняты и нет свободных слотов. Доминирующая корневая причина — время удержания: транзакция, остающаяся открытой во время медленного запроса, ожидания блокировки или внешнего API-вызова, держит backend занятым. Увеличение `pool_size` не исправляет время удержания — оно даёт больше транзакций в полёте при том же удержании, добавляя конкуренцию в Postgres. Правильная последовательность: выявить удержание через `pg_stat_activity` и `SHOW POOLS`; исправить причину (индекс, вынести API-вызов за транзакцию, добавить `COMMIT/ROLLBACK` на путях ошибок); добавить `idle_in_transaction_session_timeout = 60s` как постоянную страховку; алертировать при `cl_waiting > 0` и возрасте idle-in-transaction `> 30 с`. Backend в idle-in-transaction также закрепляет MVCC-снапшот, незаметно блокируя `VACUUM` и увеличивая раздутие таблиц — исчерпание пула и раздутие MVCC имеют одну корневую причину.
+</Recap>

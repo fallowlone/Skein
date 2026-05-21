@@ -1,0 +1,213 @@
+---
+slug: 05-sampling-consistency-and-collector
+lang: ru
+track: observability
+unit: 06-trace-propagation
+order: 5
+title: "Согласованность sampling и tier tail-sampling Collector"
+summary: "Consistent sampling использует детерминированный хэш trace-id: все сервисы договариваются о keep/drop без координации. Tail-sampling Collector требует load-balancing exporter, RAM-бюджета и cap для защиты от OOM."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/06-trace-propagation/04-head-and-tail-sampling"]
+deepensInto: []
+spiral: []
+concepts: ["consistent-sampling", "trace-id-hashing", "tail-sampling-collector", "load-balancing-exporter", "oom-prevention", "num-traces-cap"]
+sources:
+  - https://opentelemetry.io/blog/2022/tail-sampling/
+  - https://opentelemetry.io/docs/concepts/sampling/
+  - https://www.w3.org/TR/trace-context-2/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+Tail-sampling Collector OOM'ит каждые несколько часов в пиковый трафик. Команда поднимает memory limit — и снова OOM. Никто не спросил: почему растёт память, что её контролирует и что её ограничивает?
+</Hook>
+
+<Crux>Хэш trace-id: все сервисы согласуют keep/drop без координации. RAM Collector'а = active-traces × спаны × size × окно — каждый рычаг или OOM.</Crux>
+
+<Explanation>
+
+## Согласованность sampling между сервисами
+
+«Consistent sampling» означает: все span'ы одного трейса либо все сэмплированы, либо все дропнуты. Никаких частичных трейсов — либо backend имеет полный трейс, либо ничего.
+
+Механизм: вероятностные head-sampler'ы используют **детерминированный хэш trace-id по модулю 100** для решения, какие трейсы хранить. Потому что хэш детерминированный и trace-id одинаков во всех сервисах (пропагируется traceparent), каждый сервис независимо приходит к тому же решению keep/drop. Координации не нужно.
+
+W3C Trace Context Level 2 (2024) формализует это через флаг `random-trace-id` (бит 1, значение `02`): когда установлен, trace-id гарантированно равномерно случаен, делая hash-based consistent sampling надёжным. Consistent hash-based sampler'ы читают этот флаг как предусловие; при его отсутствии могут откатиться к более простому подходу.
+
+**Почему частичные трейсы хуже отсутствия трейсов:**
+- Трейс без span'а сервиса B выглядит как прямой вызов из A в C. Атрибуция latency неверна.
+- Расчёты перцентилей по частичным трейсам дают систематическое смещение — короткие span'ы перепредставлены.
+- On-call-инженеры диагностируют по тому, что видят; частичные трейсы ведут к уверенным неверным диагнозам.
+
+## Модель памяти tail-sampler'а
+
+Tail-sampling Collector держит все span'ы каждого активного трейса в памяти до закрытия decision-окна. Использование памяти:
+
+```
+RAM = active_traces × avg_spans_per_trace × bytes_per_span
+    = (in_flight_request_rate × decision_window_seconds) × avg_spans × span_size
+```
+
+При 10k req/s, 30с окно, 10 span'ов/трейс, 1 KB/span:
+`10 000 × 30 × 10 × 1 024 ≈ 3 GB на Collector instance`
+
+Каждый фактор — независимый рычаг OOM:
+
+| Фактор | Что раздувает | Смягчение |
+|---|---|---|
+| active_traces | Traffic-всплеск, слишком длинное окно | Масштабировать реплики, сократить окно |
+| spans_per_trace | Long-running batch-job'ы, рекурсивная инструментация | Ломать длинные трейсы через span-link'и |
+| bytes_per_span | Большие значения атрибутов, избыточные метаданные | Лимиты размера значений атрибутов |
+| decision_window | Консервативно слишком длинное | Настраивать per-service SLA; 30с — типично |
+
+## Требование load-balancing exporter
+
+Несколько реплик Collector'а — стандарт в production (5–20 реплик типично). Без роутинга span'ы одного трейса случайно разбрасываются по репликам — ни одна не видит полный трейс и ни одна не может принять корректное policy-решение.
+
+OTel Collector поставляется с exporter'ом `loadbalancing`, хэширующим по trace-id и направляющим на фиксированную реплику. Механизмы discovery: DNS round-robin, статический список или Kubernetes endpoint API.
+
+**Операционные подвохи:**
+- **Scale-события:** когда Collector-реплика добавляется или удаляется, hash ring перебалансируется. Span'ы в полёте для трейсов, хэшированных на перебалансированный shard, могут прийти на новую реплику до более ранних span'ов — tail sampler видит частичный трейс и может принять решение преждевременно. Смягчение: короткие decision-окна (30с), graceful drain при scale-down.
+- **Потеря реплики:** если Collector-реплика умирает в середине decision-окна, её in-flight трейсы теряются. Tail sampling по умолчанию не персистирует на диск. Это приемлемо: потеря трейсов при сбое Collector'а — известный операционный trade-off.
+
+## Защита от OOM tail-sampler'а
+
+Tail-sampler без cap'а будет буферизовать неограниченно до OOM процесса. Процессор `tail_sampling` предоставляет `num_traces` как жёсткий cap на число активных трейсов. При достижении cap'а sampler начинает вытеснять самые старые in-progress трейсы (незавершённые трейсы отбрасываются).
+
+Инцидент Slack 2023: tail-sampling Collector'ы уронили tracing-pipeline во время крупного инцидента, потому что `num_traces` был без cap'а. Postmortem добавил cap, отдельный high-priority always-keep tier для критических трейсов и alert на `otelcol_processor_dropped_spans_rate`.
+
+**Полный паттерн конфигурации:**
+
+```yaml
+processors:
+  tail_sampling:
+    decision_wait: 30s
+    num_traces: 100000           # жёсткий cap — вытеснять старейшие при превышении
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: slow-traces
+        type: latency
+        latency:
+          threshold_ms: 2000
+      - name: probabilistic
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 1
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Alert-метрика</th>
+        <th class="border border-border px-3 py-2 text-left">Что означает</th>
+        <th class="border border-border px-3 py-2 text-left">Порог</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2 font-mono text-xs">otelcol_processor_tail_sampling_count_traces_on_memory</td>
+        <td class="border border-border px-3 py-2">Активные in-flight трейсы</td>
+        <td class="border border-border px-3 py-2">Alert при 80% num_traces cap</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2 font-mono text-xs">otelcol_processor_dropped_spans</td>
+        <td class="border border-border px-3 py-2">Span'ы дропнуты из-за cap'а</td>
+        <td class="border border-border px-3 py-2">Alert при любой ненулевой частоте</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2 font-mono text-xs">container_memory_working_set_bytes (Collector pod)</td>
+        <td class="border border-border px-3 py-2">Реально используемая RAM</td>
+        <td class="border border-border px-3 py-2">Alert при 85% memory limit</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TraceScenario
+  id="05-consistency-trace-1"
+  pieceSlug="05-sampling-consistency-and-collector"
+  lang="ru"
+  scenario="Tail-sampling Collector OOM'ит каждые несколько часов. Проследи root cause."
+  steps={[
+    { prompt: "Шаг 1: tail-sampler OOM — какая модель памяти?", reveal: "Tail sampler обязан держать все span'ы каждого активного трейса в RAM, пока не закроется decision-окно (обычно 30с). Память = active-traces × spans-per-trace × bytes-per-span. Любой фактор раздулся — RAM ушёл. Начни с метрик самого Collector'а, чтобы изолировать растущий фактор." },
+    { prompt: "Шаг 2: проверяем метрики — какой фактор растёт?", reveal: "Смотри otelcol_processor_tail_sampling_count_traces_on_memory и otelcol_processor_tail_sampling_count_spans_on_memory. Если число трейсов стабильно, а spans-per-trace растёт: один трейс собирает слишком много span'ов (long-running, рекурсивный, batch). Если число трейсов растёт: traffic-всплеск или decision-окно слишком длинное." },
+    { prompt: "Шаг 3: spans-per-trace раздулось — типичная причина?", reveal: "Long-running трейс (batch-job, worker обрабатывающий 10 000 записей под одним trace-id) накапливает тысячи span'ов, каждый держится до decision. Decision-окно 30с × 1000 span/с = 30 000 span'ов на один трейс. Фикс: не делай 10k-span трейсов; ломай работу на под-трейсы со span-link'ами или отдельный trace-id на элемент." },
+    { prompt: "Шаг 4: число трейсов раздулось — типичная причина?", reveal: "Либо traffic-всплеск (инцидент), либо upstream генерирует уникальный trace-id на запрос без parent (нет traceparent propagation, каждый запрос выглядит новым). Фикс: масштабируй реплики collector'а за load-balancing exporter с хэшем по trace-id, либо укороти decision-окно, если 30с — overkill." },
+    { prompt: "Шаг 5: устойчивый фикс?", reveal: "Поставь жёсткий num_traces-cap на tail-sampling процессор; настрой load-balancing exporter (хэш по trace-id), чтобы трейсы не fan-in на один collector; alert на частоту otelcol_processor_dropped_spans. Долгосрочно: бюджет collector-ёмкости per service / per region; рассматривай collector'ы как самостоятельную production-инфру со своим SLO." },
+  ]}
+/>
+
+<NumbersCard
+  id="05-consistency-numbers"
+  title="Референсные числа tail-sampling Collector"
+  stats={[
+    { label: "W3C Trace Context Level 1", value: "Recommendation 2020-02" },
+    { label: "W3C Trace Context Level 2 (флаг random-trace-id)", value: "Recommendation 2024" },
+    { label: "Типичное tail decision-окно", value: "30с" },
+    { label: "RAM Collector при 50k трейсов × 100 span × 1 KB", value: "~5 GB" },
+    { label: "Типичных реплик Collector в production", value: "5–20" },
+    { label: "Ключ роутинга load-balancing exporter", value: "trace-id (детерминированный хэш)" },
+  ]}
+/>
+
+<Quiz
+  id="05-consistency-quiz-1"
+  lessonSlug="05-sampling-consistency-and-collector"
+  lang="ru"
+  question="Сервис эмитирует 5% orphan span'ов для внутренних (не entry-point) сервисов. Команда добавляет tail sampling. Orphan rate остаётся. Что не так понято?"
+  choices={[
+    { label: "Tail sampling решает, какие трейсы ХРАНИТЬ — он не может починить сломанную propagation. Orphan'ы вызваны отсутствием parent_id при эмиссии; sampling только фильтрует, не реконструирует.", correct: true },
+    { label: "Tail sampling отвергает orphan'ы", misconception: "Его можно настроить отвергать, но это не фиксит базовую сломанную propagation; только скрывает симптом." },
+    { label: "5% — норма для внутренних сервисов", misconception: "Здоровые внутренние сервисы должны иметь orphan rate близкий к 0%; 5% — реальный propagation-баг." },
+    { label: "OTel не поддерживает repair orphan'ов", misconception: "Ни одна tracing-система не может починить orphan'ы; их нужно предотвращать на этапе propagation." },
+  ]}
+/>
+
+<Quiz
+  id="05-consistency-quiz-2"
+  lessonSlug="05-sampling-consistency-and-collector"
+  lang="ru"
+  question="Реплика Collector'а удаляется при scale-down. Что происходит с трейсами, чьё decision-окно ещё не закрылось на этой реплике?"
+  choices={[
+    { label: "Эти трейсы теряются — tail sampling по умолчанию не персистирует на диск, и это принятый операционный trade-off", correct: true },
+    { label: "Load-balancing exporter перенаправляет их span'ы на выжившую реплику", misconception: "Load-balancing exporter маршрутизирует новые span'ы, но не мигрирует in-progress trace-буферы с умирающей реплики на другую." },
+    { label: "Collector сбрасывает все in-progress решения перед завершением", misconception: "Graceful drain сбрасывает очередь экспорта, но tail-sampling decision-буферы в RAM теряются при выходе процесса." },
+    { label: "Tracing-backend реконструирует трейс из частичных span'ов", misconception: "Tracing-backend'ы склеивают span'ы по trace-id, но только те, что получили. Если Collector их выбросил — backend их никогда не видел." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Consistent sampling использует детерминированное хэширование trace-id, чтобы все сервисы независимо договорились о keep/drop без координации — частичные трейсы никогда неприемлемы. RAM tail-sampling Collector'а ограничена формулой active-traces × span'ы × байт × окно; жёсткий num_traces-cap предотвращает OOM. Load-balancing exporter обязателен: без trace-id-роутинга tail sampling тихо производит fragment-based решения.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-consistency-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Как детерминированное хэширование trace-id достигает consistent sampling без координации между сервисами?", a: "Каждый сервис независимо вычисляет одну и ту же детерминированную функцию: hash(trace-id) mod 100 < sample_percentage. Потому что trace-id фиксирован по всем сервисам (пропагируется traceparent) и хэш-функция детерминированная, все сервисы приходят к одному и тому же boolean-результату без коммуникации. Если root-сервис решает дропать трейс (результат хэша = false), каждый downstream тоже выдаст false для того же trace-id. OTel SDK кодирует head-решение в sampled-флаг (бит 0 trace-flags traceparent), поэтому downstream могут срезать путь и просто читать флаг — но даже если перехэшируют, получат тот же ответ. Флаг random-trace-id W3C Level 2 (бит 1) утверждает, что trace-id равномерно случаен, что является предусловием для равномерного хэш-распределения." },
+    { q: "Объясни failure mode OOM tail-sampler'а и три независимых смягчения.", a: "Root cause OOM: tail sampling держит все span'ы каждого активного трейса в RAM пока decision_wait не истечёт. RAM = active_traces × avg_spans × bytes_per_span. Любой фактор растущий неограниченно → OOM. Три независимых смягчения: 1. cap num_traces — процессор tail_sampling вытесняет самый старый незавершённый трейс при достижении cap'а. Ограничивает числитель (число активных трейсов). Ставь alert при 80% cap'а, чтобы успеть масштабировать до начала вытеснения. 2. Ломать длинные трейсы — batch-job обрабатывающий 10 000 записей под одним trace-id накапливает тысячи span'ов до решения. Используй span-link'и для разбиения длинных workflow'ов на под-трейсы, каждый вмещающийся в одно decision-окно. Ограничивает spans_per_trace. 3. Масштабировать реплики collector'а за load-balancing exporter — распределяет RAM-нагрузку горизонтально. Каждая реплика обрабатывает непересекающееся подмножество trace-id; добавление реплик вдвое снижает per-instance active-trace count." },
+    { q: "Почему load-balancing exporter обязан использовать хэширование по trace-id, а не round-robin или least-connections?", a: "Round-robin и least-connections равномерно распределяют span'ы по количеству или нагрузке, но разбрасывают span'ы одного трейса по разным репликам. Tail sampler на каждой реплике видит фрагмент — часть span'ов для trace-id, но не все. Fragment-based решения неверны: error span может попасть на реплику A, root span — на реплику B. Реплика A хранит трейс (error policy), реплика B дропает (не видит ошибки). 'Keep' от A даёт частичные span'ы; 'drop' от B выбрасывает остальное. Итоговый хранимый трейс — фрагмент. Хэширование по trace-id детерминировано: все span'ы одного trace-id всегда отображаются на одну и ту же реплику вне зависимости от времени. Tail sampler на этой реплике накапливает полный набор и принимает корректное policy-решение. Ключ роутинга обязан быть trace-id — никакая другая стратегия не даёт корректной tail-sampling семантики." },
+  ]}
+/>
+
+<Recap lang="ru">
+Consistent sampling использует детерминированный hash(trace-id) mod 100, чтобы все сервисы независимо договорились о keep/drop — частичные трейсы никогда не возникают. Флаг `random-trace-id` W3C Level 2 делает это безопасным, утверждая равномерное распределение trace-id. RAM tail-sampling Collector'а — `active_traces × span'ы/трейс × байт/span × decision_window`; каждый фактор — независимый OOM-рычаг. Жёсткий cap `num_traces` предотвращает неограниченный рост; alert'ы на `otelcol_processor_dropped_spans` ловят срабатывание cap'а. Load-balancing exporter обязан использовать хэширование по trace-id — round-robin разбрасывает span'ы трейса по репликам, делая policy-решения неверными. Long-running трейсы (batch-job'ы, накапливающие тысячи span'ов) нужно ломать на под-трейсы через span-link'и, чтобы вмещаться в decision-окно.
+</Recap>

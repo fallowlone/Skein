@@ -1,0 +1,266 @@
+---
+slug: 06-http3-production
+lang: en
+track: networking
+unit: 06-http-versions
+order: 6
+title: "HTTP/3 in production: QUIC internals, fallback, and observability"
+summary: "Running HTTP/3 in production means understanding QUIC congestion control in userspace, ALPN-based version negotiation, silent fallback mechanics, and the metrics that reveal when UDP is being blocked."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "03-http3-and-quic"
+  - "05-tls-handshake/05-0rtt-defenses-and-modern-tls"
+deepensInto:
+  - "07-http-design-and-security"
+spiral: ["multiplexing"]
+concepts: ["quic-congestion-control", "quic-stream-independence", "hpack-vs-qpack", "alpn-negotiation", "http3-fallback", "alt-svc", "https-svcb", "connection-coalescing", "0rtt-replay", "quic-userspace", "qlog", "alpn-distribution", "server-push-removal"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc9000
+  - https://datatracker.ietf.org/doc/html/rfc9001
+  - https://datatracker.ietf.org/doc/html/rfc9114
+  - https://datatracker.ietf.org/doc/html/rfc9204
+  - https://radar.cloudflare.com/adoption-and-usage
+  - https://blog.cloudflare.com/http3-the-past-present-and-future/
+  - https://w3techs.com/technologies/details/ce-http3
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import RFCQuiz from "~/components/pedagogy/RFCQuiz.astro";
+import DesignPrompt from "~/components/pedagogy/DesignPrompt.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Your edge service switches on HTTP/3. One morning the ALPN dashboard shows h3 share collapsing from 40% to 5%. No errors in the application logs. Users aren't calling in. What just broke? This is an HTTP/3 production incident — and the diagnosis path looks nothing like a TCP outage.
+</Hook>
+
+<Crux>HTTP/3 in production: ALPN distribution, h3-fallback rate by ASN, and QUIC userspace congestion control are the key health signals.</Crux>
+
+<Explanation>
+
+## TCP HOL blocking: the precise mechanism
+
+HTTP/2's antagonist is TCP's delivery contract. TCP guarantees **in-order delivery of a byte stream**. When a segment carrying bytes 50,000–50,099 is lost, TCP buffers all subsequently-arriving bytes until the missing segment is retransmitted. The kernel's TCP receive buffer fills; no bytes advance to the application. At the HTTP/2 layer, stream #1 may use bytes 50,000–50,099, stream #2 may use bytes 50,100–50,199 — both stall while the retransmit completes.
+
+The metric: at 1% packet loss and 100 ms RTT, you expect roughly one loss event per 100 packets, with a ~100 ms stall per event. At 50 concurrent streams, that stall affects all 50. On high-loss links (cellular at 0.5–2%, satellite at 2–5%), HTTP/2 measurably underperforms HTTP/1.1 with 6 parallel TCP connections — because parallel connections have independent loss recovery domains.
+
+## QUIC stream independence: precise mechanism
+
+QUIC numbers **packets**, not byte offsets of a unified stream. Each QUIC packet is acknowledged individually. Each stream tracks which packets carried its frames and which are outstanding.
+
+When packet N is lost:
+1. QUIC retransmits the **specific frames from streams A and C** that were in packet N.
+2. Streams B, D, and E — whose frames were in other packets — continue sending and receiving.
+3. The application layer for stream B sees no interruption.
+
+Cost: QUIC frame headers add overhead (stream ID, offset, length per frame — ~8–10 bytes each, vs TCP's segment with no per-stream overhead). Per-connection state is heavier. But on lossy paths, the win is decisive.
+
+## HPACK vs QPACK: the ordering dependency
+
+HPACK (RFC 7541) maintains a dynamic table indexed by sequence of insertion. Entry at index 62 was the 62nd (name, value) pair inserted since connection start. A HEADERS frame referencing index 62 *must* be processed after the frame that inserted index 62.
+
+On TCP: frames arrive in order — the HEADERS frame adding index 62 always arrives before HEADERS frames referencing it. The ordering constraint is invisible.
+
+On QUIC: streams deliver frames independently. HEADERS frame on stream #3 might arrive before HEADERS frame on stream #1 that would have added index 62. If stream #3's HEADERS references index 62, decoding fails or blocks.
+
+QPACK (RFC 9204) solution:
+- **Encoder stream** — a dedicated unidirectional QUIC stream carries dynamic table insertions. This stream delivers table updates in order.
+- **Decoder stream** — carries acknowledgement of which table entries have been processed.
+- **HEADERS frames** — reference only entries the encoder knows have been acknowledged on the decoder stream. A HEADERS frame on stream #3 never references an entry that might not yet be in the decoder's table.
+
+Result: HEADERS frames on one stream can never be blocked by HEADERS frames on another stream — QUIC's stream independence is preserved at the header-compression layer.
+
+<NumbersCard
+  id="card-h3-ops"
+  title="HTTP/3 production metrics (April 2026)"
+  data-lesson-visual
+  stats={[
+    { label: "Global HTTP/3 traffic share", value: "21.1% (Cloudflare Radar)" },
+    { label: "Websites advertising HTTP/3", value: "38.8% (W3Techs)" },
+    { label: "Google, Meta, Cloudflare, Akamai h3 share", value: ">50% of their traffic" },
+    { label: "Typical enterprise firewall UDP/443 block rate", value: "5–15% of corporate paths" },
+    { label: "HTTP/3 → HTTP/2 fallback RTT cost", value: "1 extra RTT on first visit" },
+    { label: "0-RTT data replay risk window", value: "Duration of session ticket validity" },
+  ]}
+/>
+
+## Version negotiation: ALPN and the fallback chain
+
+**For HTTP/1.1 and HTTP/2:** ALPN (RFC 7301) is a TLS extension. During the TLS handshake, the client sends a list of supported protocols (`["h2", "http/1.1"]`). The server picks one. No extra round-trip — version negotiation is free inside the handshake.
+
+**For HTTP/3:** The negotiation is two-stage because QUIC/UDP is a different transport:
+
+1. First connection uses TCP-based HTTP/1.1 or /2.
+2. Server response includes `Alt-Svc: h3=":443"; ma=86400` (or an HTTPS/SVCB DNS record). The browser stores this hint.
+3. Subsequent connections to this origin: browser tries QUIC/UDP first, with TLS ALPN selecting `h3`.
+4. If UDP/443 is blocked (QUIC handshake fails): browser marks this origin as "h3 unavailable" for some cooldown period and falls back to TCP-based HTTP/2.
+
+The fallback is **silent** — users see no error, but operators must monitor ALPN distribution metrics. A spike in h3→h2 fallback is the signal of a network-path change blocking UDP/443.
+
+## Connection coalescing
+
+Multiple origins sharing the same edge server IP and covering TLS certificate can share one HTTP/2 or HTTP/3 connection — **connection coalescing**. Example: `cdn.example.com` and `api.example.com` both resolve to the same IP, and the edge certificate covers both SANs (Subject Alternative Names). Chrome and Firefox coalesce: one QUIC connection serves requests to both hostnames.
+
+This saves handshake cost on pages that load from multiple origins on the same CDN. The pitfall: if the certificate's SAN list does not include one of the hostnames (misconfiguration), the browser opens a separate connection — a silent latency regression. Monitor per-origin connection counts; a sudden rise signals a coalescing failure.
+
+## Congestion control in QUIC userspace
+
+TCP congestion control (CUBIC, BBR, Reno) runs in the **operating system kernel**. QUIC implements congestion control in **userspace** — inside the application or QUIC library.
+
+Implications:
+- **Flexibility:** operators can tune or switch algorithms per connection, per application, or per traffic class without a kernel change.
+- **CPU cost:** congestion control computations run in the process, competing with application code for CPU time. At high connection counts, this is measurable.
+- **Observability:** each QUIC connection must export its own congestion window, loss rate, and RTT measurements. Kernel TCP exports these via `/proc/net/tcp` and `ss`; QUIC requires per-connection telemetry hooks.
+
+The IETF **qlog** format (JSON-based per-connection event log) is the deep-debug tool for QUIC. For production, Prometheus/OTel exporters aggregate QUIC metrics across connections.
+
+## 0-RTT replay: the operational risk
+
+0-RTT resumption (via TLS session tickets) allows the browser to send an HTTP request in the very first QUIC packet, before the handshake completes. This saves one RTT (~50–300 ms on wide-area links).
+
+The risk: **0-RTT data is replayable** by a network adversary. An attacker who captures the first QUIC packet can re-send it, causing the server to process the request a second time. For GET requests (idempotent, no side effects), this is harmless. For POST (create an order, send a payment), it is catastrophic.
+
+Production requirements:
+- Server must track and reject replayed 0-RTT data (via anti-replay tokens — RFC 9001 § 9.2).
+- Servers should respond `425 Too Early` for non-safe methods in 0-RTT.
+- Anti-replay token storage: bounded; on large distributed deployments, a shared cache (Redis) is needed to detect replays across edge nodes.
+
+<TraceScenario
+  id="sr-trace-h3-incident"
+  pieceSlug="06-http3-production"
+  lang="en"
+  scenario="Diagnose: a service's HTTP/3 traffic share dropped from 40% to 5% overnight."
+  steps={[
+    { prompt: "Step 1: what is the first metric to check?", reveal: "ALPN distribution: tls_alpn_protocol counter by label. If h3 share collapsed and h2 absorbed everything, clients tried QUIC but failed and fell back. If h3 share is stable but throughput regressed, the connections work but something else caused latency." },
+    { prompt: "Step 2: ALPN shows h3 went from 40% → 0% and h2 absorbed everything. What likely happened?", reveal: "UDP/443 is being dropped somewhere on the path. A network operator pushed a firewall rule, an ISP changed routing, or a transit provider's middlebox started dropping QUIC packets. HTTP/3 → /2 fallback is transparent to users but the ALPN metric catches it." },
+    { prompt: "Step 3: tcpdump on an edge node shows incoming UDP/443 packets at near-zero. Confirm the hypothesis. How do you locate the block?", reveal: "Run mtr or paris-traceroute with UDP probe packets from a known-affected client AS. Look for the AS hop where UDP/443 stops being forwarded. Common culprits: a misconfigured DDoS-protection scrubber that added UDP/443 to its drop list, or an ISP anti-amplification rule over-broad enough to catch QUIC Initial packets." },
+    { prompt: "Step 4: while the network team coordinates the fix, what do you do customer-side?", reveal: "Users are already on h2 fallback — no action needed for them. Optionally lower Alt-Svc max-age temporarily so clients stop burning an RTT on the failed h3 attempt. Alert on the ALPN metric for future incidents. Document the ISP AS number and ticket the peering team." },
+  ]}
+/>
+
+<DebugLog
+  id="sr-debug-h3-fallback"
+  pieceSlug="06-http3-production"
+  lang="en"
+  title="Observability dashboard: HTTP/3 fallback spike detection"
+  output={`# Prometheus metrics from CDN edge, April 2026
+
+## ALPN protocol distribution (5-minute rolling average)
+tls_alpn_protocol{protocol="h3"} 21.1%     # Normal baseline
+tls_alpn_protocol{protocol="h2"} 51.3%
+tls_alpn_protocol{protocol="http/1.1"} 27.6%
+
+## Fallback rate (h3 attempted but fell back to h2)
+http3_to_http2_fallback_rate 0.8%          # Baseline: normal ISP loss/blocking
+
+## At 2026-04-15 14:35 UTC, alert fires: fallback rate spikes
+http3_to_http2_fallback_rate 18.2%         # 23x normal
+tls_alpn_protocol{protocol="h3"} 1.3%      # Collapsed from 21.1%
+
+## Geolocation breakdown shows the spike is concentrated:
+fallback_rate{region="US-Northeast", ISP="AS7922"} 67.4%
+fallback_rate{region="US-Midwest"} 2.1%
+fallback_rate{region="Europe"} 1.9%
+
+## Network diagnostic from edge
+$ mtr -P UDP/443 route-to-AS7922-customer
+hop 5: (AS7922 transit edge) UDP packets: 0% loss [OK]
+hop 6: (AS7922 DDoS scrubber, new rule: 2026-04-15 14:00 UTC)
+       UDP packets: 100% loss [BLOCKED]
+hop 7+: unreachable`}
+  outputLang="log"
+  question="An HTTP/3 fallback spike appears for one ISP's traffic (AS7922, US-Northeast) but nowhere else. MTR shows UDP reaching hop 5 cleanly. Where is the block and what is the likely cause?"
+  hint="Check what infrastructure changed at the ISP around 2026-04-15 14:00 UTC — 35 minutes before the spike."
+  answer="The block is at hop 6: the ISP's DDoS-protection middlebox added a new rule 35 minutes before the spike, dropping UDP/443 packets as an anti-amplification measure — probably over-broad, catching legitimate QUIC Initial packets alongside whatever it targeted. Recovery: contact the ISP to whitelist RFC 9000 QUIC Initial packets, or lower Alt-Svc max-age temporarily. Monitor with alerts on http3_to_http2_fallback_rate; threshold at 3x baseline triggers a page."
+/>
+
+<DebugLog
+  id="sr-debug-h3-version"
+  pieceSlug="06-http3-production"
+  lang="en"
+  title="curl -v output to a misconfigured HTTP/3 server"
+  output={`$ curl --http3-only -v https://api.example.com/health
+* Trying 203.0.113.42:443...
+* QUIC handshake fail: protocol violation: invalid initial packet
+* Closing connection
+curl: (35) QUIC handshake fail: protocol violation: invalid initial packet
+
+$ curl -v https://api.example.com/health
+* Connected to api.example.com (203.0.113.42) port 443
+* ALPN: offers h2,http/1.1
+* ALPN: server accepted h2
+< HTTP/2 200 OK
+< alt-svc: h3=":443"; ma=86400
+< server: nginx/1.27.0
+< x-quic-version: draft-29
+< content-type: application/json
+{"status":"ok"}`}
+  outputLang="log"
+  question="HTTP/3 explicitly fails with 'protocol violation: invalid initial packet' but the server advertises h3 via Alt-Svc. What is the misconfiguration, and what is the fix?"
+  hint="Look at the x-quic-version header. What does draft-29 indicate?"
+  answer="The server is running an old QUIC draft (draft-29) rather than the final RFC 9000 version (wire version 0x00000001, advertised as 'h3'). Modern clients (curl with QUIC, Chrome, Firefox) only speak RFC 9000 + RFC 9114 final versions and reject draft-29 as a protocol violation. The fix: upgrade the server's nginx + QUIC library to a post-RFC-9000 build (mid-2021 onward). Until upgrade, remove Alt-Svc: h3 — advertising h3 when the implementation is draft-29 wastes an RTT per client (try h3, fail, fall back to h2)."
+/>
+
+<RFCQuiz
+  id="sr-rfc-quic"
+  pieceSlug="06-http3-production"
+  lang="en"
+  question="Which RFC defines the QUIC transport protocol (not HTTP/3 itself, not TLS-over-QUIC)?"
+  choices={[
+    { rfc: "RFC 9114", title: "HTTP/3" },
+    { rfc: "RFC 9000", title: "QUIC: A UDP-Based Multiplexed and Secure Transport", correct: true },
+    { rfc: "RFC 9001", title: "Using TLS to Secure QUIC" },
+    { rfc: "RFC 9204", title: "QPACK: Field Compression for HTTP/3" },
+  ]}
+/>
+
+<DesignPrompt
+  id="sr-design-h3"
+  pieceSlug="06-http3-production"
+  lang="en"
+  prompt="You are deploying HTTP/3 for a global API serving 10k req/s from 50+ countries, expecting 5–15% of paths to block UDP/443. Design the HTTP/3 rollout strategy."
+  constraints={[
+    "Some corporate and carrier networks block UDP/443 silently.",
+    "You cannot break existing HTTP/1.1 and HTTP/2 clients.",
+    "Mobile users on cellular are a priority target for HTTP/3's loss isolation.",
+    "SRE team needs to detect UDP-blocking incidents within 5 minutes.",
+  ]}
+  canonical="Serve all three versions simultaneously: HTTP/3 (QUIC/UDP/443), HTTP/2 (TCP/443), HTTP/1.1 (TCP/443). ALPN negotiates h2 vs h1.1 for TCP connections. Advertise h3 via Alt-Svc: h3=':443'; ma=3600 (short initially) and HTTPS/SVCB DNS records. Start with ma=3600 (1 hour hint lifetime) rather than 86400 — shorter allows faster fallback during the rollout. Define alert: http3_to_http2_fallback_rate > 3x 30-day baseline for any region → PagerDuty. After 30 days of stable data, raise ma to 86400. 0-RTT: enable for GET/HEAD only; reject non-safe methods with 425 Too Early. Observability: ALPN distribution per region and per ASN, QUIC retransmission rate, connection migration count, 0-RTT acceptance rate. Connection coalescing: ensure edge cert SAN covers all origins sharing the same IP."
+  keyPoints={[
+    "Serve all three versions; ALPN and Alt-Svc handle selection.",
+    "Start with short Alt-Svc max-age during rollout, extend after stability.",
+    "Alert on h3-fallback-rate by region/ASN — this is your network-health signal.",
+    "0-RTT safe for idempotent methods only; 425 Too Early for POST.",
+    "Verify edge cert SANs cover all coalescing origins.",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>HTTP/3 production operations centre on three signals: ALPN distribution (is h3 being selected?), h3-to-h2 fallback rate by ASN (is UDP being blocked?), and QUIC retransmit rate (are loss isolation gains real?). QPACK preserves stream independence at the header-compression layer; QUIC congestion control runs in userspace (flexible but costlier CPU); 0-RTT is safe only for idempotent methods.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-http3-production-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why QPACK exists separately from HPACK.", a: "HPACK uses an ordered dynamic table: entries are added in insertion order, and references are by sequential index. If a HEADERS frame adding entry index 60 is lost or arrives late (possible on QUIC where streams are independent), every subsequent HEADERS frame referencing index 60 cannot decode until the missing frame arrives. On TCP this is invisible because TCP delivers in order anyway. On QUIC with independent streams, out-of-order HEADERS frames for stream A would block decoding for stream B's HEADERS — defeating QUIC's stream isolation. QPACK (RFC 9204) fixes this by placing dynamic table updates on a dedicated encoder control stream (delivered in order) and only referencing entries that the encoder knows the decoder has acknowledged. Regular HEADERS frames never block on each other's table updates." },
+    { q: "An engineer says HTTP/3 always beats HTTP/2 because of QUIC streams. Where is the flaw?", a: "HTTP/3's core win — stream-level loss isolation — only matters on lossy networks. On wired links with <0.1% packet loss, TCP rarely retransmits and HOL blocking is invisible. HTTP/3 has real costs: QUIC encryption runs in userspace (more CPU than kernel-offloaded TCP+TLS), the stack is more complex, and middleboxes that drop UDP/443 force fallback. For datacentre east-west traffic on reliable 10 GbE links, HTTP/2 over TCP is often faster and simpler. HTTP/3 wins on mobile, lossy, long-RTT paths. The correct answer: run HTTP/3 at the user-facing edge; HTTP/2 for internal east-west." },
+    { q: "What is connection coalescing and what breaks it?", a: "Connection coalescing: when multiple origins share the same server IP and the TLS certificate covers both names (via SAN list), HTTP/2 and HTTP/3 clients can reuse one connection for requests to both origins instead of opening separate connections per hostname. This saves handshake cost on pages loading from multiple CDN origins. What breaks it: a TLS certificate whose SAN list does not include one of the hostnames being coalesced. The browser opens a separate connection for the uncovered hostname — a silent latency regression visible only as a rise in per-origin connection count metrics." },
+  ]}
+/>
+
+<Recap lang="en">
+HTTP/3 in production is fundamentally about UDP path reliability and operational observability. QUIC stream independence means one lost packet stalls only the streams whose data it carried — but this requires QUIC's packet-based loss tracking (not TCP's byte-stream model) and QPACK's encoder/decoder control streams (not HPACK's ordered dynamic table). QUIC congestion control runs in userspace — more tunable but more CPU-intensive. Version negotiation for HTTP/3 uses Alt-Svc or HTTPS/SVCB DNS and silently falls back to HTTP/2 if UDP/443 is blocked — the ALPN distribution metric is the signal. Connection coalescing saves handshake cost across origins sharing the same IP and cert SAN. 0-RTT saves a round-trip but requires server-side anti-replay and must be restricted to idempotent methods.
+</Recap>

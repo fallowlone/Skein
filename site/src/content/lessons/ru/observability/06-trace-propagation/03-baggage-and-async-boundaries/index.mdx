@@ -1,0 +1,228 @@
+---
+slug: 03-baggage-and-async-boundaries
+lang: ru
+track: observability
+unit: 06-trace-propagation
+order: 3
+title: "Baggage и async-границы: перенос контекста через очереди и callback'и"
+summary: "baggage пропагирует key-value рядом с трейсом, но неограниченный размер и semi-public видимость делают его PII-ловушкой. Async-границы — setTimeout, Kafka, workers — тихо теряют контекст без явного context.with() или inject/extract."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/06-trace-propagation/02-traceparent-and-tracestate"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["baggage", "async-context", "context-bind", "kafka-propagation", "otel-context-with"]
+sources:
+  - https://www.w3.org/TR/baggage/
+  - https://opentelemetry.io/docs/specs/otel/baggage/api/
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+Разработчик пишет `setTimeout(() => doWork(), 100)` внутри request-handler'а. Отложенная работа выполняется нормально, эмитирует span'ы и появляется в tracing-дашборде — как совершенно отдельный трейс без связи с запросом, который её запустил.
+</Hook>
+
+<Crux>HTTP auto-инструментация — лёгкий случай. setTimeout, workers и Kafka consumer ломают контекст — нести его нужно явно.</Crux>
+
+<Explanation>
+
+## Baggage: произвольные key-value через journey
+
+Baggage — второй заголовок (`baggage`), определённый W3C, пропагируется идентично `traceparent`. Несёт произвольные пары: tenant-id, region, выбор feature-flag, A/B-cohort. Baggage читается downstream-сервисами и может прикрепляться как атрибуты span'а или использоваться кодом (например, для per-tenant квот).
+
+Подвох: baggage по спеке не ограничен, ограничен только carrier-протоколом. HTTP-лимиты заголовка (обычно 8–64 KB на поле, настройка сервера) — практический cap.
+
+**Два реальных риска:**
+
+1. **Раздутая latency.** Baggage пропагируется на каждом hop запроса, каждом сообщении очереди, каждой async-границе. Каждый hop платит дважды: сериализация на исходящем, парсинг на входящем. 16-KB baggage при 10k req/s внутреннего трафика — примерно 160 MB/s чистого baggage-транспорта плюс парсинг на каждом hop.
+
+2. **Утечка PII.** Baggage течёт на каждый downstream, включая third-party-интеграции и SaaS API, которые могут логировать или сохранять заголовки — часто в менее аудитируемых контекстах, чем исходная БД. Всё в baggage фактически semi-public внутри и за пределами инженерии.
+
+**Дисциплина: baggage хранит операционные теги, никогда — данные идентичности.**
+
+Что класть в baggage: tenant-id (opaque-токен), region, состояние feature-flag, имя A/B-cohort, метка request-source. Что никогда не класть: email пользователей, токены карт или платежей, API-ключи, auth-токены, customer PII, внутренние секреты.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Безопасно в baggage</th>
+        <th class="border border-border px-3 py-2 text-left">Никогда в baggage</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">tenant-id (opaque-токен)</td>
+        <td class="border border-border px-3 py-2">email или полный user-id</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">region / availability-zone</td>
+        <td class="border border-border px-3 py-2">токен карты или платежа</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">состояние feature-flag (например `checkout-v2=true`)</td>
+        <td class="border border-border px-3 py-2">API-ключи или auth-токены</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">имя A/B-cohort</td>
+        <td class="border border-border px-3 py-2">любые customer PII</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Async-границы: убийцы
+
+HTTP propagation — лёгкий случай: OTel auto-instrumentation обрабатывает его для поддерживаемых HTTP-серверов и клиентов. Тяжёлые — очереди, таймеры, callback'и.
+
+**Ловушка setTimeout в Node.js.** In-process «текущий контекст» в Node.js течёт через call stack автоматически, но `setTimeout`, `setImmediate` и `queueMicrotask` планируют работу на будущее в другом call stack. Когда callback срабатывает — контекст оригинального запроса исчез. OTel создаёт новый root span (свежий trace-id) для отложенной работы. Результат: трейс, обрывающийся на вызове setTimeout, и отдельный orphan-трейс для отложенной работы.
+
+**Фикс:** оберни callback в `context.bind(ctx, fn)` или запусти внутри `context.with(ctx, fn)`:
+
+```js
+// BROKEN: traceparent потерян через setTimeout
+app.post('/checkout', async (req, res) => {
+  setTimeout(() => {
+    doDeferredWork(); // новый трейс; не связан с запросом
+  }, 100);
+  res.status(202).end();
+});
+
+// FIXED: привязываем контекст через границу
+app.post('/checkout', async (req, res) => {
+  const ctx = context.active();
+  setTimeout(context.bind(ctx, () => {
+    doDeferredWork(); // теперь видит trace-id запроса
+  }), 100);
+  res.status(202).end();
+});
+```
+
+`context.bind(ctx, fn)` возвращает обёрнутую функцию, восстанавливающую захваченный контекст при вызове. Тот же паттерн для `setImmediate`, `queueMicrotask`, callback'ов в third-party-библиотеках и любых custom thread или worker абстракций.
+
+## Kafka и propagation через message queue
+
+Когда работа пересекает process-границу через message queue (Kafka, RabbitMQ, SQS, Cloud Pub/Sub) — in-process контекст не может перенестись. Trace-id нужно записать в wire-формат сообщения и прочитать обратно с другой стороны:
+
+- **Сторона producer:** вызови `propagator.inject(context, message.headers)` перед публикацией. Это записывает `traceparent` (и `baggage`) в map заголовков сообщения.
+- **Сторона consumer:** вызови `context = propagator.extract(message.headers)` после polling. Это восстанавливает trace-id, позволяя consumer'у создать дочерний span, связанный со span'ом producer'а.
+
+OTel Kafka instrumentation обрабатывает обе стороны автоматически — но только если instrumentation-библиотека загружена и настроена.
+
+**Ключевое различие:** `context.bind` держит in-process контекст живым через async-границу у producer'а, но не записывает `traceparent` в сообщение. Kafka живёт в отдельном процессе. У consumer'а нет общей памяти с producer'ом; единственный способ нести trace-id — inject его в заголовки сообщения перед публикацией.
+
+<Misconception id="mc-broken-async">
+  <p><strong>«Auto-instrumentation решает всё».</strong> Нет. setTimeout, очереди и workers теряют контекст без <code>context.with()</code>. Очередям нужен inject у producer'а и extract у consumer'а. Необёрнутые границы — главная причина split-трейсов.</p>
+</Misconception>
+
+<FadedExample
+  client:load
+  id="03-baggage-fe-1"
+  pieceSlug="03-baggage-and-async-boundaries"
+  lang="ru"
+  title="Почини сломанную setTimeout-propagation в Node.js"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Setup:</strong> Endpoint Express стартует отложенную задачу. Трейс кончается на границе setTimeout; отложенная работа имеет свой orphan-трейс.</p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`// BROKEN: traceparent потерян через setTimeout
+const { context, trace } = require('@opentelemetry/api');
+
+app.post('/checkout', async (req, res) => {
+  const span = trace.getSpan(context.active());
+  // делаем sync работу...
+  setTimeout(() => {
+    doDeferredWork(); // <-- новый трейс; не связан с запросом
+  }, 100);
+  res.status(202).end();
+});
+
+// FIXED: привязываем контекст через границу
+app.post('/checkout', async (req, res) => {
+  const ctx = context.active();
+  setTimeout(context.bind(ctx, () => {
+    doDeferredWork(); // <-- теперь видит trace-id запроса
+  }), 100);
+  res.status(202).end();
+});`}</code></pre>
+        <p><strong>Почему работает:</strong> <code>context.bind(ctx, fn)</code> возвращает обёрнутую функцию, восстанавливающую захваченный контекст при вызове. Отложенная работа теперь идёт с trace-id запроса, span'ы линкуются. Тот же паттерн для <code>setImmediate</code>, <code>queueMicrotask</code>, callback'ов в third-party-библиотеках и любых custom thread / worker абстракций.</p>
+      </div>
+    ),
+    semi: {
+      prompt: "Если отложенная работа пушит сообщение в Kafka, какой дополнительный шаг propagation нужен на месте публикации?",
+      blanks: [
+        { id: "step", expected: "inject", placeholder: "глагол (inject/extract/bind/start)" },
+      ],
+    },
+    blank: {
+      prompt: "Почему context.bind не починит Kafka-propagation сам по себе?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>context.bind держит in-process контекст живым через async-границу в producer'е, но само сообщение пересекает process-границу — в Kafka-кластер и далее в consumer-процесс. У consumer'а нет общей памяти с producer'ом; единственный способ нести trace-id — inject traceparent в заголовки сообщения перед публикацией, а consumer должен extract при получении. OTel Kafka-instrumentation делает оба автоматически, но только если библиотека инструментации загружена и настроена.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "step:extract": "extract — сторона consumer. Producer должен inject traceparent перед отправкой.",
+    "step:bind": "bind держит in-process контекст, но не пишет в wire-формат сообщения.",
+  }}
+/>
+
+<Quiz
+  id="03-baggage-quiz-1"
+  lessonSlug="03-baggage-and-async-boundaries"
+  lang="ru"
+  question="Сервис помещает email пользователя в заголовок baggage для передачи downstream-сервисам. Какой риск?"
+  choices={[
+    { label: "Email течёт на каждый downstream-сервис и в любую third-party-интеграцию, читающую заголовки — фактически semi-public внутри и за пределами инженерии", correct: true },
+    { label: "Заголовки baggage обрезаются при TLS-терминации", misconception: "Baggage — обычный HTTP-заголовок, не обрезается при TLS-терминации. Риск — в пропагировании к downstream third-party, не в шифровании." },
+    { label: "W3C-спека запрещает строки в baggage", misconception: "Значения baggage — произвольные строки. Спека не запрещает никакой тип содержимого — риск организационный и связан с privacy, не нарушение спеки." },
+    { label: "Email-адреса превышают лимит значения в 256 символов", misconception: "Типичные email-адреса далеко до 256 символов. Риск — exposure PII, не размер." },
+  ]}
+/>
+
+<Quiz
+  id="03-baggage-quiz-2"
+  lessonSlug="03-baggage-and-async-boundaries"
+  lang="ru"
+  question="Node.js-сервис использует OTel auto-instrumentation и Kafka. Трейсы от Kafka-consumer'ов — разрозненные orphan'ы. Самая вероятная причина?"
+  choices={[
+    { label: "Producer не вызывает propagator.inject() в заголовки сообщения перед публикацией, поэтому traceparent никогда не пишется в wire", correct: true },
+    { label: "Kafka не поддерживает заголовки сообщений", misconception: "Kafka record headers (добавлены в Kafka 0.11) — стандартный механизм для OTel propagation. Вопрос в том, инжектирует ли их producer." },
+    { label: "Consumer'у нужно вызвать context.bind() перед обработкой сообщений", misconception: "context.bind — для in-process async-границ. Kafka пересекает process-границу, поэтому решение — inject на стороне producer'а и extract на стороне consumer'а." },
+    { label: "OTel не поддерживает Kafka propagation", misconception: "У OTel есть официальная Kafka instrumentation для основных клиентских библиотек. Вопрос в том, загружена ли и используется ли она." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Baggage несёт операционные key-value рядом с трейсом, но течёт везде — никогда не клади PII или секреты. Async-границы (setTimeout, Kafka, worker'ы) тихо теряют контекст: используй context.bind/context.with для in-process callback'ов, и inject/extract для границ message queue.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-baggage-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, почему дисциплина по размеру baggage важна в production и что никогда не должно попадать в baggage.", a: "Baggage пропагируется на каждом hop запроса, каждом сообщении очереди, каждой async-границе. Каждый hop платит дважды: сериализация на исходящем, парсинг на входящем. 16-KB baggage при 10k req/s внутреннего трафика — примерно 160 MB/s чистого baggage-транспорта плюс парсинг на каждом hop. Помимо стоимости, baggage high-trust: течёт на каждый downstream, включая third-party-интеграции и SaaS API, которые могут логировать или сохранять заголовки. Всё в baggage фактически semi-public внутри инженерии. Никогда не клади: email, полные user-id (используй opaque-токен), токены карт или платежей, API-ключи, auth-токены, customer PII, внутренние секреты. Всегда можно: tenant-id (opaque), region, состояние feature-flag, имя A/B-cohort, метка request-source — операционные теги, реально нужные downstream для routing- или feature-решений." },
+    { q: "В чём разница между context.bind (in-process) и inject/extract (cross-process) для trace propagation?", a: "context.bind и context.with работают в памяти одного процесса. Они захватывают текущий OTel контекст (включая trace-id) и восстанавливают его при выполнении callback'а, поэтому асинхронные callback'и вроде setTimeout или queueMicrotask видят тот же контекст, что и код, их запланировавший. Это работает потому, что всё выполняется в одном процессе. inject/extract работают через process-границы. inject записывает trace-id в wire-формат сообщения (заголовки Kafka, HTTP-заголовки, свойства AMQP), чтобы он мог путешествовать по сети. extract читает его обратно на принимающей стороне. Без inject — trace-id не пишется в сообщение; context.bind в producer'е только держит контекст живым в процессе producer'а — не влияет на consumer-процесс, стартующий без контекста." },
+    { q: "Назови четыре async-границы в Node.js, требующие явной context propagation, и объясни фикс для каждой.", a: "1. setTimeout/setImmediate: оберни callback в context.bind(ctx, fn) перед передачей в setTimeout. SDK восстанавливает контекст когда таймер срабатывает. 2. queueMicrotask: тот же паттерн — context.bind(ctx, fn). 3. Kafka/RabbitMQ/SQS publish: вызови propagator.inject(context.active(), messageHeaders) перед отправкой. На стороне consumer вызови propagator.extract(messageHeaders) после polling. 4. Worker threads / Web Workers: передай сериализованный trace-id как аргумент worker-сообщения, затем вызови setSpan на OTel context worker'а с RemoteSpan, построенным из полученных id. Каждый фикс решает ту же корневую причину: OTel context — thread-local или async-local — он не пересекает process или thread границы автоматически." },
+  ]}
+/>
+
+<Recap lang="ru">
+W3C-заголовок `baggage` пропагирует операционные key-value (tenant-id, feature flags, A/B-cohort) рядом с трейсом, но каждый hop платит сериализацию и парсинг, а заголовок течёт на каждый downstream, включая third-party-интеграции. PII или секреты в baggage semi-public внутри и за пределами инженерии. Async-границы — главная причина split-трейсов в production: `setTimeout`, `setImmediate` и `queueMicrotask` срабатывают в другом call stack без OTel-контекста; фикс — `context.bind` или `context.with`. Consumer'ы очередей (Kafka, RabbitMQ, SQS) пересекают process-границу — фикс: `propagator.inject()` в заголовки сообщения у producer и `propagator.extract()` у consumer; `context.bind` одного недостаточно.
+</Recap>

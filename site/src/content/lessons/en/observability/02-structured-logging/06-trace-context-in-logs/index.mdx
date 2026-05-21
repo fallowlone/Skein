@@ -1,0 +1,165 @@
+---
+slug: 06-trace-context-in-logs
+lang: en
+track: observability
+unit: 02-structured-logging
+order: 6
+title: "Trace context propagation in logs"
+summary: "Every log line emitted inside a traced request must carry trace_id and span_id. Without them, the log-to-trace pivot fails and observability degrades to guesswork."
+estMin: 12
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["observability/02-structured-logging/05-pii-redaction"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["trace-context", "trace_id", "span_id", "async-context", "asynclocalstorage", "context-propagation", "otel-correlation"]
+sources:
+  - https://opentelemetry.io/docs/specs/otel/logs/data-model/
+  - https://opentelemetry.io/docs/concepts/signals/logs/
+  - https://opentelemetry.io/docs/concepts/context-propagation/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+An engineer finds a log line showing a 5xx error from a checkout service. She searches for more context. The log line has no trace_id. She cannot open the trace, cannot see which downstream call failed, and cannot reconstruct the request flow. She has a symptom and nothing else. Without trace_id, structured logs are an island.
+</Hook>
+
+<Crux>Log lines in traced requests must carry trace_id and span_id — join keys to the trace. Without them, incident investigation is guesswork.</Crux>
+
+<Explanation>
+
+## Why trace_id is the most valuable field
+
+A log line with a trace_id can be clicked into the corresponding distributed trace. That trace shows every span across every service that touched the request: per-span timing, dependency calls, error spans, upstream and downstream context. The log line is no longer an island — it is a node in the full observability graph.
+
+Without trace_id, the same log line carries a symptom but no path to the cause. The only option is to correlate by timestamp and hope that no other requests interleaved — which fails the moment the service handles more than one concurrent request.
+
+The OTel Logs Data Model encodes this relationship directly: every log record carries `TraceId`, `SpanId`, and `TraceFlags` as first-class fields, inherited from the active span at emit time. This is not optional metadata — it is the structural join key.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Without trace_id</th>
+        <th class="border border-border px-3 py-2 text-left">With trace_id</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Log line is an island. You know something happened, not why.</td>
+        <td class="border border-border px-3 py-2">Log line links to the full distributed trace for the request.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Correlation requires timestamp guesswork across services.</td>
+        <td class="border border-border px-3 py-2">One click opens spans across all services involved.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Concurrent requests interleave in log search results.</td>
+        <td class="border border-border px-3 py-2">Query by trace_id isolates exactly one request end-to-end.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Incident investigation: minutes to find root service.</td>
+        <td class="border border-border px-3 py-2">Incident investigation: one pivot to the failing span.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How trace context reaches the log line
+
+The trace context — an immutable struct holding the current trace_id, span_id, and trace flags — lives in the language's request-scoped execution context. The logger reads from it at emit time, automatically.
+
+- **Node.js**: the OTel SDK stores context in `AsyncLocalStorage`. Pino's `mixin` callback (or the `@opentelemetry/api` `context.with()` mechanism) reads the active span from the store at emit time. Every log emitted within a request handler inherits the trace_id with no per-call-site boilerplate.
+- **Go**: `context.Context` carries the active span. The `slog` handler or the zap logger reads from the context passed to the handler function. Unlike Node, context is explicit — the `ctx` must be threaded through the call chain.
+- **Python**: `contextvars.ContextVar` holds the active span (Python 3.7+). Structlog's `merge_contextvars` processor reads the active span at render time.
+- **JVM**: the OTel Java agent auto-instruments the thread-local context. Log4j2's `ThreadContext` or Logback's MDC carries the trace_id automatically when the agent is attached.
+
+In each case the pattern is the same: the logger has a hook (mixin, processor, handler) that consults the active execution context and injects trace_id and span_id into the log record without the calling code having to pass them explicitly.
+
+<Inset kind="why" lang="en">
+The reason trace_id auto-injection matters is volume. A typical service emits thousands of log lines per second across dozens of call sites. Requiring engineers to pass `{trace_id, span_id}` manually to every log call is impractical — it is forgotten during refactors, omitted in third-party libraries, and skipped under time pressure. Auto-injection at the logger level is the only reliable mechanism at scale.
+</Inset>
+
+## Async context propagation pitfalls
+
+The logger reads context from the active execution context. Anything that breaks the execution context propagation breaks the trace_id on the log line. This is the most common source of `trace_id = "00000000000000000000000000000000"` entries.
+
+**Node.js pitfalls**: `setTimeout`, `setImmediate`, fire-and-forget Promises, and worker threads can each drop `AsyncLocalStorage` if not wrapped in `context.bind()` or `context.with()`. A callback scheduled with `setTimeout(() => { logger.warn(...) }, 0)` fires outside the original request context if the span is not explicitly propagated into the callback.
+
+**Python pitfalls**: `asyncio.create_task` propagates `contextvars` correctly since Python 3.7. But threads spawned via `threading.Thread` and `ProcessPoolExecutor` subprocesses do not inherit the context automatically — the context must be captured and restored manually.
+
+**Go pitfalls**: there is no ambient context propagation in Go. The `context.Context` must be threaded explicitly through every function in the call chain, including goroutines. A goroutine launched without the parent context (`go func() { logger.Warn(...) }()`) will not carry the trace_id unless the context is explicitly passed in.
+
+**Detection**: query your log backend for `trace_id IS NULL` or `trace_id = "000000000000..."` as a fraction of total volume. If the fraction is above 1%, something is dropping context on a hot path. Pair this with a CI test that exercises async paths (fire a request, wait for an async callback to complete, assert that its log line carries the inbound trace_id).
+
+<Quiz
+  id="06-trace-context-quiz-1"
+  lessonSlug="06-trace-context-in-logs"
+  lang="en"
+  question="A Node.js service observes that approximately 5% of log lines have trace_id = '00000000000000000000000000000000'. Most likely cause?"
+  choices={[
+    { label: "The OTel SDK is misconfigured globally", misconception: "If globally misconfigured, the fraction would be near 100%, not 5%." },
+    { label: "Some code paths emit logs outside the active request context — async callbacks (setTimeout, setImmediate, unbound Promises) or worker threads that did not propagate AsyncLocalStorage", correct: true },
+    { label: "The log backend is corrupting trace IDs on ingest", misconception: "Backends do not rewrite trace IDs. The all-zeros value is what gets emitted when there is no active context at the call site." },
+    { label: "Sampling at the collector dropped the trace IDs from those lines", misconception: "Sampling drops whole records, not individual fields within a record." },
+  ]}
+/>
+
+<Quiz
+  id="06-trace-context-quiz-2"
+  lessonSlug="06-trace-context-in-logs"
+  lang="en"
+  question="Why is passing trace_id manually to every log call not a reliable solution at scale?"
+  choices={[
+    { label: "It is fine — senior engineers can be relied on to always pass the context", misconception: "At thousands of call sites across dozens of services, manual passing is forgotten during refactors, omitted in third-party libraries, and skipped under time pressure." },
+    { label: "Manual passing is forgotten during refactors, omitted in third-party library calls, and unreliable under time pressure — auto-injection at the logger level is the only reliable mechanism at scale", correct: true },
+    { label: "It adds too much latency to every log call", misconception: "Latency is not the issue. Reliability is — manual passing creates systematic gaps in coverage." },
+    { label: "trace_id is not needed on every log line, only on error lines", misconception: "trace_id on every line enables the full log-to-trace pivot. Without it on INFO lines, you cannot reconstruct the normal execution path that preceded an error." },
+  ]}
+/>
+
+<DragOrder
+  id="06-trace-context-drag-1"
+  lessonSlug="06-trace-context-in-logs"
+  lang="en"
+  prompt="Order the steps to investigate a 5xx error using the log-to-trace pivot:"
+  items={[
+    { id: "a", label: "Query logs: service=checkout level=error in the last 15 minutes" },
+    { id: "b", label: "Find a matching log line; copy its trace_id field" },
+    { id: "c", label: "Open the tracing backend; paste the trace_id to load the full distributed trace" },
+    { id: "d", label: "Identify the failing span — the one with error=true or the longest duration" },
+    { id: "e", label: "Navigate to the service that owns the failing span" },
+    { id: "f", label: "Query logs for that service filtered by the same trace_id to see its full log context" },
+    { id: "g", label: "Cross-reference: log message confirms the error type; span confirms the timing and call chain" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>trace_id and span_id on every log line are the join keys that make structured logs participate in the full observability graph. Auto-inject them via the logger's context hook (pino mixin, structlog processor, slog handler). Watch for async context drops — setTimeout, unbound Promises, Go goroutines without explicit context, Python threads — they produce all-zeros trace IDs. Detect regressions with a query on trace_id IS NULL fraction.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-trace-context-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does trace context auto-injection work in Node.js with pino and the OTel SDK?", a: "The OTel SDK stores the active span in AsyncLocalStorage, which is a request-scoped execution context that persists across async operations within the same request. Pino's mixin callback — configured once at logger construction — is called on every log write. It reads the active span from AsyncLocalStorage (via the OTel API's context.active() method), extracts trace_id and span_id, and merges them into the log record. The calling code sees none of this — it just calls logger.info() as normal. The result: every log line emitted during a request handler, regardless of call depth, carries the request's trace_id without any per-call-site boilerplate." },
+    { q: "In Go, why does context propagation not work automatically for goroutines, and what is the fix?", a: "Go has no ambient execution context — there is no global thread-local or fiber-local storage. The context.Context is an explicit value passed as a function argument. When a goroutine is launched, it receives a copy of the enclosing scope's variables but does not inherit any 'current context' automatically. A goroutine launched as go func() { logger.Warn(context.Background(), ...) }() uses the background context, which has no active span. The fix is explicit: capture the parent context before launching the goroutine and pass it into the goroutine: ctx := ctx; go func() { logger.WarnContext(ctx, ...) }(). The OTel Go SDK docs call this 'context threading' — it is the idiomatic Go pattern and the reason Go code that omits context arguments is considered bad practice." },
+    { q: "What is the production signal for async context propagation regressions, and how do you set up detection?", a: "The signal is the fraction of log lines with trace_id equal to all zeros ('00000000000000000000000000000000'). In any healthy service this fraction should be below 1% — accounting for log lines emitted during startup and shutdown where no request context exists. Above 1% indicates a code path that is emitting logs outside the active request context. Detection: add a saved query or dashboard panel in the log backend that computes count(trace_id = '000...') / count(*) over the last hour, per service. Alert when the fraction exceeds 1%. For CI: write an integration test that fires a traced request, waits for all async callbacks to complete, and asserts that every log line emitted during that request carries the inbound trace_id. This catches context drops before they reach production." },
+  ]}
+/>
+
+<Recap lang="en">
+trace_id and span_id are the join keys that connect a log line to the full distributed trace. Without them, a log line is an island — you have a symptom but no path to the cause. The mechanism: the OTel SDK stores the active span in the language's request-scoped execution context (AsyncLocalStorage in Node, context.Context in Go, contextvars in Python, thread-local MDC in JVM); the logger reads from it at emit time via a mixin, processor, or handler hook, injecting trace_id and span_id automatically. The failure mode: async boundaries (setTimeout, unbound Promises, goroutines without explicit context, Python threads) drop the execution context, producing all-zeros trace IDs. Detection: monitor the trace_id IS NULL fraction per service; alert above 1%; add a CI test that asserts async log lines carry the inbound trace_id.
+</Recap>

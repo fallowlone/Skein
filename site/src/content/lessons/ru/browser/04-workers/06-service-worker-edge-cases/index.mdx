@@ -1,0 +1,153 @@
+---
+slug: 06-service-worker-edge-cases
+lang: ru
+track: browser
+unit: 04-workers
+order: 6
+title: "Граничные случаи service worker: version skew, долговременность и ловушка навигации"
+summary: "Version skew из-за не хешированных ресурсов, ловушка kill-and-restart долговременности, и почему сломанный service worker, перехватывающий навигацию, — это инцидент класса stop-the-deploy."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["browser/04-workers/04-service-worker-lifecycle"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["version-skew", "service-worker-durability", "navigation-interception", "app-shell", "kill-switch", "event-waitUntil", "cache-versioning"]
+sources:
+  - https://web.dev/articles/service-worker-lifecycle
+  - https://developer.mozilla.org/en-US/docs/Web/API/Service_Worker_API
+  - https://web.dev/articles/workbox
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Вы деплоите service worker, который раздаёт кеш app shell по стратегии cache-first. Через неделю деплоите исправление бага. Часть пользователей никогда его не получит — они продолжают получать сломанный закешированный shell при каждой перезагрузке, и никакой кнопки восстановления для обычного пользователя не существует.
+</Hook>
+
+<Crux>Service worker, перехватывающий навигацию — постоянный прокси; задеплоенный баг — stop-the-deploy, выйти перезагрузкой нельзя.</Crux>
+
+<Explanation>
+
+## Проблема обновления и version skew
+
+Кеш ресурсов service worker привязан к версии его кода. При деплое версии N+1 открытая страница может работать с воркером версии N, пока HTML версии N+1 уже задеплоен — или наоборот. Если воркер раздаёт cache-first `app.js` версии N, а HTML ожидает `app.js` версии N+1, получается runtime-ошибка из-за несовпадающих модулей.
+
+**Надёжный паттерн:**
+
+1. **Content-hash каждое имя файла ресурса** (`app.4f3a1c.js`). Старые и новые ресурсы сосуществуют в кеше без коллизий.
+2. **Version-tag имена кешей** (`cache-v3`, `cache-v4`). Pre-cache весь набор ресурсов каждого деплоя под version tag.
+3. **В `activate` удалять только устаревшие кеши** — кеши, чей version tag не является текущим. Делайте это *после* `clients.claim()`, чтобы ни одна контролируемая страница не потеряла ресурсы в середине сессии.
+4. **Раздавать навигационные запросы network-first** (или по выделенному маршруту app-shell), чтобы пользователи всегда получали HTML, консистентный с активным воркером.
+
+Тот же класс бага применим к `sw.js` самому по себе: браузеры кешируют файл воркера по умолчанию до 24 часов. Современная практика — отдавать `sw.js` с заголовком `Cache-Control: no-cache`, чтобы браузер всегда перепроверял его на навигации.
+
+## Service workers не являются долговременными
+
+Браузер агрессивно убивает idle service worker — часто в течение секунд после завершения `fetch`-события — и перезапускает при следующем событии. Любое состояние в module-level переменной исчезает при перезапуске. Это частый источник багов:
+
+- Счётчик запросов в полёте.
+- Кеш ожидающих промисов.
+- WebSocket-соединение в глобальной переменной.
+
+Всё испаряется. **Постоянное состояние должно жить в `IndexedDB` или Cache API.**
+
+Долгоживущая работа внутри обработчика события должна быть обёрнута в `event.waitUntil(promise)` — это говорит браузеру: «не убивай меня, пока этот промис не завершится». Забыть `waitUntil` — значит браузер может завершить воркер на полпути, и background sync, push-обработка, заполнение кеша молча не завершатся.
+
+<NumbersCard
+  id="card-sw-edge-cases-ru"
+  title="Факты о долговременности service worker"
+  data-lesson-visual
+  stats={[
+    { label: "Время убийства idle-воркера", value: "Секунды после последнего события" },
+    { label: "HTTP-кеш браузера для sw.js", value: "До 24 часов по умолчанию" },
+    { label: "Рекомендуемый заголовок для sw.js", value: "Cache-Control: no-cache" },
+    { label: "Варианты постоянного состояния", value: "Только Cache API или IndexedDB" },
+    { label: "Забытый waitUntil → тихий сбой", value: "push, sync, заполнение кеша" },
+  ]}
+/>
+
+## Перехват навигации и опасность app-shell
+
+Самый мощный — и самый опасный — паттерн service worker: перехват навигационных запросов. `fetch`-обработчик ловит запрос на HTML-документ и возвращает закешированный app shell. Это даёт мгновенную загрузку, но создаёт класс багов, иначе невозможных.
+
+**Ловушка:** если вы задеплоите баг в app shell и закешируете его с cache-first, каждый повторный визит будет раздавать сломанный shell из кеша, минуя сеть, где лежит исправление. Пользователь не может выбраться обычной перезагрузкой.
+
+**Защита многоуровневая:**
+
+1. **Навигационные запросы — network-first** с коротким таймаутом (~3 с, с откатом на кеш). Это гарантирует, что исправление дойдёт до пользователей при первой успешной загрузке.
+2. **Держите kill switch** — версионированный эндпоинт, который воркер проверяет при activate или периодически. По сигналу вызывает `self.registration.unregister()` и удаляет кеши. Это позволяет удалённо отсоединить сломанный service worker от всех клиентов.
+3. **Никогда не кешировать навигацию только из кеша.** Всегда должен быть сетевой путь.
+
+**Сломанный service worker, задеплоенный широко — это инцидент stop-the-deploy**, потому что обычные пользователи не имеют кнопки восстановления: они не могут открыть DevTools, не могут очистить данные сайта. Единственный выход — kill switch или свежий деплой, который старый воркер подхватит при следующей активации.
+
+<Quiz
+  id="sr-quiz-sw-edge-1"
+  lessonSlug="06-service-worker-edge-cases"
+  lang="ru"
+  question="Service worker хранит карту запросов в полёте в module-level переменной `const cache = new Map()`. Через несколько секунд простоя записи исчезают. Почему?"
+  choices={[
+    { label: "Браузер завершил idle service worker; module-level состояние теряется при перезапуске — постоянное состояние должно жить в IndexedDB или Cache API", correct: true },
+    { label: "Map имеет встроенный TTL", misconception: "Map не имеет TTL. Записи исчезают, потому что весь воркер — и его module scope — был уничтожен и перезапущен." },
+    { label: "Другая вкладка очистила Map", misconception: "Страницы не разделяют module scope service worker, и нет кроссвкладочной очистки Map. Воркер сам был убит." },
+    { label: "Сборщик мусора удалил Map", misconception: "Module-level const — это GC-корень; он не собирается, пока жив воркер. Воркер перестал жить — вот в чём разница." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-sw-edge-2"
+  lessonSlug="06-service-worker-edge-cases"
+  lang="ru"
+  question="Вы деплоите обновление service worker, и часть пользователей сообщает о сломанной странице: скрипты не загружаются с ошибками module-mismatch. Какова наиболее вероятная причина и надёжное исправление?"
+  choices={[
+    { label: "Version skew: воркер раздал cache-first ресурсы версии N против HTML версии N+1. Исправление: content-hash всех ресурсов, version-tag имён кешей, network-first для навигации", correct: true },
+    { label: "Service worker закешировал HTML с неверным content-type", misconception: "Проблема content-type вызвала бы сбой парсинга HTML, а не ошибки module-mismatch. Module-mismatch означает загрузку неверной версии JS." },
+    { label: "skipWaiting не был вызван, поэтому старый воркер всё ещё активен", misconception: "Если старый воркер активен, пользователи получают консистентную версию N — без mismatch. Mismatch происходит, когда старые кешированные ресурсы раздаются против нового HTML или наоборот." },
+    { label: "Cache API не хранит JavaScript корректно", misconception: "Cache API хранит ответы по URL и нормально работает с JS. Проблема — коллизия URL между версиями, решается content-hashing." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-sw-edge-3"
+  lessonSlug="06-service-worker-edge-cases"
+  lang="ru"
+  question="Пользователь застрял на сломанном закешированном app shell, и обычная перезагрузка не помогает. Какой механизм восстановления нужно было заложить заранее?"
+  choices={[
+    { label: "Kill switch эндпоинт, который воркер проверяет — по сигналу вызывает self.registration.unregister() и удаляет кеши, отсоединяя воркер от всех клиентов", correct: true },
+    { label: "Скажите пользователям очистить кеш браузера вручную", misconception: "Обычные пользователи не могут или не будут этого делать. Kill switch — это путь восстановления, управляемый инженерией." },
+    { label: "Задеплоить новый service worker и ждать распространения skipWaiting", misconception: "Если сломанный воркер перехватывает навигацию cache-first, он может раздать кешированный ответ до проверки обновлений. Kill switch принудительно запускает проверку." },
+    { label: "Браузер автоматически обнаружит сломанный воркер и отменит регистрацию", misconception: "У браузера нет понятия 'сломанный' воркер — он только знает, что воркер запустился и ответил. Он продолжит его использовать." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Почему сломанный service worker так сложно исправить? Когда service worker перехватывает навигацию, он сидит между браузером и сервером для самого HTML-документа — страница не может загрузиться без ответа воркера первым. В отличие от сломанного CDN (где браузер откатывается на origin), сломанный service worker успешно отвечает сломанным закешированным ответом. Браузер не может отличить правильный кешированный ответ от ошибочного. Вот почему kill switch должен быть проактивным: URL, который воркер проверяет на каждой активации, чей ответ говорит воркеру, нужно ли ему отменить регистрацию. Если вы ждёте сообщений от пользователей — вы уже задеплоили.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Service worker не имеет постоянного module-level состояния — используйте waitUntil и IndexedDB/Cache API. Version skew требует content-hashed ресурсов и version-tagged кешей. Service worker, перехватывающий навигацию, должен работать network-first с kill switch, иначе сломанный деплой навсегда удерживает пользователей.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-service-worker-edge-cases-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему module-level состояние service worker исчезает между запросами?", a: "Браузер агрессивно убивает idle service workers — часто секунды после завершения fetch-события — и перезапускает при следующем событии. Module scope уничтожается и пересоздаётся каждый раз. Постоянное состояние должно жить в Cache API или IndexedDB, и любая долгоживущая операция внутри обработчика события должна быть обёрнута в event.waitUntil(promise), чтобы предотвратить завершение воркера на полпути." },
+    { q: "Каков failure mode version skew в service workers и как его предотвратить?", a: "Version skew: service worker раздаёт кешированные ресурсы версии N против HTML, ожидающего версию N+1, вызывая runtime module-mismatch ошибки. Предотвращение: content-hash каждое имя файла ресурса (старые и новые сосуществуют без коллизий), version-tag имена кешей и удалять устаревшие в activate, раздавать навигационные запросы network-first — чтобы HTML всегда был консистентен с активным воркером." },
+    { q: "Почему сломанный service worker, перехватывающий навигацию — инцидент stop-the-deploy, и какова архитектурная защита?", a: "Когда service worker перехватывает навигацию и раздаёт HTML-документ из кеша, пользователи не могут перезагрузкой дойти до исправленной версии — сломанный кешированный shell раздаётся при каждой перезагрузке. У обычных пользователей нет способа очистить воркер. Защита: навигация должна быть network-first (не cache-first), и kill switch эндпоинт должен существовать — воркер проверяет его при активации, и если сигнал подаётся, вызывает self.registration.unregister() и очищает кеши." },
+  ]}
+/>
+
+<Recap lang="ru">
+У service workers три основных failure mode. Version skew: раздача кешированных ресурсов неверной версии — предотвращается content-hashed именами файлов и version-tagged кешами. Ловушка долговременности: module-level состояние испаряется между событиями, потому что браузер убивает idle воркеры; используйте `event.waitUntil` для долгих операций и IndexedDB/Cache API для состояния. Перехват навигации: кеширование самого HTML-документа означает, что сломанный shell навсегда удерживает пользователей — всегда используйте network-first для навигации и стройте kill-switch эндпоинт. Все три сбоя становятся трудноотменяемыми продакшн-инцидентами без превентивных мер. Файл `sw.js` должен отдаваться с `Cache-Control: no-cache` — иначе обновление воркера может задержаться до 24 часов.
+</Recap>

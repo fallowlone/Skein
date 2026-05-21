@@ -1,0 +1,212 @@
+---
+slug: 06-graphql-api-senior
+lang: en
+track: apis
+unit: 06-graphql-n-plus-one
+order: 6
+title: "Senior GraphQL API: scheduling contract, tenant isolation, observability"
+summary: "DataLoader's exact scheduling semantics, tenant-safe per-request scoping, APQ vs trusted documents, multiplicative complexity scoring, alias-bomb anatomy, and the minimum-viable observability dashboard."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - apis/06-graphql-n-plus-one/03-batch-function-contracts
+  - apis/06-graphql-n-plus-one/05-query-complexity-defences
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["enqueue-post-promise-job", "tenant-isolation", "apq-vs-trusted-documents", "multiplicative-complexity", "alias-bomb-anatomy", "resolver-observability"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://www.apollographql.com/docs/apollo-server/data/fetching-data
+  - https://escape.tech/blog/graphql-batch-attacks-cause-dos/
+  - https://graphql.org/learn/security/
+  - https://cheatsheetseries.owasp.org/cheatsheets/GraphQL_Cheat_Sheet.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Production incident: database call rate 6× normal, HTTP request rate unchanged. Persisted queries are enforced — no unusual hashes. A recent refactor moved one DataLoader out of the context factory into module scope. One line, zero tests catching it, and the cache is now shared across tenants.
+</Hook>
+
+<Crux>DataLoader bounded by JS event loop. Tenant isolation needs SQL filter. Complexity scoring must multiply by list-argument size.</Crux>
+
+<Explanation>
+
+## DataLoader's exact scheduling contract
+
+The library uses `enqueuePostPromiseJob` — a wrapper over `process.nextTick` in Node.js and `Promise.resolve().then` in browsers — to schedule the batch dispatch. The dispatch runs:
+
+- After the current synchronous frame
+- After any microtasks queued during that frame
+
+This means `.load()` calls inside resolver bodies, inside `.then()` chains following synchronous resolver work, and inside nextTick-deferred logic all land in the same batch. The window is bounded by the JavaScript event-loop, not a timer. There is no `setTimeout`, no `setImmediate`, no fixed millisecond window.
+
+`batchScheduleFn` overrides this if you need different semantics (e.g. debouncing at the cluster level via a cross-process broker). Production servers leave the default in place.
+
+## Tenant isolation in the cache key
+
+The context factory pattern from lesson 02 is necessary but not sufficient for multi-tenant systems. A new DataLoader instance per request prevents cross-request cache hits, but if the batch function queries data without filtering by tenant, two requests from different tenants within the same Node process can receive each other's data via the database query (not the cache).
+
+The safe pattern:
+
+```javascript
+context: async ({ req }) => ({
+  loaders: makeLoaders(req.auth.tenantId),
+})
+
+function makeLoaders(tenantId) {
+  return {
+    user: new DataLoader(async (ids) => {
+      const rows = await db.query(
+        'SELECT * FROM users WHERE id = ANY($1) AND tenant_id = $2',
+        [ids, tenantId]   // tenant scoped at the SQL level
+      );
+      const map = new Map(rows.map(r => [r.id, r]));
+      return ids.map(id => map.get(id) ?? null);
+    }),
+  };
+}
+```
+
+SonarSource's 2024 audit of OSS GraphQL servers found tenant-leak bugs in 6 of 12 audited codebases — all traceable to module-scope DataLoader or missing tenant filter in the batch query.
+
+## APQ vs trusted documents
+
+Two different things called "persisted queries":
+
+- **Automatic Persisted Queries (APQ):** The client computes SHA-256 of the query string and sends only the hash. If the server has not seen the hash before, it returns `PersistedQueryNotFound` and the client resends with the full document. APQ saves bytes on warm cache (5 KB query collapses to 64-character hash). It does **not** constrain query shape — any client can still send any document.
+
+- **Trusted documents:** Only pre-registered hashes execute. Unknown hashes are rejected. Registration happens at client build time. This is a security boundary, not a performance optimisation.
+
+Production teams that need both deploy trusted documents and use APQ-style hashing within the registered set.
+
+## Why field-count complexity scoring is an under-counting bug
+
+The naive rule "cost = 1 per field, summed" reports cost 50 for a 10-deep query with 5 fields per level. The real cost is in the row expansion at each list level. A query that requests `first: 100` at each of 5 levels reads 100^5 = 10^10 rows conceptually — but the field-count rule still reports 50.
+
+The correct formula multiplies by list-argument size:
+
+```
+cost(field) = field_weight + sum(child.first_arg × cost(child))
+```
+
+With `first: 100` at every level, the calculator returns 100^5 — astronomically over budget, query rejected at AST parse time before any resolver fires. GitHub's public complexity formula is a documented version of this multiplicative rule.
+
+## Alias bomb anatomy
+
+A single document with 1000 root aliases:
+
+```graphql
+q1: user(id: 1) { email }
+q2: user(id: 2) { email }
+...
+q1000: user(id: 1000) { email }
+```
+
+This is one valid document, parsed once. Execution runs 1000 resolver calls. DataLoader collapses the database trips to one batch query — but resolver-execution count is still the attacker's leverage: 1000 resolvers call your permission-checking logic, your logging, your context lookups. A 5 MB document can produce six-figure resolver counts per HTTP request, under any naive per-request rate limit.
+
+Escape.tech's 2024 audit: 64% of production GraphQL endpoints had no alias caps. Imperva's 2023 report attributed 18% of GraphQL production incidents to alias-batch DoS.
+
+## Minimum-viable observability dashboard
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Metric | Alert condition |
+|---|---|
+| `graphql_request_total{operation,outcome}` | Error rate above SLO |
+| `graphql_request_duration_p99` | Above latency budget |
+| `graphql_resolver_call_count` per request | Above N (N+1 regression) |
+| `graphql_query_cost` histogram | Long-tail above budget |
+| `graphql_persisted_query_hit_ratio` | Below 90% |
+| `graphql_introspection_request_total` | Non-zero in prod (if introspection off) |
+
+</div>
+
+Per-resolver tracing via OpenTelemetry GraphQL instrumentation emits a span per `type.field` call. Aggregating spans by operation gives resolver call counts. Without this instrumentation, an N+1 regression is invisible until the database CPU pages someone.
+
+<NumbersCard
+  id="card-senior-numbers"
+  title="Senior-tier GraphQL safety numbers"
+  stats={[
+    { label: "GitHub GraphQL points/hour cap", value: "5000" },
+    { label: "GitHub per-query cost cap", value: "1000" },
+    { label: "Shopify Storefront per-query cap", value: "1000 cost units" },
+    { label: "Shopify Storefront throttle", value: "1000 cost/sec/IP" },
+    { label: "Default depth limit (Apollo Router)", value: "10" },
+    { label: "List-depth recommendation", value: "3–4" },
+    { label: "Alias-bomb cap (typical)", value: "≤20 root aliases" },
+    { label: "Operation-batch cap (typical)", value: "≤5 operations" },
+  ]}
+/>
+
+<Misconception id="mc-dataloader-global-senior">
+  <p><strong>"A global DataLoader saves memory by caching across requests."</strong> It also leaks data across tenants. Same key returns the same cached row, so Tenant A's revoked permission is invisible to Tenant B. DataLoaders are per-request — instantiate in the context factory, never as module singletons.</p>
+</Misconception>
+
+<Quiz
+  id="senior-q1"
+  lessonSlug="06-graphql-api-senior"
+  lang="en"
+  question="A federated supergraph applies depth limit 7 at the router. Why must each subgraph also apply its own complexity and depth limits?"
+  choices={[
+    { label: "Defence-in-depth — assume the router can be bypassed or misconfigured", correct: true },
+    { label: "The router does not pass limits downstream to subgraphs", misconception: "The router does enforce its own limits. The question is what each subgraph adds on top for defence-in-depth." },
+    { label: "Subgraphs always run on different hardware with different limits", misconception: "Hardware is orthogonal to query-shape defences." },
+    { label: "The federation spec requires per-subgraph limits", misconception: "Best practice requires it; the federation spec does not." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q2"
+  lessonSlug="06-graphql-api-senior"
+  lang="en"
+  question="A complexity rule assigns 'cost = 1 per field, summed across the AST'. A 10-deep recursive query with 5 fields per level reports cost 50 and passes the 1000-cost budget. What is wrong?"
+  choices={[
+    { label: "The rule under-counts by ignoring list-argument multiplication — a query with first:100 at each of 5 levels reads 100^5 rows, not 50", correct: true },
+    { label: "The rule over-counts because field weights should be fractional", misconception: "The issue is under-counting, not over-counting." },
+    { label: "The rule is correct — 50 fields is 50 cost", misconception: "Field count ignores the row expansion from list arguments. 5 levels of first:100 = 10^10 rows conceptually." },
+    { label: "The rule fails because depth limit should be applied first", misconception: "Depth limits and complexity scoring are complementary, not sequential. This is a bug in the complexity formula itself." },
+  ]}
+/>
+
+<Quiz
+  id="senior-q3"
+  lessonSlug="06-graphql-api-senior"
+  lang="en"
+  question="DataLoader is instantiated per-request but the batch function queries the database without a tenant filter. What is the failure mode?"
+  choices={[
+    { label: "Cross-request cache hits are prevented, but two simultaneous requests for different tenants may receive each other's rows via the database query itself", correct: true },
+    { label: "The per-request cache prevents all cross-tenant data leaks", misconception: "The cache isolation prevents cross-request cache hits, but if the SQL does not filter by tenant, different tenants can still receive each other's rows from the database." },
+    { label: "The batch function always filters by tenant automatically", misconception: "The batch function is your code — it filters what you tell it to filter." },
+    { label: "This only matters in federated graphs", misconception: "Tenant isolation is a concern in any multi-tenant GraphQL server, federated or not." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>DataLoader scheduling is bounded by JS event-loop semantics. Tenant isolation requires SQL-level tenant filters inside the batch function. Multiplicative complexity scoring catches the list-expansion cost that field-count misses. Resolver-level OpenTelemetry tracing is the only reliable way to catch N+1 regressions in production.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="senior-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does Apollo Federation's _entities batching not eliminate the need for DataLoader inside subgraphs?", a: "_entities batches at the network level: the router sends one HTTP call with 50 representations instead of 50 HTTP calls. Inside the subgraph, __resolveReference is called once per representation. If those calls each query the database directly, you get 50 SQL queries within the single _entities call. DataLoader batches those into one SQL trip. Federation gives you the network batch for free; the database batch is your responsibility." },
+    { q: "What is the difference between APQ and trusted documents?", a: "APQ is a performance optimisation: the client sends a hash, the server fetches and executes the full document if known. Any document can still be registered and executed — APQ does not constrain query shape. Trusted documents are a security boundary: only pre-registered hashes execute, unknown hashes are rejected. APQ saves bytes; trusted documents close the attack surface." },
+  ]}
+/>
+
+<Recap lang="en">
+DataLoader's batch window is the JavaScript event-loop microtask boundary — not a timer. All `.load()` calls from resolver bodies and their Promise chains land in the same batch. Per-request instantiation prevents cross-request cache pollution; tenant ID in the SQL filter prevents cross-tenant data leaks. APQ saves wire bytes but does not constrain query shape; trusted documents do. Field-count complexity scoring misses list-expansion cost — multiply by `first/last` arguments to catch 100^5-row queries. Alias bombs bypass rate limits via resolver-count amplification; cap at ≤20 aliases. Wire resolver call counts to OpenTelemetry spans: without per-resolver tracing, N+1 regressions are invisible until the database pages someone.
+</Recap>

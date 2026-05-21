@@ -1,0 +1,219 @@
+---
+slug: 05-lcp-and-critical-path
+lang: ru
+track: frontend
+unit: 02-data-fetching
+order: 5
+title: "LCP, prefetch и race conditions в интерактивном fetching"
+summary: "Как диагностировать LCP регрессии по network waterfall, что даёт prefetch и чего стоит, и как устранить race conditions в поиске по мере ввода."
+estMin: 10
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - frontend/02-data-fetching/04-client-cache-swr
+deepensInto:
+  - frontend/02-data-fetching/06-senior-internals
+spiral: ["statefulness"]
+concepts: ["LCP", "Web-Vitals", "prefetch", "race-condition", "AbortController", "debounce", "pagination", "cursor-pagination"]
+sources:
+  - https://web.dev/articles/optimize-lcp
+  - https://tanstack.com/query/v5/docs/framework/react/guides/request-waterfalls
+  - https://datatracker.ietf.org/doc/html/rfc5861
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Пользователь вводит "react" в поле поиска. Запускаются два fetch'а — для "reac" и "react". Ответ на "reac" приходит на 200ms позже "react" из-за медленного сервера. UI показывает результаты "reac" пока в поле введено "react". Классический race condition.
+</Hook>
+
+<Crux>LCP — это самый медленный fetch critical path. Данные LCP на сервер. Гонки — AbortController. Prefetch при hover; береги мобильный трафик.</Crux>
+
+<Explanation>
+
+## LCP и критический fetch
+
+**Largest Contentful Paint** измеряет когда основной контент-элемент страницы становится виден. Для страницы товара LCP-элемент обычно — hero image или заголовок товара. Пороги Web Vitals:
+
+- Хорошо: LCP менее 2.5s
+- Отлично: LCP менее 1.5s
+
+Самое большое улучшение LCP, которое могут сделать большинство приложений: перенести data fetching LCP-элемента с клиента на сервер. Client-fetched заголовок добавляет загрузку JS + монтирование + fetch к LCP critical path — легко в 2–3 раза дольше, чем эквивалентная SSR страница.
+
+Дополнительные инструменты:
+- `fetchpriority="high"` на LCP изображении сигнализирует браузеру приоритизировать его обнаружение при парсинге
+- `<link rel="preload">` для LCP изображений, URL которых известен при сборке, раньше достигают браузера
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Путь оптимизации LCP</div>
+  <div class="flex flex-col gap-3">
+    <div class="rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 p-3">
+      <div class="font-bold text-red-700 dark:text-red-300 text-xs mb-1">ДО — client fetch</div>
+      <div class="text-xs">HTML 50ms → JS bundle 600ms → mount 100ms → /api/product 200ms → LCP ~950ms</div>
+    </div>
+    <div class="rounded border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/20 p-3">
+      <div class="font-bold text-green-700 dark:text-green-300 text-xs mb-1">ПОСЛЕ — RSC server fetch</div>
+      <div class="text-xs">HTML с данными 250ms → LCP ~300ms (улучшение в 3x)</div>
+    </div>
+  </div>
+</div>
+
+## Диагностика waterfall'а из DevTools
+
+Реальный паттерн регрессии в production: четыре последовательных API вызова, каждый начинается только после предыдущего ответа:
+
+```
+GET /products/42        50ms  → 250ms
+GET /app-bundle.js     260ms  → 850ms
+GET /api/product/42    860ms  → 1300ms    (useEffect, после bundle)
+GET /api/reviews       1310ms → 1700ms   (после product)
+GET /api/user          1710ms → 2000ms   (после reviews)
+LCP на 2050ms
+```
+
+Три антипаттерна в одном waterfall'е:
+1. Запросы 3–5 последовательны, хотя независимы — reviews и user не обязаны ждать ответ на product
+2. Все три запускаются useEffect'ом — ждут загрузки JS bundle, парсинга, монтирования
+3. bundle.js слишком большой (~590ms) — code-split критический LCP-путь до 50KB
+
+После фикса — RSC с параллельными серверными fetch'ами, небольшой интерактивный bundle:
+
+```
+GET /index.html (streaming)  50ms → 80ms  TTFB
+streaming чанки              80ms → 300ms  LCP ~320ms
+```
+
+## Race conditions в интерактивном fetching
+
+Race condition поиска по вводу: пользователь вводит "rea" → fetch A запускается. Вводит "react" → fetch B. Сервер медленнее для fetch A. Fetch B разрешается первым (результаты для "react"), UI обновляется. Потом приходит fetch A (результаты для "rea"), UI перезаписывается неверными результатами.
+
+**Фикс 1: AbortController** — отменить in-flight запрос при новом нажатии клавиши:
+
+```typescript
+let controller = new AbortController();
+
+function search(query: string) {
+  controller.abort();
+  controller = new AbortController();
+  return fetch(`/api/search?q=${query}`, { signal: controller.signal });
+}
+```
+
+TanStack Query автоматически передаёт `AbortSignal` через meta queryFn'а — запросы для старого ключа отменяются при изменении ключа.
+
+**Фикс 2: Debounce** — ждать пока пользователь перестанет печатать перед запуском:
+
+```typescript
+const debouncedQuery = useDebounce(inputValue, 300);
+const { data } = useQuery({
+  queryKey: ['search', debouncedQuery],
+  queryFn: () => searchProducts(debouncedQuery),
+  enabled: debouncedQuery.length > 1,
+});
+```
+
+Задержка 300ms означает один fetch на паузу в наборе.
+
+**Фикс 3: queryKey versioning (встроено в TanStack Query)** — каждый ответ помечен queryKey который его произвёл. Кэш хранит только данные последнего ключа. Устаревшие ответы для старых ключей отбрасываются автоматически.
+
+## Стратегии prefetch
+
+Умный fetching может начать работу до того, как пользователь кликнет:
+
+**Hover prefetch**: когда курсор входит в ссылку, начать fetch'ить цель. Пользователь обычно кликает через 100–300ms после hover — данные часто готовы до клика.
+
+```typescript
+<Link
+  href={`/product/${id}`}
+  onMouseEnter={() => queryClient.prefetchQuery({
+    queryKey: ['product', id],
+    queryFn: () => fetchProduct(id),
+  })}
+>
+  Смотреть товар
+</Link>
+```
+
+**Viewport prefetch**: когда ссылка прокручивается в область видимости, начать prefetch. Полезно для следующей страницы в infinite scroll списке.
+
+**Next.js Link по умолчанию**: `<Link href="...">` делает prefetch автоматически в production при нахождении в viewport. Отключить через `prefetch={false}` если важен трафик.
+
+**Компромисс**: prefetch использует bandwidth спекулятивно. На мобильном с лимитированным трафиком избыточный prefetch дорог. Ограничить следующими вероятными целями; избегать prefetch крупных медиа.
+
+## Пагинация: cursor vs offset
+
+**Offset пагинация**: `?page=2&limit=20`. Просто, но ломается при конкурентных вставках: если новый элемент вставлен между fetch'ами страницы 1 и 2, элементы смещаются и пользователь видит дубликат или пропуск.
+
+**Cursor пагинация**: `?cursor=abc123`. Стабильна при вставках потому что cursor маркирует позицию в наборе данных, а не счётчик. TanStack Query `useInfiniteQuery` нативно обрабатывает cursor-based с `getNextPageParam` извлекающим следующий cursor из каждого ответа.
+
+Использовать cursor пагинацию для любого списка под нагрузкой. Offset приемлем только для статических или редко изменяемых данных.
+
+<Misconception id="mc-lcp-just-images">
+  <p><strong>"Оптимизация LCP — только про изображения."</strong> LCP срабатывает на самом большом элементе — текст (заголовок, название товара) так же часто как изображение. Если это текст из API, перенос на сервер улучшает LCP. Проверяй что DevTools сообщает как LCP кандидат прежде чем считать проблему в изображениях.</p>
+</Misconception>
+
+<NumbersCard
+  id="lcp-numbers"
+  title="LCP пороги и числа fetch'а"
+  stats={[
+    { label: "LCP порог 'хорошо'", value: "менее 2.5 s" },
+    { label: "LCP порог 'отлично'", value: "менее 1.5 s" },
+    { label: "Задержка hover-to-click (типично)", value: "100–300 ms" },
+    { label: "Debounce для поисковых полей", value: "200–400 ms" },
+    { label: "Ускорение Promise.all при N=5", value: "~5x vs последовательный" },
+  ]}
+/>
+
+<Quiz
+  id="05-q1"
+  pieceSlug="05-lcp-and-critical-path"
+  lang="ru"
+  question="Страница имеет LCP 4.2s. DevTools показывает лесенку из 3 последовательных /api fetch'ей общим временем 1500ms. Какой лучший первый фикс?"
+  choices={[
+    { label: "Добавить fetchpriority='high' всем изображениям", misconception: "fetchpriority помогает с обнаружением изображений; последовательные API fetch'и требуют параллелизма или миграции на сервер." },
+    { label: "Перенести 3 fetch'а на сервер (RSC или SSR) и запустить их параллельно — убирает client-side waterfall и сокращает LCP critical path на ~1500ms", correct: true },
+    { label: "Добавить loading спиннер", misconception: "Спиннеры улучшают воспринимаемый UX, но не исправляют базовую задержку." },
+    { label: "Обновиться на HTTP/3", misconception: "Версия HTTP влияет на накладные расходы соединения, но не на последовательную логику в JavaScript коде." },
+  ]}
+/>
+
+<Quiz
+  id="05-q2"
+  pieceSlug="05-lcp-and-critical-path"
+  lang="ru"
+  question="Поисковое поле запускает fetch при каждом нажатии клавиши. Пользователь вводит 'react' и видит результаты 'reac'. Лучший фикс?"
+  choices={[
+    { label: "Увеличить staleTime", misconception: "staleTime контролирует свежесть кэша, не race conditions от быстрых изменений ключей." },
+    { label: "Добавить AbortController отменяющий предыдущий in-flight запрос при новом нажатии, или TanStack Query который отменяет автоматически при изменении queryKey", correct: true },
+    { label: "Перенести поиск на server-side", misconception: "Поиск по своей природе клиентски-интерактивен; фикс — логика отмены, а не локация fetch'а." },
+    { label: "Отключить конкурентные fetch'и в React", misconception: "Такого API нет; конкурентные fetch'и — фундаментальная возможность HTTP." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>LCP улучшается больше всего когда данные LCP-элемента перемещаются с клиента на сервер. Race conditions в интерактивном fetching требуют AbortController отмены или queryKey-based автоматической отмены. Prefetch при hover для почти мгновенной навигации; уважай мобильные данные с избирательным prefetch'ем.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Каковы LCP пороги 'хорошо' и 'отлично'?", a: "Хорошо: менее 2.5s. Отлично: менее 1.5s. Это пороги Web Vitals используемые в Lighthouse и Core Web Vitals отчётах." },
+    { q: "Что такое race condition в поисковом поле и как AbortController его исправляет?", a: "Когда быстрые нажатия клавиш запускают несколько fetch'ей, ответы приходящие не в порядке перезаписывают UI устаревшими результатами. AbortController.abort() отменяет предыдущий in-flight fetch перед запуском нового. TanStack Query передаёт AbortSignal через queryFn автоматически при изменении queryKey." },
+    { q: "Почему cursor пагинация предпочтительнее offset для изменяемых данных?", a: "Offset ломается при конкурентных вставках: новый элемент вставленный между fetch'ами страницы 1 и 2 смещает элементы, вызывая дубликаты или пропуски. Cursor пагинация использует стабильный маркер позиции; вставки не влияют на уже загруженные страницы." },
+  ]}
+/>
+
+<Recap lang="ru">
+LCP измеряет когда основной контент-элемент страницы становится виден; Web Vitals цели — менее 2.5s (хорошо) и 1.5s (отлично). Самое большое улучшение LCP — перенести данные LCP-элемента с клиента на сервер, убирая 2–3 последовательных trip'а из critical path. Диагностировать LCP регрессии: ищи лесенку в Network panel — последовательные запросы где начало каждого совпадает с концом предыдущего. Фикс: Promise.all или RSC для независимых серверных fetch'ей; AbortController или debounce для клиентских интерактивных потоков. Prefetch при hover для почти мгновенных навигаций, но ограничить спекулятивный prefetch на мобильном для экономии трафика.
+</Recap>

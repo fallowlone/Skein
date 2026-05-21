@@ -1,0 +1,181 @@
+---
+slug: 05-heap-and-toast
+lang: en
+track: databases
+unit: 01-relational-model
+order: 5
+title: "Heap storage, TOAST, and column alignment"
+summary: "How Postgres stores rows in 8KB pages, what TOAST does to wide values, why column declaration order affects storage size, and how to pick Postgres data types at the byte level."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-jsonb-and-arrays"]
+deepensInto: ["06-schema-integrity"]
+spiral: ["statefulness"]
+concepts: ["heap", "page", "tuple-header", "TOAST", "column-alignment", "TIMESTAMPTZ", "NUMERIC", "BIGSERIAL", "UUIDv7", "type-selection"]
+sources:
+  - https://www.postgresql.org/docs/current/storage-page-layout.html
+  - https://www.postgresql.org/docs/current/storage-toast.html
+  - https://www.postgresql.org/docs/current/datatype.html
+  - https://www.postgresql.org/docs/current/ddl-generated-columns.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A team trims a table from 40 columns to 35. Storage drops by 18%. They did not delete any data — they reordered the remaining columns to eliminate alignment padding. The database never changed its rules. The team finally read them.
+</Hook>
+
+<Crux>Rows pack into 8KB pages. Column order and type choices affect alignment padding, TOAST spill, and cache density for the table's lifetime.</Crux>
+
+<Explanation>
+
+## The heap: how Postgres stores rows
+
+Postgres stores table rows in fixed-size 8KB pages on disk. The layout matters for storage and query performance:
+
+- Each page has a header (24 bytes) and an item pointer array.
+- Each row (tuple) starts with a **23-byte tuple header** containing transaction visibility information (xmin, xmax, ctid — covered in the MVCC lesson).
+- If any column is nullable, a **null bitmap** follows (1 bit per column, rounded to a byte).
+- Then the **column data** in declaration order, each padded to its alignment boundary.
+
+The total row size affects how many rows fit on one page, which affects how many pages must be read for a sequential scan — one of the most direct connections between schema design and query cost.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Postgres type</th>
+        <th class="border border-border px-3 py-2 text-left">Storage size</th>
+        <th class="border border-border px-3 py-2 text-left">Alignment</th>
+        <th class="border border-border px-3 py-2 text-left">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td class="border border-border px-3 py-2">SMALLINT</td><td class="border border-border px-3 py-2">2 bytes</td><td class="border border-border px-3 py-2">2 bytes</td><td class="border border-border px-3 py-2">Range: ±32767</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">INTEGER</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">Range: ±2.1B</td></tr>
+      <tr><td class="border border-border px-3 py-2">BIGINT / BIGSERIAL</td><td class="border border-border px-3 py-2">8 bytes</td><td class="border border-border px-3 py-2">8 bytes</td><td class="border border-border px-3 py-2">Range: ±9.2×10¹⁸</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">UUID</td><td class="border border-border px-3 py-2">16 bytes</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">Native type, not TEXT</td></tr>
+      <tr><td class="border border-border px-3 py-2">BOOLEAN</td><td class="border border-border px-3 py-2">1 byte</td><td class="border border-border px-3 py-2">1 byte</td><td class="border border-border px-3 py-2">True/false/null</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">TIMESTAMPTZ</td><td class="border border-border px-3 py-2">8 bytes</td><td class="border border-border px-3 py-2">8 bytes</td><td class="border border-border px-3 py-2">Microsecond precision, stored UTC</td></tr>
+      <tr><td class="border border-border px-3 py-2">NUMERIC(p,s)</td><td class="border border-border px-3 py-2">Variable (2-1000 bytes)</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">Exact; use for money</td></tr>
+      <tr class="bg-surface-2"><td class="border border-border px-3 py-2">TEXT / VARCHAR</td><td class="border border-border px-3 py-2">Variable (1 byte + content)</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">No storage difference; TEXT preferred</td></tr>
+      <tr><td class="border border-border px-3 py-2">JSONB</td><td class="border border-border px-3 py-2">Variable (binary)</td><td class="border border-border px-3 py-2">4 bytes</td><td class="border border-border px-3 py-2">TOAST-able above ~2KB</td></tr>
+    </tbody>
+  </table>
+</div>
+
+## Column alignment padding
+
+Alignment padding is inserted between columns to ensure each value starts at its alignment boundary. A column layout that alternates between wide and narrow types wastes bytes:
+
+```
+-- Bad order: [SMALLINT(2), BIGINT(8), SMALLINT(2)]
+-- Layout: 2 bytes + 6 bytes padding + 8 bytes + 2 bytes + 6 bytes padding = 24 bytes
+
+-- Good order: [BIGINT(8), SMALLINT(2), SMALLINT(2)]
+-- Layout: 8 bytes + 2 bytes + 2 bytes + 4 bytes padding = 16 bytes (struct alignment at end)
+```
+
+On a wide table (40 columns of mixed types), poor column ordering can waste 10-20% of storage. ORM-generated schemas rarely optimise for this; it is a real production lever on tables above ~100M rows.
+
+**Rule of thumb:** declare columns from widest alignment to narrowest (8-byte types first, then 4-byte, then 2-byte, then 1-byte). Variable-length types (TEXT, JSONB) go last — they have internal length headers and their alignment cost is fixed regardless of position relative to fixed-width columns.
+
+## TOAST: handling wide values
+
+Postgres pages are 8KB. Rows that exceed approximately 2KB trigger TOAST (The Oversized-Attribute Storage Technique). What happens:
+
+1. The wide value is compressed (using LZ4 or pglz by default).
+2. If still over the threshold, it is sliced into ~2KB chunks and stored in a separate TOAST table alongside the main table.
+3. The main row holds a pointer (18 bytes) referencing the TOAST chunks.
+
+TOAST is transparent — a SELECT returns the full value as if it were inline — but has performance implications:
+
+- **Reading a TOASTed column requires an extra disk fetch** from the TOAST table (not in the main page).
+- **Updating a TOASTed value rewrites the side-table chunks** plus the pointer in the main row.
+- **Listing rows without reading TOASTed columns is cheap** — the pointer is inline, the chunks are not fetched unless you SELECT that column.
+
+Implication for schema design: if a wide TEXT/JSONB/BYTEA column is rarely read (it is attached metadata that you only display on a detail page), excluding it from queries that list rows is important. `SELECT * FROM events LIMIT 1000` fetches the TOASTed payload for every event — a `SELECT id, event_type, created_at FROM events LIMIT 1000` does not.
+
+<Inset kind="why" lang="en">
+TOAST was introduced to preserve the 8KB-page model without hard-limiting row size. It is largely invisible to application code, but visible in EXPLAIN output (the TOAST table appears as a separate relation in the plan if the query reads TOASTed columns). The design trade: page uniformity (all pages are 8KB, predictable I/O) at the cost of occasional extra fetches for wide columns. The alternative would be variable-page-size storage, which Postgres's buffer manager was not designed for.
+</Inset>
+
+## Type selection: the production defaults
+
+**Integer types.** Pick the narrowest range that exceeds your domain by 100x. A `user_id` that will never exceed 10 million can be `INTEGER` (4 bytes, saves 4 bytes per index entry). A payment ID that could reach billions should be `BIGINT`. Never `SMALLINT` for anything that could grow.
+
+**String types.** `TEXT` is the production default. `VARCHAR(n)` adds a length-check constraint but uses the same storage. `CHAR(n)` pads to length (trailing spaces cause subtle bugs) — almost always wrong.
+
+**Money.** `NUMERIC(p,s)` (exact arithmetic) or `BIGINT` storing cents. Never `REAL` or `DOUBLE PRECISION` — IEEE 754 floats accumulate rounding errors on financial arithmetic. A `REAL` money column drifts cents after months of transactions.
+
+**Timestamps.** `TIMESTAMPTZ` (with time zone) is the production default — stores UTC, displays in the session timezone. `TIMESTAMP` (without time zone) is a footgun when the application spans multiple timezones. `DATE` for date-only data.
+
+**UUID vs BIGSERIAL.** BIGSERIAL is 8 bytes, sequential (B-tree-friendly, good index locality), simple. UUID is 16 bytes, globally unique (good for distributed inserts, offline-first clients, merging datasets from multiple sources). UUIDv4 is random — B-tree indexes fragment badly on large tables. **UUIDv7** (time-ordered, RFC 9562) fixes the locality issue with a timestamp prefix; it is the modern default when UUID is needed. Pick BIGSERIAL for single-region services; UUIDv7 for multi-region or offline-first.
+
+<Quiz
+  id="05-heap-and-toast-quiz-1"
+  lessonSlug="05-heap-and-toast"
+  lang="en"
+  question="A team runs `SELECT * FROM events ORDER BY created_at DESC LIMIT 100` on a 50M-row table and notices the query is 3x slower than expected even with an index on created_at. The events table has a large JSONB payload column averaging 8KB. The most likely cause?"
+  choices={[
+    { label: "The ORDER BY defeats the index", misconception: "An index on created_at supports ORDER BY created_at DESC; the query can use an index scan in reverse." },
+    { label: "Each matching row requires a TOAST table fetch to read the payload column, which is 8KB on average and stored in the TOAST side table — SELECT * forces fetching all TOASTed columns", correct: true },
+    { label: "JSONB columns cannot be read in ORDER BY queries", misconception: "JSONB can be read in any query. The issue is the per-row TOAST fetch cost." },
+    { label: "A 50M-row table always requires a sequential scan regardless of index", misconception: "With a selective index (created_at DESC LIMIT 100 fetches 100 rows), an index scan is cheap. The bottleneck here is TOAST, not scan type." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="05-heap-and-toast-tradeoff-1"
+  lessonSlug="05-heap-and-toast"
+  lang="en"
+  prompt="A new service needs a globally-unique row identifier for an orders table. The service is currently single-region but may expand to multi-region in 18 months."
+  options={[
+    { name: "BIGSERIAL — 8-byte sequential integer, auto-incremented by Postgres", summary: "Simplest, best index locality, wrong if multi-region insert is needed.", justification: "BIGSERIAL is the simplest and most storage-efficient option. Sequential values give B-tree indexes excellent locality (minimal fragmentation). The only limitation: sequential generation requires a single coordinating Postgres sequence, which breaks under multi-region distributed writes. If multi-region inserts are certain, migrate proactively; if uncertain, start with BIGSERIAL and migrate if needed — the migration is straightforward (add a UUID column, backfill, promote)." },
+    { name: "UUIDv4 — random 128-bit identifier", summary: "Globally unique but terrible index locality.", justification: "Random UUIDs cause B-tree index fragmentation because each new insert hits a random page. On a large table (>10M rows), this fragmentation causes frequent page splits and bloat. The index can reach 3-5x the size of a sequential-key index for the same number of rows. Only choose UUIDv4 if global uniqueness is required today and UUIDv7 is not available in your stack." },
+    { name: "UUIDv7 — time-ordered UUID per RFC 9562", summary: "Best of both: globally unique and sequential.", correct: true, justification: "UUIDv7 has a 48-bit millisecond timestamp prefix, making it monotonically increasing within the same millisecond. B-tree index locality is nearly as good as BIGSERIAL. 16 bytes vs 8 (doubles index entry size), but buys global uniqueness and no central sequence. The modern default when UUID is needed." },
+    { name: "ULID — 26-character base32 lexicographic ID", summary: "Similar to UUIDv7 conceptually, less Postgres-native.", justification: "ULIDs are time-sorted and globally unique, but Postgres has no native ULID type — they are stored as TEXT (26 bytes vs 16 for UUID). More verbose, no native operators, not the standard choice in a Postgres shop. Prefer UUIDv7." },
+  ]}
+/>
+
+<Quiz
+  id="05-heap-and-toast-quiz-2"
+  lessonSlug="05-heap-and-toast"
+  lang="en"
+  question="A wide events table declared columns in this order: (id BIGSERIAL, created_at TIMESTAMPTZ, type SMALLINT, flags BOOLEAN, user_id BIGINT, details TEXT). Which reordering reduces alignment padding?"
+  choices={[
+    { label: "id BIGSERIAL, user_id BIGINT, created_at TIMESTAMPTZ, type SMALLINT, flags BOOLEAN, details TEXT — 8-byte types first, then smaller, TEXT last", correct: true },
+    { label: "details TEXT first — variable-length columns at the front save padding", misconception: "Variable-length columns have a length header regardless of position. Moving them first does not reduce padding on the fixed-width columns." },
+    { label: "flags BOOLEAN first — smallest type first reduces total row size", misconception: "Putting 1-byte BOOLEAN first before 8-byte columns adds 7 bytes of padding before each 8-byte column. Widest-first minimises padding." },
+    { label: "Column order does not affect storage in Postgres", misconception: "Column order directly affects alignment padding. [INT4, INT8, INT4] wastes 4+4=8 bytes of padding; [INT8, INT4, INT4] wastes 0 bytes." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Postgres rows live in 8KB pages: 23-byte header + null bitmap + column data with alignment padding. Values wider than ~2KB TOAST to a side table — SELECT * fetches them all; targeted SELECTs avoid the overhead. Declare fixed-width columns widest-first to minimise padding. Use TIMESTAMPTZ not TIMESTAMP, NUMERIC not REAL for money, BIGSERIAL for single-region PKs, UUIDv7 for distributed uniqueness.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-heap-and-toast-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the TOAST mechanism: when it triggers, what it does to the data, and the two performance implications for schema design.", a: "TOAST triggers when a value exceeds approximately 2KB within an 8KB page. Postgres first compresses the value (LZ4 or pglz); if still oversized, it slices the value into ~2KB chunks stored in a separate TOAST side table alongside the main table. The main row holds an 18-byte pointer. Performance implications: (1) Reading a TOASTed column requires an additional I/O to the TOAST table — SELECT * on a table with large JSONB or TEXT columns fetches all TOASTed values; avoid SELECT * in hot query paths, select only needed columns. (2) Updating a TOASTed value rewrites the side-table chunks — updates to large JSONB payloads are more expensive than updates to typed columns. Schema design lesson: keep rarely-read wide data (attachments metadata, raw payloads) in columns that are explicitly excluded from hot queries." },
+    { q: "Why is UUIDv4 a poor choice for a primary key on a large table, and how does UUIDv7 fix the problem?", a: "UUIDv4 is randomly generated. B-tree indexes maintain sorted order; inserting random values means each new row hits a random page in the B-tree, causing frequent page splits and index bloat. On tables above ~10M rows, the index can be 3-5x larger than it would be with sequential keys, and insert throughput degrades as the page split rate increases. UUIDv7 prefixes the UUID with a 48-bit millisecond timestamp, making values monotonically increasing within the same millisecond. This gives B-tree inserts the same locality as BIGSERIAL — new rows append to the rightmost pages — while retaining global uniqueness and no central sequence requirement." },
+    { q: "State three type choices that are production defaults in Postgres and explain what the wrong alternative costs.", a: "TIMESTAMPTZ over TIMESTAMP: TIMESTAMP stores no timezone information; in a multi-timezone application, the same stored value represents different instants depending on the session timezone. Cost of the wrong choice: silent time-zone bugs that manifest only when an engineer in a different timezone runs the query. NUMERIC over REAL for money: REAL uses IEEE 754 floating-point, which cannot represent all decimal fractions exactly. Accumulated over thousands of financial transactions, the rounding error compounds into cents-level discrepancies. Cost: incorrect financial reports, regulatory risk. TEXT over CHAR(n): CHAR(n) pads values with trailing spaces to the declared length. Trailing spaces cause subtle comparison bugs (WHERE name = 'anna' vs WHERE name = 'anna  '). TEXT and VARCHAR(n) use identical storage; VARCHAR(n) only adds a write-time length check." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres rows are stored in 8KB pages: a 23-byte tuple header, an optional null bitmap, then column data padded to alignment boundaries. Column declaration order affects padding — declare fixed-width columns widest-first (8-byte, then 4-byte, then 2-byte, then 1-byte, then variable-length) to minimise wasted bytes. Values wider than ~2KB TOAST to a side table; SELECT * always fetches them. For type selection: TIMESTAMPTZ (never TIMESTAMP), NUMERIC or BIGINT-cents (never REAL/FLOAT for money), TEXT (never CHAR(n)), BIGSERIAL for single-region PKs, UUIDv7 for globally-unique distributed keys. These are schema decisions that are hard to change on large tables — make them right at design time.
+</Recap>

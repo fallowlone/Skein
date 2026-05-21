@@ -1,0 +1,182 @@
+---
+slug: 05-concurrency-and-cache
+lang: ru
+track: backend
+unit: 05-idempotency-retries
+order: 5
+title: "Конкурентность и архитектура кеша для идемпотентности на масштабе"
+summary: "Наивный SELECT-then-INSERT не атомарен. Postgres ON CONFLICT или advisory lock предотвращают гонки. На высоком throughput Redis Cluster с fallback на Postgres — production-паттерн."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/05-idempotency-retries/02-server-state-machine
+deepensInto:
+  - backend/05-idempotency-retries/06-idempotency-senior
+spiral: ["statefulness"]
+concepts: ["on-conflict-do-nothing", "advisory-lock", "redis-setnx", "redis-cluster", "two-tier-cache", "durability-tradeoff"]
+sources:
+  - https://brandur.org/idempotency-keys
+  - https://stripe.com/blog/idempotency
+  - https://httptoolkit.com/blog/idempotency-keys/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Два запроса с одним idempotency key прилетают на сервер одновременно — реальный сценарий, когда мобильный клиент стреляет двумя retry до первого подтверждения. Наивный SELECT-then-INSERT пропускает оба. Оба списывают с клиента.
+</Hook>
+
+<Crux>SELECT-then-INSERT не атомарен. Используй ON CONFLICT DO NOTHING. Выше ~10к записей/сек: Redis Cluster hot-path + Postgres fallback.</Crux>
+
+<Explanation>
+
+## Гонка в наивной реализации
+
+Частая первая реализация:
+
+```sql
+-- Не атомарно!
+SELECT * FROM idempotency_keys WHERE key = $1;
+-- Здесь время течёт. Второй запрос проскакивает.
+INSERT INTO idempotency_keys (key, fingerprint, status, expires_at)
+  VALUES ($1, $2, 'in_progress', NOW() + interval '24 hours');
+```
+
+Между SELECT и INSERT второй конкурентный запрос может выполнить тот же SELECT (не увидев строки), потом тоже INSERT. Оба успешны. Оба начинают обработку. Оба списывают с клиента.
+
+## Фикс 1: Postgres INSERT ... ON CONFLICT DO NOTHING RETURNING
+
+```sql
+INSERT INTO idempotency_keys (key, fingerprint, status, expires_at)
+  VALUES ($1, $2, 'in_progress', NOW() + interval '24 hours')
+  ON CONFLICT (key) DO NOTHING
+  RETURNING *;
+```
+
+Если RETURNING пустой, этот запрос проиграл гонку. Он перечитывает строку:
+- Если `status=in_progress` → вернуть 409 Conflict.
+- Если `status=completed` → вернуть кешированный ответ.
+
+INSERT атомарен на уровне базы. Гонки нет.
+
+## Фикс 2: Postgres advisory lock
+
+```sql
+SELECT pg_advisory_xact_lock(hashtext($1));
+-- Теперь безопасно делать SELECT-then-INSERT
+```
+
+`pg_advisory_xact_lock` держит session-level эксклюзивную блокировку на время транзакции. Только одно соединение может держать блокировку для данного хеша в один момент.
+
+**Компромисс:** `hashtext` 64-битный — коллизии возможны на масштабе (~10⁻¹⁰ при 10M ключей/день). Приемлемо для большинства нагрузок; security-критичные пути используют полный unique-индекс. Блокировка должна держаться на весь запрос включая внешние API-вызовы (десятки-сотни миллисекунд) — следи за `pg_locks` при инцидентах.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Подход | Атомарен? | Риск коллизии | Примечания |
+|---|---|---|---|
+| SELECT then INSERT | Нет | N/A | Небезопасно — окно гонки |
+| INSERT ON CONFLICT DO NOTHING RETURNING | Да | Нет | Рекомендован для большинства |
+| pg_advisory_xact_lock | Да | 10⁻¹⁰ (hash коллизия) | Осторожно: pool при медленных внешних вызовах |
+
+</div>
+
+## Масштабирование кеша: Redis Cluster
+
+Один Postgres primary упирается примерно в 5–10к записей/сек на commodity-железе. На 50к req/сек idempotency-запись становится узким местом.
+
+**Redis Cluster с SETNX:**
+
+```
+SETNX idempotency:{key} {fingerprint}:{status} EX {ttl_seconds}
+```
+
+`SETNX` атомарен: set-if-not-exists. Redis Cluster шардирует по hash ключа, распределяя нагрузку по нодам. Каждая нода тянет ~50–100к SETNX/сек.
+
+**Риск durability:** Redis по умолчанию делает async `fsync`. Crash в течение миллисекунд после записи может потерять запись. Для платёжного API это означает: ключ пропал, следующий retry обрабатывается как новый — потенциальное двойное списание.
+
+## Двухуровневый кеш: production-паттерн
+
+Платёжные API с юридической ответственностью за двойные списания используют гибрид:
+
+1. **Hot path: Redis** — `SETNX` по ключу. Если успех (новый ключ) — обрабатывать и писать в Postgres асинхронно через outbox. Если конфликт (существующий ключ) — читать Redis для кешированного ответа.
+2. **Cold path: Postgres** — авторитетная запись. Если Redis miss (редко, при crash) — провалиться в Postgres для восстановления авторитетного ответа.
+
+```
+Запрос → Redis SETNX
+          ├─ Новый: обработать + записать в Postgres async + кешировать в Redis
+          ├─ Конфликт: вернуть кешированный ответ из Redis
+          └─ Redis miss: читать из Postgres → заполнить Redis → вернуть
+```
+
+**Stripe и Square** используют этот гибрид в production. Чистый Redis приемлем для нефинансовых нагрузок (регистрации, аналитические события), где редкий дубликат — шум в логах, а не compliance-событие.
+
+<Inset kind="why" lang="ru">
+Почему не DynamoDB для idempotency cache? DynamoDB ConditionExpression обрабатывает атомарный insert-or-noop нативно и масштабируется горизонтально без шардирования. На 50к/сек стоимость ~$3к/месяц, p99 latency ~5–10 мс. Хорошо, если уже на AWS и нужен zero ops; дорого и добавляет latency иначе. Гибрид Redis + Postgres дешевле и быстрее на сравнимом масштабе.
+</Inset>
+
+<Quiz
+  id="concurrency-q1"
+  lessonSlug="05-concurrency-and-cache"
+  lang="ru"
+  question="Два запроса с одним idempotency key прилетают одновременно. Наивный SELECT-then-INSERT запущен. Какой worst-case исход?"
+  choices={[
+    { label: "Оба запроса возвращают 409 Conflict", misconception: "409 — правильный ответ при обнаружении гонки. Наивная реализация может не обнаружить гонку вообще." },
+    { label: "Оба запроса обрабатывают операцию независимо — потенциальное двойное списание", correct: true },
+    { label: "База бросает unique constraint violation, приложение обрабатывает как 409", misconception: "В наивной реализации нет unique constraint или атомарной проверки — оба INSERT могут успешно завершиться, если SELECT-INSERT промежуток достаточно велик." },
+    { label: "Второй запрос автоматически ждёт завершения первого", misconception: "Автоматической сериализации нет. Окно гонки реально." },
+  ]}
+/>
+
+<Quiz
+  id="concurrency-q2"
+  lessonSlug="05-concurrency-and-cache"
+  lang="ru"
+  question="На 50к запросов/сек почему Redis Cluster превосходит один Postgres primary для lookup idempotency key?"
+  choices={[
+    { label: "Redis имеет более слабые гарантии консистентности, что делает его быстрее", misconception: "Компромисс durability реален, но основная причина — архитектура: шардирование vs single-node." },
+    { label: "Redis Cluster шардирует ключи по нодам, каждая тянет ~50-100к SETNX/сек, а один Postgres primary насыщается на ~5-10к записей/сек", correct: true },
+    { label: "Postgres не может эффективно хранить idempotency keys", misconception: "Postgres отличный хранилище для idempotency keys при умеренном throughput. Проблема — write throughput single-primary на очень высоком масштабе." },
+    { label: "Redis не требует fingerprint-проверки", misconception: "Fingerprint-проверка — логика приложения, она работает одинаково независимо от storage backend." },
+  ]}
+/>
+
+<Quiz
+  id="concurrency-q3"
+  lessonSlug="05-concurrency-and-cache"
+  lang="ru"
+  question="Redis Cluster нода падает в миллисекундах после SETNX-записи. Ключ потерян. Каковы последствия для платёжного API, использующего Redis как единственное хранилище?"
+  choices={[
+    { label: "Клиент никогда не списывается — транзакция откатывается", misconception: "Если платёж уже был обработан до crash, списание существует в платёжном процессоре. Потеря Redis-ключа означает, что retry обработается как новый." },
+    { label: "Следующий retry с тем же ключом обрабатывается как новый — потенциальное двойное списание", correct: true },
+    { label: "409 Conflict возвращается из памяти", misconception: "Если ключ потерян при crash, у сервера нет записи о нём. Нечем ответить 409." },
+    { label: "Redis репликация гарантирует, что ключ никогда не теряется", misconception: "Redis репликация async по умолчанию. Crash до получения реплики теряет ключ." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Используй INSERT ON CONFLICT DO NOTHING RETURNING для атомарного создания ключей в Postgres. Выше &gt;10к записей/сек добавь Redis Cluster как hot-path cache backed by Postgres. Никогда не используй только Redis для финансовых idempotency keys.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="concurrency-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему SELECT-then-INSERT небезопасен для создания idempotency key, и каков правильный фикс на Postgres?", a: "SELECT-then-INSERT имеет временное окно между двумя операторами, в котором второй конкурентный запрос может выполнить тот же SELECT (не увидев строки) и тоже INSERT. Оба INSERT успешны, оба обрабатывают операцию независимо — двойное списание. Фикс: INSERT ON CONFLICT (key) DO NOTHING RETURNING *. Это один атомарный оператор: если INSERT успешен (RETURNING не пустой) — этот запрос выиграл гонку. Если RETURNING пустой — проиграл, перечитывает существующую строку для 409 (in-flight) или replay (completed)." },
+    { q: "Опиши архитектуру двухуровневого idempotency cache в production платёжных API.", a: "Hot path: Redis Cluster, SETNX key fingerprint:status EX ttl. Атомарен, быстр, масштабируется горизонтально. Cold path: Postgres-таблица как авторитетная durable запись. На запрос: SETNX на Redis — если новый, обрабатывать и писать Postgres async через outbox; если конфликт, читать Redis для кешированного ответа; если Redis miss (crash), провалиться в Postgres, восстановить ответ, заполнить Redis. Это даёт throughput Redis с durability Postgres. Только Redis неприемлем для платежей: async fsync может потерять ключи при crash, превращая следующий retry в двойное списание." },
+    { q: "Каков компромисс pg_advisory_xact_lock vs ON CONFLICT для сериализации idempotency keys?", a: "Advisory lock обеспечивает более чистый путь сериализации — один lock-and-go code path вместо insert-then-re-read. Минус: hashtext() 64-битный, коллизии существуют с вероятностью ~10⁻¹⁰ при 10M ключей/день (обычно приемлемо). Важнее: блокировка держится всю транзакцию включая внешние API-вызовы (десятки-сотни миллисекунд). При высоком конкурентном доступе с медленными внешними вызовами advisory lock может исчерпать connection pool. ON CONFLICT безопаснее для высоконагруженных путей; advisory lock чище для низконагруженных критичных путей." },
+  ]}
+/>
+
+<Recap lang="ru">
+Конкурентное создание idempotency key требует атомарной операции. Postgres `INSERT ... ON CONFLICT (key) DO NOTHING RETURNING *` — стандартный фикс: один оператор без окна гонки. Запрос с пустым RETURNING проиграл гонку и перечитывает строку для 409 или replay. На throughput выше ~10к записей/сек Redis Cluster hot-path с `SETNX` справляется с нагрузкой; Postgres cold-path fallback обеспечивает durability для финансовых нагрузок. In-memory-only дедупликация никогда не допустима за load balancer.
+</Recap>

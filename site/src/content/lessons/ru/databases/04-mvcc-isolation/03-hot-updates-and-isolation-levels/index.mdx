@@ -1,0 +1,211 @@
+---
+slug: 03-hot-updates-and-isolation-levels
+lang: ru
+track: databases
+unit: 04-mvcc-isolation
+order: 3
+title: "HOT-обновления и уровни изоляции"
+summary: "HOT экономит 30–70% WAL когда UPDATE не трогает индексированные колонки и новый tuple влезает на ту же страницу; fillfactor резервирует место для цепочки. Четыре уровня изоляции от RC до Serializable — выбор и цена каждого."
+estMin: 18
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/04-mvcc-isolation/02-row-versions-and-snapshots"]
+deepensInto: ["databases/04-mvcc-isolation/06-ssi-and-production-tuning"]
+spiral: ["statefulness"]
+concepts: ["hot-update", "fillfactor", "read-committed", "repeatable-read", "serializable", "write-skew", "ssi"]
+sources:
+  - https://www.postgresql.org/docs/current/storage-hot.html
+  - https://www.postgresql.org/docs/current/transaction-iso.html
+  - https://www.postgresql.org/docs/current/mvcc-serialization-failure-handling.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+
+<Hook>
+UPDATE обновляет неиндексированную колонку. Postgres пишет ноль новых индексных записей. WAL сокращается на 30–70%. Это называется HOT — и ты никогда этого не видишь, пока не узнаешь, куда смотреть.
+</Hook>
+
+<Crux>HOT: UPDATE не трогает индекс-колонки, версия на той же странице — индекс молчит. Уровень изоляции выбирает, какие аномалии ловит БД.</Crux>
+
+<Explanation>
+
+## HOT-обновления
+
+Если UPDATE не трогает ни одну индексированную колонку и новый tuple влезает на ту же страницу, что и старый, Postgres выполняет **heap-only tuple (HOT)** обновление:
+
+- Старый tuple получает флаг `HEAP_HOT_UPDATED` («иди по цепочке t_ctid»)
+- Новый tuple получает флаг `HEAP_ONLY_TUPLE` («на меня не указывает ни один индекс»)
+- Индекс продолжает указывать на исходный tuple, цепочка в heap доводит lookup до конца
+
+Результат: ноль новых индексных записей. На UPDATE-нагруженных воркфлоу, где большинство колонок неиндексированы — это разница между удвоением WAL и его едва заметным ростом.
+
+**Условия HOT:**
+
+| Условие | Если не выполнено |
+|---------|-------------------|
+| UPDATE не трогает индексированную колонку | Нужна новая индексная запись — HOT невозможен |
+| Новый tuple влезает на ту же heap-страницу | Цепочка ломается; следующий UPDATE снова платит цену индекса |
+
+**Fillfactor** (`ALTER TABLE foo SET (fillfactor = 85)`) резервирует процент каждой heap-страницы под HOT-обновления. По умолчанию 100 — для UPDATE-нагруженных таблиц типично 70–90.
+
+Мониторинг: `pg_stat_all_tables.n_tup_hot_upd / n_tup_upd` — HOT-доля. Выше 80% хорошо; ниже 50% — или слишком агрессивный fillfactor, или неправильный набор индексов.
+
+## Четыре уровня изоляции
+
+| Уровень | Snapshot | Dirty read | Non-rep. read | Phantom | Write skew |
+|---------|---------|------------|---------------|---------|------------|
+| Read Uncommitted | Per-statement | — (Postgres блокирует) | Да | Да | Да |
+| Read Committed | Per-statement | Нет | Да | Да | Да |
+| Repeatable Read | Per-transaction | Нет | Нет | Нет | **Да** |
+| Serializable | Per-transaction + SSI | Нет | Нет | Нет | Нет |
+
+**Read Committed** (по умолчанию) — каждый statement получает свежий snapshot. Два SELECT в одной транзакции могут увидеть разные данные.
+
+**Repeatable Read** — единственный snapshot взят на первом statement. Postgres реализует RR как snapshot isolation — строже стандартного RR (phantom read запрещён), но write skew разрешён.
+
+**Serializable** (с 9.1) — добавляет SSI поверх RR. Postgres отслеживает зависимости read–write и откатывает транзакции с SQLSTATE 40001, чей порядок коммита не соответствует ни одному серийному расписанию.
+
+## Write skew: аномалия, которую ловит только Serializable
+
+<TraceScenario
+  id="trace-1"
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  lang="ru"
+  scenario="Проследи аномалию write skew под Repeatable Read, которую Serializable предотвратил бы."
+  steps={[
+    { prompt: "Сетап: таблица doctors с булевым on_call. Двое: alice и bob, оба on_call=true. Инвариант: хотя бы один врач должен быть on_call всегда.", reveal: "Два инстанса приложения каждый разрешает врачу уйти со смены только если хотя бы один другой остаётся on_call." },
+    { prompt: "T1 (alice снимает смену): SELECT COUNT(*) FROM doctors WHERE on_call = true. Возвращает 2.", reveal: "Под Repeatable Read snapshot взят на BEGIN, T1 видит: двое on_call." },
+    { prompt: "T2 (bob снимает смену, параллельно с T1): тот же SELECT. Тоже возвращает 2.", reveal: "Snapshot T2 тоже видит двоих on_call. Обе транзакции считают, что им безопасно." },
+    { prompt: "T1: UPDATE doctors SET on_call = false WHERE name = 'alice'. Коммитит.", reveal: "T1 коммитит успешно. T1 тронула alice, T2 тронет bob — это разные строки, конфликта нет." },
+    { prompt: "T2: UPDATE doctors SET on_call = false WHERE name = 'bob'. Коммитит.", reveal: "Под Repeatable Read T2 тоже коммитит. Теперь оба врача off_call. Инвариант сломан. Это write skew: каждая транзакция прочитала набор, решила на его основе и изменила другую строку этого набора." },
+    { prompt: "Что произошло бы под Serializable?", reveal: "SSI отслеживает зависимости read–write. T1 прочитала набор on_call и записала alice; T2 прочитала тот же набор и записала bob. SSI обнаруживает цикл и откатывает одну с SQLSTATE 40001. Повтор уже видит только одного on_call — инвариант сохранён." },
+  ]}
+/>
+
+## Что должно делать приложение
+
+Под Read Committed приложение само отвечает за предотвращение lost update:
+- `SELECT ... FOR UPDATE` (пессимистичная блокировка строки)
+- `UPDATE ... WHERE version = ?` с оптимистичной конкуренцией
+- `INSERT ... ON CONFLICT ... DO UPDATE` для upsert
+
+Под Repeatable Read и Serializable база поднимает SQLSTATE `40001` при конфликте. Единственный корректный ответ — повторить всю транзакцию.
+
+## Когда выбирать какой уровень
+
+**Read Committed** — дефолт по причине: на 90% бизнес-логики даёт ожидаемую семантику и максимальный throughput, потому что snapshot перевычисляется на каждом statement.
+
+**Repeatable Read** — когда логика опирается на стабильность набора строк между несколькими SELECT (например, отчёт суммирует поля, которые потом сверяет с агрегированной версией).
+
+**Serializable** — когда у бизнес-логики есть инвариант, который сохраняется только при отсутствии write skew: на стороне финтеха «хотя бы один счёт остаётся включённым», в медицине «хотя бы один врач остаётся on-call», в инвентаре «никакая позиция не получает больше резервов, чем имеет на складе». Serializable не магия — он добавляет до 5x cost и предполагает готовность к ретраям.
+
+## Прикладные паттерны под Read Committed
+
+**`SELECT ... FOR UPDATE`** на горячих строках — самый предсказуемый способ избежать lost update: блокировка эксклюзивная, держится до конца транзакции. Порядок взятия должен быть детерминистическим (например, по ascending id) во избежание deadlock.
+
+**Оптимистичная конкуренция через колонку `version`** (или `updated_at`): SELECT читает версию, UPDATE проверяет её в WHERE и атомарно увеличивает; если строка не вернулась — повтор. Hibernate `@Version`, Sequelize `versionAttribute`, ActiveRecord `optimistic_locking`.
+
+**`INSERT ... ON CONFLICT ... DO UPDATE`** (upsert) — атомарно решает гонку вставка-vs-обновление без явных блокировок, но требует уникального constraint.
+
+## Числа
+
+<NumbersCard
+  id="card-hot-isolation"
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  title="HOT и изоляция: ключевые числа"
+  stats={[
+    { label: "Экономия WAL на HOT", value: "30–70% на UPDATE-нагрузке" },
+    { label: "Уровень изоляции по умолчанию", value: "READ COMMITTED" },
+    { label: "Код serialization failure", value: "SQLSTATE 40001" },
+    { label: "HOT-доля здорово", value: "&gt;80% n_tup_hot_upd / n_tup_upd" },
+    { label: "Типичный fillfactor", value: "70–90 для UPDATE-нагруженных таблиц" },
+    { label: "Serializable overhead", value: "до 5x cost при высокой конкуренции" },
+  ]}
+/>
+
+</Explanation>
+
+## Проверь себя
+
+<Quiz
+  id="quiz-1"
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  lang="ru"
+  question="HOT-обновление (heap-only tuple) может произойти, когда..."
+  choices={[
+    { label: "Меняется любая колонка, если у таблицы нет индексов", misconception: "HOT работает и на индексированных таблицах — требование в том, чтобы не менялась индексированная колонка." },
+    { label: "Не меняется ни одна индексированная колонка И новый tuple влезает на ту же heap-страницу", correct: true },
+    { label: "Обновление внутри SELECT FOR UPDATE", misconception: "FOR UPDATE — про блокировки, не про HOT." },
+    { label: "Autovacuum только что прошёл по таблице", misconception: "Autovacuum не имеет отношения к HOT — HOT решается в момент UPDATE по свободному месту страницы и составу изменений." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-2"
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  lang="ru"
+  question="Write skew — это аномалия, разрешённая под Repeatable Read. Почему?"
+  choices={[
+    { label: "Потому что RR не отслеживает чтения, только записи", correct: true, justification: "RR фиксирует snapshot, но не видит зависимости read–write. Каждая транзакция читает набор, принимает решение по нему и изменяет другую строку — обе строки разные, конфликта по версии нет, обе коммитят." },
+    { label: "Потому что RR не запрещает phantom read", misconception: "Postgres RR запрещает phantom read — именно потому что реализован как snapshot isolation." },
+    { label: "Потому что write skew это не аномалия по стандарту SQL", misconception: "Write skew признана аномалией; стандарт SQL просто не требовал от RR её предотвращения, и Postgres следует стандарту в этом." },
+    { label: "Потому что RR слишком дорогой для отслеживания зависимостей", misconception: "Стоимость тут ни при чём. SSI (Serializable) отслеживает зависимости; RR по дизайну этого не делает." },
+  ]}
+/>
+
+<Quiz
+  id="quiz-3"
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  lang="ru"
+  question="Postgres логирует снижение HOT-доли (n_tup_hot_upd / n_tup_upd) ниже 40% на таблице orders. Каков первый шаг диагностики?"
+  choices={[
+    { label: "Снизить autovacuum_vacuum_scale_factor", misconception: "Scale factor контролирует частоту autovacuum, не HOT eligibility. HOT — про страничное место и индексы." },
+    { label: "Проверить, меняет ли приложение индексированные колонки в UPDATE, и проверить fillfactor страниц через pgstattuple", correct: true },
+    { label: "Переключить на REPEATABLE READ чтобы снизить конкуренцию", misconception: "Уровень изоляции не влияет на HOT eligibility. HOT — механика UPDATE, не изоляции." },
+    { label: "Выполнить VACUUM FULL чтобы дефрагментировать страницы", misconception: "VACUUM FULL убирает bloat, но не восстанавливает HOT eligibility. Проблема может быть в схеме индексов." },
+  ]}
+/>
+
+<KeyTakeaway>HOT экономит 30–70% WAL на UPDATE-нагруженных таблицах, когда UPDATE не трогает индексированные колонки и новый tuple влезает на ту же страницу. Fillfactor резервирует место для цепочки. Write skew — единственная аномалия, которую ловит только Serializable, но не Repeatable Read; конкретный выбор уровня зависит от того, нужен ли инвариант над набором строк.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  lessonSlug="03-hot-updates-and-isolation-levels"
+  lang="ru"
+  questions={[
+    {
+      id: "q1",
+      q: "Назови два условия, при которых Postgres выполняет HOT-обновление, и объясни, что происходит при нарушении каждого.",
+      a: "Условие 1: UPDATE не трогает индексированную колонку. Если нарушено — нужна новая запись в индекс, и Postgres обязан выполнить полный UPDATE с новым индексным заходом. Условие 2: новый tuple влезает на ту же heap-страницу. Если нарушено — новый tuple идёт на другую страницу, цепочка t_ctid ломается, индекс больше не ведёт напрямую к живой версии через HOT, и следующий UPDATE снова платит индексную цену. Fillfactor предотвращает второе нарушение, резервируя место на странице.",
+    },
+    {
+      id: "q2",
+      q: "Почему Postgres иногда откатывает транзакцию под Serializable с SQLSTATE 40001, даже если она успешно прошла бы под Repeatable Read?",
+      a: "SSI отслеживает rw-антизависимости: если транзакция T1 прочитала набор и записала строку X, а транзакция T2 прочитала тот же набор и записала строку Y, существует цикл read-write. Под RR обе коммитят, потому что конфликта по версии строки нет. SSI обнаруживает цикл и откатывает одну. Конкретная транзакция, которую откатят — та, что завершит опасную структуру. Приложение должно повторить откатанную транзакцию.",
+    },
+    {
+      id: "q3",
+      q: "Сервис переводов банка хочет атомарно перевести деньги между счетами. Какой уровень изоляции ты выберешь и почему?",
+      a: "READ COMMITTED + SELECT ... FOR UPDATE на обоих счетах (в консистентном порядке по id, чтобы избежать deadlock). Перевод читает и меняет ровно две строки; write skew требует чтения набора с последующим изменением другой строки этого набора — у перевода нет такой поверхности. Serializable добавляет стоимость предикатных блокировок без дополнительной защиты, нужной для этого паттерна. FOR UPDATE на обоих счетах даёт те же гарантии что Serializable для данного сценария.",
+    },
+  ]}
+/>
+
+<Recap>
+- HOT: UPDATE без изменения индексированных колонок + новый tuple на той же странице = ноль новых индексных записей, WAL -30–70%
+- Fillfactor резервирует место для HOT-цепочек; мониторинг — n_tup_hot_upd / n_tup_upd
+- RC: snapshot per-statement. RR: snapshot per-transaction. Serializable: RR + SSI (отслеживание rw-антизависимостей)
+- Write skew разрешена под RR, запрещена под Serializable
+- RC — дефолт и лучший выбор для большинства нагрузок; Serializable — когда нужен инвариант над набором строк
+- Под RC защита от lost update — ответственность приложения: FOR UPDATE, оптимистичная конкуренция или upsert
+</Recap>

@@ -1,0 +1,212 @@
+---
+slug: 02-traceparent-and-tracestate
+lang: en
+track: observability
+unit: 06-trace-propagation
+order: 2
+title: "traceparent and tracestate: the W3C header format in full"
+summary: "The traceparent header is exactly 55 bytes — four fixed-width fields encoding version, trace-id, parent-id, and trace-flags. tracestate is the vendor escape hatch. Knowing the bit-level layout is what lets you validate, debug, and safely ignore malformed input."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["observability/06-trace-propagation/01-what-is-propagation"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["traceparent", "tracestate", "trace-id", "span-id", "trace-flags", "propagator-interface", "otel-context"]
+sources:
+  - https://www.w3.org/TR/trace-context/
+  - https://www.w3.org/TR/trace-context-2/
+  - https://opentelemetry.io/docs/specs/otel/context/api-propagators/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+An on-call engineer sees a traceparent value of `99-aaaaaaaa-bbbbbbbb-01` in an HTTP header. Is it valid? Should the service use it or generate a fresh trace? The answer is in the spec, and getting it wrong silently corrupts the backend's trace store.
+</Hook>
+
+<Crux>traceparent: 4 fixed fields, 55 bytes, no regex needed. tracestate: vendor escape hatch. One malformed byte → spec says start a fresh trace.</Crux>
+
+<Explanation>
+
+## The traceparent header bit-by-bit
+
+The W3C Trace Context spec (Recommendation since 2020, Level 2 since 2024) defines a single fixed-width HTTP header. The value is exactly 55 bytes:
+
+```
+00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+```
+
+Four dash-separated fields:
+
+| Field | Width | Current value | Rules |
+|---|---|---|---|
+| Version | 2 hex (1 byte) | `00` | `ff` is reserved and forbidden |
+| Trace-id | 32 lowercase hex (16 bytes) | 128-bit random | All-zeros is invalid |
+| Parent-id | 16 lowercase hex (8 bytes) | 64-bit span-id of the caller | All-zeros is invalid |
+| Trace-flags | 2 hex (1 byte) | `01` = sampled | Only bit 0 (sampled) is currently defined |
+
+The width is deliberately fixed so a router or sidecar can parse the header without a regex engine — just split on dashes and check byte lengths. The compact form means trace context costs about 0.04 KB per HTTP request — measurable but negligible relative to typical request payloads.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse font-mono text-xs">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Position in string</th>
+        <th class="border border-border px-3 py-2 text-left">Field</th>
+        <th class="border border-border px-3 py-2 text-left">Example value</th>
+        <th class="border border-border px-3 py-2 text-left font-sans">Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">0–1</td>
+        <td class="border border-border px-3 py-2">version</td>
+        <td class="border border-border px-3 py-2">00</td>
+        <td class="border border-border px-3 py-2 font-sans">Spec version; ff is forbidden</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">3–34</td>
+        <td class="border border-border px-3 py-2">trace-id</td>
+        <td class="border border-border px-3 py-2">4bf92f3577b34da6a3ce929d0e0e4736</td>
+        <td class="border border-border px-3 py-2 font-sans">128-bit random; must not be all-zeros</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">36–51</td>
+        <td class="border border-border px-3 py-2">parent-id</td>
+        <td class="border border-border px-3 py-2">00f067aa0ba902b7</td>
+        <td class="border border-border px-3 py-2 font-sans">Caller's span-id; all-zeros invalid</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">53–54</td>
+        <td class="border border-border px-3 py-2">trace-flags</td>
+        <td class="border border-border px-3 py-2">01</td>
+        <td class="border border-border px-3 py-2 font-sans">Bit 0 = sampled; rest reserved</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Trace-id must be uniformly random
+
+The spec is firm: trace-id must be generated as a cryptographically-strong random 128-bit value. It must not encode timestamps, IPs, or user-ids because:
+- Downstream tools assume uniform distribution for sampling decisions (consistent hashing relies on this).
+- Embedded info leaks operational data.
+
+OpenTelemetry SDKs use the platform's secure random source: `crypto.getRandomValues` in browsers, `/dev/urandom` on Linux, `java.security.SecureRandom` on JVM. Generating one 128-bit id is sub-microsecond — never a measurable cost. At 128-bit randomness, the collision probability across one trillion traces is on the order of 10⁻¹⁵, effectively zero.
+
+Trace-id uniqueness is the foundation: the tracing backend keys all spans by trace-id, joins them at query time, and if two unrelated requests share an id the backend will silently merge them into one nonsense trace.
+
+## Validation and the missing-header fallback
+
+When a service receives a request with no `traceparent`, or with one that fails validation (wrong version, all-zero trace-id, malformed hex), the receiver **must generate a brand-new trace-id and start a fresh trace**. The spec explicitly defines this fallback so a single misbehaving caller does not cascade into broken traces.
+
+Validation failures should be logged as a span attribute (`invalid_traceparent_received=true`) so the trace appears in the backend with a marker, letting operators find broken upstream callers. Production teams treat a non-zero rate of `invalid_traceparent` spans as a propagation regression.
+
+**The `99-aaaaaaaa-bbbbbbbb-01` example:** version `99` is unknown (current max is `00`); the trace-id and span-id have wrong lengths (8 and 8 hex chars, not 32 and 16). This header is invalid — the receiving service starts a fresh trace.
+
+## The tracestate companion
+
+Where `traceparent` is the universal identifier, `tracestate` carries vendor-specific extra context: which sampler decided this trace, which canary version emitted it, what extra ids the backend wants.
+
+Format: comma-separated key=value list members, up to 32 members, each key and value up to 256 chars. The spec mandates that vendors propagate at least 512 characters of cumulative `tracestate` even if they do not understand the keys — this preserves end-to-end tracing across heterogeneous vendor tooling.
+
+Mutation rules:
+- A vendor may **add** a new key (prepend to the list).
+- A vendor may **update** its own key (move to front).
+- A vendor **must not delete** keys belonging to other vendors.
+
+The header is the escape hatch for things that cannot be captured in the rigid `traceparent`.
+
+## The propagator interface
+
+OpenTelemetry generalises the header logic with two operations on a Context object:
+
+- `inject(context, carrier)` — writes the relevant headers into an outgoing request.
+- `extract(carrier) -> context` — reads them from an incoming request.
+
+Carriers are pluggable (HTTP headers, gRPC metadata, AMQP properties, plain dict) and propagators are pluggable (W3C TraceContext, W3C Baggage, B3 single, B3 multi, Jaeger). The default OTel composite propagator is TraceContext + Baggage. B3 is supported for interop with Zipkin-era systems.
+
+The library handles bit-encoding, validation, and "if no incoming header then generate" logic so application code never touches raw hex.
+
+<NumbersCard
+  id="02-traceparent-numbers"
+  title="traceparent key numbers"
+  stats={[
+    { label: "traceparent header size", value: "55 bytes (fixed)" },
+    { label: "trace-id width", value: "128 bits / 32 hex chars" },
+    { label: "span-id (parent-id) width", value: "64 bits / 16 hex chars" },
+    { label: "trace-flags currently defined bits", value: "1 (sampled flag, bit 0)" },
+    { label: "tracestate max list members", value: "32" },
+    { label: "tracestate min propagated chars per vendor", value: "512" },
+    { label: "trace-id collision probability at 1 trillion traces", value: "~10⁻¹⁵" },
+    { label: "Cost per request", value: "~0.04 KB header overhead" },
+  ]}
+/>
+
+<Quiz
+  id="02-traceparent-quiz-1"
+  lessonSlug="02-traceparent-and-tracestate"
+  lang="en"
+  question="The traceparent header value is `00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01`. What does the final `01` mean?"
+  choices={[
+    { label: "The sampled flag is set — the caller indicates the trace is being recorded; downstream services should also record their spans", correct: true },
+    { label: "Trace version is 01", misconception: "Version is the first field (00 here)." },
+    { label: "Span index", misconception: "Spans are identified by parent-id (8-byte hex), not a sequential index." },
+    { label: "Number of hops", misconception: "Hop count is not encoded in traceparent." },
+  ]}
+/>
+
+<Quiz
+  id="02-traceparent-quiz-2"
+  lessonSlug="02-traceparent-and-tracestate"
+  lang="en"
+  question="An HTTP request arrives at your service with `traceparent: 99-aaaaaaaa-bbbbbbbb-01`. What does your service do per the W3C spec?"
+  choices={[
+    { label: "Treat the header as invalid (version 99 unknown, trace-id and span-id wrong length) and start a fresh trace", correct: true },
+    { label: "Crash with an error", misconception: "Servers must gracefully ignore unknown traceparent and continue." },
+    { label: "Reject the request", misconception: "The spec mandates ignoring invalid traceparent, not rejecting the request." },
+    { label: "Use the header as-is", misconception: "Using invalid headers would corrupt the backend trace store." },
+  ]}
+/>
+
+<Quiz
+  id="02-traceparent-quiz-3"
+  lessonSlug="02-traceparent-and-tracestate"
+  lang="en"
+  question="A vendor reads a tracestate header containing keys from two other vendors. Which mutation is forbidden by the spec?"
+  choices={[
+    { label: "Deleting keys belonging to the other vendors", correct: true },
+    { label: "Prepending its own new key", misconception: "Prepending is the correct add operation — allowed." },
+    { label: "Moving its own existing key to the front (updating)", misconception: "Moving your own key to the front is the correct update operation — allowed." },
+    { label: "Propagating more than 512 chars of other vendors' keys", misconception: "512 chars is the minimum that must be propagated, not a maximum. Propagating more is fine." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>traceparent packs version + 128-bit trace-id + 64-bit parent-id + 1-bit sampled flag into exactly 55 bytes. Invalid headers (wrong version, wrong length, all-zeros id) must be discarded and a fresh trace started. tracestate carries vendor extras; vendors must propagate others' keys even if they do not understand them.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-traceparent-retrieval"
+  lang="en"
+  questions={[
+    { q: "List the four fields of traceparent in order and their purpose.", a: "1. version (2 hex chars): specifies the format version; currently always '00'; receivers must start a fresh trace if they encounter an unknown version. 2. trace-id (32 lowercase hex chars = 128 bits): the globally unique identifier for the whole request journey; must be uniformly random; all-zeros is invalid. 3. parent-id (16 lowercase hex chars = 64 bits): the span-id of the caller — this is how the receiving service knows which span it is a child of. 4. trace-flags (2 hex chars = 8 bits): bitfield; only bit 0 (value 01) is currently defined as the sampled flag indicating the trace is being recorded." },
+    { q: "Why must trace-id be uniformly random and why can it never encode timestamps or IPs?", a: "Uniform randomness is required for two reasons: (1) consistent head-sampling algorithms hash the trace-id modulo a sampling rate to decide which traces to keep — if trace-ids encode timestamps, recent traffic skews toward the same hash bucket and sampling becomes non-uniform; (2) trace-ids are visible in HTTP headers to anyone who can inspect traffic between your edge and the origin, so encoding IPs or timestamps leaks operational information. Uniform random 128-bit values produced by a secure PRNG carry no embedded information and produce a uniform hash distribution." },
+    { q: "What is the propagator inject/extract interface and what problem does it solve?", a: "The OTel propagator interface exposes two methods: inject(context, carrier) writes trace context into an outgoing request's carrier (HTTP headers, gRPC metadata, message properties), and extract(carrier) -> context reads trace context from an incoming request's carrier. The interface makes the carrier pluggable (HTTP, gRPC, Kafka, etc.) and the propagator format pluggable (W3C, B3, Jaeger). Application code never manipulates raw hex — the SDK handles encoding, validation, and the 'no incoming header → generate fresh trace' fallback. This means instrumentation written once works across all transport protocols and all vendor backends." },
+  ]}
+/>
+
+<Recap lang="en">
+The W3C `traceparent` header carries four fixed-width fields — version, 128-bit trace-id, 64-bit parent-id, and trace-flags — in exactly 55 bytes. The fixed width is a deliberate design choice: any router or sidecar can parse it without a regex engine. The trace-id must be uniformly random, never encoding timestamps or IPs, because consistent samplers and privacy both depend on it. An invalid header (unknown version, wrong field length, all-zero trace-id or parent-id) must be discarded and a fresh trace started, logged as `invalid_traceparent_received` for regression tracking. The `tracestate` companion carries vendor-specific extras up to 32 key=value pairs; vendors must propagate others' keys even without understanding them. The OTel propagator interface (inject/extract) wraps all of this so application code never touches raw hex.
+</Recap>

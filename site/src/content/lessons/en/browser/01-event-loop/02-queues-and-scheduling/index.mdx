@@ -1,0 +1,232 @@
+---
+slug: 02-queues-and-scheduling
+lang: en
+track: browser
+unit: 01-event-loop
+order: 2
+title: "Tasks, microtasks, and scheduler.yield()"
+summary: "The HTML spec's processing model — task sources, the 5-step iteration, how input lands on the loop, and how to yield without breaking rendering."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["01-loop-model"]
+deepensInto: ["04-microtask-starvation"]
+spiral: ["statefulness", "latency"]
+concepts: ["task-source", "microtask-checkpoint", "queueMicrotask", "MessageChannel", "scheduler-yield", "requestAnimationFrame", "input-dispatch", "INP"]
+sources:
+  - https://html.spec.whatwg.org/multipage/webappapis.html#event-loops
+  - https://developer.chrome.com/blog/introducing-scheduler-yield-origin-trial
+  - https://web.dev/articles/optimize-long-tasks
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import NumberDrill from "~/components/pedagogy/NumberDrill.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+You write `await Promise.resolve()` to "yield" inside a long loop. The browser still freezes. You try `setTimeout(fn, 0)`. Now it flickers weirdly. The problem is not your code — it is not knowing which queue each primitive lands in.
+</Hook>
+
+<Crux>Microtasks drain before rendering; tasks yield to rendering — pick the wrong one and you either starve the renderer or lose queue position.</Crux>
+
+<Explanation>
+
+## The HTML spec model: task sources and task queues
+
+The HTML standard (§ event loops) defines an event loop as a thread with a set of **task queues**. Each task is associated with a **task source** — the kind of work that produced it (DOM manipulation, user interaction, networking, history traversal). Each task source has its own queue, and the user agent picks one queue per iteration, dequeues the oldest task, and runs it to completion. There is no preemption. When the task ends, the agent runs the microtask checkpoint, then optionally the render step, then loops back.
+
+## Microtasks vs tasks: the decisive rule
+
+A **microtask** is queued by: `Promise.then`, `Promise.catch`, `Promise.finally`, `queueMicrotask`, `MutationObserver`, and `await` (sugar over Promise.then).
+
+A **task** is queued by: `setTimeout`, `setInterval`, `MessageChannel.postMessage`, network responses, dispatched DOM events, parsed HTML chunks.
+
+The decisive operational rule: **microtasks drain to empty between every task and every frame**. If a microtask schedules another microtask, both run before the loop moves on. This is why `Promise.resolve().then(self)` in a tight chain hangs the page: the microtask queue is never empty, the loop never reaches step 4, and the browser never paints.
+
+<NumbersCard
+  id="card-queue-types"
+  title="What goes where"
+  data-lesson-visual
+  stats={[
+    { label: "Promise.then / queueMicrotask", value: "microtask queue" },
+    { label: "setTimeout / setInterval", value: "task queue (timer source)" },
+    { label: "MessageChannel.postMessage", value: "task queue (messaging source)" },
+    { label: "DOM click event", value: "task queue (user-interaction source)" },
+    { label: "MutationObserver callback", value: "microtask queue" },
+    { label: "scheduler.yield()", value: "task queue (resumes as next task)" },
+  ]}
+/>
+
+## queueMicrotask vs Promise.resolve().then vs MessageChannel
+
+Three ways to "schedule something soon," each with different semantics:
+
+- `queueMicrotask(fn)` — queues a microtask directly. Runs after the current task, before the next. No rendering between.
+- `Promise.resolve().then(fn)` — identical timing to queueMicrotask, but allocates a Promise, a closure, and a chain entry. Slightly slower, otherwise identical. **Does not yield to the renderer.**
+- `new MessageChannel().port1.postMessage(...)` — queues a **task**. Runs after the current task, after microtasks drain, possibly after a frame. **Does yield to the renderer.**
+
+The pattern matters when you want to yield to rendering: microtasks do not; MessageChannel does. Modern code uses `scheduler.yield()` (Chrome 115+) for explicit yield points.
+
+## Where requestAnimationFrame fits
+
+rAF callbacks run in step 4 of the loop, immediately before style/layout/paint. The browser only enters step 4 when it has decided a frame is due — typically every 16.67 ms at 60 Hz. If a long task missed several frame deadlines, the browser does **not** queue up multiple rAF callbacks; it runs the rAF set once. This is why a long task always shows as exactly one frame drop: rAF is driven by the render budget, not a timer.
+
+## Where input fits
+
+Input events (mousemove, click, keydown, touchstart) are queued as tasks by the browser's input thread (a separate OS thread). The main thread pulls them in step 1 like any other task. There is no preemption: if your JS task runs for 80 ms when a click arrives at the 20 ms mark, the click waits 60 ms before its handler can run. INP measures exactly this latency: when did the user click, when did the next paint reflect the result. INP &lt; 200 ms p75 is "good." Hitting that requires that no single task on the loop exceeds about 50 ms.
+
+## How a DOM event becomes a task
+
+When the user clicks, the browser's input thread records the hit-test target and queues a single task on the main thread's user-interaction task source. When the main thread pulls that task, it runs the full event dispatch in one shot: capture phase down to the target, then the target itself, then bubble phase back up. Every matching listener along that path runs synchronously inside this one task — there is no yield point between them. This is why a slow listener on a high ancestor (a `mousemove` handler on `document`) taxes every descendant interaction. The `passive: true` listener option matters for scroll, wheel, and touch: it promises the listener will not call `preventDefault()`, letting the browser start compositor scrolling without waiting for the dispatch task to finish.
+
+## Yielding inside a long task
+
+If you must do 200 ms of work, break it into ≤50 ms chunks separated by yield points so input can interleave. Three techniques:
+
+1. `setTimeout(fn, 0)` — queues a task in ~4 ms (clamped); coarse but universal.
+2. `MessageChannel` with `postMessage` — queues a task immediately, no clamping. This is what React 18 uses internally for time-slicing.
+3. `scheduler.yield()` (Chrome 115+) — promises a yield point that allows input and rendering to run, then resumes the same logical task with priority. Modern recommendation: use `scheduler.yield()`, fall back to `setTimeout(0)`. Do **not** use `await Promise.resolve()` to yield — it queues a microtask, which does not let the renderer run.
+
+<Quiz
+  id="mid-quiz-1"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  question="`setTimeout(fn, 0)` and `queueMicrotask(fn)` both 'schedule something soon.' What is the operational difference?"
+  choices={[
+    { label: "queueMicrotask runs before the next task and before any frame; setTimeout(0) runs as a task — after microtasks drain, possibly after a frame", correct: true },
+    { label: "They are identical — both schedule for 'after this code'", misconception: "Identical timing in single-line examples, but they live in different queues. The difference becomes visible with rendering and other tasks in flight." },
+    { label: "setTimeout(0) is faster because it uses native timers", misconception: "Browsers clamp setTimeout to a 4 ms minimum after nesting depth 5. queueMicrotask has no clamp and runs strictly sooner." },
+    { label: "queueMicrotask runs in a separate thread", misconception: "All microtasks run on the main thread. There is no separate worker for them." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-2"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  question="A loop body is `await fetch(url)`. Why does the page still render between iterations even though the loop never returns?"
+  choices={[
+    { label: "Each `await` suspends the function; fetch resolution is delivered as a task on the network task source — control returns to the loop, which runs rendering before the resume task fires", correct: true },
+    { label: "fetch is asynchronous so it runs in a worker", misconception: "fetch runs in the network stack, not a worker; promise resolution still happens on the main thread." },
+    { label: "The browser preempts long-running tasks every 50 ms", misconception: "There is no preemption. The loop is cooperative: tasks run to completion. The page renders here only because the await actually yields." },
+    { label: "await is special syntax that always lets the renderer run first", misconception: "await suspends the async function and resumes it as a microtask when the awaited promise resolves. Whether the renderer runs before depends on whether resolution is a task (network) or a microtask (Promise.resolve)." },
+  ]}
+/>
+
+<TraceScenario
+  id="mid-trace-1"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  scenario="DevTools Performance shows a 320 ms 'long task' on a search input handler. INP for the page reports 410 ms p75. The handler does: parse user input → fetch suggestions → JSON.parse the response → re-render the dropdown. Where is the time?"
+  steps={[
+    { prompt: "JSON.parse on a large response is the most likely culprit — synchronous on the main thread, scales linearly with bytes", reveal: "JSON.parse holds the main thread for the full duration. A 2 MB suggestions blob can take 80–150 ms on a mid-range Android. Combined with React reconciliation that follows, the total task easily reaches 320 ms. Fix: stream the response (chunked parser), parse in a Worker, or shrink the response server-side." },
+    { prompt: "fetch is the bottleneck — network latency", reveal: "fetch latency is invisible to the long-task counter. The timer only ticks while the main thread is busy — which it is not during network wait. The visible 320 ms is post-fetch work." },
+    { prompt: "React re-render of dropdown is the bottleneck", reveal: "React re-render is part of the cost but rarely the majority. A typical dropdown reconciler runs in 5–20 ms. JSON.parse and parsing dominate." },
+    { prompt: "Network timeout backoff", reveal: "Network operations do not block the main thread. They show as gray idle time in DevTools, not as long tasks." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-3"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  question="You want to break a 200 ms task into 50 ms chunks so input can interleave. Which technique actually lets the browser process input between chunks?"
+  choices={[
+    { label: "Yield via `await scheduler.yield()` (or `await new Promise(r => setTimeout(r, 0))` as fallback)", correct: true },
+    { label: "Yield via `await Promise.resolve()`", misconception: "That queues a microtask. Microtasks do not let rendering or input run — they extend the current task's effective duration." },
+    { label: "Yield via `requestAnimationFrame`", misconception: "rAF only runs when a frame is due. If you yield to rAF mid-task, you wait until the next frame boundary, which can be many ms — not a yield point for input." },
+    { label: "Yield via `process.nextTick`", misconception: "process.nextTick only exists in Node, not the browser. And in Node it runs before microtasks — even more aggressive starvation." },
+  ]}
+/>
+
+<Quiz
+  id="mid-quiz-4"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  question="A worker calls `postMessage(data)` to the main thread. The data is a 5 MB Float32Array. What is the dominant cost?"
+  choices={[
+    { label: "Structured clone of the buffer (the default copies bytes); use `postMessage(data, [data.buffer])` to transfer instead", correct: true },
+    { label: "The task hop between threads (~1–2 ms)", misconception: "Task hop is negligible against a 5 MB clone. Clone alone costs ~20 ms; transfer cuts it to microseconds." },
+    { label: "JSON serialization of the array", misconception: "postMessage uses structured clone, not JSON. JSON would be much slower because it would convert floats to strings." },
+    { label: "GC of the worker-side buffer", misconception: "GC happens later. The visible synchronous cost on postMessage is the clone." },
+  ]}
+/>
+
+<DragOrder
+  id="mid-drag-1"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  prompt="A click handler runs sync code, then `Promise.resolve().then(...)`, then `setTimeout(..., 0)`, then more sync code. Drag the callbacks into the order they actually fire."
+  items={[
+    { id: "sync1", label: "Sync code at top of handler" },
+    { id: "sync2", label: "Sync code at bottom of handler (before return)" },
+    { id: "promise", label: "Promise.then callback (microtask)" },
+    { id: "timer", label: "setTimeout callback (task)" },
+  ]}
+  correctOrder={["sync1", "sync2", "promise", "timer"]}
+/>
+
+<MetaphorComplete
+  id="mid-metaphor-1"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  setup="When two threads (main and worker) exchange data, the messages cross via the task queue, not the microtask queue. So the lower bound for round-trip latency is one task hop each way. What is this hop usually called in performance discussions?"
+  accepted={["task hop", "main-thread hop", "thread hop", "task boundary", "task-queue hop"]}
+  canonical="task hop"
+  explanation="A task hop is one trip through 'wait for the receiving thread to finish its current task, then this message becomes the next task it pulls.' On a free main thread, that is ~1 ms; on a busy main thread, it is bounded by however long the current task takes. Task hops are why high-frequency cross-thread chatter (many small messages) is much worse than batched messages — each hop pays the same fixed minimum, plus structured clone, plus scheduling jitter."
+/>
+
+<TradeoffMatrix
+  id="card-task-vs-microtask"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  prompt="You need to schedule code to run 'after this synchronous block, but as soon as possible.' Which primitive?"
+  options={[
+    { name: "queueMicrotask(fn) — runs as the next microtask", summary: "Use for: state-derived work that must run before any rendering or other task.", correct: true, justification: "Microtasks have no clamping, they run between the current task and the next task — but importantly, they run before step 4 (rendering). Use them when downstream code needs to observe the new state before the user sees a frame, but you do not want to interleave with other tasks." },
+    { name: "setTimeout(fn, 0) — runs as a task after a 4 ms clamp", summary: "Use for: yielding to the renderer and to user input.", justification: "Different semantics. setTimeout queues a task, which means rendering and input can run before fn does. The 4 ms clamp makes it a poor choice for tight loops; use MessageChannel or scheduler.yield() instead for that case." },
+    { name: "scheduler.yield() — explicitly yields to the platform", summary: "Use for: continuing a long task after letting the browser process input/render.", justification: "Modern primitive, Chrome 115+. It is the right tool when you have a long task you want to chunk while preserving logical continuity. Falls back to setTimeout(0) where unsupported. Always use it inside a chunked-work loop, never to schedule unrelated code." },
+    { name: "requestAnimationFrame(fn) — runs at the next frame boundary", summary: "Use for: code that mutates the DOM right before paint.", justification: "Wrong primitive for general scheduling. rAF runs in step 4 of the loop only on frame boundaries, which can be many ms away. Use for animation work that wants to be coalesced with rendering, not for general 'soon' scheduling." },
+  ]}
+/>
+
+<NumberDrill
+  id="mid-drill-1"
+  pieceSlug="02-queues-and-scheduling"
+  lang="en"
+  question="A `setTimeout(fn, 0)` callback after the 5th level of nesting has its delay clamped to a minimum. Per the HTML spec, that minimum (in ms) is:"
+  expected={4}
+  tolerance={0}
+  unit="ms"
+  explanation="Browsers clamp setTimeout to a 4 ms minimum once nesting reaches 5 levels — the rule originated to prevent abusive busy loops via setTimeout(0) chains in the early 2000s. This is why setTimeout(0) is a poor scheduling primitive for tight-loop yield: a 100-iteration loop using setTimeout(0) takes at least 400 ms regardless of work. Use MessageChannel or scheduler.yield() instead — neither has the 4 ms clamp."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Microtasks run before any rendering; tasks yield to it. Use queueMicrotask when you need state visible before the next paint; use scheduler.yield() or MessageChannel when you need to let the renderer and input run between work chunks.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-queues-and-scheduling-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why `await Promise.resolve()` does not 'yield to the browser' even though it suspends the calling function.", a: "await is sugar for Promise.then. When you await an already-resolved promise, the engine queues the function's resume as a microtask. The microtask checkpoint runs after the current task finishes — but it runs to empty before the loop reaches step 4 (rendering) or pulls another task. So the function pauses, but the loop never reaches the renderer or the input queue between the pause and the resume. To actually yield to rendering and input you need to queue a task: setTimeout(fn, 0), new MessageChannel().port1.postMessage(), or scheduler.yield()." },
+    { q: "A worker sends 60 messages per second to the main thread, each carrying a small JSON object. Why does this still cause main-thread jank even though each individual message is tiny?", a: "Each postMessage queues a task on the main thread. 60 messages per second means 60 task hops per second. Each hop pays: structured clone cost, task scheduling overhead (~0.1 ms), and forced execution of the receive handler. If the main thread also has rendering work, input handlers, and other tasks, those 60 task hops fragment the loop into very short slices. Fix: batch to one message every 16 ms carrying an array of events." },
+    { q: "Why does a slow event listener on `document` (like a mousemove analytics wrapper) tax every descendant interaction?", a: "Input events queue as a single task on the user-interaction task source. When the main thread pulls the task, it runs the full event dispatch synchronously: capture down, target, bubble up. Every matching listener along the path runs inside this one task with no yield points between them. A slow listener high in the tree runs on every matching event fired by any descendant, extending the total dispatch task duration. There is no way to 'skip' an ancestor listener without removing it." },
+  ]}
+/>
+
+<Recap lang="en">
+The HTML spec defines multiple task queues — one per task source — and the browser picks one queue per iteration. Microtasks, by contrast, live in a single checkpoint that drains to empty after every task and before every frame. The three scheduling primitives have distinct semantics: queueMicrotask is pre-render, setTimeout(0)/MessageChannel is post-render (task-level yield), and scheduler.yield() is a structured task-level yield that preserves priority. Input events land on the task queue from the OS input thread; a 80 ms running task delays a mid-task click by the full remaining duration. The passive listener option on scroll and touch events lets the compositor thread start immediately instead of waiting for the dispatch task — a concrete win for scroll responsiveness without touching JS logic.
+</Recap>

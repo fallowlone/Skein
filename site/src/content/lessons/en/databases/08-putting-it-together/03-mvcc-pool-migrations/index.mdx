@@ -1,0 +1,170 @@
+---
+slug: 03-mvcc-pool-migrations
+lang: en
+track: databases
+unit: 08-putting-it-together-db
+order: 3
+title: "Acts 4–6 in depth: MVCC bloat, connection pooling, and safe migrations"
+summary: "One long transaction can grow a 200 MB table to 80 GB. A cold-start pod surge can turn 4 ms queries into 4 s timeouts. A single ALTER TABLE can freeze production for eight minutes. All three failures share a root cause: resource starvation from an unbounded operation."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/02-schema-indexes-plans
+  - databases/04-mvcc-isolation/04-vacuum-and-bloat
+  - databases/05-pooling/02-pgbouncer-modes
+  - databases/06-migrations/03-lock-queue-incident
+deepensInto:
+  - databases/08-putting-it-together/04-sharding-and-tradeoffs
+spiral: ["statefulness", "latency"]
+concepts: ["xmin-horizon", "bloat", "pool-sizing-math", "expand-contract", "lock-queue"]
+sources:
+  - https://www.postgresql.org/docs/current/
+  - https://www.cybertec-postgresql.com/en/postgresql-vacuum-and-bloat/
+  - https://www.pgbouncer.org/config.html
+  - https://pgroll.com/docs/latest/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+A nightly report runner holds one transaction open for four hours. It reads a snapshot — no writes, nothing harmful. But VACUUM cannot reclaim dead tuples below the xmin horizon. The table swells from 200 MB to 80 GB. No new rows were inserted. The report runner is the only culprit.
+</Hook>
+
+<Crux>Acts 4–6 fail from one unbounded operation each: long transaction blocks vacuum, excess backends starve the pool, blocking ALTER queues all.</Crux>
+
+<Explanation>
+
+## Act 4 — MVCC and the xmin horizon
+
+Every row in Postgres carries `xmin` (creation transaction id) and `xmax` (deletion transaction id). A `DELETE` does not free the row — it sets `xmax`. `VACUUM` reclaims rows whose `xmax` is older than the global `xmin` horizon — the oldest active transaction ID visible across the cluster.
+
+If one analyst session leaves a transaction open for hours, the horizon does not advance. No dead tuple created after that horizon can be reclaimed. The table swells; queries that scan the table get slower because they read dead rows alongside live ones.
+
+The fix is operational:
+1. Kill the long transaction (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query_start < now() - interval '5 minutes'`).
+2. Set `idle_in_transaction_session_timeout = 60s` — any session that holds a transaction open without executing a query for 60 seconds is terminated.
+3. Run `pg_repack` to reclaim disk without an AccessExclusiveLock (`VACUUM FULL` takes one).
+4. Permanent fix: move reporting to a read replica; the xmin horizon on a replica does not block vacuum on the primary when `hot_standby_feedback = off`.
+
+At 1B rows, one idle session can bloat the table by 10% in a single day. Bloat slows every subsequent query because the heap pages contain dead tuples alongside live ones, forcing the sequentialscanner to read and skip them.
+
+## Act 5 — Connection pool sizing math
+
+Each Postgres backend is a forked OS process with its own memory footprint (~5–10 MB RSS). A server with 32 GB RAM can support roughly 2000–3000 backends before the kernel scheduler thrashes and query latency degrades.
+
+At 50 app pods with 20 workers each, a cold-start or pod-rollout event opens 1000 backends simultaneously. Queries that previously took 4 ms take 4 s not because of data volume, but because the OS scheduler cannot efficiently time-slice 1000 processes.
+
+PgBouncer in transaction-mode:
+- 100 server-side backends (fits in kernel scheduler's sweet spot).
+- 10000 client connections multiplexed onto those 100 backends.
+- Each backend is used only during active transaction time, then returned to the pool.
+
+**Pool sizing math:**
+```
+pool_size = active_concurrent_transactions × safety_factor
+```
+Not `max_app_workers`. The relevant number is how many transactions hit the database simultaneously, not the total worker count. For a 16-core SSD-only server, 30–60 server-side backends is typically the sweet spot.
+
+**The transaction-mode prepared statement trap:** PgBouncer in transaction-mode rebinds connections after each transaction, so server-side prepared statements (`PREPARE foo AS SELECT ...`) are lost between transactions. PgBouncer 1.21+ ships `server_prepared_statements = on` which caches plan IDs server-side and replays them — without it, app frameworks that auto-prepare statements pay re-prepare overhead on every transaction.
+
+## Act 6 — The lock matrix and expand-contract
+
+`ALTER TABLE` takes `AccessExclusiveLock` by default — incompatible with every other lock mode including reads. While it waits for the lock, every new query waits behind it. While it holds the lock, every query waits.
+
+A short ALTER under low load completes in milliseconds. An ALTER behind a long-running query (as in Act 4) waits, builds a queue, and the queue freezes the database. A single 60-second lock on a hot table can cascade into a 10-minute incident due to connection timeout and app-level retry storms.
+
+**The expand-contract recipe** for adding a `tenant_id BIGINT NOT NULL` column safely:
+1. `ALTER TABLE users ADD COLUMN tenant_id BIGINT` — nullable, no default. No rewrite.
+2. Backfill: `UPDATE users SET tenant_id = 0 WHERE tenant_id IS NULL LIMIT 10000` — batched, low lock pressure.
+3. `ALTER TABLE users ADD CONSTRAINT chk_tenant_id CHECK (tenant_id IS NOT NULL) NOT VALID` — does not scan the table.
+4. `ALTER TABLE users VALIDATE CONSTRAINT chk_tenant_id` — scans the table under a `ShareUpdateExclusiveLock`, compatible with reads and writes.
+5. `ALTER TABLE users ALTER COLUMN tenant_id SET NOT NULL` — metadata-only after a successful validation, milliseconds.
+6. `ALTER TABLE users DROP CONSTRAINT chk_tenant_id` — cleanup.
+
+Tools like `pgroll` and `Atlas` codify this recipe. Without it, the naive `ADD COLUMN ... NOT NULL DEFAULT` on Postgres 10 and earlier causes a full table rewrite; on Postgres 11+ it is a metadata change for constant defaults, but the lock still queues all queries.
+
+<NumbersCard
+  id="card-acts-4-6-numbers"
+  title="Acts 4–6: costs and thresholds"
+  stats={[
+    { label: "Bloat rate on write-heavy table, no autovacuum tuning", value: "1–10% per month" },
+    { label: "Bloat rate with idle-in-transaction bug", value: "50%+ per week" },
+    { label: "pg_repack time for 80 GB table", value: "30–90 min online" },
+    { label: "PgBouncer transaction-mode sweet spot, 16-core SSD server", value: "30–60 backends" },
+    { label: "AccessExclusiveLock on hot table → incident duration", value: "up to 10 min" },
+    { label: "expand-contract: SET NOT NULL after VALIDATE CONSTRAINT", value: "milliseconds" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="en">
+Why does `idle_in_transaction_session_timeout` matter more than `statement_timeout`? A session in `idle in transaction` state is not executing a query — `statement_timeout` would never fire. But the session holds a transaction and therefore pins the `xmin` horizon. Setting a transaction-idle timeout terminates the session before it can freeze vacuum progress for hours.
+</Inset>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-1"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="en"
+  question="A long-running analytics session holds a transaction open for four hours. No data has been inserted or deleted in that time. Why is the table growing on disk?"
+  choices={[
+    { label: "Dead tuples from prior writes cannot be reclaimed by VACUUM because the session pins the xmin horizon below them", correct: true },
+    { label: "The analytics query is inserting temporary rows", misconception: "Holding a transaction open does not insert rows. The growth is from dead tuples that VACUUM cannot reclaim." },
+    { label: "VACUUM requires exclusive access to run and the analytics query blocks it", misconception: "VACUUM (non-FULL) does not require exclusive access — it runs concurrently. The bloat is caused by the xmin horizon preventing reclamation, not by VACUUM being blocked from running." },
+    { label: "The database is buffering query results to disk", misconception: "Postgres does not buffer query result sets in the heap. The table growth is bloat from unreclaimed dead tuples." },
+  ]}
+/>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-2"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="en"
+  question="50 app pods each open 20 workers. At pod-rollout time, query latency jumps from 4 ms to 4 s. Root cause?"
+  choices={[
+    { label: "1000 concurrent OS processes flood the kernel scheduler; the scheduler cannot efficiently time-slice them and context switches dominate CPU time", correct: true },
+    { label: "The 1000 backends are all executing the same slow query", misconception: "At rollout, most backends are idle or just connecting — not executing slow queries. The latency is from scheduler pressure, not query content." },
+    { label: "Postgres has a hard limit of 100 connections", misconception: "Postgres does not have a hard 100-connection limit. max_connections defaults to 100 but is configurable; the real problem is OS scheduler pressure, not a Postgres limit." },
+    { label: "The network is overwhelmed by 1000 simultaneous connection handshakes", misconception: "Network handshake is a small part of the cost. The dominant cost is the OS scheduler unable to efficiently time-slice 1000 processes on a machine designed for 30–60 active ones." },
+  ]}
+/>
+
+<Quiz
+  id="03-mvcc-pool-migrations-quiz-3"
+  lessonSlug="03-mvcc-pool-migrations"
+  lang="en"
+  question="A migration runs ALTER TABLE ADD COLUMN ... NOT NULL during a period when a pg_dump session holds AccessShareLock on the table. What happens?"
+  choices={[
+    { label: "The ALTER waits for the AccessExclusiveLock behind the pg_dump AccessShareLock — and every new query queues behind the waiting ALTER, freezing production", correct: true },
+    { label: "pg_dump and ALTER run in parallel — AccessShareLock is compatible with AccessExclusiveLock", misconception: "AccessExclusiveLock is incompatible with every other lock mode, including AccessShareLock. The ALTER must wait." },
+    { label: "The ALTER fails immediately with a lock timeout error", misconception: "Without a lock_timeout set, the ALTER waits indefinitely. The queue building behind it is what causes the incident." },
+    { label: "pg_dump is cancelled automatically to allow the migration to proceed", misconception: "Postgres does not automatically cancel running sessions to allow a DDL statement. The migration waits; all new queries wait behind it." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Act 4: one long transaction can bloat a table from 200 MB to 80 GB — the lever is idle_in_transaction_session_timeout and pg_repack. Act 5: pool size is active_concurrent_transactions × safety_factor, not max_app_workers — 30–60 server-side backends beats 1000. Act 6: AccessExclusiveLock queues everything; expand-contract decomposes a blocking ALTER into six lock-cheap steps.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-mvcc-pool-migrations-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the xmin horizon: what is it, how does a long transaction pin it, and what is the operational consequence?", a: "The xmin horizon is the oldest transaction ID still visible across the cluster — the minimum of all backend_xmin values in pg_stat_activity. VACUUM can only reclaim dead tuples whose xmax is older than this horizon. If one analyst session opens a transaction (even read-only) and holds it for hours, the horizon is pinned at that session's snapshot. Any dead tuple created after that point cannot be reclaimed until the session releases its transaction. The operational consequence: tables bloat continuously for the duration of the long transaction. At 1B rows, one idle session can bloat a table by 10% in a single day. The fix is idle_in_transaction_session_timeout to automatically terminate idle transactions." },
+    { q: "Why is pool_size = active_concurrent_transactions × safety_factor the correct sizing formula rather than max_app_workers?", a: "App workers spend most of their time waiting for network I/O, handling HTTP requests, or idle between requests — they are not all executing database queries simultaneously. The relevant metric is how many transactions are active in the database at the same moment. A 16-core server can efficiently schedule 30–60 OS processes; beyond that, context switching dominates CPU time. max_app_workers (e.g., 1000 for 50 pods × 20 workers) dramatically overstates the actual concurrent database demand. Sizing on active_concurrent_transactions and applying a safety factor gives a pool large enough for spikes without flooding the OS scheduler." },
+    { q: "Walk through the expand-contract recipe for adding a NOT NULL column and explain why each step is lock-cheap.", a: "Step 1: ADD COLUMN nullable with no default — heap pages are not rewritten, no lock beyond metadata update (milliseconds). Step 2: batch UPDATE backfill — small batches each take short row-level locks, no table-wide lock. Step 3: ADD CONSTRAINT ... NOT VALID — adds the constraint without scanning existing rows, no full table lock. Step 4: VALIDATE CONSTRAINT — scans under ShareUpdateExclusiveLock (compatible with reads and most writes), allows concurrent queries. Step 5: ALTER COLUMN SET NOT NULL — metadata-only after a successful validation, milliseconds. Step 6: DROP CONSTRAINT — cleanup, metadata-only. The total lock exposure is near zero for each step; the naive one-step ALTER would take AccessExclusiveLock for the duration of the full table scan." },
+  ]}
+/>
+
+<Recap lang="en">
+Acts 4–6 each fail from one unbounded operation — a long transaction pins the xmin horizon and prevents VACUUM from reclaiming dead tuples, causing unlimited table growth; too many OS-level Postgres backends flood the kernel scheduler and turn 4 ms queries into 4 s timeouts; and an ALTER TABLE that waits for AccessExclusiveLock queues every subsequent query behind it. The levers are: `idle_in_transaction_session_timeout = 60s` and `pg_repack` for bloat; a connection pool sized on active concurrent transactions (not max workers) for connection storms; and the expand-contract recipe for every schema change that would otherwise hold an exclusive lock. These three acts require operational discipline — monitoring, alerting, runbooks — not just one-time fixes. Teams that skip them discover the failure modes at the worst possible time: peak traffic, mid-deploy, or during a large batch migration.
+</Recap>

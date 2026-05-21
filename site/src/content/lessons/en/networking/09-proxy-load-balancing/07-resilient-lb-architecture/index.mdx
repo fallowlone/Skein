@@ -1,0 +1,175 @@
+---
+slug: 07-resilient-lb-architecture
+lang: en
+track: networking
+unit: 09-proxy-load-balancing
+order: 7
+title: "Resilient LB architecture: anycast, zone-aware routing, and observability"
+summary: "A single LB is a SPOF — anycast + BGP ECMP eliminates it; zone-aware routing cuts cross-zone egress cost; TLS terminates at the edge; RED metrics and circuit-breaker state are the minimum observability for safe operation."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - "09-proxy-load-balancing/03-l4-vs-l7-balancing"
+  - "09-proxy-load-balancing/04-health-checks-and-draining"
+  - "09-proxy-load-balancing/06-retry-storms-and-circuit-breakers"
+  - "07-cdn-edge/02-anycast-and-geodns"
+deepensInto: []
+spiral: ["latency", "statefulness"]
+concepts: ["anycast", "bgp-ecmp", "maglev", "zone-aware-routing", "tls-termination-lb", "0rtt-resumption", "dns-load-balancing", "red-metrics", "slo"]
+sources:
+  - https://engineering.linkedin.com/blog/2016/04/the-joy-of-anycast--in-side-the-datacenter/
+  - https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/health_checking
+  - https://cloud.google.com/blog/products/networking/tcp-bbr-congestion-control-comes-to-gcp-your-internet-just-got-faster
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Your load balancer is healthy. Then it is not. Every client connection drops at once because the single LB machine crashed. Your load balancer — the component that was supposed to make your backend resilient — is your single point of failure.
+</Hook>
+
+<Crux>A single LB is a SPOF — anycast + BGP ECMP gives &lt;1 s failover; zone-aware routing cuts egress; RED metrics catch failures first.</Crux>
+
+<Explanation>
+
+## The LB single point of failure
+
+If your load balancer is a single machine, its failure takes down all traffic. Even with a hot standby (active-passive failover), the failover takes 10–30 seconds — long enough for users to notice.
+
+**Solution: anycast + BGP ECMP**
+
+Multiple LB machines all advertise the **same anycast VIP** (virtual IP) via BGP. The network's Equal-Cost Multipath (ECMP) routing distributes client traffic across all LBs:
+
+- Client connects to IP `203.0.113.10` (the VIP).
+- BGP sees multiple equal-cost routes to `203.0.113.10` — one via LB_A, one via LB_B, one via LB_C.
+- ECMP hashes the 5-tuple (src IP, src port, dst IP, dst port, protocol) to pick a path.
+- If LB_A crashes, BGP withdraws its route. ECMP re-hashes to LB_B or LB_C. Convergence: &lt;1 second.
+
+**The stateless LB requirement.** When ECMP re-routes a flow to a different LB, that LB has no memory of the previous state. If the LB stored connection state (TLS session, HTTP/2 stream state) locally, the client must reconnect. **Stateless LBs** store no per-flow state — each connection is self-contained. This is why Maglev (Google's distributed LB) uses consistent hashing of the 5-tuple to always map the same flow to the same LB machine, even as machines come and go.
+
+## Zone-aware routing
+
+**The problem:** A client in zone A (us-east-1a) routing to a backend in zone B (us-east-1b) incurs:
+- Cross-zone egress cost: $0.01–0.02/GB in most clouds.
+- Extra latency: 1–5 ms intra-region RTT.
+
+**Zone-aware routing:** Prefer backends in the **same zone** as the LB. Fall back to other zones only when all same-zone backends are unhealthy or circuit-breaker limits are hit.
+
+**AWS ALB zone-affinity:** Enabled by default in newer AWS regions. Envoy: `locality_weighted_lb_config` with local-zone preference. GCP: uses zone-affinity mode by default when backends span zones.
+
+**Zone failure isolation.** When zone A has a partial failure, zone-aware routing prevents it from cascading: traffic stays in zone A (or shifts to zone B/C only for zone-A traffic), so zone B/C are not suddenly absorbing 3× their normal load.
+
+## TLS termination at the LB
+
+The LB terminates TLS: decrypts the client's TLS session, sees plaintext, and (optionally) re-encrypts on the connection to the backend or sends plaintext over the internal network.
+
+**Benefits:**
+- Backends do not need to manage certificates — one cert at the LB edge.
+- TLS handshake cost (~20–50 ms per new connection) borne once at the LB, not by every backend.
+- The LB can terminate TLS 1.2 from old clients and upgrade to TLS 1.3 on the backend-facing connection.
+
+**TLS 1.3 0-RTT resumption at the LB.** If the client has a pre-shared key (PSK) from a prior session, the first request can be sent in the same flight as the ClientHello — zero extra round-trips. The LB must route the resumption request to the same LB instance that holds the session ticket, or the PSK must be stored in a distributed session cache shared by all LB instances.
+
+**Cost:** ~20–50 ms per new connection, 50–2 000 ms under load spikes. TLS session reuse amortizes this over many requests.
+
+<NumbersCard
+  id="card-lb-arch-numbers"
+  title="Resilient LB architecture numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Anycast ECMP failover time", value: "&lt;1 s (BGP withdrawal)" },
+    { label: "Cross-zone egress cost", value: "$0.01–0.02/GB" },
+    { label: "TLS termination cost (new connection)", value: "20–50 ms" },
+    { label: "TLS termination cost under load spike", value: "50–2 000 ms" },
+    { label: "DNS TTL for geo-LB", value: "60–300 s" },
+    { label: "L4 edge + L7 behind: Google's pattern", value: "Maglev + Envoy" },
+  ]}
+/>
+
+## DNS load balancing vs LB routing
+
+**DNS round-robin:** Return multiple A records for one hostname. Clients pick one. Simple, but:
+- DNS TTL is 60–300 seconds — backend changes are not reflected for up to 5 minutes.
+- Clients cache DNS results and defeat rebalancing.
+- No health awareness — DNS returns dead backends until TTL expires.
+
+**Correct pattern:** DNS points to a single anycast VIP (one per region). The LB cluster behind the VIP handles per-request balancing. DNS provides geographic routing (return the nearest regional VIP); the LB provides per-request balancing within the region.
+
+## Observability: minimum viable metrics
+
+Alert-worthy metrics for a load balancer cluster:
+
+1. **Request rate per backend** (RED method: Rate, Errors, Duration).
+2. **p50/p95/p99 latency per backend** — p99 shows tail latency that affects 1% of users.
+3. **Error rate per backend** — alert if > 0.01%.
+4. **Active connection count per backend**.
+5. **Health-check success/failure rate** — alert on flapping.
+6. **Circuit-breaker opens/closes** — one open per week is fine; 10/hour signals a problem.
+7. **Retry rate** — alert if > 0.1% of request rate (early storm warning).
+8. **Load imbalance** — std dev of request counts across backends; high imbalance signals algorithm or affinity issues.
+9. **Drain time on shutdowns** — long drain time (approaching timeout) signals long-running requests.
+
+**SLOs:**
+- p99 latency &lt; 100 ms for API endpoints.
+- Error rate &lt; 0.01%.
+- Circuit-breaker open time &lt; 1 minute/week.
+
+<TraceScenario
+  id="lb-sr-trace-zone"
+  pieceSlug="07-resilient-lb-architecture"
+  lang="en"
+  scenario="Trace zone-aware LB failover and anycast resilience."
+  steps={[
+    { prompt: "You have LBs in zones A, B, C. All advertise the same anycast VIP via BGP ECMP. A client in zone A initiates a request. Which LB handles it?", reveal: "LB_A in zone A — BGP ECMP routes to the nearest LB. LB_A has the shortest network path from zone A. LB_B and LB_C are used only by clients in zones B and C respectively (or by ECMP overflow)." },
+    { prompt: "LB_A in zone A has backends in zones A, B, and C. Should it prefer zone-A backends for new requests?", reveal: "Yes. Zone-aware routing prefers same-zone backends to avoid cross-zone egress cost ($0.01–0.02/GB). LB_A routes to its zone-A backends first. Falls back to zone B or C only if all zone-A backends are unhealthy or circuit-breaker limits are hit." },
+    { prompt: "LB_A crashes. BGP withdraws its route. ECMP re-hashes in-flight connections to LB_B or LB_C. What is the impact on existing TCP connections?", reveal: "For stateless LBs: the connection is lost — the client must reconnect to LB_B or LB_C. For Maglev-style consistent hashing on the 5-tuple: the same 5-tuple always maps to LB_A; when LB_A is removed, ~1/3 of connections remap to LB_B or LB_C (the rest continue normally, because 2/3 of flows were already hashed to B and C). BGP convergence: &lt;1 second." },
+    { prompt: "Backend B1 in zone A dies. Zone-A backends are now [B2, B3]. Should LB_A immediately fail over all new traffic to zone B?", reveal: "No. LB_A should use B2 and B3 (zone A) via power-of-two-choices for all new requests. Fall back to zone B only when ALL zone-A backends are unhealthy. Premature cross-zone failover wastes egress budget and adds latency unnecessarily." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="lb-sr-tradeoff-1"
+  pieceSlug="07-resilient-lb-architecture"
+  lang="en"
+  prompt="A platform team is building a multi-region load balancer for a globally distributed SaaS service. Pick the topology."
+  options={[
+    { name: "Single global L7 LB with all backends in one region", summary: "Simplest architecture.", justification: "Latency to distant regions exceeds 500 ms. A single-region outage takes the whole service down. Not resilient." },
+    { name: "DNS geolocation → regional L4 LBs → L7 LBs → backends in each region (power-of-two-choices within region)", summary: "Regional isolation + fast failover.", correct: true, justification: "DNS returns the nearest regional VIP. L4 LB absorbs raw packet pressure (DDoS, connections). L7 LB applies content routing and policies. Power-of-two-choices within each region. Zone-aware routing within regions. Regional failures do not affect other regions." },
+    { name: "Anycast + consistent hashing of client IP to LB instance globally", summary: "Stateless global LB cluster.", justification: "Anycast routes to the nearest LB, consistent hashing preserves per-flow state. But without regional separation, one region's traffic surge affects all. More complex than DNS-based regional separation." },
+    { name: "Single global L7 LB with connection pooling to all backends across regions", summary: "Centralized control.", justification: "All routing intelligence in one place but latency to every user goes through that single point. Does not scale. Not resilient." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+**Google's Maglev and the two-tier LB pattern.** Google uses Maglev as a stateless L4 LB at the network edge. Maglev uses a consistent hash of the 5-tuple to route flows to backend Envoy instances (L7). This two-tier design separates concerns: Maglev absorbs packet-rate traffic cheaply and provides LB-level fault tolerance via anycast + consistent hashing. Envoy behind it does content routing, TLS, gRPC transcoding, and per-request observability. AWS mirrors this with Network Load Balancer (L4, anycast VIP) → Application Load Balancer (L7, HTTP routing).
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A single LB is a SPOF — anycast + BGP ECMP distributes traffic across a cluster with &lt;1 s failover. Zone-aware routing keeps traffic same-zone to cut $0.01–0.02/GB egress cost. TLS terminates at the edge. Alert on p99 &gt; 100 ms, error rate &gt; 0.01%, and retry rate &gt; 0.1% — these are the early-warning signs before a cascade.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-resilient-lb-architecture-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does anycast + BGP ECMP eliminate the LB single point of failure, and what happens to in-flight connections when one LB crashes?", a: "Multiple LBs advertise the same VIP. ECMP distributes flows across them by 5-tuple hash. If one LB crashes, BGP withdraws its route in &lt;1 s and ECMP re-hashes affected flows to surviving LBs. For stateless LBs, affected TCP connections are lost and clients must reconnect. For Maglev-style consistent hashing, ~1/N flows remap (where N is the number of LBs); the rest continue uninterrupted." },
+    { q: "Why does zone-aware routing matter economically, and when should it fail over to another zone?", a: "Cross-zone egress costs $0.01–0.02/GB in most clouds. Keeping traffic same-zone eliminates this cost and reduces RTT by 1–5 ms intra-region. Fail over to another zone only when ALL same-zone backends are unhealthy or circuit-breaker limits are hit — premature cross-zone failover wastes egress budget unnecessarily." },
+    { q: "What is the minimum set of metrics needed to detect a retry storm before it causes an outage?", a: "Retry rate per backend: alert at >0.1% (early storm warning). Error rate per backend: alert at >0.01%. Circuit-breaker open events: one/week is fine; 10/hour signals systemic failure. p99 latency: rising p99 ahead of error rate indicates queue buildup. Active connection count: rising connections on a healthy backend signals queue accumulation." },
+  ]}
+/>
+
+<Recap lang="en">
+A single load balancer is a single point of failure. Anycast + BGP ECMP advertises the same VIP from multiple LBs; ECMP hashes flows across them and BGP withdraws a dead LB's route in &lt;1 second. Zone-aware routing keeps traffic in the same availability zone to avoid $0.01–0.02/GB egress costs and intra-region RTT overhead — only crossing zones when all same-zone backends are unhealthy. TLS terminates at the LB edge: one certificate, 20–50 ms handshake cost borne once rather than on every backend. The minimum observability set — request rate, p99 latency, error rate, retry rate, circuit-breaker opens — catches a retry storm at the 0.1% retry rate threshold before it escalates to cascade failure.
+</Recap>

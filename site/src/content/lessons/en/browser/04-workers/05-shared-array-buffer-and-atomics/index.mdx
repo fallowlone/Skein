@@ -1,0 +1,178 @@
+---
+slug: 05-shared-array-buffer-and-atomics
+lang: en
+track: browser
+unit: 04-workers
+order: 5
+title: "SharedArrayBuffer, Atomics, and cross-origin isolation"
+summary: "SAB is real shared memory between threads, gated behind COOP + COEP; Atomics prevents data races; the relaxed memory model means atomic operations are the only safe ordering guarantee."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["browser/04-workers/03-structured-clone-and-transfer", "browser/04-workers/01-what-workers-are"]
+deepensInto: []
+spiral: ["encapsulation"]
+concepts: ["SharedArrayBuffer", "Atomics", "cross-origin-isolation", "COOP", "COEP", "data-race", "relaxed-memory-model", "happens-before", "Atomics.wait", "Atomics.notify"]
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/API/SharedArrayBuffer
+  - https://developer.mozilla.org/en-US/docs/Web/API/Window/crossOriginIsolated
+  - https://html.spec.whatwg.org/multipage/structured-data.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import Term from "~/components/prose/Term.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Every postMessage either copies or hands off ownership. But multithreaded WASM needs a shared ring buffer that both the codec threads and JS can read and write at the same time — no copy, no handoff, just shared memory. And then it silently returns `undefined` in production.
+</Hook>
+
+<Crux>SharedArrayBuffer is zero-copy shared memory gated behind COOP + COEP — without both it is undefined and WASM threads silently fail.</Crux>
+
+<Explanation>
+
+## What SharedArrayBuffer is
+
+`SharedArrayBuffer` (SAB) is a block of memory that two or more threads can both read and write at the same time, with no copy. You build typed-array views over it on each thread and they see the same bytes:
+
+```js
+// main thread
+const sab = new SharedArrayBuffer(1024);
+worker.postMessage({ sab }); // NOT transferred — shared
+
+// worker
+self.onmessage = e => {
+  const view = new Int32Array(e.data.sab);
+  view[0] = 42; // visible to main thread immediately
+};
+```
+
+This is the foundation that makes multithreaded WebAssembly work in the browser — WASM's linear memory *is* a SharedArrayBuffer when compiled with `-pthread`.
+
+## Why Atomics exist
+
+Two threads writing the same SAB location without coordination is a **data race** — the result depends on timing and is undefined. `Atomics` provides operations the CPU guarantees are indivisible:
+
+- `Atomics.add(view, i, 1)` — reads, adds, writes as one uninterruptible step. Two threads incrementing the same counter never lose an update.
+- `Atomics.compareExchange(view, i, expected, replacement)` — the building block for lock-free data structures.
+- `Atomics.wait(view, i, expected)` — **blocks** the calling thread until another thread calls `Atomics.notify(view, i)`. A real blocking primitive — forbidden on the main thread, allowed inside workers. This wait/notify pair is how a WASM thread pool parks idle workers and wakes them when work arrives.
+
+<NumbersCard
+  id="card-sab-numbers"
+  title="SharedArrayBuffer at a glance"
+  data-lesson-visual
+  stats={[
+    { label: "Requires", value: "COOP: same-origin + COEP: require-corp" },
+    { label: "crossOriginIsolated check", value: "self.crossOriginIsolated === true" },
+    { label: "Without headers", value: "typeof SharedArrayBuffer === 'undefined'" },
+    { label: "Atomics.wait", value: "Forbidden on main thread — blocks the thread" },
+    { label: "Growable SAB", value: "new SharedArrayBuffer(size, { maxByteLength })" },
+  ]}
+/>
+
+## The relaxed memory model
+
+SAB exposes a <Term k="relaxed_memory_model" lang="en">relaxed memory model</Term>: without atomics, one thread's writes are not guaranteed visible to another thread in any particular order — the CPU and compiler may reorder non-atomic memory operations.
+
+Atomic operations establish synchronisation edges (<Term k="happens_before" lang="en">happens-before relationships</Term>) that make preceding non-atomic writes visible. The practical rule for application code:
+
+1. Worker writes bulk data with plain typed-array writes.
+2. Worker does one `Atomics.store` on a "data ready" flag.
+3. Reader does one `Atomics.load` on the flag.
+4. Once the reader sees the ready value, all the bulk writes are guaranteed visible.
+
+Hand-rolling lock-free structures without this discipline produces bugs that appear only under load, only on certain CPUs.
+
+## The COOP/COEP gate
+
+After the **Spectre** CPU vulnerability (2018), high-resolution shared memory became a security risk — a SAB-backed timer is precise enough to mount a side-channel attack. Browsers locked SAB behind two response headers the document must send:
+
+- `Cross-Origin-Opener-Policy: same-origin` (COOP) — isolates your browsing-context group from other origins.
+- `Cross-Origin-Embedder-Policy: require-corp` (COEP) — requires every cross-origin subresource to explicitly opt in to being embedded via `Cross-Origin-Resource-Policy`.
+
+When both are present, `self.crossOriginIsolated` is `true` and `SharedArrayBuffer` is available. When they are not, `SharedArrayBuffer` is `undefined` and any code that needs it — multithreaded WASM especially — silently fails.
+
+**The cost:** COEP breaks cross-origin images, fonts, and scripts that do not send the matching `Cross-Origin-Resource-Policy` header. Enabling isolation means auditing and fixing every third-party asset. Roll out COEP in report-only mode first (`Cross-Origin-Embedder-Policy-Report-Only`) to enumerate what would break before enforcing.
+
+<DebugLog
+  id="sr-debug-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="en"
+  label="Browser console — SharedArrayBuffer feature check"
+  output={`> typeof SharedArrayBuffer
+'undefined'
+
+> self.crossOriginIsolated
+false
+
+> performance.getEntriesByType('navigation')[0].responseHeaders
+// Cross-Origin-Opener-Policy: same-origin
+// Cross-Origin-Embedder-Policy: (not set)
+
+[WASM] threads requested: 8
+[WASM] SharedArrayBuffer unavailable - falling back to single-threaded
+[WASM] init complete (single-threaded, 4.2x slower than target)`}
+  outputLang="log"
+  question="A multithreaded WASM module silently runs single-threaded in production. The console shows SharedArrayBuffer is undefined and crossOriginIsolated is false. COOP is set but COEP is not. What is the exact fix, and what will it break?"
+  hint="SharedArrayBuffer requires BOTH headers. Read which one is missing — then think about what COEP enforces on every other asset."
+  answer="The fix is to add the missing header: Cross-Origin-Embedder-Policy: require-corp on the document response. With both COOP: same-origin and COEP: require-corp present, crossOriginIsolated becomes true and SharedArrayBuffer is defined, so WASM threads initialise. But COEP: require-corp will then block every cross-origin subresource that does not opt in — third-party images, fonts, scripts, and iframes must send Cross-Origin-Resource-Policy: cross-origin (or be served with CORS). The rollout therefore is not one header: audit every cross-origin asset, get each one to send CORP, or proxy it through your own origin, or use COEP: credentialless (a softer mode that drops credentials instead of blocking) where the assets are public. Ship COEP in report-only mode first (Cross-Origin-Embedder-Policy-Report-Only) to enumerate what would break before enforcing."
+/>
+
+<Quiz
+  id="sr-quiz-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="en"
+  question="Why is `Atomics.wait()` forbidden on the main thread but allowed inside a worker?"
+  choices={[
+    { label: "Atomics.wait blocks the calling thread until notified; blocking the main thread would freeze rendering and input, which the platform forbids", correct: true },
+    { label: "The main thread has no access to SharedArrayBuffer", misconception: "The main thread can use SharedArrayBuffer fine under cross-origin isolation. It is the blocking wait specifically that is banned there." },
+    { label: "Atomics.wait is slower on the main thread", misconception: "Speed is not the reason. It is a hard prohibition: a blocking call on the main thread would hang the whole page." },
+    { label: "Workers have higher priority than the main thread", misconception: "There is no priority ordering like that. The rule is about not blocking the thread that owns rendering and input." },
+  ]}
+/>
+
+<TraceScenario
+  id="sr-trace-sab-1"
+  lessonSlug="05-shared-array-buffer-and-atomics"
+  lang="en"
+  scenario="A page deploys COOP + COEP to unlock multithreaded WASM. After deploy, crossOriginIsolated is true but the WASM module panics on startup with 'memory.grow failed'. Debug the cause."
+  steps={[
+    { prompt: "The WASM module uses growable SharedArrayBuffer (maxByteLength option) but the browser does not support it", reveal: "Possible but uncommon. All modern browsers support growable SAB. The panic on memory.grow is more likely a runtime failure — the WASM runtime requested more memory than the SAB's maxByteLength allows, or the grow() call itself was not coordinated between threads." },
+    { prompt: "The WASM runtime called memory.grow without atomic coordination — another thread was mid-read of the old memory region", reveal: "Correct. memory.grow on a SharedArrayBuffer-backed WASM memory invalidates all existing typed-array views. Any thread that still holds an old view and then accesses it gets stale pointers. The WASM toolchain is supposed to emit atomic barriers around grows, but a misconfigured build or a custom allocator that calls grow unsafely can produce this failure." },
+    { prompt: "The SharedArrayBuffer size exceeds browser limits", reveal: "There is no universal browser limit that would cause a panic here. The issue is concurrent memory.grow without synchronisation." },
+    { prompt: "COEP broke one of the WASM imports", reveal: "COEP blocking an import would fail at load time, not at memory.grow. The panic happens at runtime, pointing to a concurrency issue during resize." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does the Spectre gate exist? Spectre is a CPU microarchitecture vulnerability (CVE-2017-5753) where speculative execution leaks memory across process boundaries via timing side-channels. High-resolution timers (including those you can build from a SharedArrayBuffer by incrementing a counter in one thread while measuring reads in another) make these attacks practical in the browser. The COOP header prevents your page from sharing a process with potentially malicious cross-origin pages; COEP prevents cross-origin resources from being loaded without explicit consent. Together they give the browser confidence it can enable high-resolution shared memory without leaking secrets from co-located origins.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>SharedArrayBuffer is zero-copy shared memory between threads — powerful enough to run multithreaded WASM, gated behind COOP + COEP or it is undefined. Atomics prevents data races; Atomics.wait is forbidden on the main thread. Enable cross-origin isolation in report-only mode first to audit COEP breakage before enforcing.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-shared-array-buffer-and-atomics-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through everything that has to be true for SharedArrayBuffer to be available, and what enabling it costs.", a: "The document must be served with two response headers: COOP: same-origin (severs connection to cross-origin contexts that could share a process) and COEP: require-corp or credentialless (forces every cross-origin subresource to opt in). When both are in effect, self.crossOriginIsolated is true and SharedArrayBuffer is defined. The cost: COEP blocks every cross-origin image, font, script, and iframe that does not send Cross-Origin-Resource-Policy. Audit with report-only mode first." },
+    { q: "Why are atomic operations necessary when using SharedArrayBuffer?", a: "Without atomics, two threads writing the same SAB location produce a data race — the result depends on CPU and compiler reordering and is undefined. Atomics provides indivisible operations (add, compareExchange) and synchronisation primitives (wait, notify) that establish happens-before relationships, making a thread's writes visible to other threads in a defined order." },
+    { q: "What is the practical pattern for using an atomic flag to signal 'data is ready' in a SharedArrayBuffer?", a: "Write bulk data with plain typed-array stores (fast, no ordering guarantee). Then do one Atomics.store on a flag. The reader does one Atomics.load on the flag — once it sees the ready value, the happens-before edge makes all preceding bulk writes visible. This avoids making every data write atomic (expensive) while still guaranteeing visibility." },
+  ]}
+/>
+
+<Recap lang="en">
+`SharedArrayBuffer` is the escape from message-passing — a block of memory visible to all threads that hold a view of it, with zero copy overhead. It is the foundation of multithreaded WASM in the browser. It is gated behind `COOP: same-origin` and `COEP: require-corp` (or `credentialless`) — without both headers, `SharedArrayBuffer` is `undefined` and multithreaded WASM silently degrades. Atomics prevents data races: `Atomics.add`, `Atomics.compareExchange`, and `Atomics.wait`/`notify` are the primitives. `Atomics.wait` is forbidden on the main thread because it blocks — and blocking the main thread freezes the page. The relaxed memory model means only atomic operations guarantee ordering between threads.
+</Recap>

@@ -1,0 +1,219 @@
+---
+slug: 05-lcp-and-critical-path
+lang: en
+track: frontend
+unit: 02-data-fetching
+order: 5
+title: "LCP, prefetch, and race conditions in interactive fetching"
+summary: "How to diagnose LCP regressions from the network waterfall, what prefetching patterns buy and cost, and how to eliminate race conditions in search-as-you-type fetching."
+estMin: 10
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - frontend/02-data-fetching/04-client-cache-swr
+deepensInto:
+  - frontend/02-data-fetching/06-senior-internals
+spiral: ["statefulness"]
+concepts: ["LCP", "Web-Vitals", "prefetch", "race-condition", "AbortController", "debounce", "pagination", "cursor-pagination"]
+sources:
+  - https://web.dev/articles/optimize-lcp
+  - https://tanstack.com/query/v5/docs/framework/react/guides/request-waterfalls
+  - https://datatracker.ietf.org/doc/html/rfc5861
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+Your user types "react" into a search box. Two fetches fire — for "reac" then "react". The "reac" response arrives 200ms after "react" because the server happened to be slower. The UI shows "reac" results while the input shows "react". Classic race condition.
+</Hook>
+
+<Crux>LCP = slowest critical-path fetch. Move LCP data server-side. Fix races with AbortController. Prefetch on hover; mind mobile.</Crux>
+
+<Explanation>
+
+## LCP and the critical fetch
+
+**Largest Contentful Paint** measures when the page's main content element becomes visible. For a product page, the LCP element is typically the hero image or the product title. Web Vitals thresholds:
+
+- Good: LCP under 2.5s
+- Excellent: LCP under 1.5s
+
+The single biggest LCP improvement most apps can make: move the LCP element's data fetching from client to server. A client-fetched title adds JS-download + mount + fetch to the LCP critical path — easily 2–3x the latency of an equivalent SSR page.
+
+Supporting signals:
+- `fetchpriority="high"` on the LCP image tells the browser to prioritise its discovery early in parsing
+- `<link rel="preload">` for LCP images whose URL is known at build time push them to the browser earlier
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">LCP optimization path</div>
+  <div class="flex flex-col gap-3">
+    <div class="rounded border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 p-3">
+      <div class="font-bold text-red-700 dark:text-red-300 text-xs mb-1">BEFORE — client fetch</div>
+      <div class="text-xs">HTML 50ms → JS bundle 600ms → mount 100ms → /api/product 200ms → LCP at ~950ms</div>
+    </div>
+    <div class="rounded border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/20 p-3">
+      <div class="font-bold text-green-700 dark:text-green-300 text-xs mb-1">AFTER — RSC server fetch</div>
+      <div class="text-xs">HTML with data 250ms → LCP at ~300ms (3x improvement)</div>
+    </div>
+  </div>
+</div>
+
+## Diagnosing a waterfall from DevTools
+
+A real regression pattern seen in production: four sequential API calls, each starting only after the previous response:
+
+```
+GET /products/42        50ms  → 250ms
+GET /app-bundle.js     260ms  → 850ms
+GET /api/product/42    860ms  → 1300ms    (useEffect, starts after bundle)
+GET /api/reviews       1310ms → 1700ms   (after product)
+GET /api/user          1710ms → 2000ms   (after reviews)
+LCP at 2050ms
+```
+
+Three antipatterns in one waterfall:
+1. Requests 3–5 are sequential when independent — no reason reviews and user need to wait for product response
+2. All three are useEffect-triggered — they wait for JS bundle download, parse, mount
+3. bundle.js is too large at ~590ms — code-split the LCP-critical path to under 50KB
+
+After fix — RSC with server fetches in parallel, small interactive bundle:
+
+```
+GET /index.html (streaming)  50ms → 80ms  TTFB
+streaming chunks             80ms → 300ms  LCP at ~320ms
+```
+
+## Race conditions in interactive fetching
+
+The search-as-you-type race: user types "rea" → fetch A fires. User types "react" → fetch B fires. Server is slower for fetch A. Fetch B resolves first (results for "react"), UI updates. Then fetch A resolves (results for "rea"), UI overwrites with wrong results.
+
+**Fix 1: AbortController** — cancel the in-flight request when a new one starts:
+
+```typescript
+let controller = new AbortController();
+
+function search(query: string) {
+  controller.abort();
+  controller = new AbortController();
+  return fetch(`/api/search?q=${query}`, { signal: controller.signal });
+}
+```
+
+TanStack Query automatically passes an `AbortSignal` through the `queryFn`'s meta — queries for an old key are cancelled when the key changes.
+
+**Fix 2: Debounce** — wait until the user stops typing before firing:
+
+```typescript
+const debouncedQuery = useDebounce(inputValue, 300);
+const { data } = useQuery({
+  queryKey: ['search', debouncedQuery],
+  queryFn: () => searchProducts(debouncedQuery),
+  enabled: debouncedQuery.length > 1,
+});
+```
+
+300ms delay means only one fetch fires per pause in typing.
+
+**Fix 3: queryKey versioning (TanStack Query built-in)** — each response is tagged with the queryKey that produced it. The cache stores only the latest key's data. Stale responses for old keys are discarded automatically.
+
+## Prefetch strategies
+
+Smart fetching can start work before the user clicks:
+
+**Hover prefetch**: when the cursor enters a link, start fetching the target. User typically clicks 100–300ms after hover begins — data is often done before they click.
+
+```typescript
+<Link
+  href={`/product/${id}`}
+  onMouseEnter={() => queryClient.prefetchQuery({
+    queryKey: ['product', id],
+    queryFn: () => fetchProduct(id),
+  })}
+>
+  View product
+</Link>
+```
+
+**Viewport prefetch**: as a link scrolls into view, start prefetching. Useful for the next page in an infinite scroll list.
+
+**Next.js Link default**: `<Link href="...">` prefetches automatically in production when in viewport. Disable with `prefetch={false}` if bandwidth matters.
+
+**Tradeoff**: prefetching uses bandwidth speculatively. On mobile with limited data plans, over-eager prefetching is expensive. Limit to next-likely targets; avoid prefetching large media.
+
+## Pagination: cursor vs offset
+
+**Offset pagination**: `?page=2&limit=20`. Simple but breaks under concurrent inserts: if a new item is inserted between page 1 and page 2 fetches, items shift and the user sees a duplicate or skipped item.
+
+**Cursor pagination**: `?cursor=abc123`. Stable across inserts because the cursor marks a position in the dataset, not a count. TanStack Query's `useInfiniteQuery` handles cursor-based natively, with `getNextPageParam` extracting the next cursor from each response.
+
+Use cursor pagination for any list under churn. Offset is acceptable only for rarely-mutated, static datasets.
+
+<Misconception id="mc-lcp-just-images">
+  <p><strong>"LCP optimisation is just about images."</strong> LCP fires on the largest contentful element — text (headline, product title) as often as images. If the largest element is text from an API call, moving that call server-side improves LCP. Always check what DevTools reports as the LCP candidate first.</p>
+</Misconception>
+
+<NumbersCard
+  id="lcp-numbers"
+  title="LCP thresholds and fetch numbers"
+  stats={[
+    { label: "LCP 'good' threshold", value: "under 2.5 s" },
+    { label: "LCP 'excellent' threshold", value: "under 1.5 s" },
+    { label: "Hover-to-click delay (typical)", value: "100–300 ms" },
+    { label: "Debounce for search inputs", value: "200–400 ms" },
+    { label: "Promise.all speedup at N=5", value: "~5x vs sequential" },
+  ]}
+/>
+
+<Quiz
+  id="05-q1"
+  pieceSlug="05-lcp-and-critical-path"
+  lang="en"
+  question="A page has LCP of 4.2s. DevTools shows a staircase of 3 sequential /api fetches taking 1500ms total. What is the best first fix?"
+  choices={[
+    { label: "Add fetchpriority='high' to all images", misconception: "fetchpriority helps image discovery; sequential API fetches need parallelism or server-side migration." },
+    { label: "Move the 3 fetches to the server (RSC or SSR) and fire them in parallel — removes client-side waterfall and reduces LCP critical path by ~1500ms", correct: true },
+    { label: "Add a loading spinner", misconception: "Spinners improve perceived UX but do not fix the underlying latency." },
+    { label: "Upgrade to HTTP/3", misconception: "HTTP version affects connection overhead, not the sequential logic in JavaScript code." },
+  ]}
+/>
+
+<Quiz
+  id="05-q2"
+  pieceSlug="05-lcp-and-critical-path"
+  lang="en"
+  question="A search input fires a fetch on every keystroke. The user types 'react' and gets 'reac' results displayed. What is the best fix?"
+  choices={[
+    { label: "Increase staleTime", misconception: "staleTime controls cache freshness, not race conditions from rapid key changes." },
+    { label: "Add an AbortController that cancels the previous in-flight request when a new keystroke fires, or use TanStack Query which cancels automatically via queryKey change", correct: true },
+    { label: "Move search to server-side", misconception: "Search is inherently client-interactive; the fix is cancellation logic, not fetch location." },
+    { label: "Disable concurrent fetches in React", misconception: "There is no such API; concurrent fetches are a fundamental HTTP feature." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>LCP improves most when the LCP element's data moves from client to server. Race conditions in interactive fetching need AbortController cancellation or queryKey-based automatic cancellation. Prefetch on hover for near-instant navigation; respect mobile data with selective prefetching.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the LCP 'good' and 'excellent' thresholds?", a: "Good: under 2.5s. Excellent: under 1.5s. These are Web Vitals thresholds used in Lighthouse and Core Web Vitals reporting." },
+    { q: "What is a search-box race condition and how does AbortController fix it?", a: "When rapid keystrokes fire multiple fetches, out-of-order responses overwrite the UI with stale results. AbortController.abort() cancels the previous in-flight fetch before the new one starts. TanStack Query passes an AbortSignal through queryFn automatically when the queryKey changes." },
+    { q: "Why is cursor pagination preferable to offset for mutable data?", a: "Offset breaks under concurrent inserts: a new item inserted between page 1 and page 2 fetches shifts items, causing duplicates or gaps. Cursor pagination uses a stable position marker; inserts do not affect pages already fetched." },
+  ]}
+/>
+
+<Recap lang="en">
+LCP measures when the page's main content element becomes visible; Web Vitals targets under 2.5s (good) and 1.5s (excellent). The largest LCP win is moving the LCP element's data fetch from client to server, cutting 2–3 sequential trips from the critical path. Diagnosing LCP regressions: look for a staircase in the Network panel — sequential requests with the start of each matching the end of the previous. Fix: Promise.all or RSC for independent server-side fetches; AbortController or debounce for client-side interactive flows. Prefetch on hover for near-instant navigations, but limit speculative prefetching on mobile to avoid wasting data plan bandwidth.
+</Recap>

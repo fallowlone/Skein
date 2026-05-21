@@ -1,0 +1,189 @@
+---
+slug: 04-key-schedule-and-extensions
+lang: en
+track: networking
+unit: 05-tls-handshake
+order: 4
+title: "Key schedule, SNI, ALPN, and extensions"
+summary: "How HKDF derives every traffic key from the shared secret, why SNI leaks which hostname you visit, and how ALPN, HelloRetryRequest, and OCSP stapling work inside the handshake."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["02-the-1rtt-handshake", "03-session-resumption-and-0rtt"]
+deepensInto: ["05-0rtt-defenses-and-modern-tls"]
+spiral: ["encapsulation"]
+concepts: ["hkdf", "key-schedule", "sni", "alpn", "hello-retry-request", "ocsp-stapling", "crlite", "new-session-ticket", "key-update", "certificate-transparency"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc8446
+  - https://datatracker.ietf.org/doc/html/rfc5869
+  - https://hpbn.co/transport-layer-security-tls/
+  - https://blog.cloudflare.com/rfc-8446-aka-tls-1-3/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+You understand how ECDHE produces a shared secret. But that secret is not used directly as an encryption key — it feeds a key derivation tree that produces separate keys for handshake traffic, application traffic, resumption, and export. That tree is the HKDF key schedule, and every key TLS 1.3 uses flows from it.
+</Hook>
+
+<Crux>HKDF derives a tree of domain-separated keys from the ECDHE secret; compromising one key cannot help decrypt traffic from any other branch.</Crux>
+
+<Explanation>
+
+## HKDF key schedule (RFC 8446 §7.1)
+
+TLS 1.3 derives every key from a two-phase HKDF tree:
+
+**Phase 1 — Early Secret.**
+```
+early_secret = HKDF-Extract(salt=0, IKM=PSK_or_zero)
+```
+If no PSK: IKM is all zeros. From the early secret, `Derive-Secret(early_secret, "derived", "")` produces the salt for phase 2.
+
+**Phase 2 — Handshake Secret.**
+```
+handshake_secret = HKDF-Extract(salt=derived_from_early, IKM=ECDHE_shared_secret)
+```
+From the handshake secret:
+- Client handshake traffic key: `HKDF-Expand-Label(hs_secret, "c hs traffic", transcript, hash_len)`
+- Server handshake traffic key: `HKDF-Expand-Label(hs_secret, "s hs traffic", transcript, hash_len)`
+
+**Phase 3 — Master Secret.**
+```
+master_secret = HKDF-Extract(salt=derived_from_handshake, IKM=zero)
+```
+From the master secret:
+- Client application traffic key: `HKDF-Expand-Label(master, "c ap traffic", transcript, hash_len)`
+- Server application traffic key: `HKDF-Expand-Label(master, "s ap traffic", transcript, hash_len)`
+- Resumption PSK: `Derive-Secret(master, "res master", transcript)`
+
+The labels (`"c hs traffic"`, `"s ap traffic"`, etc.) are domain separators: compromising one key derivation path cannot help an attacker on another path.
+
+<NumbersCard
+  id="card-key-schedule"
+  title="HKDF key schedule at a glance"
+  data-lesson-visual
+  stats={[
+    { label: "Hash for TLS_AES_128_GCM_SHA256", value: "SHA-256" },
+    { label: "Hash for TLS_AES_256_GCM_SHA384", value: "SHA-384" },
+    { label: "Handshake traffic keys protect", value: "EncryptedExtensions → Finished" },
+    { label: "Application traffic keys protect", value: "All data after Finished" },
+    { label: "Key update primitive", value: "HKDF-Expand-Label(current, 'traffic upd', '', hash_len)" },
+    { label: "Cipher suite controls", value: "AEAD cipher + hash for schedule; key exchange is separate" },
+  ]}
+/>
+
+## Cipher suite separation in TLS 1.3
+
+TLS 1.2 packed three choices into one cipher suite string: key exchange, bulk cipher, and MAC. TLS 1.3 separated them:
+- **Named-group negotiation** — picks the ECDHE curve (`x25519`, `secp256r1`, …)
+- **Signature-algorithm negotiation** — picks how the certificate signature is verified (`ecdsa_secp256r1_sha256`, `ed25519`, …)
+- **Cipher suite** — picks only the AEAD cipher and hash for the key schedule: `TLS_AES_128_GCM_SHA256`, `TLS_CHACHA20_POLY1305_SHA256`, `TLS_AES_256_GCM_SHA384`
+
+TLS 1.2 had hundreds of valid combinations. TLS 1.3 has five standard suites.
+
+## SNI: server name indication
+
+Many hostnames share one IP address (virtual hosting, CDNs). Without help the server cannot pick the right certificate before reading the request — the request is encrypted. SNI solves this by having the client send the **hostname in plain text** inside ClientHello. The server uses it to select the right certificate before responding.
+
+The privacy cost: anyone on the wire learns which hostname you visited. This is the motivation for Encrypted ClientHello (ECH), covered in the next lesson.
+
+## ALPN: application-layer protocol negotiation
+
+After TLS is established, client and server must agree on the protocol above: HTTP/1.1, HTTP/2, or HTTP/3. ALPN puts a list in ClientHello (typically `["h2", "http/1.1"]`) and the server picks one in ServerHello. Because both messages are protected by the transcript hash, a middlebox cannot strip `h2` to force HTTP/1.1 — tampering breaks Finished.
+
+## HelloRetryRequest
+
+If the client's key_share only contains a curve the server does not support, the server sends `HelloRetryRequest` (encoded as a special ServerHello with the `magic_retry_request_random` value) containing a cookie and the named group it wants. The client sends a fresh ClientHello with the correct key_share plus the cookie. This adds one RTT but is rare: modern clients offer `x25519` and `P-256` simultaneously to pre-empt it. The cookie also enables stateless servers (load balancers without connection affinity) to complete HRR without persisting state between the two ClientHellos.
+
+## OCSP stapling and CRLite
+
+Traditional OCSP: the client makes a live request to the CA's OCSP responder to check revocation — leaking browsing history and adding latency. OCSP stapling moves this to the server: the server periodically fetches a signed OCSP response and attaches it to the TLS handshake via the `status_request` extension. No extra client round-trip, no privacy leak.
+
+Post-2024 reality: Let's Encrypt stopped serving OCSP on 2025-05-07. Firefox 137 shipped CRLite by default — a compact, signed bloom-filter cascade covering all WebPKI revocations from CT logs, refreshed every 12 hours. New infrastructure should plan around 90-day (soon 47-day) cert lifetimes rather than runtime OCSP.
+
+## Certificate transparency (CT)
+
+Every publicly trusted certificate must appear in at least two CT logs — append-only, publicly auditable, signed Merkle trees. The client checks the certificate carries Signed Certificate Timestamps (SCTs). Chrome and Safari refuse connections with missing or invalid SCTs. CT made the CA ecosystem auditable: a rogue CA cannot issue a certificate for `example.com` without leaving a public tamper-evident record, and detection tools (crt.sh) alert domain owners within minutes.
+
+<Quiz
+  id="sr-quiz-1"
+  pieceSlug="04-key-schedule-and-extensions"
+  lang="en"
+  question="Why does the HKDF key schedule use domain-separated labels for each key?"
+  choices={[
+    { label: "To make the handshake faster", misconception: "Labels add negligible cost. The purpose is security isolation." },
+    { label: "So that compromising one derived key (e.g. early traffic) cannot help an attacker derive any other key (e.g. application traffic)", correct: true },
+    { label: "To allow the cipher suite to be changed mid-connection", misconception: "The cipher suite is fixed at negotiation; key update uses the same labels." },
+    { label: "Labels are required by the HKDF RFC regardless of TLS", misconception: "HKDF-Expand-Label is a TLS 1.3 construction; the base HKDF RFC 5869 does not mandate labels." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-2"
+  pieceSlug="04-key-schedule-and-extensions"
+  lang="en"
+  question="Why is OCSP stapling being phased out across the WebPKI in 2024–2026?"
+  choices={[
+    { label: "OCSP responses became too large to fit in TLS records", misconception: "Size was never the issue. OCSP responses fit comfortably." },
+    { label: "Soft-fail revocation checking made OCSP largely ineffective, and the privacy leak (CA sees every site you visit) was deemed worse than the risk", correct: true },
+    { label: "CAs decided unilaterally to stop signing OCSP responses", misconception: "The decision was ecosystem-wide: browser vendors moved to CRLite, Let's Encrypt deprecated OCSP." },
+    { label: "TLS 1.3 removed support for the status_request extension", misconception: "TLS 1.3 still supports OCSP stapling; the WebPKI just moved away from it operationally." },
+  ]}
+/>
+
+<DragOrder
+  id="sr-drag-1"
+  pieceSlug="04-key-schedule-and-extensions"
+  lang="en"
+  prompt="Order the TLS 1.3 key derivation hierarchy from input to output:"
+  items={[
+    "Input: ECDHE shared secret",
+    "HKDF-Extract produces handshake secret",
+    "Derive-Secret produces handshake traffic secrets (client and server)",
+    "HKDF-Expand-Label produces handshake traffic keys and IVs",
+    "Records under handshake traffic key protect EncryptedExtensions → Finished",
+    "After Finished: master secret derived, application traffic keys produced",
+  ]}
+/>
+
+<Misconception
+  id="alpn-misconception"
+  title="'A middlebox can strip ALPN h2 to force HTTP/1.1'"
+>
+ALPN is bound to the handshake transcript. Any change to ClientHello or ServerHello invalidates the Finished HMAC on both sides. A middlebox rewriting ALPN causes Finished to fail and the connection to abort — the downgrade is caught before any data flows.
+</Misconception>
+
+<Inset kind="why" lang="en">
+**Key update for long-lived connections.** TLS 1.3 supports rolling application traffic keys mid-connection without renegotiation: either side sends `KeyUpdate`, derives a new application traffic secret via `HKDF-Expand-Label(current, "traffic upd", "", hash_len)`, and starts using the new key. The peer responds with its own `KeyUpdate`. Modern AEAD ciphers tolerate enormous data volumes before key rotation is security-critical, but the mechanism exists for ultra-long-lived sessions (persistent WebSocket connections, service-mesh links open for hours).
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The HKDF key schedule produces domain-separated traffic keys from the ECDHE secret, so each stage (handshake, application, resumption) is cryptographically isolated; SNI leaks the target hostname in plain text — ECH encrypts it; ALPN negotiates the protocol above TLS inside the tamper-proof handshake.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-key-schedule-and-extensions-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does ALPN prevent downgrade attacks on the HTTP version?", a: "The client sends the list of supported protocols (h2, http/1.1) in ClientHello's ALPN extension. The server picks one in ServerHello. Both messages are folded into the transcript hash, so any tampering invalidates the Finished HMAC. A middlebox that strips h2 causes the Finished check to fail — the downgrade is detected before any application data flows." },
+    { q: "What information does SNI reveal, and why does ECH matter?", a: "SNI is the hostname sent in plain text inside ClientHello so the server can pick the right certificate. On-path observers (ISPs, corporate firewalls, government inspection proxies) learn which exact hostname you connected to. ECH (RFC 9849) encrypts the inner ClientHello under the server's published DNS key, so observers only see that you connected to the ECH-capable front-end, not the actual origin hostname." },
+    { q: "When does a TLS 1.3 server send HelloRetryRequest, and what is the client required to include in its retry?", a: "The server sends HRR when the client's key_share does not include a named group the server supports. The HRR message carries a cookie and the desired named group. The client must include that cookie and a key_share for the requested group in its fresh ClientHello. The cookie allows stateless servers (load balancers) to continue without pinning connections." },
+  ]}
+/>
+
+<Recap lang="en">
+The HKDF key schedule derives a tree of keys from the ECDHE shared secret — early secret, handshake secret, master secret — each separated by domain labels so compromising one path cannot help an attacker on another. TLS 1.3 also separated cipher suite negotiation into three independent axes (named group, signature algorithm, AEAD cipher), collapsing hundreds of TLS 1.2 combinations to five standard suites. SNI sends the target hostname in plain text so virtual hosting works; ALPN negotiates the application protocol above TLS inside the tamper-proof transcript. HelloRetryRequest handles the edge case where the client's first key_share guess is wrong. OCSP stapling reduced per-connection revocation latency; CRLite (Firefox 137+) replaces it with a locally refreshed bloom-filter cascade.
+</Recap>

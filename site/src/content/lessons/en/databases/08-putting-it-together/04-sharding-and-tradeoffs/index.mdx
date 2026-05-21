@@ -1,0 +1,165 @@
+---
+slug: 04-sharding-and-tradeoffs
+lang: en
+track: databases
+unit: 08-putting-it-together-db
+order: 4
+title: "Act 7 in depth: sharding, co-location, and the seven-tier tradeoff cascade"
+summary: "Sharding is the last resort — chosen when single-Postgres limits are measured and proven. The shard key is irreversible, co-location determines which joins stay local, and the tradeoff cascade shows why skipping any earlier act makes sharding harder."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - databases/08-putting-it-together/03-mvcc-pool-migrations
+  - databases/07-sharding/02-shard-key-selection
+  - databases/07-sharding/04-colocation-and-citus
+  - databases/07-sharding/07-resharding-and-operations
+deepensInto:
+  - databases/08-putting-it-together/05-observability-and-triage
+spiral: ["statefulness", "latency", "multiplexing"]
+concepts: ["shard-key-irreversibility", "colocation", "tradeoff-cascade", "federation-tax"]
+sources:
+  - https://docs.citusdata.com/en/stable/
+  - https://www.citusdata.com/blog/2022/09/19/citus-11-1-shards-postgres-tables-without-interruption/
+  - https://github.blog/2021-08-31-partitioning-githubs-relational-databases-scale/
+  - https://www.postgresql.org/docs/current/ddl-partitioning.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+
+<Hook>
+Citus is deployed. Shard key is tenant_id. Most tenants are fast. Tenant Acme — 40% of all queries — saturates its shard while the other five shards sit idle. The cluster is effectively single-shard for Acme. The hot-shard failure was not caused by sharding; it was designed in on the day the shard key was chosen.
+</Hook>
+
+<Crux>Sharding distributes load across nodes — shard key is irreversible and dictates which queries stay local vs. which pay federation tax.</Crux>
+
+<Explanation>
+
+## Act 7 — Three independent sharding decisions
+
+Sharding at year-3 involves three decisions made independently:
+
+**Decision 1: Shard key.** The shard key determines data distribution and query locality. For B2B multi-tenant SaaS, `tenant_id` is the natural choice: all queries for one tenant stay on one shard. For B2C, `user_id`. For time-series, a time bucket. The key must have high cardinality (so load spreads), uniform access patterns (so no single shard is hot), and be cheap to compute (so routing overhead is minimal).
+
+**Decision 2: Distribution method.**
+- **Hash**: rows are hashed to shards — even spread, range queries fan out across all shards.
+- **Range**: rows in a key range go to a specific shard — range queries stay local, but a hot key range creates a hot shard.
+- **List**: manual assignment — flexible, high operational cost.
+- **Directory**: a lookup table maps key values to shards — most flexible, highest operational cost.
+
+**Decision 3: Co-location.** Tables that join together must be placed on the same shard key so cross-shard joins stay local. In Citus: `users`, `orgs`, `events`, `audit_log` — all sharded by `tenant_id` — are co-located. A join between `users` and `events` for tenant 42 hits a single shard and returns at local latency. Without co-location, the same join fans out to all shards, collects results at the coordinator, and merges.
+
+## The federation tax
+
+Once sharded, queries that span multiple shards must be federated: send the query to each shard, collect results, and merge on the application side or at the Citus coordinator.
+
+A naive outer join across two shards becomes two inner queries (one per shard) and a client-side join. A `GROUP BY` that involves shards becomes a `GROUP BY` per shard, then a second `GROUP BY` on the aggregates. Each cross-shard query has latency = max(latency per shard) + merge time; tail latency dominates.
+
+Citus handles federation with distributed query planning, but only for co-located tables (those with the same shard key). **Reference tables** (replicated to every worker node) are free — a small dimension table like `countries` or `currencies` can be replicated once and joined locally everywhere.
+
+## The hot-shard fix
+
+When Acme accounts for 40% of all queries on a tenant_id-sharded cluster:
+
+- **Option A — logical split:** Route Acme's queries to a dedicated set of logical shards. The tenant-aware router multiplexes Acme across shard IDs that map to a dedicated physical worker. Other tenants share the remaining workers.
+- **Option B — physical cluster:** Move Acme to its own Postgres cluster. Queries for Acme route there; the shared cluster handles all other tenants.
+
+Both options require online resharding (`citus_rebalance_table_shards`), which uses logical replication for sub-second per-shard write pauses. Plan the window — catch-up replication adds load.
+
+## The seven-tier tradeoff cascade
+
+Each act unlocks the next, but only if the previous is sound:
+
+- Skip Act 1 (schema) → Acts 2–7 fight inefficient joins and mutable natural keys.
+- Skip Act 2 (indexing) → Act 3 planning decisions are made blind; statistics are useless if the planner has no indexes to choose between.
+- Skip Act 3 (stats) → Act 4 vacuum is the only lever; tables bloat while you guess at cardinality.
+- Skip Act 4 (bloat) → Act 5 pool threads see table scans that are slower because dead tuples inflate heap pages.
+- Skip Act 5 (pool sizing) → Act 6 migrations starve under connection storms; the connection handshake backlog prevents the migrate from acquiring locks in a timely window.
+- Skip Act 6 (lock safety) → Act 7 sharding is impossible without downtime; every shard rebalance requires an exclusive lock if migrations were not designed for online operation.
+- Skip Act 7 (when needed) → one tenant dominates the cluster and the others wait in queue.
+
+The order is a constraint imposed by physics and Postgres internals, not a suggestion.
+
+<NumbersCard
+  id="card-act-7-numbers"
+  title="Act 7 sharding reference numbers"
+  stats={[
+    { label: "Single-node ceiling, write-heavy OLTP (2026 hardware)", value: "10–50K writes/s sustained" },
+    { label: "Full scan of 1B-row table on SSD", value: "5–10 min" },
+    { label: "Online shard-move write pause (Citus 11.1+)", value: "under 1 second per shard" },
+    { label: "Schema-based sharding: practical tenant ceiling per cluster", value: "1000–3000 tenants" },
+    { label: "Shard key change project duration", value: "months (dual-write + backfill + cutover)" },
+  ]}
+  data-lesson-visual
+/>
+
+<Inset kind="why" lang="en">
+Schema-based multi-tenancy ("one schema per tenant") works at low tenant count: clean isolation, easy backup, simple data export. But Postgres catalog tables (`pg_class`, `pg_attribute`, `pg_constraint`) grow linearly with schema count × tables per schema. At 10000 schemas × 50 tables, `pg_class` has half a million rows; planner walk-time on queries that touch multiple schemas climbs to seconds. The practical ceiling is 1000–3000 tenants per cluster with schema-based sharding. Past that, row-level multi-tenancy (`tenant_id` on every table) with Citus shard distribution scales further.
+</Inset>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-1"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="en"
+  question="A Citus cluster shards by tenant_id. A query joins users and events for a single tenant. Will this query pay the federation tax?"
+  choices={[
+    { label: "No — if users and events are co-located on tenant_id, the join stays on one shard at local latency", correct: true },
+    { label: "Yes — any join in a sharded cluster is federated", misconception: "Federation only applies to cross-shard queries. If both tables are co-located on the same shard key and the query includes the shard key in the WHERE clause, the Citus coordinator sends the query to one shard." },
+    { label: "No — Citus caches join results to avoid repeated federation", misconception: "Citus does not cache join results. Co-location is the mechanism that avoids federation." },
+    { label: "Yes — Citus always fans out to all shards for joins", misconception: "Citus only fans out when the query cannot be routed to a single shard, which happens when the shard key is absent from the predicate or the tables are not co-located." },
+  ]}
+/>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-2"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="en"
+  question="The team skipped Act 6 (safe migration patterns). They now need to add a column to a sharded table of 1B rows. What is the consequence?"
+  choices={[
+    { label: "Each shard migration must acquire an AccessExclusiveLock; without expand-contract discipline, every shard rebalance and migration is a downtime event for that shard's tenants", correct: true },
+    { label: "Sharding eliminates the need for expand-contract because shards are smaller", misconception: "Each shard's migration is still a Postgres DDL that takes AccessExclusiveLock. Smaller shards reduce the lock duration, but not the number of lock windows (one per shard, potentially concurrent)." },
+    { label: "Citus automatically parallelizes migrations across shards without locking", misconception: "Citus propagates DDL from the coordinator to workers — but the DDL itself still takes the same locks on each worker as it would on a single Postgres." },
+    { label: "The migration only needs to run once on the coordinator", misconception: "Citus propagates DDL to all workers. The migration runs on every shard, and each lock window is a potential incident for the tenants on that shard." },
+  ]}
+/>
+
+<Quiz
+  id="04-sharding-and-tradeoffs-quiz-3"
+  lessonSlug="04-sharding-and-tradeoffs"
+  lang="en"
+  question="Why is changing the shard key after launch described as 'among the most expensive operations in databases'?"
+  choices={[
+    { label: "Every row must be re-hashed and moved to its new shard, requiring months of dual-write + backfill + cutover while maintaining correctness in both schemes simultaneously", correct: true },
+    { label: "Citus prevents shard key changes to protect data integrity", misconception: "There is no technical prevention. The cost is operational: maintaining two sharding schemes simultaneously, backfilling historical data, and cutting over reads and writes without data loss." },
+    { label: "The shard key change requires rebuilding all indexes across all shards", misconception: "Index rebuilds are a part of it, but the dominant cost is the data migration itself — every row hashes to a different shard, requiring a new cluster and a dual-write period." },
+    { label: "Shard key changes are expensive only on large tenants like Acme", misconception: "The cost is proportional to total data volume, not to any single tenant's share. Every row in every table sharded by the old key must be moved." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Sharding's three decisions — shard key (irreversible), distribution method (hash/range/list), co-location (join locality) — compound. A wrong shard key is a months-long reshard project. The tradeoff cascade means every skipped earlier act amplifies the cost of sharding: no safe migrations = every shard rebalance is a downtime event.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-sharding-and-tradeoffs-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the three independent decisions in sharding and explain why the shard key is the most consequential.", a: "Decision 1: Shard key — which column(s) to hash/range/list to determine row placement. Decision 2: Distribution method — hash (even spread, range queries fan out), range (range queries local, hot range risk), list (manual), directory (most flexible, highest ops cost). Decision 3: Co-location — which tables share the same shard key so joins stay local. The shard key is most consequential because it is largely irreversible: once the app and schema are built for tenant_id sharding, every query assumes that column, every table carries it, and changing it requires months of dual-write + backfill + cutover — the most expensive database operation short of a full rewrite." },
+    { q: "What is the federation tax and when does co-location eliminate it?", a: "The federation tax is the latency and complexity of queries that span multiple shards: each participating shard executes a sub-query, results are collected at the coordinator, and a merge step produces the final result. Latency = max(per-shard latency) + merge time; tail latency dominates. Co-location eliminates the tax when two tables sharing the same shard key are joined on that key in a single-tenant query — the coordinator routes the entire query to one shard, which executes it as a local Postgres join. Co-location requires explicit design: Citus must be told to co-locate tables, and the shard key must appear in the join predicate for routing to kick in." },
+    { q: "Trace the tradeoff cascade: pick Acts 1 and 6, describe how skipping them makes Act 7 more expensive.", a: "Skip Act 1 (schema): use email as the natural key. At Act 7, sharding by email is unusable — email is a property of one entity, not a tenant; co-location across users/events/orgs becomes impossible. The team must retrofit a tenant_id column (Act 6 migration), then reshard. The schema mistake converts a deployment decision into a multi-month re-architecture. Skip Act 6 (safe migrations): the team uses naive ALTER TABLE with AccessExclusiveLock. At Act 7, every shard maintenance window (rebalance, column add, index build) requires downtime — one AccessExclusiveLock per shard, potentially staggered but each a production risk. With expand-contract, each step is lock-cheap; without it, every sharding operation is a downtime event multiplied by shard count." },
+  ]}
+/>
+
+<Recap lang="en">
+Act 7 involves three decisions: shard key (largely irreversible — determines data distribution and join locality), distribution method (hash for even spread, range for range-query locality, list/directory for manual control), and co-location (tables that join together must share a shard key to avoid the federation tax). The hot-shard failure mode — one tenant saturating a shard — is fixed by logical tenant split or physical cluster isolation, both via online resharding. The tradeoff cascade is the proof that acts compound: skip Act 1 and the shard key choice is poisoned by the wrong schema; skip Act 6 and every shard operation is a downtime event. The 2026 pragmatic default for a Postgres shop scaling past one node is declarative partitioning first, Citus when single-node limits are measured and proven, and Aurora DSQL or Spanner only when global writes are a real product requirement.
+</Recap>

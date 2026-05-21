@@ -1,0 +1,222 @@
+---
+slug: 05-extended-statistics
+lang: ru
+track: databases
+unit: 03-execution-plans
+order: 5
+title: "Расширенная статистика: исправление ошибок оценки для коррелированных колонок"
+summary: "По умолчанию планировщик предполагает независимость колонок. CREATE STATISTICS учит его функциональным зависимостям, многоколоночному n_distinct и комбинациям MCV — устраняя самый распространённый класс ошибок оценки строк."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["04-statistics-and-analyze"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["create-statistics", "dependencies", "ndistinct", "mcv", "functional-dependency", "correlated-columns", "extended-statistics"]
+sources:
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+  - https://www.postgresql.org/docs/current/multivariate-statistics-examples.html
+  - https://www.postgresql.org/docs/current/planner-stats.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+WHERE-условие фильтрует по `country='US' AND region='CA' AND status='shipped'`. Планировщик предсказывает 500 совпадающих строк — три независимые вероятности, перемноженные вместе. Реальных строк 50,000. Nested Loop выполняется в 100× лишних раз. Колонки коррелированы, а не независимы. `CREATE STATISTICS` исправляет это двумя строками SQL.
+</Hook>
+
+<Crux>Планировщик перемножает вероятности колонок. CREATE STATISTICS учит его зависимостям и MCV для коррелированных колонок.</Crux>
+
+<Explanation>
+
+## Почему предположение о независимости ломается
+
+Дефолтная модель многоколоночной селективности планировщика:
+
+```
+P(country='US' AND region='CA' AND status='shipped')
+  = P(country='US') × P(region='CA') × P(status='shipped')
+  = 0.50 × 0.05 × 0.20
+  = 0.005 (0.5%)
+```
+
+Но если country определяет region (каждый CA-заказ в US — функциональная зависимость), реальная селективность:
+
+```
+P(region='CA') × P(status='shipped') = 0.05 × 0.20 = 1.0%
+```
+
+На 100M строках: планировщик оценивает 500,000 строк; реальность — 1,000,000 — ошибка в 2×, которая может склонить Nested Loop к катастрофическому поведению. При более жёстких корреляциях ошибка может быть в 1000×.
+
+## Три вида расширенной статистики
+
+`CREATE STATISTICS` (доступен с PG 10) поддерживает три взаимодополняющих вида:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Вид</th>
+        <th class="border border-border px-3 py-2 text-left">Что хранит</th>
+        <th class="border border-border px-3 py-2 text-left">Исправляет</th>
+        <th class="border border-border px-3 py-2 text-left">С версии</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>dependencies</code></td>
+        <td class="border border-border px-3 py-2">Коэффициенты функциональной зависимости между парами колонок</td>
+        <td class="border border-border px-3 py-2">Одна колонка подразумевает другую (zip → city, country → region)</td>
+        <td class="border border-border px-3 py-2">PG 10</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ndistinct</code></td>
+        <td class="border border-border px-3 py-2">Счётчик уникальных комбинаций для многоколоночных групп</td>
+        <td class="border border-border px-3 py-2">Кардинальность GROUP BY по нескольким колонкам</td>
+        <td class="border border-border px-3 py-2">PG 10</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>mcv</code></td>
+        <td class="border border-border px-3 py-2">Наиболее часто встречающиеся кортежи значений для комбинации колонок</td>
+        <td class="border border-border px-3 py-2">Точные оценки для частых комбинаций</td>
+        <td class="border border-border px-3 py-2">PG 12</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### dependencies
+
+Хранит коэффициенты функциональной зависимости между парами колонок. Коэффициент, близкий к 1.0, означает «колонка A почти всегда определяет колонку B». Когда планировщик видит `WHERE country='US' AND region='CA'`, он проверяет зависимость между `country` и `region` — если country определяет region с коэффициентом 0.95, планировщик знает, что не нужно перемножать P(country) × P(region); вместо этого он оценивает на основе более селективной из двух.
+
+```sql
+CREATE STATISTICS stx_orders_geo (dependencies)
+  ON country, region, status FROM orders;
+ANALYZE orders;
+```
+
+### ndistinct
+
+Без этого планировщик оценивает количество уникальных комбинаций (country, region) как `n_distinct(country) × n_distinct(region)`, что резко переоценивает, когда колонки коррелированы. `ndistinct` хранит реальное количество комбинаций.
+
+Полезно для запросов вида:
+
+```sql
+SELECT country, region, COUNT(*) FROM orders GROUP BY country, region;
+```
+
+Без `ndistinct` планировщик может выделить Hash Aggregate, ожидая миллионы групп, тогда как их сотни.
+
+### mcv (многоколоночные наиболее частые значения)
+
+Хранит наиболее частые кортежи комбинации колонок напрямую — аналог MCV-списка на уровне колонки, но для пар или троек. Для `WHERE country='US' AND status='shipped'`, если (US, shipped) — частая комбинация, планировщик читает её точную частоту из MCV-списка, а не перемножает маргинальные вероятности.
+
+Доступен с PG 12 и часто является наиболее ценным видом для OLTP-шаблонов запросов.
+
+### Статистика выражений (PG 14+)
+
+PG 14 добавил статистику по выражениям:
+
+```sql
+CREATE STATISTICS stx_orders_lower_email ON LOWER(email) FROM users;
+ANALYZE users;
+```
+
+Это позволяет планировщику точно оценивать селективность для `WHERE LOWER(email) = 'x'` даже без функционального индекса на `LOWER(email)`.
+
+## Когда и как применять CREATE STATISTICS
+
+Рабочий процесс:
+
+1. Запустите `EXPLAIN ANALYZE` на медленном запросе. Найдите узлы, где `rows` (оценка) отличается от `actual rows` более чем в 10×.
+2. Определите колонки WHERE на этом узле. Проверьте, коррелированы ли они: zip и city, country и region, продукт и категория.
+3. Создайте объект статистики:
+
+```sql
+-- Наиболее частый шаблон: dependencies + mcv вместе
+CREATE STATISTICS stx_orders_country_region_status
+  (dependencies, mcv)
+  ON country, region, status FROM orders;
+
+-- Для точности GROUP BY:
+CREATE STATISTICS stx_orders_ndistinct
+  (ndistinct)
+  ON country, region FROM orders;
+
+-- Запустите ANALYZE для заполнения:
+ANALYZE orders;
+```
+
+4. Повторно запустите `EXPLAIN ANALYZE`. Убедитесь, что `rows` отслеживает `actual rows` в пределах 2× на затронутых узлах.
+
+Стоимость хранения: небольшая — килобайты на объект статистики. Улучшение планирования на затронутых запросах: 100–1000×.
+
+<Inset kind="why" lang="ru">
+Почему default_statistics_target не решает эту проблему? Повышение целевого значения (например, до 1000) даёт более детальные гистограммы и более длинные MCV-списки для отдельных колонок — но не учит планировщика корреляциям между колонками. С MCV-списками из 1000 записей планировщик всё равно перемножает P(country) × P(region) — просто с лучшими одноколоночными оценками. Предположение о независимости сохраняется. CREATE STATISTICS заменяет предположение о независимости для конкретных групп колонок; SET STATISTICS уточняет данные, используемые внутри него.
+</Inset>
+
+<Quiz
+  id="05-extstats-quiz-1"
+  lessonSlug="05-extended-statistics"
+  lang="ru"
+  question="Какой инструмент правильный, чтобы сообщить планировщику о корреляции двух колонок (например, zip и city)?"
+  choices={[
+    { label: "CREATE STATISTICS (dependencies, mcv) ON zip, city FROM addresses; ANALYZE addresses;", correct: true },
+    { label: "ALTER TABLE addresses ALTER COLUMN zip SET STATISTICS 1000;", misconception: "Это уточняет одноколоночную статистику zip; не учит планировщика корреляции с city." },
+    { label: "CREATE INDEX ON addresses (zip, city)", misconception: "Индекс помогает выполнению запроса; он не уточняет модель оценки строк планировщика для многоколоночных предикатов." },
+    { label: "SET enable_nestloop = off", misconception: "Отключение типа соединения — обходное решение для симптома; плохая оценка в основе остаётся." },
+  ]}
+/>
+
+<Quiz
+  id="05-extstats-quiz-2"
+  lessonSlug="05-extended-statistics"
+  lang="ru"
+  question="Когда `ndistinct` является правильным видом расширенной статистики для создания?"
+  choices={[
+    { label: "Когда запрос имеет GROUP BY по нескольким коррелированным колонкам и планировщик резко переоценивает количество групп", correct: true },
+    { label: "Когда две колонки имеют функциональную зависимость (A определяет B)", misconception: "Функциональные зависимости обрабатываются видом 'dependencies', не 'ndistinct'." },
+    { label: "Когда частая комбинация значений (например, country='US' AND status='shipped') недооценивается", misconception: "Частые комбинации обрабатываются видом 'mcv'." },
+    { label: "Когда колонка имеет косое распределение (несколько значений очень распространены)", misconception: "Одноколоночная косость обрабатывается через SET STATISTICS, а не расширенную статистику." },
+  ]}
+/>
+
+<Quiz
+  id="05-extstats-quiz-3"
+  lessonSlug="05-extended-statistics"
+  lang="ru"
+  question="После запуска CREATE STATISTICS на (country, region, status) и ANALYZE, как убедиться, что статистика реально улучшила оценку?"
+  choices={[
+    { label: "Повторно запустите EXPLAIN ANALYZE на затронутом запросе и сравните rows-estimated vs actual rows — они должны совпадать в пределах 2x на затронутом узле", correct: true },
+    { label: "Проверьте pg_statistic для колонки — должны появиться новые записи", misconception: "Расширенная статистика хранится в pg_statistic_ext и pg_statistic_ext_data, а не в одноколоночном pg_statistic. И просмотр хранилища подтверждает существование объекта, но не улучшение оценки." },
+    { label: "Запрос автоматически станет быстрее без повторной проверки", misconception: "Нужно проверить с EXPLAIN ANALYZE — объект статистики помогает только если планировщик использует его для конкретной комбинации предикатов." },
+    { label: "Запустите pg_stat_statements и наблюдайте снижение mean_exec_time запроса", misconception: "Это подтверждает улучшение производительности, но не изолирует, была ли причиной исправление статистики." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CREATE STATISTICS (dependencies, mcv) ON col1, col2 FROM tbl; ANALYZE — учит планировщика о коррелированных колонках. Используйте dependencies, когда A подразумевает B (country → region); используйте mcv для частых комбинаций значений; используйте ndistinct для кардинальности GROUP BY. Проверяйте улучшение через EXPLAIN ANALYZE rows-estimated vs actual.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-extstats-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясните провал предположения о независимости и почему CREATE STATISTICS (dependencies) исправляет его.", a: "По умолчанию для предиката WHERE A = 'x' AND B = 'y' планировщик оценивает P(A='x') × P(B='y'). Это предполагает, что A и B статистически независимы — их совместная вероятность равна произведению маргинальных. Когда A и B коррелированы (A определяет B с высокой вероятностью, например country → region), реальная совместная вероятность намного ближе к P(B='y') — нельзя получить информацию из P(A='x'), потому что она подразумевается. Предположение о независимости резко недооценивает селективность: если P(country='US')=0.5 и P(region='CA')=0.05, планировщик предсказывает 2.5%, но реально 5% (потому что region='CA' подразумевает country='US'). CREATE STATISTICS с 'dependencies' измеряет коэффициент функциональной зависимости между парами колонок во время ANALYZE и сохраняет его. Когда планировщик видит тот же предикат, он использует коэффициент зависимости, чтобы откорректировать перемноженную вероятность в сторону вероятности более селективной колонки. Оценка становится точной; выбор соединения следует за ней." },
+    { q: "В чём разница между 'dependencies', 'mcv' и 'ndistinct' в CREATE STATISTICS?", a: "Все три устраняют ошибки многоколоночных оценок, но для разных шаблонов запросов. 'dependencies' отслеживает коэффициенты функциональной зависимости — насколько сильно колонка A определяет колонку B. Полезно когда значение одной колонки подразумевает другую (zip → city, country → region). 'mcv' хранит наиболее часто встречающиеся кортежи значений для комбинации колонок — аналог MCV-списка для пар или троек. Полезно для частых конкретных комбинаций вроде (country='US', status='shipped'). 'ndistinct' отслеживает реальное количество уникальных комбинаций — полезно для запросов GROUP BY, где планировщик должен знать, сколько групп ожидать. На практике создание 'dependencies' и 'mcv' вместе покрывает большинство OLTP-случаев: CREATE STATISTICS stx (dependencies, mcv) ON col1, col2 FROM tbl." },
+    { q: "Как определить, какие комбинации колонок нуждаются в расширенной статистике в production базе данных?", a: "Рабочий процесс: (1) Использовать pg_stat_statements для нахождения top-20 запросов по total_exec_time. (2) Для каждого запустить EXPLAIN ANALYZE и искать узлы с отношением rows-estimated / rows-actual больше 10×. (3) Изучить WHERE-условие на этом узле — какие колонки фильтруются? Есть ли среди них естественная корреляция (географическая иерархия country/region/city, иерархия продукта category/subcategory/product, колонки status и date, изменяющиеся вместе)? (4) Проверить реальные данные: SELECT country, region, COUNT(*) FROM orders GROUP BY country, region ORDER BY count(*) DESC LIMIT 20 — если значения region сильно концентрированы внутри countries, функциональная зависимость есть. (5) Создать объект статистики, ANALYZE, повторно запустить EXPLAIN ANALYZE. (6) Убедиться, что rows-estimated отслеживает rows-actual в пределах 2× на затронутом узле. Стоимость хранения тривиальна (килобайты); улучшение планирования 100-1000× на затронутых запросах." },
+  ]}
+/>
+
+<Recap lang="ru">
+По умолчанию планировщик перемножает одноколоночные селективности, предполагая независимость — крайне неверно для коррелированных колонок вроде (country, region) или (zip, city). `CREATE STATISTICS` добавляет три вида многоколоночной информации: `dependencies` (коэффициенты функциональной зависимости между парами колонок, исправляя ошибки оценки для WHERE A='x' AND B='y' когда A определяет B), `ndistinct` (реальное количество комбинаций для точной кардинальности GROUP BY) и `mcv` (кортежи наиболее частых значений для частых конкретных комбинаций, доступен с PG 12). PG 14+ добавил статистику выражений. Стоимость хранения — килобайты; улучшение планирования на затронутых запросах — 100–1000×. После создания статистики всегда запускайте `ANALYZE` и проверяйте с `EXPLAIN ANALYZE`, что rows-estimated отслеживает rows-actual в пределах 2× на затронутых узлах.
+</Recap>

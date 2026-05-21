@@ -1,0 +1,185 @@
+---
+slug: 04-jit-deopt-and-fix-verify
+lang: en
+track: performance
+unit: 02-hot-paths
+order: 4
+title: "JIT deopt, the fix-and-verify loop, and PR-time profiling"
+summary: "JIT deopt loops silently multiply hot-path cost 10–100x. The fix-and-verify loop is the discipline that proves a fix landed. PR-time profiling catches regressions before production."
+estMin: 18
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["performance/02-hot-paths/03-reading-parent-and-child-chains"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["JIT-deoptimisation", "hidden-class", "fix-verify-loop", "PR-time-profiling", "amdahl", "microbenchmark-vs-production"]
+sources:
+  - https://www.brendangregg.com/Articles/Netflix_Tech_Blog_Performance.pdf
+  - https://github.com/golang/go/wiki/CompilerOptimizations
+  - https://github.com/google/pprof/blob/main/doc/README.md
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A Node service has a wide leaf that flamegraphs show as the V8 interpreter (InterpreterCallStub), not TurboFan. The function is hot. The JIT is not optimising it. Every call pays interpreter overhead. Switching to a faster algorithm does nothing until the deopt is fixed. Understanding why the JIT bailed is the diagnosis.
+</Hook>
+
+<Crux>JIT runtimes deoptimise hot code when type assumptions break. Fix is type stabilisation. Prove every fix landed with a profile diff.</Crux>
+
+<Explanation>
+
+## JIT deoptimisation: a sixth shape
+
+JIT runtimes (V8, JVM HotSpot, .NET, PyPy) compile hot code to native machine code under typed assumptions. If assumptions break — a function receives an unexpected type, a hidden class transitions, a megamorphic call site fans out — the JIT bails to the interpreter or a slower compilation tier.
+
+**Signature in the flame graph:** the function shows wide, but the wide frame is the interpreter (`Interpreter::execute`, `InterpreterCallStub`) or a baseline JIT frame (V8 Sparkplug) instead of the optimised compiler's frame (V8 TurboFan, HotSpot C2).
+
+**Cost:** a single deopt is microseconds. A deopt loop (deopt → recompile → deopt) can multiply per-call cost 10–100x silently. Latency spikes that don't correlate with traffic, periodic pauses without GC running, and baseline-tier frames intermittently dominating the flame graph are all deopt-loop symptoms.
+
+**Fix:** stabilise types.
+- V8: keep hot object shapes to ≤4 hidden classes; no late property addition in JS inside hot loops.
+- HotSpot: monitor `-XX:+PrintCompilation` for repeated deopts; avoid boxing in hot code.
+- PyPy: watch `jit-summary` for guard failures; write type-stable loops.
+
+**Verification:** re-profile and check that the optimised compiler's frame (TurboFan, C2) is back in the hot stack.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Runtime</th>
+        <th class="border border-border px-3 py-2 text-left">Deopt signal in profile</th>
+        <th class="border border-border px-3 py-2 text-left">Diagnosis tool</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">V8 (Node.js)</td>
+        <td class="border border-border px-3 py-2">Sparkplug / Interpreter frames instead of TurboFan</td>
+        <td class="border border-border px-3 py-2"><code>--trace-deopt</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">JVM HotSpot</td>
+        <td class="border border-border px-3 py-2">C1 compiled frames instead of C2</td>
+        <td class="border border-border px-3 py-2"><code>-XX:+PrintCompilation -XX:+TraceDeoptimization</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">.NET RyuJIT</td>
+        <td class="border border-border px-3 py-2">Interpreter / tier-0 frames</td>
+        <td class="border border-border px-3 py-2">PerfView with Tiered JIT counters</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">PyPy</td>
+        <td class="border border-border px-3 py-2">Interpreter frames; jit-summary guard failures</td>
+        <td class="border border-border px-3 py-2"><code>--jit-summary</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The fix-and-verify loop
+
+Every performance fix has five required steps:
+
+1. **Name the hotspot and classify it** (one of the six shapes including JIT deopt).
+2. **Pick the categorical fix family** that matches the classification.
+3. **Write the fix with no scope creep** — only the change predicted in step 2.
+4. **Capture a profile under the same load** and diff against the baseline.
+5. **Verify both:** the local frame shrank **AND** the headline metric improved (p99, throughput, CPU%, whatever the SLO names).
+
+**If the frame shrank but the metric did not move:** look at where the time went instead — often a second hotspot is now visible that was masked by the first. This is not failure; it is the next iteration.
+
+**If the metric moved but the frame did not shrink:** the fix worked through a side effect you did not predict. Investigate; you may have hit something orthogonal. Both outcomes require evidence and drive the next move.
+
+The loop is the senior performance habit: fix one thing, prove it landed, find the next.
+
+## Microbenchmark-driven vs production-profile-driven fixes
+
+A microbenchmark in isolation may say a new algorithm is 5x faster. The production profile may show that algorithm is now 8% of total time instead of 15%, but other paths got slower because the new algorithm allocates more and pushed GC pressure up.
+
+The fix-and-verify loop catches this: capturing the production profile after the change tells you the whole-system effect, not just the local one. Microbenchmark claims are predictions; production profile diffs are the verdict.
+
+Production-grade teams require both: a microbenchmark that shows the local change does what is claimed, AND a production profile diff that shows the system-wide effect is positive. PRs with only one or the other ship regressions that look like wins.
+
+## PR-time vs incident-time profiling
+
+Two modes of applying hot-path methodology:
+
+**Incident-time:** the service is on fire, on-call catches the hotspot in minutes, fixes, verifies, ships. Reactive mode — same methodology, clock ticking.
+
+**PR-time:** before release, CI captures the PR's profile against the main branch baseline and flags regressions before they reach production. Proactive mode — same methodology, no pressure.
+
+Senior teams invest in both: incident-time runbooks for on-call, PR-time CI gates for prevention. Every incident retro adds one rule to the PR-time gate: if the exact regression could have been caught in CI, encode the signature. Over time the PR-time gate catches most regressions before release; incident-time runbooks handle the rest.
+
+<Inset kind="why" lang="en">
+Cross-pollination between incident-time and PR-time is the mechanism that makes performance discipline self-compounding. Each incident retro that encodes a CI rule reduces future on-call load by one class of regression. The mature signature: perf incidents per quarter trending down, not flat. Teams that do not cross-pollinate stay on the "heroic on-call" stage indefinitely.
+</Inset>
+
+<DragOrder
+  id="04-jit-deopt-and-fix-verify-drag-1"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="en"
+  prompt="Order the five steps of the fix-and-verify loop:"
+  items={[
+    { id: "a", label: "Name the hotspot and classify it (CPU, alloc, cache, lock, syscall, or JIT deopt)" },
+    { id: "b", label: "Pick the categorical fix family matching the classification" },
+    { id: "c", label: "Write only the predicted change — no scope creep" },
+    { id: "d", label: "Capture a new profile under the same load and diff against baseline" },
+    { id: "e", label: "Verify: local frame shrank AND headline metric improved — both required" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Quiz
+  id="04-jit-deopt-and-fix-verify-quiz-1"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="en"
+  question="A Node flame graph shows InterpreterCallStub frames dominating a function that should be hot. What is the most likely cause and fix?"
+  choices={[
+    { label: "JIT deoptimisation: the function was optimised by TurboFan, a type assumption broke, and V8 fell back to the interpreter. Fix: stabilise hot object shapes to prevent the deopt.", correct: true },
+    { label: "The function is CPU-bound — rewrite with a better algorithm.", misconception: "CPU-bound shows as optimised compiler frames (TurboFan), not interpreter frames. Interpreter presence signals a JIT issue." },
+    { label: "The function is allocation-bound — use pooling.", misconception: "Allocation-bound would show as GC frames, not interpreter frames. The deopt frame is the diagnostic signal here." },
+    { label: "The profiler is sampling at a rate too high for this function.", misconception: "Sample rate affects all functions equally; it does not selectively produce interpreter frames for one function." },
+  ]}
+/>
+
+<Quiz
+  id="04-jit-deopt-and-fix-verify-quiz-2"
+  lessonSlug="04-jit-deopt-and-fix-verify"
+  lang="en"
+  question="A microbenchmark shows a new algorithm is 5x faster locally. The production profile diff shows the function dropped from 15% to 8% CPU, but total CPU% is unchanged and p99 is worse. What is the most likely explanation?"
+  choices={[
+    { label: "The new algorithm allocates more, raising GC pressure. The local win is real but a new hotspot emerged. The production profile diff is the verdict — the system-wide effect is negative.", correct: true },
+    { label: "The microbenchmark was wrong", misconception: "The microbenchmark may be correct locally; the system-wide effect revealed by the production diff is the distinguishing data." },
+    { label: "Production traffic changed during the measurement", misconception: "Possible, but the diagnosis proceeds by checking what else grew in the profile — the GC frames or another function now wider." },
+    { label: "The algorithm is slower in production because of JIT", misconception: "JIT would show as interpreter frames; the scenario describes a new hotspot from GC pressure, not a deopt." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>JIT deopt loops look like CPU-bound code but demand type-stabilisation fixes. The fix-and-verify loop — classify, fix one thing, diff the profile, check local AND headline — is the discipline that separates performance engineering from guessing. Microbench wins are predictions; production profile diffs are verdicts.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-jit-deopt-and-fix-verify-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the tell-tale signs of a JIT deopt loop in a flame graph, and what is the fix for V8 specifically?", a: "A JIT deopt loop shows as interpreter frames (Interpreter::execute, InterpreterCallStub) or baseline-JIT frames (V8 Sparkplug) where the optimised compiler's frame (TurboFan in V8, C2 in HotSpot) should appear. The function is wide, but the work is happening in a slow tier. Other symptoms: latency spikes that don't correlate with traffic, periodic pauses without GC running. For V8 specifically: use --trace-deopt to find which functions deoptimise and why, then stabilise object shapes. Keep hot objects to ≤4 hidden classes. Avoid late property addition (adding new properties to objects after construction in hot code). Add type assertions or wrappers where V8 cannot infer type stability. Verify: re-profile and confirm TurboFan frames are back in the hot stack." },
+    { q: "Why must the fix-and-verify loop check BOTH the local frame and the headline metric, and what does each failure mode mean?", a: "Checking only the local frame proves the specific function was fixed but not that the system benefited — another bottleneck may have been masked by the first. Checking only the headline metric proves something improved but not what or why — you cannot tell if you got lucky, if an orthogonal change landed, or if the fix is causally responsible. The local frame check is the mechanical proof the fix worked at the function level; the headline metric check is the systemic proof the user-facing behaviour improved. If the frame shrank but the metric didn't move: a second hotspot was masked by the first — capture a new profile and find it. If the metric moved but the frame didn't shrink: the fix worked through an unexpected side effect — investigate to understand the actual mechanism before shipping to production." },
+  ]}
+/>
+
+<Recap lang="en">
+JIT deoptimisation is a sixth hotspot shape: the flamegraph shows interpreter or baseline-JIT frames where an optimised compiler's output should appear. The fix is type stabilisation, not algorithmic rewrite. The fix-and-verify loop applies to all six shapes: classify, write one targeted change, capture a diff profile under the same load, verify both local shrinkage and headline improvement. Microbenchmarks are predictions; production diffs are verdicts. PR-time CI gates that encode lessons from incident retros turn reactive performance work into proactive prevention.
+</Recap>

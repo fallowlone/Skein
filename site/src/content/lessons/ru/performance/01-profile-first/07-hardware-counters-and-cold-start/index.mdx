@@ -1,0 +1,174 @@
+---
+slug: 07-hardware-counters-and-cold-start
+lang: ru
+track: performance
+unit: 01-profile-first
+order: 7
+title: "Hardware counters, профили холодного старта и безопасность профилей"
+summary: "Флейм-граф называет функцию. HPC говорят почему: memory-stalled при IPC 0.5 или compute-bound при 3.0. Холодный старт и steady-state — разные профили, разные фиксы."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["performance/01-profile-first/06-profiler-history-and-pitfalls"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["hardware-performance-counters", "IPC", "cache-miss", "cold-start", "steady-state", "profile-security", "eBPF", "CAP_PERFMON"]
+sources:
+  - https://www.brendangregg.com/systems-performance-2nd-edition-book.html
+  - https://www.brendangregg.com/methodology.html
+  - https://man7.org/linux/man-pages/man2/perf_event_open.2.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+JSON-парсер занимает 30% CPU сервиса на флейм-графе. Команда переходит на более быстрый парсер — экономит 10%. Инженер запускает perf с счётчиками cache-miss: IPC = 0.4, процент cache-miss = 12%. Парсер memory-stalled, а не compute-bound. Реструктуризация layout'а входных данных экономит 50%.
+</Hook>
+
+<Crux>Counters: «почему горячая?». Sampling: «какая горячая?». IPC &lt;1.0 = memory-stalled; &gt;2.5 = compute-bound. Фикс зависит от ответа.</Crux>
+
+<Explanation>
+
+## Hardware performance counters (HPC)
+
+Флейм-граф называет функцию. Он не говорит, что именно CPU делает внутри неё. Hardware performance counters открывают цену на уровне кремния.
+
+Ключевые счётчики:
+
+- **cycles** — потреблённые сырые такты CPU
+- **instructions** — завершённые инструкции. IPC = instructions / cycles.
+- **cache-misses** — количество промахов кэша L3 (каждый промах = ~100 нс задержки)
+- **branch-misses** — количество неверных предсказаний ветвлений (каждое = ~15 тактов штрафа)
+- **page-faults** — количество page fault'ов OS
+- **dTLB-load-misses** — количество промахов data TLB (Translation Lookaside Buffer)
+
+Интерпретация IPC:
+
+- **IPC &lt; 1.0** — memory-bound. CPU заторможен в ожидании данных из кэша или RAM. Алгоритмические переписывания не помогут; рычаги — исправления layout'а данных (struct-of-arrays, cache-friendly обход, prefetching).
+- **IPC 1.0–2.5** — смешанный. Исследуй конкретные промахи.
+- **IPC &gt; 2.5** — compute-bound. Алгоритм выполняет полезную работу; рычаги — векторизация или более умная математика.
+
+Использование на Linux:
+
+```bash
+# Профилировать cycles, instructions, cache-misses, branch-misses вместе
+perf record -e cycles,instructions,cache-references,cache-misses,branch-misses \
+    -g ./myapp workload
+perf report  # показывает разбивку счётчиков по функциям
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Сигнал</th>
+        <th class="border border-border px-3 py-2 text-left">Ответ на вопрос</th>
+        <th class="border border-border px-3 py-2 text-left">Направление фикса</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">IPC &lt; 1.0 + высокий cache-miss</td>
+        <td class="border border-border px-3 py-2">Memory-stalled: CPU ждёт RAM</td>
+        <td class="border border-border px-3 py-2">Layout данных, prefetch, меньшие структуры</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">IPC &gt; 2.5 + низкий cache-miss</td>
+        <td class="border border-border px-3 py-2">Compute-bound: алгоритм — предел</td>
+        <td class="border border-border px-3 py-2">Векторизация, SIMD, более умный алгоритм</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Высокий branch-misses</td>
+        <td class="border border-border px-3 py-2">Предсказатель ветвлений ошибается на нерегулярных данных</td>
+        <td class="border border-border px-3 py-2">Безветвевой код, отсортированные входные данные, таблицы поиска</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Профили холодного старта vs установившегося режима
+
+Профиль первых 60 секунд после запуска процесса абсолютно не похож на профиль после часа трафика.
+
+**Фаза холодного старта:**
+- JIT-рантаймы компилируют горячие пути кода (HotSpot, V8, .NET CLR) — компиляция проявляется как CPU-цена.
+- Кэши холодные: пулы соединений устанавливаются, лениво загружаемые модули загружаются, L3-кэш пуст.
+- Оптимизации: AOT-компиляция (GraalVM native-image, .NET ReadyToRun), нетерпеливая загрузка модулей, предварительное прогревание соединений.
+
+**Фаза установившегося режима:**
+- JIT полностью оптимизирован; кэши тёплые.
+- Оптимизации: алгоритмические фиксы, изменения layout'а данных, снижение конкуренции за локи.
+
+Путаница между ними — частая ошибка: команда оптимизирует hotspot установившегося режима и удивляется, что события scale-out автоскейлера всё ещё деградируют tail latency — путь холодного старта никогда не измерялся.
+
+**Production-grade профилирование захватывает оба:** профиль холодного старта (первые 30-60 секунд после запуска) и профиль установившегося режима (после прогрева под репрезентативной нагрузкой). Поддерживай отдельные дашборды для обеих фаз.
+
+## Безопасность профилей
+
+Профиль содержит имена функций — нередко включающие приватные внутренние API, недокументированные эндпоинты и пути сборки, раскрывающие среду деплоя. Memory-профили при плохой конфигурации могут включать аргументы аллокации (строковые содержимое, JSON-тела).
+
+**Реальные инциденты:** pprof-эндпоинты случайно открыты через `/debug/pprof` на публичном порту, раскрывая пути исходников и имена feature-флагов. Профайлеры аллокаций, утекающие session-токены из строк запросов.
+
+**Production-дисциплина:**
+- pprof-эндпоинты привязаны только к localhost или аутентифицированному admin-only пути.
+- eBPF-профайлеры запускаются с минимальными capabilities (`CAP_PERFMON` на Linux 5.8+, не `CAP_SYS_ADMIN`).
+- Бэкенды непрерывного профилирования защищены RBAC по командам.
+- Экспорт профилей требует согласования с менеджером.
+
+Профили — операционные данные с последствиями для безопасности, а не «только для ops артефакты, которыми безопасно делиться».
+
+<Inset kind="why" lang="ru">
+Linux 5.8 (2020) разделил возможность профилирования из CAP_SYS_ADMIN в отдельную CAP_PERFMON. Это было сделано специально, чтобы профилировочные инструменты могли работать без предоставления полного системного администрирования. В мультитенантных Kubernetes-кластерах eBPF-профайлеры должны запускаться только с CAP_PERFMON, в namespace-области, чтобы предотвратить межарендную видимость стековых фреймов.
+</Inset>
+
+<Quiz
+  id="07-hardware-counters-and-cold-start-quiz-1"
+  lessonSlug="07-hardware-counters-and-cold-start"
+  lang="ru"
+  question="Флейм-граф показывает функцию десериализации JSON, потребляющую 35% CPU. Hardware counters показывают IPC = 0.4 и процент cache-miss = 11%. Какой фикс с наибольшей вероятностью поможет?"
+  choices={[
+    { label: "Layout данных: уменьши размер структур, улучши cache locality, перейди на арена-аллокацию. Низкий IPC и высокий cache-miss показывают, что функция memory-stalled, а не compute-bound.", correct: true },
+    { label: "Перейти на более быстрый алгоритм десериализации", misconception: "Более быстрый алгоритм, по-прежнему ограниченный памятью, увидит аналогичные задержки. Узкое место — паттерны доступа к памяти, а не количество инструкций алгоритма." },
+    { label: "Добавить SIMD-векторизацию", misconception: "Векторизация помогает compute-bound функциям (высокий IPC); она не снижает memory stalls." },
+    { label: "Снизить количество неверных предсказаний ветвлений", misconception: "Низкий IPC с высоким cache-miss указывает на memory stalls, а не на неверные предсказания ветвлений — проверь счётчик branch-miss отдельно." },
+  ]}
+/>
+
+<Quiz
+  id="07-hardware-counters-and-cold-start-quiz-2"
+  lessonSlug="07-hardware-counters-and-cold-start"
+  lang="ru"
+  question="Команда оптимизирует CPU-hotspot установившегося режима. После деплоя события scale-out всё ещё вызывают высокий tail latency на 60 секунд. Какое измерение они пропустили?"
+  choices={[
+    { label: "Профиль холодного старта. События scale-out запускают новые инстансы с нуля; фаза холодного старта имеет другие hotspot'ы (JIT-компиляция, прогрев пула соединений), которые профиль установившегося режима не показывает.", correct: true },
+    { label: "Профиль аллокаций памяти", misconception: "Профили аллокаций полезны, но симптом конкретно указывает на послезапускной переходный период — диагноз холодный старт." },
+    { label: "Распределённый трейс медленных запросов", misconception: "Трейсы покажут симптомы, но корневая причина в том, что фаза холодного старта не профилировалась." },
+    { label: "Профили hardware counters", misconception: "Hardware counters объясняют, почему функция горячая; они не объясняют различие холодного старта и установившегося режима." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Hardware counters дополняют флейм-граф: IPC &lt; 1.0 + высокий cache-miss = memory-stalled (чини layout данных); IPC &gt; 2.5 = compute-bound (чини алгоритм). Профили холодного старта определяют фиксы JIT/warmup; профили установившегося режима — алгоритмические фиксы. pprof-эндпоинты на публичных портах раскрывают пути исходников — защищай RBAC и CAP_PERFMON.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-hardware-counters-and-cold-start-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, почему hardware performance counters необходимы вместе с stack-sampling профайлерами, и разбери конкретный сценарий диагностики, где флейм-граф в одиночку вводил бы в заблуждение.", a: "Stack-sampling профайлеры говорят, какая функция находится на CPU; они не говорят, что именно CPU этой функции делает. Функция с IPC 0.5 и 10% cache-miss — memory-bound: её CPU-время тратится на ожидание памяти, а не на выполнение инструкций. Функция с IPC 3.0 и минимальными cache-miss — compute-bound. Флейм-граф показывает обе одинаково как широкие листья; только hardware counters раскрывают ограничение. Сценарий: JSON-парсер занимает 30% CPU на флейм-графе. Команда переходит на более быстрый парсер — экономит 10%. perf с счётчиками cache-miss показывает IPC = 0.4 и cache-miss = 12%: парсер memory-bound. Реструктуризация входных данных для лучшей cache-friendly укладки (меньшая структура, SOA layout) поднимает IPC до 1.5 и экономит 50%. Без счётчиков команда провела бы недели, оценивая парсеры, и получила бы маргинальную победу." },
+    { q: "Каковы production-ограничения безопасности при запуске профайлеров и в чём принцип минимальных привилегий?", a: "Профили содержат имена функций (приватные API, недокументированные эндпоинты, пути сборки), а memory-профили могут содержать аргументы аллокации, включая строки и JSON-тела. Принцип минимальных привилегий: на Linux 5.8+, профайлеры должны запускаться с CAP_PERFMON, не CAP_SYS_ADMIN. CAP_PERFMON предоставляет только доступ perf_event_open; CAP_SYS_ADMIN — полное системное администрирование. В мультитенантных Kubernetes-кластерах eBPF-профайлеры должны быть ограничены namespace'ом для предотвращения межарендной видимости стековых фреймов. pprof-эндпоинты должны быть привязаны только к localhost или аутентифицированному admin-only пути — никогда не открываться на публичном порту. Доступ к бэкенду непрерывного профилирования должен быть защищён RBAC по командам." },
+  ]}
+/>
+
+<Recap lang="ru">
+Stack-sampling профайлеры называют горячую функцию; hardware performance counters называют, почему она горячая. IPC ниже 1.0 с высоким cache-miss идентифицирует memory-stalled код, где исправления layout'а данных (меньшие структуры, cache-friendly обход) превосходят алгоритмические переписывания. IPC выше 2.5 идентифицирует compute-bound код, где рычаги — векторизация или алгоритмические улучшения. Профили холодного старта захватывают фазу JIT-компиляции и прогрева кэша, доминирующую в первые 30-60 секунд после запуска процесса — критично для корректности автоскейлера при scale-out. Профили установившегося режима захватывают production-поведение после прогрева. Профили раскрывают имена функций и могут раскрывать полезные нагрузки аллокаций; привязывай pprof-эндпоинты к localhost, запускай eBPF-профайлеры с CAP_PERFMON (не CAP_SYS_ADMIN), защищай доступ к бэкенду RBAC.
+</Recap>

@@ -1,0 +1,231 @@
+---
+slug: 06-senior-internals
+lang: en
+track: frontend
+unit: 02-data-fetching
+order: 6
+title: "Senior internals: RSC payload, caching layers, and production failure modes"
+summary: "The RSC Payload wire format, Server Functions as type-safe API endpoints, multi-layer cache invalidation, hydration mismatches, and real production failures from Vercel, Spotify, and Linear."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - frontend/02-data-fetching/05-lcp-and-critical-path
+deepensInto: []
+spiral: ["statefulness", "encapsulation"]
+concepts: ["RSC-payload", "server-functions", "hydration-mismatch", "cache-layers", "edge-runtime", "service-worker", "observability"]
+sources:
+  - https://react.dev/reference/rsc/server-components
+  - https://vercel.com/blog/understanding-react-server-components
+  - https://web.dev/articles/optimize-lcp
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+After an RSC migration at Vercel, a customer's TTFB regressed from 100ms to 2.5s. The component tree looked correct. The data fetching looked correct. The culprit: a Server Component that fetched 50 items in a sequential loop instead of Promise.all. A pattern that is invisible in code review but catastrophic in production.
+</Hook>
+
+<Crux>RSC Payload is a streaming row-protocol. Server Functions are typed RPC. Cache layers need coordinated invalidation or users see stale data.</Crux>
+
+<Explanation>
+
+## The RSC Payload wire format
+
+When React renders a Server Component tree, the output is not HTML and not JSON. It is the **RSC Payload** — a custom streaming format designed to be processed incrementally as it arrives over the network.
+
+The format uses row-prefix codes:
+- `M` — module reference (client component bundle URL)
+- `J` — JSON literal (serialized props or data)
+- `H` — hint (browser directive like `prefetch`)
+
+Each row references previous rows by ID, building up the React tree incrementally. Example:
+
+```
+0:["$","div",null,{"children":[["$","h1",null,{"children":"Product"}]]}]
+1:{"id":42,"name":"Product","price":29.99}
+```
+
+The browser's React client processes these rows as they arrive, enabling the same "stream HTML, render what you have" behaviour described in the Suspense streaming lesson — but for React tree updates, not just initial HTML.
+
+The RSC Payload is the mechanism behind Next.js client-side navigation: instead of fetching a new HTML page, the client fetches the RSC Payload for the new route and applies it to the existing React tree. This makes navigations feel instant because the shell (layout, nav) never re-renders.
+
+## Server Functions: type-safe RPC over HTTP
+
+React 19 introduces **Server Functions** — async functions marked with `'use server'` that can be called from Client Components but execute on the server. The framework generates a stable POST endpoint for each; the client-side call becomes a typed `fetch`.
+
+```tsx
+// actions.ts
+'use server';
+export async function likePost(postId: string) {
+  await db.post.update({ where: { id: postId }, data: { likes: { increment: 1 } } });
+  revalidatePath('/posts');
+}
+
+// PostCard.tsx — Client Component
+'use client';
+import { likePost } from './actions';
+export function PostCard({ postId }) {
+  return <button onClick={() => likePost(postId)}>Like</button>;
+}
+```
+
+TypeScript sees `likePost` as a normal typed function. No need to define a REST route, request/response types, or error handling shape. Arguments are serialized automatically; the function body never ships to the client.
+
+Combined with form actions (`<form action={serverFunc}>`), Server Functions enable progressive enhancement: the form works with JavaScript disabled because the browser submits to the generated endpoint directly.
+
+**Constraints**: arguments must be serializable (no class instances, no functions). Authentication must be explicit inside the function — the framework does not automatically check session cookies. Never trust client-provided IDs for ownership checks without re-validating server-side.
+
+## Caching layers and coordinated invalidation
+
+A modern Next.js 15 app has at least five caching layers:
+
+1. **CDN edge cache** — URL-keyed, seconds to hours. Serves static content without hitting origin.
+2. **Next.js fetch cache** — RSC `fetch()` calls are cached by default with a configurable `revalidate` duration.
+3. **Database query cache** — Redis or in-memory, sits in front of the database.
+4. **Browser HTTP cache** — controlled by Cache-Control headers.
+5. **Client library cache** — TanStack Query / SWR, keyed by queryKey.
+
+A mutation that changes data must invalidate the right layers:
+
+```typescript
+// On the server (Server Function or route handler)
+revalidatePath('/products');      // Next.js cache + CDN if configured
+revalidateTag('product-42');      // granular tag-based CDN purge
+
+// On the client
+queryClient.invalidateQueries({ queryKey: ['product', 42] });
+```
+
+Skipping any layer leaves users staring at stale data. The most common bug: the server cache is revalidated but the client TanStack Query cache still serves the old response for the next 5 minutes.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Cache invalidation cascade on a mutation</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">1</span>
+      <span>POST /api/products/42 mutation completes</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">2</span>
+      <span>Server: revalidateTag('product-42') → Next.js cache + CDN purge</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">3</span>
+      <span>Client: queryClient.invalidateQueries(['product', 42]) → refetch</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="rounded bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5">4</span>
+      <span>Client: invalidateQueries(['products']) → listing cache refreshes</span>
+    </div>
+  </div>
+</div>
+
+## Hydration mismatches: silent interactivity bugs
+
+React's hydration assumes the server-rendered DOM exactly matches what the client would render given the same props. When they differ, React's reconciler tries to patch the DOM, but its model of which event handlers belong to which DOM nodes is now inconsistent — clicks may fire on the wrong handler or be silently dropped.
+
+Common causes:
+- `Date.now()` or `Math.random()` rendered on both sides — different values
+- Conditional rendering based on `window.innerWidth` — server has no `window`
+- Reading `localStorage` at module top-level
+
+The visible output looks correct because both server and client render valid HTML. But the event-handler bindings are misaligned.
+
+Fix patterns:
+- **useEffect for client-only logic**: render the safe initial state on both sides; mutate to client-specific state after hydration completes
+- **suppressHydrationWarning**: valid for genuinely divergent leaves (timestamps with locale)
+- **Client Components** for content that is fundamentally client-specific
+
+React 19 improved hydration error messages to localise the mismatched element; pre-19, the message was generic. Production teams instrument hydration errors via error boundaries reporting to Sentry — a steady non-zero rate signals accumulating mismatches before they surface as user-reported bugs.
+
+## Edge runtime for data fetching
+
+The **edge runtime** (Next.js Edge, Cloudflare Workers, Vercel Edge) runs server code at CDN nodes instead of a central data center. Latency to the user: single-digit ms vs hundreds for traditional servers.
+
+Best fit: globally-replicated data sources (Cloudflare D1, Turso, PlanetScale) where the edge server fetches from a nearby replica. Edge-rendered RSC gives the user first paint in 50–100ms regardless of geography.
+
+Constraints: limited APIs (no Node.js fs, no native modules), Web-standard APIs only (fetch, crypto.subtle), smaller memory limits per request.
+
+<Inset kind="why" lang="en">
+The RSC Payload format is documented in React's RFC repository and is intentionally not JSON — it is designed for incremental parsing as bytes arrive. JSON requires the full string before parsing. The RSC format allows React to begin constructing the component tree from the first bytes, matching the streaming model of chunked HTTP transfer. Framework authors (Next.js, Remix, Waku) implement the server emitter; React DOM implements the client consumer.
+</Inset>
+
+## Real production failures
+
+**Vercel 2024 — server-side waterfall**: A customer's RSC migration regressed TTFB from 100ms to 2.5s. Root cause: a Server Component fetched 50 product items in a sequential `for...await` loop instead of `Promise.all`. Caught by observability dashboards flagging the p95 TTFB spike; fixed by wrapping in `Promise.all`. The lesson: sequential `await` in Server Components is a server-side waterfall with the same cost as client-side — it blocks the Suspense boundary from streaming.
+
+**Spotify Web Player 2023 — incomplete optimistic snapshot**: An optimistic update for "add to playlist" used `setQueryData` but the `onMutate` did not snapshot the previous state. When the server rejected the request, the rollback set the cache value to `undefined` instead of the actual previous state — playlists appeared to vanish for a few seconds. Fixed by the canonical pattern: always call `queryClient.getQueryData` in `onMutate` before the optimistic update.
+
+**Linear 2024 — SSE reconnect message loss**: A Server-Sent Events based real-time sync used a client-generated message ID scheme. On reconnect, the client missed messages sent during the disconnect window — users saw cards "bounce back" after drag operations. Fixed by using server-assigned monotonic IDs and a `Last-Event-ID`-based resume protocol that the server replays missed messages for.
+
+<Misconception id="mc-edge-always-faster">
+  <p><strong>"Edge runtime is always faster than traditional server."</strong> Only when the data source is also at the edge. An edge function calling a single-region Postgres still travels CDN → DB → CDN, adding 2x the hop vs a co-located server. Edge wins only with globally-replicated data. Measure first.</p>
+</Misconception>
+
+<NumbersCard
+  id="senior-numbers"
+  title="Senior-tier data-fetching numbers"
+  stats={[
+    { label: "Edge runtime cold start", value: "under 50 ms" },
+    { label: "RSC Payload size (typical page)", value: "10–50 KB" },
+    { label: "HTTP/2 max concurrent streams (default)", value: "100" },
+    { label: "Next.js 15 App Router default", value: "RSC + App Router" },
+    { label: "React 19 RSC stable release", value: "Q4 2024" },
+  ]}
+/>
+
+<Quiz
+  id="06-q1"
+  pieceSlug="06-senior-internals"
+  lang="en"
+  question="A team migrates from CSR to RSC. Bundle shrinks from 240KB to 60KB but JS evaluation time on mobile stays the same. Why?"
+  choices={[
+    { label: "RSC generates more JS than SSR", misconception: "RSC ships less JS, not more." },
+    { label: "The RSC Payload still needs to be parsed and applied by the client — on low-end CPUs this takes 100–300ms, comparable to the saved JS parse time. The net win is download size and main-thread spread, not raw evaluation time.", correct: true },
+    { label: "The browser caches the old bundle", misconception: "Cache busting on deploy ensures the new bundle is served." },
+    { label: "React 19 is slower than React 18", misconception: "React 19 is not slower; RSC Payload parsing is a new cost, not a regression." },
+  ]}
+/>
+
+<Quiz
+  id="06-q2"
+  pieceSlug="06-senior-internals"
+  lang="en"
+  question="Why do hydration mismatches silently break interactivity even when the visible HTML looks correct?"
+  choices={[
+    { label: "The mismatch always throws a JavaScript error", misconception: "React logs a warning in development but does not throw in production — and visible HTML can look correct." },
+    { label: "React's reconciler maps event handlers to DOM nodes based on the expected tree. A mismatch misaligns those mappings — clicks may fire on wrong handlers or be silently dropped.", correct: true },
+    { label: "The server HTML is discarded when a mismatch occurs", misconception: "React tries to patch the DOM rather than discard and re-render from scratch." },
+    { label: "Hydration mismatches only affect styling, not events", misconception: "Mismatches affect the internal fiber tree, which controls event delegation — styling is separate." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The RSC Payload is an incremental streaming protocol enabling navigation without full page reloads. Server Functions replace ad-hoc REST routes with type-safe RPC. Multi-layer cache invalidation must coordinate server revalidation and client queryClient.invalidateQueries. Hydration mismatches silently corrupt event handler bindings — instrument and fix them before they surface as user bugs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the RSC Payload and why is it not JSON?", a: "A custom streaming row-protocol representing the React component tree and references to client component bundles. Not JSON because JSON requires the full string before parsing; the RSC format enables incremental parsing as bytes arrive, matching chunked HTTP streaming. The browser can start building the React tree from the first bytes." },
+    { q: "Explain the 5 caching layers in a Next.js 15 app and which API handles each.", a: "CDN edge cache (revalidateTag / CDN config), Next.js fetch cache (revalidatePath / revalidateTag), database query cache (Redis or in-memory, application code), browser HTTP cache (Cache-Control headers), client library cache (queryClient.invalidateQueries). A mutation must invalidate all relevant layers — skipping one leaves users with stale data." },
+    { q: "What is the Spotify Web Player optimistic update bug and what is the fix?", a: "The onMutate callback applied the optimistic state but did not call getQueryData to snapshot the previous state. When the server rejected the mutation, onError tried to roll back to context.previous, which was undefined — the playlist vanished. Fix: always snapshot with queryClient.getQueryData in onMutate and return it as context before applying the optimistic update." },
+  ]}
+/>
+
+<Recap lang="en">
+The RSC Payload is a streaming row-protocol — not HTML, not JSON — that lets React incrementally build the component tree as bytes arrive, enabling navigation without full page reloads. Server Functions generate stable typed POST endpoints from `'use server'`-marked async functions, replacing hand-authored API routes. Multi-layer cache invalidation spans five layers — CDN, Next.js fetch cache, DB query cache, HTTP cache, and client library cache — each needing explicit invalidation on mutations. Hydration mismatches corrupt event-handler bindings silently; fix by deferring client-only logic to useEffect and monitoring hydration errors in production. Edge runtime cuts first-paint latency to 50ms but only when the data source is globally replicated — edge functions calling a single-region database add round-trips, not subtract them.
+</Recap>

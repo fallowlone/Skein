@@ -1,0 +1,167 @@
+---
+slug: 04-stale-while-revalidate
+lang: en
+track: caching
+unit: 03-stampede
+order: 4
+title: "Stale-while-revalidate and CDN request coalescing"
+summary: "RFC 5861's stale-while-revalidate directive returns the stale cached value immediately while refreshing in the background — eliminating the wait entirely. CDNs extend this with request coalescing that forwards exactly one origin fetch per cache miss."
+estMin: 12
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - caching/03-stampede/03-xfetch-probabilistic
+deepensInto:
+  - caching/03-stampede/05-detection-and-ttl-design
+spiral: ["statefulness", "encapsulation"]
+concepts: ["stale-while-revalidate", "rfc-5861", "request-coalescing", "request-collapsing", "stale-if-error", "background-refresh"]
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://blog.cloudflare.com/coalescing-requests/
+  - https://www.fastly.com/blog/request-collapsing
+  - https://en.wikipedia.org/wiki/Cache_stampede
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A lock-based cache gives 10,000 waiting requests one of two things: the rebuilt value (after waiting 400 ms) or a fallback. Stale-while-revalidate gives all 10,000 waiting requests the old value immediately — and queues exactly one background refresh. Zero waiting, zero DB spike.
+</Hook>
+
+<Crux>SWR serves the expired cache value immediately and refreshes in background — zero waits, one rebuild.</Crux>
+
+<Explanation>
+
+## RFC 5861: the standard
+
+RFC 5861 (2010) defines two `Cache-Control` extensions:
+
+- **`stale-while-revalidate=N`** — serve the stale (expired) cached response for up to N seconds while initiating a background revalidation. The user sees a response without waiting.
+- **`stale-if-error=N`** — serve the stale cached response for up to N seconds if revalidation fails (5xx, timeout). Keeps the site available during origin failures.
+
+**Example header:**
+```
+Cache-Control: max-age=60, stale-while-revalidate=30, stale-if-error=3600
+```
+
+This means: fresh for 60 s, serve stale for an additional 30 s while refreshing in the background, serve stale for up to 1 hour if the origin errors.
+
+## What happens at TTL expiry
+
+With SWR enabled on a cache (CDN or application-level):
+
+1. `T=60.0s` — TTL fires. Cache key is now "stale but within stale-while-revalidate window".
+2. Requests 1–N all arrive at T=60.001s.
+3. All N requests immediately receive the stale value. No waiting.
+4. Exactly one background refresh is queued (the cache picks the first request, or uses a separate background goroutine/task).
+5. `T=60.4s` — background refresh completes. New value stored.
+6. Future requests get the fresh value.
+
+**DB load at the boundary: 1 query**, not N.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Mitigation | User wait at TTL boundary | DB queries at boundary |
+|---|---|---|
+| None (naïve TTL) | None — but DB falls over | N concurrent |
+| Lock only | Up to rebuild p99 (waiters queue) | 1 (serialised) |
+| Single-flight | Up to rebuild p99 (subscribers wait) | 1 per node |
+| XFetch | None — cache never expires under traffic | ~1 (early rebuild) |
+| SWR | None — stale served immediately | 1 (background) |
+
+</div>
+
+## The tradeoff: bounded staleness
+
+SWR explicitly accepts that readers will see stale data for up to the `stale-while-revalidate` duration after the max-age expires. This is fine for:
+
+- Content pages, news feeds, product listings
+- Homepage hero banners, navigation menus
+- Any data where a 30–300 s lag is invisible to users
+
+It is **wrong** for:
+- Account balance, vote counts, anything that affects business decisions in real time
+- Anything where two users must see consistent state simultaneously
+
+## CDN-level: request coalescing
+
+CDNs extend SWR with **request coalescing** (Cloudflare) or **request collapsing** (Fastly). When a cache miss arrives at the edge:
+
+1. The edge enters a "stitching" state — it has issued one upstream fetch and is waiting for the response.
+2. Any additional requests for the same path while in "stitching" state do **not** generate additional upstream fetches.
+3. All waiting requests receive the response simultaneously when the single upstream fetch completes.
+
+A viral content event with 10 million viewers hitting one URL produces **one** origin fetch, not 10 million. Both Cloudflare and Fastly publish that request coalescing turns sudden-traffic incidents into low-impact events at the origin.
+
+## Framework-level: Next.js ISR
+
+Next.js Incremental Static Regeneration (ISR) is SWR at the framework level. A page configured with `revalidate: 60` is served from cache for 60 seconds; the first request after the revalidate window triggers a background regeneration while the stale page continues serving. The shape is identical to RFC 5861 — the framework just implements it without requiring HTTP `Cache-Control` headers.
+
+<Inset kind="why" lang="en">
+Apollo's GraphQL caching uses SWR semantics for normalised cache entries. A query result is served from the normalised cache while a background refetch reconciles any out-of-date fields. The same principle extends to gRPC response caching and even DNS TTLs — the pattern "serve stale, refresh in background" is universal wherever TTL-based caches exist.
+</Inset>
+
+<Quiz
+  id="swr-q1"
+  lessonSlug="04-stale-while-revalidate"
+  lang="en"
+  question="At T=60.001 s, 2,000 requests arrive for a key with TTL=60 s and stale-while-revalidate=30 s. How many of them wait for the rebuild to complete?"
+  choices={[
+    { label: "2,000 — all must wait for a fresh value", misconception: "That is the behaviour without SWR. SWR returns the stale value immediately to all requests while the background refresh runs." },
+    { label: "1 — the one that triggers the background refresh", misconception: "Even the trigger request does not wait — it also receives the stale response immediately, and the background refresh happens independently." },
+    { label: "0 — all 2,000 receive the stale response immediately, and one background refresh is queued", correct: true },
+    { label: "Depends on how long the rebuild takes", misconception: "SWR does not make any request wait for the rebuild. The rebuild is asynchronous and decoupled from the response path." },
+  ]}
+/>
+
+<Quiz
+  id="swr-q2"
+  lessonSlug="04-stale-while-revalidate"
+  lang="en"
+  question="Which use case is UNSUITABLE for stale-while-revalidate?"
+  choices={[
+    { label: "A news homepage updated once per minute", misconception: "A homepage is an ideal SWR use case — content staleness of 30–60 s is invisible to most users." },
+    { label: "A product listing page refreshed every hour", misconception: "Product listings rarely change second-by-second. SWR staleness is acceptable." },
+    { label: "A user's current account balance shown at the top of every page", correct: true },
+    { label: "A navigation menu that changes weekly", misconception: "A menu that changes weekly is perfect for SWR — staleness of minutes is invisible." },
+  ]}
+/>
+
+<Quiz
+  id="swr-q3"
+  lessonSlug="04-stale-while-revalidate"
+  lang="en"
+  question="Cloudflare request coalescing fires at a CDN edge during a viral traffic event. 50,000 simultaneous requests arrive for the same URL that just expired. How many upstream origin requests are made?"
+  choices={[
+    { label: "50,000 — each request needs to verify freshness with the origin", misconception: "That would defeat the purpose of the CDN. Coalescing means the edge issues one upstream fetch and pipes the response to all 50,000." },
+    { label: "One per CDN edge POP — if there are 5 POPs, 5 upstream requests", misconception: "Coalescing is per-POP, but within a single POP all concurrent misses for the same URL are collapsed to one upstream fetch." },
+    { label: "1 — the edge issues a single upstream fetch and delivers the response to all 50,000 waiting connections simultaneously", correct: true },
+    { label: "0 — the edge serves from cache even when expired", misconception: "The edge does need to revalidate with the origin. Coalescing just ensures only one request goes upstream, not 50,000." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>SWR eliminates wait time at TTL boundaries: every request gets a response (stale or fresh) immediately. CDN request coalescing extends this globally — one origin fetch per miss event. The tradeoff is bounded staleness, acceptable for content but wrong for strongly consistent data.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="swr-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does the HTTP header Cache-Control: max-age=60, stale-while-revalidate=30, stale-if-error=3600 mean in practice?", a: "The response is fresh for 60 s — cache hits with no origin contact. From seconds 60–90 the cache serves the expired response immediately to all requests while one background revalidation runs to the origin. After second 90, the cache must wait for the origin before responding. If the origin is unreachable or returns a 5xx, the cache will serve the stale response for up to 1 hour (3600 s). Together these three directives give: fast responses during normal operation, stampede-free behaviour at TTL boundaries, and resilience during origin failures." },
+    { q: "How does Next.js ISR implement the same guarantee as RFC 5861 stale-while-revalidate?", a: "A page with revalidate: 60 is statically generated and served from the edge/CDN for 60 seconds — no origin contact. After 60 s the page becomes 'stale'. The first request after the 60-second window triggers a background regeneration (the server runs getStaticProps again and rebuilds the page). While regeneration runs, all requests continue to receive the old static page. Once regeneration completes, the next request gets the new page. The shape is identical to SWR: serve stale, rebuild in background, no user waits for the rebuild." },
+  ]}
+/>
+
+<Recap lang="en">
+Stale-while-revalidate (RFC 5861) eliminates waiter queues at TTL boundaries by returning the stale cached value immediately to all requests and triggering exactly one background refresh. The user latency at the boundary drops to zero; DB load drops to one rebuild query. CDN-level request coalescing extends the same principle globally: the edge issues one origin fetch per cache miss event regardless of concurrent request count. The tradeoff is explicit bounded staleness — acceptable for content, unsuitable for strongly consistent business data. Compose SWR at the CDN edge with XFetch or a distributed lock at the application cache layer for defence-in-depth at every tier.
+</Recap>

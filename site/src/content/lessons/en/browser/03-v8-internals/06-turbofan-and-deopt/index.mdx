@@ -1,0 +1,175 @@
+---
+slug: 06-turbofan-and-deopt
+lang: en
+track: browser
+unit: 03-v8-internals
+order: 6
+title: "TurboFan's speculative engine and the deopt-loop trap"
+summary: "TurboFan's sea-of-nodes IR, escape analysis, polymorphic inlining, speculative guards, the FeedbackVector in depth, Sparkplug's non-optimising pass, and diagnosing deopt-loops with --trace-deopt."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs: ["02-jit-pipeline", "04-inline-caches", "03-hidden-classes"]
+deepensInto: ["07-production-perf"]
+spiral: ["statefulness"]
+concepts: ["TurboFan", "sea-of-nodes", "escape analysis", "polymorphic inlining", "speculative guard", "deopt-loop", "FeedbackVector pollution", "Maglev SSA", "Sparkplug baseline JIT"]
+sources:
+  - https://v8.dev/blog/maglev
+  - https://v8.dev/blog/sparkplug
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://mathiasbynens.be/notes/shapes-ics
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import DebugLog from "~/components/pedagogy/DebugLog.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+
+<Hook>
+A performance-critical function deopts repeatedly in production — every call triggers a 100ms TurboFan recompile, then deopts again. Your hot path is orders-of-magnitude slower than uncompiled. This is the deopt-loop, and it starts from one misunderstood guard.
+</Hook>
+
+<Crux>TurboFan guards every speculation; one guard failing in a tight loop triggers a deopt-loop costlier than never optimising.</Crux>
+
+<Explanation>
+
+## TurboFan's speculative optimisation engine
+
+TurboFan builds a **sea-of-nodes** graph IR, performs:
+- **Aggressive inlining** — call sites with known targets are inlined, eliminating call overhead and enabling cross-function optimisations.
+- **Escape analysis** — objects that never escape the function scope are stack-allocated or elided entirely (zero allocation, no GC pressure).
+- **Polymorphic inlining** — up to 4 known call targets are inlined with an upfront class-check; the generic slow path handles rare shapes.
+- **Range analysis** — a variable known to be 0..255 stays in a byte register; a loop index known bounded avoids overflow guards.
+- **Type-narrowing** — iterative refinement of types through the graph, enabling tighter machine code.
+
+At every speculative assumption, TurboFan installs a **guard instruction**: "this is a smi" before arithmetic, "this object has hidden class HCx" before property access. Guard failure means deopt. The cost-benefit: TurboFan code is often 3–10× faster than Maglev **when guards hold**; when they break, the overhead is worse than never TurboFan-compiling.
+
+## The FeedbackVector in depth
+
+Every function has an associated **FeedbackVector** — a fixed-size array in the GC heap, one slot per IC site (property load, call, binary op). Slots store:
+- One hidden class pointer (monomorphic)
+- A small array of classes (polymorphic)
+- `MegamorphicSentinel` (given up)
+
+All four tiers read it: Sparkplug reads minimal feedback (type), Maglev reads richer data (class chains, call target frequencies), TurboFan reads everything plus loop trip counts and branch probabilities.
+
+**FeedbackVector pollution**: a single megamorphic slot explains why V8 cannot keep a function optimised even after deopt-and-reopt cycles. `%DebugPrintFeedback(fn)` in d8 dumps the vector; inspecting it is the starting point for diagnosing persistent deopt behaviour.
+
+## Sparkplug: the JIT that does not optimise
+
+Sparkplug (V8 9.1, May 2021) emits machine code from bytecode in a single linear pass with no SSA, no inlining, no instruction scheduling. For each Ignition bytecode, Sparkplug emits a fixed block of native instructions — approximately 1.5–2× faster than Ignition because the interpreter dispatch loop overhead (table lookup, indirect jump) is replaced by direct execution. Compile speed: ~1ms/kB bytecode. Documented average benefit: 5–15% on real workloads. Purpose: give hot-but-not-hot-enough-for-Maglev functions a speedup without paying Maglev's compile cost.
+
+## Maglev: SSA, but cheap
+
+Maglev (2023) fills the gap between Sparkplug and TurboFan. Pipeline: bytecode → Maglev IR (SSA) → linear-scan register allocator → native code. The IR is simpler than TurboFan's (no effect chains, no graph rewriting passes); the register allocator is linear scan rather than graph-colouring. Maglev does some speculative optimisation — specialises property loads and arithmetic on observed types — but skips escape analysis, polymorphic inlining, and type-narrowing iteration. Result: ~10ms compile, ~50–70% of TurboFan code quality, correct tradeoff for medium-hot code.
+
+<NumbersCard
+  id="card-senior-numbers"
+  title="Senior-tier V8 numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Sparkplug shipped", value: "V8 9.1 (May 2021)" },
+    { label: "Maglev shipped", value: "V8 11.0 (mid-2023)" },
+    { label: "TurboFan compile time", value: "~100 ms / function" },
+    { label: "Maglev compile time", value: "~10 ms / function" },
+    { label: "IC slot size", value: "16 bytes (8B class + 8B handler)" },
+    { label: "Sparkplug compile rate", value: "~1 ms / kB bytecode" },
+    { label: "TurboFan vs Maglev speed", value: "TurboFan ~1.5–3× faster when stable" },
+  ]}
+/>
+
+<TraceScenario
+  id="sr-trace-deopt"
+  pieceSlug="turbofan-and-deopt"
+  lang="en"
+  scenario="A perf-critical function deopt-loops in production. Trace and fix."
+  steps={[
+    { prompt: "Step 1: deopt-loop means continuous tier-down then tier-up. What in --trace-deopt would confirm?", reveal: "Look for repeated 'deoptimized' / 'optimized' pairs on the same function within a short window. The 'reason' field tells you what guard failed — common: 'not a smi', 'wrong map', 'out of bounds'." },
+    { prompt: "Step 2: reason is 'not a smi'. What does that mean?", reveal: "Small integer guard failed. TurboFan assumed the value is always a smi (small int, 31-bit signed) but at runtime saw a number that overflows or a NaN. Common cause: arithmetic that occasionally produces NaN (0/0, Math.sqrt(-1)) or values above 2^30." },
+    { prompt: "Step 3: find the offending line. How?", reveal: "DevTools deopt traces include source position. Look at the line — likely a multiplication or division that occasionally hits a path producing NaN or a large value. Common: parsing user input where most values are small but one user submits a huge number." },
+    { prompt: "Step 4: fix?", reveal: "Two options. (a) Guard the input before the hot loop: if (x > 1e9 || isNaN(x)) handleSlow(x); else fastLoop(x). This keeps the fast loop monomorphic-on-smi while routing pathological values to a slow path. (b) Convert all values to a known type up front: Number(x) | 0 for int32, or always use float64 via Math.fround for typed numerics." },
+    { prompt: "Step 5: prevent recurrence?", reveal: "Add a test asserting --trace-deopt produces no output for the function under representative input. CI fails on any deopt in the hot path. For production observability, expose a deopt-counter metric via Node's V8 inspector — alert if it grows non-zero." },
+  ]}
+/>
+
+<DebugLog
+  id="sr-debug-deopt"
+  pieceSlug="turbofan-and-deopt"
+  lang="en"
+  title="Diagnose the V8 deopt log — what is the root cause?"
+  output={`[deoptimizing (DEOPT eager): begin 0x... <JSFunction processItem (sfi = 0x...)> (opt #42) @14, FP to SP delta: 128, caller sp: 0x...]
+            ;;; deoptimize at <main.js:42:18>, not a Smi
+   bytecode position 14
+[deoptimizing (eager): end 0x... processItem  @14 => node=4, pc=0x..., caller sp=0x..., took 0.012 ms]
+[marking 0x... <JSFunction processItem (sfi = 0x...)> for non-concurrent optimization]
+[compiling method 0x... <JSFunction processItem (sfi = 0x...)> using TurboFan]
+[deoptimizing (DEOPT eager): begin 0x... <JSFunction processItem (sfi = 0x...)> (opt #43) @14, FP to SP delta: 128, caller sp: 0x...]
+            ;;; deoptimize at <main.js:42:18>, not a Smi
+   bytecode position 14`}
+  outputLang="log"
+  question="The same function keeps deoptimizing with reason 'not a Smi' at line 42:18. What is happening and how do you fix it?"
+  hint="Note the deopt + recompile cycle. What guard at line 42:18 might fail repeatedly?"
+  answer="The function is in a deopt-loop. TurboFan compiles it assuming the value at line 42:18 is a Smi (small int). At runtime that value is not a Smi (either > 2^30 or NaN), so the guard fires and V8 deoptimizes. V8 then re-promotes the function (because it is still hot), re-compiles with TurboFan, makes the same wrong assumption, deopts again. Cost per cycle: ~12µs of bookkeeping + ~100ms of TurboFan compile + the time spent in slower tier in between. If this happens at every call, the function performs orders of magnitude worse than uncompiled. The fix: find the operation at line 42:18 — likely an arithmetic op whose result occasionally is too large or NaN. Either add an explicit type check before the hot block (typeof === 'number' && Number.isFinite(x)) to handle pathological values on a slow path, or use Math.fround / |0 / +x to coerce values to a known stable type so the Smi assumption holds."
+/>
+
+<Misconception id="mc-deopt-fatal">
+  <p><strong>"Deopt means my function is broken forever."</strong> No. Deopt drops to a lower tier; the function then re-tiers up if the new feedback stabilises. The bug is when deopt happens in a tight loop — each iteration deopts then re-optimises then deopts again. A single deopt is microseconds; a deopt-loop is catastrophic.</p>
+</Misconception>
+
+<Quiz
+  id="sr-quiz-td-1"
+  pieceSlug="turbofan-and-deopt"
+  lang="en"
+  question="V8 has FOUR JIT tiers and concurrent GC. What is the deepest performance reason these are necessary instead of one good optimiser?"
+  choices={[
+    { label: "JavaScript's dynamism means compile-time type knowledge is incomplete; V8 must observe runtime types to specialise, which only works after some warmup — and the warmup must be fast itself, hence Ignition + Sparkplug", correct: true },
+    { label: "Hardware variance demands multiple tiers", misconception: "Hardware variance is handled by code-generation, not tiering." },
+    { label: "Browsers must support old standards", misconception: "Standards are handled at the parser; all tiers run modern ECMAScript." },
+    { label: "Marketing requirement", misconception: "Each tier has documented engineering motivation." },
+  ]}
+/>
+
+<Quiz
+  id="sr-quiz-td-2"
+  pieceSlug="turbofan-and-deopt"
+  lang="en"
+  question="A function processes 10M items per frame and is monomorphic in tests but megamorphic in production. What is the most likely cause?"
+  choices={[
+    { label: "Tests are faster machines", misconception: "IC state depends on observed shapes, not machine speed." },
+    { label: "Production has more code paths exercising the function — third-party integrations or feature-flag paths construct inputs with different object shapes that the test suite never covers", correct: true },
+    { label: "TurboFan is disabled in production builds", misconception: "TurboFan cannot be selectively disabled per environment." },
+    { label: "The function was inlined in tests, changing its IC", misconception: "Inlining changes where the IC lives, not whether it stays monomorphic if input shapes are consistent." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does TurboFan use a sea-of-nodes IR instead of a traditional basic-block CFG? Sea-of-nodes represents both control flow and data flow as edges in the same graph — there is no notion of "instruction order" until scheduling. This enables more aggressive optimisations: escape analysis can hoist allocations out of loops, range analysis propagates bounds across branches, and dead-code elimination works at the expression level, not just the basic-block level. The cost: the compiler is significantly more complex and harder to debug. But for a dynamically-typed language where the compiler must reason about types observed at runtime rather than declared at compile time, the flexibility is worth it.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>TurboFan's power comes from speculative guards. When guards hold, code is 3–10× faster than Maglev. When they break in a tight loop, the deopt-loop costs more than never optimising. Stable hidden classes and bounded numeric ranges are the pre-conditions for guards that always hold.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="turbofan-and-deopt-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is TurboFan's sea-of-nodes IR and what optimisations does it enable?", a: "Sea-of-nodes represents both control and data flow as edges in one graph — no instruction order until scheduling. This enables: escape analysis (stack-allocate or elide objects that never escape), polymorphic inlining (inline 2-4 known call targets with an upfront class check), range analysis (keep a 0-255 variable in a byte register, skip overflow guards), and dead-code elimination at expression granularity. The cost is compiler complexity; the benefit is code quality that approaches what a static-typing compiler can produce despite JavaScript's dynamic types." },
+    { q: "Explain FeedbackVector 'pollution' and how to diagnose it.", a: "A FeedbackVector slot goes megamorphic when 5+ different hidden classes are observed. TurboFan reads all slots when deciding how to compile a function. One megamorphic slot prevents TurboFan from inlining the corresponding call site or specialising the property access — it must emit a generic handler. If the polluted slot is in a tight inner loop, the function cannot be fully optimised and may not be promoted to TurboFan at all. Diagnose: %DebugPrintFeedback(fn) in d8 shows each slot's state. Look for MegamorphicSentinel entries and trace which source line they correspond to." },
+    { q: "What distinguishes a deopt-loop from a one-time deopt?", a: "A one-time deopt: TurboFan compiles a function with an assumption that turns out wrong once, deopts, the function re-warms with new feedback that includes the exception case, TurboFan recompiles with updated assumptions, and the function stays optimised. One-time deopt costs ~microseconds + one recompile. A deopt-loop: the condition that triggers the guard is present on every call — TurboFan cannot include the exception in its specialisation, so it deopts on every call, immediately re-promotes, compiles again (100ms), deopts again. Cost per iteration: 12µs deopt + 100ms compile + slowdown from running in lower tier. Fix: move the pathological values to a separate slow path before the hot loop so the fast path stays type-stable." },
+  ]}
+/>
+
+<Recap lang="en">
+TurboFan builds a sea-of-nodes IR and applies escape analysis, polymorphic inlining, range narrowing, and aggressive type specialisation. Every speculative assumption becomes a guard instruction; guard failure triggers deoptimization. A single deopt costs microseconds; a deopt-loop — where TurboFan recompiles and deopts on every call — costs more than never optimising. The FeedbackVector is the profile data that drives every tier: Ignition writes it, TurboFan reads it to know what shapes and types to specialise on. FeedbackVector pollution (megamorphic slots) can block TurboFan entirely. Sparkplug (V8 9.1) is the baseline tier that costs ~1ms/kB and delivers 1.5–2× over Ignition; Maglev (2023) adds SSA-based specialisation at ~10ms compile time, reaching 50–70% of TurboFan quality. The right mental model: tiers are not a waterfall but a ladder with lifts — functions can be on different tiers simultaneously, and the tiering heuristics continuously re-evaluate based on FeedbackVector data.
+</Recap>

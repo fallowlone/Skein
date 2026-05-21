@@ -1,0 +1,224 @@
+---
+slug: 02-row-versions-and-snapshots
+lang: en
+track: databases
+unit: 04-mvcc-isolation
+order: 2
+title: "Row versions and snapshots: the on-disk mechanics"
+summary: "Every Postgres tuple carries a 23-byte header with xmin/xmax; a snapshot is three numbers that decide which versions are visible — this is the entire mechanism."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["databases/04-mvcc-isolation/01-mvcc-basics"]
+deepensInto: []
+spiral: ["statefulness"]
+concepts: ["tuple-header", "t_xmin", "t_xmax", "snapshot", "hot-update", "visibility-rule"]
+sources:
+  - https://www.postgresql.org/docs/current/mvcc.html
+  - https://boringsql.com/posts/postgresql-mvcc-byte-by-byte/
+  - https://www.sahaj.ai/internals-of-mvcc-in-postgres-hidden-costs-of-updates-vs-inserts/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TraceScenario from "~/components/pedagogy/TraceScenario.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+You know that MVCC gives each transaction a snapshot. The question is: what is a snapshot, exactly, and how does Postgres decide — for every single row on every single page scan — whether that row belongs in your snapshot or not?
+</Hook>
+
+<Crux>A 23-byte tuple header plus a 3-number snapshot is the entire MVCC mechanism — no locks, no undo log, just visibility math per row.</Crux>
+
+<Explanation>
+
+## Every row carries a header
+
+When Postgres stores a tuple on a heap page, it prefixes the user columns with a **23-byte system header** containing:
+
+- `t_xmin` — the transaction id that inserted this version
+- `t_xmax` — the transaction id that deleted or updated this version (zero if still live)
+- `t_cid` — the command id within a transaction
+- `t_ctid` — a pointer to the next version of this row (used for chaining updates)
+- `t_infomask` / `t_infomask2` — bitmaps flagging commit status, lock state, freeze state, and HOT bits
+
+These fields are how visibility decisions get made on every single tuple Postgres looks at.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Field</th>
+        <th class="border border-border px-3 py-2 text-left">Size</th>
+        <th class="border border-border px-3 py-2 text-left">Meaning</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>t_xmin</code></td>
+        <td class="border border-border px-3 py-2">4 B</td>
+        <td class="border border-border px-3 py-2">Transaction id that created this version</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>t_xmax</code></td>
+        <td class="border border-border px-3 py-2">4 B</td>
+        <td class="border border-border px-3 py-2">Transaction id that deleted/updated; 0 = still live</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>t_ctid</code></td>
+        <td class="border border-border px-3 py-2">6 B</td>
+        <td class="border border-border px-3 py-2">Pointer to next version of this row</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>t_infomask</code></td>
+        <td class="border border-border px-3 py-2">2 B</td>
+        <td class="border border-border px-3 py-2">Commit status hint bits, lock flags</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How a snapshot decides what to read
+
+When a transaction begins, Postgres builds a **snapshot** — a small structure with three numbers:
+
+- `xmin` — the oldest still-running transaction id
+- `xmax` — one past the newest committed id at snapshot time
+- `xip` — the list of in-progress transactions between `xmin` and `xmax`
+
+The visibility rule applied to every tuple is roughly: **a tuple is visible if its `t_xmin` is committed and not in the in-progress list (`xip`), and its `t_xmax` is either zero, rolled back, or in the in-progress list.** That is it. No locks involved.
+
+- Under **READ COMMITTED** (the Postgres default), a fresh snapshot is taken at the start of each statement.
+- Under **REPEATABLE READ**, the snapshot is taken once at the first statement of the transaction.
+
+## INSERT, UPDATE, DELETE — what actually happens on disk
+
+**INSERT** places a fresh tuple with `t_xmin = current_txid` and `t_xmax = 0`.
+
+**UPDATE** is two operations: marks the old tuple's `t_xmax = current_txid` and inserts a new tuple with the new values (`t_xmin = current_txid`, `t_xmax = 0`). The old tuple's `t_ctid` is chained to the new tuple's page-and-offset.
+
+**DELETE** just marks the existing tuple's `t_xmax = current_txid`. Nothing is physically removed. All operations are logically reversible until commit and physically present until VACUUM.
+
+## A visibility walkthrough
+
+Connection A runs `BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 42;` — does not commit.
+Connection B runs `BEGIN; SELECT balance FROM accounts WHERE id = 42;` at the same time.
+
+Row id=42 now has two heap versions:
+- v1: balance=100, `t_xmin` = prior committed tx, `t_xmax` = A
+- v2: balance=0, `t_xmin` = A, `t_xmax` = 0
+
+B's snapshot was taken at B's BEGIN. A is in B's `xip`.
+
+- v1: `t_xmin` is committed (passes lower bound), `t_xmax` = A (in xip, deletion not visible) → **v1 is visible**
+- v2: `t_xmin` = A (in xip, fails lower bound) → **v2 is invisible**
+
+B reads balance=100. No locks, no waiting.
+
+<FadedExample
+  client:load
+  id="02-row-versions-fe-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="en"
+  title="Trace one row across an UPDATE and a concurrent SELECT"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Setup:</strong> table <code>accounts</code> has one row at id=42 with balance=100, inserted by a long-since-committed transaction.</p>
+        <p><strong>Connection A:</strong> <code>BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 42;</code> — does not commit.</p>
+        <p><strong>Connection B:</strong> <code>BEGIN; SELECT balance FROM accounts WHERE id = 42;</code> at the same moment.</p>
+        <p><strong>What B sees:</strong> the OLD balance (100).</p>
+        <ul class="list-disc list-inside ml-2 space-y-1">
+          <li>v1: balance=100, t_xmin = prior committed tx, t_xmax = A (in xip) → <strong>visible</strong></li>
+          <li>v2: balance=0, t_xmin = A (in xip) → <strong>invisible</strong></li>
+        </ul>
+      </div>
+    ),
+    semi: {
+      prompt: "Same setup, but now A commits before B finishes. What balance does B see on a SECOND SELECT in the same B transaction, under Repeatable Read?",
+      blanks: [
+        { id: "rr_balance", expected: "100", placeholder: "balance value" },
+      ],
+    },
+    blank: {
+      prompt: "Same setup, but now A commits before B finishes. Under Read Committed (Postgres default), B issues a SECOND SELECT after A commits. What balance does B see, and why is it different from Repeatable Read?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p><strong>B sees the NEW balance (0).</strong></p>
+          <p>Under Read Committed, every statement gets a FRESH snapshot. B's first SELECT used a snapshot that excluded A; the second SELECT, after A committed, uses a new snapshot where A is in the past. v2 is now visible. Repeatable Read freezes the snapshot at transaction start, so the second SELECT would still see 100.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "rr_balance:0": "Under Repeatable Read the snapshot was taken at B's BEGIN, before A committed. B's view does not advance. The new balance is invisible until B commits and starts a new transaction.",
+  }}
+/>
+
+<TraceScenario
+  id="02-row-versions-trace-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="en"
+  scenario="Trace what happens to a row's MVCC state under SELECT then UPDATE then DELETE in three separate transactions, with a fourth long-running SELECT keeping an old snapshot alive."
+  steps={[
+    { prompt: "T1 inserts (id=5, balance=100). T1 commits. What is the heap state?", reveal: "One tuple at id=5 with t_xmin = T1, t_xmax = 0. Live and visible to any later snapshot." },
+    { prompt: "T2 begins (snapshot includes T1), reads id=5 (sees balance=100), and stays open without committing. Meanwhile T3 begins.", reveal: "No on-disk change yet. T2 holds a snapshot with xmin = T2's id, and its backend_xmin is set so VACUUM cannot reclaim anything T2 still needs." },
+    { prompt: "T3 runs UPDATE accounts SET balance = 50 WHERE id = 5, then commits.", reveal: "Heap now holds two tuples for id=5. v1: t_xmin = T1, t_xmax = T3 (the original 100 marked dead by T3). v2: t_xmin = T3, t_xmax = 0 (the new 50, live). For any new snapshot, v2 is visible. T2's still-open snapshot still sees v1." },
+    { prompt: "T4 begins, runs DELETE FROM accounts WHERE id = 5, commits.", reveal: "v2 gets t_xmax = T4. Now v1 (dead) and v2 (also dead) both physically exist. No live version of id=5 remains for new snapshots. But T2's snapshot still pins v1, so VACUUM cannot reclaim either tuple yet." },
+    { prompt: "What does pg_stat_all_tables.n_dead_tup show for this table at this moment?", reveal: "Both v1 and v2 are dead, so n_dead_tup = 2. But pg_stat_activity.backend_xmin for T2 is older than v1's deletion, so autovacuum logs 'cannot remove tuples deleted by transactions in progress'. Bloat is pinned by T2." },
+    { prompt: "T2 finally commits. Now what happens?", reveal: "T2's snapshot is released; backend_xmin advances. Next autovacuum cycle reclaims both v1 and v2 slots (marks them reusable inside the heap page). The file does not shrink, but new INSERTs can land in those slots." },
+  ]}
+/>
+
+<Quiz
+  id="02-row-versions-quiz-1"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="en"
+  question="An UPDATE sets the row's t_xmax to the current transaction id and inserts a new tuple. What happens to the old tuple immediately after the transaction commits?"
+  choices={[
+    { label: "Physically removed from the heap file", misconception: "No physical removal occurs at commit. The tuple is still on disk." },
+    { label: "Marked dead via the committed t_xmax, kept on disk until VACUUM and no snapshot needs it", correct: true },
+    { label: "Moved to a separate undo log", misconception: "Postgres does not have a separate undo log — every old version stays in the same heap." },
+    { label: "Compressed in place to save space", misconception: "No in-place compression. The old version's bytes remain identical." },
+  ]}
+/>
+
+<Quiz
+  id="02-row-versions-quiz-2"
+  lessonSlug="02-row-versions-and-snapshots"
+  lang="en"
+  question="Under READ COMMITTED, two SELECT statements in the same transaction query the same row. Transaction A updates and commits between the two SELECTs. What does the second SELECT return?"
+  choices={[
+    { label: "The same value as the first SELECT (snapshot is frozen for the transaction)", misconception: "That would be Repeatable Read behavior. READ COMMITTED re-snapshots on each statement." },
+    { label: "The new value committed by A (each statement gets a fresh snapshot)", correct: true },
+    { label: "An error because the row changed mid-transaction", misconception: "Postgres does not raise an error. Under READ COMMITTED it simply returns the latest committed value." },
+    { label: "NULL because the old version was overwritten", misconception: "The old version is still on disk as a dead tuple. The new version is what the fresh snapshot returns." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every Postgres tuple carries a 23-byte header (xmin, xmax, ctid, infomask). A snapshot is three numbers (xmin, xmax, xip). Visibility is a pure function of tuple header vs snapshot — no locks, no undo log. Every UPDATE writes a new tuple and marks the old one dead; VACUUM reclaims dead tuples only when no snapshot still needs them.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-row-versions-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are t_xmin and t_xmax in a Postgres tuple header, and what do they each mean?", a: "t_xmin is the transaction id that created (inserted) this version of the row. t_xmax is the transaction id that deleted or replaced this version; if t_xmax is zero the row is still live. Together they bracket the version's lifetime: visible to transactions that committed after t_xmin and before t_xmax." },
+    { q: "What three numbers make up a Postgres snapshot, and what is each for?", a: "xmin: the oldest still-running transaction id — any t_xmin older than this and committed is definitely visible. xmax: one past the highest committed transaction id at snapshot time — any t_xmin >= xmax is definitely invisible. xip: the list of in-progress transaction ids between xmin and xmax — a version whose t_xmin is in xip is not yet committed and therefore invisible." },
+    { q: "Why is READ COMMITTED surprising if you do two SELECTs on the same row in one transaction?", a: "Under READ COMMITTED, Postgres takes a fresh snapshot at the start of each statement, not at the start of the transaction. If another transaction commits between your two SELECTs, your second SELECT will see the new value. This means a single transaction can observe the same row change during its lifetime — the classic non-repeatable read. Repeatable Read prevents this by using one snapshot for the whole transaction." },
+  ]}
+/>
+
+<Recap lang="en">
+Every Postgres tuple carries a 23-byte system header with `t_xmin` (who inserted it), `t_xmax` (who deleted it; zero if live), `t_ctid` (pointer to the next version), and `t_infomask` hint bits. A snapshot captures three numbers — xmin, xmax, xip — and the visibility rule is applied tuple-by-tuple: is this tuple's creation transaction committed and not in xip? Is its deletion transaction absent, rolled back, or in xip? No locks are taken. Under READ COMMITTED a fresh snapshot is taken per statement; under REPEATABLE READ once per transaction. Every UPDATE creates a new tuple and marks the old one dead; dead tuples persist until VACUUM confirms no snapshot still references them.
+</Recap>

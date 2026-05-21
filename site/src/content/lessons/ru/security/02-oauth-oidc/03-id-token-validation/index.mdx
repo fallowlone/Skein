@@ -1,0 +1,153 @@
+---
+slug: 03-id-token-validation
+lang: ru
+track: security
+unit: 02-oauth-oidc
+order: 3
+title: "Валидация ID-токена и управление JWKS-кешем"
+summary: "Восемь обязательных проверок каждого OIDC клиента, почему устаревший JWKS-кеш вызывает auth-аутаж, и паттерн on-cache-miss refresh."
+estMin: 9
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - security/02-oauth-oidc/02-auth-code-pkce
+deepensInto:
+  - security/02-oauth-oidc/04-refresh-tokens-and-scopes
+  - security/02-oauth-oidc/05-sender-constrained-tokens
+spiral: ["statefulness"]
+concepts: ["id-token", "jwks", "jwt-validation", "kid", "iss", "aud", "nonce", "clock-skew"]
+sources:
+  - https://openid.net/specs/openid-connect-core-1_0.html
+  - https://datatracker.ietf.org/doc/html/rfc7636
+  - https://auth0.com/docs/get-started/authentication-and-authorization-flow/authorization-code-flow-with-pkce
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+IdP ротирует signing key. JWKS-кеш твоего приложения имеет TTL 6 часов. Следующие 4 часа каждый новый пользователь получает 401 — его id_token подписан новым ключом, которого нет в кеше. Валидация подписи fail-ит на токене, который полностью валиден.
+</Hook>
+
+<Crux>Пропусти одну из восьми проверок id_token — получишь CVE. Устаревший JWKS-кеш — самый частый production аутаж.</Crux>
+
+<Explanation>
+
+## Восемь обязательных проверок id_token
+
+Когда твоё приложение получает id_token от OIDC authorization server, оно обязано верифицировать все восемь следующих пунктов перед тем, как доверять identity пользователя. Пропуск любого — документированная CVE категория.
+
+**1. Распарсить JWT.** Split `header.payload.signature`. Base64url-декодировать каждую часть.
+
+**2. Прочитать `kid` из JWT header.** Поле `kid` (Key ID) называет, каким публичным ключом подписан этот токен. Без него нельзя найти правильный ключ.
+
+**3. Получить публичный ключ из JWKS.** Вызвать `/.well-known/jwks.json` IdP (кешировано, TTL 5–15 мин). Найти ключ с совпадающим `kid`. При cache miss — немедленно обновить перед тем, как провалиться.
+
+**4. Верифицировать подпись.** Использовать алгоритм, объявленный в header (должен быть RS256 или ES256 — никогда HS256 с асимметричным ключом, никогда `alg: none`). Fail подписи → отклонить. **Закрепить алгоритм server-side; никогда не доверять `alg` claim самого токена.**
+
+**5. Валидировать `iss`.** Должен точно совпадать с ожидаемым URL issuer из конфига. Атакующий может выпустить токен от своего IdP с валидной подписью.
+
+**6. Валидировать `aud`.** Должен содержать твой `client_id`. Без этой проверки токен, выпущенный для другого приложения, принимается твоим.
+
+**7. Валидировать `exp` и `iat`.** `exp` должен быть в будущем; `iat` — в прошлом. Допустимо ~5 минут clock skew (300 секунд — типичная tolerance). Обе проверки используют часы сервера, не клиента.
+
+**8. Валидировать `nonce`.** Должен совпадать с nonce, отправленным клиентом в `/authorize`. Без этой проверки захваченный id_token можно replay-нуть в другую сессию.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm">
+  <div class="mb-3 text-ink-2 text-xs uppercase tracking-wider">Последовательность валидации id_token</div>
+  <div class="space-y-1">
+    {[
+      ["Парсинг JWT", "Split header.payload.signature"],
+      ["kid lookup", "Читаем key ID из header → находим ключ в JWKS"],
+      ["Подпись", "Верифицируем публичным ключом; отклонить alg=none или неверный тип"],
+      ["iss", "Должен совпасть с ожидаемым issuer (exact string)"],
+      ["aud", "Должен содержать ВАШ client_id"],
+      ["exp / iat", "exp в будущем, iat в прошлом — допустимо 300с clock skew"],
+      ["nonce", "Должен совпасть с nonce из /authorize"],
+    ].map(([step, detail], i) => (
+      <div class="flex gap-2 items-start">
+        <span class={`shrink-0 w-6 h-6 rounded-full text-white text-xs flex items-center justify-center font-bold ${i < 3 ? 'bg-blue-500' : i < 6 ? 'bg-orange-500' : 'bg-green-500'}`}>{i + 1}</span>
+        <div><span class="font-medium text-ink-1">{step}</span><span class="text-ink-2 ml-2">{detail}</span></div>
+      </div>
+    ))}
+  </div>
+</div>
+
+## Устаревший JWKS-кеш: production failure mode
+
+JWKS endpoint IdP содержит его текущие signing public keys. Твоё приложение кеширует этот список (fetching на каждый запрос был бы слишком медленным). При ротации ключей IdP публикует новый ключ — но твой кеш ещё содержит старый.
+
+**Что ломается:** новые токены подписаны новым ключом. Твой валидатор читает `kid` из header токена, ищет в кеше — не найдено. Валидация подписи fail-ит. Пользователи не могут войти, хотя их токены полностью валидны.
+
+**Fix — on-cache-miss refresh:** Когда `kid` не найден в кеше, немедленно сделать fresh fetch JWKS с `/.well-known/jwks.json` и повторить lookup. RFC 7517 явно разрешает это. Провалить только если `kid` всё ещё отсутствует после refresh.
+
+**Долгосрочная митигация:** Короткий cache TTL (5–15 минут) плюс on-miss refresh как backstop. Mature IdP (Auth0, Okta) публикуют новые ключи за 24–48 часов до активации. Если твой не делает этого — короткий TTL + on-miss refresh — единственная надёжная защита.
+
+<Quiz
+  id="03-q1"
+  pieceSlug="03-id-token-validation"
+  lang="ru"
+  question="Приложение верифицирует подпись id_token и iss корректно, но скипает проверку aud. Какая атака становится возможной?"
+  choices={[
+    { label: "PKCE downgrade", misconception: "PKCE downgrade — про обмен кода, не связан с aud." },
+    { label: "Audience confusion: токен, выпущенный для другого приложения, принимается — атакующий с токеном любого другого клиента получает доступ к этому приложению как жертва", correct: true },
+    { label: "JWT algorithm confusion", misconception: "Algorithm confusion — про манипуляцию alg header, не про aud." },
+    { label: "Nonce replay", misconception: "Nonce replay требует пропуска nonce проверки, не aud." },
+  ]}
+/>
+
+<Quiz
+  id="03-q2"
+  pieceSlug="03-id-token-validation"
+  lang="ru"
+  question="Почему нельзя доверять claim 'alg' в JWT header?"
+  choices={[
+    { label: "Header не base64-кодирован", misconception: "Header base64url-кодирован и читаем. Проблема в том, чтобы доверять ему." },
+    { label: "Algorithm confusion атаки меняют alg на 'none' или HS256, заставляя валидатор использовать неверный путь верификации — pin alg server-side предотвращает это", correct: true },
+    { label: "Claim alg всегда пустой", misconception: "Claim alg присутствует; проблема в том, чтобы позволять токену диктовать алгоритм." },
+    { label: "GDPR запрещает чтение JWT header", misconception: "GDPR не регулирует JWT header trust." },
+  ]}
+/>
+
+<DragOrder
+  id="03-drag-1"
+  pieceSlug="03-id-token-validation"
+  lang="ru"
+  prompt="Поставь шаги валидации id_token в правильном порядке:"
+  items={[
+    "Парсинг JWT — split header.payload.signature",
+    "Читаем kid (key ID) из JWT header",
+    "Получаем matching public key с JWKS endpoint issuer-а (кешировано, refresh при miss)",
+    "Верифицируем подпись публичным ключом и pinned ожидаемым алгоритмом",
+    "Валидируем iss claim совпадает с ожидаемым issuer",
+    "Валидируем aud claim содержит client_id приложения",
+    "Валидируем exp в будущем и iat в прошлом (допустимо ~300с clock skew)",
+    "Валидируем nonce claim совпадает с nonce из /authorize",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Восемь проверок, по порядку — пропусти одну и получи CVE. Устаревший JWKS вызывает самый частый production аутаж: короткий TTL (5–15 мин) плюс on-cache-miss refresh решает это. Pin ожидаемый алгоритм server-side; никогда не читай alg из токена.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-id-token-validation-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое on-cache-miss JWKS refresh паттерн и почему он требуется?", a: "Когда kid в JWT header не найден в локальном JWKS-кеше, немедленно получить fresh JWKS с /.well-known/jwks.json и повторить lookup. Это обрабатывает ротацию ключей IdP: новый ключ существует на IdP, но ещё нет в кеше. Без этого паттерна первая волна токенов, подписанных новым ключом, вызывает storm 401 до истечения TTL кеша." },
+    { q: "Почему aud claim должен содержать ТВОЙ client_id, а не просто любой client_id?", a: "Токен выпускается для конкретной audience. Если валидатор принимает любой валидный aud, атакующий, получивший токен для приложения X, может представить его приложению Y. Проверка aud должна верифицировать, что токен предназначен именно для этого resource server — валидируется против hard-coded ожидаемого значения, никогда не выводимого из запроса." },
+    { q: "Приложение скипает exp/iat для производительности. Каков blast radius украденного id_token?", a: "Без exp/iat проверок украденный id_token валиден бесконечно — без enforcement expiry. Атакующий replay-нет его через дни или месяцы. Blast radius — весь аккаунт пользователя в приложении на всё время пока signing key IdP остаётся валидным (обычно годы). Short-lived id_tokens (TTL 1–24 ч) в сочетании с exp валидацией ограничивают окно временем жизни токена." },
+  ]}
+/>
+
+<Recap lang="ru">
+Валидация OIDC id_token имеет восемь обязательных шагов. Верификация подписи требует правильного публичного ключа из JWKS, выбранного по `kid`, с server-side pinned алгоритмом — никогда не читать из токена. Checks `iss` и `aud` предотвращают cross-issuer и cross-audience атаки. Checks `exp`/`iat` применяют freshness. Check `nonce` предотвращает replay. Устаревание JWKS-кеша при ротации ключей — самый частый production fail: on-cache-miss refresh плюс короткий TTL (5–15 минут) — стандартная митигация.
+</Recap>

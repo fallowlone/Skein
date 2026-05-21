@@ -1,0 +1,238 @@
+---
+slug: 03-join-algorithms
+lang: en
+track: databases
+unit: 03-execution-plans
+order: 3
+title: "Join algorithms and the row-estimate cascade"
+summary: "Postgres picks Nested Loop, Hash Join, or Merge Join based on row estimates. When the outer side is underestimated by 1000×, Nested Loop blows up — the algorithm is the symptom, the bad row estimate is the cause."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs: ["02-scan-types"]
+deepensInto: []
+spiral: ["latency"]
+concepts: ["nested-loop", "hash-join", "merge-join", "row-estimate-cascade", "non-sargable-predicate", "work-mem", "sargable"]
+sources:
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+
+<Hook>
+A query returns 50 rows in 50ms on staging. In production with the same schema, identical indexes, same query — 4.2 seconds. EXPLAIN ANALYZE reveals `Nested Loop ... loops=520000`. The inner index scan ran half a million times. The planner thought the outer side had 50 rows. It had 520,000. One bad row estimate. One wrong join choice. 80× slowdown.
+</Hook>
+
+<Crux>The join algorithm is the symptom. Bad row estimates are the cause. Fix the estimate and the algorithm choice fixes itself.</Crux>
+
+<Explanation>
+
+## The three join algorithms
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Algorithm</th>
+        <th class="border border-border px-3 py-2 text-left">Cost shape</th>
+        <th class="border border-border px-3 py-2 text-left">Wins when</th>
+        <th class="border border-border px-3 py-2 text-left">Danger</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Nested Loop</td>
+        <td class="border border-border px-3 py-2">outer_rows × inner_cost</td>
+        <td class="border border-border px-3 py-2">Outer is small (10s of rows), inner has an index</td>
+        <td class="border border-border px-3 py-2">Blows up if outer is misestimated as small</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Hash Join</td>
+        <td class="border border-border px-3 py-2">build_cost + probe_cost</td>
+        <td class="border border-border px-3 py-2">Medium-to-large equi-joins; neither side has a sort index</td>
+        <td class="border border-border px-3 py-2">Spills to disk if hash table exceeds work_mem</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Merge Join</td>
+        <td class="border border-border px-3 py-2">sort_cost + merge_cost</td>
+        <td class="border border-border px-3 py-2">Both sides already sorted (matching index); large equi-joins</td>
+        <td class="border border-border px-3 py-2">Requires sorted input; sort can spill if work_mem is low</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+### Nested Loop
+
+For each row in the outer relation, look up matching rows in the inner relation — typically via index. Cost is `outer_rows × inner_cost_per_lookup`. It wins when the outer side is small (tens of rows) because the inner index lookup cost is paid only that many times. It catastrophically fails when the outer side is underestimated: if the planner thinks there are 10 outer rows but there are 10,000, the inner lookup runs 10,000 times instead of 10 — 1000× more work.
+
+**Diagnostic**: `loops` count on the inner node. In a healthy Nested Loop: `loops=50`. In a blown-up one: `loops=520000`.
+
+### Hash Join
+
+Builds a hash table from the smaller (build) side, then probes it with rows from the larger (probe) side. Cost is build + probe. Wins for medium-to-large equi-joins where neither side has an index aligned with the join key. The critical parameter is `work_mem`: the hash table must fit in memory. When it does not, `Hash Batches` exceeds 1 and the table spills to disk — look for `Batches: 64` or similar in the plan output. Fix: `SET work_mem = '64MB'` for the session (not globally without accounting for `max_connections`).
+
+### Merge Join
+
+Sorts both sides on the join key (or uses indexes that already provide sort order), then merges in parallel. Wins when both sides arrive sorted — for example, joining two tables where both have `ORDER BY id` and matching indexes. Adding no-extra-sort cost to the join. Useful for range joins and when sort order is also needed for the final result.
+
+## The row-estimate cascade
+
+This is the most important concept in this lesson. A bad row estimate at one plan node cascades into every node above it:
+
+1. Planner thinks the filter `WHERE country='US' AND region='CA' AND status='shipped'` returns 50 rows (independent probabilities: 50% × 5% × 20% = 0.5%)
+2. Planner picks **Nested Loop** — cheap when outer is small
+3. Reality: the columns are correlated (all CA orders are in US), actual selectivity is 5% × 20% = 1% — not 0.5%, but the planner also missed the index cardinality; actual rows = 520,000
+4. The inner index scan runs 520,000 times instead of 50 — 10,400× more work
+
+The wrong join algorithm (Nested Loop instead of Hash Join) is the **symptom**. The wrong row estimate is the **cause**. Forcing the algorithm (e.g., `SET enable_nestloop = off`) masks the symptom but leaves the root cause. Fix the estimate — the algorithm choice follows.
+
+<Misconception id="03-join-mc-1">
+<strong>"My query is slow because it picked the wrong join algorithm."</strong> Almost always the algorithm is the symptom; bad row estimates are the cause. Planner picks Nested Loop expecting 10 outer rows; outer is 10,000; loop blows up. Fix the estimate; algorithm follows.
+</Misconception>
+
+## Non-sargable predicates
+
+A predicate is "sargable" (Search ARGument-ABLE) if the planner can use an index for it. Non-sargable predicates force Seq Scans and corrupt row estimates.
+
+Common offenders:
+- `WHERE LOWER(email) = 'alice@x.com'` — function on indexed column → use expression index `CREATE INDEX ON users (LOWER(email))`
+- `WHERE created_at::date = '2026-01-01'` — type coercion → rewrite as `WHERE created_at >= '2026-01-01' AND created_at < '2026-01-02'`
+- `WHERE EXTRACT(year FROM created_at) = 2026` — function call → same range rewrite
+- `WHERE id::text = '42'` — implicit cast → `WHERE id = 42` (fix the application type)
+- `WHERE name LIKE '%foo'` — leading wildcard → pg_trgm GIN index for fuzzy match
+
+EXPLAIN reveals these immediately: Seq Scan + Filter where you expected Index Scan. The Filter line shows what was applied after the scan rather than before — meaning the index could not help.
+
+<FadedExample
+  client:load
+  id="03-join-fe-1"
+  lessonSlug="03-join-algorithms"
+  lang="en"
+  title="Diagnose and fix a row-estimate blowup"
+  steps={{
+    solved: (
+      <div class="space-y-3 text-sm">
+        <p><strong>Slow query (4.2 seconds, returns 50 rows):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`SELECT o.id, o.total_cents, c.name
+FROM orders o
+JOIN customers c ON c.id = o.customer_id
+WHERE o.workspace_id = 42
+  AND o.country = 'US' AND o.region = 'CA'
+  AND o.status = 'shipped'
+ORDER BY o.created_at DESC
+LIMIT 50;`}</code></pre>
+        <p><strong>EXPLAIN ANALYZE (annotated):</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`Limit  (actual time=4180..4192 rows=50 loops=1)
+  -> Nested Loop  (actual time=4180..4192 rows=50 loops=1)
+       -> Index Scan on orders
+            (cost=0..3800000 rows=50)
+            (actual time=12..3950 rows=520000 loops=1)
+            Index Cond: (workspace_id = 42)
+            Filter: (country='US' AND region='CA' AND status='shipped')
+            Rows Removed by Filter: 4480000
+       -> Index Scan on customers_pkey
+            (actual time=0.002..0.002 rows=1 loops=520000)`}</code></pre>
+        <p><strong>Diagnosis:</strong> Planner estimated <em>rows=50</em> on the orders scan (the Limit's target) and picked Nested Loop. Reality: the Filter on (country, region, status) removes 4.48M rows after the index narrows to workspace_id; the orders scan emits 520,000 rows. The inner index scan on customers runs 520,000 times. Root cause: the planner assumed country, region, status are independent and multiplied their probabilities — wildly wrong for correlated columns.</p>
+        <p><strong>The fix:</strong></p>
+        <pre class="text-xs bg-zinc-100 p-2 rounded overflow-x-auto"><code>{`-- Teach Postgres the columns are correlated:
+CREATE STATISTICS stx_orders_geo (dependencies, mcv)
+  ON country, region, status FROM orders;
+ANALYZE orders;
+
+-- Better composite index for this query shape:
+CREATE INDEX CONCURRENTLY idx_orders_filtered_recent
+  ON orders (workspace_id, country, region, status, created_at DESC)
+  INCLUDE (id, total_cents, customer_id);`}</code></pre>
+        <p><strong>After fix:</strong> row estimate on the orders scan matches reality (~50 rows for this workspace/geo/status combination), Nested Loop stays appropriate, execution drops from 4.2s to ~3ms.</p>
+      </div>
+    ),
+    semi: {
+      prompt: "Suppose you see `rows=10 ... actual rows=12000` on the bottom-most plan node, but the planner did not pick a Nested Loop above it. Is the row estimate still a problem worth fixing?",
+      blanks: [
+        { id: "answer", expected: "yes", placeholder: "yes or no" },
+      ],
+    },
+    blank: {
+      prompt: "Why does CREATE STATISTICS fix the problem that bumping default_statistics_target alone cannot?",
+      reveal: (
+        <div class="space-y-2 text-sm">
+          <p>default_statistics_target only refines single-column statistics. By default the planner assumes columns are independent: P(country='US' AND region='CA') = P(country='US') × P(region='CA'). If country='US' is 50% of rows and region='CA' is 5%, the planner predicts 2.5% selectivity — but in reality only US orders have CA as a region (functional dependency), so the actual selectivity is just 5%. On 100M rows the difference is 2.5M predicted rows vs 5M actual. CREATE STATISTICS with `dependencies` teaches the planner that country determines region, and with `mcv` it stores the most-common combinations directly. The estimate becomes accurate; the plan choice follows.</p>
+        </div>
+      ),
+    },
+  }}
+  misconceptions={{
+    "answer:no": "Even if the join algorithm above is fine today, a 1000x row-estimate error is a ticking bomb — any small change to the query or data can tip the planner into a bad choice. Fix the estimate when you see it.",
+  }}
+/>
+
+<Quiz
+  id="03-join-quiz-1"
+  lessonSlug="03-join-algorithms"
+  lang="en"
+  question="An EXPLAIN ANALYZE shows `Nested Loop (cost=0..50 rows=10) ... -> Index Scan ... (loops=10000)`. What is the most likely cause?"
+  choices={[
+    { label: "The outer side was massively underestimated; the planner expected 10 rows but the inner index scan ran 10,000 times", correct: true },
+    { label: "Postgres is broken", misconception: "Postgres works correctly; the planner made a cost-based decision on bad statistics." },
+    { label: "The inner index is missing", misconception: "The inner is doing Index Scan, so it has an index — the issue is the loop ran too many times." },
+    { label: "Locking contention", misconception: "Locks do not affect plan choice; they manifest differently in pg_stat_activity." },
+  ]}
+/>
+
+<Quiz
+  id="03-join-quiz-2"
+  lessonSlug="03-join-algorithms"
+  lang="en"
+  question="A query plan shows `Hash Join ... Hash Batches: 64`. What does this indicate and what is the fix?"
+  choices={[
+    { label: "The hash table spilled to disk 64 times because it exceeded work_mem; fix with SET work_mem = '64MB' or higher for this session", correct: true },
+    { label: "The join ran 64 times — it is a loop inside another loop", misconception: "Hash Batches is not a loop count; it is the number of partitioned passes when the hash table spills to disk." },
+    { label: "There are 64 NULL values in the join key", misconception: "Batches count has nothing to do with NULL values." },
+    { label: "64 indexes were scanned", misconception: "Hash Join does not use indexes for the join itself — it builds a hash table from the build side." },
+  ]}
+/>
+
+<Quiz
+  id="03-join-quiz-3"
+  lessonSlug="03-join-algorithms"
+  lang="en"
+  question="Which predicate is NON-sargable and will force a sequential scan even if an index exists on `created_at`?"
+  choices={[
+    { label: "WHERE created_at >= '2026-01-01' AND created_at < '2026-02-01'", misconception: "This is a range predicate on the indexed column — sargable, the index can be used." },
+    { label: "WHERE EXTRACT(year FROM created_at) = 2026", correct: true },
+    { label: "WHERE created_at = '2026-01-15'", misconception: "Equality on the indexed column is sargable — the index can be used." },
+    { label: "WHERE created_at IS NOT NULL", misconception: "IS NOT NULL is sargable in Postgres — the index can be used." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Nested Loop wins for small outers; Hash Join for medium equi-joins; Merge Join when both sides are already sorted. A bad row estimate on the outer side cascades into a 1000x loop blowup — fix the statistics, not the algorithm. Non-sargable predicates (functions on indexed columns, implicit casts) prevent index use and corrupt estimates.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-join-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the row-estimate cascade: why does a bad estimate at one node break the entire plan above it?", a: "The planner's cost formula at each node depends on the row estimates from nodes below. A bad estimate at a leaf node (e.g., a scan that emits 1000x more rows than predicted) propagates upward: the join above picks the wrong algorithm (Nested Loop because the planner thinks the outer is small); the sort above picks the wrong sort method (in-memory because the planner thinks the dataset is small); the Limit above does not push down because the planner thinks all rows must be read first. Every decision in the tree above the wrong estimate is built on a false premise. This is why senior Postgres tuning starts with rows-estimated vs actual on every node, not with join types or sort methods — the root cause is always upstream in the statistics." },
+    { q: "When is Hash Join the right choice, and what makes it spill to disk?", a: "Hash Join wins for medium-to-large equi-joins (= operator on the join key) where neither side has an index sorted on the join key. It builds a hash table from the smaller (build) side, then probes with rows from the larger (probe) side. It spills to disk when the hash table exceeds work_mem — Postgres partitions the data into batches, each fitting in work_mem, and processes them sequentially. The symptom is Hash Batches > 1 in EXPLAIN ANALYZE (Batches: 64 means 64 passes). The fix is to increase work_mem for the session (SET work_mem = '64MB'). Do not raise work_mem globally without accounting for max_connections × work_mem — total RAM budget matters." },
+    { q: "What is a non-sargable predicate, why does it matter for performance, and how do you fix the most common cases?", a: "A predicate is sargable if the planner can use an index to evaluate it. A non-sargable predicate forces a sequential scan of the entire table. Most common causes and fixes: (1) Function on indexed column: WHERE LOWER(email) = 'x' — fix with expression index CREATE INDEX ON users (LOWER(email)). (2) Type coercion: WHERE id::text = '42' — fix by passing the correct type from the application. (3) Date function: WHERE EXTRACT(year FROM created_at) = 2026 — fix with range predicate WHERE created_at >= '2026-01-01' AND created_at < '2027-01-01'. (4) Leading wildcard: WHERE name LIKE '%foo' — fix with a pg_trgm GIN index. EXPLAIN reveals non-sargable predicates as a Seq Scan + Filter where you expected Index Scan." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres picks among three join algorithms: Nested Loop (outer_rows × inner_cost, wins for small outers with an inner index), Hash Join (build hash table + probe, wins for medium-to-large equi-joins, spills to disk when hash table exceeds work_mem), and Merge Join (sort both sides, merge in parallel, wins when both sides arrive sorted). The algorithm choice is driven by row estimates at each node — a 1000× underestimate on the outer side of a Nested Loop turns the inner lookup into 1000× more work than planned. The wrong algorithm is always a symptom; the wrong row estimate is always the root cause. Fix estimates (ANALYZE, extended statistics) and the algorithm choice corrects itself. Non-sargable predicates (functions on indexed columns, implicit casts) prevent index use and corrupt estimates — rewrite them as range predicates or add expression indexes.
+</Recap>

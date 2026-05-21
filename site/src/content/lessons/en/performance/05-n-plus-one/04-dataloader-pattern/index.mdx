@@ -1,0 +1,215 @@
+---
+slug: 04-dataloader-pattern
+lang: en
+track: performance
+unit: 05-n-plus-one
+order: 4
+title: "DataLoader: batching across resolver trees"
+summary: "DataLoader queues lookup IDs across an entire request and fires one batched query per type when the event loop yields — the canonical fix for GraphQL N+1 and multi-source fan-out."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+deepensInto: []
+spiral: ["latency"]
+concepts: ["dataloader", "event-loop-batching", "graphql-nplus1", "request-scope-cache", "batch-function"]
+sources:
+  - https://github.com/graphql/dataloader
+  - https://shopify.engineering/improving-graphql-performance
+  - https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A GraphQL query for `me { posts { author { name } } }` on 50 posts triggers 1 + 50 author lookups. The ORM eager-load approach cannot help here — the data need is scattered across 50 independent resolver calls, not concentrated at one query site. DataLoader is the structural fix.
+</Hook>
+
+<Crux>DataLoader batches all IDs queued in a request into one query per type, fired on the next event-loop tick — not at each call site.</Crux>
+
+<Explanation>
+
+## Why ORM eager loading is not enough for GraphQL
+
+ORM eager loading (`includes`, `select_related`, `joinedload`) works by declaring relationships at the query construction site. You write one query with relationships declared up front. In a GraphQL server, there is no single query construction site — each resolver runs independently for each parent object. There is no natural place to say "by the way, I will also need the author for all of these posts."
+
+When 50 post resolvers each call `db.user.findUnique({ where: { id: authorId } })`, the ORM does not know they are all asking for the same kind of data. It fires 50 queries.
+
+DataLoader solves this by moving batching to the request scope, not the query scope.
+
+## How DataLoader works
+
+Facebook open-sourced DataLoader in 2015 alongside GraphQL.js. The mechanism:
+
+1. A DataLoader instance is created once per request (not per call).
+2. Any code in the request calls `loader.load(id)`, which returns a Promise and **queues the id internally** — it does not execute a query.
+3. When the current synchronous work finishes and the event loop reaches its next tick, the loader fires one batched query: `SELECT * FROM users WHERE id IN (all queued ids)`.
+4. The loader distributes results to each waiting Promise in order.
+
+```javascript
+// Create once per request (e.g., in GraphQL context)
+const userLoader = new DataLoader(async (ids) => {
+  // ids is the batch: all IDs queued since last tick
+  const users = await db.user.findMany({
+    where: { id: { in: ids } },
+  });
+  // Must return results in the same order as ids
+  return ids.map(id => users.find(u => u.id === id) ?? null);
+});
+
+// In a Post resolver — called 50 times for 50 posts
+const resolveAuthor = async (post) => {
+  return userLoader.load(post.authorId);
+  // Does NOT query immediately — queues the ID
+};
+// After all 50 resolvers have queued their IDs,
+// DataLoader fires one query:
+// SELECT * FROM users WHERE id IN (1, 2, ..., 50)
+```
+
+Three properties DataLoader provides:
+
+1. **Automatic batching** — many `load(id)` calls in one event-loop tick become one query.
+2. **Automatic caching** — `load(id)` called twice in the same request returns the cached result without a second query.
+3. **Request scope** — the cache is scoped to the request object, so stale data does not leak between requests.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">What happens</th>
+        <th class="border border-border px-3 py-2 text-left">Queries fired</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Resolver calls load(1)</td>
+        <td class="border border-border px-3 py-2">ID 1 queued; Promise returned</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Resolver calls load(2) ... load(50)</td>
+        <td class="border border-border px-3 py-2">IDs 2–50 queued</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Event loop ticks</td>
+        <td class="border border-border px-3 py-2">Loader fires batch query</td>
+        <td class="border border-border px-3 py-2">1</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Results arrive</td>
+        <td class="border border-border px-3 py-2">Each Promise resolves with its row</td>
+        <td class="border border-border px-3 py-2">0</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## GraphQL four-level N+1
+
+The shape compounds with nesting depth. For a query `me { teams { projects { members { name } } } }`:
+
+- teams resolver: 1 query
+- projects resolver (per team): N queries
+- members resolver (per project): N×M queries
+- name: included in members, no extra queries
+
+Total without DataLoader: 1 + N + (N×M) queries. With DataLoader per type: 4 queries total — one per type per request.
+
+```javascript
+// Each loader batches one type
+const teamLoader = new DataLoader(ids => batchLoadTeams(ids));
+const projectLoader = new DataLoader(ids => batchLoadProjects(ids));
+const memberLoader = new DataLoader(ids => batchLoadMembers(ids));
+
+// Each resolver just calls the loader:
+const resolveTeams = (user) => teamLoader.load(user.id);
+const resolveProjects = (team) => projectLoader.load(team.id);
+const resolveMembers = (project) => memberLoader.load(project.id);
+```
+
+Impact: query count drops 100–1000x depending on fan-out depth. p99 drops from 1.4 s to ~150 ms for a typical four-level query.
+
+## DataLoader vs ORM eager loading: when to use each
+
+DataLoader is more powerful and more complex than ORM eager loading. Choose based on where the data needs originate:
+
+- **Known shape at query site** → ORM eager loading. One declaration, ORM handles it.
+- **Data needs scattered across many code paths** → DataLoader. Batches across resolver trees or module boundaries.
+
+The deciding question: "do I know at one place in the code what all the data needs are?" If yes, eager load. If no, DataLoader.
+
+<Inset kind="why" lang="en">
+DataLoader is fundamentally tied to async / promise-based runtimes because it relies on event-loop ticks to trigger batching. Synchronous codebases need explicit batch-coordination: collect IDs in a first pass, query once, distribute in a second pass. Many languages now have DataLoader ports: graphql-java/dataloader (Java), aiodataloader (Python asyncio), DataLoader.NET (C#), graphql-dataloader (Go).
+</Inset>
+
+<Quiz
+  id="04-dataloader-pattern-quiz-1"
+  lessonSlug="04-dataloader-pattern"
+  lang="en"
+  question="A GraphQL resolver calls userLoader.load(post.authorId) 50 times for 50 posts. How many database queries does DataLoader fire?"
+  choices={[
+    { label: "One — DataLoader queues all 50 IDs and fires a single SELECT WHERE id IN (...) when the event loop ticks.", correct: true },
+    { label: "50 — one per load() call", misconception: "load() queues the ID and returns a Promise. The actual query fires later in one batch." },
+    { label: "Two — one for the first call, one for the rest", misconception: "DataLoader fires one batch containing all IDs queued before the event loop ticks." },
+    { label: "Zero — DataLoader caches everything from a previous request", misconception: "DataLoader's cache is request-scoped. The first request for these IDs in this request fires the query." },
+  ]}
+/>
+
+<Quiz
+  id="04-dataloader-pattern-quiz-2"
+  lessonSlug="04-dataloader-pattern"
+  lang="en"
+  question="A team is building a REST API endpoint that assembles data from three database tables by ID lookups scattered across three helper modules. Which tool is best suited?"
+  choices={[
+    { label: "DataLoader — batches lookups from all three modules into one query per table per request, with request-scope caching.", correct: true },
+    { label: "ORM eager loading (.includes)", misconception: ".includes declares relationships at the query construction site. With lookups scattered across three modules there is no single construction site to declare them from." },
+    { label: "Add indexes to all three tables", misconception: "Indexes improve per-query speed. The issue is query count across three modules, not per-query speed." },
+    { label: "Use GraphQL instead of REST", misconception: "DataLoader works with any request-response system, not just GraphQL." },
+  ]}
+/>
+
+<DragOrder
+  id="04-dataloader-pattern-drag-1"
+  lessonSlug="04-dataloader-pattern"
+  lang="en"
+  prompt="Order the events in a DataLoader batch cycle, from first call to resolved promises:"
+  items={[
+    { id: "a", label: "Resolver calls loader.load(id) — Promise returned, ID queued" },
+    { id: "b", label: "More load() calls from other resolvers — IDs accumulate in the batch" },
+    { id: "c", label: "Current synchronous work completes; event loop ticks" },
+    { id: "d", label: "DataLoader fires: SELECT * WHERE id IN (all queued IDs)" },
+    { id: "e", label: "Results arrive; each Promise resolves with its corresponding row" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>DataLoader batches IDs queued across an entire request into one query per type, firing when the event loop ticks. It provides automatic batching, request-scope caching, and works across any code path — making it the canonical fix for GraphQL resolver N+1 and multi-source fan-out where ORM eager loading cannot help.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-dataloader-pattern-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how DataLoader differs from ORM eager loading and when each is the right tool.", a: "ORM eager loading is declarative within a query: you tell the ORM which relationships to load via .includes, select_related, joinedload, or similar. The ORM picks JOIN or IN and executes queries upfront at one entry point. Works when you know at the query construction site what the consuming code will need. DataLoader is request-scoped batching: code calls loader.load(id) wherever it needs a record; the loader queues IDs across the entire request; fires one batched query when the event loop ticks; caches results within the request. Works when data needs are scattered across many code paths with no single entry point. The deciding question: 'do I know up front what data this request will need?' If yes — eager load. If the needs are scattered — DataLoader. DataLoader adds async complexity, a batch-window latency under 1 ms, and a request-scope caching layer that must handle mutations carefully. ORM eager loading is simpler and faster for known-shape queries." },
+    { q: "A GraphQL query has four levels of nesting: me { teams { projects { members } } }. Explain how DataLoader reduces query count.", a: "Without DataLoader, each resolver runs independently for each parent. Teams resolver: 1 query. Projects resolver runs for each team: N queries. Members resolver runs for each project: N times M queries. Total: 1 + N + (N*M). With DataLoader, one loader is created per type per request. Each resolver calls loader.load(id) which queues the ID and returns a Promise. When all resolvers at one level have queued their IDs, the event loop ticks and DataLoader fires one batch query for that type. Total: one query for teams, one for projects (WHERE team_id IN all team IDs), one for members (WHERE project_id IN all project IDs). From 1 + N + N*M queries down to 3–4 regardless of fan-out depth." },
+  ]}
+/>
+
+<Recap lang="en">
+DataLoader batches ID lookups across an entire request into one query per type, firing when the event loop ticks. Unlike ORM eager loading, which must be declared at a single query site, DataLoader works across scattered code paths — making it the canonical fix for GraphQL resolver N+1, where each resolver independently requests related data. It provides three guarantees: automatic batching, request-scope caching, and no stale-data leakage across requests. The DataLoader pattern is async-first; synchronous codebases need explicit two-pass collect-then-query coordination instead.
+</Recap>

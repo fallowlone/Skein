@@ -1,0 +1,237 @@
+---
+slug: 06-nplus1-senior
+lang: en
+track: performance
+unit: 05-n-plus-one
+order: 6
+title: "N+1 at scale: pool exhaustion, plan changes, and denormalisation"
+summary: "How N+1 cascades into connection pool exhaustion, why fix strategies change query plans in surprising ways, how N+1 paths become DoS vectors, and when denormalisation is the right answer."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - performance/05-n-plus-one/02-fix-families
+  - performance/05-n-plus-one/03-detecting-nplus1
+deepensInto: []
+spiral: ["latency"]
+concepts: ["connection-pool-exhaustion", "query-plan-instability", "query-amplification-dos", "denormalisation", "cqrs-read-model", "prepared-statements"]
+sources:
+  - https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html
+  - https://hibernate.org/orm/documentation/
+  - https://shopify.engineering/improving-graphql-performance
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A service with 50 queries per request and a connection pool of 25 starts returning 503s under load. The individual queries are fast. The database is healthy. The pool is saturated — each request holds a connection across 50 serial queries, and the pool cannot rotate fast enough to serve the traffic.
+</Hook>
+
+<Crux>N+1 does not just slow requests — it holds DB connections longer than the pool rotates, exhausts the pool, and opens DoS amplification.</Crux>
+
+<Explanation>
+
+## Connection pool exhaustion
+
+An N+1-bound endpoint holds a database connection through many serialised queries. With a connection pool size of 25 and 50 queries per request at ~2 ms each, each request holds a connection for ~100 ms.
+
+Throughput per connection: ~10 requests/s. Total pool throughput: 250 requests/s. Once load exceeds 250 requests/s, new requests queue waiting for a connection. The queue adds latency; latency tails spiral; eventual 503s.
+
+**Diagnostic signature:** connection pool saturation metric high, individual query latency stable, request queue growing. The root cause is not the database — it is the application holding connections too long.
+
+```
+# pgbouncer metrics — a leading indicator
+cl_waiting > 0 for more than a few seconds → N+1 likely
+server_active / max_server_connections > 80% sustained → pool pressure
+```
+
+The fix is the N+1 fix: reduce queries per request from 50 to 2–3. Each request now holds the connection for ~10 ms instead of 100 ms. Pool throughput goes from 250 to 2 500 requests/s — a 10× relief with the same pool size.
+
+The same shape applies to HTTP client pools, gRPC connection pools, Redis pools: any pooled resource where hold-time drives exhaustion.
+
+## Query plan changes after N+1 fixes
+
+N+1 fixes change the shape of queries, which changes query plans. A query that was `WHERE id = 1` is now `WHERE id IN (1, 2, ..., 1000)`. Postgres may switch from index scan to bitmap scan to sequential scan depending on selectivity estimates and list size.
+
+```sql
+-- Before: fast index scan
+EXPLAIN SELECT * FROM tasks WHERE project_id = 1;
+-- Index Scan using tasks_project_id_idx (cost=0.43..8.45 rows=10 width=80)
+
+-- After fix: large IN list, plan may change
+EXPLAIN SELECT * FROM tasks WHERE project_id IN (1, 2, ..., 500);
+-- Bitmap Heap Scan on tasks (cost=12.55..350.00 rows=5000 width=80)
+```
+
+**Senior production discipline:** after fixing N+1, run `EXPLAIN ANALYZE` on the new query under representative production data sizes. Verify the plan does not degrade for edge cases (very small parent sets, very large parent sets, special parameter values). A fix that works at 50 rows may flip the plan at 5 000.
+
+```
+# Postgres tooling for plan monitoring
+pg_stat_statements   — track query execution counts and durations
+auto_explain         — log plans for queries exceeding a threshold
+```
+
+Hibernate `subselect` loading strategy generates `SELECT * FROM child WHERE parent_id IN (SELECT id FROM parent WHERE ...)` — a correlated subquery that can produce very different plans from the parent's main query. After applying Hibernate batch-size or subselect loading, verify plan stability.
+
+## Security: query amplification as DoS
+
+An N+1 code path can be an attack vector. If a public endpoint allows the user to request N items and the handler fires N+1 queries per item, the attacker can saturate the database with one large request.
+
+Real incidents: Strapi 2021 (CVE-2021-32820) — a deeply nested filter could amplify queries 1 000×. Various GraphQL providers — cyclic queries cause exponential resolver expansion. Early Hasura versions — permission filters not bounded.
+
+**Mitigations:**
+
+```javascript
+// GraphQL — depth and complexity limits
+import depthLimit from 'graphql-depth-limit';
+import { createComplexityRule } from 'graphql-query-complexity';
+
+const server = new ApolloServer({
+  validationRules: [
+    depthLimit(5),
+    createComplexityRule({ maxComplexity: 200 }),
+  ],
+});
+```
+
+Per-request query budget enforced at framework level: Rails strict_loading + max-queries middleware. Hasura automatic complexity analysis. Any user-controlled parameter that multiplies query count is a DoS vector. Senior code review for ORM-using code includes: "could this allow query amplification under hostile input?"
+
+## Prepared statements reduce overhead even when N+1 persists
+
+When N+1 is unavoidable (legacy code, exploratory queries), prepared statements reduce the per-query overhead. Each parameterised query `WHERE id = ?` is parsed and planned once; subsequent executions skip parse and plan.
+
+```sql
+-- Postgres explicit:
+PREPARE get_task AS SELECT * FROM tasks WHERE id = $1;
+EXECUTE get_task(42);
+
+-- ORMs use prepared statements by default for parameterised queries.
+-- The ORM's ? or $1 parameter syntax IS the prepared statement protocol.
+```
+
+Savings: ~30–50% per repeated query on Postgres. For a service running thousands of repeat queries per second, prepared statements alone can cut DB CPU 10–30%.
+
+**Tradeoff:** connection-pool affinity. Prepared statements are connection-scoped in some setups. pgbouncer transaction mode disables server-side prepared statements (use PgBouncer statement-level pooling or the `pgbouncer_params` prepared statement passthrough if you need both).
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Metric</th>
+        <th class="border border-border px-3 py-2 text-left">N+1 baseline</th>
+        <th class="border border-border px-3 py-2 text-left">After fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Queries per request</td>
+        <td class="border border-border px-3 py-2">51</td>
+        <td class="border border-border px-3 py-2">2</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Connection hold time</td>
+        <td class="border border-border px-3 py-2">~100 ms</td>
+        <td class="border border-border px-3 py-2">~4 ms</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Pool throughput (pool=25)</td>
+        <td class="border border-border px-3 py-2">~250 req/s</td>
+        <td class="border border-border px-3 py-2">~6 000 req/s</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">p99 latency (intra-DC)</td>
+        <td class="border border-border px-3 py-2">~800 ms</td>
+        <td class="border border-border px-3 py-2">~40 ms</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## When denormalisation is the right answer
+
+For paths with extreme latency SLOs — HFT, real-time bidding, sub-50 ms p99 on heavy joins — even 2–3 queries are too many.
+
+**Counter cache:** stores derived data on the parent. Instead of `count(*)` per request, one SELECT of a field.
+
+```ruby
+# Rails counter_cache
+belongs_to :project, counter_cache: true
+# project.tasks_count is maintained automatically on create/destroy
+```
+
+**Materialised view (Postgres):** precomputes a complex join + aggregation. The page fetches one query against a fully-ready view.
+
+```sql
+CREATE MATERIALIZED VIEW product_summary AS
+SELECT p.id, p.name, c.name AS category,
+       COUNT(r.id) AS review_count,
+       AVG(r.score) AS avg_score
+FROM products p
+JOIN categories c ON p.category_id = c.id
+LEFT JOIN reviews r ON r.product_id = p.id
+GROUP BY p.id, p.name, c.name;
+
+REFRESH MATERIALIZED VIEW CONCURRENTLY product_summary;
+```
+
+**CQRS read model:** the write side updates a normalised schema; an event handler writes to a read-optimised table with pre-joined data. The read path fetches one query.
+
+**Tradeoffs:** staleness (read view lags writes by milliseconds to seconds), storage duplication, maintenance cost (derivation logic must stay correct as schema evolves).
+
+**When to apply:** read p99 SLO &lt; 50 ms on heavy joins AND read load is 1 000× or more the write load. For balanced workloads, ORM eager loading is simpler and sufficient. Denormalisation is the right answer only when measurement shows eager loading cannot meet the SLO.
+
+<Inset kind="why" lang="en">
+Production failures linked to N+1: Shopify 2016 — checkout page regressed to N+1 on shipping calculations; outage. Slack 2018 — message search hit a deeply nested join that exploded under search-result fan-out. Discord 2020 — GraphQL N+1 caused per-channel resolvers to fan out to the permissions service; DataLoader retrofit cut DB load 40%. GitHub 2021 — repo settings page loaded 200+ queries per render after a refactor introduced lazy loading. LinkedIn 2023 — feed aggregator ran 8-way serial RPC fan-out; parallelised, p99 dropped 6×. Every large engineering org has an N+1 retrospective. The runbook entry exists in every mature team: "page slow → check query count first."
+</Inset>
+
+<Quiz
+  id="06-nplus1-senior-quiz-1"
+  lessonSlug="06-nplus1-senior"
+  lang="en"
+  question="A team applies .includes to fix N+1. Query count drops from 50 to 2, but p99 worsens by 30%. What is the most likely explanation?"
+  choices={[
+    { label: "The JOIN inflates the result set: parent columns duplicate for every child row. Network and ORM parsing cost outweighs the round-trip savings. Switch from joinedload to selectinload (IN-based) to avoid duplication.", correct: true },
+    { label: "Eager loading is always slower than lazy loading", misconception: "Eager loading is almost always faster for the round-trip count reduction. The issue here is JOIN vs IN strategy for this particular cardinality." },
+    { label: "The database does not support the eager-load query", misconception: "All major databases support JOIN and IN. The issue is payload size and query plan cost." },
+    { label: "Indexes are missing on the child table", misconception: "Indexes affect per-query speed. The symptom here is payload-size cost from JOIN duplication, not query speed." },
+  ]}
+/>
+
+<Quiz
+  id="06-nplus1-senior-quiz-2"
+  lessonSlug="06-nplus1-senior"
+  lang="en"
+  question="A service is seeing connection pool saturation: active connections near 100%, request queue growing, but individual query latency is stable. What is the most likely root cause and fix?"
+  choices={[
+    { label: "N+1 queries holding connections longer than the pool can rotate. Fix: reduce queries per request so each request releases the connection faster.", correct: true },
+    { label: "The connection pool is configured too small", misconception: "Increasing pool size helps temporarily but does not fix the underlying cause: each request holds a connection for too long because of N+1." },
+    { label: "The database is under load from too many concurrent connections", misconception: "Individual query latency is stable, suggesting the database is not the bottleneck. The bottleneck is in the application holding connections across many serial queries." },
+    { label: "The pool is leaked — connections not being released", misconception: "A connection leak causes the active count to grow without recovering. Here, connections are released — just slowly, because each request runs 50 serial queries." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>At scale, N+1 cascades: 50 queries per request × 2 ms hold time × pool size 25 = 250 req/s capacity ceiling. Fix the N+1 and the pool ceiling jumps 10×. Watch for query plan changes after fixing. Guard against DoS amplification on public endpoints. Use denormalisation only when measurement shows eager loading cannot meet the latency SLO.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-nplus1-senior-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe how an N+1 problem cascades into a connection pool exhaustion incident, and what observability signals to alert on.", a: "An N+1-bound endpoint holds a database connection through many serialised queries. With a pool size of 25 and 50 queries per request at 2 ms each, each request holds a connection for 100 ms. Pool throughput is limited by hold-time × pool size: 25 / 0.1 s = 250 requests/s. Beyond that rate, requests queue waiting for connections. Wait time adds to latency; the queue grows; tails spiral; some requests time out with 503s. The cascade: high latency → health checks fail → pods removed from rotation → remaining pods see more load → worse. The proximate fix: kill the N+1 to reduce hold-time from 100 ms to 4 ms, lifting pool throughput from 250 to 6 000 requests/s. Observability signals: (1) connection pool saturation (active/max) above 80% sustained — leading indicator; (2) connection wait time above 10 ms — pgbouncer cl_waiting, Rails ActiveRecord pool stats; (3) per-endpoint p99 query count above 20; (4) per-endpoint p99 latency growing while individual query latency stable." },
+    { q: "Explain when denormalisation (counter cache, materialised view, CQRS read model) is the right fix for N+1, and when it is premature.", a: "Denormalisation is right when: read p99 SLO is below 50 ms on heavy joins AND read load is 1 000× or more the write load AND measurement shows ORM eager loading cannot meet the SLO. Counter caches work for scalar aggregations (counts, sums). Materialised views work for complex joins and aggregations read many times. CQRS read models work for full data assembly where the write and read shapes differ dramatically. Each option adds write-side complexity, staleness risk, and ongoing maintenance. Denormalisation is premature when: the latency SLO is 100+ ms (eager loading will meet it); the write load is not dramatically lower than read load (staleness and maintenance cost mount fast); the team has not yet measured and confirmed eager loading is the bottleneck. The most common mistake is introducing CQRS at 10× read-to-write ratio when one .includes directive would have solved it in 30 minutes." },
+  ]}
+/>
+
+<Recap lang="en">
+At production scale, N+1 has three second-order effects beyond slow page loads. First: connection pool exhaustion — each request holding a connection through 50 serial queries saturates the pool far faster than 2-query requests do. Fix the N+1, multiply pool throughput by 10×. Second: query plan instability — IN lists and batch queries can flip from index scan to bitmap scan to sequential scan; always EXPLAIN ANALYZE the new query after fixing. Third: DoS amplification — any user-controlled parameter that multiplies query count is an attack vector; add depth limits, complexity analysis, and per-request query budgets for public endpoints. Denormalisation (counter caches, materialised views, CQRS read models) is the right answer only when measurement confirms eager loading cannot meet an extreme latency SLO.
+</Recap>
