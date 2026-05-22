@@ -1,0 +1,135 @@
+---
+slug: 05-streaming-and-backpressure
+lang: en
+track: backend
+unit: 01-request-lifecycle
+order: 5
+title: "Streaming and backpressure: when the client reads slower than you write"
+summary: "A response is not done when the handler returns — it is done when the bytes drain. If the client reads slower than the server writes and backpressure is ignored, the response buffers in RAM until the process dies."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/01-request-lifecycle/04-handler-and-response
+deepensInto:
+  - backend/01-request-lifecycle/06-timeouts-and-tail-latency
+  - backend/03-async-blocking/01-overview
+spiral: ["latency"]
+concepts: ["streaming", "backpressure", "high-water-mark", "drain", "flow-control", "tcp-window", "slow-consumer"]
+sources:
+  - https://nodejs.org/api/stream.html#backpressuring-in-streams
+  - https://www.rfc-editor.org/rfc/rfc9113
+  - https://nodejs.org/api/http.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A reporting service streams a 400 MB CSV export. It works in tests. In production it OOMs and restarts every afternoon. The export code is fine — it reads rows and calls `res.write()` in a tight loop. The bug is that one customer downloads over a phone tethered at 200 KB/s, and the server generates rows far faster than that phone can read them. The unread bytes pile up in the process heap until the kernel kills it.
+</Hook>
+
+<Crux>If you write faster than the client reads and ignore backpressure, the unsent bytes buffer in your heap until the process is killed.</Crux>
+
+<Explanation>
+
+## Buffer vs stream
+
+There are two ways to send a body. **Buffer**: build the whole response in memory, set `Content-Length`, send it. Simple, but a 400 MB export means 400 MB resident per concurrent download. **Stream**: produce the body in pieces and write each piece as it is ready, using `Transfer-Encoding: chunked` so the total size need not be known up front. Streaming keeps memory flat — *if* you respect backpressure.
+
+## Backpressure: the write that says "stop"
+
+Every writable stream has a buffer with a threshold called the **high-water mark** (Node's default is **16 KB** for byte streams, 64 KB for filesystem streams). The mechanism:
+
+- `res.write(chunk)` returns `true` while the internal buffer is below the high-water mark — keep writing.
+- It returns `false` when the buffer is full — **stop writing** and wait for the `'drain'` event before continuing.
+
+`write()` returning `false` does **not** mean the write failed. It means the consumer is behind and the buffer is full. If you ignore the `false` and keep writing anyway, the data does not vanish — it accumulates in the stream's internal buffer in your process heap. That is the OOM. The fix is to honor the signal: pause production until `'drain'`. `pipe()` and `pipeline()` do this for you automatically, which is why `pipeline(source, res)` is the safe default and a hand-rolled `while` loop of `write()` is the classic footgun.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Pattern | Memory under a slow client | Verdict |
+|---|---|---|
+| Buffer whole body, then send | O(body size) per connection | OK for small bodies only |
+| `write()` in a loop, ignore return value | Grows unbounded → OOM | Bug |
+| `write()` + wait for `'drain'` on `false` | Flat (≈ high-water mark) | Correct |
+| `pipeline(source, res)` | Flat, handles errors + cleanup | Correct, preferred |
+
+</div>
+
+## Why the buffer fills: it is turtles down to TCP
+
+Backpressure is not a Node invention; it is the application-level surface of a chain of flow-control windows. The client's TCP receive window advertises how much it can accept. When the client app reads slowly, its receive buffer fills, it shrinks the advertised window, and the server's kernel send buffer stops draining. The userland writable stream then stops draining, `write()` returns `false`, and — if you listen — your code stops producing. Each layer pushes back on the one above it. Ignoring backpressure means decoupling your *production* rate from this entire chain, so the gap accumulates in the one place with no flow control: your heap.
+
+<Inset kind="why" lang="en">
+Why does HTTP/2 make backpressure both more important and more subtle? HTTP/2 multiplexes many streams over one TCP connection, and it has its own flow-control windows *per stream* (default 64 KB) on top of TCP's connection-level window. A single slow stream can stall if its window is exhausted, but because all streams share one TCP connection, head-of-line blocking at the TCP layer can also stall unrelated streams. So an HTTP/2 server must respect two layers of windows, and a misbehaving large download can starve small concurrent requests on the same connection in ways that are invisible at the HTTP/1.1 level.
+</Inset>
+
+## The slow-consumer attack
+
+The same mechanism is a denial-of-service vector. **Slowloris** and slow-read attacks deliberately read responses one byte at a time to hold connections open and keep server-side buffers occupied. A server that buffers per connection and ignores backpressure can be exhausted by a handful of slow clients — no volume needed. Defenses are the same as the correctness fixes plus limits: honor backpressure, cap per-connection buffering, and set write/idle timeouts so a stalled drain is abandoned rather than held forever (the subject of the next lesson).
+
+<Quiz
+  id="streaming-q1"
+  lessonSlug="05-streaming-and-backpressure"
+  lang="en"
+  question="A streaming endpoint OOMs only when a client downloads over a very slow link. The code calls res.write() in a loop and ignores its return value. What is happening?"
+  choices={[
+    { label: "The disk read is failing on slow links", misconception: "The source read is fine. The problem is the mismatch between how fast you write and how slowly the client reads." },
+    { label: "write() returns false when the buffer is full, but the code keeps writing, so unsent bytes pile up in the heap", correct: true },
+    { label: "Slow links corrupt the TCP checksum and force retransmits", misconception: "Retransmits are normal and bounded; they do not cause unbounded heap growth. The growth is unread data buffered in userland." },
+    { label: "The garbage collector is disabled on slow connections", misconception: "GC cannot reclaim buffers that are still referenced by the pending write queue. The data is live, not garbage." },
+  ]}
+/>
+
+<Quiz
+  id="streaming-q2"
+  lessonSlug="05-streaming-and-backpressure"
+  lang="en"
+  question="What does res.write() returning false actually mean?"
+  choices={[
+    { label: "The write failed and the data was lost", misconception: "The data was accepted into the buffer; nothing was lost. false is a flow-control signal, not an error." },
+    { label: "The internal buffer crossed the high-water mark — you should stop writing and resume on the 'drain' event", correct: true },
+    { label: "The connection was closed by the client", misconception: "A closed connection raises an error or 'close' event, not a false return. false means the buffer is full, not gone." },
+    { label: "The response is complete", misconception: "Completion is signaled by end(), not by a false return from write(). false means slow down, not done." },
+  ]}
+/>
+
+<Quiz
+  id="streaming-q3"
+  lessonSlug="05-streaming-and-backpressure"
+  lang="en"
+  question="Why is backpressure described as the application-level surface of TCP flow control?"
+  choices={[
+    { label: "Because Node reimplements TCP in JavaScript", misconception: "Node does not reimplement TCP. It surfaces the kernel's flow-control state up to your code via the write() return value." },
+    { label: "A slow reader shrinks its TCP receive window, which stops the kernel send buffer draining, which fills the userland buffer, which returns false to your code", correct: true },
+    { label: "Backpressure only exists in HTTP, not in TCP", misconception: "TCP has had flow control via the receive window since its inception. Application backpressure rides on top of it." },
+    { label: "TCP windows are unrelated to application memory", misconception: "They are directly related: when the window stops the send buffer draining, the userland buffer is where the gap accumulates if you ignore it." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Stream large bodies instead of buffering, but respect backpressure: write() returns false when the buffer passes the high-water mark (16 KB default) — stop and resume on 'drain', or use pipeline() which does it for you. Ignoring false buffers unread bytes in your heap until OOM. It is the userland surface of TCP flow control, and the same mechanism slow clients abuse for DoS.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="streaming-retrieval"
+  lang="en"
+  questions={[
+    { q: "What exactly does res.write() returning false signal, and what is the correct response?", a: "It signals that the writable stream's internal buffer has crossed its high-water mark (Node default 16 KB for byte streams, 64 KB for filesystem streams) — the consumer is reading slower than you are writing. It is a flow-control signal, not an error; the data you just wrote was accepted into the buffer. The correct response is to stop writing and wait for the 'drain' event before producing more. Ignoring it and continuing to write does not lose data — it accumulates unsent bytes in your process heap, which is the OOM. Using pipe()/pipeline() handles this automatically and is the preferred default." },
+    { q: "Trace how a slow client ends up causing server-side OOM, layer by layer.", a: "The client app reads slowly, so its TCP receive buffer fills and it advertises a smaller receive window. The server's kernel send buffer can no longer drain into that shrinking window, so it fills. The userland writable stream can no longer push into the kernel buffer, so its own buffer fills and crosses the high-water mark, making write() return false. If the application honors that signal it pauses production and memory stays flat (≈ high-water mark). If it ignores false and keeps writing, the gap between production rate and the client's read rate accumulates in the one place with no flow control — the process heap — until the kernel OOM-kills it." },
+    { q: "Why does HTTP/2 add a second layer of backpressure concern beyond TCP, and how can a slow download hurt other requests?", a: "HTTP/2 multiplexes many logical streams over one TCP connection and adds its own per-stream flow-control windows (default 64 KB) on top of TCP's connection-level window. A server must respect both. Because all streams share one TCP connection, a single large or slow download can exhaust shared capacity and, via head-of-line blocking at the TCP layer, stall small concurrent requests on the same connection — a starvation effect invisible at the HTTP/1.1 level. The mitigation is the same discipline: honor flow control at every layer and bound per-connection buffering and time." },
+  ]}
+/>
+
+<Recap lang="en">
+A response finishes when its bytes drain, not when the handler returns — and the hard case is a client that reads slower than the server writes. Buffering the whole body costs O(body size) memory per connection; streaming keeps memory flat only if you respect backpressure. The signal is write() returning false when the internal buffer crosses the high-water mark (16 KB default): stop and resume on 'drain', or let pipeline() manage it. Ignoring the signal piles unread bytes in the heap until the process is OOM-killed. Backpressure is the userland surface of a chain of flow-control windows down to TCP's receive window, and HTTP/2 adds per-stream windows on top. The same mechanism is the slow-consumer DoS vector — which is why the final stop, timeouts, must abandon a drain that never completes.
+</Recap>
