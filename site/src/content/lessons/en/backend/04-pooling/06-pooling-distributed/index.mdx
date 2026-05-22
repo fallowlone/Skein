@@ -1,0 +1,138 @@
+---
+slug: 06-pooling-distributed
+lang: en
+track: backend
+unit: 04-pooling
+order: 6
+title: "Pooling at scale: many instances, one database, and PgBouncer"
+summary: "One pool against one database is solved. The hard version is N application instances each with their own pool, all colliding against a single max_connections — where the math overflows and a transaction-level multiplexer becomes mandatory, with sharp tradeoffs."
+estMin: 17
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/04-pooling/05-pool-exhaustion
+deepensInto:
+  - backend/05-idempotency-retries/01-why-idempotency
+spiral: ["resource-limits", "scalability"]
+concepts: ["connection-multiplexing", "pgbouncer", "transaction-pooling", "session-pooling", "max-connections", "serverless-connections", "fan-in"]
+sources:
+  - https://www.pgbouncer.org/features.html
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.postgresql.org/docs/current/runtime-config-connection.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A single service with a pool of 20 is healthy. Then it scales: autoscaling runs 50 instances under load, each with its own pool of 20. That is 1,000 connections demanded from a Postgres configured with the default `max_connections = 100`. The database starts rejecting connections with `FATAL: sorry, too many clients already`, and the rejection hits *every* instance, so the whole fleet degrades at once. Nothing is leaking and no single pool is misconfigured. The arithmetic simply overflowed: each instance sized its pool in isolation, but they all draw from one shared, hard limit — and that is the problem distributed pooling exists to solve.
+</Hook>
+
+<Crux>Many pools fan into one max_connections and overflow it; a multiplexer like PgBouncer fits thousands of clients through tens of connections.</Crux>
+
+<Explanation>
+
+## The fan-in problem
+
+A client-side pool bounds connections *from one instance*. It knows nothing about the other instances pointing at the same database. The constraint that actually matters is global:
+
+```
+(number of instances) × (pool size per instance) ≤ database max_connections
+```
+
+with headroom subtracted for admin, replication, and migration tools. With Postgres defaulting to `max_connections = 100`, and each connection being a real backend process consuming a few megabytes, you cannot simply raise `max_connections` to 1,000 — the database would spend itself on per-process memory and scheduling, the exact contention from the sizing lesson, now at the server's own scale. So in a horizontally scaled or autoscaling fleet, the per-instance pool size must be tiny (sometimes 2–5), and even then a scale-up event can blow the budget. This is the wall that pushes you to a different architecture.
+
+## PgBouncer: a multiplexer in the middle
+
+A **connection pooler** like **PgBouncer** sits between the applications and Postgres. The apps connect to PgBouncer — cheaply, because a PgBouncer client connection is lightweight, not a backend process — and PgBouncer maintains a small pool of *real* connections to Postgres, lending them out as needed. It is a **fan-in multiplexer**: thousands of client connections funnel into tens of server connections. Typical ratios are dramatic — PgBouncer can present **thousands of client connections** while holding only a few dozen real Postgres backends, a multiplexing factor often quoted around **25–50×** or more. The fleet's 1,000 demanded connections become, say, 25 actual backends, and Postgres is comfortable again.
+
+## Transaction pooling buys the ratio — and breaks session state
+
+PgBouncer offers pooling **modes**, and the choice is the whole tradeoff:
+
+- **Session pooling.** A client holds a real server connection for its entire client session. Safe and transparent — everything works — but the multiplexing ratio is poor, because a real backend is tied up for as long as a client stays connected. Little better than no pooler for connection count.
+- **Transaction pooling.** A real server connection is assigned only *for the duration of a transaction*, then returned to the pool the instant the transaction commits. This is what delivers the huge ratio, because connections are held for milliseconds, not minutes. The cost: **anything that relies on session state across transactions breaks.** Prepared statements (server-side), `SET` session variables, `LISTEN/NOTIFY`, advisory locks, and session-level temporary tables no longer work, because the next statement may land on a *different* backend. Drivers must run in a mode that avoids server-side prepared statements, and application code must not assume session continuity.
+
+<Inset kind="why" lang="en">
+Why does transaction pooling deliver such a large multiplexing ratio while session pooling barely helps? Because the ratio is governed by *how long each client occupies a real backend*. In session pooling a client owns a backend for the whole time it stays connected — often minutes or hours of mostly-idle keep-alive — so the number of real backends has to be close to the number of concurrently *connected* clients, which is exactly the count you were trying to shrink. In transaction pooling the backend is occupied only while a transaction is actually executing, typically a few milliseconds, then handed to the next client mid-flight; since at any instant only a small fraction of connected clients are inside an active transaction, a few dozen backends can serve thousands of connections. The ratio is essentially the inverse of the duty cycle — the fraction of time a client spends actually transacting versus idle. That same mechanism is why session state breaks: state like a prepared statement or a SET lives on a specific backend, but transaction pooling deliberately moves you to a different backend on the next transaction to keep the duty cycle low. You cannot have both maximal multiplexing and persistent per-session server state — they are the same coin, because multiplexing works precisely by not letting any client keep a backend.
+</Inset>
+
+## Serverless makes this acute
+
+The fan-in problem reaches its extreme with serverless functions, where each concurrent invocation can be its own process wanting its own connection, and invocations scale to hundreds in a burst. Traditional pooling assumes a long-lived process that amortises a pool over many requests; a function that lives for 200 ms cannot. The answers are the same shape — an external pooler (PgBouncer, or a managed equivalent like a serverless data proxy) that absorbs the burst of short-lived clients into a stable set of real backends, plus aggressively small per-function limits. The principle never changes: the database's connection count is a hard, shared, expensive resource, and every layer that fans into it must be bounded.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Approach | Real Postgres backends | Client capacity | Caveat |
+|---|---|---|---|
+| Per-instance pools only | instances × pool size | Limited by max_connections | Overflows on scale-up |
+| PgBouncer session mode | ≈ concurrent clients | Low multiplexing | Safe, transparent, weak ratio |
+| PgBouncer transaction mode | tens | Thousands (25–50×+) | No prepared stmts / SET / LISTEN / advisory locks |
+| Serverless + data proxy | stable small set | Burst of short-lived fns | Per-function limit must be tiny |
+
+</div>
+
+<Quiz
+  id="distributed-q1"
+  lessonSlug="06-pooling-distributed"
+  lang="en"
+  question="A service healthy at one instance with a pool of 20 starts throwing 'FATAL: sorry, too many clients already' after autoscaling to 50 instances. No pool leaks. Why?"
+  choices={[
+    { label: "Each instance's pool got corrupted during scale-up", misconception: "No corruption is involved; each pool is fine individually — they collectively exceed the database's shared connection limit." },
+    { label: "50 instances × 20 connections = 1,000 demanded against a default max_connections of 100, so the shared limit overflows and the database rejects connections fleet-wide", correct: true },
+    { label: "Autoscaling disabled connection pooling", misconception: "Pooling is still on; the issue is that many independent pools sum past the one global limit, not that pooling stopped." },
+    { label: "The query workload suddenly changed", misconception: "The workload is not the cause; the rejection is purely the connection arithmetic exceeding max_connections." },
+  ]}
+/>
+
+<Quiz
+  id="distributed-q2"
+  lessonSlug="06-pooling-distributed"
+  lang="en"
+  question="Why does PgBouncer transaction pooling achieve a far higher multiplexing ratio than session pooling?"
+  choices={[
+    { label: "It compresses the network traffic between app and database", misconception: "It does not compress traffic; the ratio comes from how briefly each client holds a real backend." },
+    { label: "A real backend is held only for the milliseconds of a transaction, not the whole client session, so a few dozen backends serve thousands of mostly-idle connections", correct: true },
+    { label: "It runs queries in parallel across multiple databases", misconception: "It does not parallelise across databases; it multiplexes many clients onto few backends of one database." },
+    { label: "It caches query results so the database is barely touched", misconception: "PgBouncer is a connection multiplexer, not a result cache; the ratio is about backend occupancy time, not caching." },
+  ]}
+/>
+
+<Quiz
+  id="distributed-q3"
+  lessonSlug="06-pooling-distributed"
+  lang="en"
+  question="What is the main correctness cost of switching to PgBouncer transaction pooling?"
+  choices={[
+    { label: "Transactions become non-atomic", misconception: "Transactions remain atomic; what breaks is state that must persist across transactions, not the atomicity of one." },
+    { label: "Session-spanning state breaks — server-side prepared statements, SET variables, LISTEN/NOTIFY, advisory locks — because the next transaction may run on a different backend", correct: true },
+    { label: "Data is silently corrupted on commit", misconception: "There is no data corruption; the issue is that per-session server state does not follow the client to a new backend." },
+    { label: "It forces every query to be read-only", misconception: "Writes are fully supported; transaction pooling does not restrict query type, only persistent session state." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>One pool against one database is solved; the hard version is fan-in: N instances each with their own pool collide against a single max_connections, so 50 instances × pool 20 = 1,000 demanded overflows Postgres's default 100 and the database rejects fleet-wide with "FATAL: sorry, too many clients already" — and you cannot just raise max_connections, because each connection is a real backend process. A connection pooler like PgBouncer multiplexes thousands of lightweight client connections into a few dozen real backends, often 25–50× or more. The ratio comes from transaction pooling, which holds a real backend only for a transaction's milliseconds rather than a whole session — but that breaks anything relying on session state across transactions: server-side prepared statements, SET variables, LISTEN/NOTIFY, advisory locks. Session pooling keeps those working but barely multiplexes. Serverless makes the fan-in extreme, demanding an external pooler plus tiny per-function limits, because the database's connection count is always a hard, shared, expensive resource.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="distributed-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a horizontally scaled fleet overwhelm a database even when every individual pool is correctly sized?", a: "Because a client-side pool only bounds connections from one instance and knows nothing about the other instances pointing at the same database, while the constraint that actually matters is global: the number of instances times the pool size per instance must stay under the database's max_connections, with headroom subtracted for admin, replication, and migration tools. Postgres defaults max_connections to 100, and each connection is a real backend process consuming a few megabytes, so 50 instances each with a pool of 20 demand 1,000 connections and the database rejects them with FATAL: sorry, too many clients already, hitting every instance at once. You cannot simply raise max_connections to 1,000, because the database would then spend itself on per-process memory and scheduling — the same contention as the sizing lesson but at the server's own scale. So per-instance pools must be tiny in a scaled fleet, and even then a scale-up event can blow the budget, which is the wall that forces a different architecture." },
+    { q: "What is PgBouncer and how do its pooling modes trade off?", a: "PgBouncer is a connection pooler that sits between the applications and Postgres: apps connect to it cheaply because a PgBouncer client connection is lightweight rather than a backend process, and it maintains a small pool of real connections to Postgres that it lends out, acting as a fan-in multiplexer that funnels thousands of client connections into tens of server connections, often a 25–50x ratio or more. Its modes are the tradeoff. Session pooling ties a real server connection to a client for its entire session — safe and fully transparent, but the multiplexing ratio is poor because a backend is occupied as long as a client stays connected, so it barely reduces the connection count. Transaction pooling assigns a real connection only for the duration of a transaction and returns it the instant the transaction commits, which delivers the huge ratio because backends are held for milliseconds not minutes. The cost is that anything relying on session state across transactions breaks — server-side prepared statements, SET session variables, LISTEN/NOTIFY, advisory locks, and session temporary tables — because the next statement may land on a different backend, so drivers must avoid server-side prepared statements and code must not assume session continuity." },
+    { q: "Why are transaction pooling's high ratio and its loss of session state two sides of the same mechanism, and why is serverless the acute case?", a: "The multiplexing ratio is governed by how long each client occupies a real backend. In session pooling a client owns a backend for the whole time it is connected, often minutes of mostly-idle keep-alive, so the number of real backends must approach the number of concurrently connected clients — the very count you wanted to shrink. In transaction pooling the backend is occupied only while a transaction actually executes, typically milliseconds, then handed to the next client, and since at any instant only a small fraction of connected clients are inside an active transaction, a few dozen backends serve thousands of connections; the ratio is essentially the inverse of the duty cycle. That same mechanism is why session state breaks: state like a prepared statement or a SET lives on one specific backend, but transaction pooling deliberately moves you to a different backend on the next transaction to keep the duty cycle low, so you cannot have both maximal multiplexing and persistent per-session server state. Serverless is the extreme because each concurrent invocation can be its own short-lived process wanting its own connection and invocations burst into the hundreds, while a function living 200 ms cannot amortise a pool; the answer is the same shape — an external pooler or managed data proxy that absorbs the burst of short-lived clients into a stable set of real backends, plus aggressively small per-function limits — because the database's connection count is always a hard, shared, expensive resource that every layer fanning into it must bound." },
+  ]}
+/>
+
+<Recap lang="en">
+The solved case is one pool against one database; the hard case is fan-in, where N instances each sizing a pool in isolation collide against a single max_connections — 50 instances × pool 20 = 1,000 against Postgres's default 100, rejected fleet-wide with "FATAL: sorry, too many clients already" — and raising max_connections does not help because every connection is a real backend process competing for memory and scheduling. A connection pooler like PgBouncer multiplexes thousands of lightweight client connections into a few dozen real backends, and the big ratio comes specifically from transaction pooling, which occupies a backend only for a transaction's milliseconds instead of a whole session. That is the same coin as its cost: because the next transaction may run on a different backend, session-spanning state breaks — server-side prepared statements, SET, LISTEN/NOTIFY, advisory locks — while session pooling preserves them but barely multiplexes. Serverless drives the fan-in to its extreme and forces an external pooler plus tiny per-function limits. This closes the pooling unit: the database connection is a hard, shared, expensive resource bounded at every layer. The next unit turns from holding a resource to surviving a failed call — idempotency and retries, where safely repeating a request becomes the foundation of resilience.
+</Recap>

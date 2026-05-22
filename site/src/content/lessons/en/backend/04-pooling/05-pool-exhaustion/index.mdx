@@ -1,0 +1,165 @@
+---
+slug: 05-pool-exhaustion
+lang: en
+track: backend
+unit: 04-pooling
+order: 5
+title: "Pool exhaustion: leaks, and why a bigger pool won't save you"
+summary: "The most common pool outage is not under-sizing — it is a leak, where code borrows a connection and never returns it. Each leak permanently shrinks the pool until nothing is left, and the instinct to enlarge the pool only delays the same failure."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/04-pooling/04-health-and-lifecycle
+deepensInto:
+  - backend/04-pooling/06-pooling-distributed
+spiral: ["resource-limits", "failure-modes"]
+concepts: ["pool-exhaustion", "connection-leak", "try-finally", "leak-detection", "async-boundary", "pool-metrics", "transaction-scope"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/Configuration
+  - https://vladmihalcea.com/connection-leak-detection-hikaricp/
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A service runs for hours, then slowly, every request starts timing out on "unable to acquire connection." Restarting fixes it — for a few hours, then it returns on a schedule. This is not load; it is a **leak**. Somewhere a code path borrows a connection and, on a particular branch — usually an error path — never returns it. Each time that branch runs, the pool permanently loses one connection. A pool of 20 survives 20 leaks and then it is dead, no matter how little traffic there is. The fix everyone reaches for first — make the pool bigger — only changes the leak from a 3-hour outage into a 6-hour one.
+</Hook>
+
+<Crux>A leak shrinks the pool one un-returned borrow at a time until empty; a bigger pool just delays the death — fix is guaranteeing the return.</Crux>
+
+<Explanation>
+
+## A leak is a borrow without a return
+
+The pool's contract is simple: every checkout must be matched by a return. A **leak** is a violation of that contract — a connection is acquired and then, on some path, never released. The classic culprit is an error path that skips the cleanup:
+
+```js
+const conn = await pool.acquire();
+const rows = await conn.query(sql);   // throws here
+conn.release();                       // never reached — leaked
+```
+
+When `query` throws, execution jumps past `release()`, and that connection is gone from the pool forever. The pool does not know the borrower abandoned it; from its view the connection is still "checked out, in use." Every run of that error path removes one more connection from circulation. This is why a leak looks like a slow time bomb: traffic is normal, then over hours the available count ratchets down to zero and *every* request starts failing — the symptom is identical to massive overload, but the cause is a few lines of code on an unlucky branch.
+
+The fix is structural, not bigger numbers: guarantee release with `try/finally` (or a language construct that does the same — `using`, `defer`, a context manager, a framework's scoped transaction):
+
+```js
+const conn = await pool.acquire();
+try {
+  return await conn.query(sql);
+} finally {
+  conn.release();   // runs on success AND on throw
+}
+```
+
+## Why a bigger pool does not fix a leak
+
+The reflex when connections run out is to raise the pool size. Against a leak this is worse than useless — it converts a fast, obvious failure into a slow, mysterious one, and it does not stop the bleeding. There is a deeper, counter-intuitive result here: even *resilience* measures show sharply diminishing returns against leaks. A study of leak impact found that raising the pool from **5 to 100** connections — a 20× increase — only improved the failure-reduction rate from **96.8% to 62.8%** worse... the point being that throwing connections at the problem buys far less than the size increase suggests, because a steady leak rate drains any pool; you have only changed how long until empty. The only real fix is to stop leaking and to *detect* leaks early.
+
+<Inset kind="why" lang="en">
+Why does enlarging the pool give such poor returns against a leak, when it is the most natural first response? Because a leak is a *rate*, not a fixed cost — every execution of the buggy branch removes a connection permanently, so the pool drains at a speed set by how often that branch runs, not by how big the pool is. A bigger pool is simply a bigger bucket with the same hole: it takes longer to empty, but empty it will. Worse, the bigger bucket hides the hole. With a pool of 5 the leak surfaces in minutes and points you straight at the recent change; with a pool of 100 it surfaces hours later, long after the deploy, looking like a random overload and sending you hunting in the wrong place. So the large pool costs you twice — it does not prevent the outage, and it destroys the signal that would let you find the cause. The same logic applies to retries and other resilience knobs layered on top of a leak: they smear the failure out in time without addressing that the resource is escaping faster than it returns. The discipline is to bound the *cause* — guarantee the return — not to inflate the buffer that delays the symptom.
+</Inset>
+
+## Detect leaks and watch the right metrics
+
+Because leaks are silent until catastrophic, the defence is observability:
+
+- **Leak detection threshold.** A pool can warn when a connection has been held longer than any legitimate query should take (HikariCP's `leakDetectionThreshold`, e.g. **2 s**). A connection out for longer than that is almost certainly leaked or stuck on a pathologically slow operation — either way you want to know, with a stack trace of who borrowed it.
+- **The four pool gauges.** Track **active** (in use), **idle** (free), **total**, and **waiting** (threads queued for a connection). A healthy pool has idle > 0 most of the time. A leak shows as active climbing and never falling back; exhaustion shows as idle pinned at 0 and waiting climbing. Alert on **idle near 0** and **waiting > 0** sustained — those precede the outage.
+
+## The async-boundary trap
+
+A subtle modern cause: holding a pooled connection across an `await` on something *other than the database*. If you check out a connection and then `await` a slow external HTTP call before running your query, you are holding a scarce connection idle for the duration of that call — not leaked, but *hoarded*. Under load this exhausts the pool just like a leak, because effective concurrency is now bounded by the slowest thing you hold the connection across. The rule: **acquire the connection as late as possible, hold it only for the database work, and never wrap an unrelated network call inside the borrow.**
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Symptom | Active | Idle | Waiting | Likely cause |
+|---|---|---|---|---|
+| Healthy | Varies | > 0 | 0 | Normal operation |
+| Leak | Climbs, never falls | → 0 | Climbing | Borrow without return on some path |
+| True overload | At max | 0 | High | Pool genuinely too small for load |
+| Hoarding | High | ~0 | Climbing | Connection held across unrelated await |
+
+</div>
+
+<Quiz
+  id="exhaustion-q1"
+  lessonSlug="05-pool-exhaustion"
+  lang="en"
+  question="A service times out on connection acquisition after running for hours; a restart fixes it for a few hours, then it recurs. Traffic is normal throughout. What is the most likely cause?"
+  choices={[
+    { label: "The pool is too small for the traffic", misconception: "Traffic is normal and a restart temporarily fixes it — that points to a resource draining over time, not a steady-state size mismatch." },
+    { label: "A connection leak: some code path borrows a connection and never returns it, so the pool ratchets down to empty until a restart resets it", correct: true },
+    { label: "The database is rejecting logins", misconception: "Logins are not failing; the app cannot even acquire from its own pool, and a restart resetting it is the signature of a leak, not server rejection." },
+    { label: "TLS sessions are expiring", misconception: "No handshake error is implied; the gradual drain cured by restart is a leak pattern, not certificate or session expiry." },
+  ]}
+/>
+
+<Quiz
+  id="exhaustion-q2"
+  lessonSlug="05-pool-exhaustion"
+  lang="en"
+  question="Why is enlarging the pool a poor fix for a connection leak?"
+  choices={[
+    { label: "Bigger pools always crash the database", misconception: "The point is not a DB crash; it is that the leak still drains any pool — size only changes the timeline." },
+    { label: "A leak drains the pool at a rate, so a bigger pool just takes longer to empty and also hides the cause by delaying the symptom past the deploy", correct: true },
+    { label: "Larger pools disable leak detection", misconception: "Pool size does not turn off leak detection; the issue is that more connections only postpone the same exhaustion." },
+    { label: "It makes individual queries slower", misconception: "Query speed is not the mechanism; the problem is the leak rate empties the pool regardless of its size." },
+  ]}
+/>
+
+<Quiz
+  id="exhaustion-q3"
+  lessonSlug="05-pool-exhaustion"
+  lang="en"
+  question="Why is holding a pooled connection across an await on an unrelated HTTP call dangerous even when nothing leaks?"
+  choices={[
+    { label: "The HTTP call corrupts the database connection", misconception: "The unrelated call does not corrupt the connection; the harm is holding it idle, not damaging it." },
+    { label: "The connection is hoarded idle for the call's duration, so under load effective concurrency is bound by the slow call and the pool exhausts like a leak", correct: true },
+    { label: "Awaiting always releases the connection automatically", misconception: "Awaiting does not release the connection; that is exactly the problem — it stays checked out across the wait." },
+    { label: "It doubles the pool size requirement permanently", misconception: "It does not change the configured size; it wastes the connections you have by holding them idle across unrelated work." },
+  ]}
+/>
+
+<DragOrder
+  id="exhaustion-drag1"
+  lessonSlug="05-pool-exhaustion"
+  lang="en"
+  prompt="Order how a connection leak becomes a full outage:"
+  items={[
+    "An error path borrows a connection and skips the release",
+    "Each run of that path permanently removes one connection from the pool",
+    "Active count climbs and never returns; idle ratchets toward zero",
+    "The pool empties and every request times out acquiring a connection",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The most common pool outage is a leak, not under-sizing: a borrow that skips its return on some path — classically an error branch that jumps past release() — permanently removes a connection, so the pool ratchets to empty over hours and every request fails like massive overload while traffic is normal, cured only by a restart. The structural fix is guaranteeing release with try/finally or an equivalent scoped construct, never a bigger pool — a study showed raising a pool 5→100 (20×) bought far less resilience than the size suggests because a leak drains any pool at its own rate, and the bigger pool also hides the cause by delaying the symptom past the deploy. Defend with leak detection (warn when a connection is held beyond ~2 s, with a stack trace) and the four gauges — active, idle, total, waiting — alerting on idle near 0 and waiting sustained above 0. Also avoid hoarding: never hold a connection across an await on unrelated work.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="exhaustion-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a connection leak and how does it produce an outage that looks like overload?", a: "A leak is a violation of the pool's basic contract that every checkout must be matched by a return: a connection is acquired and then, on some path, never released. The classic culprit is an error path that skips cleanup — code calls acquire, runs a query that throws, and execution jumps past the release call, so that connection is gone from the pool forever while the pool still believes it is checked out and in use. Each run of that branch removes one more connection from circulation, so a pool of 20 survives 20 leaks and then is dead regardless of how little traffic there is. The symptom is a slow time bomb: traffic stays normal, then over hours the available count ratchets down to zero and every request begins failing to acquire a connection — identical in appearance to massive overload, but caused by a few lines on an unlucky branch, which is why a restart temporarily cures it. The fix is structural: guarantee release with try/finally or an equivalent scoped construct like using, defer, a context manager, or a framework's scoped transaction." },
+    { q: "Why is making the pool bigger a poor response to a leak?", a: "Because a leak is a rate, not a fixed cost: every execution of the buggy branch removes a connection permanently, so the pool drains at a speed set by how often that branch runs, not by how large the pool is. A bigger pool is the same bucket with the same hole — it takes longer to empty but empties just the same. A study of leak impact found that increasing the pool from 5 to 100 connections, a twentyfold increase, improved the failure-reduction rate far less than the size change implies, because a steady leak rate defeats any pool. Worse, the bigger bucket hides the hole: with a small pool the leak surfaces in minutes and points straight at the recent change, while with a large pool it surfaces hours later, long after the deploy, looking like random overload and sending you hunting in the wrong place. So the large pool costs you twice — it does not prevent the outage and it destroys the signal that would locate the cause. The same logic applies to retries and other resilience knobs: they smear the failure out in time without fixing that the resource escapes faster than it returns. The discipline is to bound the cause by guaranteeing the return, not to inflate the buffer that delays the symptom." },
+    { q: "How do you detect leaks early, which metrics matter, and what is the async-boundary trap?", a: "Because leaks are silent until catastrophic, the defence is observability. A leak detection threshold makes the pool warn when a connection has been held longer than any legitimate query should take — HikariCP's leakDetectionThreshold around two seconds — emitting a stack trace of whoever borrowed it, since a connection out that long is almost certainly leaked or stuck. Track four gauges: active connections in use, idle free, total, and waiting threads queued for a connection; a healthy pool keeps idle above zero most of the time, a leak shows active climbing and never falling while idle ratchets to zero, and true overload shows idle pinned at zero with waiting high. Alert on idle near zero and waiting sustained above zero, because those precede the outage. The async-boundary trap is a subtler cause: holding a pooled connection across an await on something other than the database, such as a slow external HTTP call, hoards a scarce connection idle for the whole call. It is not leaked but it exhausts the pool under load just like a leak, because effective concurrency becomes bound by the slowest thing you hold the connection across. The rule is to acquire the connection as late as possible, hold it only for the database work, and never wrap an unrelated network call inside the borrow." },
+  ]}
+/>
+
+<Recap lang="en">
+Pool exhaustion usually comes from a leak rather than under-sizing: a borrow that misses its return on some path — almost always an error branch that jumps past release() — permanently subtracts a connection, so the pool ratchets to empty over hours and every request fails to acquire while traffic looks normal, temporarily cured by a restart. The fix is structural — try/finally or an equivalent scoped construct that returns the connection on success and on throw — and never a bigger pool, because a leak drains at its own rate so size only changes the timeline; a 5→100 study showed enlarging buys far less resilience than expected and worse, hides the cause by delaying the symptom past the deploy. Defend with leak detection that warns when a connection is held beyond a couple of seconds with a stack trace, and watch the four gauges — active, idle, total, waiting — alerting on idle near zero and sustained waiting. And do not hoard: holding a connection across an await on unrelated work exhausts the pool just like a leak. Everything so far assumed one pool against one database — the final lesson scales out, where N application instances each with their own pool collide against a single max_connections, and a connection multiplexer like PgBouncer becomes mandatory.
+</Recap>
