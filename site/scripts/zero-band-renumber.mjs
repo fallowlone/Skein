@@ -7,6 +7,10 @@ export const FULLSTACK = [
   "networking", "observability", "performance", "queues", "security",
 ];
 
+// Foundations tracks (learn-from-zero spine). Same orientation wedge as the
+// fullstack pillars, applied separately so FULLSTACK stays the 16-pillar set.
+export const FOUNDATIONS = ["math", "algorithms", "base-cs"];
+
 // Per-pillar orientation unit metadata. Unit title is uniform; crux is the
 // beginner-facing one-line "what this pillar is about". All < 140 chars.
 export const ORIENTATION = {
@@ -26,6 +30,9 @@ export const ORIENTATION = {
   "performance":          { title: { en: "Orientation", ru: "Введение" }, crux: { en: "Why software gets slow and how to find the real reason.", ru: "Почему софт тормозит и как найти настоящую причину." } },
   "queues":               { title: { en: "Orientation", ru: "Введение" }, crux: { en: "Why systems pass work through a line instead of doing it on the spot.", ru: "Почему системы передают работу через очередь, а не делают её сразу." } },
   "security":             { title: { en: "Orientation", ru: "Введение" }, crux: { en: "Why every system is attacked and what 'safe enough' means.", ru: "Почему любую систему атакуют и что значит «достаточно безопасно»." } },
+  "math":                 { title: { en: "Orientation", ru: "Введение" }, crux: { en: "What math really is once you stop memorizing answers and start reasoning from rules.", ru: "Что такое математика, когда перестаёшь заучивать ответы и начинаешь рассуждать по правилам." } },
+  "algorithms":           { title: { en: "Orientation", ru: "Введение" }, crux: { en: "What an algorithm is, and why the same task has fast and slow solutions.", ru: "Что такое алгоритм и почему у одной задачи есть быстрые и медленные решения." } },
+  "base-cs":              { title: { en: "Orientation", ru: "Введение" }, crux: { en: "How a computer actually runs your code, beneath any programming language.", ru: "Как компьютер на самом деле исполняет ваш код — под любым языком программирования." } },
 };
 
 /** Pure: returns a new units array with `track` renumbered + orientation inserted. Idempotent. */
@@ -33,6 +40,7 @@ export function transform(units, track, meta) {
   if (units.some((u) => u.track === track && u.slug === "00-orientation")) return units;
   const out = units.map((u) => (u.track === track ? { ...u, order: u.order + 1 } : u));
   out.push({
+    id: `${track}/00-orientation`,
     slug: "00-orientation",
     track,
     order: 1,
@@ -45,7 +53,7 @@ export function transform(units, track, meta) {
 
 export function transformAll(units) {
   let u = units;
-  for (const t of FULLSTACK) u = transform(u, t, ORIENTATION[t]);
+  for (const t of [...FULLSTACK, ...FOUNDATIONS]) u = transform(u, t, ORIENTATION[t]);
   return u;
 }
 
