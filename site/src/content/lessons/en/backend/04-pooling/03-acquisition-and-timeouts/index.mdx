@@ -1,0 +1,132 @@
+---
+slug: 03-acquisition-and-timeouts
+lang: en
+track: backend
+unit: 04-pooling
+order: 3
+title: "Acquisition and timeouts: the wait queue is the real latency dial"
+summary: "When every connection is busy, a request does not fail — it waits in a queue. The acquisition timeout decides how long it waits before giving up, and that one number is the difference between failing fast and a pile-up that takes the whole service down."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/04-pooling/02-pool-sizing
+deepensInto:
+  - backend/04-pooling/04-health-and-lifecycle
+spiral: ["latency", "resource-limits"]
+concepts: ["connection-acquisition", "wait-queue", "acquire-timeout", "fail-fast", "queue-buildup", "latency-budget", "thread-starvation"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://github.com/brettwooldridge/HikariCP/wiki/Configuration
+  - https://vladmihalcea.com/connection-timeout-spring-boot-hikaricp/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A downstream query that normally takes 5 ms slows to 500 ms during an incident. Within seconds, every connection in the pool is occupied by one of these slow queries. The next request asks for a connection and there are none free — so it waits. The pool has a default acquisition timeout of 30 seconds, so it waits up to 30 seconds before failing. Now requests are piling up behind an empty pool, each holding a web-server thread hostage for 30 seconds, and the thread pool fills too. The database was merely *slow*; the acquisition timeout turned slow into *down*, because nobody decided how long a request should be willing to wait.
+</Hook>
+
+<Crux>When the pool is empty a request queues, not fails; the acquisition timeout decides whether you fail fast or pile up until starvation.</Crux>
+
+<Explanation>
+
+## Checkout is not always instant
+
+The happy-path story is "check out a connection, it is free, run your query." But a fixed-size pool has a second state: **all connections are busy**. When that happens, checkout does not error and it does not magically create a new connection — it **blocks**, putting the caller into a **wait queue** until a connection is returned or a timeout fires. This waiting is invisible in normal times because the pool is rarely empty, but it is the single most important behaviour to understand, because every pool-related outage lives here.
+
+So a request's total time is no longer just *queue time on the database*; it is now **wait-for-connection time + query time**. Under load, the wait-for-connection part can dwarf the query itself, and it is completely hidden unless you measure it separately.
+
+## The acquisition timeout is a latency dial
+
+The **acquisition timeout** (HikariCP's `connectionTimeout`, default **30 seconds**) is how long a caller will sit in the wait queue before the pool gives up and throws. This number is not a safety detail to leave at default — it is a *deliberate latency budget* for the worst case. Setting it well means choosing what should happen when the pool is starved:
+
+- **Too long (e.g. 30 s default).** Requests wait a small eternity. Each waiter holds an upstream resource — a web-server worker thread, an HTTP connection — for the whole time. The pool empties, then the thread pool fills with waiters, then the service stops accepting requests at all. One slow dependency cascades into a full outage.
+- **Too short (e.g. 50 ms).** Requests fail the instant the pool is briefly full, including normal micro-bursts that would have cleared in 60 ms. You convert transient pressure into a flood of errors.
+- **Right (often 1–3× a normal query's time, e.g. a few hundred ms to ~2 s).** Long enough to ride out a normal burst, short enough that a real starvation **fails fast** and frees the upstream thread to do something useful — return a 503, shed load, trip a breaker.
+
+<Inset kind="why" lang="en">
+Why is *failing fast* better than waiting a long time when the pool is starved? Because a waiting request is not free — it pins resources all the way up the stack. While it sits in the acquisition queue it still holds a web-server thread, a socket, request memory, and often an upstream caller blocked on it. A 30-second wait is 30 seconds of holding all of that for a request that will probably fail anyway. Multiply by hundreds of concurrent requests and the upstream thread pool fills with waiters, so the service can no longer even accept new connections — the classic *thread starvation* spiral, where a slow database takes down a healthy web tier. A short timeout converts that slow-motion collapse into immediate, cheap failures: the request errors in a few hundred milliseconds, the thread is freed, and the system can apply its real overload strategy (retry elsewhere, shed load, return a degraded response) instead of locking up. Fast failure preserves capacity; slow failure consumes it. This is the same head-of-line-blocking lesson from the throughput unit — one stuck stage poisons everything queued behind it — so you cap the wait deliberately.
+</Inset>
+
+## The pile-up is a feedback loop
+
+The dangerous part of an empty pool is that it is **self-reinforcing**. Slow queries hold connections longer → the pool drains → new requests queue → those requests hold upstream threads while queued → the upstream tier saturates → retries pile on more requests → the database, now under even more pressure, gets slower still. Each step makes the next worse. This is why a small latency blip on a dependency can become a total outage minutes later: the pool's wait behaviour amplifies it. The defences are all about *bounding the wait*: a sane acquisition timeout, a separately-monitored "threads waiting" metric, and fast failure so upstream capacity is never consumed by doomed waiters.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Acquisition timeout | Behaviour on a starved pool | Risk |
+|---|---|---|
+| 30 s (default) | Every waiter holds a thread for 30 s | Thread starvation, full outage |
+| 50 ms (too short) | Normal micro-bursts fail | Error flood under benign load |
+| ~250 ms – 2 s (tuned) | Rides bursts, fails fast on real starvation | Frees upstream to shed load |
+| None / infinite | Waiters block forever | Permanent deadlock under pressure |
+
+</div>
+
+<Quiz
+  id="acquisition-q1"
+  lessonSlug="03-acquisition-and-timeouts"
+  lang="en"
+  question="A downstream slowdown fills the pool, and within seconds the whole web tier stops accepting requests even though the database is still up. What is the mechanism?"
+  choices={[
+    { label: "The pool ran out of memory and crashed", misconception: "The pool did not crash; it is doing exactly what it is configured to do — making callers wait for a connection." },
+    { label: "Requests wait up to the long acquisition timeout for a connection, each holding a web-server thread, so the thread pool fills with waiters and the tier starves", correct: true },
+    { label: "The database rejected the connections", misconception: "The database is up and not rejecting; the bottleneck is callers queuing inside the app for a free pooled connection." },
+    { label: "TLS handshakes started failing", misconception: "No handshake failure is implied; pooled connections are already open — the issue is none are free and the wait is too long." },
+  ]}
+/>
+
+<Quiz
+  id="acquisition-q2"
+  lessonSlug="03-acquisition-and-timeouts"
+  lang="en"
+  question="Why is a short, deliberate acquisition timeout usually safer than the 30-second default?"
+  choices={[
+    { label: "It makes individual queries run faster", misconception: "The timeout does not change query speed; it bounds how long a caller waits for a connection." },
+    { label: "It makes a starved pool fail fast, freeing the upstream thread to shed load instead of pinning resources for 30 s on a request that will likely fail anyway", correct: true },
+    { label: "It increases the effective pool size", misconception: "The timeout does not add connections; it only controls the wait before giving up." },
+    { label: "It disables the wait queue entirely", misconception: "A finite timeout still queues; it just bounds the wait. Disabling queuing would fail on the first momentary contention." },
+  ]}
+/>
+
+<DragOrder
+  id="acquisition-drag1"
+  lessonSlug="03-acquisition-and-timeouts"
+  lang="en"
+  prompt="Order the cascade when a slow dependency starves a pool with a long acquisition timeout:"
+  items={[
+    "A dependency slows, so queries hold pooled connections far longer than usual",
+    "The pool drains until no connection is free",
+    "New requests enter the wait queue, each pinning a web-server thread",
+    "The upstream thread pool fills with waiters and the service stops accepting requests",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A fixed-size pool has two states, and the dangerous one is empty: when all connections are busy, checkout does not error or grow the pool — it blocks the caller in a wait queue. A request's time becomes wait-for-connection plus query time, and the acquisition timeout (HikariCP connectionTimeout, default 30 s) decides the worst case. Left at 30 s, every waiter pins a web-server thread until the thread pool fills and a slow database takes down a healthy web tier; too short and normal micro-bursts fail. Tuned to roughly 1–3× a normal query (often a few hundred ms to ~2 s) it rides bursts but fails fast on real starvation, freeing upstream capacity to shed load. The empty-pool pile-up is a self-reinforcing feedback loop, so bound the wait deliberately and monitor threads-waiting as a first-class signal.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="acquisition-retrieval"
+  lang="en"
+  questions={[
+    { q: "What happens when a request needs a connection but every connection in the pool is busy?", a: "It does not error and the pool does not create a new connection beyond its maximum — instead the caller blocks and is placed in a wait queue until a connection is returned or the acquisition timeout fires. This means a request's total latency is no longer just the database queue plus query time; it is wait-for-connection time plus query time. In normal operation the pool is rarely empty so this waiting is invisible, but under load the wait-for-connection portion can dwarf the query itself, and it stays hidden unless you measure it separately. Almost every pool-related outage lives in this empty-pool state, which is why understanding the wait queue matters more than the happy path." },
+    { q: "What is the acquisition timeout and how should you set it?", a: "The acquisition timeout (HikariCP's connectionTimeout, default 30 seconds) is how long a caller will sit in the wait queue before the pool gives up and throws. It is best treated as a deliberate latency budget for the worst case, not a default to ignore. Left at 30 seconds it is dangerous: every waiter holds an upstream resource — a web-server worker thread, a socket, request memory — for the whole wait, so a starved pool fills the thread pool with waiters and a merely slow database becomes a full outage. Set far too short, say 50 ms, normal micro-bursts that would clear in tens of milliseconds fail and you flood with errors. The right value is usually about one to three times a normal query's time — often a few hundred milliseconds to a couple of seconds — long enough to ride out a normal burst but short enough that real starvation fails fast and frees the upstream thread to shed load, trip a breaker, or return a degraded response." },
+    { q: "Why is failing fast better than waiting, and how does an empty pool become a feedback loop?", a: "Failing fast is better because a waiting request is not free: while it sits in the acquisition queue it still pins a web-server thread, a socket, request memory, and often an upstream caller blocked on it, so a 30-second wait is 30 seconds of holding all of that for a request that will probably fail anyway. Multiplied across hundreds of concurrent requests, the upstream thread pool fills with waiters and the service can no longer accept new connections — thread starvation, where a slow database takes down a healthy web tier. The empty pool is self-reinforcing: slow queries hold connections longer, the pool drains, new requests queue while holding upstream threads, the upstream tier saturates, retries pile on more load, and the database gets slower still — each step worsening the next, which is how a small latency blip becomes a total outage minutes later. A short timeout breaks the loop by converting slow-motion collapse into immediate cheap failures that preserve capacity, the same head-of-line-blocking principle from the throughput unit applied to connection acquisition." },
+  ]}
+/>
+
+<Recap lang="en">
+A fixed pool has a quiet failure mode that lives entirely in its empty state: when every connection is busy, checkout blocks in a wait queue instead of erroring or growing, so a request's latency becomes wait-for-connection plus query time — and the acquisition timeout decides the worst case. HikariCP's 30-second default is a trap, because each waiter pins a web-server thread for the full wait, and under a slow dependency the thread pool fills with doomed waiters until a healthy web tier stops accepting requests; too short a timeout instead fails benign micro-bursts. Tuned to roughly one to three times a normal query, it rides bursts yet fails fast on real starvation, freeing upstream capacity to shed load. The empty-pool pile-up is a self-reinforcing loop — slow queries drain the pool, queued requests pin upstream threads, retries add load, the database slows further — so the defence is to bound the wait deliberately and monitor threads-waiting as a first-class metric. Bounding the wait assumes the connections you do hand out are healthy — and the next lesson shows they are not free forever: connections go stale, get killed by the database, and must be aged out and validated before they silently break a request.
+</Recap>

@@ -4,14 +4,137 @@ lang: en
 track: backend
 unit: 04-pooling
 order: 1
-level: junior
+title: "Why pool: the cost of creating a connection"
+summary: "Opening a database connection is not cheap — TCP, TLS, and auth cost milliseconds and the server allocates a whole backend process. A pool creates a small set of connections once and lends them out, so requests pay setup cost almost never instead of every time."
+estMin: 11
+status: ready
 lessonType: topic
-status: stub
-title: "Connection and thread pooling"
-summary: "Pools amortise expensive resource creation; pool size and eviction policy determine throughput or timeouts."
-prereqs: []
-deepensInto: []
-spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+level: junior
+prereqs:
+  - backend/03-async-blocking/06-throughput-under-load
+deepensInto:
+  - backend/04-pooling/02-pool-sizing
+spiral: ["latency", "resource-limits"]
+concepts: ["connection-pool", "connection-lifecycle", "tcp-handshake", "tls-handshake", "backend-process", "checkout-return", "amortization"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.postgresql.org/docs/current/runtime-config-resource.html
+  - https://www.systemoverflow.com/learn/networking-protocols/http-protocols/tls-handshake-latency-the-critical-path-tax-across-protocol-versions
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A junior service opens a fresh Postgres connection for every request, runs one quick `SELECT`, and closes it. The query takes 1 ms; the request takes 35. The missing 34 ms are pure *setup*: a TCP handshake, a TLS handshake, and the database authenticating the user and forking a backend process — every single time, thrown away after one query. Under load the database spends more CPU creating and destroying connections than answering them. Nobody wrote a slow query. They wrote a fast query wrapped in an expensive ritual, repeated on every request.
+</Hook>
+
+<Crux>A connection costs handshakes plus a server-side process; a pool pays that once and lends it out, so requests almost never pay setup.</Crux>
+
+<Explanation>
+
+## A connection is expensive to create
+
+To a beginner a database connection looks free — call `connect()`, get an object. Underneath, opening one is a chain of slow steps:
+
+- **TCP handshake** — a round trip to establish the socket (one RTT before any bytes flow).
+- **TLS handshake** — encryption setup, **2 round trips** on TLS 1.3, **3** on TLS 1.2; on a link with real latency this alone is tens to hundreds of milliseconds.
+- **Authentication** — the database verifies credentials, often with its own challenge/response round trip.
+- **Backend allocation** — Postgres *forks a dedicated OS process* per connection; MySQL spawns a thread. That process reserves memory (**~2–3 MB** of shared/admin memory before it runs a single query).
+
+So a connection is not a cheap handle — it is a TCP socket plus a TLS session plus a live server-side process. Creating and tearing one down per request means paying all of that for one query's worth of work.
+
+## A pool amortises the cost
+
+A **connection pool** is a small, long-lived set of already-open connections kept ready. Instead of `connect → query → close`, the flow becomes:
+
+1. **Check out** (acquire/borrow) a ready connection from the pool.
+2. Run your query on it.
+3. **Return** (release) it to the pool — *not* closed, just marked free for the next request.
+
+The expensive handshakes happen once, when the pool fills, then those same connections are reused thousands of times. This is **amortisation**: a fixed setup cost spread across many uses until the per-request share is negligible. A request now pays ~0 ms of setup instead of ~34, and the database stops burning CPU on connection churn.
+
+<Inset kind="why" lang="en">
+Why keep connections open and idle rather than open-on-demand and close-when-done? Because the whole point is to *not* pay setup on the request path. An idle pooled connection costs a little memory on both client and server, but it is instantly available — checkout is a near-free in-process operation. The alternative, opening per request, moves the handshake latency directly into the user's wait time and turns the database into a connection factory under load. The pool trades a small, bounded, steady-state cost (a handful of idle connections) for the elimination of a large, repeated, per-request cost. That trade is almost always worth it for a server that handles more than a trickle of traffic.
+</Inset>
+
+## A pool is also a limit
+
+Reuse is the obvious benefit, but the pool's second job matters just as much: it is a **bound**. A pool of size 20 means at most 20 connections ever exist from this service to the database, no matter how many requests arrive. That cap is a feature — it protects the database, which can only handle so many backends before it falls over (Postgres defaults to **max_connections = 100**). Without a pool, a traffic spike of 5,000 concurrent requests would try to open 5,000 connections and the database would reject them with "too many clients." The pool turns unbounded demand into a fixed, survivable number — the same bounded-concurrency idea from the last unit, applied to the most expensive downstream resource a backend has.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| | Connect per request | Pooled connections |
+|---|---|---|
+| Setup cost paid | Every request (TCP+TLS+auth) | Once, at pool fill |
+| Per-request latency | + tens of ms of handshake | ~0 ms (in-process checkout) |
+| DB-side load | Constant fork/teardown churn | Stable set of backends |
+| Concurrency to DB | Unbounded (spike → overload) | Capped at pool size |
+| Failure under spike | "too many clients", refused | Requests queue or fail fast |
+
+</div>
+
+<Quiz
+  id="pooling-overview-q1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A handler runs a 1 ms query but each request takes ~35 ms end to end, and the database CPU is high even though queries are trivial. What is the most likely cause?"
+  choices={[
+    { label: "The query needs an index", misconception: "A 1 ms query is already fast; the missing time is connection setup, not query execution." },
+    { label: "It opens and closes a connection per request, so every request pays TCP + TLS + auth handshakes and the DB churns backend processes", correct: true },
+    { label: "The network card is too slow", misconception: "Hardware is not implied; the overhead is the repeated handshake and backend allocation, which pooling removes." },
+    { label: "Postgres is single-threaded", misconception: "Postgres uses a process per connection; the cost here is creating those processes repeatedly, not a threading model." },
+  ]}
+/>
+
+<Quiz
+  id="pooling-overview-q2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Besides reusing connections, what second protection does a fixed-size pool give a backend?"
+  choices={[
+    { label: "It makes individual queries run faster on the database", misconception: "Pooling does not speed up query execution; it removes setup cost and bounds connection count." },
+    { label: "It caps the number of connections to the database, so a traffic spike cannot open thousands and trigger 'too many clients'", correct: true },
+    { label: "It encrypts the connection automatically", misconception: "Encryption is the TLS handshake's job, done per connection; the pool does not provide it." },
+    { label: "It retries failed queries transparently", misconception: "Retries are a separate concern; a pool manages connection reuse and a concurrency cap, not query retries." },
+  ]}
+/>
+
+<DragOrder
+  id="pooling-overview-drag1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the lifecycle of one request using a connection pool:"
+  items={[
+    "Check out a ready connection from the pool",
+    "Run the query on the borrowed connection",
+    "Return the connection to the pool (free, not closed)",
+    "A later request checks out that same connection and reuses it",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Opening a database connection is a chain of slow steps: a TCP handshake, a TLS handshake (2 RTT on TLS 1.3, 3 on 1.2), authentication, and a server-side backend process that reserves ~2–3 MB before running anything. Doing this per request means paying tens of milliseconds of setup for one query and making the database churn processes. A connection pool opens a small set once and lends them out — check out, query, return-not-close — so setup is amortised to nearly zero per request. The pool is also a bound: it caps connections at its size, protecting a database that defaults to max_connections = 100 from spike-driven overload.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="pooling-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is creating a database connection expensive, step by step?", a: "Opening a connection is not a free handle but a chain of slow operations. First a TCP handshake establishes the socket, costing one round trip. Then a TLS handshake sets up encryption, which is two round trips on TLS 1.3 and three on TLS 1.2, so on a link with real latency it alone can be tens to hundreds of milliseconds. Then the database authenticates the credentials, often with its own challenge/response round trip. Finally the server allocates a backend: Postgres forks a dedicated OS process per connection (MySQL spawns a thread), and that process reserves memory — roughly 2–3 MB of shared/admin memory — before it runs a single query. So a connection is a TCP socket plus a TLS session plus a live server-side process, and creating one per request pays all of that for one query's worth of work, while making the database burn CPU on fork/teardown churn." },
+    { q: "How does a connection pool work and what does amortisation mean here?", a: "A connection pool is a small, long-lived set of already-open connections kept ready to use. Instead of connect → query → close, a request checks out (borrows) a ready connection, runs its query, and returns (releases) it to the pool — the connection is marked free for the next request, not closed. The expensive handshakes happen once, when the pool fills, and then those same connections are reused thousands of times. That is amortisation: a fixed setup cost spread across many uses until the per-request share is negligible. The result is that a request pays roughly zero milliseconds of setup instead of tens, and the database stops spending CPU on constant connection creation and destruction." },
+    { q: "Why is a pool also a bound, and why does that matter?", a: "A pool has a fixed maximum size, so at most that many connections ever exist from the service to the database regardless of how many requests arrive — a pool of 20 means never more than 20 backends. That cap is a protection, because a database can only handle so many connections before it degrades; Postgres defaults to max_connections = 100, and each connection is a real backend process consuming memory. Without a pool, a spike of thousands of concurrent requests would try to open thousands of connections and the database would reject them with 'too many clients already.' The pool turns unbounded demand into a fixed, survivable number, which is the same bounded-concurrency principle from the async unit applied to the most expensive downstream resource a backend has." },
+  ]}
+/>
+
+<Recap lang="en">
+A database connection looks free but is a chain of expensive setup: a TCP handshake, a TLS handshake (two round trips on 1.3, three on 1.2), authentication, and a server-side backend process that reserves a couple of megabytes before doing any work. Opening one per request buries tens of milliseconds of handshake in every call and makes the database burn CPU forking and tearing down processes — a fast query wrapped in an expensive ritual. A connection pool fixes both halves: it opens a small set of connections once and lends them out (check out, query, return-not-close), amortising setup to nearly zero per request, and it caps total connections at its size, protecting a database that defaults to only 100 backends from spike-driven 'too many clients' overload. The pool is bounded concurrency for the priciest resource a backend touches. But a pool only helps if it is the right size — and the next lesson shows why bigger is counterintuitively not better, and how to compute the number that actually maximises throughput.
+</Recap>

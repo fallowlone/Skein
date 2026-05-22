@@ -1,0 +1,135 @@
+---
+slug: 04-health-and-lifecycle
+lang: en
+track: backend
+unit: 04-pooling
+order: 4
+title: "Connection lifecycle: stale connections and how to age them out"
+summary: "A pooled connection is reused for hours, which is the whole point — but the database, firewalls, and load balancers all reserve the right to kill it underneath you. Without max-lifetime, idle eviction, and validation, the pool happily hands out dead connections."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/04-pooling/03-acquisition-and-timeouts
+deepensInto:
+  - backend/04-pooling/05-pool-exhaustion
+spiral: ["resource-limits", "failure-modes"]
+concepts: ["connection-lifecycle", "max-lifetime", "idle-timeout", "keepalive", "connection-validation", "stale-connection", "minimum-idle"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/Configuration
+  - https://github.com/brettwooldridge/HikariCP/wiki/Bad-Behavior:-Handling-Database-Down
+  - https://www.postgresql.org/docs/current/runtime-config-client.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A service runs fine all day, then at 3 a.m. — during a traffic lull — the first requests of the morning fail with "connection reset by peer." Nothing deployed, the database is healthy. What happened is that during the quiet night the database's `wait_timeout`, a firewall idle rule, and a load balancer all silently dropped the long-idle pooled connections, but the pool did not notice. It kept those dead sockets and confidently handed one to the first morning request, which wrote a query into a closed pipe. The pool's greatest strength — keeping connections open for reuse — is also a liability: a connection it holds may have died without telling it.
+</Hook>
+
+<Crux>A pooled connection can die silently — killed by the DB, a firewall or LB — so retire by age and validate on borrow, or serve dead sockets.</Crux>
+
+<Explanation>
+
+## A held connection can die without the pool knowing
+
+A pool keeps connections open precisely so requests skip the handshake — but "open on our side" is not "alive end to end." A TCP connection has two ends and several middleboxes, any of which can tear it down while the pool's side still looks `ESTABLISHED`:
+
+- **The database itself.** Postgres and MySQL enforce idle and lifetime limits server-side (`idle_in_transaction_session_timeout`, MySQL's `wait_timeout` defaulting to **8 hours**). When the server closes a backend, the client socket is not notified until it next writes.
+- **Firewalls and NAT gateways.** Stateful firewalls drop idle flows after a few minutes to reclaim table space; a common cloud NAT idle timeout is around **350 seconds**. After that the connection is a black hole — packets vanish.
+- **Load balancers and proxies.** An LB in front of the database (or a PgBouncer) has its own idle and lifetime limits and recycles backends on deploys.
+
+The result: a connection sitting idle in the pool can be quietly dead, and the pool only discovers this when a request tries to use it and gets a reset or a hang.
+
+## Three controls keep the pool fresh
+
+A good pool defends against staleness with three cooperating settings:
+
+- **Max lifetime.** Retire and replace every connection after a fixed age (HikariCP `maxLifetime`, default **30 minutes**) *whether or not it looks healthy*. This proactively rotates connections out before middleboxes or the server kill them. The rule that matters: **maxLifetime must be shorter than the database's own connection timeout** (e.g. a few seconds under MySQL's `wait_timeout`), so the pool always closes a connection before the server does.
+- **Idle timeout.** Shrink the pool back toward a minimum during quiet periods by evicting connections idle beyond `idleTimeout` (default **10 minutes**). This only does anything if `minimumIdle` is set below maximum — otherwise the pool holds all connections forever.
+- **Keepalive / validation.** Periodically probe idle connections (`keepaliveTime`) and/or test a connection at checkout before lending it. A modern pool validates with a lightweight protocol-level ping; if it fails, the connection is quietly discarded and a fresh one is created — so the *request* never sees the dead socket.
+
+## Validate at the right moment, cheaply
+
+Validation has a cost: a check on every single checkout adds a round trip to every query, which can erase the latency win pooling exists for. The modern compromise is **validate on borrow, but skip the check if the connection was used very recently** — HikariCP's `aliveBypassWindow` of **500 ms** means a connection returned and re-borrowed within half a second is trusted without a probe, on the reasoning that it cannot have gone stale that fast. This keeps hot connections fast while still catching the ones that have been sitting idle long enough to be at risk.
+
+<Inset kind="why" lang="en">
+Why retire connections by `maxLifetime` proactively instead of just validating them when borrowed? Because validation only catches a connection that is *already dead* at the moment of checkout — it does nothing for a connection that dies *after* you hand it out, mid-query, when a firewall finally drops the long-lived flow or the database recycles the backend. Proactive lifetime rotation attacks the root cause: it ensures no connection ever lives long enough to hit those external limits in the first place, so the dangerous in-use death becomes vanishingly rare. The two controls are complementary, not redundant — validation handles the connection that went stale while idle in the pool, and maxLifetime handles the connection that would have gone stale while held by a request. There is also a stability benefit: rotating connections steadily spreads reconnection cost evenly over time, rather than letting the whole pool age together and then reconnect in a thundering herd when the database finally closes them all at once. Bounding a connection's age is the same discipline as bounding the wait queue — you cap a resource deliberately rather than letting an external system cap it for you at the worst moment.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Control | What it prevents | Key constraint |
+|---|---|---|
+| maxLifetime (~30 min) | Connection killed by DB/firewall while held | Must be < DB wait_timeout |
+| idleTimeout (~10 min) | Holding excess idle connections off-peak | Only acts if minimumIdle < max |
+| keepalive probe | Idle flow dropped by NAT/firewall | Interval < middlebox idle limit |
+| validate on borrow | Handing a dead socket to a request | Skip within aliveBypassWindow (500 ms) |
+
+</div>
+
+<Quiz
+  id="lifecycle-q1"
+  lessonSlug="04-health-and-lifecycle"
+  lang="en"
+  question="After an overnight lull, the first morning requests fail with 'connection reset' even though nothing deployed and the database is healthy. What happened?"
+  choices={[
+    { label: "The database ran out of disk space overnight", misconception: "No storage failure is implied; the database is healthy — the connections themselves were silently dropped while idle." },
+    { label: "Idle pooled connections were killed by the DB wait_timeout, a firewall, or an LB during the lull, but the pool kept the dead sockets and handed one out", correct: true },
+    { label: "The pool size was too small for morning traffic", misconception: "Size is not the issue; the held connections were dead, not insufficient. The first request failed on a stale socket, not a full pool." },
+    { label: "TLS certificates expired at midnight", misconception: "No certificate expiry is implied; the failure is stale TCP connections dropped by middleboxes during idle, not auth." },
+  ]}
+/>
+
+<Quiz
+  id="lifecycle-q2"
+  lessonSlug="04-health-and-lifecycle"
+  lang="en"
+  question="Why must maxLifetime be set shorter than the database's own connection timeout (e.g. MySQL wait_timeout)?"
+  choices={[
+    { label: "So the pool always closes and replaces a connection before the server kills it, avoiding stale sockets the pool doesn't know are dead", correct: true },
+    { label: "So queries run faster on fresh connections", misconception: "Connection age does not change query speed; the point is to retire connections before the server closes them unannounced." },
+    { label: "Because the database rejects long-lived connections at login", misconception: "Long-lived connections are allowed; the server closes them on idle/lifetime timeout, which the pool must pre-empt." },
+    { label: "To reduce the number of connections below max_connections", misconception: "maxLifetime rotates connections, it does not lower the count; the constraint is ordering pool retirement before server-side closure." },
+  ]}
+/>
+
+<Quiz
+  id="lifecycle-q3"
+  lessonSlug="04-health-and-lifecycle"
+  lang="en"
+  question="Why do modern pools validate on borrow but skip the check within a short window like aliveBypassWindow (500 ms)?"
+  choices={[
+    { label: "Because validation permanently disables a connection", misconception: "Validation does not disable connections; it discards only the ones that fail the probe and replaces them." },
+    { label: "Validating on every checkout adds a round trip per query; a connection re-borrowed within 500 ms cannot have gone stale, so skipping the probe keeps hot connections fast", correct: true },
+    { label: "Because connections older than 500 ms are always dead", misconception: "Age of 500 ms does not mean death; the window is the opposite — connections used that recently are trusted as alive." },
+    { label: "To make the pool larger during bursts", misconception: "The bypass window is about validation cost, not pool size; it does not change how many connections exist." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Keeping connections open for reuse is pooling's whole value and also its liability: the database (MySQL wait_timeout defaults to 8 hours), stateful firewalls and NAT (often ~350 s idle), and load balancers can all kill a pooled connection while the pool's side still looks ESTABLISHED, so the pool happily lends a dead socket and the request fails with a reset. Three cooperating controls keep it fresh: maxLifetime (~30 min) proactively retires connections and must be shorter than the DB's own timeout so the pool closes first; idleTimeout (~10 min) shrinks the pool off-peak but only acts when minimumIdle is below max; and validation on borrow plus keepalive probes catch already-dead sockets — skipping the check within aliveBypassWindow (500 ms) to keep hot connections fast. Proactive lifetime rotation and validation are complementary: one handles connections that die while idle, the other connections that would die while held.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="lifecycle-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can a pooled connection be dead even though the pool thinks it is open?", a: "Because a TCP connection has two ends and several middleboxes between them, and any of them can tear it down while the pool's local socket still appears ESTABLISHED. The database enforces server-side idle and lifetime limits — Postgres has idle_in_transaction_session_timeout, MySQL's wait_timeout defaults to 8 hours — and when the server closes its backend the client is not notified until it next writes. Stateful firewalls and NAT gateways drop idle flows after minutes to reclaim table space, with cloud NAT idle timeouts commonly around 350 seconds, after which packets simply vanish. Load balancers and proxies in front of the database have their own idle and lifetime limits and recycle backends on deploys. So a connection sitting idle in the pool can be quietly dead, and the pool discovers it only when a request tries to use it and gets a reset or a hang — which is why the first requests after a quiet period are the classic victims." },
+    { q: "What three controls keep a pool's connections fresh, and what is the key constraint on each?", a: "First, max lifetime: retire and replace every connection after a fixed age — HikariCP's maxLifetime defaults to 30 minutes — regardless of apparent health, proactively rotating connections out before middleboxes or the server kill them. Its key constraint is that maxLifetime must be shorter than the database's own connection timeout, for example a few seconds under MySQL's wait_timeout, so the pool always closes a connection before the server does. Second, idle timeout: shrink the pool toward a minimum during quiet periods by evicting connections idle beyond idleTimeout, default 10 minutes — but this only does anything if minimumIdle is set below the maximum, otherwise the pool keeps every connection forever. Third, keepalive and validation: periodically probe idle connections and test a connection at checkout before lending it, using a lightweight protocol-level ping; a connection that fails is quietly discarded and replaced so the request never sees the dead socket. The keepalive interval must be shorter than the middlebox idle limit it is defending against." },
+    { q: "Why retire connections by maxLifetime proactively instead of relying on validation alone?", a: "Because validation only catches a connection that is already dead at the moment of checkout — it does nothing about a connection that dies after it has been handed out, mid-query, when a firewall finally drops a long-lived flow or the database recycles the backend. Proactive lifetime rotation attacks the root cause by ensuring no connection ever lives long enough to hit those external limits, so the dangerous in-use death becomes vanishingly rare. The two are complementary rather than redundant: validation handles the connection that went stale while idle in the pool, and maxLifetime handles the one that would have gone stale while held by a request. Rotating connections steadily also spreads reconnection cost evenly over time instead of letting the whole pool age together and reconnect in a thundering herd when the database closes them all at once. To keep validation cheap, modern pools validate on borrow but skip the probe if the connection was used within a short window such as HikariCP's aliveBypassWindow of 500 milliseconds, on the reasoning that a connection re-borrowed that fast cannot have gone stale, which keeps hot connections fast while still catching idle ones at risk." },
+  ]}
+/>
+
+<Recap lang="en">
+The reuse that makes pooling fast also makes it fragile: a connection the pool holds can be killed silently by the database (MySQL wait_timeout defaults to 8 hours), by stateful firewalls and NAT dropping idle flows after minutes, or by load balancers recycling backends, all while the pool's socket still looks ESTABLISHED — so it lends a dead connection and the request fails with a reset, classically the first request after a quiet night. Three controls keep the pool fresh: maxLifetime (~30 min) proactively rotates connections and must be shorter than the database's own timeout so the pool always closes first; idleTimeout (~10 min) shrinks the pool off-peak but only when minimumIdle is below max; and validation on borrow plus keepalive probes catch already-dead sockets, skipping the check within a 500 ms aliveBypassWindow so hot connections stay fast. Proactive rotation and validation are complementary — one catches connections that die idle, the other those that would die in use — and steady rotation also avoids a thundering-herd reconnect. Fresh, bounded, validated connections keep the happy path healthy; the next lesson confronts what happens when they run out for the wrong reason: leaks, exhaustion, and the metrics that catch them before users do.
+</Recap>

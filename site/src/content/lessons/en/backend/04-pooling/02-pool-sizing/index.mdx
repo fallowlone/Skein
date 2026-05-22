@@ -1,0 +1,141 @@
+---
+slug: 02-pool-sizing
+lang: en
+track: backend
+unit: 04-pooling
+order: 2
+title: "Pool sizing: why bigger is not faster"
+summary: "The instinct is to raise the pool size until the database stops being the bottleneck — but past a small number throughput drops, because a connection is a real backend process competing for cores, locks, and memory. The right size is a small formula, not a big guess."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/04-pooling/01-overview
+deepensInto:
+  - backend/04-pooling/03-acquisition-and-timeouts
+spiral: ["latency", "resource-limits"]
+concepts: ["pool-sizing", "connections-equals-cores", "context-switching", "lock-contention", "work-mem", "saturation", "little's-law"]
+sources:
+  - https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+  - https://www.postgresql.org/docs/current/runtime-config-resource.html
+  - https://wiki.postgresql.org/wiki/Number_Of_Database_Connections
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A team sees the database is the bottleneck, so they raise the connection pool from 20 to 100, expecting roughly five times the throughput. Throughput *drops*. Latency climbs, CPU on the database spikes, and the work the server actually finishes per second goes down. They raised the one number that looked like a throttle and made everything worse. The pool was not too small — it was now far larger than the number of queries the database hardware can run at once, and every extra connection past that point is not parallelism, it is contention.
+</Hook>
+
+<Crux>A connection is a backend process competing for cores, locks, and memory — past a point, more connections means contention, not throughput.</Crux>
+
+<Explanation>
+
+## More connections is not more parallelism
+
+It feels obvious that more connections means more concurrent work. It does not, and the reason is physical. A database server has a fixed number of CPU cores and a fixed number of disk spindles (or SSD queues). At any instant it can only truly *execute* as many queries as it has cores; everything else is waiting. A connection that holds a query is not magically running — it is competing for a core to run on.
+
+So when you open 100 connections on an 8-core box, you do not get 100 queries running at once. You get 8 running and 92 fighting over those 8 cores, plus all the overhead of switching between them. The pool size sets how many queries can be *in flight*; the hardware sets how many can actually *progress*. When the first number greatly exceeds the second, the gap is pure waste.
+
+## The three taxes of an oversized pool
+
+Each connection past the useful count does not sit quietly. It costs you in three ways at once:
+
+- **Context switching.** The OS time-slices many connections across few cores. Each switch flushes CPU caches and costs scheduler time. With 100 active connections on 8 cores, the box spends a growing share of CPU just *changing which query is running* instead of running queries.
+- **Lock and latch contention.** Concurrent transactions contend for row locks, and the database's own internal latches (buffer pool, WAL, lock tables) are shared. More concurrent connections means more contention on those shared structures — and contention is super-linear, so it gets worse faster than the connection count grows.
+- **Memory.** In Postgres each connection is a forked backend process holding ~2–3 MB of baseline memory, and worse, `work_mem` is allocated *per operation per connection*. A sort-heavy query at `work_mem = 16 MB` across 100 connections can reserve gigabytes; the same workload at 10 connections cannot.
+
+## The formula: small, derived from hardware
+
+HikariCP's well-known guidance turns this into a starting formula:
+
+```
+connections = (core_count × 2) + effective_spindle_count
+```
+
+The intuition: while one query waits on disk I/O, another can use the freed CPU core — so you want roughly twice the cores to keep them busy through I/O stalls, plus one per independent disk that can serve a seek in parallel. A **4-core server with one SSD** lands at `(4 × 2) + 1 = 9` connections. Not 90. The number that maximises throughput is shockingly small, and measured benchmarks back it: a pool of ~10 often beats a pool of 100 on the same hardware, finishing more queries per second at lower latency.
+
+<Inset kind="why" lang="en">
+Why does a pool of 10 beat a pool of 100 when the workload clearly has more than 10 things to do? Because the extra 90 are not doing work — they are queuing *inside the database* instead of *outside it*, and queuing inside is worse. When 100 connections hit an 8-core box, the database accepts all 100 and time-slices them, paying context-switch and lock-contention tax on every one, so each individual query runs slower and the total finishes later. When 10 connections hit the same box, the database runs them near full speed and the other requests wait in the pool's queue — cheaply, in your application's memory, costing nothing on the database. Same total work, but the small pool lets the database run at its efficient operating point and pushes the unavoidable waiting to the cheapest place to wait. Bounding the pool is the same bounded-concurrency lesson as the async unit: you queue the overflow somewhere cheap rather than dumping it on the expensive resource.
+</Inset>
+
+## Sizing is finding the saturation point
+
+The formula is a starting point, not a final answer — real workloads have a mix of CPU-bound and I/O-bound queries, and the right number is found by measurement. The method is to raise concurrency while watching throughput and latency: throughput rises, then flattens (the **saturation point**), then *falls* as contention takes over. The best pool size sits at or just below that flat top — the smallest pool that reaches peak throughput. Past it you are buying latency with no throughput in return, exactly the queueing-knee behaviour from the throughput lesson, now driven by the pool you chose.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Pool size (8-core box) | What actually happens | Throughput | Latency |
+|---|---|---|---|
+| 4 (too small) | Cores sit idle waiting on I/O | Below peak | Low but capacity wasted |
+| ~10–16 (right) | Cores busy, minimal contention | Peak | Lowest at peak |
+| 50 | Heavy context switching + lock contention | Below peak | Climbing |
+| 100 | Database thrashes scheduling, not running | Well below peak | High, unstable |
+
+</div>
+
+<Quiz
+  id="pool-sizing-q1"
+  lessonSlug="02-pool-sizing"
+  lang="en"
+  question="A team raises the pool from 20 to 100 on an 8-core database to get more throughput, but throughput drops and latency climbs. Why?"
+  choices={[
+    { label: "The pool is now too small to hold all the requests", misconception: "The pool got larger, not smaller; the problem is too many connections, not too few." },
+    { label: "Only ~8 queries can truly run at once on 8 cores, so 92 extra connections add context-switching and lock contention without adding parallelism", correct: true },
+    { label: "Larger pools always need a faster network card", misconception: "Network hardware is not implied; the cost is on-database contention for cores, locks, and memory." },
+    { label: "Postgres caps connections at 20 by default", misconception: "The default max_connections is 100, not 20; the issue is contention well before any hard cap." },
+  ]}
+/>
+
+<Quiz
+  id="pool-sizing-q2"
+  lessonSlug="02-pool-sizing"
+  lang="en"
+  question="Using the HikariCP heuristic, what is a sensible starting pool size for a 4-core database with a single SSD?"
+  choices={[
+    { label: "Around 9, from (4 × 2) + 1", correct: true },
+    { label: "Around 40, roughly ten per core", misconception: "Ten-per-core overshoots wildly; the formula gives single digits because cores, not connections, bound execution." },
+    { label: "100, the Postgres default max_connections", misconception: "max_connections is a ceiling for the whole server, not a per-app target; the throughput-maximising number is far smaller." },
+    { label: "As high as memory allows", misconception: "Maximising connections maximises contention, not throughput; the best size is small and derived from cores plus spindles." },
+  ]}
+/>
+
+<Quiz
+  id="pool-sizing-q3"
+  lessonSlug="02-pool-sizing"
+  lang="en"
+  question="Why is per-connection memory a real constraint when sizing a Postgres pool, beyond the baseline process cost?"
+  choices={[
+    { label: "Each connection caches the entire database in memory", misconception: "Connections do not each cache the database; the shared buffer pool is shared, not per-connection." },
+    { label: "work_mem is allocated per operation per connection, so a sort-heavy query times the pool size can reserve gigabytes", correct: true },
+    { label: "Connections store query results forever", misconception: "Results are not retained per connection indefinitely; the per-connection cost is process memory plus work_mem allocations." },
+    { label: "Memory is irrelevant; only CPU matters for sizing", misconception: "Memory is a real bound: baseline backend memory plus work_mem multiplied across connections can exhaust RAM." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>More connections is not more parallelism: a database can only truly run as many queries at once as it has cores, so a pool far larger than (cores × 2 + spindles) adds context switching, lock and latch contention, and per-connection memory pressure — work_mem is allocated per operation per connection — without adding throughput. A 4-core, one-SSD box wants about (4 × 2) + 1 = 9 connections, and a pool of ~10 routinely beats a pool of 100 on the same hardware. Find the size by raising concurrency until throughput flattens (saturation), then sit at the smallest pool that reaches that peak. The overflow should queue cheaply in the pool, not expensively inside the database.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="pool-sizing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does raising the pool size past a small number reduce throughput instead of increasing it?", a: "Because a connection is not a unit of parallelism — a core is. A database server can only truly execute as many queries at once as it has CPU cores (plus a little headroom for queries stalled on disk I/O); every connection beyond that is waiting, not running. Opening 100 connections on an 8-core box gives you 8 queries progressing and 92 competing, and that competition is not free: the OS pays context-switch cost time-slicing many connections across few cores, the database pays lock and latch contention on shared internal structures (buffer pool, WAL, lock tables) which grows super-linearly, and each Postgres connection holds ~2–3 MB of backend process memory plus work_mem allocated per operation. So past the useful count, more connections buy more overhead and more contention, and the total queries finished per second falls while latency rises." },
+    { q: "What is the HikariCP sizing formula and what is the reasoning behind it?", a: "The formula is connections = (core_count × 2) + effective_spindle_count. The doubling of cores is because while one query is stalled waiting on disk I/O, the freed CPU core can run another query, so you want roughly two connections per core to keep cores busy through I/O stalls. The spindle term adds one connection per independent disk that can serve a seek in parallel (for SSDs this is effectively the device's parallel queue capacity, often counted as one for a single SSD). A 4-core server with one SSD therefore starts at (4 × 2) + 1 = 9 connections. The striking part is how small the number is: benchmarks repeatedly show a pool of around 10 outperforming a pool of 100 on the same hardware, finishing more work per second at lower latency, because the small pool lets the database run at its efficient operating point instead of thrashing." },
+    { q: "How do you actually find the right pool size for a real workload, and why is a small pool better even when there is more work to do?", a: "You find it by measurement: raise offered concurrency while watching throughput and latency. Throughput rises, then flattens at a saturation point, then falls as contention takes over; the best pool size is the smallest one that reaches that flat peak, sitting at or just below the knee. A small pool is better even with abundant work because the overflow has to wait somewhere, and waiting inside the database is far more expensive than waiting in the pool's queue. A large pool makes the database accept everything and time-slice it, paying context-switch and contention tax on every query so each runs slower; a small pool runs queries near full speed and parks the excess cheaply in application memory. Same total work, but the small pool keeps the expensive resource at its efficient point and pushes unavoidable waiting to the cheapest place — the same bounded-concurrency principle as the async unit, applied to the database." },
+  ]}
+/>
+
+<Recap lang="en">
+The instinct to fix a database bottleneck by enlarging the pool is backwards: a connection is a real backend process competing for a fixed number of cores, so a pool far larger than the hardware can run turns extra connections into pure contention — context switching across too few cores, super-linear lock and latch contention on shared internal structures, and per-connection memory where work_mem is multiplied per operation across every connection. HikariCP's (cores × 2) + spindles puts a 4-core, one-SSD box at about 9 connections, and a pool of ~10 routinely beats a pool of 100 on identical hardware because the small pool lets the database run at its efficient point while the overflow waits cheaply in the pool's queue rather than thrashing inside the engine. The right size is the smallest pool that reaches peak throughput, found by raising concurrency until throughput flattens. Knowing the size answers how many connections to keep — the next lesson asks what happens to a request when they are all busy: the wait queue, the acquisition timeout, and how that timeout becomes a deliberate latency dial.
+</Recap>
