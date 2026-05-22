@@ -9,11 +9,11 @@ const glossary = {
 
 // altitude: lower = closer to zero knowledge
 const entries: ScanEntry[] = [
-  { collection: "lessons", group: "algorithms", slug: "01-heaps", altitude: 100,
+  { collection: "lessons", group: "algorithms", unit: "01-priority-queues", slug: "01-heaps", altitude: 100,
     body: 'A <Term k="heap" lang="en">heap</Term> orders by priority.' },
-  { collection: "book", group: "networking", slug: "03-tcp-handshake", altitude: 9000,
+  { collection: "book", group: "networking", unit: "", slug: "03-tcp-handshake", altitude: 9000,
     body: 'The <Term k="tcp" lang="en">TCP</Term> <Term k="syn" lang="en">SYN</Term> packet. <Term k="tcp" lang="en">TCP</Term> again.' },
-  { collection: "book", group: "networking", slug: "01-osi", altitude: 8000,
+  { collection: "book", group: "networking", unit: "", slug: "01-osi", altitude: 8000,
     body: 'Early mention of <Term k="tcp" lang="en">TCP</Term>.' },
 ];
 
