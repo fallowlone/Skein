@@ -1,0 +1,137 @@
+---
+slug: 04-offloading-cpu-work
+lang: en
+track: backend
+unit: 03-async-blocking
+order: 4
+title: "Offloading CPU work: worker threads and the libuv pool"
+summary: "Two thread pools hide behind the single loop, and confusing them wastes weeks. The libuv pool runs native I/O like fs and crypto, never your JavaScript; CPU-bound JS needs worker threads or chunking, each carrying its own cost — message-copy overhead, partitioning complexity."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/03-async-blocking/03-what-blocks-the-loop
+deepensInto:
+  - backend/03-async-blocking/05-backpressure-and-concurrency
+spiral: ["latency"]
+concepts: ["worker-threads", "libuv-threadpool", "uv-threadpool-size", "structured-clone", "transferable", "sharedarraybuffer", "task-partitioning"]
+sources:
+  - https://nodejs.org/api/worker_threads.html
+  - https://shiftasia.com/community/understanding-the-thread-pool-and-libuv-in-node-js/
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A team profiles a slow image-resize endpoint, finds the CPU-heavy work, and "fixes" it by bumping `UV_THREADPOOL_SIZE` from 4 to 32. Nothing improves. The resize is JavaScript running on the loop thread, and the libuv pool they just enlarged does not run JavaScript at all — it runs native I/O. They tuned the wrong pool. Node hides *two* execution resources behind the one event loop, and knowing which work goes to which is the difference between a fix and a week lost.
+</Hook>
+
+<Crux>The libuv pool handles native I/O, not your JS; CPU-bound JavaScript needs worker threads or chunking to keep the loop free.</Crux>
+
+<Explanation>
+
+## Two pools, two jobs
+
+Behind the single loop there are two distinct sources of parallelism, and they serve opposite kinds of work:
+
+- **The libuv thread pool** — a small pool (default **4 threads**, configurable up to **1024** via `UV_THREADPOOL_SIZE`) that runs *native* operations that have no async OS primitive: file-system calls, DNS lookups (`dns.lookup`), and the async crypto/zlib functions. It does **not** run your JavaScript. When you call `fs.promises.readFile`, libuv does the blocking read on a pool thread and posts the result back to the loop. This is why async `bcrypt` does not freeze the loop — the hashing runs on a libuv thread.
+- **Worker threads** (`worker_threads`) — real, separate V8 isolates with their own event loop, giving **true multicore parallelism for your CPU-bound JavaScript**. This is where image resizing, large-payload parsing, compression, or any heavy computation belongs.
+
+The image-resize bug is now obvious: resizing is JS, so it needs a *worker thread*, not a bigger libuv pool. Enlarging libuv only helps when you are bottlenecked on fs/dns/crypto throughput — and even then, more pool threads than CPU cores mostly adds contention.
+
+## The cost of a worker: moving data
+
+Worker threads are not free, and the bill is mostly **data transfer**. By default, anything you `postMessage` to a worker is **deep-copied** via the structured-clone algorithm — for a large buffer that copy is real work (a multi-MB `ArrayBuffer` copy was measured around **268 ms**, versus about **29 ms** when transferred). Two escape hatches matter:
+
+- **Transferables** — pass an `ArrayBuffer` in the `transferList` and ownership *moves* to the worker with no copy (the sender can no longer use it). Near-zero transfer cost.
+- **`SharedArrayBuffer`** — shared memory both threads see at once, with `Atomics` for safe coordination. No copy, no transfer of ownership; the right tool when both sides need the same bytes.
+
+So the senior calculus for offloading is: *the work must be CPU-heavy enough to dwarf the message-passing cost.* Offloading a 2 ms computation to a worker can be slower than just running it, once you pay the clone and round-trip.
+
+<Inset kind="why" lang="en">
+Why not spin up a fresh worker per request? Thread creation and isolate startup are expensive (tens of milliseconds and real memory per worker), so per-request workers turn a CPU problem into a thread-churn problem. The production pattern is a **worker pool**: create a fixed set of workers once (commonly ~one per CPU core), hand them tasks over a queue, and reuse them. This caps parallelism at the hardware that actually exists — eight cores cannot truly run nine CPU-bound tasks at once — and avoids paying startup on every call. It mirrors connection pooling: the resource is expensive to create, cheap to reuse, and dangerous to create unboundedly. Libraries like Piscina exist precisely to manage this so you do not hand-roll the queue and lifecycle.
+</Inset>
+
+## When not to offload: chunk instead
+
+Not every long computation needs a thread. If the work can be **partitioned** into small pieces, you can run a chunk, then `setImmediate` (or `await` a resolved promise) to yield the loop, then run the next chunk — letting I/O callbacks interleave between pieces. This keeps everything on the loop thread with no transfer cost, trading total throughput (the work now competes with requests) for a responsive loop. Chunking suits work that is *long but interruptible* (iterating a big array, paginating a computation). Worker threads suit work that is *monolithic and heavy* (a single resize, a crypto operation) or that you genuinely want running in parallel on another core.
+
+And sometimes the right answer is neither: if CPU is the bottleneck across the whole service, **horizontal scale** — more processes (cluster) or more machines — is the lever, because one Node process maps to one loop, and CPU-bound throughput is fundamentally a core-count problem.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Approach | Runs what | True parallelism | Main cost |
+|---|---|---|---|
+| libuv pool (4, tunable) | Native fs/dns/crypto/zlib | Yes, for native I/O | Wrong tool for JS CPU work |
+| Worker thread | Your CPU-bound JS | Yes, another core | Data copy / transfer + startup |
+| Chunk + `setImmediate` | Your JS, in pieces | No (one loop) | Lower throughput, manual partitioning |
+| Cluster / more machines | Whole process replicated | Yes, more loops | Ops complexity, shared-state coordination |
+
+</div>
+
+<Quiz
+  id="offload-q1"
+  lessonSlug="04-offloading-cpu-work"
+  lang="en"
+  question="A CPU-heavy image resize (pure JavaScript) blocks the loop. Why does raising `UV_THREADPOOL_SIZE` not help?"
+  choices={[
+    { label: "The pool size cannot exceed the number of CPU cores", misconception: "It can go up to 1024; the real issue is what the pool runs, not its size limit." },
+    { label: "The libuv pool runs native operations (fs, dns, crypto, zlib), not your JavaScript, so JS CPU work stays on the loop; it needs a worker thread instead", correct: true },
+    { label: "Image resizing is I/O-bound, not CPU-bound", misconception: "Resizing is CPU-bound computation; that is exactly why it blocks and why a worker thread is the fix." },
+    { label: "UV_THREADPOOL_SIZE only takes effect after a restart that the team skipped", misconception: "Even applied correctly it would not help, because the pool does not execute JavaScript." },
+  ]}
+/>
+
+<Quiz
+  id="offload-q2"
+  lessonSlug="04-offloading-cpu-work"
+  lang="en"
+  question="You offload a large buffer to a worker and find the round-trip is dominated by copying. What is the most direct fix?"
+  choices={[
+    { label: "Increase the worker's heap size", misconception: "Heap size does not change the structured-clone copy; the copy itself is the cost." },
+    { label: "Pass the ArrayBuffer in the transferList so ownership moves without a copy, or use a SharedArrayBuffer if both threads need the bytes", correct: true },
+    { label: "Send the data as a JSON string instead of a buffer", misconception: "Stringifying adds CPU and usually more bytes; it makes the transfer cost worse, not better." },
+    { label: "Spawn a fresh worker per message to parallelize the copy", misconception: "Per-message workers add startup cost and do not remove the copy; transfer or shared memory does." },
+  ]}
+/>
+
+<Quiz
+  id="offload-q3"
+  lessonSlug="04-offloading-cpu-work"
+  lang="en"
+  question="When is chunking with `setImmediate` a better choice than a worker thread?"
+  choices={[
+    { label: "When the work is monolithic and cannot be split", misconception: "Monolithic heavy work is the worker-thread case; chunking needs the work to be partitionable." },
+    { label: "When the work is long but interruptible, so running a piece and yielding keeps the loop responsive without paying message-transfer cost", correct: true },
+    { label: "When you need true parallelism across cores", misconception: "Chunking stays on the one loop thread, so it gives no parallelism; that is the worker-thread case." },
+    { label: "When the computation is only a couple of milliseconds", misconception: "A couple of milliseconds rarely needs offloading or chunking at all; just run it." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Node hides two parallelism resources behind the loop. The libuv pool (4 threads, up to 1024 via UV_THREADPOOL_SIZE) runs native I/O — fs, dns, crypto, zlib — never your JavaScript, which is why async crypto does not freeze the loop. CPU-bound JS needs worker threads: separate V8 isolates with true multicore parallelism, but you pay data transfer (structured-clone deep copy ~268 ms for a big buffer vs ~29 ms transferred), so use transferables or SharedArrayBuffer and a reused worker pool, not per-request workers. For long-but-interruptible work, chunk and setImmediate to yield; when CPU is the whole-service bottleneck, scale horizontally.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="offload-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two thread pools behind the event loop and what does each run?", a: "The libuv thread pool is a small pool — default 4 threads, configurable up to 1024 via UV_THREADPOOL_SIZE — that runs native operations with no async OS primitive: file-system calls, dns.lookup, and async crypto and zlib. Crucially it does not run your JavaScript; when you call fs.promises.readFile, libuv performs the blocking read on a pool thread and posts the result back to the loop, which is also why async bcrypt hashing does not freeze the loop. Worker threads are entirely different: real separate V8 isolates each with their own event loop, providing true multicore parallelism for your CPU-bound JavaScript such as image resizing, large parsing, or compression. The common mistake is enlarging the libuv pool to fix a JS CPU bottleneck — it cannot, because the pool never executes JavaScript; that work needs a worker thread." },
+    { q: "What does it cost to use a worker thread, and how do you reduce that cost?", a: "The main cost is data transfer. By default anything postMessage'd to a worker is deep-copied via the structured-clone algorithm, and for a large buffer that copy is significant — a multi-MB ArrayBuffer copy was measured around 268 ms versus about 29 ms when transferred. Two mechanisms cut this: transferables, where you pass an ArrayBuffer in the transferList and ownership moves to the worker with no copy (the sender can no longer use it), and SharedArrayBuffer, shared memory both threads see at once with Atomics for safe coordination. There is also startup cost — thread and isolate creation take tens of milliseconds and real memory — so you should not spawn a worker per request; instead create a fixed worker pool once (commonly about one per core) and reuse it via a task queue. The rule of thumb: only offload when the CPU work is heavy enough to dwarf the message-passing and round-trip cost." },
+    { q: "When should you chunk work on the loop instead of offloading, and when is neither the answer?", a: "Chunking fits work that is long but interruptible: partition it into small pieces, run a piece, then setImmediate or await a resolved promise to yield the loop so I/O callbacks interleave, then run the next piece. This keeps everything on the loop thread with no transfer cost, trading some total throughput (the work now competes with requests) for a responsive loop — good for iterating a big array or paginating a computation. Worker threads instead suit monolithic heavy work like a single resize or crypto operation, or anything you genuinely want running in parallel on another core. And when CPU is the bottleneck across the whole service, neither helps enough: since one Node process is one loop, CPU-bound throughput is a core-count problem, so the lever is horizontal scale — more processes via cluster or more machines." },
+  ]}
+/>
+
+<Recap lang="en">
+Two execution resources hide behind the one event loop, and offloading well means sending each kind of work to the right one. The libuv thread pool — four threads by default, tunable to 1024 — runs native I/O like fs, dns, crypto, and zlib, and never your JavaScript, so enlarging it does nothing for a JS CPU bottleneck (the image-resize trap). CPU-bound JavaScript belongs in worker threads, separate V8 isolates that deliver true multicore parallelism, but they bill you for moving data: structured-clone deep-copies by default (around 268 ms for a big buffer versus 29 ms transferred), so reach for transferables or a SharedArrayBuffer, and reuse a fixed worker pool rather than spawning one per request to avoid startup churn. When work is long but splittable, chunk it and yield with setImmediate to keep the loop responsive at the cost of throughput; when CPU is the whole-service ceiling, scale horizontally because one process is one loop. With heavy work moved off the critical path, the next lesson turns to controlling the I/O work that stays: backpressure and bounded concurrency, so the system matches its own consumption speed instead of drowning in unbounded fan-out.
+</Recap>
