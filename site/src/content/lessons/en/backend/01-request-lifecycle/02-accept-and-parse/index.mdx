@@ -1,0 +1,152 @@
+---
+slug: 02-accept-and-parse
+lang: en
+track: backend
+unit: 01-request-lifecycle
+order: 2
+title: "Accept and parse: from kernel queue to a typed request"
+summary: "Before your code runs, the kernel completes the handshake into a bounded accept queue, and the server turns raw bytes into a request line, headers, and body — each step with a hard limit you can overflow."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/01-request-lifecycle/01-overview
+deepensInto:
+  - backend/01-request-lifecycle/03-routing-and-middleware
+spiral: ["latency"]
+concepts: ["accept-queue", "syn-queue", "somaxconn", "http-parser", "header-limit", "content-length", "chunked-encoding"]
+sources:
+  - https://nginx.org/en/docs/http/ngx_http_core_module.html
+  - https://nodejs.org/api/http.html
+  - https://www.rfc-editor.org/rfc/rfc9112
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+A service passes every load test, then refuses connections in production during a traffic spike — not with a 500, but with a TCP reset before any of your code runs. The logs are empty because the request never reached the application. The bottleneck was a kernel queue with a default depth of 128, set in 1999 and never changed.
+</Hook>
+
+<Crux>Two kernel queues and one byte-parser stand between the socket and your code — each is bounded, and each bound is a different outage.</Crux>
+
+<Explanation>
+
+## Two queues, not one
+
+A `listen()` socket has **two** kernel-side queues, and confusing them causes most "connections refused under load" mysteries:
+
+- **SYN queue** (incomplete) — connections mid-handshake: the server got a SYN, sent SYN-ACK, and is waiting for the final ACK. Sized by `net.ipv4.tcp_max_syn_backlog` (commonly ~1024–2048).
+- **Accept queue** (complete) — fully established connections waiting for the application to call `accept()`. Sized by `min(listen(backlog), net.core.somaxconn)`.
+
+When your handler is slow or your process is busy, it stops calling `accept()` fast enough. The accept queue fills. Once full, the kernel **drops** new completed connections — the client sees a timeout or reset, and your application logs nothing because the connection was never handed up.
+
+## The 128 trap
+
+`net.core.somaxconn` defaulted to **128** on Linux for two decades (raised to 4096 in kernel 5.4). Even today many container base images and managed platforms still ship 128. A framework that calls `listen(511)` (Node's default backlog) is silently capped to 128 by `somaxconn`. Under a burst, 129 simultaneous pending connections is enough to start dropping.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Setting | Common default | What it bounds | Overflow symptom |
+|---|---|---|---|
+| `tcp_max_syn_backlog` | ~1024–2048 | Half-open handshakes | SYN flood / dropped SYNs |
+| `somaxconn` | 128 (older), 4096 (5.4+) | Established, awaiting accept() | Connection refused / reset, no app log |
+| `listen(backlog)` | 511 (Node), 511 (nginx) | App's requested accept depth | Capped down to somaxconn |
+
+</div>
+
+## Parsing: bytes to a request
+
+Once `accept()` returns a socket, the server reads bytes and runs an HTTP parser — a state machine that recognizes the request line (`GET /path HTTP/1.1`), then header lines, then the body. Parsing is **not** free of limits:
+
+- **Header size cap.** Node.js limits total headers to **16 KB** (`--max-http-header-size`, raised from 8 KB in Node 12). nginx uses `large_client_header_buffers` (default `4 8k`). Exceed it and you get **431 Request Header Fields Too Large** or a 400 — most often caused by a bloated `Cookie` header or a large JWT.
+- **Request line length.** A URL longer than the buffer (nginx `8k` by default) is rejected before routing.
+
+## Where the body comes from
+
+The parser learns the body length one of two ways, and they fail differently:
+
+- **`Content-Length: N`** — read exactly N bytes. A lying or truncated length causes a hang or a parse error.
+- **`Transfer-Encoding: chunked`** — read sized chunks until a zero-length chunk. Streaming-friendly, but the classic vector for **request smuggling** when a proxy and an app server disagree about which header wins.
+
+A safe parser rejects a request that carries *both* `Content-Length` and `Transfer-Encoding` (RFC 9112 §6.1) — disagreement here is exactly how a smuggled request hides a second request inside the first.
+
+<Quiz
+  id="accept-parse-q1"
+  lessonSlug="02-accept-and-parse"
+  lang="en"
+  question="Under a traffic burst, clients get connection timeouts but the application logs are completely empty. What is the most likely cause?"
+  choices={[
+    { label: "The handler is throwing an uncaught exception", misconception: "An exception would appear in the logs and usually return a 500. Empty logs mean the request never reached your code." },
+    { label: "The kernel accept queue (bounded by somaxconn) filled, so new connections were dropped before accept()", correct: true },
+    { label: "JSON serialization is too slow for the response", misconception: "Serialization happens long after accept(). If connections never reach the app, serialization is irrelevant." },
+    { label: "The database connection pool is exhausted", misconception: "Pool exhaustion produces errors inside the handler that get logged. Empty logs point upstream of the application entirely." },
+  ]}
+/>
+
+<Quiz
+  id="accept-parse-q2"
+  lessonSlug="02-accept-and-parse"
+  lang="en"
+  question="A request fails with 431 Request Header Fields Too Large only for logged-in users. What is the likely cause?"
+  choices={[
+    { label: "The response body is too large", misconception: "431 is about request headers, not the response. The body size has nothing to do with it." },
+    { label: "Accumulated cookies or a large JWT pushed the header block past the parser's limit (e.g. Node's 16 KB)", correct: true },
+    { label: "The user's password is too long", misconception: "Passwords are sent in the body on login, not in every request header. They do not accumulate per request." },
+    { label: "The route table has too many entries", misconception: "Routing happens after parsing. The number of routes does not affect the header size limit." },
+  ]}
+/>
+
+<Quiz
+  id="accept-parse-q3"
+  lessonSlug="02-accept-and-parse"
+  lang="en"
+  question="Why should an HTTP parser reject a request that contains BOTH Content-Length and Transfer-Encoding: chunked?"
+  choices={[
+    { label: "It wastes bandwidth to send both", misconception: "The concern is correctness and security, not bandwidth. The two headers describe body framing, which must be unambiguous." },
+    { label: "A proxy and an app server may disagree on which header wins, which is the basis of request smuggling", correct: true },
+    { label: "Chunked encoding is deprecated and no longer valid", misconception: "Chunked transfer encoding is a normal, current part of HTTP/1.1. It is the ambiguity with Content-Length that is dangerous." },
+    { label: "Content-Length is always wrong when chunked is present", misconception: "Neither is inherently wrong; the problem is that two framings present at once are ambiguous and exploitable." },
+  ]}
+/>
+
+<DragOrder
+  id="accept-parse-drag1"
+  lessonSlug="02-accept-and-parse"
+  lang="en"
+  prompt="Order the steps from packet arrival to a parsed request:"
+  items={[
+    "Client SYN arrives; connection enters the SYN queue (half-open)",
+    "Handshake completes; connection moves to the accept queue",
+    "Application calls accept(); kernel hands up the connected socket",
+    "Server reads bytes and parses the request line (method, path, version)",
+    "Parser reads header lines until the blank line, enforcing the size cap",
+    "Body is read by Content-Length or chunked framing",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A listen socket has two bounded kernel queues: the SYN queue (half-open) and the accept queue (established, waiting for accept()). The accept queue is min(backlog, somaxconn) — often still 128 — and overflow drops connections with no app log. Parsing then enforces a header cap (Node 16 KB) and frames the body by Content-Length or chunked; both framings at once is a smuggling vector.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="accept-parse-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two kernel queues behind a listen() socket, and what bounds each?", a: "The SYN queue holds half-open connections mid-handshake (server sent SYN-ACK, awaiting the final ACK); it is bounded by net.ipv4.tcp_max_syn_backlog, commonly ~1024–2048. The accept queue holds fully established connections waiting for the application to call accept(); it is bounded by min(listen backlog, net.core.somaxconn). When the application is too slow to call accept(), the accept queue fills and the kernel drops new completed connections — the client sees a timeout or reset and the application logs nothing." },
+    { q: "Why is somaxconn = 128 a production trap, and how does it interact with the framework's backlog?", a: "net.core.somaxconn defaulted to 128 on Linux for ~20 years (raised to 4096 in kernel 5.4), and many container images and managed platforms still ship 128. The effective accept queue depth is min(listen backlog, somaxconn), so even if a framework requests listen(511) — Node's default — the kernel silently caps it to 128. Under a burst, 129 simultaneously pending connections begins dropping, producing connection refused/reset with no application-level log." },
+    { q: "How does the parser determine body length, and why is presence of both Content-Length and Transfer-Encoding dangerous?", a: "The parser frames the body either by Content-Length (read exactly N bytes) or Transfer-Encoding: chunked (read sized chunks until a zero-length chunk). If both are present, a front-end proxy and a back-end server may disagree about which one defines the body boundary. That disagreement lets an attacker hide a second request inside the first — HTTP request smuggling. RFC 9112 §6.1 requires rejecting such ambiguous requests." },
+  ]}
+/>
+
+<Recap lang="en">
+Before any application code runs, the kernel manages two queues per listen socket: the SYN queue for half-open handshakes (tcp_max_syn_backlog) and the accept queue for established connections awaiting accept() (min of the framework backlog and somaxconn). The accept queue is the silent killer — its default of 128 is easy to overflow under burst, and overflow drops connections with no application log. Once accept() returns, an HTTP parser turns bytes into a request line, headers (capped at 16 KB in Node, configurable in nginx via large_client_header_buffers), and a body framed by Content-Length or chunked encoding. Oversized headers yield 431/400; both framings at once is the request-smuggling vector RFC 9112 forbids. With a parsed request in hand, the next stop is choosing what code runs: routing and the middleware chain.
+</Recap>
