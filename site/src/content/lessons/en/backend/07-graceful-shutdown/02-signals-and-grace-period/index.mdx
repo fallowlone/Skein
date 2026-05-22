@@ -1,0 +1,137 @@
+---
+slug: 02-signals-and-grace-period
+lang: en
+track: backend
+unit: 07-graceful-shutdown
+order: 2
+title: "Signals and the grace period: SIGTERM, SIGKILL, and PID 1"
+summary: "Shutdown is a contract with the orchestrator: a preStop hook, then SIGTERM to PID 1, then a grace period (Kubernetes default 30s), then an unstoppable SIGKILL. The grace period is a hard deadline, and the classic bug is a process that never receives the signal at all."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/07-graceful-shutdown/01-overview
+deepensInto:
+  - backend/07-graceful-shutdown/03-the-deregistration-race
+spiral: ["failure-modes", "resilience", "lifecycle"]
+concepts: ["sigterm", "sigkill", "termination-grace-period", "prestop-hook", "pid-1", "signal-forwarding", "hard-deadline"]
+sources:
+  - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+  - https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+  - https://www.cncf.io/blog/2024/12/19/decoding-the-pod-termination-lifecycle-in-kubernetes-a-comprehensive-guide/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+"Let the process finish first" is a nice idea, but who tells the process to start finishing, and how long does it have? The answer is a precise contract between the orchestrator and your container, and getting it wrong is one of the most common production surprises. A team adds a clean SIGTERM handler that drains for up to 45 seconds — and discovers their requests are *still* being cut off mid-flight on every deploy. The handler was correct; the problem was that the signal never reached it. Their container started the app through a shell (`sh -c "node server.js"`), so PID 1 was the shell, the shell did not forward SIGTERM, and after the grace period the orchestrator sent the one signal nobody can catch — SIGKILL — straight through the polite handler that was waiting for a SIGTERM it would never see. Shutdown begins with understanding exactly which signals fire, in what order, to which process, and against what clock.
+</Hook>
+
+<Crux>The orchestrator sends SIGTERM, waits a grace period, then SIGKILL — a hard deadline; your job is to catch the signal and finish inside it.</Crux>
+
+<Explanation>
+
+## The termination sequence
+
+When Kubernetes decides to stop a pod, it runs a fixed sequence — and the same shape holds for most schedulers:
+
+1. **The pod is marked Terminating** and removed from the Service's endpoints (more on that race in the next lesson).
+2. **The preStop hook runs**, if you defined one. This is a command or HTTP call that executes *before* the signal is sent, and the orchestrator blocks on it. It is commonly used to sleep briefly so routing can drain, or to flip a readiness flag.
+3. **SIGTERM is sent to PID 1** of the container — the polite "please stop" signal. This is the moment your shutdown handler should fire.
+4. **The orchestrator waits the grace period** — `terminationGracePeriodSeconds`, default **30 seconds** in Kubernetes. The clock covers the preStop hook *and* the post-SIGTERM shutdown combined.
+5. **SIGKILL is sent** if the process is still alive when the clock runs out. SIGKILL cannot be caught, blocked, or handled — the kernel destroys the process immediately.
+
+So your entire graceful shutdown — drain, close, exit — must fit inside that grace period, minus whatever the preStop hook already consumed. The grace period is not a suggestion; it is a **hard deadline** enforced by an uncatchable signal.
+
+## SIGTERM versus SIGKILL
+
+The two signals are not two flavors of the same thing; they are categorically different. **SIGTERM** (signal 15) is a *request*: it interrupts the process and runs whatever handler you registered, giving you the chance to drain and clean up. **SIGKILL** (signal 9) is a *command to the kernel*, not to your process: it is never delivered to your code, so there is no handler, no cleanup, no final flush. The whole game is to do your cleanup during SIGTERM so that SIGKILL never has to fire — if SIGKILL fires, you have already lost the in-flight work, exactly as in the abrupt-exit case from lesson one.
+
+## The PID 1 trap
+
+Inside a container, the first process started becomes **PID 1**, and PID 1 is special: it is the process the orchestrator signals, and the kernel gives it unusual signal semantics. Two traps follow:
+
+- **Signals go only to PID 1.** If you launch your app as a *child* of a shell — `sh -c "node server.js"` or an unsuspecting entrypoint script — then the *shell* is PID 1, SIGTERM is delivered to the shell, and many shells do not forward it to their children. Your app never sees the signal, drains nothing, and is SIGKILLed at the deadline. The fix is to make your app PID 1 (exec form: `CMD ["node", "server.js"]`, or `exec node server.js` at the end of a script) or to run a tiny init like `tini` that forwards signals and reaps zombies.
+- **PID 1 has no default signal handlers.** Normally the kernel installs default actions (like "terminate on SIGTERM"), but for PID 1 it does not. If your app is PID 1 and you *forget* to register a handler, the default is to ignore the signal — so the process keeps running and, again, eats the SIGKILL.
+
+<Inset kind="why" lang="en">
+Why does the kernel treat PID 1 so differently that a missing handler means the signal is ignored rather than terminating the process? PID 1 is descended from the role of `init` on a normal Linux system — the first userspace process, the ancestor of everything, and the one responsible for reaping orphaned children and keeping the system alive. The kernel deliberately protects it: if PID 1 could be killed by a stray default signal action, the whole system (or, in a container, the whole container) would die by accident, so the kernel does *not* apply the usual default dispositions to PID 1. A signal with no explicitly registered handler is simply discarded. This is a sensible safety rule for a real init system, but it becomes a footgun in containers, because your application — written assuming it is an ordinary process where SIGTERM defaults to "terminate" — is suddenly wearing the init crown without knowing it. The same code that would shut down fine when launched normally now ignores SIGTERM entirely as PID 1. That is why the two canonical fixes exist: either explicitly register a SIGTERM handler so PID 1 has something to run, or insert a real init process (tini, dumb-init, or the platform's `--init` flag) as PID 1 whose entire job is to forward signals to your app and reap zombies. The deeper point is that "send SIGTERM and wait" only works if SIGTERM actually arrives at code that listens for it, and containerization silently changes both whether it arrives and what happens when it does.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Step | What fires | Catchable? | Your opportunity |
+|---|---|---|---|
+| Terminating | Pod removed from endpoints | — | Routing begins to drain |
+| preStop hook | Command / HTTP, blocks | n/a | Sleep for propagation, flip readiness |
+| SIGTERM | Signal 15 to PID 1 | Yes | Run the shutdown handler: drain + close |
+| Grace period | `terminationGracePeriodSeconds` (30s) | — | The hard deadline for all of the above |
+| SIGKILL | Signal 9 via kernel | **No** | None — process destroyed, work lost |
+
+</div>
+
+<Quiz
+  id="gs-signals-q1"
+  lessonSlug="02-signals-and-grace-period"
+  lang="en"
+  question="A team adds a correct 45-second SIGTERM drain handler, but requests are still cut off on every deploy. The container runs the app via sh -c 'node server.js'. What is wrong?"
+  choices={[
+    { label: "The shell is PID 1 and receives SIGTERM but does not forward it to the node child, so the handler never runs and the app is SIGKILLed at the deadline", correct: true },
+    { label: "45 seconds is shorter than the default grace period, so the handler is cut off", misconception: "45s exceeding the 30s default would be its own issue, but here the handler never runs at all — the signal never reaches node because the shell is PID 1." },
+    { label: "SIGTERM handlers are not supported in containers", misconception: "They are fully supported; the problem is signal delivery to PID 1, not handler support." },
+    { label: "The node process is too slow to register the handler in time", misconception: "Registration is instant at startup; the signal is delivered to the shell, not node, so timing is not the issue." },
+  ]}
+/>
+
+<Quiz
+  id="gs-signals-q2"
+  lessonSlug="02-signals-and-grace-period"
+  lang="en"
+  question="Why must all of your drain-and-cleanup work complete before the grace period expires?"
+  choices={[
+    { label: "When the grace period ends the orchestrator sends SIGKILL, which cannot be caught or handled — the process is destroyed immediately, so any work still in flight is lost", correct: true },
+    { label: "Because SIGTERM is automatically resent after the grace period", misconception: "SIGTERM is not resent; the deadline is enforced by SIGKILL, an uncatchable signal that ends the process." },
+    { label: "Because the grace period pauses the process at the deadline", misconception: "Nothing is paused; the process is killed outright by SIGKILL when the clock runs out." },
+    { label: "Because the load balancer stops draining at the deadline", misconception: "The hard stop is SIGKILL killing your process, not a load-balancer behavior." },
+  ]}
+/>
+
+<DragOrder
+  id="gs-signals-drag1"
+  lessonSlug="02-signals-and-grace-period"
+  lang="en"
+  prompt="Order the Kubernetes pod termination sequence:"
+  items={[
+    "Pod is marked Terminating and removed from the Service endpoints",
+    "preStop hook runs to completion (if defined), blocking the next step",
+    "SIGTERM is delivered to PID 1; the shutdown handler should drain and clean up",
+    "After terminationGracePeriodSeconds, SIGKILL destroys the process if it is still alive",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Shutdown is a precise contract with the orchestrator. The sequence: the pod is marked Terminating and pulled from endpoints, the preStop hook runs and blocks, SIGTERM (signal 15) is delivered to PID 1 as the polite "please stop," the orchestrator waits terminationGracePeriodSeconds (Kubernetes default 30s, covering preStop plus post-SIGTERM combined), and then SIGKILL (signal 9) fires if the process is still alive. SIGTERM and SIGKILL are categorically different: SIGTERM runs your handler so you can drain and clean up, while SIGKILL is a kernel command never delivered to your code — no handler, no flush — so the entire game is to finish during SIGTERM so SIGKILL never fires. The grace period is therefore a hard deadline. The classic bug is PID 1: signals go only to PID 1, so launching the app under a shell (sh -c "...") makes the shell PID 1 and it swallows SIGTERM; and PID 1 has no default signal handlers, so even as PID 1 a missing handler means SIGTERM is ignored. Fix by making the app PID 1 (exec form) or running a tiny init like tini, and always register the handler.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="gs-signals-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the termination sequence and how do SIGTERM and SIGKILL differ?", a: "Kubernetes runs a fixed sequence: the pod is marked Terminating and removed from the Service's endpoints, the preStop hook runs if defined and the orchestrator blocks on it, SIGTERM is sent to PID 1 of the container, the orchestrator waits terminationGracePeriodSeconds (default 30s, which covers the preStop hook plus the post-SIGTERM shutdown combined), and SIGKILL is sent if the process is still alive when the clock runs out. SIGTERM (signal 15) and SIGKILL (signal 9) are categorically different: SIGTERM is a request that interrupts the process and runs whatever handler you registered, giving you the chance to drain and clean up, whereas SIGKILL is a command to the kernel that is never delivered to your code, so there is no handler, no cleanup, and no final flush. The whole game is to do all cleanup during SIGTERM so SIGKILL never has to fire, because once it fires the in-flight work is already lost exactly as in an abrupt exit. The grace period is thus a hard deadline enforced by an uncatchable signal." },
+    { q: "What is the PID 1 trap and how do you fix it?", a: "Inside a container the first process started becomes PID 1, which is the process the orchestrator signals and which the kernel gives unusual semantics. Two traps follow. First, signals go only to PID 1, so if you launch your app as a child of a shell — sh -c \"node server.js\" or an entrypoint script — the shell is PID 1, SIGTERM is delivered to the shell, and many shells do not forward it to their children, so your app never sees the signal, drains nothing, and is SIGKILLed at the deadline. Second, PID 1 has no default signal handlers: the kernel does not apply the usual default action (terminate on SIGTERM) to PID 1 because PID 1 descends from init, the protected ancestor process whose accidental death would take down the whole container, so a signal with no explicitly registered handler is simply discarded. The fixes are to make your app PID 1 with the exec form (CMD [\"node\", \"server.js\"] or exec node server.js at the end of a script) or to run a tiny init like tini or dumb-init that forwards signals and reaps zombies, and always to register the SIGTERM handler explicitly so PID 1 has something to run." },
+  ]}
+/>
+
+<Recap lang="en">
+The window the last lesson promised has an exact shape. Kubernetes marks the pod Terminating and removes it from endpoints, runs the blocking preStop hook, sends SIGTERM to PID 1, waits terminationGracePeriodSeconds (default 30s, covering preStop plus shutdown), and then sends SIGKILL if the process still lives. SIGTERM is a catchable request that runs your handler; SIGKILL is an uncatchable kernel command that destroys the process with no cleanup — so the grace period is a hard deadline and the entire goal is to finish during SIGTERM so SIGKILL never fires. The notorious failure is PID 1: signals reach only PID 1, so an app launched under a shell never sees SIGTERM because the shell swallows it, and even as PID 1 a missing handler means the signal is ignored, since the kernel withholds default dispositions from the protected init slot. Make the app PID 1 with the exec form or insert a tiny init like tini, and register the handler. With the signal arriving and the clock understood, the next lesson tackles the first thing the handler must reckon with — the race between SIGTERM and the load balancer, where traffic keeps arriving after you have been told to stop.
+</Recap>

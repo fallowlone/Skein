@@ -1,0 +1,121 @@
+---
+slug: 03-the-deregistration-race
+lang: en
+track: backend
+unit: 07-graceful-shutdown
+order: 3
+title: "The deregistration race: stop routing before you stop accepting"
+summary: "The subtle bug is a race: SIGTERM and endpoint removal fire in parallel, but propagation delay means the load balancer keeps routing to a pod that has already started shutting down. The fix is to fail readiness first and wait out the delay before closing the listener."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/07-graceful-shutdown/02-signals-and-grace-period
+deepensInto:
+  - backend/07-graceful-shutdown/04-draining-and-shutdown-order
+spiral: ["failure-modes", "resilience", "lifecycle"]
+concepts: ["deregistration-race", "readiness-probe", "endpoint-propagation", "prestop-sleep", "load-balancer", "eventual-consistency"]
+sources:
+  - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+  - https://cloud.google.com/blog/products/containers-kubernetes/kubernetes-best-practices-terminating-with-grace
+  - https://jorijn.com/en/knowledge-base/kubernetes/troubleshooting/kubernetes-graceful-shutdown-sigterm-pod-termination/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+You did everything right: a real SIGTERM handler, the app is PID 1, the handler stops accepting new connections the instant the signal lands and drains the in-flight ones. Deploy, and you *still* see a burst of connection-refused errors — but only for a second or two, only at the start of each rollout. The cause is a race that almost nobody guesses on the first try. When the pod starts terminating, two things happen *in parallel*: the orchestrator sends SIGTERM to your process, **and** it tells the rest of the cluster to stop routing traffic to you. The second part is not instant — it propagates through the control plane, kube-proxy on every node, and the load balancer, taking anywhere from under a second on a small cluster to tens of seconds on a big one. Your process, obeying SIGTERM, closes its listener *immediately*. So for the propagation window there is a load balancer still confidently sending requests to a pod that has already shut its door — and every one of those gets refused. You stopped accepting *before* the world stopped routing.
+</Hook>
+
+<Crux>SIGTERM and load-balancer deregistration race; the LB keeps routing during propagation, so fail readiness first and let routing drain.</Crux>
+
+<Explanation>
+
+## Two clocks, started together, ending apart
+
+The mental model that breaks here is "the load balancer knows the moment I get SIGTERM." It does not. Endpoint removal and signal delivery are *independent, concurrent* actions kicked off by the same event:
+
+- **The signal path** is fast and local: the kubelet on your node sends SIGTERM to your container in milliseconds.
+- **The routing path** is slow and distributed: the API server marks the endpoint not-ready, that change propagates to every node's kube-proxy (or to an external load balancer, or to an ingress controller that may be *polling* on an interval), and only then do the routing rules actually stop forwarding to you.
+
+Because the routing path is **eventually consistent**, there is a window — measured from "SIGTERM arrives" to "the last router stops sending you traffic" — during which the cluster still believes you are a valid backend. Reported numbers: under a second on small clusters, but **10–30 seconds** on large clusters or with polling ingress controllers. If your handler closes the listening socket the instant SIGTERM lands, every request that arrives in that window hits a closed port and the client gets a *connection refused* — the inverse of the lesson-one problem. There you exited too early and severed in-flight work; here you stop *accepting* too early and reject work the LB is still sending.
+
+## The fix: change the order, don't just add a handler
+
+The cure is to make routing stop *before* you stop accepting — to reverse the order of the two clocks. There are two complementary levers:
+
+- **Fail the readiness probe first.** Readiness is the signal the orchestrator uses to decide whether to route to you. The moment you begin shutting down, flip your readiness endpoint to failing (or unready). That *starts* the deregistration clock through the normal mechanism — but it does not finish it, because propagation still takes time.
+- **Add a preStop sleep to cover propagation.** Because the preStop hook runs *before* SIGTERM and the orchestrator blocks on it, a `preStop` that simply sleeps for a few seconds (commonly **5–15s**, sized to your cluster's real propagation delay) holds the process open and accepting while the not-ready status spreads. Only after the sleep does SIGTERM arrive and your handler close the listener — by which point the routers have caught up and are no longer sending you new traffic.
+
+The principle: keep serving until you are confident nothing is still being routed to you, *then* stop accepting, *then* drain. A handler alone is not enough; the ordering relative to deregistration is the whole point.
+
+## Don't break readiness the wrong way
+
+A common own-goal: people make the *liveness* probe and the readiness probe share an endpoint, or they let the SIGTERM handler immediately return errors from the health endpoint. If the **liveness** probe starts failing during shutdown, the orchestrator may decide the container is *broken* and kill or restart it, cutting your drain short. Keep liveness passing (the process is alive and draining is healthy behavior) and fail only **readiness** (do not send me new traffic). The two probes answer different questions: liveness asks "should I restart you?", readiness asks "should I route to you?" — and during shutdown the honest answers are *no* and *no new traffic*, respectively.
+
+<Inset kind="why" lang="en">
+Why can't the platform just make endpoint removal synchronous with the signal, so there is no window to engineer around? Because routing in a distributed cluster is not a single switch you can flip atomically — it is *replicated state* spread across many independent components, and keeping replicated state perfectly consistent on every change is exactly the expensive coordination that distributed systems avoid for throughput. When a pod goes not-ready, that fact has to reach the API server, get written to the endpoints object, be observed by every node's kube-proxy (which then rewrites local iptables or IPVS rules), and separately reach any external load balancer or ingress controller, some of which discover changes by *polling* on their own schedule rather than being pushed. Each of those hops is independently fast but collectively asynchronous, and there is no global clock that says "everyone has updated, now release the signal." Making it synchronous would mean blocking every termination on the slowest router in the fleet acknowledging the change — coupling pod shutdown to cluster-wide consensus, which would make deploys crawl and would itself fail whenever any router was slow or unreachable. So the platform chooses eventual consistency and hands *you* the tools to bridge the gap: readiness to start the clock and preStop to wait it out. The deep lesson is the same one the circuit-breaker unit kept hitting — in a distributed system you cannot assume two events triggered together are *observed* together, and any correctness that depends on their ordering has to be enforced deliberately, not assumed.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Moment | Your process | The load balancer | Result |
+|---|---|---|---|
+| No guard, SIGTERM lands | Closes listener instantly | Still routing (not yet propagated) | Connection refused for the window |
+| Fail readiness first | Keeps accepting | Starts marking you not-ready | Clock started, not yet finished |
+| preStop sleeps 5–15s | Keeps accepting | Propagation completes | Routers stop sending new traffic |
+| SIGTERM after sleep | Now closes listener | No longer routing to you | No refused connections |
+
+</div>
+
+<Quiz
+  id="gs-race-q1"
+  lessonSlug="03-the-deregistration-race"
+  lang="en"
+  question="A service with a correct SIGTERM handler that closes its listener immediately still sees a brief burst of connection-refused errors at the start of each deploy. Why?"
+  choices={[
+    { label: "Endpoint deregistration is eventually consistent and lags SIGTERM, so for a propagation window the load balancer still routes to a pod that has already closed its listener", correct: true },
+    { label: "The SIGTERM handler is too slow to start", misconception: "The handler runs fine; the issue is it closes the listener before routing has propagated, not that it starts late." },
+    { label: "The grace period is shorter than the drain time", misconception: "This is a refused-connection race at the start, not a drain-timeout problem; the listener closed too early relative to deregistration." },
+    { label: "The new pods are registering too slowly", misconception: "The refused errors come from the old pod closing its port while still in the routing tables, not from new-pod registration timing." },
+  ]}
+/>
+
+<Quiz
+  id="gs-race-q2"
+  lessonSlug="03-the-deregistration-race"
+  lang="en"
+  question="During shutdown, why should you fail the readiness probe but keep the liveness probe passing?"
+  choices={[
+    { label: "Readiness controls routing (fail it to stop new traffic), while a failing liveness probe tells the orchestrator the container is broken and may make it kill or restart you, cutting the drain short", correct: true },
+    { label: "Both probes should fail immediately to speed up shutdown", misconception: "Failing liveness can trigger a kill/restart that interrupts your drain; only readiness should fail during a healthy shutdown." },
+    { label: "Liveness controls routing and readiness controls restarts", misconception: "It is the reverse: readiness controls routing, liveness controls whether the container is considered broken and restarted." },
+    { label: "Failing readiness corrupts in-flight requests", misconception: "Readiness only affects new-traffic routing; it does not touch in-flight requests, which continue to drain." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The subtle shutdown bug is a race between two clocks started by the same event but ending apart. Signal delivery is fast and local — the kubelet sends SIGTERM in milliseconds — while endpoint deregistration is slow and distributed: the not-ready status must propagate through the API server, every node's kube-proxy, and any external or polling load balancer, an eventually-consistent path taking under a second on small clusters but 10–30s on large ones. A handler that closes the listener the instant SIGTERM lands therefore refuses every request the load balancer is still routing during that window — connection-refused errors, the inverse of exiting too early. The fix is ordering, not just a handler: fail the readiness probe first to start the deregistration clock through the normal mechanism, and add a preStop sleep (commonly 5–15s, sized to real propagation delay) that holds the process open and accepting until routing has caught up, after which SIGTERM closes the listener safely. Keep the liveness probe passing throughout — readiness controls routing, liveness controls restarts, and a failing liveness probe can make the orchestrator kill the container and cut the drain short.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="gs-race-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the deregistration race and why does it cause connection-refused errors?", a: "When a pod starts terminating, two independent actions fire in parallel from the same event: the kubelet sends SIGTERM to your container, a fast local path measured in milliseconds, and the orchestrator marks your endpoint not-ready, a slow distributed path that must reach the API server, propagate to every node's kube-proxy rewriting its routing rules, and reach any external load balancer or polling ingress controller. Because that routing path is eventually consistent there is no global moment when everyone has updated — the window from SIGTERM arriving to the last router stopping is under a second on small clusters but 10–30 seconds on large clusters or with polling ingress controllers. If your handler closes the listening socket the instant SIGTERM lands, every request that arrives during that window hits a closed port and the client gets connection-refused. It is the inverse of exiting too early: there you severed in-flight work, here you stop accepting before the world stops routing to you." },
+    { q: "How do you fix the race, and why fail readiness but not liveness?", a: "The cure is to make routing stop before you stop accepting, reversing the order of the two clocks with two complementary levers. First, fail the readiness probe the moment shutdown begins — readiness is what the orchestrator uses to decide whether to route to you, so flipping it to failing starts the deregistration clock through the normal mechanism, though propagation still takes time. Second, add a preStop hook that simply sleeps a few seconds (commonly 5–15s, sized to your cluster's real propagation delay); because preStop runs before SIGTERM and the orchestrator blocks on it, the sleep holds the process open and accepting while the not-ready status spreads, so by the time SIGTERM arrives and the handler closes the listener the routers have caught up. You fail readiness but keep liveness passing because the probes answer different questions: readiness asks should I route to you (answer: no new traffic), while liveness asks should I restart you (answer: no, the process is alive and draining is healthy). A failing liveness probe during shutdown can make the orchestrator decide the container is broken and kill or restart it, cutting the drain short." },
+  ]}
+/>
+
+<Recap lang="en">
+Even a perfect SIGTERM handler refuses connections if it closes the listener too soon, because termination starts two clocks at once that finish apart: signal delivery is a fast local path of milliseconds, while endpoint deregistration is a slow distributed path through the API server, every node's kube-proxy, and any external or polling load balancer — eventually consistent, taking under a second on small clusters but 10–30s on large ones. During that window the load balancer still routes to a pod whose door is already shut, producing connection-refused errors, the inverse of lesson one's sever-too-early. The fix is ordering: fail the readiness probe first to start the deregistration clock, and add a preStop sleep of roughly 5–15s, sized to real propagation, that keeps the process accepting until routing has caught up — only then does SIGTERM close the listener. Keep liveness passing so the orchestrator does not mistake a healthy drain for a broken container and restart it mid-shutdown. With routing safely drained and the listener finally closed, the next lesson handles what comes after the door shuts: draining the in-flight requests and closing every resource in the right order.
+</Recap>

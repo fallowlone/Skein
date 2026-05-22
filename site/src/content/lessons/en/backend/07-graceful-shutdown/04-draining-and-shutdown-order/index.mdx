@@ -1,0 +1,140 @@
+---
+slug: 04-draining-and-shutdown-order
+lang: en
+track: backend
+unit: 07-graceful-shutdown
+order: 4
+title: "Draining and shutdown order: reverse the dependency graph"
+summary: "Draining is more than server.close(): keep-alive sockets must be closed deliberately, and resources must close in reverse dependency order — HTTP server first, datastores last — or in-flight requests hit a closed pool. A guardian timeout force-exits if the drain hangs."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/07-graceful-shutdown/03-the-deregistration-race
+deepensInto:
+  - backend/07-graceful-shutdown/05-in-flight-work-and-jobs
+spiral: ["failure-modes", "resilience", "lifecycle", "resource-limits"]
+concepts: ["connection-draining", "keep-alive", "reverse-dependency-order", "guardian-timeout", "graceful-server-close", "resource-teardown"]
+sources:
+  - https://dev.to/axiom_agent/nodejs-graceful-shutdown-the-right-way-sigterm-connection-draining-and-kubernetes-fp8
+  - https://github.com/nodejs/node/issues/60617
+  - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Routing has drained, SIGTERM has arrived, and your handler calls the one line every tutorial shows: `server.close()`. You expect the process to wind down and exit. Instead it hangs until the grace period runs out and gets SIGKILLed anyway — and on a different deploy, a handful of requests fail with database-connection-closed errors *during* the drain. Two separate truths are biting you. First, `server.close()` stops the server from *accepting* new connections but does **not** close the **keep-alive** connections already open and idle, so those sockets keep the server "busy" and the close callback never fires. Second, when you did manage to shut things down, you closed the database pool in the same breath as the HTTP server — but a request still in flight reached for the pool a moment later and found it gone. Draining cleanly is not one call; it is closing the right things in the right *order*, and bounding the whole thing so a single stuck request can't hold the process hostage.
+</Hook>
+
+<Crux>Drain connections, then close resources in reverse dependency order — HTTP first, datastores last — with a guardian timeout for hangs.</Crux>
+
+<Explanation>
+
+## server.close() is necessary but not sufficient
+
+`server.close()` does exactly one thing: it stops the server from accepting *new* connections and fires its callback once all *existing* connections have ended. The trap is **keep-alive**. HTTP/1.1 keeps connections open by default (and HTTP/2 multiplexes over a long-lived one) so clients can reuse a socket for many requests. After a request finishes, its connection sits *idle but open*, waiting for the next request. `server.close()` will not touch those idle keep-alive sockets — from its point of view they are still "active connections" — so the callback never fires and the process hangs until SIGKILL.
+
+The fix is to drain keep-alive deliberately:
+
+- **Signal clients to stop reusing the socket.** Send `Connection: close` on responses during shutdown, so each client finishes its current request and then reconnects elsewhere (to a healthy instance) instead of holding the socket open.
+- **Force-close idle sockets.** Track open connections and destroy the ones that are idle (not mid-request) immediately, while letting active ones finish. Node's ecosystem wraps this in helpers; the newer runtime exposes `server.closeIdleConnections()` and `server.closeAllConnections()` for exactly this.
+
+The goal of draining: every in-flight request gets to finish and respond, and every *idle* connection is closed promptly so the server can actually reach zero and exit.
+
+## Close resources in reverse dependency order
+
+Once the HTTP layer has drained, you tear down the rest — and the order is not arbitrary. The rule is **reverse dependency order**: shut down in the opposite order you started up, so nothing is pulled out from under something that still needs it. During startup you open the database, then the cache, then start accepting HTTP. During shutdown you reverse it:
+
+1. **Stop the HTTP server / drain in-flight requests** — nothing new can arrive, existing requests finish.
+2. **Stop background workers and flush queues** — let in-progress jobs complete or checkpoint.
+3. **Close datastores last** — database pool, then Redis, then any other downstream.
+
+The reason is concrete: an in-flight request, mid-drain, may still issue a query. If you closed the database pool *before* that request finished, the query hits a closed pool and the request fails — you turned a graceful drain into the very request loss you were preventing. The datastores are the *deepest* dependency, so they close *last*, after everything that might use them is done. Closing a Postgres pool itself drains: `pool.end()` waits for idle clients to close and aborts active queries after a timeout.
+
+## The guardian timeout
+
+A drain can hang. A request might be stuck on a slow downstream, a keep-alive client might never send `Connection: close`, a worker might be wedged. If you simply `await` the drain forever, you blow past the grace period and get SIGKILLed mid-cleanup — losing exactly the state you were trying to flush. So every production shutdown wraps the drain in a **guardian timeout** (also called a force-shutdown or shutdown-watchdog): start a timer for *less* than the grace period, and if the drain has not completed when it fires, log loudly and force-exit (`process.exit(1)`) on your own terms. A self-inflicted, logged exit a second before SIGKILL is strictly better than the kernel pulling the plug, because you control the exit code and can flush logs and metrics first.
+
+<Inset kind="why" lang="en">
+Why does the closing order matter so much when the grace period is only thirty seconds anyway — won't everything be gone shortly regardless? Because *order* and *deadline* solve different problems, and getting the deadline right does nothing for ordering. The deadline bounds *how long* you wait; the order determines *whether the work that does finish, finishes correctly*. Picture a request that takes 200ms and is 100ms in when shutdown begins — well within any grace period. If you close the database pool concurrently with the HTTP server, that request's next query, issued at 150ms, finds a dead pool and fails, even though there were 29-plus seconds of grace period left unused. The request did not run out of time; it ran out of *dependency*, because you removed a resource it still needed while it was legitimately running. Reverse-dependency teardown encodes a simple invariant: a resource is only closed once everything that could use it has stopped, which means each layer closes against a quiet layer beneath it. This is the exact mirror of startup, where you must open the database before the HTTP server can serve a request that needs it — shutdown just runs the dependency graph backwards. The guardian timeout is the orthogonal guarantee: ordering ensures correctness *if* the drain completes, and the timeout ensures the process still dies on its own terms *if* the drain hangs, so you never trade a stuck request for a SIGKILL that loses everything. You need both, because a correct order that never finishes is as fatal as a fast finish in the wrong order.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Step | Action | Failure if skipped or misordered |
+|---|---|---|
+| Stop accepting | Close listener; refuse new connections | New work starts on a dying process |
+| Drain keep-alive | `Connection: close`, close idle sockets | `server.close()` hangs until SIGKILL |
+| Finish in-flight | Let active requests complete and respond | Severed requests, 502s |
+| Stop workers | Drain queues, complete/checkpoint jobs | Half-done jobs lost |
+| Close datastores | Pool end, then Redis, last of all | In-flight query hits a closed pool |
+| Guardian timeout | Force-exit before grace period ends | SIGKILL mid-cleanup, state lost |
+
+</div>
+
+<Quiz
+  id="gs-drain-q1"
+  lessonSlug="04-draining-and-shutdown-order"
+  lang="en"
+  question="A shutdown handler calls server.close() and then waits, but the process hangs until SIGKILL even though no requests are actively running. Why?"
+  choices={[
+    { label: "server.close() stops accepting new connections but does not close idle keep-alive connections, which it still counts as active, so its callback never fires — you must close idle sockets explicitly", correct: true },
+    { label: "server.close() is asynchronous and was not awaited", misconception: "Even awaited, it will not resolve while idle keep-alive sockets stay open; the hang is the un-closed keep-alive connections, not a missing await." },
+    { label: "The grace period is too long", misconception: "A longer grace period would just delay the SIGKILL; the hang is caused by open keep-alive sockets the close call ignores." },
+    { label: "The database pool blocks server.close()", misconception: "The pool is a separate resource; the hang here is HTTP keep-alive connections keeping the server from reaching zero." },
+  ]}
+/>
+
+<Quiz
+  id="gs-drain-q2"
+  lessonSlug="04-draining-and-shutdown-order"
+  lang="en"
+  question="Why must the database pool be closed after the HTTP server has drained, not at the same time?"
+  choices={[
+    { label: "An in-flight request may still issue a query while draining; if the pool is already closed it fails — datastores are the deepest dependency, so they close last in reverse dependency order", correct: true },
+    { label: "Closing the pool first makes the HTTP server start faster", misconception: "Startup speed is unrelated; the issue is in-flight requests needing the pool during the drain." },
+    { label: "The pool must be closed before any requests to flush its cache", misconception: "Closing it early severs in-flight queries; the pool closes last, after everything that uses it has stopped." },
+    { label: "Redis must always close before the database", misconception: "The order is reverse-dependency, not a fixed Redis-then-DB rule; datastores close after the HTTP layer that depends on them." },
+  ]}
+/>
+
+<DragOrder
+  id="gs-drain-drag1"
+  lessonSlug="04-draining-and-shutdown-order"
+  lang="en"
+  prompt="Order a clean drain-and-teardown after SIGTERM (reverse dependency order):"
+  items={[
+    "Stop accepting new connections and send Connection: close on responses",
+    "Close idle keep-alive sockets and let in-flight requests finish",
+    "Stop background workers and flush their queues",
+    "Close datastores last — database pool, then Redis",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Draining is not a single call. server.close() stops accepting new connections but does not close idle keep-alive sockets — HTTP/1.1 keeps them open by default — so it counts them as active and its callback never fires, hanging the process until SIGKILL; you must drain keep-alive deliberately by sending Connection: close on shutdown responses and force-closing idle sockets (server.closeIdleConnections/closeAllConnections) while letting active requests finish. Then tear down in reverse dependency order, the opposite of startup: stop the HTTP server and finish in-flight requests, stop background workers and flush queues, and close datastores last — database pool (pool.end() drains idle clients and aborts active queries after a timeout), then Redis. The reason is concrete: an in-flight request mid-drain may still query the database, so closing the pool early turns a graceful drain into request loss; datastores are the deepest dependency and close last, after everything that uses them has stopped. Finally, wrap the whole drain in a guardian timeout set below the grace period: if the drain hangs, log and force-exit on your own terms rather than letting SIGKILL pull the plug mid-cleanup. Order ensures correctness; the timeout ensures the process still dies cleanly if the drain stalls — you need both.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="gs-drain-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is server.close() not enough, and how do you drain keep-alive connections?", a: "server.close() does exactly one thing: it stops the server accepting new connections and fires its callback once all existing connections have ended. The trap is keep-alive: HTTP/1.1 keeps connections open by default and HTTP/2 multiplexes over a long-lived one, so after a request finishes its connection sits idle but open waiting for the next request, and server.close() will not touch those idle sockets because from its point of view they are still active connections — so the callback never fires and the process hangs until SIGKILL. You drain keep-alive deliberately in two ways: send Connection: close on responses during shutdown so each client finishes its current request and reconnects to a healthy instance instead of holding the socket open, and track open connections to force-close the idle ones immediately while letting active ones finish, which the newer Node runtime exposes as server.closeIdleConnections() and server.closeAllConnections(). The goal is that every in-flight request finishes and responds while every idle connection is closed promptly so the server can reach zero and exit." },
+    { q: "What is reverse dependency order and why is a guardian timeout needed too?", a: "Reverse dependency order means shutting down in the opposite order you started up, so nothing is pulled out from under something that still needs it: stop the HTTP server and drain in-flight requests first, then stop background workers and flush queues, then close datastores last — database pool, then Redis. The reason is concrete — an in-flight request mid-drain may still issue a query, so if you closed the pool before that request finished, the query hits a closed pool and the request fails, turning a graceful drain into the request loss you were preventing; datastores are the deepest dependency so they close last, after everything that might use them is done, and pool.end() itself drains idle clients and aborts active queries after a timeout. The guardian timeout is the orthogonal guarantee: a drain can hang on a slow downstream, a keep-alive client that never closes, or a wedged worker, so every production shutdown wraps the drain in a timer set below the grace period and, if the drain has not completed when it fires, logs loudly and force-exits on its own terms. Ordering ensures correctness if the drain completes; the timeout ensures the process still dies cleanly if it hangs, and you need both because a correct order that never finishes is as fatal as a fast finish in the wrong order." },
+  ]}
+/>
+
+<Recap lang="en">
+The handler has the door shut and routing drained; now it must drain connections and tear down resources without re-introducing loss. server.close() only stops new connections — it ignores idle keep-alive sockets, which HTTP/1.1 holds open by default, so it counts them as active and hangs until SIGKILL; drain them by sending Connection: close and force-closing idle sockets while in-flight requests finish. Then tear down in reverse dependency order, the mirror of startup: HTTP server and in-flight requests first, then workers and queues, then datastores last, because an in-flight request mid-drain may still query the database and a pool closed early turns a clean drain back into request loss. Wrap the whole thing in a guardian timeout below the grace period so a single stuck request cannot hold the process hostage to SIGKILL — a logged, self-chosen exit beats the kernel pulling the plug. Order buys correctness, the timeout buys a clean death under stall, and you need both. The mechanics are now complete for requests that fit the window — but some work does not fit: long requests and background jobs that cannot finish in time. The next lesson, the unit's first senior beat, asks what to do with work the deadline will cut off.
+</Recap>

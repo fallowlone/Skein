@@ -1,0 +1,129 @@
+---
+slug: 05-in-flight-work-and-jobs
+lang: en
+track: backend
+unit: 07-graceful-shutdown
+order: 5
+title: "In-flight work: long requests, background jobs, and the deadline"
+summary: "The grace period is a budget, and long requests or background jobs may not fit. The senior question is what to do with work that won't finish: reject it cleanly, or requeue it — and requeue is only safe when the consumer is idempotent, tying back to the idempotency unit."
+estMin: 17
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/07-graceful-shutdown/04-draining-and-shutdown-order
+deepensInto:
+  - backend/07-graceful-shutdown/06-zero-downtime-deploys
+spiral: ["failure-modes", "resilience", "lifecycle", "resource-limits", "idempotency"]
+concepts: ["deadline-budget", "long-running-request", "background-job", "requeue", "visibility-timeout", "checkpointing", "at-least-once"]
+sources:
+  - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+  - https://dev.to/axiom_agent/nodejs-graceful-shutdown-the-right-way-sigterm-connection-draining-and-kubernetes-fp8
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+The drain logic is correct, the teardown order is right, the guardian timeout is armed — and it all works beautifully for the requests that finish in a few hundred milliseconds. Then you look at what actually runs on this service: a CSV export that streams for ninety seconds, a video transcode worker that's been chewing on one job for four minutes, a report builder mid-way through writing rows. The grace period is thirty seconds. None of these can finish in time, and "let in-flight work drain" — the rule the last three lessons built — quietly becomes "wait for work that will never complete before the deadline, then get SIGKILLed mid-write anyway." The earlier lessons assumed the in-flight work *fits* the window. The senior reality is that some of it doesn't, and pretending it will is how you lose a half-written report and a payment that was captured but never recorded. So the question changes shape: not "how do I drain?" but "what do I do with the work the deadline is going to cut off?" — and the answer depends on whether that work can be safely *redone*.
+</Hook>
+
+<Crux>Work that can't finish inside the grace period must be rejected or requeued — and requeue is only safe if the work is idempotent.</Crux>
+
+<Explanation>
+
+## The grace period is a budget, not a guarantee
+
+Reframe the grace period as a **deadline budget** you spend, not a length of time you're given. The whole window — `terminationGracePeriodSeconds`, default 30s — has to cover the preStop sleep (propagation, ~5–15s), the keep-alive drain, the resource teardown, *and* whatever margin the guardian timeout reserves. What's left for actually finishing in-flight work is the budget *minus* all of that — often well under twenty seconds. Any single unit of work whose remaining runtime exceeds that residual budget **will not finish**, full stop. The mistake is to treat the grace period as "plenty of time" and `await` everything; the senior move is to know your work's duration distribution and accept that the long tail is structurally un-drainable. You can raise the grace period for a service dominated by long requests, but you cannot raise it without bound — the orchestrator, the node drain, the spot-reclaim deadline all cap it — so for genuinely long work, *more time* is not the answer. A different disposition is.
+
+## Two kinds of work, two dispositions
+
+The work that won't fit splits into two cases, and they're handled differently:
+
+- **Long synchronous requests** (a streaming export, a slow upload). You cannot requeue an HTTP request — there's a client holding the socket. So the choice is: let it finish if it's *close*, or **reject it cleanly** so the client can retry against a healthy instance. A clean rejection is `503 Service Unavailable` with a `Retry-After` header, or refusing to *start* new long operations once shutdown has begun. The cardinal sin is severing it silently mid-stream, which gives the client a connection reset it can't reason about.
+- **Background jobs** (a queue worker mid-task). Here you have a real option the HTTP case lacks: **requeue**. Stop pulling new jobs the moment shutdown begins, and for the job in hand either finish it if it fits, or release it back to the queue so another worker picks it up. Most queues do this *for* you: if the worker dies without acknowledging, the message's **visibility timeout** expires and the broker redelivers it. That redelivery is the safety net — but it is also the trap.
+
+## Requeue is at-least-once, so it demands idempotency
+
+Here is where this unit collides with the idempotency unit, and the collision is the whole point. Requeue — whether you do it explicitly or let the visibility timeout do it — is an **at-least-once** delivery: the job *may run again from the start*. If the worker was killed after charging a card but before acking the message, the redelivered job charges the card *again*. Requeue is only safe when the consumer is **idempotent** — when running the job a second time produces the same end state as running it once, via an idempotency key, an inbox/dedup table, or a state machine that no-ops on already-applied work. This is not optional polish; it is the precondition that makes requeue correct instead of a double-spend generator. For long jobs, **checkpointing** softens the cost: periodically persist progress so a redelivery resumes near where it stopped instead of redoing minutes of work — but checkpointing still relies on each step being safe to re-apply. The rule compounds: *drain what fits, requeue what doesn't, and only requeue work you can prove is safe to run twice.*
+
+<Inset kind="why" lang="en">
+Why is "just finish the job, the queue will wait" the wrong instinct even when the queue genuinely would wait? Because the constraint that bites is not the queue's patience — it's the *process's* deadline, and those are two different clocks owned by two different systems. The broker is happy to hold the message and the downstream is happy to take the write whenever it arrives; what is not happy is the orchestrator, which will SIGKILL your worker at the grace-period boundary regardless of how much the rest of the system would have tolerated waiting. So a worker that says "I'll just finish this four-minute job" is making a promise it has no authority to keep: the kill is coming on the platform's schedule, not the job's. The instant it lands mid-write you are in the worst state of all — partial work applied, no acknowledgement sent, and a redelivery already queued behind you. That redelivery is what *saves* you, but only if the redo is safe; if it isn't, the platform's deadline has just manufactured a duplicate out of a perfectly correct-looking worker. This is why the disposition has to be decided *before* the deadline, not discovered at it: you choose up front "this job is idempotent and may be redelivered" or "this request is too long, reject new ones during shutdown," and the graceful-shutdown handler enforces that choice. The deadline is non-negotiable and external; the only thing you control is whether the work it interrupts can survive being interrupted. Idempotency is what converts an interrupted job from data corruption into a harmless retry — which is exactly why the two units are joined at the hip.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Work type | Fits the budget? | Disposition | Safety precondition |
+|---|---|---|---|
+| Short request | Yes | Drain — let it finish and respond | None |
+| Long request | No | Reject new: 503 + Retry-After | Client retries elsewhere |
+| Background job (fits) | Yes | Finish, then ack | None |
+| Background job (too long) | No | Requeue / let visibility timeout redeliver | Consumer must be idempotent |
+| Long job, partial progress | No | Checkpoint, then requeue to resume | Each step safe to re-apply |
+
+</div>
+
+<Quiz
+  id="gs-inflight-q1"
+  lessonSlug="05-in-flight-work-and-jobs"
+  lang="en"
+  question="A queue worker is four minutes into a job when SIGTERM lands and the grace period is 30s. What is the correct disposition?"
+  choices={[
+    { label: "Stop pulling new jobs and release the in-hand job back to the queue (or let its visibility timeout redeliver it) — but only because the consumer is idempotent, so a redelivery is safe to run again", correct: true },
+    { label: "Extend the grace period until the job finishes", misconception: "The grace period is capped by the orchestrator, node drain, and spot-reclaim deadlines; a four-minute job structurally cannot fit, so more time is not the lever — a different disposition is." },
+    { label: "Let the job finish; the queue will wait for it", misconception: "The queue would wait, but the orchestrator will SIGKILL the worker at the deadline regardless — the constraint is the process's deadline, not the queue's patience." },
+    { label: "Acknowledge the message immediately so it is not redelivered, then keep working", misconception: "Acking before the work is done means a SIGKILL loses the job with no redelivery — the opposite of safe; you ack only after completion." },
+  ]}
+/>
+
+<Quiz
+  id="gs-inflight-q2"
+  lessonSlug="05-in-flight-work-and-jobs"
+  lang="en"
+  question="Why does requeueing background work during shutdown require the consumer to be idempotent?"
+  choices={[
+    { label: "Requeue is at-least-once delivery: the job may run again from the start, so if it ran partially before the kill (e.g. charged a card) the redelivery repeats it — idempotency makes the second run a safe no-op", correct: true },
+    { label: "Idempotency makes the job run faster on redelivery", misconception: "Idempotency is about correctness under repeats, not speed; checkpointing is what reduces redo time, and it still relies on each step being safe to re-apply." },
+    { label: "Requeue is exactly-once, so idempotency is only a nice-to-have", misconception: "Requeue and visibility-timeout redelivery are at-least-once, not exactly-once; the job can genuinely run twice, which is why idempotency is a precondition, not polish." },
+    { label: "Because the load balancer may route the redelivery to two workers at once", misconception: "The duplication comes from redelivery after a partial-then-killed run, not from concurrent LB routing; the at-least-once semantics are the source." },
+  ]}
+/>
+
+<DragOrder
+  id="gs-inflight-drag1"
+  lessonSlug="05-in-flight-work-and-jobs"
+  lang="en"
+  prompt="Order how a worker handles in-flight work when SIGTERM arrives:"
+  items={[
+    "Stop pulling new jobs and refuse to start new long requests (503 + Retry-After)",
+    "Let work that fits the remaining budget finish and acknowledge it",
+    "Checkpoint partial progress on long jobs, then release them back to the queue",
+    "Rely on idempotent consumers so any redelivered job is safe to run again",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The grace period is a deadline budget, not a guarantee: the whole window (default 30s) must cover the preStop sleep, the keep-alive drain, resource teardown, and the guardian-timeout margin, so the residual time to finish in-flight work is often under twenty seconds — and any unit of work whose remaining runtime exceeds that residual will not finish, no matter how you await it. Long work splits into two cases. A long synchronous request cannot be requeued (a client holds the socket), so you either finish it if it is close or reject it cleanly with 503 + Retry-After (or refuse to start new long operations once shutdown begins) — never sever it silently mid-stream. A background job can be requeued: stop pulling new jobs, finish what fits, and release the rest back to the queue, or let the message's visibility timeout redeliver it. But requeue and visibility-timeout redelivery are at-least-once — the job may run again from the start — so requeue is only safe when the consumer is idempotent (idempotency key, inbox/dedup table, or a no-op-on-applied state machine), exactly the discipline from the idempotency unit; checkpointing reduces redo time but still relies on each step being safe to re-apply. Decide the disposition before the deadline, because the kill is external and non-negotiable and the only thing you control is whether the interrupted work can survive being interrupted.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="gs-inflight-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is the grace period a budget rather than plenty of time, and what work cannot fit?", a: "The grace period (terminationGracePeriodSeconds, default 30s) is a single window that has to cover everything: the preStop sleep for routing propagation (~5–15s), the keep-alive connection drain, the reverse-dependency resource teardown, and the margin the guardian timeout reserves to force-exit before SIGKILL. What is left for actually finishing in-flight work is the budget minus all of that, often well under twenty seconds. Any single unit of work whose remaining runtime exceeds that residual budget structurally cannot finish — a ninety-second export, a four-minute transcode — and awaiting it just means you wait, blow the deadline, and get SIGKILLed mid-write anyway. You can raise the grace period for a long-request-dominated service, but not without bound, because the orchestrator, node drain, and spot-reclaim deadlines all cap it. So for genuinely long work more time is not the answer; a different disposition is. The senior move is to know your work's duration distribution and accept the long tail is un-drainable, deciding up front what to do with it." },
+    { q: "What is the disposition for long requests versus background jobs, and why does requeue demand idempotency?", a: "Long synchronous requests cannot be requeued because a client is holding the socket, so the choice is to let it finish if it is close or reject it cleanly — 503 with Retry-After, or refusing to start new long operations once shutdown begins — never severing it silently mid-stream, which gives the client an unreasonable connection reset. Background jobs have an option the HTTP case lacks: stop pulling new jobs the moment shutdown begins, finish the in-hand job if it fits, otherwise release it back to the queue, and most brokers do this for you via the visibility timeout, which redelivers a message whose worker died without acking. But that redelivery is at-least-once: the job may run again from the start, so if the worker was killed after charging a card but before acking, the redelivered job charges again. Requeue is therefore only safe when the consumer is idempotent — running the job twice yields the same end state, via an idempotency key, an inbox/dedup table, or a state machine that no-ops on applied work — which is exactly the precondition from the idempotency unit. Checkpointing persists partial progress so a redelivery resumes near where it stopped, but it still relies on each step being safe to re-apply." },
+  ]}
+/>
+
+<Recap lang="en">
+The drain mechanics of the last three lessons assumed in-flight work fits the window; the senior reality is that some of it does not, so the grace period is best read as a deadline budget — the default 30s minus preStop sleep, keep-alive drain, teardown, and guardian margin — leaving often under twenty seconds, and any job whose remaining runtime exceeds that simply will not finish. Long synchronous requests cannot be requeued, so finish them if close or reject cleanly with 503 + Retry-After rather than severing the stream; background jobs can be requeued by stopping new pulls and releasing the rest, or by letting the visibility timeout redeliver. But redelivery is at-least-once, so a job killed after a partial write runs again from the start — which makes idempotency the precondition that turns an interrupted job from data corruption into a harmless retry, exactly the discipline the idempotency unit built, with checkpointing to cut redo time. Decide the disposition before the deadline, because the kill is external and the only thing you control is whether the interrupted work survives being interrupted. The unit's mechanics are now complete for a single instance; the final lesson zooms out to the fleet, where graceful shutdown becomes a property of the whole rolling deploy rather than one process.
+</Recap>
