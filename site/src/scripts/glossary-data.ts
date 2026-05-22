@@ -36,6 +36,7 @@ async function buildRelations(): Promise<Relations> {
     scan.push({
       collection: "lessons",
       group: e.data.track,
+      unit: e.data.unit,
       slug: e.data.slug,
       altitude: lessonAltitude(
         trackOrder.get(e.data.track) ?? 999,
@@ -60,16 +61,17 @@ export async function loadGlossary(lang: Locale): Promise<{
   const tracks = await getCollection("tracks");
   const trackTitle = new Map(tracks.map((t) => [t.data.slug, t.data.title[lang]]));
 
-  // key: `${collection}:${group}:${slug}` → entry title for `lang`
+  // key: `${collection}:${group}:${unit}:${slug}` → entry title for `lang`
+  // unit is part of the key because lesson slugs are unit-scoped (many units reuse "01-overview").
   const titleByKey = new Map<string, string>();
-  for (const e of lessons) titleByKey.set(`lessons:${e.data.track}:${e.data.slug}`, e.data.title);
+  for (const e of lessons) titleByKey.set(`lessons:${e.data.track}:${e.data.unit}:${e.data.slug}`, e.data.title);
 
   function resolveRef(ref: ContentRef): ResolvedRef {
-    const k = `${ref.collection}:${ref.group}:${ref.slug}`;
+    const k = `${ref.collection}:${ref.group}:${ref.unit}:${ref.slug}`;
     const title = titleByKey.get(k) ?? ref.slug;
     return {
       title,
-      href: `/${lang}/learn/${ref.group}/${ref.slug}/`,
+      href: `/${lang}/learn/${ref.group}/${ref.unit}/${ref.slug}/`,
       group: trackTitle.get(ref.group) ?? ref.group,
     };
   }
