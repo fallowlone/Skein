@@ -1,0 +1,122 @@
+---
+slug: 04-bulkheads-and-isolation
+lang: en
+track: backend
+unit: 06-circuit-breakers
+order: 4
+title: "Bulkheads: isolating failure domains"
+summary: "A breaker reacts after failures accumulate, but a shared thread pool can be drained by one slow dependency before it trips. A bulkhead caps concurrency per dependency so one sick downstream can't take the whole budget — thread-pool vs semaphore isolation is a real tradeoff."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/06-circuit-breakers/03-thresholds-and-windows
+deepensInto:
+  - backend/06-circuit-breakers/05-fallbacks-and-degradation
+spiral: ["failure-modes", "resilience", "resource-limits"]
+concepts: ["bulkhead", "failure-isolation", "thread-pool-isolation", "semaphore-isolation", "resource-partition", "concurrency-limit", "blast-radius"]
+sources:
+  - https://learn.microsoft.com/en-us/azure/architecture/patterns/bulkhead
+  - https://resilience4j.readme.io/docs/bulkhead
+  - https://github.com/Netflix/Hystrix/wiki/How-it-Works
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Your service calls three downstreams — payments, recommendations, and search — from one shared worker pool of 50 threads. Recommendations, the least important of the three, slows to 5 s. Within seconds all 50 threads are parked on recommendations calls, and now payments and search fail too, because there are no threads left to run them. The breaker on recommendations *will* trip — but only after enough failures accumulate, and by then the damage is done: a non-critical dependency took down a critical one because they drew from the same bucket. A breaker limits how *long* you call a sick dependency; a bulkhead limits how *much* of your capacity any one dependency can ever hold.
+</Hook>
+
+<Crux>A bulkhead caps concurrency per dependency so one slow downstream can't drain the whole thread budget — isolating failure domains.</Crux>
+
+<Explanation>
+
+## The shared-budget problem
+
+A breaker is *reactive* — it trips after a failure rate accumulates over a window. But the cascade can happen *before* it reacts, because while the breaker is still counting, every in-flight call to the slow dependency is holding a thread from a pool shared with everyone else. If that pool is shared across all dependencies, a single slow downstream can occupy all of it, and now calls to perfectly healthy dependencies fail for lack of a thread to run on. The breaker eventually trips, but the blast radius already covered the whole service.
+
+The name comes from shipbuilding: a hull is divided into watertight **bulkhead** compartments so that a breach floods one compartment, not the entire ship. The software pattern is identical — partition your resources so a failure is contained to one compartment instead of sinking everything.
+
+## Partition the budget per dependency
+
+A bulkhead **caps concurrency per dependency**. Instead of one pool of 50 threads shared across payments, recommendations, and search, you give each its own bounded allowance — say 20 / 10 / 20. Now if recommendations slows, it can pin at most its own 10; the other 40 stay available for payments and search. Recommendations calls beyond 10 are rejected immediately (or queued briefly), which *itself* feeds the breaker's failure signal — but critically, the failure is confined to recommendations. One dependency can no longer spend the whole service's capacity.
+
+This is the same bounded-concurrency idea as pool sizing, applied for **isolation** rather than throughput: the limit's job is not to maximize work but to cap the blast radius of any single dependency.
+
+## Two ways to isolate: threads vs semaphores
+
+There are two implementations, and the choice is a genuine tradeoff:
+
+- **Thread-pool isolation.** Each dependency gets its own dedicated thread pool (Hystrix's default model, `coreSize = 10`). The caller hands the work to that pool and waits with its own timeout. The big advantage: because the call runs on a *separate* thread, the caller can **walk away from a hung call** — if the dependency blocks forever, the caller's timeout still fires and frees the caller. The cost is overhead: every call pays a thread hand-off and context switch, and you maintain many pools.
+- **Semaphore isolation.** A simple counter caps how many calls run concurrently (resilience4j's `SemaphoreBulkhead`, `maxConcurrentCalls = 25`, `maxWaitDuration = 0`). The call runs on the *caller's own* thread — no hand-off, almost no overhead. The catch: a semaphore can only *count*; it cannot interrupt a call that is already blocking. If the dependency hangs, the calling thread hangs with it, and the semaphore just stops *new* calls — it cannot rescue the ones already stuck.
+
+The rule of thumb: use **semaphore** isolation for fast, in-process, or non-blocking calls where overhead matters and hangs are impossible; use **thread-pool** isolation for network calls that can hang, because only a separate thread lets you actually abandon a stuck call.
+
+<Inset kind="why" lang="en">
+Why can't a semaphore protect you from a hanging dependency, when it clearly limits concurrency? Because a semaphore is *only* a counter — it grants a permit before the call and releases it after. It has no thread of its own and no way to reach into a call that has already started and stop it. If a dependency accepts your request and then never responds, the thread that took the permit sits blocked in the network read indefinitely, still holding the permit. The semaphore faithfully prevents a *new* call from starting once all permits are taken, so it does cap how many threads can be stuck at once — but it cannot unstick the ones already there. A thread-pool bulkhead can, because the call runs on a pool thread while the caller waits separately with a timeout; when the timeout fires, the caller stops waiting and reclaims its own thread even though the pool thread is still stuck on the dead dependency. The cost of that power is real — a thread hand-off and context switch on every single call, plus the memory and scheduling overhead of many pools — so you do not pay it everywhere. You pay it exactly where calls can hang, which is network I/O, and you use the cheap semaphore everywhere a hang is impossible. The distinction is the same one from the timeouts lesson: only an *independent* waiter can enforce a deadline on a call it does not control.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| | Thread-pool isolation | Semaphore isolation |
+|---|---|---|
+| Mechanism | Dedicated pool per dependency | Concurrency counter |
+| Runs on | A pool thread (hand-off) | The caller's own thread |
+| Overhead | Higher (context switch, many pools) | Near-zero |
+| Can abandon a hung call? | Yes — caller times out independently | No — caller blocks with the call |
+| Best for | Network calls that can hang | Fast, in-process, non-blocking calls |
+| Example default | Hystrix coreSize 10 | resilience4j maxConcurrentCalls 25 |
+
+</div>
+
+<Quiz
+  id="cb-bulkheads-q1"
+  lessonSlug="04-bulkheads-and-isolation"
+  lang="en"
+  question="Three downstreams share one 50-thread pool. The least important one slows to 5 s and the whole service fails, even though its breaker eventually trips. What does a bulkhead add that the breaker alone doesn't?"
+  choices={[
+    { label: "A per-dependency concurrency cap, so the slow downstream can pin at most its own allowance and the others keep their threads — the breaker only limits how long you keep calling, not how much capacity one dependency can hold", correct: true },
+    { label: "A faster failure-rate window", misconception: "A faster window makes the breaker trip sooner but doesn't stop one dependency from draining the shared pool before then; isolation is the missing piece." },
+    { label: "Automatic retries for the slow dependency", misconception: "Retries would add load, not isolate; a bulkhead partitions the resource budget." },
+    { label: "Encryption per dependency", misconception: "Bulkheads isolate concurrency budgets, not security; encryption is unrelated." },
+  ]}
+/>
+
+<Quiz
+  id="cb-bulkheads-q2"
+  lessonSlug="04-bulkheads-and-isolation"
+  lang="en"
+  question="Why does thread-pool isolation protect against a hanging network call when semaphore isolation does not?"
+  choices={[
+    { label: "The call runs on a separate pool thread while the caller waits with its own timeout, so when the timeout fires the caller reclaims its thread even though the pool thread is still stuck", correct: true },
+    { label: "Thread pools make the network call faster", misconception: "Thread isolation adds overhead, not speed; its value is the ability to abandon a hung call." },
+    { label: "Semaphores don't limit concurrency", misconception: "Semaphores do limit concurrency; they just can't interrupt a call already blocking on the caller's thread." },
+    { label: "Thread pools retry the call automatically", misconception: "Isolation is not retrying; the point is the caller can time out independently of the stuck call." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A breaker is reactive — it trips only after a failure rate accumulates — so a shared thread pool can be fully drained by one slow dependency before the breaker even reacts, failing calls to healthy dependencies for lack of a thread. A bulkhead fixes this by capping concurrency per dependency: each gets its own bounded allowance, so a slow downstream can pin at most its own share and the rest stay available — failure contained to one compartment, like a ship's hull. It is bounded concurrency applied for isolation, not throughput. Two implementations trade off: thread-pool isolation (Hystrix coreSize 10) runs each call on a dedicated pool thread so the caller can abandon a hung call via its own timeout, at the cost of a hand-off and context switch per call; semaphore isolation (resilience4j maxConcurrentCalls 25) is a near-zero-overhead counter that runs on the caller's thread but cannot interrupt a call already blocking. Use semaphores for fast non-blocking calls and thread pools for network calls that can hang.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="cb-bulkheads-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why isn't a circuit breaker enough on its own, and what does a bulkhead add?", a: "A breaker is reactive: it trips only after a failure rate accumulates over a window, and the cascade can happen before it reacts because while the breaker is still counting, every in-flight call to the slow dependency is holding a thread from a pool shared with everyone else. If that pool is shared across all dependencies, a single slow downstream can occupy all of it, so calls to perfectly healthy dependencies fail for lack of a thread to run on, and the breaker eventually trips but the blast radius already covered the whole service. A bulkhead — named for the watertight compartments that stop a hull breach from sinking a whole ship — caps concurrency per dependency, giving each its own bounded allowance instead of one shared pool, so if one slows it can pin at most its own share while the others stay available. Calls beyond the allowance are rejected immediately, which itself feeds the breaker's failure signal, but the failure is confined to that one dependency. It is the same bounded-concurrency idea as pool sizing, applied for isolation rather than throughput: the limit's job is to cap the blast radius, not maximize work." },
+    { q: "What is the tradeoff between thread-pool and semaphore isolation?", a: "Thread-pool isolation gives each dependency its own dedicated thread pool — Hystrix's default model with coreSize 10 — and the caller hands work to that pool and waits with its own timeout. Its big advantage is that because the call runs on a separate thread, the caller can walk away from a hung call: if the dependency blocks forever, the caller's timeout still fires and frees the caller, even though the pool thread stays stuck. The cost is overhead — every call pays a thread hand-off and context switch, and you maintain many pools. Semaphore isolation is just a counter capping concurrent calls — resilience4j's SemaphoreBulkhead with maxConcurrentCalls 25 and maxWaitDuration 0 — and the call runs on the caller's own thread with almost no overhead. The catch is that a semaphore can only count; it cannot interrupt a call already blocking, so if the dependency hangs the calling thread hangs with it and the semaphore only stops new calls. The rule of thumb: semaphores for fast, in-process, non-blocking calls where overhead matters and hangs are impossible, thread pools for network calls that can hang, because only a separate thread lets you actually abandon a stuck call." },
+  ]}
+/>
+
+<Recap lang="en">
+A circuit breaker limits how long you keep calling a sick dependency, but it is reactive — it trips only after failures accumulate, and in the meantime a shared thread pool can be fully drained by one slow downstream, failing calls to healthy dependencies for want of a thread. A bulkhead closes that gap by capping concurrency per dependency, the way a ship's watertight compartments confine a breach: give payments, recommendations, and search their own bounded allowances and a slow one can pin at most its own share, containing the failure to a single compartment. It is bounded concurrency applied for isolation rather than throughput. The implementation is a real tradeoff: thread-pool isolation runs each call on a dedicated pool thread so the caller can abandon a hung call through its own timeout, paying a hand-off and context switch per call; semaphore isolation is a near-zero-overhead counter on the caller's own thread that caps concurrency but cannot interrupt a call already blocking. Use semaphores for fast non-blocking work and thread pools for network calls that can hang. Breaker and bulkhead together limit how long and how much — but neither answers what the caller should *return* when a call is rejected. The next lesson covers timeouts as the trigger and fallbacks as the answer.
+</Recap>
