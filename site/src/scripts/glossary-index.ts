@@ -11,6 +11,7 @@ export type GlossEntry = {
 export type ScanEntry = {
   collection: "book" | "lessons";
   group: string; // pillar slug (book) | track slug (lessons)
+  unit: string; // unit slug (lessons); "" for book
   slug: string; // piece slug | lesson slug
   altitude: number; // lower = closer to zero knowledge
   body: string; // raw MDX source
@@ -19,6 +20,7 @@ export type ScanEntry = {
 export type ContentRef = {
   collection: "book" | "lessons";
   group: string;
+  unit: string;
   slug: string;
   altitude: number;
 };
@@ -65,6 +67,7 @@ export function deriveRelations(
     const ref: ContentRef = {
       collection: entry.collection,
       group: entry.group,
+      unit: entry.unit,
       slug: entry.slug,
       altitude: entry.altitude,
     };
