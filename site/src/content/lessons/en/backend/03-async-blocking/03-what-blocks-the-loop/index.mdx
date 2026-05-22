@@ -1,0 +1,136 @@
+---
+slug: 03-what-blocks-the-loop
+lang: en
+track: backend
+unit: 03-async-blocking
+order: 3
+title: "What blocks the loop: CPU work and sync calls"
+summary: "Cooperative concurrency has one fatal failure mode: any synchronous work on the loop thread freezes every connection at once. Sync file reads, JSON.parse on big payloads, sync crypto, and catastrophic regexes are the usual culprits; event-loop lag reveals it first."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/03-async-blocking/02-the-event-loop
+deepensInto:
+  - backend/03-async-blocking/04-offloading-cpu-work
+spiral: ["latency"]
+concepts: ["event-loop-blocking", "synchronous-io", "cpu-bound", "redos", "event-loop-lag", "head-of-line-blocking", "monitor-event-loop-delay"]
+sources:
+  - https://nodejs.org/learn/asynchronous-work/dont-block-the-event-loop
+  - https://snyk.io/blog/redos-and-catastrophic-backtracking/
+  - https://nodejs.org/api/perf_hooks.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A health-check endpoint that does nothing but return `200 OK` starts timing out. Nothing touches it; its code is two lines. The real cause is three routes away: a reporting endpoint calls `JSON.parse` on a 40 MB payload, and for the ~800 ms that parse runs, the single loop thread is busy and *every* other request — including the trivial health check — sits frozen in the queue. Nobody wrote a slow health check. Someone wrote one slow synchronous line, and cooperative concurrency spread the pain to the whole process.
+</Hook>
+
+<Crux>Synchronous work on the loop thread freezes every connection at once — CPU loops, sync calls, and bad regexes stall the whole server.</Crux>
+
+<Explanation>
+
+## One slow callback stalls everyone
+
+The last lesson's payoff and price are the same fact: callbacks run to completion with no preemption. As long as everything yields quickly — `await` on I/O, return fast — thousands of connections interleave smoothly. But the moment one callback does **synchronous** work that takes real time, the loop cannot advance to the poll phase, cannot run any other I/O callback, cannot fire any timer. The cost is not "this request is slow." It is **head-of-line blocking for the entire process**: every concurrent request pays the full duration, because they are all waiting behind the one callback hogging the thread.
+
+This is the defining failure mode of the model. In a thread-per-connection server, one slow request slows *that* thread; here, one slow synchronous span slows *all of them*.
+
+## The usual culprits
+
+Blocking work comes in two flavors: **synchronous APIs** that do I/O on the loop thread, and **CPU-bound** computation that simply takes too long between yields.
+
+- **Sync I/O APIs** — `fs.readFileSync`, `fs.writeFileSync`, `child_process.execSync`. These do the I/O *on the loop thread* and can stall it for hundreds of milliseconds (a sync read of a large file was measured around **1200 ms**). The async twins (`fs.promises.readFile`) hand the work off and let the loop continue.
+- **Big `JSON.parse` / `JSON.stringify`** — parsing or serializing a multi-megabyte payload is pure CPU on the loop thread; a large parse was measured around **800 ms** of frozen loop.
+- **Synchronous crypto** — `bcrypt.hashSync` at a realistic cost factor blocks roughly **200–400 ms** *per call*; under login load that single line collapses throughput. Hashing, `crypto.pbkdf2Sync`, large `gzipSync`.
+- **Catastrophic regex (ReDoS)** — a pattern with nested quantifiers like `/A(B|C+)+D/` against a crafted string can backtrack exponentially; one documented case spent **~3.7 seconds** of pure CPU on a single input. Because it is on the loop thread, an attacker can freeze the whole server with one request — a denial of service.
+
+## Event-loop lag: seeing it before users do
+
+You do not need users to report timeouts to find blocking. The direct signal is **event-loop lag** (a.k.a. event-loop delay): schedule a timer for *t* ms and measure how late it actually fires. If a `setTimeout(fn, 0)` consistently runs 200 ms late, the loop was busy 200 ms — that lateness *is* the blocking, quantified. Node exposes `perf_hooks.monitorEventLoopDelay()` for a histogram (p50/p99 of lag), and tools like clinic.js surface it; a common production alert threshold is around **100 ms** of lag.
+
+<Inset kind="why" lang="en">
+Why is event-loop lag a better health signal than CPU usage? CPU can read 100% for a perfectly healthy reason — the loop is doing useful, well-chunked work and still yielding between units. What hurts users is not CPU being busy; it is the loop failing to *return to poll* to service waiting sockets. Lag measures exactly that gap: the time between when a callback was due and when the loop actually got to it. A server can sit at 60% CPU with 500 ms of loop lag (one fat synchronous span repeatedly) and be far sicker than one at 95% CPU with 2 ms lag (steady, yielding work). This is why senior teams alert on event-loop *delay* and event-loop *utilization* (ELU), not just CPU — lag is the metric that correlates with the timeouts users actually feel.
+</Inset>
+
+## The mental test
+
+Before any line runs on the loop thread, the senior reflex is one question: **is this bounded and fast, or could it run for tens of milliseconds on a big input?** Reading a 2 KB config sync at startup is fine. Parsing arbitrary user-supplied JSON of unknown size, hashing a password, or matching a user-controlled string against a backtracking regex on the request path is not — those belong off the loop, which is the next lesson.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Blocking culprit | Rough frozen time | Why it blocks | Fix direction |
+|---|---|---|---|
+| `fs.readFileSync` (large) | ~1200 ms | I/O on the loop thread | Async `fs.promises` |
+| `JSON.parse` (multi-MB) | ~800 ms | Pure CPU on loop | Stream / worker thread |
+| `bcrypt.hashSync` | ~200–400 ms/call | CPU on loop | Async bcrypt (libuv pool) |
+| Catastrophic regex (ReDoS) | seconds, attacker-controlled | Exponential backtracking on loop | Safe regex / timeout / validate |
+
+</div>
+
+<Quiz
+  id="blocks-q1"
+  lessonSlug="03-what-blocks-the-loop"
+  lang="en"
+  question="A trivial health-check endpoint times out whenever a reporting route runs `JSON.parse` on a 40 MB body. Why does the health check suffer?"
+  choices={[
+    { label: "The health check shares a database connection with the reporting route", misconception: "No database is involved; the health check is two lines. The cause is the shared loop thread, not a shared connection." },
+    { label: "The parse is synchronous CPU work on the single loop thread, so until it finishes the loop cannot reach poll to serve any other request — head-of-line blocking for the whole process", correct: true },
+    { label: "JSON.parse opens too many file descriptors", misconception: "Parsing opens no descriptors; it is in-memory CPU work. The harm is monopolizing the loop thread." },
+    { label: "The health check is lower priority in the router", misconception: "Router priority is irrelevant when the loop thread itself is frozen; nothing runs until the parse returns." },
+  ]}
+/>
+
+<Quiz
+  id="blocks-q2"
+  lessonSlug="03-what-blocks-the-loop"
+  lang="en"
+  question="Why is event-loop lag often a better health signal than CPU utilization?"
+  choices={[
+    { label: "CPU utilization cannot be measured reliably in Node", misconception: "CPU is easy to measure; the point is what it tells you, not whether you can read it." },
+    { label: "High CPU can be healthy well-chunked work; lag measures the gap between when a callback was due and when the loop reached it — exactly the delay users feel", correct: true },
+    { label: "Lag counts the number of open connections", misconception: "Lag measures timer lateness, not connection count; those are unrelated signals." },
+    { label: "CPU only reflects the libuv thread pool, not the loop", misconception: "CPU reflects all threads; the real distinction is that busy-but-yielding differs from busy-and-stalled, which lag captures." },
+  ]}
+/>
+
+<Quiz
+  id="blocks-q3"
+  lessonSlug="03-what-blocks-the-loop"
+  lang="en"
+  question="Why is a catastrophic-backtracking regex on the request path a denial-of-service risk specifically in an event-loop runtime?"
+  choices={[
+    { label: "Regexes allocate unbounded memory until the process is killed", misconception: "ReDoS is CPU exhaustion via backtracking, not primarily memory; the freeze comes from CPU time on the loop." },
+    { label: "A single crafted input can spend seconds of CPU on the loop thread, freezing every other connection until it finishes — one request stalls the whole server", correct: true },
+    { label: "Regexes run on the libuv pool and exhaust its four threads", misconception: "JavaScript regex matching runs on the loop thread, not the libuv pool; that is precisely why it freezes the loop." },
+    { label: "The regex engine spawns a thread per match", misconception: "No threads are spawned; matching is synchronous on the loop thread, which is the source of the DoS." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cooperative concurrency means callbacks run to completion with no preemption, so any synchronous work on the loop thread blocks every connection at once — head-of-line blocking for the whole process, not one request. The usual culprits are sync I/O APIs (fs.readFileSync ~1200 ms), big JSON.parse (~800 ms), sync crypto (bcrypt.hashSync ~200–400 ms/call), and catastrophic regexes (ReDoS, seconds, attacker-controlled). The signal is event-loop lag: how late a timer fires equals how long the loop was frozen; alert near 100 ms and watch ELU, because high CPU that still yields is healthier than low CPU that stalls.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="blocks-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does one slow synchronous callback freeze the entire server rather than just its own request?", a: "Event-loop concurrency is cooperative: each callback runs to completion with no preemption, and only by finishing or hitting an await does it let the loop advance. As long as work yields quickly, thousands of connections interleave smoothly. But a callback that does synchronous work taking real time prevents the loop from reaching the poll phase, so no other I/O callback runs and no timer fires for that whole duration. The result is head-of-line blocking for the entire process: every concurrent request pays the full stall, because they are all queued behind the one callback monopolizing the thread. This is the inverse of thread-per-connection, where one slow request slows only its own thread; in an event loop, one slow synchronous span slows all of them." },
+    { q: "What are the common things that block the loop, and roughly how long do they freeze it?", a: "Two flavors: synchronous I/O APIs that do I/O on the loop thread, and CPU-bound computation that runs too long between yields. fs.readFileSync or writeFileSync on a large file can stall around 1200 ms; the async fs.promises twins hand the work off. JSON.parse or stringify on a multi-megabyte payload is pure CPU on the loop and was measured around 800 ms. Synchronous crypto such as bcrypt.hashSync blocks roughly 200–400 ms per call at a realistic cost factor, which collapses throughput under login load. And a catastrophic-backtracking regex (ReDoS) such as /A(B|C+)+D/ on a crafted input can spend seconds — one documented case about 3.7 seconds — of pure CPU on the loop thread, letting a single request deny service to everyone." },
+    { q: "What is event-loop lag, how do you measure it, and why is it better than CPU usage as a health signal?", a: "Event-loop lag (or delay) is how late a scheduled callback actually fires: schedule a timer for t ms and measure the overage, and that lateness equals how long the loop was busy and unable to return to poll. Node exposes perf_hooks.monitorEventLoopDelay() for a p50/p99 histogram, tools like clinic.js surface it, and a common alert threshold is around 100 ms. It beats CPU utilization because CPU can read high for a healthy reason — well-chunked work that still yields between units — while what actually hurts users is the loop failing to get back to poll to service waiting sockets. Lag measures exactly that gap, so a server at 60% CPU with 500 ms of lag (one fat synchronous span) is far sicker than one at 95% CPU with 2 ms lag; senior teams therefore alert on event-loop delay and utilization, not CPU alone." },
+  ]}
+/>
+
+<Recap lang="en">
+The strength of cooperative concurrency — callbacks run to completion without preemption — is also its one fatal failure mode: any synchronous span on the loop thread freezes every connection at once, so a slow line three routes away can time out a two-line health check. The culprits fall into sync I/O on the loop (fs.readFileSync, around 1200 ms), heavy CPU between yields (JSON.parse of a multi-MB body near 800 ms, bcrypt.hashSync at 200–400 ms a call), and attacker-controllable catastrophic regexes that backtrack for seconds and turn one request into a denial of service. You see all of this before users do through event-loop lag — the lateness of a scheduled timer, surfaced by monitorEventLoopDelay and alerted near 100 ms — which is a truer health signal than CPU because busy-and-yielding is fine while busy-and-stalled is not. The reflex is to ask whether any line on the loop is bounded and fast or could run for tens of milliseconds on a big input; the slow ones belong off the loop entirely, which is the next lesson: worker threads, the libuv pool, and chunking CPU work.
+</Recap>

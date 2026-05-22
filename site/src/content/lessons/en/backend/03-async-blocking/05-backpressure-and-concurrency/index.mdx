@@ -1,0 +1,133 @@
+---
+slug: 05-backpressure-and-concurrency
+lang: en
+track: backend
+unit: 03-async-blocking
+order: 5
+title: "Backpressure and bounded concurrency"
+summary: "Async makes it easy to start more work than the system can finish, and the loop will not stop you. Backpressure lets a fast producer feel a slow consumer; bounded concurrency caps how many run at once. Without them, unbounded fan-out becomes OOM and overloaded downstreams."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/03-async-blocking/04-offloading-cpu-work
+deepensInto:
+  - backend/03-async-blocking/06-throughput-under-load
+spiral: ["latency"]
+concepts: ["backpressure", "high-water-mark", "bounded-concurrency", "unbounded-fan-out", "promise-all", "drain-event", "stream-pipeline"]
+sources:
+  - https://nodejs.org/learn/modules/backpressuring-in-streams
+  - https://github.com/sindresorhus/p-limit
+  - https://nodejs.org/api/stream.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A migration script reads a million user IDs and "for each, fetch the profile and upsert it." Written the obvious async way — `await Promise.all(ids.map(processUser))` — it launches a million concurrent operations in the same instant. The database opens connections until it refuses, memory climbs as a million pending promises and their closures pile up, and the process is OOM-killed before the first thousand finish. The code was correct. The *concurrency* was unbounded, and an event loop will happily start infinite work it can never finish.
+</Hook>
+
+<Crux>Unbounded concurrency floods memory and downstreams; backpressure and a concurrency cap match production speed to consumption speed.</Crux>
+
+<Explanation>
+
+## The loop will not stop you
+
+The event loop's gift — start thousands of operations cheaply — is also a loaded gun. Nothing in `Promise.all(items.map(fn))` limits how many `fn`s are in flight; it starts *all* of them, immediately. For ten items that is fine. For a million it is a self-inflicted denial of service: every in-flight operation holds memory (buffers, closures, a pending promise), and every one hammers whatever it calls. Two distinct disciplines tame this: **backpressure** (let a slow consumer push back on a fast producer) and **bounded concurrency** (cap how many operations run at once). They solve the same disease — producing faster than you consume — at different layers.
+
+## Backpressure: the consumer pushes back
+
+**Backpressure** is a feedback signal from a slow consumer to a fast producer: "stop sending, I'm full." Node streams have it built in. When you `writable.write(chunk)` and the internal buffer exceeds the **`highWaterMark`** (default **16 KB** for byte streams, **16 objects** in object mode), `write()` returns **`false`** — your cue to *stop writing* until the stream emits a **`drain`** event signaling the buffer has emptied. Honor that signal and memory stays bounded; ignore it and Node keeps buffering every chunk in memory until the process OOMs.
+
+The reason `pipe()` and `pipeline()` are the recommended way to connect streams is that they wire this handshake *automatically* — pausing the readable when the writable is full, resuming on drain — so a 50 GB file copies through a few hundred KB of live buffer instead of loading whole. Manual `read`/`write` loops that skip the `false`/`drain` dance are the classic source of streaming OOMs.
+
+<Inset kind="why" lang="en">
+Why is `highWaterMark` a threshold and not a hard cap? It is the line at which the stream *starts saying* "false" — backpressure is advisory, not enforced. A single `write()` of a 10 MB chunk still buffers all 10 MB even though the mark is 16 KB; the mark only governs when the stream signals fullness, not how much a given write may add. This matters because backpressure protects you only if you *check the return value and wait for drain*. Code that calls `write()` in a tight loop ignoring the boolean defeats the entire mechanism — the buffer grows without bound regardless of the high-water mark. The mark is a politeness signal between cooperating parties; it does nothing for code that does not listen.
+</Inset>
+
+## Bounded concurrency: cap the fan-out
+
+Streams handle the byte-pipeline case. The other case is **N independent async tasks** — fetch these 10,000 URLs, process these million rows — where the fix is a **concurrency limit**: run at most *k* at a time, and as each finishes, start the next. The migration above becomes safe by replacing `Promise.all(ids.map(fn))` with a limiter (e.g. `p-limit(20)`) so only 20 operations are ever in flight, or by using a worker-pool/`for await` pattern that pulls from the list as capacity frees up.
+
+The numbers make the case: a sequential `for...of await` loop and a bounded `Promise.all` can differ by orders of magnitude in wall time (one benchmark: ~30 s sequential vs ~340 ms concurrent), but *unbounded* concurrency does not beat bounded — past the point your downstream can absorb, extra in-flight work only adds queueing, memory, and failures. The sweet spot is the largest *k* the downstream tolerates, not infinity. That *k* is usually set by the downstream's own limit: a connection pool of 20, an API rate limit, a disk's IOPS.
+
+## Three regimes, one decision
+
+Picture the spectrum. **Sequential** (`await` in a loop) is one-at-a-time: safe, slow, no pressure on anything. **Unbounded** (`Promise.all` over a huge list) is all-at-once: fast to start, catastrophic at scale. **Bounded** (limit *k*) is the production answer: fast enough, predictable memory, downstream-respecting. The senior reflex on seeing `Promise.all(bigArray.map(...))` is immediate: *what bounds this?* If the array size is attacker- or data-controlled, unbounded `Promise.all` is a latent outage.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Pattern | In flight | Speed | Risk |
+|---|---|---|---|
+| Sequential `for await` | 1 | Slowest | None, but wastes idle capacity |
+| Unbounded `Promise.all(map)` | All N | Fast start, then collapse | OOM, downstream overload |
+| Bounded (limit *k*) | At most *k* | Fast and stable | Tune *k* to downstream limit |
+| Stream `pipeline()` | ~`highWaterMark` | Steady | Must not bypass backpressure |
+
+</div>
+
+<Quiz
+  id="backpressure-q1"
+  lessonSlug="05-backpressure-and-concurrency"
+  lang="en"
+  question="`await Promise.all(millionIds.map(processUser))` OOM-kills the process. What actually went wrong?"
+  choices={[
+    { label: "Promise.all has a bug with large arrays", misconception: "Promise.all behaves as specified; it starts every promise at once, which is the intended (and here harmful) semantics." },
+    { label: "It starts all million operations concurrently, so a million pending promises, closures, and downstream connections pile up in memory at once — unbounded concurrency", correct: true },
+    { label: "await inside map blocks the event loop", misconception: "The map callbacks do not block the loop; the problem is how many run at once, not that any one blocks." },
+    { label: "The IDs should have been numbers, not strings", misconception: "Data types are irrelevant; the failure is the count of simultaneous in-flight operations." },
+  ]}
+/>
+
+<Quiz
+  id="backpressure-q2"
+  lessonSlug="05-backpressure-and-concurrency"
+  lang="en"
+  question="In a Node stream, `writable.write(chunk)` returns `false`. What does that signal and what should you do?"
+  choices={[
+    { label: "The write failed and the chunk was lost", misconception: "The chunk is buffered, not lost; false is a flow-control signal, not an error." },
+    { label: "The internal buffer passed the highWaterMark — stop writing and wait for the `drain` event before continuing, or memory grows unbounded", correct: true },
+    { label: "The stream is closed and you should reopen it", misconception: "The stream is open and accepting data; false only means its buffer is full for now." },
+    { label: "Backpressure is disabled and writes are now synchronous", misconception: "false is precisely backpressure working; it is asking you to pause, not signaling it is off." },
+  ]}
+/>
+
+<Quiz
+  id="backpressure-q3"
+  lessonSlug="05-backpressure-and-concurrency"
+  lang="en"
+  question="What usually sets the right concurrency limit *k* for a bounded fan-out of async tasks?"
+  choices={[
+    { label: "The number of items to process", misconception: "k is about how many run at once, independent of total count; using N is just unbounded again." },
+    { label: "The downstream's own capacity — connection pool size, API rate limit, or disk IOPS — since extra in-flight work past that point only adds queueing and failures", correct: true },
+    { label: "Always the number of CPU cores", misconception: "Cores bound CPU work; these tasks are I/O-bound, so the binding limit is the downstream resource, not cores." },
+    { label: "As high as possible, because more concurrency is always faster", misconception: "Past what the downstream absorbs, more concurrency adds latency and errors, not throughput; bounded beats unbounded." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>An event loop will start more work than it can finish, so you must impose limits. Backpressure is a slow consumer's signal to a fast producer: a stream write returns false when its buffer passes the highWaterMark (16 KB / 16 objects), telling you to wait for drain — which pipe() and pipeline() wire automatically so huge files flow through tiny live buffers. Bounded concurrency caps independent tasks at k in flight (p-limit, worker pool) instead of the unbounded Promise.all(map) that OOMs and overloads downstreams. Sequential is safe-but-slow, unbounded is fast-then-collapse, bounded is the production answer — and k is set by the downstream's limit, not infinity.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="backpressure-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does Promise.all over a huge array cause an outage, and what is the fix?", a: "Promise.all(items.map(fn)) starts every fn immediately and concurrently; nothing limits how many are in flight. For a few items that is fine, but for a million it is a self-inflicted denial of service: each in-flight operation holds memory in buffers, closures, and a pending promise, and each one hammers whatever it calls, so the database opens connections until it refuses and memory climbs until the process is OOM-killed. The code is correct; the concurrency is unbounded. The fix is bounded concurrency — cap at most k operations in flight using a limiter like p-limit(20) or a worker-pool / for-await pattern that pulls new work as capacity frees up — so memory and downstream load stay predictable regardless of how many items there are." },
+    { q: "How does Node stream backpressure work, and why are pipe/pipeline preferred over manual loops?", a: "Backpressure is a feedback signal from a slow consumer to a fast producer meaning 'stop, I'm full.' When you call writable.write(chunk) and the internal buffer exceeds the highWaterMark — default 16 KB for byte streams or 16 objects in object mode — write() returns false, which is your cue to stop writing until the stream emits a drain event indicating the buffer has emptied. Honor that and memory stays bounded; ignore it and Node buffers every chunk until it OOMs. pipe() and pipeline() are preferred because they wire this handshake automatically, pausing the readable when the writable is full and resuming on drain, so a 50 GB file copies through a few hundred KB of live buffer. Manual read/write loops that skip the false/drain dance are the classic streaming OOM. Note the highWaterMark is only a threshold for when the stream signals fullness, not a hard cap — a single huge write still buffers fully — so backpressure protects you only if you actually check the return value and wait for drain." },
+    { q: "Compare sequential, unbounded, and bounded concurrency and explain how to choose k.", a: "Sequential (await in a for...of loop) runs one operation at a time: safe and pressure-free but slow, and it wastes idle capacity while waiting on I/O. Unbounded (Promise.all over a large list) starts everything at once: fast to launch but it collapses at scale through OOM and downstream overload. Bounded concurrency runs at most k at a time and starts the next as each finishes: fast enough, predictable in memory, and respectful of downstreams — the production answer. Benchmarks show sequential versus concurrent can differ by orders of magnitude (about 30 s versus 340 ms in one case), but unbounded does not beat bounded, because past the point the downstream can absorb, extra in-flight work only adds queueing, memory, and failures. So k should be the largest value the downstream tolerates — typically dictated by a connection pool size, an API rate limit, or disk IOPS — not infinity, and certainly not the item count." },
+  ]}
+/>
+
+<Recap lang="en">
+The same cheapness that lets an event loop start thousands of operations also lets it start work it can never finish, and it will not stop you — Promise.all over a million-item array launches a million operations at once and OOM-kills the process while hammering every downstream. Two disciplines match production speed to consumption speed. Backpressure is the consumer pushing back on the producer: a stream write returns false past the highWaterMark (16 KB or 16 objects), and you must wait for drain, which pipe and pipeline do automatically so enormous files flow through tiny live buffers; the high-water mark is only a signal threshold, so code that ignores the boolean defeats it entirely. Bounded concurrency caps independent tasks at k in flight, replacing the unbounded fan-out with a limiter or worker pool, where k is set by what the downstream can absorb — a pool of 20, an API rate limit, disk IOPS — because beyond that, more concurrency buys only queueing and failure. Sequential is safe but slow, unbounded is fast then catastrophic, bounded is the answer. With work shed off the loop and inflow throttled to capacity, the final lesson zooms out to the whole system under load: how queueing makes tail latency explode near saturation, and why one loop is one core.
+</Recap>
