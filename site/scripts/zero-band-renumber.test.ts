@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transform, transformAll, FULLSTACK, ORIENTATION } from "./zero-band-renumber.mjs";
+import { transform, transformAll, FULLSTACK, FOUNDATIONS, ORIENTATION } from "./zero-band-renumber.mjs";
 
 type Unit = {
   slug: string;
@@ -34,6 +34,12 @@ describe("transform", () => {
     expect(o.crux.ru.length).toBeGreaterThan(0);
   });
 
+  it("tags the inserted unit with a composite track/slug id", () => {
+    const out = transform(sample, "databases", ORIENTATION.databases);
+    const o = out.find((u: Unit & { id?: string }) => u.track === "databases" && u.slug === "00-orientation");
+    expect(o.id).toBe("databases/00-orientation");
+  });
+
   it("is idempotent — second run is a no-op", () => {
     const once = transform(sample, "databases", ORIENTATION.databases);
     const twice = transform(once, "databases", ORIENTATION.databases);
@@ -43,6 +49,15 @@ describe("transform", () => {
   it("transformAll covers all 16 fullstack tracks and has orientation metadata for each", () => {
     expect(FULLSTACK).toHaveLength(16);
     for (const t of FULLSTACK) {
+      const o = ORIENTATION[t as keyof typeof ORIENTATION];
+      expect(o?.title?.en, `missing title for ${t}`).toBeTruthy();
+      expect(o?.crux?.ru, `missing crux for ${t}`).toBeTruthy();
+    }
+  });
+
+  it("covers the 3 foundations tracks with orientation metadata", () => {
+    expect(FOUNDATIONS).toEqual(["math", "algorithms", "base-cs"]);
+    for (const t of FOUNDATIONS) {
       const o = ORIENTATION[t as keyof typeof ORIENTATION];
       expect(o?.title?.en, `missing title for ${t}`).toBeTruthy();
       expect(o?.crux?.ru, `missing crux for ${t}`).toBeTruthy();
