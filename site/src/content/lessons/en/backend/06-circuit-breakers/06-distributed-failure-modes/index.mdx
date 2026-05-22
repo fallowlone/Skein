@@ -1,0 +1,139 @@
+---
+slug: 06-distributed-failure-modes
+lang: en
+track: backend
+unit: 06-circuit-breakers
+order: 6
+title: "At scale: per-instance state, retry storms, and coordinated shedding"
+summary: "Everything so far assumed one process. Across many instances a breaker becomes a per-instance guess with no shared view, retries multiply into call amplification, half-open probes herd, and the only stable shedding is coordinated. Resilience as a fleet property."
+estMin: 18
+status: ready
+lessonType: topic
+level: senior
+prereqs:
+  - backend/06-circuit-breakers/05-fallbacks-and-degradation
+deepensInto:
+  - backend/07-graceful-shutdown/01-overview
+spiral: ["failure-modes", "resilience", "distributed-systems"]
+concepts: ["per-instance-state", "retry-amplification", "retry-storm", "thundering-herd", "jittered-probe", "exponential-backoff", "token-bucket-retry", "coordinated-load-shedding"]
+sources:
+  - https://sre.google/sre-book/addressing-cascading-failures/
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://github.com/Netflix/Hystrix/wiki/How-it-Works
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+Every lesson so far quietly assumed one process: one breaker, one thread pool, one counter. Production is fifty instances behind a load balancer, and the assumptions break in ways that are not obvious. Each instance has its *own* breaker with its *own* count, so instance A can be tripped while instance B still hammers the dying dependency — there is no shared verdict. Worse, you almost never have just a breaker; you have *retries* under it, and retries stack multiplicatively through a call chain. Google's SRE book has the canonical horror: three layers of service, each retrying up to four times, turns one user request into **4 × 4 × 4 = 64** calls to the bottom service — a request amplifier that converts a small downstream wobble into a self-sustaining **retry storm**. Resilience at scale is not the single-process state machine of the last five lessons; it is a fleet property, and the fleet has failure modes a single breaker never sees.
+</Hook>
+
+<Crux>A breaker is per-instance with no shared view; retries beneath it multiply (4x4x4=64) — so fleet risks are retry storms and herding probes.</Crux>
+
+<Explanation>
+
+## Per-instance state: fifty breakers, no shared verdict
+
+A circuit breaker's state lives in the *process* that owns it. With fifty instances you have fifty independent breakers, each counting only the calls *it* made. This has direct consequences. Instance A might see enough failures to trip while instance B, having sampled a luckier slice of traffic, stays closed and keeps calling the sick dependency. There is no shared verdict — the dependency does not get "a breaker," it gets fifty opinions. Right after a deploy or a scale-up, a fresh instance starts with an *empty* window and a closed breaker, so it must rediscover the outage from scratch by failing real calls, even though forty-nine of its siblings already know.
+
+You *can* centralize breaker state in a shared store (Redis, a coordination service) so the fleet shares one count — but now the breaker check is a network call on the hot path, the shared store is a new dependency that can itself fail, and you have traded local-but-stale for shared-but-coupled. Most production systems keep breaker state **local on purpose** and accept the fuzziness, because a breaker is a *statistical* safety device, not a precise switch: fifty instances each sampling the dependency will, in aggregate, converge on tripping during a real outage. Local state is the pragmatic default; shared state is a deliberate, costly choice.
+
+## Retry amplification: the multiplier under the breaker
+
+The dangerous interaction is not the breaker — it is the **retry** layered beneath it. Retries multiply along a call chain. If service A calls B calls C, and each retries 4× on failure, one inbound request to A can become 64 requests at C. When C is *already* struggling, this is the worst possible response: the layer that should *reduce* load instead multiplies it, and every layer's retries feed the layer below. This is a **retry storm** (or retry amplification), and it is how a brief downstream blip becomes a sustained, self-inflicted overload that outlives the original fault.
+
+The senior fixes are layered and specific:
+
+- **Retry at one level, not every level.** The SRE guidance is to retry close to the failure *or* at the top, but not at every layer simultaneously — stacked retries are what produce the 64×. Pick a layer; make the others fail fast.
+- **Cap the absolute retry rate, not just the per-call count.** Google's pattern is a per-process budget — *"60 retries per minute"* as a server-wide cap — so retries cannot scale with traffic into a storm.
+- **Exponential backoff with jitter.** Fixed-interval retries from many clients re-synchronize into waves; AWS's builder's library shows that adding *randomized jitter* to exponential backoff spreads the retries out and is what actually breaks the wave. Backoff alone is not enough — without jitter, every client backs off by the *same* amount and they all return together.
+- **Breakers sit above retries.** The breaker is the circuit-level off-switch: once it is open, the retries beneath it never fire at all, because the whole call short-circuits. A breaker is what makes a retry policy *safe* — it bounds the storm.
+
+## Herding: half-open and recovery are fleet events
+
+The half-open state from lesson two has a distributed failure mode. When fifty instances tripped at roughly the same moment, their cooldown timers also expire at roughly the same moment, so all fifty enter half-open and fire their probe calls *together* — a synchronized **thundering herd** onto a dependency that has just barely come back. The fix is the same primitive as retry backoff: **jitter the probe timing** so the fleet's probes spread across a window instead of landing in one spike. AWS's token-bucket retry throttling is the related idea on the retry side — each client maintains a token bucket that only permits retries while tokens remain, so a fleet-wide failure cannot translate into a fleet-wide retry burst.
+
+<Inset kind="why" lang="en">
+Why does jitter matter so much that both retries and half-open probes need it — isn't exponential backoff already spreading the load out over time? Backoff spreads each *individual* client's attempts across increasing intervals, but it does nothing about *correlation between* clients. Picture the failure: a dependency hiccups and, in the same few milliseconds, a thousand clients all get an error and all start the *identical* backoff schedule — wait 1 s, then 2 s, then 4 s. Because they started together and the schedule is deterministic, they also *retry* together: a thundering wave at t=1 s, another at t=3 s, another at t=7 s. The dependency, trying to recover, is hit by synchronized spikes that look exactly like the original overload, so it never gets a quiet moment to drain its backlog. Each client is behaving perfectly; the *fleet* is pathological. Jitter breaks the correlation: instead of waiting exactly 1 s, each client waits a *random* duration up to 1 s, so the same thousand retries smear across the whole interval as steady pressure the dependency can actually absorb. The same logic applies to half-open probes — fifty breakers that tripped together will, without jitter, un-trip together and herd. The deep lesson is that in a distributed system the enemy is rarely any single client's behavior; it is *synchronization* across clients, and the cure is almost always to deliberately inject randomness to desynchronize them. This is why every mature retry and breaker implementation has jitter baked in, not bolted on.
+</Inset>
+
+## Coordinated shedding: the floor must agree
+
+Load shedding from the last lesson also changes shape across a fleet. If each instance sheds independently based on its *own* load, a load balancer routing unevenly can have some instances shedding hard while others sit idle — the fleet sheds the wrong requests. Worse, an instance that sheds a request does not make the work disappear; if the client retries, the shed request lands on *another* instance, so uncoordinated shedding can just shuffle load around the fleet instead of reducing it. The stable version is shedding that the fleet agrees on: shed by *priority* (drop low-priority traffic everywhere first, consistently), shed *deterministically* on a signal every instance can compute the same way, and pair it with the deadline-aware queuing from the last lesson so a request shed at the front door is not retried into the back. The principle that ties the whole lesson together: in a distributed system, every per-instance safety device — breaker, retry, shed — needs a fleet-level story, or the instances' locally-correct decisions compose into a globally-wrong outcome.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Failure mode | Single process | Across the fleet | The fix |
+|---|---|---|---|
+| Breaker state | One count, one verdict | 50 counts, no shared view | Accept local fuzziness (or pay for shared state) |
+| Retries | Bounded per call | Multiply 4×4×4 = 64 down the chain | Retry one layer; cap rate (60/min); breaker above |
+| Recovery probe | One half-open trickle | 50 breakers herd at once | Jitter the probe timing |
+| Backoff | Spreads one client | Clients re-sync into waves | Exponential backoff **with jitter** |
+| Load shedding | Shed local overload | Shuffles load between instances | Coordinated, priority-based, deadline-aware |
+
+</div>
+
+<Quiz
+  id="cb-distributed-q1"
+  lessonSlug="06-distributed-failure-modes"
+  lang="en"
+  question="Service A calls B calls C, each retrying up to 4 times on failure. C starts to struggle. Why does this make C's situation dramatically worse rather than better?"
+  choices={[
+    { label: "Retries multiply down the chain — one request to A becomes 4×4×4 = 64 calls to C, so the layer meant to add resilience instead amplifies load onto an already-struggling dependency (a retry storm)", correct: true },
+    { label: "Retries corrupt C's data on each attempt", misconception: "Retries don't corrupt data; the harm is multiplicative load amplification, not correctness." },
+    { label: "Each retry opens a new circuit breaker", misconception: "Retries don't create breakers; the problem is the 64× call amplification from stacked retry layers." },
+    { label: "C's breaker prevents the retries from helping", misconception: "A breaker above the retries would help by short-circuiting; the storm comes from retries with no breaker bounding them." },
+  ]}
+/>
+
+<Quiz
+  id="cb-distributed-q2"
+  lessonSlug="06-distributed-failure-modes"
+  lang="en"
+  question="Fifty instances trip their breakers at nearly the same moment during an outage. Why is jitter on the half-open probe (and on retry backoff) essential and not just nice-to-have?"
+  choices={[
+    { label: "Because they tripped together their cooldowns expire together, so without jitter all fifty probe at once — a synchronized thundering herd on a barely-recovered dependency; jitter desynchronizes them into steady pressure", correct: true },
+    { label: "Jitter makes each probe call faster", misconception: "Jitter doesn't speed up calls; it spreads their timing to break cross-client synchronization." },
+    { label: "Jitter increases the failure-rate threshold", misconception: "Jitter is about timing, not thresholds; it desynchronizes a herd of probes." },
+    { label: "Exponential backoff alone already prevents the herd", misconception: "Backoff spreads one client's attempts but clients that started together still re-sync into waves; jitter is what breaks the correlation." },
+  ]}
+/>
+
+<DragOrder
+  id="cb-distributed-drag1"
+  lessonSlug="06-distributed-failure-modes"
+  lang="en"
+  prompt="Order how a small downstream wobble becomes a fleet-wide retry storm without the right guards:"
+  items={[
+    "A downstream dependency briefly slows under normal load",
+    "Each layer's retries fire, multiplying one request into many (4×4×4 = 64)",
+    "The amplified load pins the dependency, turning a wobble into a sustained outage",
+    "Clients that failed together retry together in synchronized waves, sustaining the storm",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every prior lesson assumed one process; at scale the assumptions break. Breaker state is per-instance: fifty instances mean fifty independent counts with no shared verdict, so one can be open while another keeps calling, and a fresh instance must rediscover an outage its siblings already know — local state is the pragmatic default because a breaker is a statistical device, and shared state trades stale-but-local for coupled-but-shared. The real fleet danger is retries beneath the breaker, which multiply along a chain (SRE's 4×4×4 = 64) into a retry storm; the fixes are retry at one layer only, cap the absolute rate (60/min per process), use exponential backoff *with jitter*, and keep the breaker above the retries so an open circuit short-circuits the whole stack. Recovery herds too: breakers that tripped together un-trip together, so half-open probes need jitter exactly as retries do, since the distributed enemy is synchronization across clients, not any one client. And load shedding must be coordinated, priority-based, and deadline-aware, or instances merely shuffle load between themselves. Every per-instance safety device needs a fleet-level story.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="cb-distributed-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is per-instance breaker state both a limitation and the pragmatic default, and what is retry amplification?", a: "A breaker's state lives in the process that owns it, so fifty instances have fifty independent breakers each counting only its own calls, with no shared verdict: one instance can trip while another that sampled luckier traffic stays closed and keeps hitting the sick dependency, and a freshly deployed instance starts with an empty window and must rediscover an outage its siblings already know. You can centralize state in a shared store so the fleet shares one count, but then the check is a network call on the hot path and the store is a new dependency that can fail, trading local-but-stale for shared-but-coupled. Most systems keep breaker state local on purpose because a breaker is a statistical safety device, not a precise switch — fifty instances each sampling the dependency converge on tripping during a real outage. Retry amplification is the dangerous interaction beneath the breaker: retries multiply along a call chain, so if A calls B calls C and each retries four times, one request to A becomes 4×4×4 = 64 calls at C, and when C is already struggling the layer meant to add resilience instead multiplies load into a self-sustaining retry storm that outlives the original fault." },
+    { q: "What are the senior fixes for retry storms and herding, and why is jitter essential?", a: "The fixes are layered: retry at one level only — close to the failure or at the top, never every layer at once, since stacked retries produce the 64×; cap the absolute retry rate with a per-process budget like Google's 60 retries per minute so retries can't scale with traffic; use exponential backoff with jitter; and keep the breaker above the retries so an open circuit short-circuits the whole stack before any retry fires. Jitter is essential because backoff alone only spreads a single client's attempts over time — it does nothing about correlation between clients. When a dependency hiccups, a thousand clients get errors in the same few milliseconds and start the identical deterministic backoff schedule, so they also retry together in synchronized waves that look just like the original overload and never let the dependency drain its backlog. Jitter makes each client wait a random duration instead of the same one, smearing the retries into steady absorbable pressure. The same applies to half-open probes: fifty breakers that tripped together un-trip together and herd onto a barely-recovered dependency unless their probe timing is jittered. AWS's token-bucket retry throttling is the related guard, permitting retries only while tokens remain so a fleet-wide failure can't become a fleet-wide retry burst. The deep lesson is that the distributed enemy is synchronization across clients, and the cure is deliberately injected randomness." },
+  ]}
+/>
+
+<Recap lang="en">
+The first five lessons built a breaker for one process; this one scales it to a fleet, where the single-process intuitions quietly fail. Breaker state is per-instance — fifty instances hold fifty independent counts with no shared verdict, so one trips while another keeps calling and a new instance rediscovers the outage alone; local state is the pragmatic default because a breaker is statistical, and shared state buys a shared view at the cost of a hot-path network call and a new dependency. The real fleet hazard lives beneath the breaker in the retry layer, which multiplies along a chain into Google's 4×4×4 = 64 — a retry storm tamed only by retrying at a single layer, capping the absolute rate at something like 60 per minute, using exponential backoff with jitter, and keeping the breaker above the retries so an open circuit short-circuits the stack. Recovery itself herds: breakers that tripped together un-trip together, so half-open probes need the same jitter retries do, because the distributed enemy is synchronization across clients rather than any single client's behavior. And load shedding only works coordinated, priority-based, and deadline-aware, or instances just shuffle load between themselves. The unit's arc is complete — a slow dependency, a state machine, thresholds, bulkheads, fallbacks, and now the fleet — and the next unit turns from keeping a service alive under load to bringing it down cleanly: graceful shutdown.
+</Recap>
