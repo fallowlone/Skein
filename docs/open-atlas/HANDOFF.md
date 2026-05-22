@@ -157,6 +157,25 @@ by following a connected path of lessons. Practice is deferred (theory first).
     parallelism (concept). 10 glossary keys added.
   units.json lesson lists for units 09–12 are filled. New P3 glossary keys all use the
   underscore convention. NEXT STEP: merge `base-cs-p3` into main (or open a PR).
+- **Zero band seeded (Wedge — Вариант 1) — DONE 2026-05-22** (branch `design-wireup`,
+  not yet merged). Each of the 16 fullstack pillars now has a `level: zero` orientation
+  guide EN+RU at `lessons/{en,ru}/<track>/00-orientation/01-orientation/`. Previously no
+  lesson used `level: zero` (lowest band was `junior`); foundations tracks (math/base-cs/
+  algorithms) are inherently from-zero and untouched. Placement = Approach B (renumber):
+  a new `00-orientation` unit (`order: 1`) per fullstack track, every pre-existing unit's
+  `order` incremented +1 (units.json only; slugs/dirs unchanged, so an existing unit's
+  displayed number is now +1 off its slug number — cosmetic). Each guide is a
+  `lessonType: topic` lesson that `deepensInto` the pillar's junior entry. Done via the
+  one-shot tested script `site/scripts/zero-band-renumber.mjs` (units.json 166→182) plus
+  3 subagent waves (5 pillars each). Build clean (2463 pages, lint 0/0). Spec:
+  `docs/superpowers/specs/2026-05-22-zero-band-wedge-design.md`. Plan:
+  `docs/superpowers/plans/2026-05-22-zero-band-wedge.md`.
+  NOTE (finding, not fixed): the per-lesson skeleton linter is currently inert — in
+  `src/lint/rules/lessons.ts`, `lessonInfoFromPath` expects a `dist/`-relative path but
+  `src/lint/index.ts` passes absolute paths, so `checkLessonRules` returns `[]` for every
+  page. Active gates that DID hold the line: Zod schema, lesson-parity, connection-
+  integrity, text-budgets, cjk-leak, i18n-parity, sources. Enabling the skeleton linter
+  is a separate task (would retroactively gate 2463 pages incl. the 81 stub units).
 
 ## Work queue (in order)
 
