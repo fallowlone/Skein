@@ -1,0 +1,136 @@
+---
+slug: 02-tracing-one-request
+lang: en
+track: backend
+unit: 08-putting-it-together
+order: 2
+title: "Tracing one request: every unit on a single code path"
+summary: "Follow one request and the seven units line up as layers: lifecycle accepts and parses, middleware and DI wire dependencies, async I/O and a pool carry the downstream call, a breaker guards it, an idempotency key makes the write retry-safe, and shutdown waits for it."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+prereqs:
+  - backend/08-putting-it-together/01-overview
+deepensInto:
+  - backend/08-putting-it-together/03-when-failures-compose
+spiral: ["synthesis", "lifecycle", "resource-limits", "idempotency"]
+concepts: ["request-path", "layering", "end-to-end-trace", "composition", "timeout-budget"]
+sources:
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://sre.google/sre-book/handling-overload/
+  - https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+
+<Hook>
+The cleanest way to see seven mechanisms as one system is to stop talking about them abstractly and follow a single request all the way down. Take a concrete one: `POST /payments`, charge a card, write the result. That request does not visit one unit — it touches *all* of them, in order, on one code path. It arrives on a socket the lifecycle unit taught you to accept and parse. It passes through the middleware chain that authenticates it and starts a timeout, with its dependencies handed in by the DI container. The handler runs on an event loop that must not block, so the database call is async; that call borrows a connection from a pool; the pool's connection talks to a payment provider through a circuit breaker; the write it performs is guarded by an idempotency key so a retry cannot double-charge. And underneath the whole thing, a graceful-shutdown handler is waiting — if a SIGTERM lands while this request is in flight, every layer it touched has to unwind in the right order. One request, seven units, one continuous path. Trace it once and the "system, not a stack" claim from the last lesson stops being a slogan and becomes a thing you can point at.
+</Hook>
+
+<Crux>Trace one request and every unit appears in order: accept, middleware, async I/O, a pooled call under a breaker, an idempotent write.</Crux>
+
+<Explanation>
+
+## The happy path, layer by layer
+
+Follow `POST /payments` from socket to response and the units appear as a stack of layers, each handing off to the next:
+
+1. **Accept and parse (lifecycle).** The server accepts the connection, reads the request off the socket, and parses headers and body. Backpressure and body-size limits live here — a malformed or oversized body is rejected before it costs anything downstream.
+2. **Middleware and DI.** The request passes through the chain: logging, auth, rate-limit, and crucially the place where the **timeout budget** is set for the whole request. The DI container supplies the handler its dependencies — the payment client, the repository — already constructed and scoped to this request.
+3. **Handler on the event loop (async I/O).** The handler runs without blocking the loop. Every I/O call is awaited, so while this request waits on the database or the provider, the same loop serves thousands of other requests.
+4. **Borrow a connection (pool).** The database write needs a connection, so the handler acquires one from the pool — with an acquisition timeout, so a saturated pool fails fast instead of hanging forever.
+5. **Call the provider through a breaker.** The charge goes to an external payment provider, wrapped in a circuit breaker and its own timeout. If the provider is failing, the breaker short-circuits and the handler takes its fallback rather than piling on.
+6. **Write idempotently.** The result is persisted under an idempotency key, so if the client retries the same `POST` the server returns the original result instead of charging twice.
+7. **Answer, then shutdown waits.** The response is written back. If a SIGTERM arrived mid-charge, the shutdown handler has been holding the door: it stopped accepting new requests, kept this one alive, and will only tear down the pool and the loop once this request has answered.
+
+## The timeout budget threads through all of it
+
+The single thread that ties these layers together is the **deadline**. The timeout set in middleware (step 2) is not just for the handler — it has to be *divided* among everything downstream. The pool acquisition timeout, the provider call timeout, and the database write timeout all have to fit *inside* the request's total budget, with margin. If the request budget is 3 seconds, you cannot give the provider call a 3-second timeout, because then a slow acquire plus a slow write blows past the deadline with no time to answer. This is the lifecycle unit's tail-latency lesson and the pooling unit's acquisition-timeout lesson and the breaker unit's call-timeout lesson, all reconciled on one request: the budgets are nested, not independent, and they must sum to less than the whole.
+
+## One path, one ordering
+
+Notice the ordering is forced, not arbitrary. You parse before you route, acquire a connection before you use it, set the breaker around the call it guards, and write idempotently before you answer. And shutdown unwinds this same graph *in reverse* — stop accepting, drain in-flight, then close the pool last — which is exactly the reverse-dependency-order rule from the graceful-shutdown unit. The request path and the shutdown path are the same dependency graph read in opposite directions.
+
+<Inset kind="why" lang="en">
+Why does the timeout budget have to be divided down the stack instead of just setting one generous timeout on the whole request and letting each call take what it needs? Because a single outer timeout tells you *that* the request was too slow but gives every inner layer permission to consume the entire budget alone, which makes the failure both later and less diagnosable. If the request has 3 seconds and the provider call has no timeout of its own, a hung provider holds the connection, the loop slot, and the request itself for the full 3 seconds before the outer deadline fires — and during those 3 seconds that pooled connection is unavailable to everyone else, so one slow dependency quietly drains the pool. Nested budgets fix both problems: give pool acquisition a few hundred milliseconds, the provider call a second or so, the write its own slice, each with margin, so the *innermost* slow thing fails first, fast, and specifically, freeing its resources back to the system while there is still time to take a fallback and answer within the outer deadline. This is why the lifecycle, pooling, and breaker units each insisted on a timeout from their own angle — they were all describing one shared budget seen from different layers. The deeper idea is that a timeout is not a safety net you set once at the top; it is a *resource-release contract* enforced at every layer, and the contract only holds if the inner deadlines are strictly smaller than the outer one. Get the nesting wrong and every other mechanism degrades: the pool can't protect itself, the breaker can't see a clean timeout to count, and shutdown can't predict how long a drain will take.
+</Inset>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+
+| Step | Layer | Unit | Guard on this step |
+|---|---|---|---|
+| Accept and parse | Lifecycle | 01 | Body-size limit, backpressure |
+| Auth, set deadline | Middleware / DI | 02 | Request timeout budget |
+| Run handler | Event loop | 03 | Never block the loop |
+| Borrow connection | Pool | 04 | Acquisition timeout |
+| Call provider | Breaker | 06 | Breaker + call timeout |
+| Persist result | Idempotency | 05 | Idempotency key |
+| Answer / unwind | Shutdown | 07 | Drain in-flight, close pool last |
+
+</div>
+
+<Quiz
+  id="cap-trace-q1"
+  lessonSlug="02-tracing-one-request"
+  lang="en"
+  question="A POST /payments request has a 3-second total budget set in middleware. The provider call is given its own 3-second timeout with no smaller inner deadlines. What goes wrong?"
+  choices={[
+    { label: "A hung provider can consume the entire 3 seconds while holding its pooled connection and loop slot, so the outer deadline fires too late to take a fallback or answer — inner timeouts must be strictly smaller than the outer budget", correct: true },
+    { label: "Nothing — one timeout on the whole request is sufficient", misconception: "A single outer timeout lets each inner layer consume the whole budget alone, making the failure later, less diagnosable, and resource-draining; budgets must be nested." },
+    { label: "The request will always finish faster with one big timeout", misconception: "It finishes slower in the bad case: the innermost slow call holds resources for the full budget instead of failing fast and freeing them." },
+    { label: "The idempotency key prevents the timeout from mattering", misconception: "Idempotency makes a retry safe but does nothing about a hung call holding the connection for the full budget; that's a timeout-nesting problem." },
+  ]}
+/>
+
+<Quiz
+  id="cap-trace-q2"
+  lessonSlug="02-tracing-one-request"
+  lang="en"
+  question="How does the request path relate to the graceful-shutdown teardown path?"
+  choices={[
+    { label: "They are the same dependency graph read in opposite directions: the request acquires resources outermost-to-innermost (parse, pool, call, write), and shutdown releases them in reverse — stop accepting, drain in-flight, close the pool last", correct: true },
+    { label: "They are unrelated; shutdown closes everything at once", misconception: "Closing everything at once breaks in-flight requests; shutdown follows reverse-dependency order, which is exactly the request path reversed." },
+    { label: "Shutdown closes the pool first, then drains requests", misconception: "Closing the pool first means an in-flight request hits a dead pool; storage closes last, after everything that uses it has drained." },
+    { label: "The request path has no defined ordering", misconception: "The ordering is forced: you parse before routing, acquire before using, wrap the breaker around its call — and shutdown reverses that same forced graph." },
+  ]}
+/>
+
+<DragOrder
+  id="cap-trace-drag1"
+  lessonSlug="02-tracing-one-request"
+  lang="en"
+  prompt="Order one POST /payments request as it descends the stack:"
+  items={[
+    "Accept the connection and parse the body (lifecycle), enforcing size limits",
+    "Run middleware: auth, then set the request's total timeout budget; DI supplies dependencies",
+    "Acquire a pooled connection with an acquisition timeout inside the budget",
+    "Call the provider through a circuit breaker, then persist the result under an idempotency key",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Following one request — POST /payments, charge a card, write the result — makes the seven units appear as a single ordered code path. The lifecycle layer accepts the connection and parses the body with size limits and backpressure; middleware authenticates and sets the request's total timeout budget while DI supplies the handler's dependencies, already scoped; the handler runs on the event loop without blocking, so the loop serves thousands of other requests while this one waits; it borrows a connection from the pool with an acquisition timeout so a saturated pool fails fast; it calls the payment provider through a circuit breaker with its own call timeout, short-circuiting to a fallback if the provider is failing; it persists the result under an idempotency key so a client retry returns the original result instead of double-charging; and underneath, the graceful-shutdown handler holds the door so a SIGTERM mid-charge keeps this request alive and tears down only after it answers. The thread tying every layer together is the deadline: the timeout set in middleware must be divided down the stack so the pool-acquisition, provider-call, and write timeouts each fit inside the total budget with margin — nested, not independent, summing to less than the whole, so the innermost slow thing fails first, fast, and frees its resources while there is still time to answer. The ordering is forced (parse before route, acquire before use, breaker around its call), and graceful shutdown unwinds the same dependency graph in reverse — stop accepting, drain in-flight, close the pool last. The request path and the shutdown path are one graph read in opposite directions.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="cap-trace-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk POST /payments down the stack and name the guard at each layer.", a: "Accept and parse (lifecycle): the server reads the request off the socket and parses it, enforcing body-size limits and backpressure so a malformed or oversized body is rejected before it costs anything downstream. Middleware and DI: the request passes through logging, auth, and rate-limit, and crucially the place where the total timeout budget is set; the DI container hands the handler its dependencies, constructed and scoped to this request. Handler on the event loop (async I/O): every I/O call is awaited so the loop keeps serving thousands of other requests while this one waits. Pool: the write borrows a connection with an acquisition timeout, so a saturated pool fails fast instead of hanging. Breaker: the provider charge is wrapped in a circuit breaker and its own call timeout, short-circuiting to a fallback if the provider is failing. Idempotency: the result is persisted under an idempotency key, so a retried POST returns the original result instead of charging twice. Shutdown: the response is written, and if a SIGTERM arrived mid-charge the shutdown handler kept this request alive and only tears down the pool and loop after it answers." },
+    { q: "Why must the timeout budget be nested down the stack, and how does that connect the lifecycle, pooling, and breaker units?", a: "The timeout set in middleware is the request's total budget and must be divided among everything downstream, because a single generous outer timeout gives every inner layer permission to consume the whole budget alone — making the failure later, less diagnosable, and resource-draining. If the request has 3 seconds and the provider call has no inner timeout, a hung provider holds its pooled connection, its loop slot, and the request for the full 3 seconds before the outer deadline fires, and during that time the connection is unavailable to everyone else, so one slow dependency quietly drains the pool. Nested budgets — a few hundred milliseconds for acquisition, about a second for the provider call, a slice for the write, each with margin — make the innermost slow thing fail first, fast, and specifically, freeing its resources while there is still time to take a fallback and answer within the outer deadline. This is why the lifecycle (tail latency), pooling (acquisition timeout), and breaker (call timeout) units each insisted on a timeout from their own angle: they were describing one shared budget seen from different layers, and a timeout is really a resource-release contract that only holds if inner deadlines are strictly smaller than the outer one." },
+  ]}
+/>
+
+<Recap lang="en">
+To see the system instead of the stack, you follow one request — POST /payments — from socket to response, and the seven units line up as one ordered path: accept and parse, middleware and DI set the deadline and wire dependencies, the handler runs async on the loop, it borrows a pooled connection, calls the provider through a breaker, writes under an idempotency key, answers, and a shutdown handler waits underneath the whole time. The deadline is the thread that stitches the layers together: the request budget set in middleware must be divided so every inner timeout — acquisition, provider call, write — fits inside it with margin, nested rather than independent, so the innermost slow thing fails first and frees its resources in time to answer. The ordering is forced, and shutdown unwinds the exact same dependency graph in reverse — stop accepting, drain in-flight, close the pool last — so the request path and the teardown path are one graph read both ways. We have now seen all seven cooperate on the happy path; the next lesson turns the pressure up and watches them fail together, where one mechanism's correct behaviour becomes the next one's bad input.
+</Recap>
