@@ -6,12 +6,177 @@ unit: 07-vectors
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Vectors"
-summary: "Coming soon — Data engineering for fullstack"
+status: ready
+title: "Vector search: the recall–latency–memory triangle behind RAG"
+summary: "Semantic search ranks embeddings by distance, but exact kNN is O(N·d) and dies at scale. ANN indexes like HNSW buy speed by trading recall — and the wrong ef param drops recall silently while every query still returns ten rows."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["embeddings", "approximate-nearest-neighbor", "hnsw", "ivf-pq", "recall-latency-tradeoff", "hybrid-search"]
+estMin: 17
+sources:
+  - https://github.com/pgvector/pgvector
+  - https://www.crunchydata.com/blog/hnsw-indexes-with-postgres-and-pgvector
+  - https://dev.to/franckpachot/no-pre-filtering-in-pgvector-means-reduced-ann-recall-1aa1
+  - https://weaviate.io/blog/hybrid-search-explained
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The RAG demo nailed every question. In prod, support says the bot "can't find" docs it obviously has. Nothing errors — every query returns its ten chunks, ranked, fast. The catch: the team shipped an HNSW index but never raised `hnsw.ef_search` off the default of 40, and then bolted on a `WHERE tenant_id = ?` filter. Recall had quietly fallen to ~30%. The system was confidently returning the wrong ten rows, and no log, no metric, no exception ever said so.
+</Hook>
+
+<Crux>ANN search trades recall for speed silently — wrong ef params still return ten ranked rows, just the wrong ten.</Crux>
+
+<Explanation>
+
+## Embeddings are points; search is distance
+
+An embedding model turns text (or an image) into a fixed-length vector — 768 dims for many open models, 1536 for OpenAI's `text-embedding-3-small`, 3072 for the large one. Semantically similar inputs land near each other in that space, so "find relevant docs" becomes "find the nearest vectors to the query vector." Nearness is a metric: cosine similarity (angle), dot/inner product, or L2 (Euclidean) distance. For normalized embeddings cosine and dot rank identically, which is why people use inner product as the cheaper equivalent.
+
+The naive answer is exact k-nearest-neighbor: compare the query to every stored vector and keep the top k. That is O(N·d) per query — at 10M vectors × 1536 dims that is ~15 billion multiply-adds for a single search. Fine for 50k rows, fatal for 50M. This is why a brute-force `ORDER BY embedding <-> $1 LIMIT 10` with no index is correct but unshippable past a few hundred thousand rows.
+
+## ANN: trade recall for speed
+
+Approximate nearest neighbor (ANN) indexes give up the guarantee of finding the *true* top-k in exchange for sub-linear search. The quality metric is **recall@k**: of the true top-10, how many did the index actually return? Recall 1.0 means perfect; 0.9 means one of every ten "best" results is missing. The senior insight is that recall is a *tuning dial*, not a fixed property — and crucially, **a query at recall 0.3 looks identical to a query at recall 1.0**: same row count, same latency profile, same lack of errors. You only catch it by measuring recall against an exact baseline.
+
+The dominant index is **HNSW** (Hierarchical Navigable Small World). It builds a layered graph: sparse long-range links at the top for fast jumps across the space, dense short links at the bottom for precision. A query enters at the top, greedily walks toward the query vector, and descends. Three knobs govern the triangle:
+
+- **`M`** — links per node (pgvector default 16). Higher M → better recall and a bigger, denser graph. The HNSW graph itself runs **2–5× the size of the raw vectors** in RAM, and M is the main lever on that.
+- **`ef_construction`** — candidate pool size while building (default 64). Higher → better graph quality and recall, but build time scales roughly linearly; 400 vs 200 is about 2× slower to build.
+- **`ef_search`** — candidate pool size at query time (default **40** in pgvector). This is the runtime recall/latency dial. Raising it from 100 to 500 might move recall from ~85% to ~98% at the cost of going from ~1ms to ~5ms per query.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Index</th>
+        <th class="border border-border px-3 py-2 text-left">Memory</th>
+        <th class="border border-border px-3 py-2 text-left">Recall</th>
+        <th class="border border-border px-3 py-2 text-left">Build / writes</th>
+        <th class="border border-border px-3 py-2 text-left">Pick when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>HNSW</code></td>
+        <td class="border border-border px-3 py-2">High (2–5× raw vectors)</td>
+        <td class="border border-border px-3 py-2">Highest, easiest to hit</td>
+        <td class="border border-border px-3 py-2">Slow build, cheap incremental inserts</td>
+        <td class="border border-border px-3 py-2">Default for RAG; data changes; recall matters</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>IVFFlat</code></td>
+        <td class="border border-border px-3 py-2">~1× raw vectors</td>
+        <td class="border border-border px-3 py-2">Good, drifts as data changes</td>
+        <td class="border border-border px-3 py-2">Fast build, needs data present first</td>
+        <td class="border border-border px-3 py-2">Big static-ish set, RAM tight</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>IVF-PQ</code></td>
+        <td class="border border-border px-3 py-2">Lowest (compress ~7×)</td>
+        <td class="border border-border px-3 py-2">Lower (~70%), recoverable</td>
+        <td class="border border-border px-3 py-2">Build + train codebook</td>
+        <td class="border border-border px-3 py-2">100M+ vectors won't fit in RAM</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## IVF and IVF-PQ: cluster, then quantize
+
+The other family is **IVF** (inverted file). It k-means-clusters all vectors into `lists` buckets; a query only scans the `probes` nearest buckets instead of everything. In pgvector that is `ivfflat` with `lists` at build time and `ivfflat.probes` at query time (default **1** — far too low for good recall). IVF's memory is close to 1× the raw vectors, but it has a sharp edge: the clusters are fixed at build, so as you insert new data the centroids go stale and recall **drifts** until you reindex. HNSW has no such drift — graph inserts are constant-cost and keep quality.
+
+**IVF-PQ** adds product quantization: split each vector into sub-vectors and replace each with the id of its nearest centroid from a small codebook, compressing a 1536-dim float32 vector (6 KB) down to a few dozen bytes. NVIDIA showed 360 GiB of FP32 vectors compressed to 54 GiB while holding >95% recall on a billion vectors. The cost is recall loss from quantization error — IVF-PQ alone often lands near **70% of HNSW's recall** and needs a rerank step (re-score the top candidates with full-precision distances) to recover. PQ is the tool when 100M+ vectors simply will not fit in RAM, not a default.
+
+<Inset kind="why" lang="en">
+The "curse of dimensionality" is why this is hard at all. In 1536 dimensions almost every pair of random points is roughly equidistant — distances concentrate, so the *contrast* between the nearest neighbor and the 100th gets thin. That is exactly what makes recall fragile: a slightly-too-greedy graph walk or a too-coarse quantizer can't tell the real neighbor from a near-miss, and approximate methods give up the guarantee precisely because exact separation costs O(N·d).
+</Inset>
+
+## Filtering and hybrid search: where prod breaks
+
+Two production traps. First, **metadata filtering interacts badly with ANN**. pgvector does post-filtering: it walks the HNSW graph for `ef_search` candidates, *then* applies your `WHERE tenant_id = ?`. If the filter keeps 1% of rows and `ef_search` is 40, you might end up with almost nothing — the graph navigated a tiny, near-disconnected subgraph and recall collapses. pgvector 0.8.0 added `hnsw.iterative_scan` (`strict_order` / `relaxed_order`) to keep pulling candidates until the filter is satisfied, which trades latency back for the recall you lost.
+
+Second, **pure vector search misses exact matches**. A query for an error code, a SKU, or a function name is a lexical need, and embeddings smear it into "semantically near" — so `panic: nil pointer` can rank below a vaguely-related paragraph. The fix is **hybrid search**: run BM25 (keyword) and vector in parallel and fuse with Reciprocal Rank Fusion (`RRF = Σ 1/(k + rank)`, k≈60), which combines by rank position so the two incompatible score scales never have to be compared. Teams report jumping from ~65–78% to ~91% recall@10 by adding the keyword leg.
+
+<TradeoffMatrix
+  id="07-vectors-overview-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A RAG service over ~5M chunks gets continuous ingestion, needs high recall, and has RAM to spare. Pick the index strategy."
+  options={[
+    { name: "HNSW with tuned ef_search, measured against an exact baseline", summary: "Graph index, dial recall.", correct: true, justification: "HNSW is the right default here: it delivers the highest recall with the least tuning, and its inserts are constant-cost so continuous ingestion doesn't degrade the graph the way IVF clusters drift. With RAM to spare you can afford the 2–5× graph overhead, and raising hnsw.ef_search off the default of 40 lets you trade latency for recall on demand. The non-negotiable is measuring recall@10 against an exact ORDER BY scan so a silent drop is visible." },
+    { name: "IVFFlat with a large lists value, built once", summary: "Cluster buckets.", justification: "IVFFlat fits ~1× the raw vectors, which is attractive, but the prompt says continuous ingestion: IVF centroids are fixed at build time, so new data steadily pulls recall off until you reindex. It also needs representative data present before building. With RAM available and high recall required, you're choosing the index that drifts and underperforms HNSW for no memory win you need." },
+    { name: "IVF-PQ to compress vectors as small as possible", summary: "Quantize hard.", justification: "PQ is for when vectors won't fit in RAM at all (100M+). Here the set is ~5M and RAM is available, so paying PQ's quantization recall loss — often landing near 70% of HNSW's recall and needing a rerank pass — buys compression you don't need while hurting the recall you explicitly require." },
+    { name: "Brute-force exact kNN, no index", summary: "Scan everything.", justification: "Exact kNN gives recall 1.0 but is O(N·d): at 5M chunks × 1536 dims every query is billions of multiply-adds, so p99 latency is unshippable. Exact scan is the right tool only as the offline baseline you measure ANN recall against, not the serving path." },
+  ]}
+/>
+
+<Quiz
+  id="07-vectors-overview-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your HNSW-backed search returns ten ranked rows in 2ms, no errors — but answers are subtly wrong. What's the first thing to check?"
+  choices={[
+    { label: "Recall@k against an exact ORDER BY baseline — low ef_search returns the wrong ten rows silently", correct: true },
+    { label: "The database is down", misconception: "It returns ten rows in 2ms with no errors — the DB is fine. The failure of ANN is invisible: low recall looks exactly like high recall in row count and latency." },
+    { label: "The embedding model's API latency", misconception: "Latency is 2ms and queries succeed; the symptom is wrong results, not slow ones. That points at recall, not the embedding call." },
+    { label: "Add more replicas to scale throughput", misconception: "Throughput isn't the issue — correctness is. Scaling out replicates the same low-recall index, multiplying the wrong answers." },
+  ]}
+/>
+
+<Quiz
+  id="07-vectors-overview-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Users search for the exact error string 'ECONNREFUSED' and pure vector search buries the matching doc. Best fix?"
+  choices={[
+    { label: "Hybrid search: run BM25 keyword + vector in parallel and fuse with Reciprocal Rank Fusion", correct: true },
+    { label: "Increase ef_search to 1000", misconception: "Raising ef_search improves vector recall but the problem is lexical — embeddings smear exact tokens like an error code into 'semantically near', so more candidates of the wrong kind won't surface the literal match." },
+    { label: "Re-embed everything with a bigger model", misconception: "A larger embedding model still measures semantic similarity; it does not give exact-token precision. SKUs, error codes, and identifiers are a keyword need that BM25 handles." },
+    { label: "Switch the distance metric from cosine to L2", misconception: "Metric choice changes ranking slightly but not the fundamental gap: vector search lacks exact-match precision regardless of metric. Hybrid adds the keyword leg that does." },
+  ]}
+/>
+
+<DragOrder
+  id="07-vectors-overview-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order how an HNSW query finds nearest neighbors and how you'd tune it:"
+  items={[
+    { id: "a", label: "Embed the query into the same vector space as the stored documents" },
+    { id: "b", label: "Enter the HNSW graph at the top, sparse layer for fast long-range jumps" },
+    { id: "c", label: "Greedily walk toward the query vector, descending into denser layers" },
+    { id: "d", label: "Collect ef_search candidates at the bottom layer and return the top k by distance" },
+    { id: "e", label: "Measure recall@k vs an exact baseline; raise ef_search if recall is too low" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>ANN trades recall for speed, and low recall is invisible — same row count, same latency. Tune ef_search and measure recall@k vs exact. HNSW for changing data, IVF-PQ when it won't fit RAM, hybrid for exact matches.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-vectors-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is a low-recall ANN index so dangerous in production, and how do you actually detect it?", a: "Because the failure is completely silent. A query running at recall 0.3 returns the same ten ranked rows, in the same few milliseconds, with no error, no warning, and no anomalous metric — it just returns the wrong ten. Classic correctness failures throw exceptions or spike latency; this one looks identical to a healthy query, so it sails through staging and only shows up as vague 'the bot can't find things' reports weeks later. The trigger is usually a too-low hnsw.ef_search (pgvector's default is 40), often made worse by a selective WHERE filter that post-filtering shreds. You detect it by measuring recall@k directly: take a sample of queries, run them with an exact ORDER BY embedding <-> $1 LIMIT k scan (no index) to get ground truth, run the same queries through the ANN index, and compute the overlap. That recall number — not latency, not row count — is the metric you alert on. Without that baseline you are flying blind." },
+    { q: "When would you reach for IVF-PQ over HNSW, and what's the cost you accept?", a: "You reach for IVF-PQ when the corpus simply will not fit in RAM as full-precision vectors — think 100M to 1B+ vectors. HNSW's graph runs 2–5× the size of the raw vectors, so a billion 1536-dim float32 vectors (already ~6 KB each, terabytes raw) is hopeless to keep resident. Product quantization splits each vector into sub-vectors and replaces each with a centroid id from a small codebook, compressing dramatically — NVIDIA reported 360 GiB down to 54 GiB on a billion vectors. The cost you accept is recall: quantization throws away precision, so IVF-PQ alone often lands near 70% of HNSW's recall. You buy most of it back with a rerank step — retrieve a larger candidate set with the compressed index, then re-score those candidates with full-precision distances — and by raising probes to scan more clusters, at the price of latency. So IVF-PQ is a memory-driven choice: you trade recall and add a rerank stage to make terabyte-scale search affordable, not a default for everyday RAG." },
+  ]}
+/>
+
+<Recap lang="en">
+Vector search turns "find relevant content" into "find the nearest embeddings," ranked by cosine, dot, or L2 distance. Exact kNN is correct but O(N·d), so past a few hundred thousand rows you switch to approximate nearest neighbor and accept a recall-for-speed trade. HNSW is the default: a layered graph tuned by M and ef_construction at build and ef_search at query time, costing 2–5× the raw vectors in RAM but delivering the highest recall with the least drift as data changes. IVF clusters and IVF-PQ compresses — the latter is for corpora too big for RAM, paying recall (≈70% of HNSW) you recover with reranking. The senior discipline is the triangle of recall, latency, and memory, and one habit above all: recall drops are silent — identical row counts and latency — so you measure recall@k against an exact baseline, raise ef_search deliberately, watch out for selective metadata filters that post-filtering destroys (use iterative scan), and add hybrid BM25 + vector with rank fusion whenever exact matches matter.
+</Recap>
