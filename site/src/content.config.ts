@@ -140,4 +140,25 @@ const practice = defineCollection({
 
 export type PracticeTaskData = z.infer<typeof PracticeTask>;
 
-export const collections = { tracks, units, lessons, practice };
+// ── Projects ────────────────────────────────────────────────────────────────
+const ProjectSchema = z.object({
+  slug: z.string().regex(/^[a-z0-9-]+$/),
+  title: BiText,
+  pitch: BiText,
+  deliverable: BiText,
+  tracks: z.array(Track).min(1),
+  difficulty: z.enum(["starter", "intermediate", "advanced"]),
+  estDays: z.number().int().positive(),
+  skills: z.array(z.string()).min(1),
+  milestones: z.array(BiText).min(2),
+  seniorStretch: z.array(BiText).min(1),
+});
+
+const projects = defineCollection({
+  loader: glob({ pattern: "**/*.json", base: "./src/content/projects" }),
+  schema: ProjectSchema,
+});
+
+export type ProjectData = z.infer<typeof ProjectSchema>;
+
+export const collections = { tracks, units, lessons, practice, projects };
