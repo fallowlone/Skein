@@ -6,12 +6,170 @@ unit: 04-materialized-views
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Materialized views"
-summary: "Coming soon — Data engineering for fullstack"
+status: ready
+title: "Materialized views: trading staleness and storage for read latency"
+summary: "A materialized view stores the result of an expensive query instead of recomputing it each read. The real decision is refresh: full recompute locks readers, incremental needs an extension, and a stale refresh silently serves wrong aggregates."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["materialized-view", "refresh-strategy", "incremental-view-maintenance", "staleness-window", "refresh-concurrently", "streaming-materialized-view"]
+estMin: 16
+sources:
+  - https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html
+  - https://github.com/sraoss/pg_ivm
+  - https://clickhouse.com/docs/materialized-view/incremental-materialized-view
+  - https://materialize.com/blog/self-correcting-materialized-views/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The revenue dashboard times out. A 14-second aggregate over a 400M-row fact table runs on every page load, and the board meeting is in an hour. Someone wraps it in a materialized view: load drops to 40ms, everyone cheers. Three weeks later finance escalates — the dashboard has been showing yesterday's numbers all morning. The nightly `REFRESH MATERIALIZED VIEW` cron silently failed on a lock timeout six days ago, and nothing alerted. The view was never stale because it was correct; it was stale because nobody owned the refresh.
+</Hook>
+
+<Crux>A materialized view stores a query's result so reads are fast; the cost you actually manage is refresh and the staleness it leaks.</Crux>
+
+<Explanation>
+
+## Plain view vs materialized view
+
+A plain view is a saved query — a name for a `SELECT`. Every read re-executes the full statement against live base tables, so it is always fresh and stores nothing. A materialized view executes the query once, writes the result rows to disk as a real relation, and serves reads from that stored copy. Reads become a cheap table scan or index lookup instead of a 14-second join-and-aggregate. That is the entire value proposition: you pay storage and compute *up front, once* so that *many* reads are cheap.
+
+The tradeoff is correctness. A plain view can never be stale. A materialized view is stale the instant a base row changes after the last refresh, and stays wrong until you refresh again. So the question stops being "view or materialized view" and becomes the only question that matters: **how, and how often, do you refresh — and what staleness window can the consumer tolerate?**
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Property</th>
+        <th class="border border-border px-3 py-2 text-left">Plain view</th>
+        <th class="border border-border px-3 py-2 text-left">Materialized view</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Read cost</td>
+        <td class="border border-border px-3 py-2">Full query every read</td>
+        <td class="border border-border px-3 py-2">Scan/lookup on stored rows</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Freshness</td>
+        <td class="border border-border px-3 py-2">Always current</td>
+        <td class="border border-border px-3 py-2">As of last refresh — can be stale</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Storage</td>
+        <td class="border border-border px-3 py-2">None</td>
+        <td class="border border-border px-3 py-2">Full result set on disk</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Write impact</td>
+        <td class="border border-border px-3 py-2">None</td>
+        <td class="border border-border px-3 py-2">Refresh cost (full) or per-write delta (incremental)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Full refresh: simple, correct, and a lock you will feel
+
+The default in Postgres is `REFRESH MATERIALIZED VIEW mv`. It re-runs the defining query from scratch, recomputing every row. It is dead simple and always converges to the right answer — and it takes an `ACCESS EXCLUSIVE` lock for the whole duration. While that lock is held, every read of the view *blocks*. Refresh a heavy aggregate that takes 90 seconds and you have just made the dashboard unavailable for 90 seconds, exactly when someone is loading it.
+
+The escape hatch is `REFRESH MATERIALIZED VIEW CONCURRENTLY`. It builds the new result in the background and swaps it in with row-level diffs, so readers keep seeing the *old* version until the swap completes — no read-blocking lock. But it has hard requirements and costs a senior must know: it needs at least one `UNIQUE` index on the view (column names only, no expressions, no `WHERE`), it is generally **slower** than a plain refresh because it computes the delta against the existing rows, and only one refresh can run against a given view at a time. It also still waits for in-flight transactions to drain before it starts, so a long-running reporting query can stall the refresh indefinitely.
+
+<Inset kind="why" lang="en">
+`CONCURRENTLY` "doesn't block reads" is true but easy to over-trust. It blocks *itself* — a second refresh queues behind the first — and it waits on old transactions to finish before starting. Under a steady stream of long analytical queries, the refresh can sit waiting so long that you accumulate a backlog of refreshes that never catch up: a refresh that, in effect, never finishes.
+</Inset>
+
+## Incremental refresh: pay per write, not per read
+
+Full refresh recomputes everything even if one row changed. Incremental view maintenance (IVM) instead computes only the *delta* — the rows affected by recent writes — and applies it to the stored view. The cost moves from "expensive periodic recompute" to "small cost on every write to a base table."
+
+Vanilla Postgres has **no native incremental refresh** — this surprises people every time. The extension `pg_ivm` fills the gap: `create_immv()` populates a real table and installs `AFTER` triggers on every base table in the query. From then on, each `INSERT/UPDATE/DELETE` fires a trigger that computes and applies the delta *inside the same transaction*. The win is near-zero staleness on the views you choose. The cost is exactly inverted from full refresh: every base-table write is now slightly slower, the maintenance holds locks that throttle write throughput, and there are SQL restrictions on what the view can contain. The rule of thumb from the project itself: IVM pays off when the base table is read-heavy and modified infrequently; under a high write rate the per-write overhead dominates and you are better off with a scheduled full refresh.
+
+<TradeoffMatrix
+  id="04-materialized-views-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A Postgres dashboard MV aggregates a fact table that ingests ~5,000 inserts/sec all day; analysts read it constantly and tolerate ~5 minutes of staleness. Pick the refresh strategy."
+  options={[
+    { name: "Scheduled REFRESH ... CONCURRENTLY every few minutes, with a unique index on the view", summary: "Periodic non-blocking recompute.", correct: true, justification: "Matches the constraints: a 5-minute staleness budget means you do not need per-write freshness, and CONCURRENTLY keeps readers on the previous version during the rebuild instead of blocking them. The unique index is the price of admission. You also avoid taxing the 5,000 inserts/sec write path, which is the dominant cost here. Add monitoring + alerting on the refresh job so a silent failure does not serve stale data unnoticed." },
+    { name: "pg_ivm incremental maintenance so the view is always fresh", summary: "Per-write delta.", justification: "Right shape for low-write, read-heavy tables, but exactly wrong here: 5,000 inserts/sec means every one of those writes pays trigger + delta-maintenance overhead and contends on view locks, throttling ingest. The workload tolerates 5 minutes of staleness, so paying for zero staleness is buying correctness nobody asked for at a throughput cost everybody feels." },
+    { name: "Plain REFRESH MATERIALIZED VIEW (non-concurrent) on a cron", summary: "Recompute with a lock.", justification: "Simple and correct, but the non-concurrent refresh takes an ACCESS EXCLUSIVE lock, so every analyst read blocks for the full duration of the recompute. On a heavy aggregate that is a recurring multi-second outage on the dashboard, precisely when people are reading it. CONCURRENTLY removes the read-blocking for the cost of a unique index." },
+    { name: "Drop the MV and use a plain view so it is always fresh", summary: "Re-run every read.", justification: "Freshness is free but you reintroduce the original problem: the expensive aggregate runs on every page load against a 400M-row table. The MV existed precisely to avoid that. The constraint is read latency, not freshness — a plain view optimizes the dimension you do not care about." },
+  ]}
+/>
+
+## Streaming materialized views: maintained, not refreshed
+
+Outside Postgres, a different model removes the refresh decision entirely: the view is maintained continuously as data arrives. ClickHouse's incremental MV behaves like an `AFTER INSERT` trigger on the left-most source table — each inserted *block* of rows is transformed and written to the target table at insert time, reading only the new rows from RAM, never the disk. The catch a senior must internalize: it only ever sees the block being inserted. It does **not** process data that existed before the view was created (you need `POPULATE` for that), and aggregation only groups rows *within the same insert block* — split a group across two blocks and they are not merged unless your target engine (e.g. `AggregatingMergeTree`) reconciles them at merge time.
+
+Purpose-built streaming databases push this further. Materialize compiles SQL into a *differential dataflow* (from Microsoft Research's Naiad) that operates on changes as `(data, time, diff)` tuples and does work proportional to the size of the change, not the size of the dataset — maintaining complex joins and aggregations at millisecond latency with strict serializability. The conceptual shift: there is no "refresh" job to schedule, monitor, or have fail silently. The view is always consistent with its inputs by construction. You trade the operational burden of refresh for a different system to run and a different consistency model to reason about — eventually-consistent reads in some setups can surprise users who expect read-your-writes.
+
+<Quiz
+  id="04-materialized-views-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does plain REFRESH MATERIALIZED VIEW (without CONCURRENTLY) make a dashboard unavailable during refresh?"
+  choices={[
+    { label: "It takes an ACCESS EXCLUSIVE lock for the whole refresh, so reads of the view block until it completes", correct: true },
+    { label: "It deletes the view's rows first, so reads return empty until repopulated", misconception: "It is a lock, not an emptiness window; readers block rather than seeing partial data. CONCURRENTLY is what keeps the old version readable during the rebuild." },
+    { label: "Refresh always fails on a busy table and the dashboard shows the error", misconception: "Refresh does not fail just because the table is busy; the read-availability problem is the lock it holds, not an error." },
+    { label: "Materialized views are recomputed on every read, like plain views", misconception: "That describes a plain view. A materialized view serves stored rows; the cost shows up at refresh time, not read time." },
+  ]}
+/>
+
+<Quiz
+  id="04-materialized-views-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="When is pg_ivm (incremental maintenance) the wrong choice?"
+  choices={[
+    { label: "When the base tables take a very high write rate — per-write trigger and lock overhead throttles throughput", correct: true },
+    { label: "When the view is read often", misconception: "Read-heavy is exactly where IVM shines: reads stay cheap and the view is kept fresh. The cost is on the write side, not the read side." },
+    { label: "When you can tolerate zero staleness", misconception: "Zero staleness is what IVM gives you; that is its selling point, not a reason to avoid it." },
+    { label: "When the base table is modified infrequently", misconception: "Infrequent modification is the ideal case — little maintenance overhead while keeping the view fresh. High write frequency is the problem, not low." },
+  ]}
+/>
+
+<DragOrder
+  id="04-materialized-views-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the decisions a senior makes when reaching for a materialized view:"
+  items={[
+    { id: "a", label: "Confirm the read is genuinely expensive and repeated — otherwise a plain view or index is enough" },
+    { id: "b", label: "Decide the staleness window the consumer can actually tolerate (seconds? minutes? a day?)" },
+    { id: "c", label: "Pick refresh: tolerant of minutes → scheduled REFRESH CONCURRENTLY; needs fresh-now + low writes → incremental (pg_ivm)" },
+    { id: "d", label: "If CONCURRENTLY, add the required UNIQUE index on the view" },
+    { id: "e", label: "Add monitoring + alerting on the refresh job so a silent failure cannot serve stale data unnoticed" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Materialize only when reads are expensive and repeated, then own the refresh: full recompute locks readers (use CONCURRENTLY), incremental taxes every write, and an unmonitored refresh serves stale data silently.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-materialized-views-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate proposes a materialized view to speed up a slow report and plans to REFRESH it nightly. What three risks do you raise before approving?", a: "First, staleness: a nightly refresh means the report is up to 24 hours behind, so confirm the consumer can tolerate that window — a finance or compliance dashboard often cannot. Second, the lock: a plain REFRESH MATERIALIZED VIEW takes an ACCESS EXCLUSIVE lock for its whole duration, blocking every read of the view; if the refresh runs while anyone is reading, the report goes unavailable. Switch to REFRESH ... CONCURRENTLY, which keeps the old version readable during the rebuild, and add the UNIQUE index it requires. Third, and the one that bites hardest in production: ownership and monitoring. A refresh job that fails silently — a lock timeout, an OOM, a deploy that dropped the cron — leaves the view frozen at its last good state while reads keep succeeding, so nothing looks broken. The data is wrong but the system is green. You need alerting on refresh success/duration and a visible last-refreshed timestamp so stale data is detectable, not discovered weeks later by an angry stakeholder." },
+    { q: "Explain the difference between full refresh, incremental maintenance (pg_ivm), and a streaming materialized view, and what each one optimizes for.", a: "Full refresh recomputes the entire result from the base tables on a schedule; it is simple and always correct but pays the full query cost each time and (non-concurrently) locks readers — it optimizes for simplicity and tolerates a staleness window equal to the refresh interval. Incremental maintenance, via pg_ivm in Postgres, installs triggers on the base tables and applies only the delta from each write inside the same transaction, giving near-zero staleness; it optimizes for freshness on read-heavy, low-write tables, and its cost is paid on every write plus SQL restrictions — under a high write rate that per-write overhead dominates. Streaming materialized views (ClickHouse MV-on-insert, Materialize's differential dataflow) maintain the view continuously as data arrives, doing work proportional to the change, not the dataset; they optimize for real-time correctness with no refresh job to schedule or fail, at the cost of running a different system and reasoning about its consistency model. ClickHouse specifically only sees the inserted block — it ignores pre-existing data without POPULATE and only aggregates within a block." },
+  ]}
+/>
+
+<Recap lang="en">
+A materialized view stores the result of an expensive query so that many reads become cheap scans instead of repeated recomputation — you pay storage and compute once, up front, to amortize read latency. Unlike a plain view, which re-runs on every read and is therefore always fresh, a materialized view is stale the moment a base row changes, so the only decision that matters is refresh. Full refresh is simple and correct but takes an ACCESS EXCLUSIVE lock that blocks reads; REFRESH ... CONCURRENTLY avoids the read-block at the cost of a required unique index, being slower, and waiting on old transactions. Postgres has no native incremental refresh, so pg_ivm uses triggers to apply per-write deltas — great for read-heavy, low-write tables, ruinous under high write rates. Streaming materialized views (ClickHouse on-insert, Materialize's differential dataflow) sidestep the refresh decision by maintaining the view continuously, trading the refresh job for a new system and consistency model. The failure mode that recurs across all of them: an unmonitored refresh that fails silently serves stale data while everything looks green, so own the refresh, bound the staleness window, and alert on it.
+</Recap>
