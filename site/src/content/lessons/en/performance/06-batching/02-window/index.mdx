@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 2
 title: "The batching window: size and wait time"
-summary: "Every batching system has two knobs: max-size (bytes or records) and max-wait (time). Whichever triggers first sends the batch."
+summary: "Every batching system has two knobs: max-size (bytes or records) and max-wait (time). Whichever fires first sends the batch — and which one fires tells you whether you're throughput-bound or latency-bound."
 estMin: 10
-status: stub
+status: ready
 lessonType: topic
 level: middle
 prereqs: ["performance/06-batching/01-basics"]
@@ -24,25 +24,155 @@ sources:
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-You've tuned your Kafka producer's linger.ms from 0 to 10ms and throughput jumped 10x. But why does adding a tiny delay boost throughput so much? The answer lies in the two-dimensional window that controls batching.
+You bump your Kafka producer's `linger.ms` from 0 to 10 and throughput jumps 10x for the cost of 10ms of added latency. Apache made the same call for everyone: in Kafka 4.0 (March 2025) the default `linger.ms` changed from 0 to 5ms after years at zero. The team's reasoning was blunt — chasing immediacy at the sender does not give you global low latency. A tiny artificial delay buys batching efficiency that often *lowers* end-to-end latency. To know why a 5ms delay can make a system faster, you have to understand the two-dimensional window underneath.
 </Hook>
 
-<Crux>Batch size and max wait time — whichever hits first sends the batch. Larger windows buy throughput at the cost of tail-latency.</Crux>
+<Crux>Two triggers — max-size and max-wait — whichever fires first sends the batch. Which one fires shows if you're throughput- or latency-bound.</Crux>
 
 <Explanation>
-Every batching system has two knobs: max-size (bytes or records) and max-wait (time). Whichever triggers first — the batch fills up or the timer expires — sends the batch.
 
-Without max-size, a slow producer holds the batch until the timer expires, wasting throughput. Without max-wait, a fast producer builds huge batches that may exceed downstream capacity.
+## Two triggers, not one knob
 
-Math: Let fixed cost F (per-call overhead) and variable cost V*n (payload size). Time for N separate operations: N*(F + V*n). Time for one batched N: F + V*(N*n). Speedup: (N*F + N*V*n) / (F + V*N*n). When F dominates (small payloads), speedup → N. When V dominates (large payloads), speedup → 1. Break-even ≈ F = V*n. For ~1KB packets and ~50µs RTT, a 100-item batch reduces wall time from ~5ms to ~150µs — a 33x gain.
+Every batching system you will ever tune has exactly two limits: a **max-size** (bytes, or record count) and a **max-wait** (a timer). Items accumulate in a buffer. The batch flushes the instant *either* limit is hit — the buffer fills to max-size, or the timer reaches max-wait. They are an OR, not an AND. In Kafka these are `batch.size` and `linger.ms`; in Redis pipelining they are your client buffer and how long you let it fill; in a database bulk insert they are rows-per-statement and a flush interval. Same shape everywhere.
 
-Defaults: 10-100ms wait, 64KB-1MB size, tuned by replaying production traffic in staging.
+The naive instinct is to ship one knob — "just set a batch size" — and senior engineers have all watched that instinct page someone at 3am. You need both, and the reason is that each one alone has a failure mode the other covers.
+
+## Why size alone stalls, and time alone overflows
+
+Drop max-wait and keep only max-size: now a **slow producer holds the batch hostage**. Traffic dips at 2am, items trickle in, and the batch never reaches `batch.size`, so it never flushes. The first message of a half-full batch can sit for seconds — unbounded latency that scales inversely with load. This is the classic head-of-line stall: the cure for it is a timer that says "ship what you have."
+
+Drop max-size and keep only max-wait: now a **fast producer builds a monster**. Black Friday hits, items flood in, and in your 50ms window the buffer swells to something downstream cannot swallow — a request larger than the broker's `message.max.bytes`, a packet that fragments, a transaction that blows the WAL, an array that OOMs the consumer. The cure is a size cap that says "ship before you get too big." You need both because they fail in opposite directions: size protects throughput, time protects latency, and removing either re-introduces the bug the other was there to prevent.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Load regime</th>
+        <th class="border border-border px-3 py-2 text-left">Trigger that fires first</th>
+        <th class="border border-border px-3 py-2 text-left">What it means</th>
+        <th class="border border-border px-3 py-2 text-left">Tuning lever</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">High load</td>
+        <td class="border border-border px-3 py-2"><strong>max-size</strong> (buffer fills first)</td>
+        <td class="border border-border px-3 py-2">Throughput-bound; the timer never gets to run</td>
+        <td class="border border-border px-3 py-2">Raise <code>batch.size</code> for fewer, fatter flushes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Low load</td>
+        <td class="border border-border px-3 py-2"><strong>max-wait</strong> (timer fires first)</td>
+        <td class="border border-border px-3 py-2">Latency-bound; batches are small, timer dominates</td>
+        <td class="border border-border px-3 py-2">Tune <code>linger.ms</code> against your latency SLO</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Right at break-even</td>
+        <td class="border border-border px-3 py-2">Either, roughly together</td>
+        <td class="border border-border px-3 py-2">Window is well-matched to current traffic</td>
+        <td class="border border-border px-3 py-2">Leave it; re-check when traffic shape shifts</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The speedup math, derived
+
+Model any per-item operation as a **fixed cost** `F` (the per-call overhead — a syscall, a network round-trip, a transaction begin/commit) plus a **variable cost** `V*n` (the work proportional to payload of size `n`). Doing `N` items separately costs:
+
+`N * (F + V*n)`
+
+Doing them as one batch pays the fixed cost **once** and the same variable work:
+
+`F + V*(N*n)`
+
+Speedup is the ratio:
+
+`speedup = (N*F + N*V*n) / (F + V*N*n)`
+
+Look at the two extremes. When fixed cost dominates — `F > V*n`, i.e. small payloads where the per-call overhead is the whole story — the `N*F` term swamps everything and **speedup → N**. Batch 100 items, go ~100x faster. When variable cost dominates — `F < V*n`, large payloads where you're already paying mostly for bytes — the `V*N*n` term swamps everything and **speedup → 1**: batching buys you nothing because there was no fixed cost to amortize. The crossover, the **break-even point, is `F = V*n`**: when one item's variable cost equals the fixed overhead, batching starts to pay.
+
+## A concrete number
+
+Take a network op: 1KB packets, a 50µs round-trip per call as the fixed cost, and a 100-item batch. Sent one at a time, the round-trips alone cost `100 * 50µs = 5ms`. Batched, you pay the round-trip **once** plus the bytes — call it ~150µs total. That's `5ms` down to `150µs`, a **~33x** speedup, because here `F` (50µs RTT) hugely outweighs `V*n` (the per-KB transfer time). This is exactly the regime Redis pipelining lives in: a published benchmark sends 10,000 `PING`s in `1.185s` unpipelined and `0.250s` pipelined — ~5x — and the gap widens as RTT grows relative to per-command work. The syscall version is identical in spirit: a syscall costs ~1–5µs, so collapsing 300k syscalls into ~4k via larger buffered writes makes the per-call overhead effectively vanish.
+
+<Inset kind="why" lang="en">
+Notice the break-even is per *item*, not per batch. If a single item's payload already costs more than the fixed overhead (`V*n > F`), no batch size rescues you — you're firmly in the `speedup → 1` regime and batching only adds latency. This is why batching tiny messages (logs, metrics, key lookups) is a massive win while batching already-large blobs (video chunks, big file uploads) is mostly pointless.
+</Inset>
+
+## Load decides which trigger rules
+
+The window's behavior is not static — it shifts with traffic. At **high load** items pour in and the buffer hits max-size long before the timer; size is the dominant trigger and you're throughput-bound. At **low load** the trickle never fills the buffer, so the timer fires first; time is dominant and you're latency-bound. The practical diagnostic: watch your average batch size against the configured max-size. If batches consistently flush near max-size, size is winning — raise it. If they flush small and on the timer, time is winning — and raising `linger.ms` only helps until the batch starts filling before the timer expires anyway.
+
+Worked read of a live system: max-size `10000` bytes, max-wait `5ms`, and you observe batches averaging 8000 bytes every 4ms. The timer is firing first (`4ms < 5ms`) but the buffer isn't full (`8000 < 10000`) — moderate load, time-dominant. Bumping max-wait would grow batches and throughput, but only up to the point where the buffer fills before the timer.
+
+<DragOrder
+  id="02-window-drag-1"
+  lessonSlug="02-window"
+  lang="en"
+  prompt="Order what happens to one item as it flows through a size+time batching window:"
+  items={[
+    { id: "a", label: "Item arrives and is appended to the in-memory buffer" },
+    { id: "b", label: "System checks: did this push the buffer to max-size?" },
+    { id: "c", label: "If not full, the max-wait timer keeps running for the buffer's oldest item" },
+    { id: "d", label: "Whichever limit is reached first — full buffer OR expired timer — triggers a flush" },
+    { id: "e", label: "The whole batch ships as one operation, paying the fixed cost once" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+## Sensible defaults and how to actually tune
+
+Reasonable starting points cluster around max-wait `10–100ms` and max-size `64KB–1MB`; Kafka's high-throughput recipe is `batch.size` 64KB–256KB with `linger.ms` 20–100ms, and a balanced production config like `batch.size=32768, linger.ms=10, compression.type=lz4, acks=1` reaches ~25k msg/s with latency under 20ms. But defaults are a starting line, not an answer. The senior move is to **derive the wait from your latency SLO, not from a desire for maximum throughput**: pick the largest `linger.ms` your p99 budget tolerates, then size the buffer so it fills near that timer at your *peak* expected load. Then validate the way you can't on a whiteboard — **replay real production traffic against staging**, sweep the two knobs, and read the actual batch-size distribution and tail latency. Synthetic uniform load lies; production is bursty, and only a replay shows you which trigger dominates across your real traffic shape.
+
+<Quiz
+  id="02-window-quiz-1"
+  lessonSlug="02-window"
+  lang="en"
+  question="Your batching system uses max-size only (no timer). Traffic drops overnight. What's the failure mode?"
+  choices={[
+    { label: "The first item of a half-full batch can wait indefinitely, because the buffer never reaches max-size at low load — unbounded latency", correct: true },
+    { label: "Batches grow too large and overflow downstream capacity", misconception: "That's the failure of max-wait-only under HIGH load, not max-size-only under low load. With only a size cap, the batch can't overflow — it can only fail to flush." },
+    { label: "Throughput collapses because each item is sent separately", misconception: "Size-only batching still batches; items accumulate until the buffer fills. The problem is latency for the waiting items, not lost batching." },
+  ]}
+/>
+
+<Quiz
+  id="02-window-quiz-2"
+  lessonSlug="02-window"
+  lang="en"
+  question="For 4KB payloads where the fixed per-call cost is ~50µs and per-KB transfer is ~40µs, will a large batch give a big speedup?"
+  choices={[
+    { label: "No — variable cost (`4 * 40µs = 160µs`) already exceeds fixed cost (50µs), so `F < V*n` and speedup approaches 1", correct: true },
+    { label: "Yes — batching always multiplies throughput by the batch size N", misconception: "Speedup → N only when fixed cost dominates (`F > V*n`). Here variable cost dominates, so there's little fixed overhead left to amortize." },
+    { label: "Yes — larger payloads make batching more effective", misconception: "It's the reverse: larger payloads push you toward the `speedup → 1` regime because the fixed cost becomes a smaller fraction of total work." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="02-window-tradeoff-1"
+  lessonSlug="02-window"
+  lang="en"
+  prompt="A payment-confirmation service has a strict p99 latency SLO of 25ms but also needs high throughput at peak. How should it set the batching window?"
+  options={[
+    { name: "Pick max-wait below the SLO (e.g. linger 10ms), size the buffer to fill near that timer at peak, validate by replaying prod traffic in staging", summary: "SLO-first window.", correct: true, justification: "The wait time is a hard floor on tail latency, so it must sit safely under the 25ms p99 budget — never above it. Sizing the buffer to fill around that timer at peak load means high load is absorbed by the size trigger (throughput) while low load is bounded by the timer (latency). Replaying real bursty traffic is the only way to confirm the batch-size distribution and p99 actually land where the math predicts." },
+    { name: "Maximize throughput: set linger 100ms and a 1MB buffer", summary: "Throughput-first.", justification: "A 100ms timer alone can blow a 25ms p99 SLO at low load, when batches flush on the timer with the first item already 100ms old. Tuning for maximum throughput while ignoring the latency ceiling is exactly the mistake the SLO exists to prevent." },
+    { name: "Disable the timer; rely on max-size only so batches are always full and efficient", summary: "Size-only.", justification: "Size-only stalls under low or bursty load: when traffic dips, the buffer never fills and the oldest item waits unboundedly, violating the p99 SLO in precisely the quiet periods you'd assume were safe." },
+  ]}
+/>
+
 </Explanation>
+
+<KeyTakeaway>A window has two triggers — max-size and max-wait — whichever fires first flushes. Size protects throughput, time protects latency; you need both. Tune the wait to your latency SLO.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -50,22 +180,20 @@ Defaults: 10-100ms wait, 64KB-1MB size, tuned by replaying production traffic in
   lang="en"
   questions={[
     {
-      q: "Why do batching systems need both a size limit and a time limit?",
-      a: "The size limit prevents batches from growing too large when data arrives slowly (avoiding head-of-line blocking and unbounded latency). The time limit prevents batches from waiting too long when data arrives quickly (avoiding missed throughput opportunities). Together they adapt to varying load: size dominates at high load (batch fills before timer), time dominates at low load (timer fires before batch fills)."
+      q: "Why do batching systems need both a size limit and a time limit, and what breaks if you drop each one?",
+      a: "They cover opposite failure modes. Drop max-wait and keep only max-size: a slow or quiet producer never fills the buffer, so the batch never flushes and its oldest item waits unboundedly — latency that scales inversely with load (a head-of-line stall). Drop max-size and keep only max-wait: a fast producer floods the buffer inside the time window and builds a batch too large for downstream — bigger than the broker's max message size, or large enough to OOM the consumer or blow a transaction. Size protects throughput, time protects latency. Together they adapt to load: at high load the buffer hits max-size before the timer (size dominant, throughput-bound); at low load the timer fires before the buffer fills (time dominant, latency-bound)."
     },
     {
-      q: "What is the break-even point for batching, and how does it depend on payload size?",
-      a: "The break-even point occurs when fixed cost per operation (F) equals variable cost per item (V*n). When F > V*n (fixed cost dominates, typical for small payloads), batching helps and speedup approaches N. When F < V*n (variable cost dominates, typical for large payloads), batching helps little and speedup approaches 1. To tune batching, measure F and V*n for your specific operation."
+      q: "Derive the speedup formula and explain where it goes to N versus 1.",
+      a: "Model a per-item op as fixed cost F (per-call overhead: syscall, round-trip, transaction commit) plus variable cost V*n (work proportional to payload size n). N items done separately cost N*(F + V*n). Batched, you pay F once plus the same variable work: F + V*(N*n). Speedup is the ratio (N*F + N*V*n) / (F + V*N*n). When fixed cost dominates — `F > V*n`, typical for small payloads — the N*F term dominates and speedup approaches N (batch 100, go ~100x). When variable cost dominates — `F < V*n`, large payloads — the V*N*n term dominates and speedup approaches 1 (no fixed cost left to amortize). Break-even is per item at `F = V*n`. Concretely: 1KB packets, 50µs RTT fixed cost, 100-item batch — 100 round-trips at 50µs = 5ms, batched into one round-trip plus the bytes is ~150µs, a ~33x win."
     },
     {
-      q: "If a batching system has max-size=10000 bytes and max-wait=5ms, and you observe batches averaging 8000 bytes sent every 4ms, what does this indicate about the load?",
-      a: "The batches are hitting the time limit first (4ms < 5ms) but not filling to the size limit (8000 < 10000), indicating moderate load where the timer is the dominant trigger. Increasing max-wait would increase batch size and throughput, but only up to the point where the batch fills before the timer expires."
+      q: "max-size=10000 bytes, max-wait=5ms, observed batches average 8000 bytes every 4ms. What does that tell you, and what should you change?",
+      a: "The timer is firing first (`4ms < 5ms`) and the buffer is not full (`8000 < 10000`), so this is moderate, time-dominant load — you're latency-bound, not throughput-bound. Raising max-wait would let batches grow and lift throughput, but only up to the point where the buffer fills before the timer expires; past that, size becomes the trigger and more wait just adds latency. Before touching it, ask whether 5ms is already near your latency SLO — if so, you don't want bigger waits at all. The honest tune is to replay real production traffic in staging and watch the batch-size distribution and p99 across both knobs, because production bursts will shift which trigger dominates."
     }
   ]}
 />
 
-<KeyTakeaway>Batching windows use max-size and max-wait; whichever triggers first sends the batch. Tune to hit SLO latency ceiling, not maximum throughput.</KeyTakeaway>
-
 <Recap lang="en">
-The two-dimensional window (max-size + max-wait) is the core of batching systems. It adapts to varying load: at high load, size triggers first; at low load, time triggers first. The break-even point depends on the ratio of fixed to variable cost. Proper tuning requires measuring your operation's fixed and variable costs, then adjusting the window to meet latency SLOs while maximizing throughput.
+The two-dimensional window — max-size plus max-wait — is the core of every batching system, and the two limits are an OR: whichever fires first sends the batch. You need both because they fail in opposite directions: size-only stalls a slow producer (the batch never fills, latency goes unbounded), while time-only lets a fast producer build a batch too big for downstream. Which trigger fires also diagnoses your regime — size dominant means throughput-bound (high load), time dominant means latency-bound (low load). The speedup math is `(N*F + N*V*n) / (F + V*N*n)`: it goes to N when fixed cost dominates (`F > V*n`, small payloads) and to 1 when variable cost dominates (`F < V*n`, large payloads), with break-even per item at `F = V*n` — 1KB packets over a 50µs RTT batch ~33x. Tune by deriving max-wait from your latency SLO, sizing the buffer to fill near that timer at peak load, then validating by replaying production traffic in staging — never by chasing maximum throughput on a whiteboard.
 </Recap>
