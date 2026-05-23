@@ -57,6 +57,24 @@ describe("checkPracticeParity", () => {
       expect(await checkPracticeParity(root)).toEqual([]);
     });
   });
+  test("does not flag an identical evidence field (machine output is language-neutral)", async () => {
+    await withRoot(async (root) => {
+      const plan = "Hash Join (cost=... rows=120) (actual rows=480000 loops=1) Seq Scan on big_table";
+      const t = { ...goodTask, type: "diagnose", evidence: { en: plan, ru: plan },
+        grading: { mode: "blanks", blanks: [{ id: "b1", accept: ["x"] }] } };
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "databases", tasks: [t] });
+      const errs = await checkPracticeParity(root);
+      expect(errs.some((e) => /untranslated/.test(e))).toBe(false);
+    });
+  });
+  test("still flags whitespace-only evidence", async () => {
+    await withRoot(async (root) => {
+      const t = { ...goodTask, type: "diagnose", evidence: { en: "   ", ru: "x" } };
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "databases", tasks: [t] });
+      const errs = await checkPracticeParity(root);
+      expect(errs.some((e) => /whitespace-only/.test(e))).toBe(true);
+    });
+  });
 });
 
 describe("checkPracticeLessonKey", () => {
