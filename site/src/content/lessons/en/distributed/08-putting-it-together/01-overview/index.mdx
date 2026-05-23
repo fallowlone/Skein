@@ -6,12 +6,186 @@ unit: 08-putting-it-together
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Putting it together"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Putting it together: an order pipeline where the seams leak"
+summary: "Each distributed primitive — quorum, leader election, clocks, sagas, retries — is correct alone. The capstone is wiring them into one order/payment pipeline and seeing the bug that only appears when two correct layers compose: a compensation racing a retry into a double refund."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["idempotency-key", "saga-compensation", "retry-budget", "fencing-token", "quorum-replication", "composition-failure"]
+estMin: 17
+sources:
+  - https://microservices.io/patterns/data/saga.html
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+  - https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A customer gets refunded twice for one cancelled order. Finance flags it; the on-call engineer pulls the trace. The payment service is idempotent, the saga orchestrator is textbook correct, the retry policy has backoff and jitter — every layer passes its own unit tests. The bug lives in none of them. The orchestrator fired a `refund` compensation, the call timed out at 30s while the refund actually succeeded, the retry budget had room, so it retried — and the refund step carried no idempotency key. Two correct layers, composed, produced a wrong number on a real customer's statement.
+</Hook>
+
+<Crux>Each primitive is correct alone; the failures live in the seams where two correct layers compose without a shared idempotency key.</Crux>
+
+<Explanation>
+
+## The system: one order pipeline, six primitives
+
+Everything in this track was a primitive in isolation. The capstone is one realistic system that uses all of them at once: an order/payment pipeline spanning four services — Order, Payment, Inventory, Shipping — coordinated by a saga. Walk the request and every prior lesson reappears as a layer:
+
+- **Quorum replication** (`R + W > N`): the Order service writes to a replicated store. With `N=3, W=2, R=2`, a write that lands on 2 of 3 replicas survives one node loss and any later read overlaps it. That is what makes "order created" durable.
+- **Leader election + fencing tokens**: the saga orchestrator runs as a single leader so two coordinators don't drive the same order. When the leader pauses (GC, network partition) and a new one is elected, the old one can wake up and still act — so every downstream write carries a monotonic **fencing token**, and resources reject any token lower than the highest they've seen.
+- **Clocks / ordering**: you cannot trust wall-clock timestamps to order events across services. Logical clocks (or Spanner's TrueTime with bounded uncertainty) order the saga's steps; "Payment happened before Shipping" must be a causal fact, not a `Date.now()` comparison.
+- **Sagas + compensations**: there is no distributed ACID transaction across four services. The saga runs forward steps and, on failure, runs **compensations** — semantic reversals (refund, restock), not rollbacks.
+- **Retry discipline**: every cross-service call retries with exponential backoff plus jitter, under a retry budget, behind a circuit breaker.
+
+Each layer is correct. The interesting failures are not inside any layer — they are in how the layers compose.
+
+## Idempotency is the load-bearing primitive
+
+At-least-once delivery and retries are the default reality of distributed systems: a call that times out may have succeeded, and you cannot tell from the caller's side. The only safe response to "did it happen?" being unknowable is to make "do it again" harmless. That is idempotency, and it is what makes every other layer in the pipeline safe.
+
+The key word is **key**. Idempotency is not "the operation is naturally repeatable" — `decrement stock by 1` is not idempotent. It is "the operation carries a stable business key, and the receiver records that key so a second arrival of the *same* key is a no-op that returns the first result." The trap a senior watches for: keying on the wrong thing. Key on the HTTP request id and a retry generated by a *different* layer (the saga vs the SDK vs the client) gets a fresh id and slips through. The key must be derived from the business intent — `refund:order-8842:attempt-1` — and threaded through every layer that might retry.
+
+<Inset kind="why" lang="en">
+"At-least-once" and "exactly-once" are not two delivery modes you pick between. Exactly-once *delivery* over a network is impossible; what people call "exactly-once" is really at-least-once delivery plus idempotent processing keyed on a dedup id. The network gives you duplicates; the key gives you exactly-once *effects*. Conflating the two is how teams ship a saga believing the broker guarantees no duplicates.
+</Inset>
+
+## The composition failure: compensation races retry
+
+Here is the bug from the Hook, mechanically. The saga decides to cancel and emits the `refund` compensation:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">t</th>
+        <th class="border border-border px-3 py-2 text-left">Saga / retry layer</th>
+        <th class="border border-border px-3 py-2 text-left">Payment service</th>
+        <th class="border border-border px-3 py-2 text-left">Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">0s</td>
+        <td class="border border-border px-3 py-2">emit <code>refund</code> compensation</td>
+        <td class="border border-border px-3 py-2">receives request, starts refund</td>
+        <td class="border border-border px-3 py-2">—</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">28s</td>
+        <td class="border border-border px-3 py-2">waiting on response</td>
+        <td class="border border-border px-3 py-2">refund <strong>succeeds</strong>, response delayed</td>
+        <td class="border border-border px-3 py-2">$50 returned (1st time)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">30s</td>
+        <td class="border border-border px-3 py-2">timeout; budget OK → <strong>retry</strong></td>
+        <td class="border border-border px-3 py-2">receives 2nd request, no dedup key</td>
+        <td class="border border-border px-3 py-2">$50 returned (2nd time)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">31s</td>
+        <td class="border border-border px-3 py-2">retry returns 200</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2"><strong>double refund</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Trace each layer in isolation and it is blameless. The timeout was reasonable. The retry budget had room, so retrying was the *correct* policy decision. The compensation logic was right — a cancelled order should refund. The payment service was idempotent for the *charge* path. The defect is purely in the seam: a retry (one correct layer) re-invoked a compensation (another correct layer) across a call that lacked a shared idempotency key. Fix it by threading one key — `refund:order-8842` — from the saga through the retry layer into the payment service, where the second arrival of that key returns the first refund's result instead of issuing a new one. Nothing about the individual layers changes; the *seam* gains a shared key.
+
+## Observability is how you actually run it
+
+The pipeline does not announce its own decay. Composition failures hide because each component's own dashboard is green. You run the system on the signals that live *between* layers:
+
+- **Consumer lag** — how far behind the saga's event consumers are. Rising lag means the pipeline is falling behind producers; sagas stall mid-flight, and in-flight compensations pile up.
+- **Quorum write/read latency** — p99 of the `W=2` write. A slow third replica drags tail latency even when no node is technically "down".
+- **Leader churn** — elections per minute. Frequent re-elections mean fencing tokens are bumping constantly and you are one pause away from a split-brain write attempt.
+- **Retry-budget exhaustion** — the percentage of the budget consumed. When budget is near 100%, retries are about to be *dropped*, which surfaces as user-visible failures even though every downstream service is healthy. Budgets are typically set to allow retries to add at most ~10% on top of normal request rate, precisely so a retry storm cannot amplify a small fault into an outage.
+
+The senior instinct: alert on the *seams*, not just the nodes. A pipeline of healthy services can still be failing customers.
+
+<TradeoffMatrix
+  id="08-putting-it-together-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Your order saga's `refund` compensation can be retried by the retry layer after a timeout. Where do you put the safeguard so a double refund is impossible?"
+  options={[
+    { name: "A business-derived idempotency key (refund:order-8842) threaded saga → retry → payment, deduped at the receiver", summary: "Shared key at the seam.", correct: true, justification: "This is the only fix that survives composition. The key is stable across every layer that might retry, and the payment service records it: the second arrival of refund:order-8842 returns the first refund's result instead of issuing a new one. The seam — not any single layer — gains the guarantee, which is exactly where the bug lived. It also makes at-least-once delivery safe to lean on everywhere else." },
+    { name: "Make the timeout longer so the response always arrives before the retry fires", summary: "Tune the clock.", justification: "A bigger timeout shrinks the race window but never closes it — the response can always be one millisecond slower than your timeout, and a genuinely lost response still triggers a retry that double-refunds. Timeouts trade latency for a smaller-but-nonzero double-fire chance; they do not make the operation safe to repeat." },
+    { name: "Set the retry budget to zero for compensations so they never retry", summary: "No retries.", justification: "Now a genuinely dropped compensation (refund request lost in the network) never completes, so a cancelled order silently keeps the customer's money. You traded a double refund for a missing refund — also a wrong number on the statement, just in the other direction. Retries are needed; they just need a key." },
+    { name: "Make the payment service idempotent for charges and assume refunds inherit it", summary: "Reuse charge dedup.", justification: "Idempotency is per-operation, keyed. A dedup table for charge:order-8842 does nothing for a refund request that carries no key or a different one. 'The service is idempotent' is meaningless without naming which operation and which key — the classic trap that ships this exact bug." },
+  ]}
+/>
+
+<Quiz
+  id="08-putting-it-together-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Every service in the order pipeline passes its own tests, yet customers see occasional double charges. Where is the bug most likely to be?"
+  choices={[
+    { label: "In a seam — two correct layers (e.g. a retry re-invoking a compensation) composing without a shared idempotency key", correct: true },
+    { label: "Inside the payment service's charge logic, which must have a hidden bug", misconception: "The charge path passes its tests and is idempotent for charges. Composition failures are precisely the ones no single component's tests can catch, because each component is correct in isolation." },
+    { label: "In the message broker, which must be delivering duplicates it promised not to", misconception: "Brokers deliver at-least-once by design; duplicates are expected, not a broker bug. The pipeline must be safe under duplicates via idempotency keys, not assume the broker prevents them." },
+    { label: "In the quorum config — R + W must not be greater than N", misconception: "R + W > N is the rule you *want*; it gives read-your-write overlap. It governs replica durability, not whether a retried compensation double-fires." },
+  ]}
+/>
+
+<Quiz
+  id="08-putting-it-together-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="The saga orchestrator runs as an elected leader. After a long GC pause it wakes up and tries to write a saga step. What stops it from corrupting state a new leader already advanced?"
+  choices={[
+    { label: "A fencing token: the write carries a monotonic number, and the resource rejects any token lower than the highest it has seen", correct: true },
+    { label: "The old leader checks if it's still leader before writing", misconception: "It cannot reliably know — that's the whole problem. It may believe it is still leader after the lease expired; only the resource enforcing a fencing token is safe against a paused, stale leader." },
+    { label: "The lease expiry guarantees the old leader stopped acting", misconception: "Leases bound wall-clock time, but a paused process has no idea time passed. Kleppmann's point: without a fencing token, a stale leader can wake and write after its lease expired." },
+    { label: "Exponential backoff delays the old leader's write until it's safe", misconception: "Backoff spaces out retries; it does nothing to reject a write from a leader that should no longer be writing. That is the fencing token's job." },
+  ]}
+/>
+
+<DragOrder
+  id="08-putting-it-together-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the steps to diagnose a composition failure (intermittent double refund) where every service is green:"
+  items={[
+    { id: "a", label: "Reproduce from a trace, not a single service log — composition bugs span layers" },
+    { id: "b", label: "Find the seam: which two correct layers interacted (here: retry layer re-invoking a compensation)" },
+    { id: "c", label: "Check whether a stable idempotency key crosses that seam — usually it does not" },
+    { id: "d", label: "Thread one business-derived key through every layer that can retry the operation" },
+    { id: "e", label: "Dedup at the receiver on that key, and add a seam-level alert (e.g. duplicate-effect counter)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Primitives are correct alone; bugs hide in the seams. Idempotency keyed on business intent is the load-bearing primitive that makes retries and at-least-once safe. Run it on seam signals, not green dashboards.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-putting-it-together-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk a teammate through how a refund compensation and a retry combine into a double refund, even though both layers are individually correct, and how one change fixes it.", a: "The saga emits a refund compensation for a cancelled order. The payment service starts the refund and it succeeds, but the response is delayed past the caller's 30s timeout. The retry layer sees a timeout, checks the retry budget, finds room, and retries — which is the correct policy decision in isolation. The compensation is also correct in isolation: a cancelled order should refund. But the refund call carried no shared idempotency key, so the payment service treats the retry as a brand-new request and refunds a second time. No single layer is buggy; the defect lives entirely in the seam between the retry layer and the payment service. The fix is to thread one business-derived key — refund:order-8842 — from the saga through the retry layer into the payment service, which records the key and returns the first refund's result on any second arrival of the same key. The individual layers are untouched; the seam gains exactly-once effects." },
+    { q: "Why is idempotency called the load-bearing primitive of the whole pipeline, and what makes a key correct versus a key that silently fails?", a: "Distributed systems deliver at-least-once: a timed-out call may have succeeded, and the caller can never be sure. Since 'did it happen?' is unknowable, the only safe design is to make 'do it again' harmless — that is idempotency, and it is what makes retries, at-least-once delivery, and saga compensations safe to lean on. Without it, every retry is a potential duplicate effect. A correct key is derived from stable business intent (refund:order-8842) and threaded through every layer that might retry, with the receiver recording it and returning the prior result on a repeat. A key fails silently when it is bound to the wrong thing — e.g. the HTTP request id — because a retry generated by a different layer (the saga vs the SDK vs the client) produces a fresh id and slips past the dedup check. 'The service is idempotent' means nothing until you name which operation and which key." },
+  ]}
+/>
+
+<Recap lang="en">
+The capstone is not a new primitive — it is the realization that every primitive in this track is correct in isolation and the real failures live in the seams where they compose. One order/payment pipeline uses all of them: quorum replication (R + W > N) for durable order writes, an elected leader with fencing tokens so a paused orchestrator cannot corrupt state a new leader advanced, logical clocks or TrueTime to order steps causally, sagas with compensations because there is no distributed ACID transaction, and retries with backoff, jitter, and a budget capped near 10% over normal traffic. Idempotency keyed on business intent is the load-bearing primitive: at-least-once delivery makes duplicates inevitable, so the only safe response to an unknowable "did it happen?" is to make "do it again" harmless. The canonical composition failure is a refund compensation racing a retry across a call with no shared key, producing a double refund while every layer's own tests stay green — fixed by threading one key through the seam, not by changing any layer. You run the whole thing on seam signals — consumer lag, quorum latency, leader churn, retry-budget exhaustion — because a pipeline of healthy services can still be failing real customers.
+</Recap>
