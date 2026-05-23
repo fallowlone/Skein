@@ -6,12 +6,206 @@ unit: 08-putting-it-together
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Putting it together"
-summary: "Coming soon — Deployment and infra"
+status: ready
+title: "Capstone: a deploy is a chain, and the outage lives in the seam"
+summary: "Each deploy stage is correct alone, yet the release breaks where two compose wrong: a rolling update with no readiness probe, a blue-green flip over an incompatible migration, an L4 LB that can't drain. The glue is health checks, expand-contract, and rollout metrics."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["deployment-pipeline", "readiness-probe", "rollout-strategy", "expand-contract-migration", "connection-draining", "infrastructure-as-code"]
+estMin: 17
+sources:
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+  - https://www.bytebase.com/blog/database-blue-green-deployment/
+  - https://docs.cloud.google.com/kubernetes-engine/docs/troubleshooting/load-balancing
+  - https://github.com/Caesarsage/bluegreen-deployment-ecs
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+Every box in the release diagram was green. The image built and pushed. The k8s `Deployment` applied without error. The rolling update reported success in 40 seconds. Then the pager went off: 30% of requests returning 502 for two minutes. Nobody had shipped a bug. The image was fine, the manifest was fine, the migration was fine — *separately*. The Deployment had no `readinessProbe`, so k8s declared each new pod "ready" the instant the container process started, before the app had opened its DB pool. The rolling update dutifully shifted traffic to pods that were alive but not yet serving. The outage did not live in any one stage. It lived in the seam between two correct ones.
+</Hook>
+
+<Crux>A deploy is a chain of correct stages; the outage lives in the seam where two of them compose wrong.</Crux>
+
+<Explanation>
+
+## The pipeline is one composed object, not seven steps
+
+The whole deployment track has been one stage at a time: build a lean multi-stage image, push it to a registry, declare k8s objects, pick a rollout strategy, front it with a load balancer, inject secrets, codify it all as infrastructure-as-code. The capstone insight is that none of those stages ships software on its own. A *release* is the composition of all of them, and composition has emergent failure modes that no single stage's tests can catch.
+
+Think of it as a chain where each link passes an artifact to the next:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Stage</th>
+        <th class="border border-border px-3 py-2 text-left">Produces</th>
+        <th class="border border-border px-3 py-2 text-left">The seam it can break</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Multi-stage build</td>
+        <td class="border border-border px-3 py-2">An immutable image + digest</td>
+        <td class="border border-border px-3 py-2">Build deps leak into runtime → bloat, CVEs</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Push to registry</td>
+        <td class="border border-border px-3 py-2">A pullable, tagged artifact</td>
+        <td class="border border-border px-3 py-2">Mutable <code>:latest</code> tag → which build is actually live?</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">k8s objects</td>
+        <td class="border border-border px-3 py-2">Deployment + Service + Ingress + Config/Secret</td>
+        <td class="border border-border px-3 py-2">No probe → "ready" lies to the rollout</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Rollout strategy</td>
+        <td class="border border-border px-3 py-2">Old → new traffic shift</td>
+        <td class="border border-border px-3 py-2">Flip over an incompatible schema → old code 500s</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Load balancer</td>
+        <td class="border border-border px-3 py-2">Client traffic → healthy backends</td>
+        <td class="border border-border px-3 py-2">L4 can't drain → in-flight requests killed mid-flight</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Secrets at deploy</td>
+        <td class="border border-border px-3 py-2">Config injected at runtime</td>
+        <td class="border border-border px-3 py-2">Secret baked into image → leaked + un-rotatable</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">IaC</td>
+        <td class="border border-border px-3 py-2">Reproducible cluster state</td>
+        <td class="border border-border px-3 py-2">Drift → the env you tested isn't the one you shipped</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Every "seam" column is a real outage someone has shipped. Each presupposes the stage before it did its job — and broke anyway, because the contract *between* stages was never enforced.
+
+## Health checks are the glue between "running" and "serving"
+
+The single most load-bearing piece of glue is the readiness probe, because it defines the contract the rollout depends on. A rolling update's whole job is: bring up a new pod, wait until it's *ready*, then take down an old one, `maxUnavailable` at a time. The word "ready" is doing enormous work there. Without a `readinessProbe`, k8s reports a pod ready the moment its container's main process starts — which is before the JVM has warmed, before the connection pool is open, before caches are primed. The rolling update sees green, adds the pod to the `Service` endpoints, and traffic flows into a process that returns 502/connection-refused.
+
+The fix is a probe that actually exercises dependencies, plus surge math that never drops below capacity:
+
+```yaml
+readinessProbe:
+  httpGet: { path: /healthz/ready, port: 8080 }
+  initialDelaySeconds: 5
+  periodSeconds: 5
+strategy:
+  rollingUpdate:
+    maxUnavailable: 0   # never below desired replicas
+    maxSurge: 1         # add one new pod before removing an old one
+```
+
+Two probes do two different jobs and conflating them is its own outage. The **readiness** probe controls *traffic* — fail it and the pod is pulled from the `Service`, but kept running. The **liveness** probe controls *restarts* — fail it and the kubelet kills and recreates the container. Wire a slow dependency (a flaky DB) into your liveness probe and you get a restart storm: every pod that can't reach the DB gets killed, which makes the DB problem worse, not better. Liveness should check "am I deadlocked," not "is my whole world healthy."
+
+<Inset kind="why" lang="en">
+A subtle trap: a probe at `path: /healthz` that returns 200 if the *web server* is up tells the rollout nothing useful, because the web server is up almost instantly. The probe has to fail while the thing the request actually needs — the DB pool, the cache connection, the downstream client — is still initializing. A health check that can't go red during startup is decoration, not glue.
+</Inset>
+
+## The rollout strategy and the migration are one decision
+
+The most expensive seam in the whole chain is between the rollout strategy and the database, because the LB flip is reversible and the schema change usually is not. Picture a blue-green deploy: blue is live, green is the new version, you flip the LB and roll back instantly if green misbehaves. Now suppose green's release "cleaned up" the schema — it dropped a column blue still reads. The flip succeeds, green serves fine. Then green throws an error and you roll back to blue — and blue immediately 500s on every request, because the column it needs is gone. Your "instant rollback" is now a forward-only emergency.
+
+The discipline that makes rollout-and-migration composable is **expand-contract** (also "parallel change"): never ship a schema change that is incompatible with the currently-running code. You split one logical change into separate deploys, each maintaining **N-1 compatibility** (new schema works with old code, and vice versa):
+
+1. **Expand** — add the new column/table; keep the old one. Both versions work.
+2. **Migrate** — backfill data into the new shape; dual-write from the app.
+3. **Contract** — only after *all* traffic runs on new code, drop the old column. A separate, later deploy.
+
+The cost is real: a column rename that "should" be one migration becomes three deploys spread across releases, plus dual-write code you have to remember to delete. The payoff is that every intermediate state is rollback-safe, so your rollout strategy keeps the reversibility it promised.
+
+<TradeoffMatrix
+  id="08-deploy-capstone-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="You need to rename a hot column on a 200M-row table while keeping zero-downtime rollouts reversible. Pick the approach."
+  options={[
+    { name: "Expand-contract across three deploys: add new column, dual-write + backfill, then drop old column after all code is on the new path", summary: "Parallel change.", correct: true, justification: "Every intermediate schema is compatible with both the old and new app version (N-1), so a rollout of any version — and a rollback to it — stays safe. The flip never composes with a schema the rolled-back code can't read. The cost is three deploys plus temporary dual-write code, which is exactly the price of keeping the rollout reversible." },
+    { name: "Single migration that renames the column, deployed together with the new app version in one blue-green flip", summary: "One shot.", justification: "Works only if you never roll back. The instant you flip to green and then revert to blue, blue queries the old name that no longer exists and 500s on every request — the LB flip was reversible but the schema change was not, and they composed into a non-recoverable state." },
+    { name: "Rolling update with the rename migration run as an initContainer before the new pods start", summary: "Migrate-then-roll.", justification: "During a rolling update old and new pods run simultaneously by design. If the migration renames the column up front, the still-running old pods break immediately — you've created the incompatibility mid-rollout, before the new code is even fully out." },
+    { name: "Take a maintenance window, stop traffic, migrate, restart everything", summary: "Big-bang downtime.", justification: "Technically safe but throws away the zero-downtime property the whole pipeline exists to provide. Sometimes acceptable for a tiny internal tool; for a user-facing service it converts a solved problem (expand-contract) into scheduled downtime." },
+  ]}
+/>
+
+## Draining and observability close the chain
+
+Even with probes and safe migrations, the cutover can kill requests that were already in flight. When a pod is terminated, k8s removes it from the `Service` endpoints *and* sends `SIGTERM` — but those two events race, and the LB may still route a few requests to the dying pod for a beat. An L7 load balancer can drain: it stops sending new requests and waits a configurable timeout (a good default is 1.5–2× your p99 request time) for in-flight ones to finish. A naive L4 setup that just stops at the connection layer can sever requests mid-response. The application side has to cooperate: catch `SIGTERM`, stop accepting new work, finish in-flight requests, then exit — all inside `terminationGracePeriodSeconds` (default 30s), with a `preStop` sleep to cover the endpoint-removal race.
+
+And the only reason you *knew* the readiness-probe outage in the Hook was 502s and not "success" is observability. A rollout's exit code tells you the manifest applied; it does not tell you error rate, p99 latency, or saturation on the new pods. The load-bearing signal is comparing the new version's golden metrics against the old version's baseline *during* the rollout — which is exactly what a canary does automatically: shift 5% of traffic, watch error rate and latency for a few minutes, promote or auto-rollback on the metric, not on the deploy command's return value.
+
+<Quiz
+  id="08-deploy-capstone-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A rolling update reports success in 40 seconds, but 30% of requests 502 for two minutes afterward. The image, manifest, and migration are all individually fine. What is the most likely cause?"
+  choices={[
+    { label: "No readinessProbe, so k8s marked pods ready at process start and routed traffic before the app could serve", correct: true },
+    { label: "The image was too large and pods were still pulling it", misconception: "A slow pull delays the pod from starting at all; it doesn't produce a 'success' followed by 502s from pods k8s already considers ready and in the Service." },
+    { label: "maxSurge was set too high", misconception: "maxSurge controls how many extra pods spin up during the roll; it doesn't cause traffic to hit not-yet-serving pods. The missing readiness gate does." },
+    { label: "The Ingress TLS certificate expired", misconception: "An expired cert fails handshakes consistently, not as a transient 30% spike that resolves on its own as pods finish warming up." },
+  ]}
+/>
+
+<Quiz
+  id="08-deploy-capstone-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why is a blue-green flip dangerous when paired with a migration that drops a column?"
+  choices={[
+    { label: "The LB flip is reversible but the dropped column isn't, so a rollback to blue 500s on the column that's now gone", correct: true },
+    { label: "Blue-green doubles your infrastructure cost during the flip", misconception: "True but irrelevant to correctness — the danger here is that rollback is no longer safe, not the temporary cost of two environments." },
+    { label: "Green can't connect to the same database as blue", misconception: "Sharing the database is normal in blue-green; the problem is the shared schema being incompatible with the version you might roll back to." },
+    { label: "Migrations always require downtime", misconception: "They don't — expand-contract migrations are specifically how you avoid downtime; the issue is a destructive change that breaks N-1 compatibility." },
+  ]}
+/>
+
+<DragOrder
+  id="08-deploy-capstone-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order a safe column-rename release so every intermediate state is rollback-safe:"
+  items={[
+    { id: "a", label: "Deploy 1 — Expand: add the new column, leave the old one in place" },
+    { id: "b", label: "Deploy 2 — Ship code that dual-writes both columns and backfills existing rows" },
+    { id: "c", label: "Verify all running pods are on the new code reading the new column" },
+    { id: "d", label: "Deploy 3 — Contract: drop the old column now that nothing reads it" },
+    { id: "e", label: "Remove the now-dead dual-write code in a follow-up deploy" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A release is a chain. Engineer the seams: a readiness probe so "ready" means "serving," expand-contract so every schema is N-1 compatible, an L7 drain for in-flight requests, metric-gated rollout so success is healthy.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-deploy-capstone-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk a teammate through why a perfectly correct rolling update can still cause an outage, and what single piece of configuration prevents it.", a: "A rolling update's contract is: start a new pod, wait until it is ready, add it to the Service, then retire an old one. The word 'ready' is the load-bearing part. Without a readinessProbe, Kubernetes treats a pod as ready the instant its container's main process starts — which happens before the app has opened its database pool, warmed caches, or connected to downstream dependencies. So the rolling update, behaving exactly as designed, adds a not-yet-serving pod to the Service endpoints and traffic flows into a process that returns 502 or connection-refused. The deploy reports success because the manifest applied and pods are 'running'; the users see errors because running is not serving. The single fix is a readinessProbe that actually exercises a real dependency (httpGet to a /healthz/ready endpoint that checks the DB pool), combined with maxUnavailable: 0 and maxSurge: 1 so capacity never dips below desired during the roll. The probe turns 'the process is up' into 'the app can serve a request,' which is the contract the rollout actually needed all along." },
+    { q: "Explain expand-contract and why it is what makes a rollout strategy and a database migration safely composable.", a: "Expand-contract (also called parallel change) splits one schema change into separate deploys so that every intermediate state is compatible with both the currently-running code and the next version — the N-1 compatibility rule. To rename a column you first Expand: add the new column while keeping the old one, so both old and new code work. Then Migrate: backfill data into the new column and have the app dual-write to both. Only after every pod is confirmed running the new code that reads the new column do you Contract: a separate, later deploy that drops the old column. This matters because a rollout strategy promises reversibility — blue-green lets you flip back, rolling updates run old and new pods side by side — but a destructive migration breaks that promise. If you drop a column in the same release that flips traffic, a rollback lands on code that queries a column that no longer exists, and it 500s on every request. The LB flip was reversible; the schema change was not; composed together they produce a non-recoverable state. Expand-contract keeps the schema reversible at every step, so the rollout strategy keeps the safety it advertised. The cost is three deploys and temporary dual-write code instead of one migration, which is the explicit price of zero-downtime reversibility." },
+  ]}
+/>
+
+<Recap lang="en">
+A deploy is not seven independent steps; it is one composed object, and the outages live in the seams where two individually-correct stages meet under a contract nobody enforced. The readiness probe is the contract between "the process is running" and "the app can serve," and without it a flawless rolling update routes traffic to dead pods. The rollout strategy and the database migration are a single decision: a reversible LB flip composed with a destructive, non-reversible schema change produces a state you cannot roll back to, which is why expand-contract — keeping every schema N-1 compatible across separate expand, migrate, and contract deploys — is the glue that lets them coexist. An L7 load balancer that drains and an app that handles SIGTERM within terminationGracePeriodSeconds keep in-flight requests alive across the cutover, and rollout metrics (error rate and p99 versus baseline, as a canary checks automatically) are what make "success" mean healthy rather than merely applied. Build the image lean, push an immutable digest, declare the objects, inject secrets at runtime, and codify the whole thing as IaC so the environment you tested is the one you shipped — then the chain holds because you engineered the seams, not just the links.
+</Recap>
