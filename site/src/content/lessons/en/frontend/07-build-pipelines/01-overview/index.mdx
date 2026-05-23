@@ -6,12 +6,189 @@ unit: 07-build-pipelines
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Build pipelines"
-summary: "Frontend build pipelines: bundler internals, tree shaking, module federation, and CI/CD integration."
+status: ready
+title: "Build pipelines: how source becomes the bytes the browser caches"
+summary: "A build pipeline resolves, transforms, bundles, minifies, and emits — and the two places it bites you are tree-shaking misses that ship an entire library and dev/prod parity bugs from running two different tools."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["bundling", "tree-shaking", "side-effects", "dev-prod-parity", "content-hashing", "source-maps"]
+estMin: 16
+sources:
+  - https://vite.dev/guide/why
+  - https://esbuild.github.io/faq/#why-is-esbuild-fast
+  - https://webpack.js.org/guides/tree-shaking/
+  - https://vite.dev/guide/build
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A perf alert fires: the main bundle jumped from 180 KB to 410 KB overnight. Nobody added a feature. Git blame finds one line — `import _ from "lodash"` instead of `import debounce from "lodash/debounce"`. The whole library shipped because lodash is CommonJS and the bundler could not tree-shake it. One import, 200 KB of dead code, and three weeks of users on slow connections paid for it before the alert crossed threshold.
+</Hook>
+
+<Crux>A build pipeline is resolve → transform → bundle → minify → emit; it bites you at tree-shaking and at dev/prod parity.</Crux>
+
+<Explanation>
+
+## The pipeline is five stages, not one black box
+
+`bun run build` looks like one command, but it is a conveyor belt with distinct stations, and bugs live at the seams between them.
+
+1. **Resolve** — turn every `import "x"` into a real file on disk. Walk `node_modules`, honor `exports` maps, pick ESM vs CommonJS, follow `tsconfig` path aliases. This is where "module not found" and "wrong version of the same package twice" come from.
+2. **Transform** — per-file rewriting: TypeScript → JS, JSX → `createElement`, modern syntax down-leveled for your browser targets. This is the hot loop — it runs once per file, thousands of times.
+3. **Bundle** — stitch the module graph into a few files, decide code-splitting boundaries, hoist and dedupe shared modules. This is where tree-shaking happens.
+4. **Minify** — rename locals, drop whitespace and dead branches, collapse the AST. Terser is the careful-but-slow standard; esbuild's minifier is far faster and nearly as small.
+5. **Emit** — write the final files to `dist/`, with content-hashed names and source maps.
+
+The senior mental model: **transform is per-file and embarrassingly parallel; bundle is whole-graph and serial.** That split explains why one tool can be fast at one stage and slow at another, and why Vite uses *two* tools (more on that below).
+
+## Why Go and Rust tools are 10–100× faster
+
+The old default — Babel for transform, Terser for minify — is written in JavaScript and single-threaded by nature. esbuild (Go) and SWC (Rust) are compiled, multi-threaded, and avoid re-parsing the AST between passes. The result is not a small win. esbuild's own benchmarks show it bundling a large React app **in the low hundreds of milliseconds where Babel/Webpack take tens of seconds** — commonly cited as 10–100× depending on the workload. Real migrations report build-stage cuts of **93–96%** (a 30s transform step dropping to ~1–2s).
+
+Why so much faster? Three reasons that compound: a compiled language with real threads instead of an event loop, a single shared AST passed through parse/transform/minify instead of re-parsing at each tool boundary, and aggressive memory reuse. The tradeoff a senior weighs: Babel still has the richest plugin ecosystem (custom macros, exotic transforms, legacy targets), so teams that need a specific Babel plugin sometimes keep it for that one file and run esbuild/SWC for everything else.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+        <th class="border border-border px-3 py-2 text-left">Lang</th>
+        <th class="border border-border px-3 py-2 text-left">Stage</th>
+        <th class="border border-border px-3 py-2 text-left">Speed vs JS baseline</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Babel</td>
+        <td class="border border-border px-3 py-2">JS</td>
+        <td class="border border-border px-3 py-2">transform</td>
+        <td class="border border-border px-3 py-2">1× (baseline)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">SWC</td>
+        <td class="border border-border px-3 py-2">Rust</td>
+        <td class="border border-border px-3 py-2">transform</td>
+        <td class="border border-border px-3 py-2">~20× faster</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">esbuild</td>
+        <td class="border border-border px-3 py-2">Go</td>
+        <td class="border border-border px-3 py-2">transform + bundle + minify</td>
+        <td class="border border-border px-3 py-2">~10–100× faster</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Terser</td>
+        <td class="border border-border px-3 py-2">JS</td>
+        <td class="border border-border px-3 py-2">minify</td>
+        <td class="border border-border px-3 py-2">1× (careful, slow)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Tree-shaking, and the three things that defeat it
+
+Tree-shaking drops exports nobody imports. It only works on **static ES modules**, because the bundler must prove at build time that a binding is unused. Three things break that proof, and each is a real production incident:
+
+- **CommonJS.** `module.exports` is computed at runtime — the bundler can't statically know which keys you use. `import _ from "lodash"` (CJS) drags the whole library: importing just `isArray` this way costs around **24 KB** versus **~46 bytes** from `lodash-es` (ESM). The fix is using the ESM build (`lodash-es`) or deep imports (`lodash/debounce`).
+- **Side effects.** If a module does work on import (registers a polyfill, mutates a global, injects CSS), the bundler must keep it even if its exports look unused — dropping it would change behavior. That is what the `"sideEffects": false` field in `package.json` is: a promise to the bundler that *importing this file changes nothing observable*, so it is safe to drop unused parts. Lie in that field and you ship a broken build; omit it on a clean library and you ship dead code.
+- **Down-leveling to CommonJS.** Babel's `@babel/preset-env` can transform your nice ESM `import`/`export` into `require`/`module.exports` *before* the bundler sees it — silently turning a tree-shakeable graph into an opaque one. The bundler then keeps everything. This is the subtle one: the source looks shakeable, the transform stage quietly defeats it.
+
+<Inset kind="why" lang="en">
+The `"sideEffects"` flag is a contract, not a hint. `false` means "every file in this package is pure on import." If even one file injects CSS as a side effect, you must list it: `"sideEffects": ["*.css", "./src/polyfill.js"]`. Get it wrong in the safe direction (claim side effects you don't have) and you only lose some optimization. Get it wrong in the unsafe direction (claim purity you don't have) and the bundler eliminates code your app depends on — a build that passes CI and breaks at runtime.
+</Inset>
+
+## Dev and prod run different tools — and that is where parity bugs hide
+
+Modern dev servers (Vite) don't bundle in development. They serve your source as **native ES modules** straight to the browser and let the browser request modules on demand, which is why the dev server starts instantly regardless of app size and HMR updates land in **single-digit to low tens of milliseconds** — it swaps one module, not a rebuilt bundle. Production is different: Vite bundles with **Rollup** (and increasingly Rolldown), because shipping thousands of unbundled module requests over the network would be catastrophically slow.
+
+Two different code paths — esbuild/native-ESM in dev, Rollup-bundled in prod — means **dev and prod can disagree.** Different module resolution, different code-splitting, different side-effect handling. The classic symptom is "works on my machine, broken in prod": a circular import that native ESM tolerates but the bundler reorders, or a dependency that's tree-shaken in the prod build but fully present in dev. The senior habit: run a real production build locally (`vite build && vite preview`) before trusting it, and put a smoke test against the *built* output in CI, not just the dev server.
+
+<TradeoffMatrix
+  id="07-build-pipelines-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Your team's Webpack + Babel build takes 45s and HMR is 3–4s. You want faster iteration without risking prod. Pick the move."
+  options={[
+    { name: "Switch to a Vite-style setup: native ESM + esbuild in dev, Rollup bundle for prod, and gate merges on a real production build in CI", summary: "Two-tool pipeline, parity-gated.", correct: true, justification: "This is the mainstream answer and it's correct because it attacks both pain points: native ESM dev gets you instant start and millisecond HMR, while the Rollup prod build keeps the network-optimized output you actually ship. The known risk — dev and prod being different code paths — is contained by running vite build && vite preview in CI, so a parity bug fails the merge instead of reaching users." },
+    { name: "Replace Babel with SWC/esbuild as the Webpack loader but keep bundling in dev", summary: "Faster transform, same architecture.", justification: "A real and lower-risk win: swapping the JS transformer for a Rust/Go one can cut transform time dramatically (often 90%+) while keeping one bundler for dev and prod, so there's no parity risk. It's the conservative choice when you can't afford a migration — but dev still bundles, so start time and HMR improve less than a native-ESM dev server." },
+    { name: "Keep everything, just throw more CI runners at it", summary: "Buy your way out.", justification: "Parallel runners help total CI wall-clock but do nothing for the 3–4s local HMR loop that's actually killing developer flow. You're paying money to avoid a one-time tooling change, and the slow inner loop — the thing engineers feel all day — is untouched." },
+    { name: "Use esbuild as the production bundler too, to have one tool everywhere", summary: "One tool, max parity.", justification: "Tempting for parity, but esbuild's bundler is less battle-tested for production code-splitting and advanced output control than Rollup, which is exactly why Vite pairs esbuild (dev/deps) with Rollup (prod). One tool removes parity risk but trades away the prod-grade splitting and plugin maturity teams rely on." },
+  ]}
+/>
+
+<Quiz
+  id="07-build-pipelines-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A bundle balloons after someone writes import _ from 'lodash'. Why didn't tree-shaking remove the unused functions?"
+  choices={[
+    { label: "lodash's main build is CommonJS, which can't be statically analyzed — use lodash-es or deep imports like lodash/debounce", correct: true },
+    { label: "Tree-shaking is off by default and must be enabled per-import", misconception: "Tree-shaking is on by default in production builds; the issue is that CommonJS exports are computed at runtime, so the bundler can't prove which ones are unused." },
+    { label: "Minification ran before bundling, so dead code was already locked in", misconception: "Stage order isn't the cause. The bundler keeps the whole module because CJS exports aren't statically analyzable, regardless of minify timing." },
+    { label: "The import should have been a default import to trigger shaking", misconception: "The import style isn't the root cause — the module format is. ES modules shake; CommonJS doesn't." },
+  ]}
+/>
+
+<Quiz
+  id="07-build-pipelines-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A feature works in the Vite dev server but breaks after vite build. What's the most likely structural cause?"
+  choices={[
+    { label: "Dev serves native ESM unbundled while prod bundles with Rollup — different resolution, splitting, and side-effect handling can diverge", correct: true },
+    { label: "The dev server caches aggressively and served stale code", misconception: "Stale cache causes the opposite (old behavior persisting); a true dev/prod split is two different build code paths producing different output." },
+    { label: "Production minification is what changed the behavior", misconception: "Minification can occasionally surface bugs, but the structural reason dev and prod diverge is that they run different tools on different module graphs." },
+    { label: "Source maps were disabled in production", misconception: "Source maps only affect debugging readability of errors, not whether the code itself behaves differently." },
+  ]}
+/>
+
+## Source maps and content hashes: the emit stage earns its keep
+
+Two outputs of the final stage decide whether prod is debuggable and whether returning users wait. **Source maps** map minified, bundled `dist` code back to original source so a stack trace points at `Button.tsx:42` instead of `index-a1b2c3.js:1:88431`. Ship them to your error tracker (privately) even when you don't expose them publicly, or every production error is unreadable.
+
+**Content hashing** is the caching contract. The emit stage names files by a hash of their contents — `index-a1b2c3.js` — so the filename changes only when the bytes change. That lets you serve static assets with `Cache-Control: max-age=31536000, immutable` (one year), and the browser never re-downloads an unchanged chunk. Change one line and only that chunk's hash changes; everything else stays cached. The classic mistake is vendor code (React, your big deps) sharing a chunk with app code — then every app deploy busts the vendor cache too. Split vendor into its own chunk so it keeps its hash across your frequent app deploys.
+
+<DragOrder
+  id="07-build-pipelines-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the build pipeline stages from source to shipped artifact:"
+  items={[
+    { id: "a", label: "Resolve — turn every import into a real file (node_modules, exports maps, aliases)" },
+    { id: "b", label: "Transform — per-file: TS→JS, JSX→createElement, down-level syntax (esbuild/SWC/Babel)" },
+    { id: "c", label: "Bundle — stitch the module graph, code-split, tree-shake unused exports" },
+    { id: "d", label: "Minify — rename, drop whitespace, prune dead branches (Terser/esbuild)" },
+    { id: "e", label: "Emit — write content-hashed files + source maps to dist/" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Build = resolve → transform → bundle → minify → emit. Tree-shaking needs static ESM; CommonJS and side effects defeat it. Dev/prod run different tools — test the real prod build. Content-hash for year-long caching.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-build-pipelines-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate imports a utility from a CommonJS package and the bundle grows by 200 KB. Explain why tree-shaking failed and the three classes of things that defeat it.", a: "Tree-shaking only works on static ES modules, because the bundler has to prove at build time which exports are unused — and that proof requires statically analyzable import/export syntax. CommonJS breaks the first class: module.exports is assembled at runtime, so the bundler can't know which keys you touch and must keep the whole thing — importing one helper from lodash's CJS build can cost ~24 KB where lodash-es costs ~46 bytes. The second class is side effects: if importing a module does observable work (injects CSS, registers a polyfill, mutates a global), the bundler must keep it even when its exports look unused, unless package.json declares 'sideEffects': false to promise purity. The third class is ESM-to-CommonJS down-leveling: a transform like @babel/preset-env can rewrite your import/export into require/module.exports before the bundler sees it, silently turning a shakeable graph opaque. The fixes are: prefer ESM builds or deep imports, set the sideEffects field honestly, and keep modules as ESM through the transform stage." },
+    { q: "Why do 'works in dev, breaks in prod' bugs happen with tools like Vite, and how does a senior prevent them?", a: "Because dev and prod aren't the same code path. In dev, Vite serves your source as native ES modules straight to the browser — no bundling, instant start, millisecond HMR — while in prod it bundles with Rollup, because thousands of unbundled module requests would be far too slow over the network. Two different tools doing module resolution, code-splitting, and side-effect handling means the output can legitimately differ: a circular import the browser tolerates but the bundler reorders, or a module tree-shaken in the prod build but fully present in dev. The prevention is to stop trusting the dev server as a proxy for prod: run a real production build locally with vite build && vite preview, and gate merges in CI on that built output (a smoke test against the bundle, not the dev server). That way a parity bug fails the pipeline instead of reaching users." },
+  ]}
+/>
+
+<Recap lang="en">
+A build pipeline is five stages — resolve, transform, bundle, minify, emit — and the seams between them are where bugs live. Transform is per-file and parallel, which is why compiled tools like esbuild (Go) and SWC (Rust) beat JavaScript-based Babel and Terser by 10–100× and cut real build steps by 90%-plus; bundle is whole-graph and serial, which is where tree-shaking happens. Tree-shaking needs static ES modules to prove an export is unused, so it is defeated by CommonJS (runtime exports), by side effects (unless package.json honestly declares them), and by transforms that down-level ESM into CommonJS before the bundler looks — any of which can ship an entire library you never use. Dev and prod often run different tools (native ESM + esbuild in dev, Rollup in prod), so always validate the real production build to catch parity bugs early. Finally, the emit stage earns its keep with source maps for debuggable prod errors and content-hashed filenames that let you cache assets for a year while busting only the chunks that actually changed.
+</Recap>
