@@ -6,13 +6,198 @@ unit: 03-pagination
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Pagination"
-summary: "Coming soon — API contracts"
+status: ready
+title: "Pagination at scale: why OFFSET dies and keyset cursors survive"
+summary: "OFFSET makes the database scan and throw away every row before your page, so deep pages slow linearly and drift when rows shift. Keyset cursors seek straight to the next page on an indexed key and stay flat."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["offset-pagination", "keyset-pagination", "opaque-cursor", "composite-sort-key", "count-cost", "result-drift"]
+estMin: 16
 sources:
-  - https://example.com/stub
-estMin: 5
+  - https://blog.sequinstream.com/keyset-cursors-not-offsets-for-postgres-pagination/
+  - https://www.citusdata.com/blog/2016/10/12/count-performance/
+  - https://wiki.postgresql.org/wiki/Slow_Counting
+  - https://relay.dev/graphql/connections.htm
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The infinite-scroll feed is smooth for the first ten pages, then the support tickets arrive: "the app freezes when I scroll a lot." The endpoint is `?page=10000&size=20`. In staging it returned in 8ms; in prod, against a 50-million-row table, that same query takes 8.2 seconds and sometimes times out. Nobody changed the code. The query plan was always going to do this — it reads two hundred thousand rows, throws away all but the last twenty, and the deeper a user scrolls the slower it gets. The bug was in the pagination strategy, present from day one, invisible until the table grew.
+</Hook>
+
+<Crux>OFFSET scans and discards every row before your page, so deep pages slow linearly; keyset seeks to the page on an index and stays flat.</Crux>
+
+<Explanation>
+
+## Why OFFSET gets slower the deeper you go
+
+`LIMIT 20 OFFSET 200000` reads like "skip to row 200000," but the database has no way to skip. It must produce rows in sorted order, count off the first 200,000, discard them, and only then start returning your 20. The work is proportional to the *offset*, not the page size. Page 1 is instant; page 10,000 is two hundred thousand rows of wasted I/O on every request — and that cost repeats for the next page, and the next.
+
+```sql
+-- Offset pagination: the deeper the page, the more rows scanned and thrown away
+SELECT id, title, created_at
+FROM articles
+ORDER BY created_at DESC, id DESC
+LIMIT 20 OFFSET 200000;   -- DB reads 200020 rows, returns 20
+```
+
+The numbers are brutal and consistent across benchmarks. On a multi-million-row table, offset page 1,000 lands around 890ms while page 10,000 climbs to roughly 8.2 seconds — an order of magnitude slower for the same payload, purely because there are more rows to skip. Keyset pagination over the same data stays flat: 8ms, 9ms, 11ms, 12ms, page after page, because it never counts past rows at all. Reported speedups run 17x on million-row sets and up to 177x at the deep pages where offset falls apart.
+
+## Result drift: the bug OFFSET hides even on small tables
+
+Even when offset is fast enough, it is *wrong* under concurrent writes. Page boundaries are computed by position in a live, shifting result set. Insert a row near the top between page 1 and page 2 and every later row shifts down by one: the item that was the last on page 1 reappears as the first on page 2 (a duplicate the user sees twice). Delete a row instead and one item is skipped entirely — the user never sees it. This drift is not a load problem; it happens on a tiny table the moment two requests straddle a write, which on any active feed is constantly.
+
+<Inset kind="why" lang="en">
+This is why "infinite scroll built on `?page=N`" feels haunted: users on a fast-moving feed see the same post twice, or swear an item "disappeared." The frontend is correct; the pagination model is positional, and position is not stable when the underlying set changes. Keyset fixes this for free — it anchors on a value (`the row after created_at=X, id=Y`), and that anchor stays valid no matter how many rows are inserted or deleted around it.
+</Inset>
+
+## Keyset (cursor) pagination: seek, don't skip
+
+Keyset pagination replaces "skip N rows" with "give me the rows *after this specific row*." You sort by a stable, unique, indexed key and carry the last row's key values forward as the cursor. The next query becomes a range seek the index can satisfy directly, with no counting.
+
+```sql
+-- Keyset pagination: seek straight past the last row seen, O(1) regardless of depth
+SELECT id, title, created_at
+FROM articles
+WHERE (created_at, id) < ('2026-05-01 09:00:00', 918273)  -- last row of previous page
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+Two non-negotiables make this work. First, the sort key must be **unique and stable** — `created_at` alone is not unique (two rows can share a timestamp, causing a row to be dropped or duplicated at the page seam), so you append a tiebreaker like the primary key: order by `(created_at, id)` and compare the tuple as a whole. Second, you need a **composite index in the exact column order and direction** of your `ORDER BY`:
+
+```sql
+CREATE INDEX idx_articles_created_id ON articles (created_at DESC, id DESC);
+```
+
+Without that index the row-comparison `WHERE` still works but the planner falls back to a sort+scan and you lose the flat latency. With it, every page is a single index range scan — the database jumps to the cursor position and reads exactly 20 rows.
+
+## The cursor is opaque, and that is a contract decision
+
+Never expose raw `(created_at, id)` to clients. Encode the keyset into an opaque string — Base64-encoded JSON of the sort values is the common pattern — and return it as `nextCursor`. The client treats it as a black box and sends it back verbatim. This buys you the freedom to change the sort key, add fields, or switch the underlying store later without breaking the client contract; it also prevents clients from hand-crafting cursors that scan into expensive territory. GraphQL's Relay Connection spec formalizes exactly this: `edges` carry per-row `cursor` values, and `pageInfo` carries `hasNextPage` / `endCursor`. For bidirectional paging you support both `after`/`first` and `before`/`last`, flipping the comparison operator (`<` becomes `>`) and the `ORDER BY` direction, then reversing the returned slice so the client sees a stable order.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Property</th>
+        <th class="border border-border px-3 py-2 text-left">Offset / limit</th>
+        <th class="border border-border px-3 py-2 text-left">Keyset / cursor</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Deep-page latency</td>
+        <td class="border border-border px-3 py-2">Grows linearly (~8.2s at page 10k)</td>
+        <td class="border border-border px-3 py-2">Flat (~10ms at any page)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Stable under inserts/deletes</td>
+        <td class="border border-border px-3 py-2">No — duplicates and skips</td>
+        <td class="border border-border px-3 py-2">Yes — anchored on a value</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Jump to arbitrary page N</td>
+        <td class="border border-border px-3 py-2">Yes (that's its only edge)</td>
+        <td class="border border-border px-3 py-2">No — only next/prev</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Cache-friendliness</td>
+        <td class="border border-border px-3 py-2">Poor — page N shifts over time</td>
+        <td class="border border-border px-3 py-2">Good — cursor maps to fixed rows</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Needs composite index</td>
+        <td class="border border-border px-3 py-2">No (but still slow)</td>
+        <td class="border border-border px-3 py-2">Yes (matching sort order)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The hidden cost: total counts
+
+Even with keyset, the "Showing 1–20 of 4,812,339" footer is its own performance trap. In Postgres, `COUNT(*)` cannot be answered from metadata because MVCC means every transaction sees a different set of visible rows — the engine must walk the rows to count the ones visible to *you*. On a large table that is a full scan that gets slower as the table grows, often dwarfing the page query it accompanies. The senior moves: drop the exact total (most products don't need it), use a fast estimate from `pg_class.reltuples` (kept current by `ANALYZE`, normally within ~10% of the true count), or fetch `LIMIT n+1` and report only "there is a next page" — which is all infinite scroll ever actually needs.
+
+<TradeoffMatrix
+  id="01-overview-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A social feed shows newest-first posts in infinite scroll over a 50M-row table, with constant inserts. Pick the pagination strategy."
+  options={[
+    { name: "Keyset cursor on (created_at, id) with a matching composite index, opaque Base64 cursor", summary: "Seek, don't skip.", correct: true, justification: "This is the textbook fit. Infinite scroll only ever needs next-page, which keyset gives in flat ~10ms at any depth via a single index range scan. The (created_at, id) tuple is unique and stable so there are no duplicate or skipped posts at page seams even with constant inserts — the cursor anchors on a value, not a position. The opaque cursor keeps the wire contract free to evolve." },
+    { name: "Offset/limit with ?page=N&size=20", summary: "Classic paginator.", justification: "Two failures at once here. Deep pages scan and discard everything before them, so page 10,000 climbs toward 8 seconds and can time out on a 50M-row table. And under constant inserts the positional boundaries drift, so users see duplicate posts and miss others — exactly the 'app freezes / item disappeared' tickets." },
+    { name: "Offset/limit, but cache each page in Redis for 5 minutes", summary: "Patch with cache.", justification: "Caching does not fix either root cause. The first uncached hit on a deep page still does the full offset scan, and cached pages go stale immediately under constant inserts — page 2 cached now contains rows that have already shifted, so you serve duplicates and skips with extra infrastructure on top." },
+    { name: "Load all 50M rows once and paginate in application memory", summary: "Paginate in app.", justification: "A non-starter at this scale: you cannot hold 50M rows in process, the initial fetch is the slowest possible query, and the in-memory snapshot is stale the instant the next insert lands. Pagination exists precisely to avoid materializing the whole set." },
+  ]}
+/>
+
+<Quiz
+  id="01-overview-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does LIMIT 20 OFFSET 200000 get slower as the offset grows, even though it returns only 20 rows?"
+  choices={[
+    { label: "The database must produce rows in sorted order and read+discard all 200000 rows before the page; work scales with the offset, not the page size", correct: true },
+    { label: "The result payload is larger for deeper pages", misconception: "The payload is always 20 rows. The cost is the 200000 rows the engine reads and throws away to reach them, which is invisible in the response size." },
+    { label: "Deeper pages can't use the index at all", misconception: "It may use the index to order rows, but it still has to walk past every offset row to count them off — the scan-and-discard is the cost, not a missing index." },
+    { label: "OFFSET locks the table while counting", misconception: "It doesn't lock; it's a read. The slowness is the linear scan-and-discard work proportional to the offset value." },
+  ]}
+/>
+
+<Quiz
+  id="01-overview-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why is ordering by created_at alone unsafe for keyset pagination, and what fixes it?"
+  choices={[
+    { label: "created_at isn't unique — two rows can share a timestamp, so a row gets dropped or duplicated at the page boundary; add a tiebreaker like id and compare the (created_at, id) tuple", correct: true },
+    { label: "created_at is a string and can't be compared", misconception: "Timestamps compare fine. The real issue is non-uniqueness: ties at the page seam break the seek unless you add a unique tiebreaker." },
+    { label: "You should order by id only and ignore created_at", misconception: "Ordering by id alone changes the sort the product wants (newest-first). Keep created_at and append id as the unique tiebreaker." },
+    { label: "Nothing — created_at alone is fine", misconception: "It's a real bug: any duplicate timestamp at a page boundary can skip or repeat a row. The fix is the composite (created_at, id) key." },
+  ]}
+/>
+
+<DragOrder
+  id="01-overview-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the steps to serve one keyset page from an incoming cursor:"
+  items={[
+    { id: "a", label: "Decode the opaque cursor (Base64 JSON) into the last row's (created_at, id)" },
+    { id: "b", label: "Run WHERE (created_at, id) < (?, ?) ORDER BY created_at DESC, id DESC LIMIT n+1" },
+    { id: "c", label: "Use the n+1th row only to set hasNextPage, then drop it from the page" },
+    { id: "d", label: "Encode the last returned row's (created_at, id) as the new nextCursor" },
+    { id: "e", label: "Return the n rows plus pageInfo (nextCursor, hasNextPage) to the client" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>OFFSET scans and discards every prior row, so deep pages slow linearly and drift under writes. Keyset seeks on a unique indexed key — flat latency, no duplicates. Avoid COUNT(*); estimate or use LIMIT n+1.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why an offset-based infinite feed both gets slow at depth AND shows duplicate or missing items, and how keyset cursors fix both.", a: "Two separate failures share one root cause: offset addresses pages by position in a sorted result set. The performance failure is that the database cannot truly 'skip' — to serve LIMIT 20 OFFSET 200000 it produces rows in order and reads and discards the first 200000, so cost scales with the offset value, not the 20 rows you get back. On a multi-million-row table that pushes deep pages from sub-second to ~8 seconds and can time out. The correctness failure is that positions are not stable: when a row is inserted near the top between two requests, everything shifts down one, so the last item of page 1 reappears at the top of page 2 (a duplicate); a delete shifts the other way and an item is skipped entirely. Keyset fixes both by anchoring on a value instead of a position: you order by a unique, indexed key like (created_at, id) and the next page is WHERE (created_at, id) < (lastSeen) ORDER BY ... LIMIT n. That is a single index range seek — flat latency at any depth — and because the anchor is a specific row's key, inserts and deletes elsewhere can't shift the boundary, so no duplicates and no skips." },
+    { q: "Why is showing an exact total count expensive, and what do seniors do instead?", a: "In Postgres, COUNT(*) cannot be read from a metadata field because of MVCC: each transaction sees its own set of visible row versions, so the engine must actually walk the rows to count the ones visible to your transaction. On a large table that is effectively a full scan whose cost grows with the table and frequently costs more than the page query itself. Three common alternatives, in order of preference: drop the exact total — most UIs and all infinite-scroll feeds don't need 'of 4,812,339', they need 'is there a next page'; use a fast estimate from pg_class.reltuples, which ANALYZE keeps current and is normally within about 10% of the truth, when an approximate 'about 5 million' is acceptable; or fetch LIMIT n+1 and use the presence of that extra row purely to set hasNextPage. Reserve a real COUNT(*) for small tables or admin views where the exact number is genuinely required and the table is small enough that the scan is cheap." },
+  ]}
+/>
+
+<Recap lang="en">
+Pagination strategy is a performance and correctness decision made before the table is big, and it stays invisible until it isn't. OFFSET addresses pages by position, so the database reads and discards every row before your page — deep pages slow linearly, climbing from milliseconds to many seconds on large tables — and the positional boundaries drift under concurrent inserts and deletes, surfacing as duplicate and missing items on any active feed. Keyset (cursor) pagination replaces "skip N" with "seek past this row": order by a unique, stable, indexed key such as (created_at, id), compare the whole tuple in a WHERE clause backed by a composite index in the matching direction, and latency stays flat at any depth with no duplicates or skips. Hand clients an opaque cursor, not raw keys, so the contract can evolve and clients can't craft expensive seeks; support before/after for bidirectional paging. Finally, treat the total count as its own cost: COUNT(*) is a full scan under MVCC, so prefer a reltuples estimate or a LIMIT n+1 "has next page" probe over an exact number nobody needs.
+</Recap>
