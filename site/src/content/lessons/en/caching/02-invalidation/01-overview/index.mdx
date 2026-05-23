@@ -6,12 +6,179 @@ unit: 02-invalidation
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Cache invalidation: the hardest problem in CS"
-summary: "Strategies for evicting stale entries — TTL, event-driven purge, write-through, write-behind — and why getting it wrong corrupts user state."
+status: ready
+title: "Cache invalidation: the set-after-delete race and the consistency you actually buy"
+summary: "TTL, event-driven purge, write-through, write-behind, write-around — each trades freshness for a different failure. The senior trap is the cache-aside delete that a concurrent reader silently repopulates with the value you just overwrote."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["cache-aside", "ttl-jitter", "write-through", "write-behind", "set-after-delete-race", "read-your-writes"]
+estMin: 16
+sources:
+  - https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf
+  - https://redis.io/blog/how-to-tame-the-thundering-herd-problem/
+  - https://www.systemoverflow.com/learn/caching/cache-stampede/probabilistic-early-refresh-and-ttl-jitter
+  - https://danielw.cn/cache-consistency-with-database
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A user changes their display name. The `PUT /users/{id}` returns 200, the row in Postgres is updated, and the handler dutifully runs `DEL user:42` to drop the cache. They refresh — and the old name is back. Not for a second: for the next twelve hours, until the TTL expired. The on-call engineer could not reproduce it locally because it needs two requests racing by a few milliseconds. The write deleted the key; a read that started *before* the write, holding the old DB row, finished *after* the delete and wrote the stale value back. The cache was lying, and the database was telling the truth, and they disagreed for half a day.
+</Hook>
+
+<Crux>Deleting the cache key on write does not make it fresh — a concurrent reader can repopulate it with the stale value right after your delete.</Crux>
+
+<Explanation>
+
+## Invalidation is the choice of which staleness to ship
+
+There is no cache without staleness; there is only the staleness you chose and the staleness that surprised you. Every invalidation strategy is a different answer to one question: when the source of truth changes, how does the copy find out? TTL waits for a clock. Event-driven purge listens for the write. Write-through updates both in the same call. Write-behind updates the cache now and the database later. Each buys a different consistency guarantee and pays in a different failure mode — there is no strategy that is fresh, fast, and simple at once.
+
+The reason this is hard is that a cache and a database are two systems, and you are trying to keep two systems agreeing without a transaction spanning both. The moment a write touches one and not yet the other, a reader can observe the gap. Naming the strategies is easy; the senior work is knowing which gap each one opens and whether your product can tolerate it.
+
+## TTL: cheap, eventually correct, and synchronized by accident
+
+Time-to-live is the floor of caching. You stamp each entry with an expiry; reads serve it until the clock runs out, then the next read repopulates. It needs no write path coordination at all — the database does not even know a cache exists. The cost is bounded staleness: with a 60-second TTL, a changed value can be wrong for up to 60 seconds, and there is nothing you can do about it short of shortening the TTL (more origin load) or adding active invalidation on top.
+
+The production trap with TTL is not the staleness — it is *synchronized expiry*. If 1,000 app servers all cache the same hot key with an identical 300-second TTL, and they all warmed it within the same deploy window, they all expire it within the same ~100ms window. At T=300 every one of them misses simultaneously and slams the origin in lockstep — the **thundering herd** / cache stampede. The fix is **TTL jitter**: instead of a fixed 300s, set each entry to a random value in, say, 270–330s (±10%). The expiries scatter across a 60-second band, the origin sees a smooth ramp instead of a spike, and a single rebuild serves the rest. Facebook's memcache work and Redis both treat jitter as the baseline defense; the more aggressive version is probabilistic early refresh, where each read past a threshold has a small chance of refreshing early, turning a sharp 100ms spike into a 60-second ramp.
+
+## Event-driven purge and the dual-write problem
+
+If bounded staleness is not good enough, you invalidate on the write itself: when the row changes, delete (or update) the cache key. This is the "cache-aside with purge" pattern, and it is where the dragons live. You now have two writes — one to the database, one to the cache — and no transaction across both. That is the **dual-write problem**: either store can succeed while the other fails. If the DB commit succeeds and the `DEL` fails (a dropped packet, a Redis blip), the cache serves the old value until its TTL — which is why you keep a TTL even when you actively invalidate: it is the backstop for every missed purge.
+
+Deleting rather than updating the key is itself the senior reflex: a `DEL` is idempotent and order-independent, so two concurrent writers racing to invalidate cannot leave a half-written merged value the way two concurrent `SET`s can. But delete-on-write does not close the worst race, which is the next section.
+
+## The set-after-delete race: why "just delete the key" still serves stale
+
+Here is the failure from the hook, in order. Reader R gets a cache miss on `user:42` and queries the database, reading `name = "Ann"`. Before R writes that back, writer W runs: it updates the row to `name = "Bob"` and deletes `user:42`. Now R — still holding the stale "Ann" it read milliseconds ago — finishes and does `SET user:42 = "Ann"`. The cache now holds "Ann" while the database holds "Bob", and it stays wrong until the TTL expires. The delete happened *between* R's read and R's write, so R's write silently undid it.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">t</th>
+        <th class="border border-border px-3 py-2 text-left">Reader R (cache miss)</th>
+        <th class="border border-border px-3 py-2 text-left">Writer W (update)</th>
+        <th class="border border-border px-3 py-2 text-left">Cache / DB state</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1</td>
+        <td class="border border-border px-3 py-2">miss; reads DB → "Ann"</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2">DB: Ann · cache: empty</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2</td>
+        <td class="border border-border px-3 py-2">(slow: GC pause, retry)</td>
+        <td class="border border-border px-3 py-2">UPDATE DB → "Bob"</td>
+        <td class="border border-border px-3 py-2">DB: Bob · cache: empty</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2"><code>DEL user:42</code></td>
+        <td class="border border-border px-3 py-2">DB: Bob · cache: empty</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4</td>
+        <td class="border border-border px-3 py-2"><code>SET user:42 = "Ann"</code></td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2"><strong>DB: Bob · cache: Ann (stale!)</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+There are three real fixes, in rising order of cost. **Delayed double delete**: after the write, `DEL` the key, then schedule a *second* `DEL` a few hundred milliseconds later — long enough that any in-flight reader has finished its stale `SET`, so the second delete wipes it. Cheap, probabilistic, and the most common patch in practice. **Leases** (Facebook's approach): on a miss, memcache hands the reader a 64-bit token bound to the key; the reader may only `SET` if its token is still valid, and a `DEL` invalidates the token — so a stale set arriving after the delete is rejected. Leases cut Facebook's peak origin load from **17,000 to 1,300 queries/sec** on a hot key while also killing this race. **Funnel writes through the cache** (write-through), so there is no separate reader-populated `SET` to race with at all.
+
+<Inset kind="why" lang="en">
+Why does deleting beat updating the key on write? Because two writers can interleave. If W1 sets the key to "Bob" and W2 sets it to "Carol", but their network packets arrive cache-first in the opposite order from their DB commits, the cache can end on "Bob" while the DB ends on "Carol". A `DEL` has no value to get out of order — whoever reads next repopulates from the now-settled DB. Idempotent invalidation sidesteps an ordering problem that value-writes create.
+</Inset>
+
+## Write-through, write-behind, write-around: where the write goes
+
+The strategies above are read-populated (cache-aside). The write-path strategies decide what a write does to the cache directly. **Write-through** writes to the cache and the database in the same operation, synchronously — the cache is always consistent with what was just written, and there is no reader-populated stale set to race. The price is write latency (you pay both stores on the critical path) and cache pollution: you cache data that may never be read. **Write-behind / write-back** writes to the cache immediately and queues the database write asynchronously — fast writes, write coalescing under bursts, but a window where the only copy of the write is in a volatile cache. If the node dies before the flush, that write is gone; this is the strategy that can lose committed-looking data, so it is reserved for tolerant workloads (counters, metrics) or paired with a durable queue. **Write-around** skips the cache on write entirely (DB only) and lets reads populate later — good when written data is rarely read soon, bad for read-your-writes because the writer's own next read is a guaranteed miss-then-stale-until-populated.
+
+<TradeoffMatrix
+  id="02-invalidation-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A user edits their own profile and is immediately shown it again (read-your-writes is required). Picking the write strategy, what holds?"
+  options={[
+    { name: "Write-through: write cache + DB synchronously in the same call", summary: "Both stores, on the write path.", correct: true, justification: "The user's own next read hits a cache entry that already reflects their write, so read-your-writes holds with no reader-populated stale SET to race against. You pay extra write latency (two stores synchronously) and some cache pollution, which is the right price when correctness on the writer's own read is the requirement." },
+    { name: "Cache-aside with delete-on-write: update DB, DEL the key", summary: "Idempotent purge, read repopulates.", justification: "Usually fine, but exposed to the set-after-delete race: a concurrent reader that started before the write can repopulate the key with the stale value right after your DEL, so the writer can see their old profile. It needs delayed double-delete or leases to be safe for strict read-your-writes." },
+    { name: "Write-behind: write cache now, flush DB asynchronously", summary: "Fast writes, async DB.", justification: "Fast and read-your-writes-friendly on the cache, but it opens a durability window: if the node dies before the async flush, the committed-looking profile edit is lost. Reserve it for tolerant data (counters, metrics), not user-visible profile state." },
+    { name: "Write-around: write DB only, never touch cache on write", summary: "DB-only write.", justification: "Worst choice for read-your-writes: the writer's own next read is a guaranteed cache miss, and if any stale entry lingers it serves the old value until invalidation. Write-around is for data rarely read soon after writing, the opposite of this prompt." },
+  ]}
+/>
+
+<Quiz
+  id="02-invalidation-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="1,000 servers cache the same hot key with an identical 300s TTL warmed in one deploy. At T=300 the origin is hammered. The cleanest first fix?"
+  choices={[
+    { label: "TTL jitter: give each entry a random TTL like 270–330s so expiries scatter and one rebuild serves the rest", correct: true },
+    { label: "Lower the TTL to 30s so it expires sooner", misconception: "Shortening the TTL multiplies origin load and does nothing about synchronization — all 1,000 servers still expire in lockstep, just ten times as often." },
+    { label: "Remove the TTL and rely only on event-driven purge", misconception: "Dropping the TTL removes your backstop for missed purges; the stampede is a synchronization problem, and you fix it by scattering expiries, not by removing them." },
+    { label: "Add more cache nodes", misconception: "More nodes don't help when every node expires the same key at the same instant and all miss to the same origin simultaneously." },
+  ]}
+/>
+
+<Quiz
+  id="02-invalidation-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="With cache-aside delete-on-write, you update the DB then DEL the key. Why can the cache still end up holding the old value?"
+  choices={[
+    { label: "A reader that read the old DB row before the write can finish its repopulating SET after your DEL, writing the stale value back", correct: true },
+    { label: "DEL is not atomic, so the key is only partially deleted", misconception: "DEL is atomic; the problem is timing across two requests, not a partial delete of one key." },
+    { label: "Redis silently restores deleted keys from its AOF", misconception: "Redis does not resurrect deleted keys; the stale value comes from a concurrent reader's SET, not from persistence." },
+    { label: "The TTL re-creates the key with the old value", misconception: "TTL only expires keys; it never recreates them with old data. The stale write is the racing reader's repopulation." },
+  ]}
+/>
+
+<DragOrder
+  id="02-invalidation-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the events that produce a set-after-delete stale repopulation:"
+  items={[
+    { id: "a", label: "Reader misses the cache and reads the OLD value from the DB" },
+    { id: "b", label: "Writer updates the DB to the NEW value" },
+    { id: "c", label: "Writer issues DEL on the cache key (key is now empty)" },
+    { id: "d", label: "Reader finishes and SETs the cache to the OLD value it read in step 1" },
+    { id: "e", label: "Cache now serves the OLD value until the TTL backstop expires" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Pick which staleness you ship. TTL needs jitter to avoid stampedes; delete-on-write races with readers — close it with double-delete or leases; keep a TTL as the backstop for missed purges.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-invalidation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk a teammate through the set-after-delete race and the three ways to close it.", a: "A reader gets a cache miss and reads the old row from the DB. Before it writes that back, a writer updates the DB to the new value and deletes the cache key. The reader, still holding the old value it read milliseconds ago, then SETs the cache to that old value — undoing the delete. The cache now disagrees with the DB until the TTL expires, and it is hard to reproduce because it needs two requests racing within a few milliseconds. Three fixes, by cost: delayed double-delete schedules a second DEL a few hundred ms after the write, so it wipes the stale SET left by an in-flight reader — cheap and probabilistic. Leases (Facebook's memcache) hand the reader a token on miss that a DEL invalidates, so a stale SET arriving after the delete is rejected; this also cut their hot-key origin load from 17K to 1.3K queries/sec. Funneling writes through the cache (write-through) removes the separate reader-populated SET entirely, so there is nothing to race." },
+    { q: "Why keep a TTL even when you actively invalidate on every write, and why does TTL alone need jitter?", a: "Active invalidation is a dual write: the DB commit and the cache DEL are two operations with no transaction across them, so the DEL can fail — a dropped packet, a Redis hiccup, a process crash between the two. When it fails silently, the cache serves the old value forever unless something else clears it. The TTL is that backstop: it bounds how long any missed purge can stay wrong, turning a permanent inconsistency into a bounded one. But a fixed TTL creates its own failure: if many servers warm the same key together, they all expire it in the same narrow window and stampede the origin simultaneously — the thundering herd. Jitter (a random TTL like ±10% around the target) scatters those expiries across a band so the origin sees a smooth ramp and one rebuild serves the rest, instead of thousands of simultaneous misses." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache invalidation is choosing which staleness you ship, because a cache and a database are two systems with no transaction spanning both. TTL is the cheap floor — eventually correct, bounded by the expiry, but prone to synchronized stampedes that you defuse with jitter (a random ±10% TTL) and probabilistic early refresh. Event-driven purge cuts staleness to the write but introduces the dual-write problem, which is why you always keep a TTL as the backstop for every missed delete. The race that bites in production is set-after-delete: a reader that read the old row before the write repopulates the key right after the writer's DEL, leaving stale data until the TTL — closed by delayed double-delete, by leases (which also cut Facebook's hot-key load from 17K to 1.3K qps), or by funneling writes through the cache. Write-through buys consistency and read-your-writes at the cost of write latency; write-behind buys fast writes at the cost of a durability window; write-around skips the cache on write and breaks read-your-writes. Name the gap each strategy opens, then pick the one your product can tolerate.
+</Recap>
