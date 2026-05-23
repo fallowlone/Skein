@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 1
 title: "Batching: amortize fixed cost per operation"
-summary: "When per-operation price is mostly fixed (syscall, network round-trip, ACK), grouping operations amortizes it; size/window window decides where throughput meets tail-latency."
+summary: "When per-operation price is mostly fixed (syscall, network round-trip, ACK, log flush), grouping operations amortizes it. The window — size plus max-wait — decides where throughput meets tail latency."
 estMin: 8
-status: stub
+status: ready
 lessonType: topic
 level: junior
 prereqs: ["performance/01-profile-first/01-why-profile-first", "performance/02-hot-paths/01-what-makes-a-hot-path"]
@@ -24,21 +24,151 @@ sources:
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-Ever wonder why sending 1000 tiny network packets one-by-one crushes your server, but sending them in batches flies? The fix isn't faster networks—it's amortizing the fixed cost of each operation.
+A team chases a slow ingest pipeline for two weeks. The CPU is idle, the network is idle, the disk is idle — yet 1000 rows take 9 seconds to insert. Nothing is "busy." The profiler finally points at the obvious: 1000 separate `INSERT` statements, 1000 separate round-trips to Postgres, each one waiting for an ACK before the next begins. They swapped the loop for one `COPY`. Same hardware, same rows: 14 milliseconds. They never made anything faster — they just stopped paying the toll a thousand times.
 </Hook>
 
-<Crux>Per-op fixed cost dominates? Batch. Window = batch size and max wait; bigger batches buy throughput, charge tail-latency.</Crux>
+<Crux>If per-operation cost is mostly fixed, batch it: pay the fixed price once for N items instead of N times.</Crux>
 
 <Explanation>
-Every operation has a fixed price (header, ACK, syscall transition, log flush, planner overhead) and a variable price (payload size). When fixed cost dominates and rate is high, per-operation throughput ceiling becomes that fixed cost. Batching folds the fixed cost of N operations into one.
 
-Production systems use this everywhere: TCP Nagle, Kafka linger.ms, Postgres COPY, Redis pipelining, io_uring submission queues, syslog buffering. The senior question is never "to batch or not," but "what window size maximizes throughput without breaking SLO tail latency?"
+## The fixed-vs-variable cost model
+
+Every operation has two prices. The **variable** price scales with the data: serializing a 4 KB payload costs more than a 40 byte one. The **fixed** price is paid per call no matter how small the payload — and it is usually the expensive half. A syscall pays the user→kernel mode transition and back. A network call pays a full round-trip plus the ACK. A database write pays query planning, a transaction commit, and a WAL flush. A log line pays an `fsync`.
+
+Write the total cost of N operations as `total = N * (F + V)`, where `F` is fixed and `V` is variable per item. When `F` dominates `V` and N is large, almost everything you pay is `F`, repeated N times — and the data itself is rounding error. Batching changes the shape to `total = F + N * V`: you pay `F` **once** and `V` per item. The fixed cost is amortized across the whole batch. That single algebraic move — pulling `F` outside the loop — is the entire idea.
+
+This is why the slow pipeline was slow. The CPU, disk, and network all looked idle because the bottleneck was *latency*, not utilization: each operation spent its life waiting for the previous round-trip to complete. The fixed cost was never CPU time you could see in a flame graph — it was dead time on the wire and in the kernel.
+
+## Fixed cost lives at every layer
+
+The reason batching shows up everywhere — TCP's Nagle algorithm, Kafka's `linger.ms`, Postgres `COPY`, Redis pipelining, `io_uring` submission queues, syslog buffering — is that every layer of the stack has its own per-operation toll. Knowing *which* fixed cost you are amortizing tells you how big the win will be.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Layer</th>
+        <th class="border border-border px-3 py-2 text-left">Fixed cost per op</th>
+        <th class="border border-border px-3 py-2 text-left">Batched as</th>
+        <th class="border border-border px-3 py-2 text-left">Reported gain</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Syscall</td>
+        <td class="border border-border px-3 py-2">user↔kernel mode transition (~hundreds of ns each)</td>
+        <td class="border border-border px-3 py-2"><code>io_uring</code> / <code>writev</code> / batched submission</td>
+        <td class="border border-border px-3 py-2">millions of IOPS without per-op syscall</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Network (Redis)</td>
+        <td class="border border-border px-3 py-2">full RTT + ACK, paid per command</td>
+        <td class="border border-border px-3 py-2">pipelining (send many, read replies once)</td>
+        <td class="border border-border px-3 py-2">10k PINGs: 1.19s → 0.25s (~5x)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Broker (Kafka)</td>
+        <td class="border border-border px-3 py-2">produce request + replication ACK</td>
+        <td class="border border-border px-3 py-2"><code>batch.size</code> + <code>linger.ms</code></td>
+        <td class="border border-border px-3 py-2">~8k → ~150k msg/s with batching on</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Database (Postgres)</td>
+        <td class="border border-border px-3 py-2">parse + plan + commit + WAL flush</td>
+        <td class="border border-border px-3 py-2"><code>COPY</code> / multi-row <code>INSERT</code></td>
+        <td class="border border-border px-3 py-2">10M rows: 9000s of single INSERTs → 14s COPY</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The Redis case is the cleanest illustration of the model. Over a 250 ms link, a server that can serve 100k requests/sec is capped at **4 requests/sec** if the client waits for each reply — because the bottleneck is the RTT, paid per command. Pipeline the commands and you pay one RTT for the whole batch: throughput jumps back toward the server's real ceiling. The hardware never changed; the fixed cost just stopped repeating.
+
+## The window: size and max-wait
+
+A batch does not assemble itself for free — items have to *accumulate* before they ship. That accumulation is governed by a **window** with two knobs, and whichever fires first closes the batch:
+
+- **Size** — a count or byte cap. Kafka's `batch.size` defaults to 16 KB; fill it and the batch flushes immediately.
+- **Max-wait** — a time cap. Kafka's `linger.ms` (default 5 ms in modern versions) is the longest the producer will hold an under-full batch hoping more arrives.
+
+Under heavy load, batches fill before the timer expires, so you ride the size cap and get near-maximum amortization for free. Under light load, the timer is what closes the batch — and that is where the cost hides. An item arriving into an empty window pays the full `linger.ms` of dead time even though the system is idle. Bigger windows buy more throughput per unit fixed cost but charge it to **tail latency**: the items at the front of the window wait the longest. Later lessons go deep on tuning this; for now, hold the shape — the window is the dial between throughput and tail latency, and the senior question is never "batch or not" but "what window keeps p99 under the SLO?"
+
+## Where NOT to batch
+
+Batching is not free, and a senior knows the cases where it is a net loss:
+
+1. **Rare operations.** No queue depth means no items to amortize across — you just add `linger.ms` of pure latency to a single call. A batch of one is slower than no batch.
+2. **Hard sub-millisecond SLO.** If `p99 < 1ms` is the contract, any wait window blows it. The amortization math wins on throughput but you cannot spend the latency.
+3. **Causal per-op dependency.** If operation N+1's input depends on operation N's acknowledged result, you cannot fire them as a group — they are serial by definition.
+4. **Cannot tolerate partial-batch loss.** A batch is often acknowledged or lost as a unit. If one record failing must not roll back its 999 neighbors, or a crash mid-batch must not lose buffered-but-unacked items, your failure model fights the batch boundary.
+
+<TradeoffMatrix
+  id="01-basics-tradeoff-1"
+  lessonSlug="01-basics"
+  lang="en"
+  prompt="A payment service writes one ledger row per transaction. Volume is ~30 writes/sec, and the SLA is 'the row is durable before we return success to the user.' A teammate proposes buffering writes into 50 ms COPY batches to cut DB load. Pick the call a senior defends."
+  options={[
+    { name: "Reject batching here; keep per-transaction durable writes", summary: "Right tool, wrong place.", correct: true, justification: "At 30 writes/sec there is almost no queue depth to amortize, so the fixed-cost win is tiny — but the cost is real: every transaction now waits up to 50 ms and a crash before the batch flushes loses acknowledged-to-the-user payments. The failure model (durable before success) is incompatible with partial-batch loss. Batching trades latency and at-risk data for throughput you don't need." },
+    { name: "Batch into 50 ms COPY windows to reduce database load", summary: "Throughput first.", justification: "Optimizes a number nobody is paying — 30 writes/sec is not a load problem. It buys throughput headroom while breaking the actual SLA, because buffered rows are not durable and can vanish on crash. Wrong axis." },
+    { name: "Batch but acknowledge the user immediately, before the flush", summary: "Hide the latency.", justification: "Worse: now you've told the user the payment succeeded while it sits in a volatile buffer. This converts a latency problem into a data-loss-and-lie problem — the exact failure the durability SLA forbids." },
+  ]}
+/>
+
+<Quiz
+  id="01-basics-quiz-1"
+  lessonSlug="01-basics"
+  lang="en"
+  question="A pipeline does 1000 single-row INSERTs and the CPU, disk, and network all sit near idle, yet it takes 9 seconds. What is the bottleneck?"
+  choices={[
+    { label: "Per-operation fixed cost paid serially — each round-trip waits for the previous ACK, so the time is dead latency, not utilization", correct: true },
+    { label: "The CPU is secretly saturated and the profiler is wrong", misconception: "Idle CPU is the symptom, not a measurement error: the work is waiting on round-trips, so there's nothing for the CPU to do. Adding cores won't help." },
+    { label: "The rows are too large; reduce payload size", misconception: "That attacks the variable cost. The problem is the fixed per-op cost repeated 1000 times — batching with COPY pays it once, regardless of payload size." },
+  ]}
+/>
+
+<Quiz
+  id="01-basics-quiz-2"
+  lessonSlug="01-basics"
+  lang="en"
+  question="What does increasing a batching window (larger size, longer max-wait) trade away?"
+  choices={[
+    { label: "Tail latency — items at the front of the window wait longer for it to close", correct: true },
+    { label: "Throughput — bigger batches process fewer items per second", misconception: "Backwards: bigger batches raise throughput by amortizing fixed cost over more items. The cost they charge is latency, not throughput." },
+    { label: "Nothing — a bigger window is strictly better", misconception: "There is no free lunch. The window is a dial between throughput and tail latency; a too-large window can blow your p99 SLO." },
+  ]}
+/>
+
+<DragOrder
+  id="01-basics-drag-1"
+  lessonSlug="01-basics"
+  lang="en"
+  prompt="Order the senior's reasoning before deciding to batch an operation:"
+  items={[
+    { id: "a", label: "Is the per-operation cost mostly fixed (syscall, RTT, commit) rather than variable payload?" },
+    { id: "b", label: "Is the operation rate high enough to create queue depth to amortize across?" },
+    { id: "c", label: "Can the producer tolerate the added wait (no hard sub-ms SLO, no causal per-op dependency)?" },
+    { id: "d", label: "Can the failure model survive batch-granular loss/rollback?" },
+    { id: "e", label: "Only then: pick a window (size + max-wait) that keeps p99 under the SLO" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Inset kind="why" lang="en">
+The reason an idle-looking system can still be slow is that batching attacks *latency cost*, not *CPU cost*. A flame graph shows where CPU time goes; it is blind to a thread parked waiting for a round-trip. When utilization is low but throughput is bad, suspect serial fixed costs — and reach for a batch before you reach for bigger hardware.
+</Inset>
+
 </Explanation>
+
+<KeyTakeaway>Batching turns `N * (F + V)` into `F + N * V` — fixed cost paid once, not N times. Worth it with queue depth and latency slack. The window (size + max-wait) is the dial: bigger buys throughput, charges tail latency.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -47,21 +177,19 @@ Production systems use this everywhere: TCP Nagle, Kafka linger.ms, Postgres COP
   questions={[
     {
       q: "In one paragraph: explain why batching exists and where to use it versus where not to.",
-      a: "Batching exists because many operations have a fixed price per-call (network round-trip, syscall, disk seek, ACK overhead) dominating the variable price (the data itself). Without batching you pay the fixed cost per-item; with batching you pay per-batch. For high-rate operations the savings are dramatic: a Kafka producer jumping from 8k msg/sec to 150k msg/sec just by enabling batching; a DB jumping from 5k inserts/sec to 500k/sec via COPY. Use batching when (1) operation has high fixed cost per-call (network, syscall, transactional commit), (2) operations arrive at a rate creating queue depth, (3) producer tolerates small latency penalty (typically ms - tens of ms). Don't batch when (1) operation is rare (no queue depth), (2) each operation must be acknowledged before the next (causal dependency), (3) system has hard sub-ms latency requirements, (4) failure model cannot tolerate partial-batch loss."
+      a: "Batching exists because many operations have a fixed price per-call (network round-trip, syscall, transaction commit, log flush) that dominates the variable price (the data itself). Without batching you pay the fixed cost per-item; with batching you pay it once per-batch — turning N*(F+V) into F+N*V. For high-rate operations the savings are dramatic: a Kafka producer jumping from roughly 8k to 150k msg/sec just by enabling batching; Postgres ingesting 10M rows in 14s via COPY where single INSERTs took 9000s; Redis pipelining 10k PINGs in 0.25s instead of 1.19s. Use batching when (1) the operation has high fixed cost per-call, (2) operations arrive fast enough to create queue depth, and (3) the producer tolerates a small latency penalty (ms to tens of ms). Don't batch when (1) the operation is rare, so there's no queue depth to amortize across, (2) each operation must be acknowledged before the next can begin (causal dependency), (3) the system has a hard sub-millisecond latency SLO, or (4) the failure model cannot tolerate partial-batch loss or batch-granular rollback."
     },
     {
-      q: "What are the two dimensions of a batching window?",
-      a: "Batch size (or max bytes/max records) and max wait time. Whichever is reached first closes the window."
+      q: "What are the two dimensions of a batching window, and what closes the window?",
+      a: "Size (a count or max-bytes cap, e.g. Kafka batch.size) and max-wait time (e.g. Kafka linger.ms). Whichever is reached first closes the window and ships the batch. Under heavy load the size cap fires first, giving near-maximum amortization for free; under light load the timer fires first, which is where the latency cost shows up."
     },
     {
-      q: "Why does batching add latency for items at the beginning of the window?",
-      a: "Items arriving just after a batch is sent must wait for either the batch to fill up or the max wait time to expire before being processed, which adds latency proportional to the window settings."
+      q: "Why can a system look completely idle (idle CPU, disk, network) and still be slow, and why does batching fix it?",
+      a: "Because the bottleneck is latency, not utilization. Each operation spends its life waiting for the previous round-trip or commit to complete, so no resource is saturated — the threads are parked. A flame graph is blind to this because it measures CPU time, not dead time on the wire. Batching fixes it by paying the fixed round-trip/commit cost once for the whole group instead of serially per item, removing the dead time without making any individual operation faster."
     }
   ]}
 />
 
-<KeyTakeaway>Batching amortizes fixed cost across N operations. Window = max-size + max-wait. Larger batches increase throughput but increase tail-latency. Tune to SLO ceiling, not maximum throughput.</KeyTakeaway>
-
 <Recap lang="en">
-Batching exists to amortize fixed costs that dominate variable costs in high-rate operations. The two-dimensional window of batch size and max wait time controls the throughput-latency tradeoff. Items at the front of the window experience increased latency due to waiting for the window to close. Production systems apply batching at multiple layers to compound the savings, but each layer needs proper configuration and observability to avoid creating new bottlenecks downstream.
+Batching exists to amortize the fixed cost of an operation — the syscall transition, network round-trip, ACK, transaction commit, or log flush — across many items, turning N*(F+V) into F+N*V. It pays off when fixed cost dominates variable cost, when the rate is high enough to create queue depth, and when there's latency slack to spend. The window has two knobs, size and max-wait, and whichever fires first closes the batch: under load you ride the size cap, under light load the timer closes it and charges the wait to tail latency. Don't batch rare operations, hard sub-ms SLOs, causally dependent operations, or systems that can't survive partial-batch loss. The recurring senior trap is optimizing throughput nobody is paying for while breaking a latency or durability contract — so tune the window to the SLO, not to maximum throughput.
 </Recap>
