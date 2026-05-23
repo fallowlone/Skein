@@ -6,12 +6,171 @@ unit: 06-sagas
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Sagas"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Sagas: long-lived transactions across services without 2PC"
+summary: "When a workflow spans flight, hotel, and car services, you cannot hold one ACID transaction across all of them. A saga is a chain of local commits, each with a compensating undo — buying availability at the cost of isolation."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["saga-pattern", "compensating-transaction", "choreography-vs-orchestration", "two-phase-commit", "isolation-anomalies", "semantic-lock"]
+estMin: 16
+sources:
+  - https://microservices.io/patterns/data/saga.html
+  - https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf
+  - https://learn.microsoft.com/en-us/azure/architecture/patterns/saga
+  - https://temporal.io/blog/mastering-saga-patterns-for-distributed-transactions-in-microservices
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A booking flow charges the card, reserves the flight, then tries the hotel — and the hotel service is down. In a monolith you would `ROLLBACK` and walk away clean. Here there is no rollback: the card is already charged in the payments database, the seat already held in the flight database. Three services, three databases, three commits that already happened. The only way back is forward — issue a refund, release the seat — and you have to write that undo by hand, for every step, for every failure point.
+</Hook>
+
+<Crux>A saga trades ACID isolation for availability: a chain of local commits, each with a compensating undo — no lock held across services.</Crux>
+
+<Explanation>
+
+## Why two-phase commit doesn't survive microservices
+
+The textbook answer to a cross-database transaction is two-phase commit (2PC): a coordinator asks every participant to *prepare*, and once all vote yes it tells them to *commit*. It is correct, and in a microservices topology it is a trap. During the prepare phase every participant holds its locks open, waiting for the coordinator's verdict — across a network, across services owned by different teams. If the coordinator dies after prepare but before commit, participants are stuck *in-doubt*: locked, unable to commit or abort, until the coordinator recovers. The coordinator is a blocking single point of failure, and the locks it forces are held for the duration of a network round trip to the slowest service, not a local disk write.
+
+That is fine for two tables in one Postgres instance. It is fatal for a request path through six services where one is a third-party payment gateway you cannot enroll in your transaction at all. So you give up the global transaction and accept a different deal: each service commits locally, immediately, and you stitch the steps together with messages instead of locks.
+
+## The saga: local commits plus compensations
+
+A saga is a sequence of local transactions. Each step updates one service's database and emits a message that triggers the next step. There is no global commit — every `T1, T2, T3` is durable the instant it runs. The price of that immediacy is that there is no automatic undo, so every forward step `Ti` ships with a **compensating transaction** `Ci` that semantically reverses it. If step `T3` fails, the saga runs `C2` then `C1`, in reverse order, to walk the world back to a consistent state.
+
+The trip-booking example makes the shape concrete: `T1` book flight, `T2` book hotel, `T3` rent car. If the car step fails, you compensate in reverse — `C2` cancel hotel, `C1` cancel flight. Compensations run in the opposite order to forward steps because later steps may depend on earlier ones.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Forward step</th>
+        <th class="border border-border px-3 py-2 text-left">Compensation</th>
+        <th class="border border-border px-3 py-2 text-left">True undo?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>T1</code> book flight</td>
+        <td class="border border-border px-3 py-2"><code>C1</code> cancel flight</td>
+        <td class="border border-border px-3 py-2">No — may incur a fee</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>T2</code> charge card</td>
+        <td class="border border-border px-3 py-2"><code>C2</code> issue refund</td>
+        <td class="border border-border px-3 py-2">No — a new transaction, not a delete</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>T3</code> send confirmation email</td>
+        <td class="border border-border px-3 py-2">— (no compensation possible)</td>
+        <td class="border border-border px-3 py-2">No — the email is already gone</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The last row is the part juniors miss. A compensation is not a rollback; it is a *new business action* that approximates undoing the old one. A refund is not the inverse of a charge — the money moved twice, the customer sees two line items, and the gateway took a fee both ways. A sent email cannot be unsent. The senior design rule that falls out of this: order your steps so the **irreversible ones go last**. Charge the card and send the email only after every step that might fail has already succeeded.
+
+## Choreography vs orchestration
+
+There are two ways to wire the steps together, and choosing wrong is a multi-quarter regret.
+
+In **choreography**, there is no coordinator. Each service listens for events and reacts: payments hears `FlightBooked`, charges the card, emits `CardCharged`; hotel hears that and books a room. It is decentralized and has no single point of failure — but the saga's logic exists nowhere as a whole. To answer "what happens after a card is charged?" you grep four codebases. Add a fifth step and you touch three services. Cyclic event dependencies sneak in. Tracing a stuck booking means reconstructing a distributed sequence from logs across services.
+
+In **orchestration**, a central orchestrator owns the workflow as explicit code: it sends `BookFlight`, waits for the reply, sends `ChargeCard`, and on any failure drives the compensations. The whole saga is readable in one place and one trace; the cost is a new stateful component you must build, deploy, and keep available. This is the niche durable-execution engines like Temporal fill — they persist the orchestrator's state so a step that crashes mid-saga resumes exactly where it stopped instead of losing the in-flight workflow.
+
+<Inset kind="why" lang="en">
+The rough heuristic: choreography for a short, stable, linear flow (2–3 steps that rarely change); orchestration once the flow has branches, retries, timeouts, or more than ~4 steps — the point where "where is the logic?" stops having a one-file answer. Many teams start choreographed for simplicity and migrate to an orchestrator when the event web becomes untraceable.
+</Inset>
+
+## The brutal part: sagas have no isolation
+
+This is the line that gets skipped in tutorials and discovered in production. A saga is ACID minus the I: it gives you Atomicity (via compensation), Consistency, and Durability, but **no Isolation**. Because each local transaction commits immediately, its half-finished state is visible to everyone else *before* the saga as a whole has decided to succeed or fail. Garcia-Molina and Salem named the pattern in 1987 precisely as the relaxation of isolation for long-lived transactions.
+
+Three concrete anomalies follow. A **dirty read**: saga B reads an order saga A has committed but will later compensate away, then acts on data that is about to vanish. A **lost update**: two sagas read the same balance, both write, one clobbers the other. A **non-repeatable read**: a saga reads a value at step 1 and a different value at step 3 because another saga changed it in between. None of these can happen inside a single ACID transaction; all of them can happen across a saga's lifetime, which may be seconds, or — for a workflow that waits on human approval — days.
+
+The countermeasures are application-level, not database-level. A **semantic lock** marks a record `pending`/`PENDING_PAYMENT` so other sagas know not to touch it until the saga clears it. **Commutative updates** (use `balance += delta`, never `balance = newValue`) make concurrent writes order-independent. A **reread / version check** verifies the value hasn't changed before overwriting (optimistic concurrency). You are reimplementing a slice of what a database gave you for free — which is exactly why you only reach for a saga when a single transaction genuinely cannot span the work.
+
+<TradeoffMatrix
+  id="06-sagas-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A 6-step order workflow spans 5 services, has retries, timeouts, and a manual-approval step that can wait days. Pick the coordination approach."
+  options={[
+    { name: "Orchestration: a durable orchestrator owns the whole flow and drives compensations", summary: "Central, explicit.", correct: true, justification: "With 6 steps, retries, timeouts, and a multi-day human wait, the workflow's logic and state must live somewhere durable and readable. An orchestrator (or a durable-execution engine like Temporal) persists progress so a crash mid-saga resumes where it stopped, makes the whole flow visible in one trace, and centralizes the compensation logic. The cost is a new stateful component — worth it once the flow is this complex." },
+    { name: "Choreography: each service emits and reacts to events, no coordinator", summary: "Decentralized.", justification: "Great for a short, stable, linear flow, but at 6 steps across 5 services with retries and timeouts the logic is scattered nowhere-and-everywhere. The multi-day approval step needs persisted state that no single event-reacting service owns, and tracing a stuck saga means reconstructing a sequence from logs across services." },
+    { name: "Wrap all 5 services in one two-phase commit transaction", summary: "Distributed 2PC.", justification: "2PC holds locks across every participant for the duration of the slowest one and makes the coordinator a blocking single point of failure. Across 5 services — likely including ones you can't enroll, like a payment gateway — and a step that waits days, this means locks held for days and in-doubt participants on any coordinator crash. It does not scale here." },
+    { name: "Skip the saga; just call each service in sequence and hope none fail", summary: "No compensation.", justification: "Sequential calls with no compensation means a mid-flow failure leaves the system permanently inconsistent: card charged, no order. The whole reason for a saga is that partial failure is normal across services — you must define the undo path, not hope it never runs." },
+  ]}
+/>
+
+<Quiz
+  id="06-sagas-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A saga's step T2 charges a card; step T3 fails. What does C2 (compensating T2) actually do?"
+  choices={[
+    { label: "Issues a refund — a new transaction that approximates undoing the charge, not a true rollback", correct: true },
+    { label: "Rolls back the payments database to before the charge committed", misconception: "There is no rollback: T2 already committed locally and durably. A compensation is a new forward action (a refund), not a database rollback — the money moved twice and the customer sees two line items." },
+    { label: "Tells the 2PC coordinator to abort the transaction", misconception: "Sagas exist precisely because there is no 2PC coordinator holding the transaction open. Each step commits immediately; undo is manual compensation." },
+    { label: "Nothing — committed steps can't be undone", misconception: "They can't be rolled back, but they can be compensated. C2 is the explicit undo you must write; without it a mid-saga failure leaves the system inconsistent." },
+  ]}
+/>
+
+<Quiz
+  id="06-sagas-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Saga B reads an order that saga A committed but will later compensate away, and acts on it. Which anomaly is this, and why is it possible?"
+  choices={[
+    { label: "A dirty read — possible because a saga has no isolation; each local commit is visible before the whole saga resolves", correct: true },
+    { label: "A deadlock — two sagas waiting on each other's locks", misconception: "Sagas don't hold locks across steps, so classic deadlock isn't the issue. The problem is the opposite: nothing is locked, so uncommitted-in-spirit state is visible (a dirty read)." },
+    { label: "Impossible — a committed step is final and correct", misconception: "Committed locally is not the same as the saga succeeding. A step can commit and still be compensated away later, so reading it is reading data that may vanish — a dirty read." },
+    { label: "A non-repeatable read", misconception: "Non-repeatable read is when the same saga reads a value twice and gets different results. Reading another saga's about-to-be-undone state is a dirty read." },
+  ]}
+/>
+
+<DragOrder
+  id="06-sagas-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A trip saga books flight (T1), hotel (T2), car (T3). The car step fails. Order what happens:"
+  items={[
+    { id: "a", label: "T1 books flight, commits locally, emits an event" },
+    { id: "b", label: "T2 books hotel, commits locally, emits an event" },
+    { id: "c", label: "T3 attempts to rent car and fails" },
+    { id: "d", label: "C2 runs: cancel the hotel (compensate the most recent completed step first)" },
+    { id: "e", label: "C1 runs: cancel the flight (compensate in reverse order)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A saga replaces one impossible cross-service transaction with local commits plus hand-written compensations. You gain availability but lose isolation — dirty reads and lost updates are now yours to fix.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-sagas-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why a compensating transaction is not the same as a database rollback, and how that changes how you order the steps.", a: "A rollback erases an uncommitted change — it is as if the change never happened, and the database guarantees it. A compensation is a brand-new forward transaction that runs after the original already committed durably, and it can only approximate undoing the effect. A refund is not the inverse of a charge: the money moved twice, the customer sees two line items, and the gateway may have taken a fee in both directions. Worse, some steps have no compensation at all — a sent email cannot be unsent, a shipped package is gone. Because compensations are imperfect or impossible, the senior design rule is to order steps so the irreversible or hard-to-undo ones run last: do all the cancellable, reservable work first, and charge the card or send the confirmation only once every step that could fail has already succeeded. That way a mid-saga failure compensates cleanly instead of leaving an un-undoable side effect." },
+    { q: "What does it mean that a saga is 'ACID minus I', and what do you do about it in production?", a: "A saga gives you Atomicity (the whole thing either completes or is compensated back), Consistency, and Durability (each step is committed for real), but it gives up Isolation. Because each local transaction commits immediately, its intermediate state is visible to other sagas before the overall saga has decided to succeed or fail. That opens three anomalies a single ACID transaction would have prevented: dirty reads (reading state that will later be compensated away), lost updates (two sagas overwrite each other), and non-repeatable reads (a value changes between two reads inside one saga). The fixes are application-level. A semantic lock flags a record as pending so other sagas know it is mid-flight and skip or wait. Commutative updates (balance += delta instead of balance = x) make concurrent writes order-independent. A reread or version check confirms the value is unchanged before overwriting (optimistic concurrency). You are rebuilding, by hand, a slice of the isolation a database gave you for free — which is the strongest argument for only using a saga when one transaction genuinely cannot span the work." },
+  ]}
+/>
+
+<Recap lang="en">
+Two-phase commit is correct but unusable across microservices: it makes the coordinator a blocking single point of failure and holds locks across services for the length of a network round trip, so a coordinator crash leaves participants in-doubt. A saga gives that up. It is a sequence of local transactions, each committed immediately and each paired with a compensating transaction that semantically undoes it — and because compensations are new forward actions (a refund, not a delete) and some effects can't be undone at all, you order the irreversible steps last. You wire the steps with choreography (services react to events; no single point of failure but the logic is scattered and hard to trace) or orchestration (a central, often durable, orchestrator owns the flow; one place to read and resume, at the cost of a new component). The defining tradeoff is that a saga is ACID minus Isolation: intermediate commits are visible, so dirty reads, lost updates, and non-repeatable reads become your problem, fixed at the application level with semantic locks, commutative updates, and rereads. Reach for a saga only when a single transaction truly cannot span the work — and then design the undo path before you ship the happy path.
+</Recap>
