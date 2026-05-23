@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 5
 title: "From Nagle to io_uring: evolution of batching"
-summary: "Nagle's algorithm history, latency-throughput Pareto frontier, batch coalescing, deduplication"
+summary: "One pattern runs from Nagle (1984) through Kafka linger.ms to io_uring: amortize a fixed per-op cost over N ops. The lever is the same; only the fixed cost (TCP header, round-trip, syscall) and the window-tuning move change."
 estMin: 15
-status: stub
+status: ready
 lessonType: topic
 level: middle
 prereqs: ["performance/06-batching/01-basics", "performance/06-batching/02-window", "performance/06-batching/03-kafka-postgres", "performance/06-batching/04-syscall-observability"]
@@ -24,50 +24,178 @@ sources:
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-In 1984, John Nagle noticed that telnet's one-byte keystrokes were creating 40-byte TCP/IP headers per byte — swamping early networks. His solution? Buffer small writes until either an ACK arrives or the buffer fills. Decades later, the same pattern appears in Kafka linger.ms and io_uring submission queues.
+In 1984, John Nagle watched a single telnet keystroke leave a host as a 41-byte packet: one byte of payload wrapped in a 40-byte TCP/IP header. On the congested ARPANET that was 97.5% waste, and thousands of those tinygrams were melting links. His fix was three lines of TCP logic. Forty years later you tune the exact same lever every time you set `linger.ms` in Kafka or batch SQEs into one `io_uring_enter`. The fixed cost changed names; the move never did.
 </Hook>
 
-<Crux>Nagle batches small TCP writes; modern systems generalize it. Batch coalescing deduplicates concurrent requests for the same key.</Crux>
+<Crux>Nagle batched tiny TCP writes in 1984; Kafka linger.ms, io_uring, and singleflight are the same fixed-cost amortization, generalized.</Crux>
 
 <Explanation>
-The core batching insight is timeless: when fixed cost per operation dominates (headers, syscalls, ACKs), group operations to pay that cost once instead of N times. The only design question is the window size — how long to wait or how big to grow.
 
-<strong>Nagle's algorithm: the original batching tradeoff</strong>
-John Nagle's RFC 896 (1984) introduced what's now called Nagle's algorithm: TCP buffers small outbound segments until either an ACK is received or the buffer fills to Maximum Segment Size (MSS) bytes.
-  • Motivation: 1-byte telnet keystrokes → 40-byte TCP/IP header per byte of data → 97.5% overhead
-  • Mechanism: delay small writes, hoping more arrive to fill the segment
-  • Tradeoff: interactive apps wait for next write or ACK, hurting tail latency
-  • Escape hatch: TCP_NODELAY socket option disables Nagle; modern protocols (HTTP/2, gRPC) typically set TCP_NODELAY and do application-level batching instead
+The batching insight is timeless: when a *fixed* cost per operation dominates the *variable* cost of the payload — a TCP header, a network round-trip, a syscall context switch, a DB connection acquire — group operations so you pay the fixed cost once instead of N times. Everything in this lesson is that one idea, applied at a different layer of the stack across four decades. The only real design knob is the window: how long to wait, or how full to get, before you flush.
 
-<strong>The latency-throughput Pareto frontier</strong>
-Every batching system traces a curve: x-axis = batch wait time, y-axis-1 = throughput, y-axis-2 = latency.
-  • No batching: lowest latency, throughput limited by fixed cost
-  • Infinite batching: max theoretical throughput, latency = ∞ for first item
-  • Senior workflow: define SLO latency ceiling → find largest batch window under it → throughput-maximizing operating point
-  • Adaptive systems track this curve dynamically; static systems tune once
+## Nagle's algorithm: the original batching tradeoff
 
-<strong>Batch coalescing and request deduplication</strong>
-Specialized pattern for cache/lookup workloads: when concurrent requests ask for same key, coalesce into one batch.
-  • Classic example: cache miss handling
-  • Worker A misses cache for key K, starts loading from DB
-  • Worker B also misses for K → joins A's pending request instead of duplicating work
-  • Returns same result to both
-  • Implementations: singleflight (Go), Caffeine's AsyncLoadingCache (Java), request collapsing in Varnish/CDN
-  • Production impact: hot cache miss with 100 concurrent requests → 1 DB query instead of 100 → prevents thundering-herd
-  • Combined with batch loading (DataLoader): "all requests in this 10ms window for any combination of keys → one batched DB query"
+RFC 896 (1984) introduced what we now call Nagle's algorithm. The rule is small: while there is unacknowledged data already in flight, hold back any new *small* segment and coalesce it with later writes; flush immediately only when an ACK clears the in-flight data, or when you have a full MSS worth of bytes to send. The motivation was brutal arithmetic — a 1-byte telnet keystroke became a 41-byte packet, so 40 of every 41 bytes on the wire were header. Nagle's rule turned a burst of keystrokes into one packet per round-trip instead of one packet per key.
 
-<strong>Why this matters today</strong>
-The lineage from Nagle 1984 → Kafka linger.ms (2011) → io_uring submission queues (2019) is one continuous pattern:
-  • Fixed cost: TCP header → network round-trip → syscall transition
-  • Lever: amortize fixed cost across N operations
-  • Question: what window size maximizes throughput without breaking SLO tail latency?
-  • Answer: measure fixed vs variable cost, tune window to latency SLO ceiling
+The cost lands on interactive and request/response traffic. If your application does a small `write()` and then waits for a reply, Nagle may sit on that last small segment, hoping for more data that never comes — so it waits for the ACK instead, adding up to a full round-trip of dead time. The escape hatch is the `TCP_NODELAY` socket option, which disables the algorithm so every write goes out immediately. This is why HTTP/2, gRPC, Redis clients, and basically every modern RPC stack set `TCP_NODELAY` at connect time and do their own batching at the application layer, where they actually know message boundaries.
+
+## The Nagle + delayed-ACK deadlock (the postmortem beat)
+
+The famous failure mode is not Nagle alone — it is Nagle interacting with TCP *delayed ACK*. Delayed ACK is the receiver-side mirror of Nagle: instead of ACKing every segment, the receiver waits (Linux default: up to ~40ms) hoping to piggyback the ACK onto a reply or batch it with the next one. Now compose the two. The sender writes a response slightly larger than one MSS: the first full segment goes out, but the small trailing segment is held by Nagle because the first is still unacknowledged. The receiver got the first segment but holds its ACK under delayed-ACK, waiting to piggyback. Neither side will move. The deadlock breaks only when the 40ms delayed-ACK timer fires.
+
+The symptom in production is unmistakable and infuriating: a protocol that should do thousands of transactions per second mysteriously caps near 25/sec, with latency histograms spiking at a suspiciously round 40ms (or 200ms on some stacks). Marc Brooker's line — "It's always TCP_NODELAY. Every damn time." — is folklore for a reason. The fix is one socket option; the diagnosis is the hard part, because the 40ms is paid by *nobody's* CPU and shows up only as wall-clock stall.
+
+## The latency-throughput Pareto frontier
+
+Strip away the layer-specific details and every batching system traces the same curve. On one axis: batch window (time or size). On the other two: throughput and per-item latency, which move in opposition.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Operating point</th>
+        <th class="border border-border px-3 py-2 text-left">Window</th>
+        <th class="border border-border px-3 py-2 text-left">Per-item latency</th>
+        <th class="border border-border px-3 py-2 text-left">Throughput</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">No batching</td>
+        <td class="border border-border px-3 py-2">window = 0</td>
+        <td class="border border-border px-3 py-2">Minimum (send now)</td>
+        <td class="border border-border px-3 py-2">Capped by fixed cost per op</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">SLO operating point</td>
+        <td class="border border-border px-3 py-2">largest window with `p99 < SLO`</td>
+        <td class="border border-border px-3 py-2">At the SLO ceiling</td>
+        <td class="border border-border px-3 py-2">Near-max under that ceiling</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Infinite batching</td>
+        <td class="border border-border px-3 py-2">window = `latency = ∞`</td>
+        <td class="border border-border px-3 py-2">Unbounded (first item never flushes)</td>
+        <td class="border border-border px-3 py-2">Max theoretical</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The senior workflow is not "pick a number" — it is: define the latency SLO ceiling first (say `p99 < 50ms`), then find the *largest* batch window that still fits under it, because that window gives you the most throughput you can buy without breaking the contract. Static systems tune this knob once and live with it. Adaptive systems track the curve at runtime: under light load they shrink the window toward zero (latency matters, there is nothing to batch anyway); under heavy load they let batches fill (throughput matters, and items are arriving fast enough that the wait is cheap). Kafka 4.0 quietly encoded this wisdom: the producer `linger.ms` default moved from `0` to `5ms`, because the efficiency win from fuller batches usually pays for the 5ms wait — frequently yielding *lower* end-to-end latency, not higher, by reducing per-request overhead.
+
+## Batch coalescing and request deduplication
+
+There is a sharper variant for cache/lookup workloads where many callers want the *same* result, not just any throughput. When concurrent requests miss the cache for the same key, you can collapse them into a single inflight load instead of N duplicate loads. Worker A misses key `K` and starts the DB query; worker B (and C, and D…) also miss `K`, see A's request already pending, and *attach* to it rather than firing their own. One result fans out to all of them.
+
+This is the cure for the cache stampede / thundering herd: a hot key expires, 100 requests arrive in the same millisecond, and without coalescing all 100 hammer the database at once — often enough to knock it over right when traffic is highest. With coalescing, those 100 misses become 1 query and 99 free-riders. The implementations are everywhere under different names: Go's `golang.org/x/sync/singleflight`, Java's Caffeine `AsyncLoadingCache`, request collapsing in Varnish and most CDNs. GraphQL's DataLoader takes it one step further by combining coalescing with windowed batch loading: every distinct key requested within one tick is deduped *and* the unique keys are bundled into a single batched backend query, which is also how DataLoader kills the N+1 query problem.
+
+<Inset kind="why" lang="en">
+Coalescing and Nagle look different but share a spine. Nagle merges writes *in time* on one connection to amortize header cost. Singleflight merges reads *across callers* on one key to amortize a backend query. Both answer the same question — "several small things want the same expensive operation; can one trip serve them all?" — just along different dimensions (time vs. identity).
+</Inset>
+
+## Why the lineage matters
+
+The whole point of seeing Nagle, Kafka, and io_uring as one family is that the *tuning method transfers*. Each is just a different fixed cost wrapped in the same lever, so the diagnostic question is identical every time.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Era</th>
+        <th class="border border-border px-3 py-2 text-left">System</th>
+        <th class="border border-border px-3 py-2 text-left">Fixed cost amortized</th>
+        <th class="border border-border px-3 py-2 text-left">Window knob</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1984</td>
+        <td class="border border-border px-3 py-2">Nagle / RFC 896</td>
+        <td class="border border-border px-3 py-2">40-byte TCP/IP header per segment</td>
+        <td class="border border-border px-3 py-2">in-flight ACK or full MSS</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2011</td>
+        <td class="border border-border px-3 py-2">Kafka producer `linger.ms`</td>
+        <td class="border border-border px-3 py-2">network round-trip + broker request</td>
+        <td class="border border-border px-3 py-2">`linger.ms` + `batch.size`</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">2019</td>
+        <td class="border border-border px-3 py-2">io_uring (Linux 5.1)</td>
+        <td class="border border-border px-3 py-2">syscall + context switch into kernel</td>
+        <td class="border border-border px-3 py-2">SQEs queued before one `io_uring_enter`</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+io_uring is the cleanest modern echo: instead of one syscall per I/O, you fill a ring of submission queue entries (SQEs) in shared memory and submit a whole batch with a single `io_uring_enter` — amortizing the kernel-boundary crossing across many operations, exactly as Nagle amortized the header across many keystrokes. Same lever, new fixed cost. Once you see the pattern, the work is always the same three steps: measure the fixed cost vs. the variable cost, confirm the fixed cost actually dominates, then size the window to the largest value your latency SLO allows.
+
+<Quiz
+  id="05-nagle-io-uring-quiz-1"
+  lessonSlug="05-nagle-io-uring"
+  lang="en"
+  question="A request/response service over TCP mysteriously caps near 25 transactions/sec, with latencies clustered at exactly 40ms. What's the most likely cause?"
+  choices={[
+    { label: "Nagle's algorithm interacting with delayed ACK — each side waits for the other until the 40ms delayed-ACK timer fires", correct: true },
+    { label: "The database is the bottleneck and needs a bigger connection pool", misconception: "A round 40ms wall-clock stall that burns no CPU is the signature of the Nagle/delayed-ACK deadlock, not a saturated resource. A pool bottleneck shows queueing under load, not a fixed 40ms floor." },
+    { label: "TCP_NODELAY is enabled and is sending too many tiny packets", misconception: "Backwards: TCP_NODELAY *disables* Nagle and is the fix for this stall, not the cause. The deadlock happens precisely when Nagle is left on." },
+  ]}
+/>
+
+<Quiz
+  id="05-nagle-io-uring-quiz-2"
+  lessonSlug="05-nagle-io-uring"
+  lang="en"
+  question="A hot cache key expires and 100 concurrent requests miss it in the same millisecond. What does request coalescing (singleflight) do?"
+  choices={[
+    { label: "Lets one request load from the DB while the other 99 attach to that inflight load and share its result — 1 query, not 100", correct: true },
+    { label: "Queues all 100 DB queries so they run one at a time instead of in parallel", misconception: "That serializes the stampede but still issues 100 queries — coalescing issues exactly one and fans the single result out to all callers." },
+    { label: "Returns the stale cached value to all 100 to avoid hitting the DB", misconception: "That's a different technique (stale-while-revalidate). Coalescing still does one fresh load; it just deduplicates the concurrent misses onto it." },
+  ]}
+/>
+
+<DragOrder
+  id="05-nagle-io-uring-drag-1"
+  lessonSlug="05-nagle-io-uring"
+  lang="en"
+  prompt="Order the senior workflow for tuning any batch window:"
+  items={[
+    { id: "a", label: "Measure the fixed cost per op vs. the variable cost of the payload" },
+    { id: "b", label: "Confirm the fixed cost actually dominates (else batching buys little)" },
+    { id: "c", label: "Define the latency SLO ceiling first (e.g. p99 under 50ms)" },
+    { id: "d", label: "Find the largest batch window that still fits under that ceiling" },
+    { id: "e", label: "Decide static vs. adaptive: fixed knob, or shrink/grow the window with load" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<TradeoffMatrix
+  id="05-nagle-io-uring-tradeoff-1"
+  lessonSlug="05-nagle-io-uring"
+  lang="en"
+  prompt="A low-traffic internal RPC service does small request/response calls and is hitting a fixed ~40ms latency floor per call. Pick the fix a senior defends."
+  options={[
+    { name: "Set TCP_NODELAY on the sockets to disable Nagle", summary: "Turn off write coalescing.", correct: true, justification: "The 40ms floor is the classic Nagle/delayed-ACK deadlock on a request/response protocol. TCP_NODELAY disables Nagle so the trailing small segment flushes immediately instead of waiting for an ACK that the peer is also delaying. This is the canonical one-line fix, which is why every modern RPC stack sets it at connect time." },
+    { name: "Increase a producer-style linger window to batch more aggressively", summary: "Wait longer to fill batches.", justification: "Wrong direction. This is interactive request/response traffic with low volume — there is nothing to batch, so growing a window adds latency without buying throughput. linger-style batching helps high-volume fire-and-forget pipelines, not chatty RPC." },
+    { name: "Add more application threads to drive concurrency up", summary: "Throw parallelism at it.", justification: "The 40ms is wall-clock stall waiting on a timer, not CPU contention, so more threads don't shrink per-call latency — they just create more calls each paying the same 40ms floor. It masks the symptom under load instead of removing the cause." },
+  ]}
+/>
+
 </Explanation>
+
+<KeyTakeaway>One lever — amortize a fixed per-op cost over N ops — runs from Nagle (1984) to io_uring (2019). Size the window to the largest value under your latency SLO; coalescing applies it across callers, not just in time.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -75,20 +203,16 @@ The lineage from Nagle 1984 → Kafka linger.ms (2011) → io_uring submission q
   lang="en"
   questions={[
     {
-      q: "What problem did Nagle's algorithm solve, and what is its mechanism?",
-      a: "Nagle's algorithm solved the problem of small TCP writes (like telnet keystrokes) creating large header overhead. It buffers small outbound segments until either an ACK is received or the buffer fills to MSS bytes."
+      q: "What problem did Nagle's algorithm solve, what is the mechanism, and how does the classic deadlock arise?",
+      a: "Nagle (RFC 896, 1984) attacked tinygrams: a 1-byte telnet keystroke became a 41-byte packet, ~97.5% header overhead, swamping the ARPANET. Mechanism: while unacknowledged data is in flight, hold back small new segments and coalesce them; flush only when an ACK clears the in-flight data or you have a full MSS to send — turning a burst of keystrokes into one packet per round-trip. The deadlock comes from composing Nagle with TCP delayed ACK: the sender holds a small trailing segment (waiting for an ACK), while the receiver holds its ACK under delayed-ACK (waiting to piggyback on a reply). Neither moves until the ~40ms delayed-ACK timer fires, so a protocol that should do thousands of txns/sec caps near 25/sec with latencies pinned at 40ms. The fix is TCP_NODELAY, which disables Nagle and is why HTTP/2, gRPC, and Redis clients set it at connect time and batch in the app layer instead."
     },
     {
-      q: "How does batch coalescing with request deduplication prevent thundering-herd problems?",
-      a: "When multiple concurrent requests ask for the same key (e.g., cache miss), they coalesce into one batch operation instead of duplicating work, reducing 100 requests to 1 for hot keys."
+      q: "Explain the lineage Nagle → Kafka linger.ms → io_uring as one pattern, and the workflow for tuning the window.",
+      a: "All three amortize a fixed per-op cost over many ops; only the cost and the layer differ. Nagle (1984) amortizes the 40-byte TCP/IP header by coalescing writes until an ACK or a full MSS. Kafka linger.ms (2011) amortizes the network round-trip and broker request by waiting up to linger.ms (or until batch.size) to fill a producer batch — Kafka 4.0 changed the default from 0 to 5ms because fuller batches usually pay for the wait. io_uring (Linux 5.1, 2019) amortizes the syscall/context-switch by queueing many SQEs in a shared ring and submitting them with a single io_uring_enter. The tuning workflow is identical every time: measure fixed vs. variable cost, confirm the fixed cost dominates, define the latency SLO ceiling, then size the window to the largest value that still fits under it — static if you tune once, adaptive if you shrink the window under light load and grow it under heavy load."
     }
   ]}
 />
 
-<KeyTakeaway>
-Nagle's algorithm batches small TCP writes; modern systems generalize the pattern. Latency-throughput tradeoff visualized via Pareto frontier. Batch coalescing deduplicates concurrent requests for same key.
-</KeyTakeaway>
-
 <Recap lang="en">
-Nagle's algorithm (1984) introduced the core batching idea: buffer small writes until ACK or buffer full to amortize header cost. Modern systems (Kafka, io_uring) generalize this to any fixed-cost operation. The latency-throughput Pareto frontier shows the tradeoff; senior tuning finds the largest window under SLO latency ceiling. Batch coalescing with deduplication prevents thundering-herd by merging concurrent requests for the same key into one operation.
+Batching is one lever applied across four decades: when a fixed per-operation cost (TCP header, round-trip, syscall) dominates the variable cost of the payload, group operations to pay it once. Nagle's algorithm (1984) coalesced tiny TCP writes until an ACK or a full MSS, and its famous deadlock with delayed ACK pins latency at 40ms until TCP_NODELAY turns it off. Kafka's linger.ms and io_uring's batched SQE submission are the same move at higher layers, which is why the tuning workflow never changes: measure fixed vs. variable cost, define the latency SLO ceiling, then take the largest window that fits under it — statically or adaptively. Request coalescing (singleflight, Caffeine, DataLoader) applies the idea across callers instead of over time, collapsing a thundering herd of identical cache misses into a single backend load.
 </Recap>
