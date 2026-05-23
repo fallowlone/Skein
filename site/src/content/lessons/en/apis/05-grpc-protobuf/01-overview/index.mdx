@@ -6,13 +6,207 @@ unit: 05-grpc-protobuf
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Grpc protobuf"
-summary: "Coming soon — API contracts"
+status: ready
+title: "gRPC and Protobuf: the binary contract and what it costs you"
+summary: "gRPC trades JSON's human-readable payloads for a schema-bound binary wire format that is 4-10x faster and far smaller — but the field numbers become a contract you can never break, and the browser can't speak it without a proxy."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["protobuf-wire-format", "field-numbers", "schema-evolution", "http2-multiplexing", "rpc-streaming", "grpc-web"]
+estMin: 17
 sources:
-  - https://example.com/stub
-estMin: 5
+  - https://grpc.io/docs/what-is-grpc/core-concepts/
+  - https://protobuf.dev/programming-guides/proto3/
+  - https://earthly.dev/blog/backward-and-forward-compatibility/
+  - https://kreya.app/blog/grpc-web-deep-dive/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A new microservice ships. Within an hour, the orders service starts reading wrong values: `priority` shows up as `discount_pct`, and refunds fire on healthy orders. Nobody changed the data — someone renumbered a protobuf field from `4` to `3` to "tidy up the schema". On the wire there are no field names, only numbers, so every consumer still running the old schema decoded field `3` into the wrong slot. The proto compiled clean. The tests passed. Production silently corrupted state for forty minutes.
+</Hook>
+
+<Crux>gRPC's binary wire format carries field numbers, not names — so the numbers are a permanent contract you can never reuse or renumber.</Crux>
+
+<Explanation>
+
+## The wire format: numbers, not names
+
+JSON ships the schema with every message. `{"userId": 42, "active": true}` repeats the keys `userId` and `active` in every single payload, as UTF-8 text, on every request. Protobuf does the opposite: it serializes only field number, wire type, and value. That same message becomes roughly `08 2A 10 01` — a handful of bytes where `08` encodes "field 1, varint", `2A` is `42`, and so on. The field names exist only in the `.proto` file at compile time; they never travel.
+
+That single design choice produces the numbers seniors actually care about. For numeric-heavy data, protobuf runs about **4-5x smaller** than JSON thanks to varint encoding (small integers cost one byte, not their decimal-string length). Serialization is roughly **3-6x faster** and parsing **5-10x faster**, because there is no text tokenizing, no key string allocation, no reflection — the decoder walks a known layout. In Go benchmarks that shows up as ~5-7x faster round-trips with ~3x fewer allocations. The catch is the inverse of JSON's superpower: **you cannot decode a protobuf message without its schema.** The bytes are meaningless on their own.
+
+<Inset kind="why" lang="en">
+The compactness is data-shape dependent, and seniors get burned by assuming it's universal. For string-heavy payloads protobuf is only ~4% smaller than JSON — strings are stored as raw UTF-8 in both, so the only saving is dropping the repeated key names. The big wins (4-5x) come from numbers, booleans, enums, and repeated fields. If your payload is mostly free text, the size argument for protobuf nearly vanishes; you adopt it for the schema and the speed, not the bytes.
+</Inset>
+
+## Field numbers are the contract, forever
+
+Because the wire carries `field 3` and never `"discount_pct"`, the field number — not the name — is the identity of the data. This flips the usual intuition completely:
+
+- **Renaming a field is free.** `discount_pct` → `discountPercent` changes nothing on the wire; old and new binaries interoperate perfectly. The name is a local source-code label.
+- **Renumbering a field is catastrophic.** Change `3` to `4` and every peer still on the old schema reads your new field `4` into whatever *they* call field `4`, and your old field `3` data lands wherever *they* expect `3`. This is the Hook bug. The compiler cannot catch it because each side compiles a self-consistent schema.
+- **Reusing a deleted number is the same disaster, delayed.** Delete field `3`, then later add a new unrelated field and assign it `3` — now old clients sending the original field `3` poison the new one.
+
+The discipline that prevents all of this is **add-only evolution plus `reserved`**. You never change or reuse a number; you only append new fields with new numbers, and when you remove a field you reserve its number (and name) so nobody can ever reclaim it:
+
+```proto
+message Order {
+  reserved 3;                  // discount_pct, removed 2026-Q1 — never reuse
+  reserved "discount_pct";
+  string id = 1;
+  int64 amount_cents = 2;
+  Priority priority = 4;       // safe: appended with a fresh number
+}
+```
+
+Done this way, the schema is both **backward compatible** (new code reads messages written by old code: missing new fields just take their proto3 defaults — `0`, `""`, empty) and **forward compatible** (old code reads messages from new code: unknown field numbers are skipped and preserved, not errored). That two-way compatibility is the entire reason large polyglot systems can deploy producers and consumers independently.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Schema change</th>
+        <th class="border border-border px-3 py-2 text-left">Safe?</th>
+        <th class="border border-border px-3 py-2 text-left">Why (wire-level reason)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Add a new field with a new number</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Old peers skip the unknown number; new fields default for old writers</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Rename a field (same number)</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Names never travel; only the number is on the wire</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Remove a field + <code>reserved</code> its number</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Reserve blocks future reuse, so the number can't be poisoned</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Change a field's number</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Peers decode the value into the wrong field — silent corruption</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Reuse a deleted number for a new field</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Stragglers on the old schema write the old meaning into it</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## One connection, four call shapes
+
+gRPC runs over HTTP/2, and that buys **multiplexing**: many concurrent RPCs interleave as independent streams over a single TCP connection, with no head-of-line blocking at the HTTP layer — 50 in-flight calls need one connection, not 50. A cancelled or deadlined call sends an `RST_STREAM` that kills just that stream and leaves the others untouched. This is why gRPC throughput in a service mesh holds up under concurrency where HTTP/1.1's connection-per-request model collapses.
+
+On top of that single connection, the schema's `service` block defines four call shapes, and picking the wrong one is a common design smell:
+
+1. **Unary** — one request, one response. The REST-shaped 95% case.
+2. **Server streaming** — one request, a stream of responses (a price feed, a log tail, server-pushed progress).
+3. **Client streaming** — a stream of requests, one response (uploading chunks, batching telemetry).
+4. **Bidirectional streaming** — both sides stream independently over the same call (chat, live collaboration, a long-lived control channel).
+
+```proto
+service PriceService {
+  rpc GetQuote(QuoteRequest) returns (Quote);                  // unary
+  rpc WatchPrices(WatchRequest) returns (stream Quote);        // server streaming
+  rpc UploadTrades(stream Trade) returns (UploadSummary);      // client streaming
+  rpc Trade(stream Order) returns (stream Fill);               // bidirectional
+}
+```
+
+Two operational features ride along and are easy to skip until they bite. **Deadlines**: the client sets a timeout that propagates down the call chain; when it expires the RPC is auto-cancelled on *both* ends, so a slow downstream can't pin server threads forever. The classic confusing failure is a deadline-exceeded call that *succeeded* on the server ("I sent all responses") but *failed* on the client ("they arrived too late") — the work happened, the caller saw an error. **Cancellation**: either side can abort mid-flight, and propagated cancellation stops downstream work instead of letting orphaned requests grind on. Skipping deadlines is the most common reason a gRPC mesh cascades into resource exhaustion under partial failure.
+
+## Where gRPC wins, and where it hurts
+
+gRPC is the right default for **internal, service-to-service** traffic: a typed contract shared across polyglot services, the 4-10x speed and size wins on hot paths, native streaming, and deadline propagation across the call graph. In a busy mesh those savings are not academic — they cut tail latency and CPU on the serialization path that REST burns on JSON.
+
+The pain is real and lands in two places. First, **the browser cannot speak gRPC.** Browsers can't control HTTP/2 framing or trailers, so you need **grpc-web** plus a proxy (Envoy, or the framework's own) to translate between the browser and the gRPC backend — extra infrastructure, and grpc-web still can't do client or bidirectional streaming. (Connect-RPC sidesteps some of this by serving unary calls as plain HTTP.) Second, **debuggability collapses.** A binary payload is unreadable in the Chrome Network tab — you see "bytes transferred", not fields. `curl` is useless without the schema and a decoder; trailers hide inside the response body bytes where DevTools has no hook. Logs, request replay, and ad-hoc inspection all need extra tooling. That opacity is the tax you pay for the compactness — the same property that makes the wire small makes it inscrutable to humans.
+
+<TradeoffMatrix
+  id="01-overview-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A public-facing REST endpoint hit directly from a React app is slow under load. A teammate proposes switching it to gRPC. Pick the call."
+  options={[
+    { name: "Keep REST/JSON (or use Connect-RPC) for the browser edge; reserve gRPC for internal service-to-service hops", summary: "gRPC behind the edge.", correct: true, justification: "The browser can't speak native gRPC — it can't control HTTP/2 framing or trailers — so going gRPC at the public edge forces grpc-web plus a translating proxy (Envoy), adds infra, and still bars client/bidi streaming. The real wins (4-10x speed/size, deadline propagation, streaming) land on internal hops between your own services. Keep human-readable REST/JSON or Connect-RPC at the edge where debuggability and zero-proxy reach matter, and put gRPC where the traffic is dense and machine-to-machine." },
+    { name: "Convert the public endpoint to native gRPC and have the React app call it directly", summary: "gRPC at the edge.", justification: "Browsers cannot make native gRPC calls at all, so 'directly' is impossible. You'd be forced into grpc-web and a proxy hop, lose readable payloads in DevTools, and gain only marginal size benefit if the payload is string-heavy — while breaking the simplest debugging path you had." },
+    { name: "Convert everything — edge and internal — to gRPC for one consistent protocol", summary: "gRPC everywhere.", justification: "Consistency is appealing but the edge and internal tiers have opposite constraints. Forcing one protocol drags the proxy requirement and binary opacity all the way to the browser, where they cost the most, to gain uniformity you don't actually need." },
+    { name: "Drop the schema entirely and stream raw JSON over a WebSocket", summary: "Ad-hoc streaming.", justification: "This throws away the typed contract and schema evolution guarantees that are gRPC's whole point, and reinvents framing, deadlines, and backpressure by hand — usually worse than either REST or gRPC." },
+  ]}
+/>
+
+<Quiz
+  id="01-overview-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A field discount_pct = 3 is removed from a proto. What's the senior move to keep the schema safe?"
+  choices={[
+    { label: "Mark the number reserved 3; (and reserve the name) so it can never be reused", correct: true },
+    { label: "Just delete the line — the compiler will track it", misconception: "The compiler only checks the current file. A later edit can innocently reassign 3 to a new field, and old clients still sending the original field 3 will poison it. reserved is what blocks that." },
+    { label: "Renumber the remaining fields to fill the gap left by 3", misconception: "Renumbering is exactly the catastrophe to avoid: peers on the old schema decode values into the wrong fields. Gaps in numbering are completely fine." },
+    { label: "Change its type to bytes so old data still fits", misconception: "Type juggling doesn't make removal safe and risks data corruption. The issue is the field number's identity, which only reserved protects." },
+  ]}
+/>
+
+<Quiz
+  id="01-overview-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why can't you paste a captured gRPC request into a tool and read it like a JSON body?"
+  choices={[
+    { label: "The wire format carries only field numbers, wire types, and values — names live in the .proto, so you need the schema to decode", correct: true },
+    { label: "gRPC encrypts the payload end-to-end by default", misconception: "TLS encrypts transport, but that's not why it's unreadable — even decrypted, the bytes are schemaless field numbers, not text." },
+    { label: "The payload is gzip-compressed and just needs unzipping", misconception: "Compression is optional and orthogonal; the core reason is that protobuf never puts field names on the wire." },
+    { label: "Browsers strip the body before you can capture it", misconception: "The body is there; it's binary protobuf framing that DevTools can't interpret as fields without the schema." },
+  ]}
+/>
+
+<DragOrder
+  id="01-overview-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the safe steps to evolve a proto message in production:"
+  items={[
+    { id: "a", label: "Never change or reuse an existing field number — the number is the wire identity" },
+    { id: "b", label: "To remove a field, delete it and add reserved for its number and name" },
+    { id: "c", label: "To add data, append a new field with a fresh, never-used number" },
+    { id: "d", label: "Rely on proto3 defaults so old readers tolerate missing new fields (backward compat)" },
+    { id: "e", label: "Rely on unknown-field skipping so old readers tolerate new fields (forward compat)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Protobuf puts field numbers, not names, on the wire — so numbers are a permanent contract: append-only, reserve removals, never renumber. You gain 4-10x speed/size and streaming, and pay with a payload no human can read.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why renaming a protobuf field is safe but renumbering it is a production-grade disaster.", a: "Protobuf never serializes field names — they exist only in the .proto at compile time. On the wire each value is tagged with a field number and a wire type, nothing else. Renaming discount_pct to discountPercent therefore changes only a local source-code label; the number stays the same, the bytes are identical, and old and new binaries interoperate perfectly. Renumbering is the opposite. If you change field 3 to field 4, every peer still running the old schema decodes your new field 4 into whatever they call field 4, and any data you send as the old field 3 lands wherever they expect field 3. Each side compiled a self-consistent schema, so the compiler can't catch it and tests on either side pass — but in production the values silently slot into the wrong fields and corrupt state. The same disaster happens, delayed, if you reuse a deleted number. The defense is add-only evolution: never change or reuse a number, append new fields with fresh numbers, and reserve the numbers (and names) of removed fields so they can never be reclaimed." },
+    { q: "When would you choose gRPC over REST/JSON, and what concrete costs does that decision drag in?", a: "Choose gRPC for internal, service-to-service traffic where you control both ends: you get a typed contract shared across polyglot services, 4-10x faster serialization and 4-5x smaller payloads on numeric-heavy data, native streaming (server, client, bidirectional) over a single multiplexed HTTP/2 connection, and deadline and cancellation propagation that stops slow downstreams from pinning resources across the call graph. The costs are real and land in two places. The browser can't speak native gRPC because it can't control HTTP/2 framing and trailers, so any browser client needs grpc-web plus a translating proxy like Envoy — extra infrastructure, and grpc-web still can't do client or bidirectional streaming. And debuggability collapses: a binary payload shows up in DevTools as raw bytes, curl is useless without the schema and a decoder, and trailers hide in the response body where tooling has no hook. So the senior pattern is gRPC between your own services and human-readable REST/JSON (or Connect-RPC) at the public, browser-facing edge." },
+  ]}
+/>
+
+<Recap lang="en">
+gRPC's defining choice is the protobuf wire format: it serializes field number, wire type, and value, never the field names — those live only in the .proto. That makes payloads 4-5x smaller and 4-10x faster to (de)serialize than JSON for numeric data, but it also means the field number, not the name, is the data's identity. So renaming is free, renumbering or reusing a deleted number silently corrupts every peer on a different schema, and the only safe evolution is append-only with reserved markers for removals — which is what gives protobuf its two-way backward/forward compatibility. Over HTTP/2, gRPC multiplexes many RPCs on one connection and offers four call shapes (unary, server, client, bidirectional streaming) plus deadlines and cancellation that propagate down the call graph. The price is that browsers need grpc-web and a proxy, and the binary payload is opaque to humans and standard tooling. The senior pattern: gRPC for internal service-to-service hops, REST/JSON or Connect-RPC at the browser edge.
+</Recap>
