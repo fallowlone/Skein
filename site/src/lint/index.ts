@@ -9,9 +9,10 @@ import { checkI18nParity } from "./rules/i18n-parity";
 import { checkSources } from "./rules/sources";
 import { checkReducedMotion } from "./rules/reduced-motion";
 import { checkPersonas } from "./rules/personas";
-import { checkLessonRules, checkLessonParity, checkMathPrereqs } from "./rules/lessons";
+import { checkLessonRules, checkMathPrereqs } from "./rules/lessons";
 import { checkConnectionIntegrity } from "./rules/connection-integrity";
 import { checkCjkLeak } from "./rules/cjk-leak";
+import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeSandboxBudget } from "./rules/practice";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -42,16 +43,21 @@ export function lintCurriculum(): AstroIntegration {
           errors.push(...checkSources(html, f));
           errors.push(...checkPersonas(html, f));
           errors.push(...checkLessonRules(html, f));
+          errors.push(...checkPracticeSandboxBudget(html, f));
         }
 
         // Source-level + global checks
         const siteSrc = fileURLToPath(new URL("../src/", dir));
         errors.push(...(await checkI18nParity(siteSrc)));
         errors.push(...(await checkCjkLeak(siteSrc)));
-        errors.push(...(await checkLessonParity(siteSrc)));
         errors.push(...(await checkMathPrereqs(siteSrc)));
         errors.push(...(await checkConnectionIntegrity(siteSrc)));
         errors.push(...(await checkReducedMotion(root)));
+        errors.push(...(await checkPracticeParity(siteSrc)));
+        errors.push(...(await checkPracticeLessonKey(siteSrc)));
+        const pc = await checkPracticeCount(siteSrc);
+        errors.push(...pc.errors);
+        warnings.push(...pc.warnings);
 
         await writeFile(
           join(root, "lint-report.json"),
