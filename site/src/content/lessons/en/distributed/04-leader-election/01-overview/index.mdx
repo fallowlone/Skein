@@ -6,12 +6,169 @@ unit: 04-leader-election
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Leader election"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Leader election: one writer, terms, and the split-brain that fencing tokens stop"
+summary: "A single leader serializes writes so a cluster avoids conflicts — but a GC pause or partition can leave two nodes both convinced they're leader. Terms, leases, and a monotonic fencing token are how production survives it."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["leader-election", "split-brain", "fencing-token", "raft-terms", "lease-leadership", "election-timeout"]
+estMin: 17
+sources:
+  - https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+  - https://raft.github.io/raft.pdf
+  - https://zookeeper.apache.org/doc/current/recipes.html
+  - https://etcd.io/docs/latest/learning/api/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A batch worker holds the cluster lock and starts writing files to shared storage. Then its JVM hits a 14-second stop-the-world GC pause. From inside the process, nothing happened — one line of code, then the next. But the lease it held expired at second 10; the coordinator declared it dead and elected a new leader, which began its own writes. At second 14 the old worker wakes and finishes its write — to the same file, with stale data. Two leaders, one corrupted file, and a postmortem that starts with "but we had a lock."
+</Hook>
+
+<Crux>One elected leader serializes writes; a pause or partition can spawn a second, and only a monotonic fencing token stops the stale write.</Crux>
+
+<Explanation>
+
+## Why elect a leader at all
+
+Most coordination problems get dramatically simpler the moment exactly one node is allowed to make a decision. With a single leader, writes are serialized through one place, so there are no concurrent-update conflicts to merge, no last-write-wins ambiguity, no two nodes assigning the same sequence number. The leader becomes the linearization point: every change goes through it, in an order everyone agrees on. This is why so much infrastructure is leader-based — Kafka partition leaders, a primary database in a replica set, the controller in a cluster, a cron job that must run on exactly one host.
+
+The cost is that you've now created a single point of failure on purpose, so the hard part isn't electing a leader — it's *re-electing* one safely when the current one dies, without ever letting two be active at once. That second requirement is where almost all the real difficulty (and almost every production incident) lives.
+
+## Terms and randomized timeouts: how Raft elects
+
+Raft, the consensus algorithm behind etcd and many others, divides time into **terms** — consecutive integers that act as a logical clock. Each term has at most one leader. A follower expects regular heartbeats from the leader; if none arrives within its **election timeout**, it assumes the leader is gone, increments the term, becomes a candidate, and asks everyone to vote for it. A candidate wins by collecting votes from a majority (a quorum), and each node votes at most once per term, first-come-first-served.
+
+The clever detail is the timeout value. If every follower used the same fixed timeout, they'd all become candidates at the same instant, split the vote, and nobody would win — then they'd retry and split again. Raft fixes this by drawing each node's election timeout **randomly from a range, typically 150–300 ms**. One node's timer almost always fires first; it campaigns and wins before any peer wakes up. Randomization turns a synchronized stampede into a staggered queue.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">System</th>
+        <th class="border border-border px-3 py-2 text-left">Election mechanism</th>
+        <th class="border border-border px-3 py-2 text-left">Key number</th>
+        <th class="border border-border px-3 py-2 text-left">Liveness signal</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Raft (etcd, Consul)</td>
+        <td class="border border-border px-3 py-2">Term + majority vote</td>
+        <td class="border border-border px-3 py-2">Election timeout 150–300 ms (randomized)</td>
+        <td class="border border-border px-3 py-2">Leader heartbeats</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">ZooKeeper</td>
+        <td class="border border-border px-3 py-2">Lowest ephemeral sequential znode</td>
+        <td class="border border-border px-3 py-2">Session timeout (often seconds)</td>
+        <td class="border border-border px-3 py-2">Session heartbeats; znode auto-deleted on expiry</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">etcd</td>
+        <td class="border border-border px-3 py-2">Lease + compare-and-swap on a key</td>
+        <td class="border border-border px-3 py-2">Lease TTL (set per acquire)</td>
+        <td class="border border-border px-3 py-2">Lease keep-alive renewals</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Leases, sessions, and the clock you can't trust
+
+Once elected, a leader must keep proving it's alive, because the cluster needs to detect a dead leader fast enough to elect a replacement. The common mechanism is a **lease** (etcd) or a **session** (ZooKeeper): leadership is granted for a bounded time and must be renewed. In ZooKeeper, the leader holds an ephemeral znode tied to a session; if heartbeats stop for the session timeout, ZooKeeper deletes the znode and the next candidate takes over. In etcd, the leader attaches a lease with a TTL to a key and keeps it alive; if renewals stop, the lease expires and the key vanishes, freeing the role.
+
+Here's the trap a senior never forgets: a lease is a statement about *time*, and the leader's local clock and the coordinator's clock are not the same clock. A lease "valid for 10 seconds" is only safe if both sides agree on how long 10 seconds is — and they don't, exactly. Worse, the leader might not even be *running* for part of that window. A GC pause, a hypervisor freezing a VM for live migration, a swapped-out process, or an NTP jump can all make the leader believe its lease is still valid long after the coordinator has expired it and elected someone else.
+
+<Inset kind="why" lang="en">
+A lease bounds how long a *coordinator waits* before declaring a node dead — it does **not** bound how long a *paused leader* will keep believing it still holds the lease. Those are two different clocks. The leader can be frozen mid-instruction while wall-clock time, and its lease, run out underneath it. That gap is precisely where split-brain is born.
+</Inset>
+
+## Split-brain and the fencing-token fix
+
+**Split-brain** is two (or more) nodes both convinced they are the leader at the same time. A network partition can cause it — a minority side that can't see the quorum may still think it leads — but the sneakier cause is the pause from the Hook: the old leader was never partitioned, it was just *stopped*, and it wakes up holding a lease the world already gave away. Now two leaders write, and shared state corrupts.
+
+Kleppmann's fix is the **fencing token**: every time the lock/lease is granted, the coordinator hands out a number that strictly increases — 33, then 34, then 35. The leader must include its token on every write to the protected resource, and *the resource itself* must reject any write whose token is lower than the highest it has already seen. So when client 1 (token 33) wakes from its GC pause and tries to write, the storage service has already accepted client 2's write at token 34 — it rejects token 33 outright. The stale writer is *fenced off* at the resource boundary. The crucial, often-missed point: the token only works if the downstream resource actively checks it. A lock service that just hands out tokens but writes to a dumb store that ignores them buys you nothing.
+
+<TradeoffMatrix
+  id="04-leader-election-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A leader holds a 10s lease, writes to object storage, and you've seen multi-second GC pauses. How do you prevent a stale write after a pause?"
+  options={[
+    { name: "Issue a monotonic fencing token on each lease grant; the storage layer rejects any write with a token below the highest it has seen", summary: "Fence at the resource.", correct: true, justification: "This is Kleppmann's fix and the only one that closes the gap. The paused leader wakes with token 33, but the resource already accepted token 34 from the new leader, so the stale write is rejected at the boundary. It works precisely because correctness no longer depends on the paused node noticing it lost the lease — the resource enforces order regardless of clocks, pauses, or partitions." },
+    { name: "Shorten the lease TTL to 2s so a stale leader gives up faster", summary: "Tune the timeout.", justification: "Tightening the TTL makes false expirations more frequent (a 2s GC pause now loses leadership), and it still doesn't help: a paused process can't 'give up' a lease it doesn't know expired. You're trading availability for nothing — the split-brain window shrinks but never closes." },
+    { name: "Have the leader check the clock and abort the write if its lease is near expiry", summary: "Self-check before write.", justification: "Can't work: during a GC pause the process executes no code, so there is no moment to check the clock — it's frozen between the check and the write. Any time-of-check/time-of-use gap is exactly where the pause lands. Safety can't depend on the suspect node staying responsive." },
+    { name: "Use a faster consensus algorithm so elections finish quicker", summary: "Speed up election.", justification: "Faster elections help availability but are orthogonal to this bug. The problem isn't how quickly a new leader is chosen — it's that the old one still writes after it's deposed. No election speed prevents a frozen process from waking and writing stale data." },
+  ]}
+/>
+
+<Quiz
+  id="04-leader-election-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does Raft draw each node's election timeout randomly from 150–300 ms instead of using one fixed value?"
+  choices={[
+    { label: "So the timers stagger — one candidate almost always fires first and wins before peers wake, avoiding repeated split votes", correct: true },
+    { label: "To make leaders rotate fairly so every node leads equally often", misconception: "Randomization isn't about fairness of who leads; it's about desynchronizing candidates so a majority can form before everyone campaigns at once." },
+    { label: "Because a fixed timeout would violate the consensus quorum requirement", misconception: "A fixed timeout doesn't break quorum math; it just causes synchronized candidacies that split the vote and force retries." },
+    { label: "To compensate for clock skew between nodes", misconception: "The range exists to stagger candidacy, not to correct clocks; Raft's safety doesn't rely on synchronized clocks at all." },
+  ]}
+/>
+
+<Quiz
+  id="04-leader-election-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A fencing token only prevents the stale-write bug if which condition holds?"
+  choices={[
+    { label: "The protected resource actively checks the token and rejects any write whose token is lower than the highest it has seen", correct: true },
+    { label: "The lock service generates strictly increasing tokens", misconception: "Increasing tokens are necessary but useless on their own — if the downstream store doesn't validate them, the stale write still lands." },
+    { label: "All nodes have NTP-synchronized clocks", misconception: "The whole point of fencing is to be safe without trusting clocks; token ordering, not time, enforces correctness." },
+    { label: "The lease TTL is longer than the worst-case GC pause", misconception: "You can never reliably bound the worst-case pause; fencing works regardless of pause length because the resource enforces token order." },
+  ]}
+/>
+
+<DragOrder
+  id="04-leader-election-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the sequence of a classic split-brain stale write under a GC pause:"
+  items={[
+    { id: "a", label: "Leader A acquires the lease (token 33) and starts a write to shared storage" },
+    { id: "b", label: "Leader A enters a long stop-the-world GC pause and stops executing code" },
+    { id: "c", label: "A's lease expires; the coordinator declares A dead and elects leader B (token 34)" },
+    { id: "d", label: "B writes successfully; the storage layer records highest token = 34" },
+    { id: "e", label: "A wakes, finishes its write with token 33; the storage layer rejects it as fenced" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>One leader serializes writes; randomized 150–300 ms timeouts elect it safely. But a pause or partition can spawn a second leader — only a fencing token, checked by the resource, stops the stale write.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-leader-election-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why a lease alone does not prevent two nodes from both writing as leader, and what actually fixes it.", a: "A lease bounds how long the coordinator waits before declaring a leader dead and electing a replacement — but it does not bound how long a frozen leader keeps believing it still holds the lease. Those are two separate clocks. If the old leader is stuck in a long GC pause, a swapped-out process, or a paused VM, it executes no code during that window: it can't notice its lease expired, can't check the clock, can't 'give it up.' Meanwhile the coordinator has already elected a new leader. When the old one wakes, it finishes the write it was in the middle of — now stale — and you have two writers and corrupted state. Shortening the TTL only makes false expirations more common; it never closes the window. The actual fix is a monotonic fencing token: the coordinator hands out a strictly increasing number with each grant, the leader stamps every write with it, and the protected resource rejects any write whose token is below the highest it has accepted. The old leader's token 33 loses to the new leader's token 34 at the storage boundary, regardless of clocks or pause length." },
+    { q: "Why does Raft use randomized election timeouts, and what failure does that prevent?", a: "Raft elects a leader by having followers time out waiting for the leader's heartbeat, then become candidates and request votes; a candidate needs a majority to win, and each node votes at most once per term. If every follower used the same fixed timeout, they would all time out at nearly the same instant, all become candidates simultaneously, and split the vote so no one reaches a majority. They would then retry together and split again — a livelock that delays electing any leader. Raft prevents this by giving each node a random election timeout from a range, typically 150–300 ms. The node whose timer fires first becomes a candidate and usually collects a majority before any peer even wakes, so elections converge in a single round. Randomization desynchronizes the candidates: it turns a synchronized stampede into a staggered queue, which is the difference between a fast election and an endless series of split votes." },
+  ]}
+/>
+
+<Recap lang="en">
+A single leader exists to serialize writes, so a cluster avoids concurrent-update conflicts and ambiguous ordering — but it trades that simplicity for a single point of failure that must be re-elected safely. Raft does this with terms (a logical clock, one leader per term) and majority votes, using election timeouts drawn randomly from roughly 150–300 ms so candidates stagger instead of splitting the vote forever. Leadership is then held as a lease or session that must be renewed; ZooKeeper ties it to an ephemeral znode, etcd to a lease TTL. The deep hazard is that a lease is a claim about time, and clocks plus pauses lie: a GC pause, paused VM, or partition can leave an old leader writing after its lease expired and a new leader was chosen — split-brain, two writers, corrupted state. The cure isn't a shorter timeout or a clock check, because a frozen process can't act; it's a monotonic fencing token that the resource itself enforces, rejecting any write whose token has gone backwards. Elect for liveness, fence for safety.
+</Recap>
