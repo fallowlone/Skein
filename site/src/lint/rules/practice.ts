@@ -27,13 +27,17 @@ async function readPractice(siteSrc: string): Promise<{ file: string; data: any 
   return out;
 }
 
-/** Recursively find every {en, ru} string pair in an object tree. */
-function biTexts(node: any, out: { en: string; ru: string }[] = []): { en: string; ru: string }[] {
+/** Fields whose en/ru content is legitimately language-neutral (machine output,
+ *  EXPLAIN plans) — exempt from the en===ru equality check, never from whitespace. */
+const LANG_NEUTRAL_FIELDS = new Set(["evidence"]);
+
+/** Recursively find every {en, ru} string pair, tagged with the parent property key. */
+function biTexts(node: any, key: string | undefined, out: { en: string; ru: string; key?: string }[] = []): { en: string; ru: string; key?: string }[] {
   if (Array.isArray(node)) {
-    for (const el of node) biTexts(el, out);
+    for (const el of node) biTexts(el, key, out);
   } else if (node && typeof node === "object") {
-    if (typeof node.en === "string" && typeof node.ru === "string") out.push({ en: node.en, ru: node.ru });
-    for (const k of Object.keys(node)) biTexts(node[k], out);
+    if (typeof node.en === "string" && typeof node.ru === "string") out.push({ en: node.en, ru: node.ru, key });
+    for (const k of Object.keys(node)) biTexts(node[k], k, out);
   }
   return out;
 }
@@ -41,9 +45,9 @@ function biTexts(node: any, out: { en: string; ru: string }[] = []): { en: strin
 export async function checkPracticeParity(siteSrc: string): Promise<string[]> {
   const errs: string[] = [];
   for (const { file, data } of await readPractice(siteSrc)) {
-    for (const bt of biTexts(data)) {
+    for (const bt of biTexts(data, undefined)) {
       if (!bt.en.trim() || !bt.ru.trim()) errs.push(`practice-parity: "${file}" has a whitespace-only en/ru field`);
-      else if (bt.en.length >= UNTRANSLATED_MIN_LEN && bt.en.trim() === bt.ru.trim())
+      else if (!LANG_NEUTRAL_FIELDS.has(bt.key ?? "") && bt.en.length >= UNTRANSLATED_MIN_LEN && bt.en.trim() === bt.ru.trim())
         errs.push(`practice-parity: "${file}" has an untranslated field (en === ru): "${bt.en.slice(0, 40)}…"`);
     }
   }
