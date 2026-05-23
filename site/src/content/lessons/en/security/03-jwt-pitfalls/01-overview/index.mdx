@@ -6,13 +6,192 @@ unit: 03-jwt-pitfalls
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Jwt pitfalls"
-summary: "Coming soon — Web security"
+status: ready
+title: "JWT security pitfalls: alg confusion, no revocation, and where tokens leak"
+summary: "A JWT is only as safe as how you verify it. The classic failures — accepting alg:none, RS256→HS256 confusion, no revocation, and tokens in localStorage — all come from trusting the token instead of pinning what the server expects."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["alg-none", "algorithm-confusion", "token-revocation", "refresh-token-rotation", "token-storage-xss", "weak-hmac-secret"]
+estMin: 16
 sources:
-  - https://example.com/stub
-estMin: 5
+  - https://www.rfc-editor.org/rfc/rfc8725.html
+  - https://portswigger.net/web-security/jwt/algorithm-confusion
+  - https://auth0.com/blog/refresh-tokens-what-are-they-and-when-to-use-them/
+  - https://workos.com/blog/secure-jwt-storage
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A pentester logs in as a normal user, copies the JWT, flips the header from `"alg":"RS256"` to `"alg":"HS256"`, changes the payload to `"role":"admin"`, and re-signs it using the server's **public** RSA key as the HMAC secret. The server reads the header, takes the HMAC branch, verifies with that same public key — and waves it through. No private key was ever needed. The "secret" was published in the JWKS endpoint the whole time.
+</Hook>
+
+<Crux>A JWT is trustworthy only if the server pins the algorithm and key it expects — never the ones the attacker-controlled header claims.</Crux>
+
+<Explanation>
+
+## The token tells you nothing until you verify it
+
+A JWT has three base64url parts: header, payload, signature. The header carries `alg` (which algorithm), the payload carries claims (`sub`, `role`, `exp`), and the signature is what makes the first two unforgeable — *if* you verify it correctly. The dangerous mental model is treating the decoded payload as facts. It is not. Anyone can base64-decode and rewrite the payload in a browser console. The only thing standing between an attacker and `"role":"admin"` is signature verification, and every pitfall below is a way that verification quietly does nothing.
+
+RFC 8725 (JSON Web Token Best Current Practices, 2020) exists because the spec's flexibility — letting the *token* name its own algorithm — is the root cause of most JWT attacks. Its blunt rule: the application must decide which algorithms and keys are acceptable, and verify the token against *that*, not against what the header asks for.
+
+## alg:none — the empty signature that some libraries accepted
+
+The JWT spec defines an `"alg":"none"` value meaning "this token is unsigned." It exists for tokens already protected by some other layer. The catastrophe: early library versions, handed a token with `"alg":"none"` and an empty signature segment, returned "valid." An attacker just sets the header to `none`, deletes the signature, writes any payload they want, and is authenticated as anyone.
+
+The fix is one line of discipline: the verifier must be told the expected algorithm and reject everything else. `jwt.verify(token, key, { algorithms: ["RS256"] })` — an allowlist that does not contain `none` makes the attack impossible. Never call a decode-only function (`jwt.decode`, which skips the signature) and act on its claims.
+
+## RS256 → HS256 algorithm confusion
+
+This is the subtler, nastier cousin and the one in the hook. Asymmetric RS256 uses a key *pair*: a private key signs, a public key verifies, and the public key is meant to be shared — it sits in your `/.well-known/jwks.json`. Symmetric HS256 uses *one* secret for both signing and verifying.
+
+The attack exploits a server that picks its verification path from the token's `alg` header:
+
+1. Attacker grabs the public key (it's public).
+2. Attacker forges a token with `"alg":"HS256"` and signs it with HMAC-SHA256 using **the public key string as the HMAC secret**.
+3. The server reads `HS256`, branches into the HMAC code path, and runs HMAC-SHA256 with its public key as the secret — the exact operation the attacker just did.
+4. The signatures match. The forged admin token is accepted.
+
+The whole thing works because the server trusted the header's `alg` and used one key with two algorithms. RFC 8725 names both defenses directly: **pin the expected algorithm** (an explicit allowlist passed to verify), and **bind each key to exactly one algorithm** so an RS256 public key can never be fed into an HMAC verifier.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Pitfall</th>
+        <th class="border border-border px-3 py-2 text-left">What the attacker does</th>
+        <th class="border border-border px-3 py-2 text-left">The fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>alg: none</code> accepted</td>
+        <td class="border border-border px-3 py-2">Sets alg to none, empties the signature, rewrites payload</td>
+        <td class="border border-border px-3 py-2">Pass an algorithm allowlist to verify; never accept <code>none</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">RS256 → HS256 confusion</td>
+        <td class="border border-border px-3 py-2">Signs HS256 with the public RSA key as the HMAC secret</td>
+        <td class="border border-border px-3 py-2">Pin the algorithm; bind each key to one algorithm only</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">No revocation</td>
+        <td class="border border-border px-3 py-2">Replays a stolen token until it expires</td>
+        <td class="border border-border px-3 py-2">Short access TTL (5–15 min) + refresh-token rotation</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Token in <code>localStorage</code></td>
+        <td class="border border-border px-3 py-2">XSS reads the token via JavaScript and exfiltrates it</td>
+        <td class="border border-border px-3 py-2"><code>httpOnly</code> cookie or in-memory + short TTL</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Weak HMAC secret</td>
+        <td class="border border-border px-3 py-2">Brute-forces the secret offline from a captured token</td>
+        <td class="border border-border px-3 py-2">≥32 random bytes (256-bit) from a CSPRNG</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## No revocation: a stolen JWT is valid until it expires
+
+The defining property of a stateless JWT is that the server does not store it — it just verifies the signature and trusts the `exp` claim. The flip side is the production headache: there is **no built-in logout**. If a token is stolen (XSS, a leaked log, a proxy), you cannot un-issue it. Calling a "logout" endpoint that deletes a client cookie does nothing to a token the attacker already copied. It stays valid until `exp`.
+
+The senior mitigation is to keep the blast radius small with time. Issue **short-lived access tokens** — 5 to 15 minutes is the standard range — paired with a long-lived **refresh token** that exchanges for new access tokens. Now a stolen access token dies in minutes. The refresh token is the high-value secret, so it gets **rotation**: every time it's used, the server issues a new refresh token and invalidates the old one. If an old refresh token is ever replayed (the attacker used the one you'd already rotated past), the server detects reuse and revokes the entire token family — turning a stolen refresh token into a self-defeating trap.
+
+<Inset kind="why" lang="en">
+"Stateless" is a spectrum, not a religion. The moment you add refresh-token rotation or a revocation list, you've reintroduced server-side state — and that's fine. The win of JWTs was never "zero server state forever"; it was keeping the *high-frequency* check (every API request validates a signature locally) cheap, while the *rare* events (login, refresh, revoke) touch a store. Teams that treat statelessness as absolute end up with no way to kick out a compromised session.
+</Inset>
+
+## Where you store the token decides which attack hits you
+
+A token is a bearer credential: whoever holds it is you. So storage is a security decision, not a convenience one, and it's a genuine tradeoff with no free option.
+
+- **`localStorage`** is reachable by any JavaScript on the page. One XSS bug — a vulnerable dependency, an unsanitized render — and the attacker reads the token and exfiltrates it. There's no `httpOnly` equivalent for `localStorage`.
+- **`httpOnly` cookies** are invisible to JavaScript, so XSS can't read them — but cookies are sent automatically, which opens CSRF. You close that with `SameSite=Strict` (or `Lax`) plus `Secure`, and CSRF tokens for sensitive actions.
+- **In-memory** (a JS variable) survives neither a refresh nor a new tab, but it never touches disk and is the smallest XSS target — common for the access token, paired with an `httpOnly` cookie holding the refresh token.
+
+There is no storage that's immune to everything; you pick which class of attack you'd rather defend, and short token TTLs shrink the damage of whichever one slips through.
+
+<TradeoffMatrix
+  id="03-jwt-pitfalls-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A SPA needs to keep a user logged in across page refreshes. Pick the token storage strategy a security-minded senior ships."
+  options={[
+    { name: "Access token in memory (short TTL), refresh token in an httpOnly + Secure + SameSite cookie", summary: "Split by sensitivity.", correct: true, justification: "The access token is the high-frequency credential and the smallest XSS target when it lives only in a JS variable; a 5–15 min TTL caps the damage if it leaks. The long-lived refresh token — the real prize — sits in an httpOnly cookie JavaScript can never read, with SameSite + Secure closing the CSRF and transport gaps. This is the layered split RFC 8725 and Auth0 guidance both point to." },
+    { name: "Both tokens in localStorage so the SPA can read them easily", summary: "Convenient.", justification: "localStorage is readable by any script on the page, so a single XSS bug exfiltrates both tokens — including the long-lived refresh token, which is the worst thing to lose. Convenience here trades away your entire session security." },
+    { name: "Both tokens in a non-httpOnly cookie", summary: "Cookie, but readable.", justification: "Dropping httpOnly means JavaScript can still read the cookie, so you keep XSS exposure and add CSRF surface from automatic cookie sending — the worst of both storage models." },
+    { name: "Long-lived access token (24h) in memory, no refresh token", summary: "Skip refresh.", justification: "In-memory storage is good, but a 24-hour access token has no revocation: if it leaks it's valid all day, and you've removed the refresh-rotation mechanism that detects reuse. Short TTL + rotation is the point." },
+  ]}
+/>
+
+<Quiz
+  id="03-jwt-pitfalls-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your server verifies tokens with jwt.verify(token, key) and reads the algorithm from the token's header. What's the most important hardening?"
+  choices={[
+    { label: "Pass an explicit algorithm allowlist, e.g. { algorithms: ['RS256'] }, so the header's alg can't pick the verification path", correct: true },
+    { label: "Make the RSA key longer (4096-bit) so the public key is harder to guess", misconception: "Key length doesn't help: in algorithm confusion the public key isn't guessed, it's published. The bug is letting the header choose HS256 and feeding the public key into an HMAC verifier." },
+    { label: "Base64-encode the payload twice for extra obfuscation", misconception: "Encoding is not encryption or signing; double-encoding adds nothing and the payload is still attacker-rewritable before signing." },
+    { label: "Add a custom 'verified: true' claim and check it", misconception: "Any claim inside the payload is attacker-controlled until the signature is checked correctly. A self-asserted flag verifies nothing." },
+  ]}
+/>
+
+<Quiz
+  id="03-jwt-pitfalls-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A user reports their session was hijacked. With stateless JWTs, why can't you just 'log them out' server-side, and what limits the damage?"
+  choices={[
+    { label: "A stateless JWT isn't stored server-side, so it stays valid until exp; short access TTLs (5–15 min) plus refresh-token rotation limit the window", correct: true },
+    { label: "You can instantly revoke any JWT by deleting it from the database", misconception: "A stateless JWT was never in your database — that's the whole design. There's nothing to delete; the token is valid until exp unless you build a revocation list." },
+    { label: "Clearing the client cookie invalidates the token everywhere", misconception: "Deleting the client's copy does nothing to a token the attacker already exfiltrated; it's still valid until it expires." },
+    { label: "JWTs auto-expire after one use", misconception: "JWTs are not one-time tokens; the same JWT is replayable until its exp claim passes." },
+  ]}
+/>
+
+<DragOrder
+  id="03-jwt-pitfalls-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the checks a senior runs to harden a JWT verification path:"
+  items={[
+    { id: "a", label: "Pin an explicit algorithm allowlist on verify — never read alg from the header to choose the path" },
+    { id: "b", label: "Bind each key to exactly one algorithm so a public key can't be used as an HMAC secret" },
+    { id: "c", label: "Use a CSPRNG-generated HMAC secret of at least 256 bits (or an asymmetric key pair)" },
+    { id: "d", label: "Set short access-token TTLs (5–15 min) so a leaked token expires fast" },
+    { id: "e", label: "Add refresh-token rotation with reuse detection to revoke a compromised token family" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Never trust the token's own header. Pin the algorithm and key on verify, reject alg:none, bind each key to one algorithm, keep access TTLs at 5–15 min, rotate refresh tokens, and store them where XSS can't reach.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-jwt-pitfalls-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk a teammate through the RS256-to-HS256 confusion attack and the two RFC 8725 defenses that stop it.", a: "RS256 is asymmetric: a private key signs and a public key verifies, and that public key is meant to be shared — it's in your JWKS endpoint. HS256 is symmetric: one secret both signs and verifies. The attack hits a server that decides its verification path from the token's own alg header. The attacker takes the published public key, forges a token with alg set to HS256, and signs it with HMAC-SHA256 using the public key string as the HMAC secret. The server reads HS256, branches into its HMAC code, and verifies with the same public key as the secret — reproducing exactly what the attacker computed, so the signatures match and the forged admin token is accepted. RFC 8725 gives two defenses: first, pin the expected algorithm by passing an explicit allowlist to verify, so the header can never select HS256; second, bind each key to exactly one algorithm, so an RS256 public key can never be handed to an HMAC verifier. Either one alone breaks the attack; do both." },
+    { q: "Why do stateless JWTs have no real logout, and how do short TTLs plus refresh-token rotation contain a stolen token?", a: "A stateless JWT isn't stored on the server — the server just verifies the signature and trusts the exp claim. So there's nothing to delete on logout, and a token an attacker has already copied stays valid until it expires; clearing a client cookie does nothing to it. You contain this with time and rotation. Access tokens get a short TTL, typically 5 to 15 minutes, so a leaked one dies almost immediately. The long-lived refresh token is the real secret, so it rotates: each use issues a new refresh token and invalidates the old one. If an old, already-rotated refresh token is ever presented, the server sees reuse and revokes the whole token family, locking out both the attacker and the legitimate user until they re-authenticate. This reintroduces a little server-side state for the rare refresh and revoke events, while the common case — verifying a signature on every request — stays stateless and cheap." },
+  ]}
+/>
+
+<Recap lang="en">
+Every JWT pitfall traces back to one mistake: trusting the token to describe how it should be verified. The alg:none bug accepts an empty signature; algorithm confusion turns a published RS256 public key into an HMAC secret — both are stopped by pinning an explicit algorithm allowlist on verify and binding each key to exactly one algorithm, as RFC 8725 prescribes. Because a stateless token isn't stored, there's no instant logout, so you contain a stolen token with short access TTLs (5–15 minutes) and refresh-token rotation with reuse detection. HMAC secrets must be at least 256 random bits so they can't be cracked offline. And storage is a tradeoff with no free option: localStorage is XSS-readable, httpOnly cookies dodge XSS but invite CSRF (close it with SameSite + Secure), and in-memory is the smallest target — pick the attack you'd rather defend and let short TTLs shrink whatever slips through.
+</Recap>
