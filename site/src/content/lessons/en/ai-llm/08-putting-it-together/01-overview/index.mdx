@@ -6,13 +6,186 @@ unit: 08-putting-it-together
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Putting it together"
-summary: "Coming soon — AI / LLM integration"
+status: ready
+title: "Composing a production LLM app: the bug lives in the seam"
+summary: "Caching, RAG, streaming, tools, agents, and evals each pass their own tests, then fail together. Trace one request end to end, because the bug lives in the seam between two correct layers — not inside either one."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["cache-prefix-invalidation", "tool-call-streaming", "agent-budget-cap", "rag-eval-coverage", "request-tracing", "seam-failure"]
+estMin: 17
 sources:
-  - https://example.com/placeholder
-estMin: 5
+  - https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  - https://dev.to/waxell/the-47000-agent-loop-why-token-budget-alerts-arent-budget-enforcement-389i
+  - https://www.getmaxim.ai/articles/rag-evaluation-a-complete-guide-for-2025/
+  - https://dev.to/adamo_software/tool-use-api-design-for-llms-5-patterns-that-prevent-agent-loops-and-silent-failures-f29
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The assistant passed every unit. Cache test: 90% hit rate. RAG test: top-5 recall is great. Streaming test: tokens flow. Tool test: the function fires. Agent test: it finishes the task. Then you ship the RAG-backed agentic assistant and the bill triples while answers feel slower. Nobody's component is broken. The cache read rate dropped to near zero in prod because RAG context is now stitched into the cached prefix — and it changes on every single request. Six green components, one red invoice.
+</Hook>
+
+<Crux>In a composed LLM app the bug lives in the seam between two correct layers — threat- and cost-model the whole flow, not each piece.</Crux>
+
+<Explanation>
+
+## One request, every layer
+
+A capstone request looks innocent: a user asks "what's our refund window for EU orders?" and your assistant retrieves policy docs, reasons, maybe calls a tool, and streams an answer. Under the hood that single turn crosses six layers built in earlier units, each tested alone:
+
+1. **Prompt cache** — a long static prefix (system rules, tool schemas) marked with `cache_control` so repeat calls skip re-encoding it.
+2. **RAG** — retrieve the top-k policy chunks for *this* query and inject them as context.
+3. **Tool calls** — the model may call `lookup_order` or `get_policy` mid-turn.
+4. **Streaming** — tokens are sent to the user as they're generated, over SSE.
+5. **Agent loop** — if the first answer needs another retrieval or tool, loop again.
+6. **Evals** — an offline suite that gate-keeps deploys.
+
+Each layer is correct in isolation. The production failure is always at a **seam** — where the output contract of one layer silently violates the input assumption of the next. You cannot find these by testing pieces. You find them by tracing one real request through every layer and asking, at each boundary, "what does the next layer assume that this layer just changed?"
+
+## Seam 1: RAG poisons the cache prefix
+
+Anthropic prompt caching is a **prefix match**: the request is laid out as `tools → system → messages`, and the cache reuses the longest *byte-for-byte identical* prefix up to your last `cache_control` breakpoint. Default TTL is 5 minutes (or 1 hour). The naive composition is to build one big system block: rules + tool schemas + "Here are the relevant docs:" + the retrieved chunks. It demos perfectly. In prod the retrieved chunks differ on every query, so the prefix differs from byte one, the cache read rate collapses toward zero, and you pay full input price every call — exactly the case where caching mattered most.
+
+The fix is a seam-aware layout: put the **static** prefix (system rules, tool schemas) before the breakpoint, and the **per-request** RAG context *after* it, in the messages. The static prefix stays cached; only the cheap dynamic tail re-encodes. This is the whole reason `cache_control` lets you place breakpoints at boundaries instead of caching the entire request blob.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Seam</th>
+        <th class="border border-border px-3 py-2 text-left">Each side is correct</th>
+        <th class="border border-border px-3 py-2 text-left">Composed failure</th>
+        <th class="border border-border px-3 py-2 text-left">Fix at the boundary</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">RAG → cache</td>
+        <td class="border border-border px-3 py-2">Retrieval ranks well; cache hits in unit test</td>
+        <td class="border border-border px-3 py-2">Per-request chunks sit inside the cached prefix → hit rate ≈ 0, full input cost</td>
+        <td class="border border-border px-3 py-2">Static prefix before the breakpoint; RAG after it</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Tools → streaming</td>
+        <td class="border border-border px-3 py-2">Tool fires; stream delivers tokens</td>
+        <td class="border border-border px-3 py-2"><code>stop_reason: tool_use</code> mid-stream; UI keeps spinning waiting for prose</td>
+        <td class="border border-border px-3 py-2">Treat the stream as a state machine: pause render, run tool, resume</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Agent loop → budget</td>
+        <td class="border border-border px-3 py-2">Loop converges on the happy path</td>
+        <td class="border border-border px-3 py-2">Bad input retries forever; no step/$ ceiling → runaway spend</td>
+        <td class="border border-border px-3 py-2">Hard caps: <code>step ≤ MAX</code>, <code>spent ≤ BUDGET</code>, dedupe repeated calls</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Evals → retrieval</td>
+        <td class="border border-border px-3 py-2">Generation evals pass on fixed context</td>
+        <td class="border border-border px-3 py-2">Suite never varies retrieval → retrieval regressions ship green</td>
+        <td class="border border-border px-3 py-2">End-to-end evals that include the live retrieval path</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Seam 2: a tool call breaks the stream
+
+Streaming and tool use each work, but they share a wire. A streamed turn does not always end in prose: the model can emit `stop_reason: tool_use` partway through. If your frontend treats the stream as "tokens until done," it renders the partial text, then hangs — the spinner never resolves because the real continuation is *another* request you haven't sent yet (the tool result, fed back). Worse failure modes from the field: a network glitch truncates the stream with a `tool_use` stop reason but **zero** tool-call blocks, so the agent finds nothing to execute and goes idle silently; or a process crash mid-tool-execution orphans the result and the next request is rejected with `unexpected tool_use_id found in tool_result block`, leaving the session unrecoverable without manual surgery.
+
+The composition rule: the stream is a **state machine**, not a token pipe. States are `text`, `tool_use_requested`, `awaiting_tool_result`, `resumed`. The tool-use stop is a transition, not an end. And every `tool_use` id must be matched by exactly one `tool_result` in the next request — track them, or the API rejects the whole turn.
+
+<Inset kind="why" lang="en">
+Why does this only bite in prod? In a demo you ask one clean question and the model answers in prose — the `tool_use` branch never fires, so the streaming-plus-tools seam is never exercised. The first real user who triggers a tool mid-answer is the first traffic that ever crosses that seam. "Works on my machine" here means "I never hit the branch that breaks."
+</Inset>
+
+## Seam 3: the agent loop with no budget
+
+An agent loop is "call the model, run tools, feed results back, repeat until done." The unit test ends because the task succeeds. Production input does not cooperate: a tool returns a malformed result, the model rephrases and retries, the result is still malformed, it retries again — and because each iteration ships the *entire* growing transcript back to the model, cost climbs super-linearly. The widely-cited postmortem: four agents with no step cap entered a loop, ran for **11 days**, and burned **$47,000** before anyone noticed. The lesson there is sharp — token-budget *alerts* are not *enforcement*. Alerts fire after the spend; enforcement refuses the next call.
+
+The composition fix is three asserts before every model call: `step ≤ MAX_STEPS`, `spent ≤ BUDGET_USD`, and `hash(tool_name, args) not in seen` to kill repeat-the-same-call loops. A budget-aware gateway returns an error instead of forwarding the request once the ceiling is hit. Teams that add this typically cut agent cost 55–75%.
+
+<TradeoffMatrix
+  id="ai-08-putting-it-together-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Your RAG-backed assistant has cache hit rate near 0% in prod despite a long static system prompt. Pick the fix."
+  options={[
+    { name: "Move per-request RAG chunks out of the cached system prefix into the messages, after the cache_control breakpoint", summary: "Seam-aware layout.", correct: true, justification: "The cache is a byte-for-byte prefix match over tools → system → messages. Retrieved chunks change every query, so embedding them inside the cached system block changes the prefix from the first differing byte and busts the cache. Keep static rules + tool schemas before the breakpoint; put the dynamic RAG context after it. The static prefix stays cached; only the cheap tail re-encodes." },
+    { name: "Raise the cache TTL from 5m to 1h so entries live longer", summary: "Longer TTL.", justification: "TTL only controls how long an entry survives — it does nothing when the prefix itself differs every request. A longer-lived cache entry that never matches is still a 0% hit rate. The problem is prefix instability, not eviction." },
+    { name: "Disable RAG so the prefix is stable again", summary: "Drop retrieval.", justification: "This trades the whole feature for a cache metric. Retrieval is why the assistant is grounded; removing it to fix caching is optimizing the wrong layer. The right move keeps RAG and relocates it past the breakpoint." },
+    { name: "Cache the full request including the chunks and accept the misses", summary: "Do nothing.", justification: "Accepting near-0% hit rate means paying full input price on every call — exactly the cost caching exists to avoid, and worst on the long static prefix that should be free after the first call. The layout fix is cheap and recovers most of the savings." },
+  ]}
+/>
+
+## The senior thesis: model the flow, not the parts
+
+The through-line of every seam above: a layer that is correct by its own contract changes something the next layer silently depended on. RAG changed the prefix the cache assumed was stable. A tool call changed the stream the renderer assumed was prose. Real input changed the loop the budget assumed would terminate. The retrieval path changed under an eval suite that assumed fixed context. None of these is a bug *in* a component — each is a bug *between* components. So the senior skill at the capstone is not building better pieces; it's threat- and cost-modeling the **whole request path**: what does each boundary assume, and which upstream layer can violate it? Trace one real request end to end and the seams light up.
+
+<Quiz
+  id="ai-08-putting-it-together-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A streamed turn ends with stop_reason: tool_use partway through, and the UI hangs on a spinner. What's the correct mental model?"
+  choices={[
+    { label: "The stream is a state machine; tool_use is a transition (pause render, run the tool, send the result back, resume) — not the end of the turn", correct: true },
+    { label: "The model errored; retry the whole request from scratch", misconception: "Nothing errored — the model deliberately requested a tool. Retrying re-runs work and may loop; you need to handle the tool_use transition, not restart." },
+    { label: "Increase max_tokens so it finishes the prose instead of stopping", misconception: "max_tokens controls length, not whether the model wants a tool. The model stopped to call a tool; raising the limit doesn't change that decision." },
+    { label: "Buffer the whole response before rendering so partials never show", misconception: "Buffering hides streaming's benefit and still doesn't handle the tool-use branch — you'd buffer, then still need to run the tool and resume." },
+  ]}
+/>
+
+<Quiz
+  id="ai-08-putting-it-together-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your offline eval suite is green on every deploy, but users report worse answers after a retriever change. Why did evals miss it?"
+  choices={[
+    { label: "The suite evaluates generation on fixed/golden context and never exercises the live retrieval path, so retrieval regressions ship green", correct: true },
+    { label: "The evals are flaky and need more retries", misconception: "Flakiness would show as noisy pass/fail, not consistent green hiding a real regression. The gap is coverage: the retrieval seam isn't in the test path." },
+    { label: "The model got worse; re-run the same evals on the new model", misconception: "The change was the retriever, not the model. Re-running generation-only evals still skips the retrieval path that actually regressed." },
+    { label: "Generation metrics are wrong and should be replaced", misconception: "Generation metrics can be fine in isolation; the issue is they run on frozen context. You need an end-to-end eval that includes live retrieval, not different generation metrics." },
+  ]}
+/>
+
+<DragOrder
+  id="ai-08-putting-it-together-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order how to debug a composed LLM app whose cost tripled and answers feel slower:"
+  items={[
+    { id: "a", label: "Trace ONE real production request through every layer (cache, RAG, tools, stream, loop)" },
+    { id: "b", label: "At each boundary, ask what the next layer assumed that this layer just changed" },
+    { id: "c", label: "Spot the seam: per-request RAG context is inside the cached prefix → hit rate ≈ 0" },
+    { id: "d", label: "Move RAG context after the cache_control breakpoint; keep static rules before it" },
+    { id: "e", label: "Add an end-to-end eval that varies retrieval, so the seam can't silently regress again" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Six layers that each pass their own tests fail together. The bug lives in the seam: RAG busts the cached prefix, a tool call stalls the stream, an uncapped loop runs away. Trace one request end to end; model the flow.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ai-08-putting-it-together-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a RAG-backed assistant with a long static system prompt can still see near-zero cache hit rate in production, and how to fix it.", a: "Anthropic prompt caching is a prefix match: the request is ordered tools → system → messages, and the cache reuses the longest byte-for-byte identical prefix up to your last cache_control breakpoint. The naive composition builds one big system block of rules + tool schemas + the retrieved RAG chunks. In a demo with one repeated question it looks cached, but in production the retrieved chunks differ on every query, so the prefix differs from the first byte and the cache read rate collapses toward zero — you pay full input price on the long prefix every call, exactly where caching mattered most. The fix is seam-aware layout: keep the static prefix (system rules, tool schemas) before the cache breakpoint, and put the per-request RAG context after it, in the messages. The static prefix stays cached; only the cheap dynamic tail re-encodes. Raising the TTL does not help, because TTL controls survival time, not whether the prefix matches." },
+    { q: "What is the 'bug lives in the seam' thesis, and how does it change how you debug a composed LLM app versus a single component?", a: "Each layer — cache, RAG, tools, streaming, agent loop, evals — can be correct by its own contract and still break the system, because composition creates new failure modes at the boundaries. RAG changed the prefix the cache assumed was stable. A tool-use stop changed the stream the renderer assumed was pure prose, leaving the UI spinning. Real input changed the loop the budget assumed would terminate, which is how four uncapped agents ran 11 days and burned $47,000. A retriever change regressed answers under an eval suite that ran generation on frozen golden context and never exercised live retrieval. None of these is a bug inside a component; each is a bug between two correct components. So you don't debug by re-testing pieces — you trace one real request end to end and, at every boundary, ask what the next layer assumed that the previous layer just changed. The senior skill is threat- and cost-modeling the whole flow: enforce hard step and dollar caps, lay out the cache around the dynamic content, treat the stream as a state machine, and write end-to-end evals that include retrieval." },
+  ]}
+/>
+
+<Recap lang="en">
+A production LLM application is a composition of layers — prompt caching, RAG, tool calls, streaming, an agent loop, and evals — and every one of them can pass its own unit test while the system fails. The failures live in the seams. Per-request RAG context stitched into the cached prefix collapses the cache hit rate to near zero, because caching is a byte-for-byte prefix match and the chunks change every query; the fix is to keep the static prefix before the cache_control breakpoint and the dynamic context after it. A tool-use stop mid-stream hangs a renderer that assumes prose, so model the stream as a state machine and match every tool_use id with a tool_result. An agent loop with no step or dollar ceiling retries forever on bad input — the famous case ran 11 days for $47,000 — so enforce caps, not just alerts. And generation evals on frozen context ship retrieval regressions green, so add end-to-end evals that vary the live retrieval path. The senior move is not better components; it is to trace one real request through every layer and, at each boundary, ask what the next layer assumed that the last one just changed. Threat- and cost-model the whole flow.
+</Recap>
