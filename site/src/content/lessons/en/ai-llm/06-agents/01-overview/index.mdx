@@ -6,13 +6,230 @@ unit: 06-agents
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Agents"
-summary: "Coming soon — AI / LLM integration"
+status: ready
+title: "The agent loop: ReAct, runaway steps, and context that grows every turn"
+summary: "An LLM agent is a while-loop that calls the model, runs a tool, appends the result, and calls the model again. The danger is the loop that won't stop and the history that won't stop growing — both bill you per token."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["agentic-loop", "react-pattern", "tool-execution-cycle", "context-accumulation", "max-step-guard", "agent-autonomy-tradeoff"]
+estMin: 17
 sources:
-  - https://example.com/placeholder
-estMin: 5
+  - https://docs.langchain.com/oss/python/langgraph/graph-api
+  - https://huggingface.co/learn/agents-course/en/unit1/agent-steps-and-structure
+  - https://online.stevens.edu/blog/hidden-economics-ai-agents-token-costs-latency/
+  - https://www.ibm.com/think/topics/react-agent
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The on-call alert is a billing spike, not an outage. One agent request that should cost $0.08 has been running for nine minutes and burned about $12. Pull the trace: the agent called `search_orders`, got an empty result, called `search_orders` again with the same arguments, got the same empty result, and did it 140 more times. No exception, no crash — every step was a valid model call with a valid tool call. The loop simply had no reason to stop, and nobody had told it when to.
+</Hook>
+
+<Crux>An agent is a while-loop around the model: think, call a tool, append the result, repeat — the bill is the loop times its growing history.</Crux>
+
+<Explanation>
+
+## The loop is five lines
+
+Strip away the frameworks and an LLM agent is almost embarrassingly simple. It is the ReAct pattern — Reason, Act, Observe — wrapped in a `while`:
+
+```text
+messages = [system, user_task]
+while True:
+    response = model(messages, tools)        # THINK: model reasons + decides
+    if not response.tool_calls: break         # no tool wanted → it's the answer
+    result = run_tool(response.tool_calls)    # ACT: execute the chosen tool
+    messages.append(response)                 # remember what it decided
+    messages.append(result)                   # OBSERVE: feed the result back
+```
+
+That is the whole engine. The model looks at the conversation, decides whether to call a tool or to answer, and if it called a tool you run it and hand the output back as the next observation. The model never executes anything itself — your code does. The "agentic" part is only that the model, not your control flow, picks the next action each turn. Everything hard about agents in production is a consequence of those two facts: the loop can run any number of times, and `messages` gets longer on every pass.
+
+## Context accumulates, and the cost is not linear
+
+Here is the part juniors miss. Every iteration appends the model's reasoning, its tool call, and the tool's result to `messages`, and then you send the *entire* history to the model again next turn. You are not paying for one step — you are paying to re-read the whole transcript on every step.
+
+If step _n_ adds roughly _k_ tokens, then by step _N_ each call is reading about _N·k_ tokens, and the total cost of the run is the sum 1+2+3+…+N — quadratic in the number of steps. A 5-step task is cheap. A 15-step task is not three times the cost; it is closer to nine times, plus latency, because each call also waits on a larger prompt. A Reflexion-style loop running ten cycles has been measured at roughly 50× the tokens of a single linear pass. This quadratic growth is the most dangerous economic trap in agent design, and it is invisible until the trace is long.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">What gets appended</th>
+        <th class="border border-border px-3 py-2 text-left">Tokens sent THIS call</th>
+        <th class="border border-border px-3 py-2 text-left">Cumulative cost</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1</td>
+        <td class="border border-border px-3 py-2">task + 1st think/act/observe</td>
+        <td class="border border-border px-3 py-2">~1k</td>
+        <td class="border border-border px-3 py-2">~1k</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">5</td>
+        <td class="border border-border px-3 py-2">4 more triplets</td>
+        <td class="border border-border px-3 py-2">~5k</td>
+        <td class="border border-border px-3 py-2">~15k</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">15</td>
+        <td class="border border-border px-3 py-2">10 more triplets</td>
+        <td class="border border-border px-3 py-2">~15k</td>
+        <td class="border border-border px-3 py-2">~120k (quadratic)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">40+</td>
+        <td class="border border-border px-3 py-2">history exceeds window</td>
+        <td class="border border-border px-3 py-2">overflow / truncation</td>
+        <td class="border border-border px-3 py-2">errors mid-task</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+There is a second failure waiting at the end of that table: **context-window overflow mid-task.** The history grows monotonically, so a long-horizon task eventually pushes past the model's context limit. Now the framework either errors out or silently truncates the oldest messages — which often includes the original instructions. The agent forgets what it was asked to do and confidently finishes the wrong task. Models also attend disproportionately to the start and end of a long context, so a critical fact discovered at step 5 of a 15-step chain can effectively vanish even before any truncation.
+
+## Termination: the loop needs more than one exit
+
+A naive loop has exactly one way out — the model declines to call a tool. That is not enough in production, because a model that is stuck, confused, or thrashing will happily keep calling tools forever. A senior gives the loop several independent exits:
+
+- **Natural completion** — the model returns a final answer with no tool call. The good case.
+- **Max-step guard** — a hard cap on iterations. LangGraph ships this as `recursion_limit` (default **1000** super-steps in 1.0.x), and you almost always set it far lower — 10 to 25 for most tasks — because a task that needs 1000 steps is a task that has lost the plot.
+- **Wall-clock / token budget** — stop after, say, 60 seconds or N total tokens, regardless of step count. This is what actually caps the dollar figure.
+- **Progress / dedup check** — if the last few steps repeat the same tool with the same arguments, the agent is thrashing; break the loop or inject a "you are repeating yourself, stop" message.
+
+The billing-spike story is the classic missing exit: the loop had only the "model didn't call a tool" door, and the model kept calling a tool, so it never reached the door.
+
+<Inset kind="why" lang="en">
+Treat the step cap as a *seatbelt, not a steering wheel.* A hard `max_steps` is a safety net that bounds the worst case, but if your agent routinely hits it, the cap is hiding a real bug — a bad tool, a vague prompt, a missing termination signal. The primary control should be the model reaching a genuine `stop` because the task is done; the cap is what saves you the night it doesn't.
+</Inset>
+
+## Error recovery, and the retry that never gives up
+
+When a tool fails, you usually feed the error text back as the observation so the model can adapt — fix the arguments, try a different tool. This is one of the loop's superpowers. It is also a trap. Suppose `search_orders` returns an empty list (not even an error — just nothing useful). A poorly-prompted agent reads that, decides it must have made a mistake, and calls `search_orders` again. Same input, same empty result, same conclusion. Without a dedup or progress check, that is an infinite loop made of perfectly valid calls — exactly the $12 trace from the hook. The fix is structural: cap retries per tool, detect identical consecutive calls, and make "I cannot find this, here is what I tried" an acceptable terminal answer rather than a failure the model must keep fighting.
+
+## Scripted workflow vs open-ended agent
+
+The senior question is rarely "how do I build an agent" — it is "does this even need to be an agent?" A scripted workflow hard-codes the steps: call tool A, then B, then C, with `if`/`else` for branches. It is cheaper (one or two model calls, not fifteen), faster, fully predictable, and trivial to test. An open-ended agent lets the model decide the steps at runtime; it handles tasks you could not enumerate in advance, at the cost of nondeterminism, higher token spend, and a much larger surface for the loop to misbehave.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Scripted workflow</th>
+        <th class="border border-border px-3 py-2 text-left">Open-ended agent</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Who picks the next step</td>
+        <td class="border border-border px-3 py-2">You, at code-time</td>
+        <td class="border border-border px-3 py-2">The model, at run-time</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Cost / latency</td>
+        <td class="border border-border px-3 py-2">Low, bounded</td>
+        <td class="border border-border px-3 py-2">High, quadratic in steps</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Predictability</td>
+        <td class="border border-border px-3 py-2">Deterministic, testable</td>
+        <td class="border border-border px-3 py-2">Nondeterministic</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Handles novel tasks</td>
+        <td class="border border-border px-3 py-2">No — only what you coded</td>
+        <td class="border border-border px-3 py-2">Yes — adapts at runtime</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The tradeoff is autonomy against control, cost, and predictability. Give the model the freedom to choose its own path only where that freedom earns its keep; everywhere the path is known, script it. Dynamic turn limits that adjust to a task's success probability have been shown to cut costs ~24% while holding solve rates — evidence that the right amount of autonomy is usually less than the default.
+
+<TradeoffMatrix
+  id="06-agents-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A support flow always does the same three steps: look up the order, check refund eligibility, issue or deny the refund. Pick the design."
+  options={[
+    { name: "A scripted workflow: three explicit calls with if/else branches, no agent loop", summary: "Hard-code the known path.", correct: true, justification: "The steps are fixed and known at code-time, so there is nothing for an agent loop to figure out. A scripted workflow is one or two model calls instead of a growing loop: cheap, low-latency, deterministic, and unit-testable. You can assert the exact sequence in CI. Reserve the agent loop for tasks whose steps you genuinely cannot enumerate in advance." },
+    { name: "An open-ended agent with all three tools and a high recursion_limit, let it figure out the order", summary: "Let the model drive.", justification: "This pays the full agent tax — quadratic token growth, nondeterminism, a loop that can thrash — to solve a problem that has no branching uncertainty. The order never changes, so handing the model that freedom buys nothing and adds cost, latency, and a class of runaway-loop failures you now have to guard against." },
+    { name: "An agent with no max-step guard because the task is short and obviously terminates", summary: "Trust it to stop.", justification: "'Obviously terminates' is exactly the assumption that produces the $12 trace. An empty tool result or a confused model can turn a three-step task into a 140-step retry loop. Even short tasks need a hard cap and a dedup check as a seatbelt." },
+    { name: "Scripted happy path, but fall back to an agent loop only when a step returns something unexpected", summary: "Hybrid.", justification: "Defensible and often ideal in real systems, but more than the prompt needs: this flow has no unexpected branch described. Adding an agent fallback is speculative complexity here. The cleanest answer for a fully-known three-step path is to script it; reach for the hybrid when real branching shows up." },
+  ]}
+/>
+
+<Quiz
+  id="06-agents-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does a 15-step agent run cost much more than 3× a 5-step run?"
+  choices={[
+    { label: "Because the full history is re-sent every step, so total tokens grow quadratically with step count", correct: true },
+    { label: "Because the model gets slower the longer it thinks, independent of tokens", misconception: "Latency does rise, but the dominant cost is token volume: each call re-reads the entire accumulated transcript, so cost scales with the sum 1+2+...+N, not linearly." },
+    { label: "Because each tool call has a large fixed network overhead", misconception: "Network overhead is roughly per-call and linear; the superlinear blowup comes from re-sending a history that grows every turn." },
+    { label: "Because longer runs use a more expensive model", misconception: "The model is the same; what changes is how many tokens of accumulated context you pay to re-read on every iteration." },
+  ]}
+/>
+
+<Quiz
+  id="06-agents-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="An agent calls the same tool with identical arguments five times in a row, getting the same empty result. What is the correct guard?"
+  choices={[
+    { label: "A progress/dedup check that detects repeated identical calls and breaks the loop", correct: true },
+    { label: "Increase the recursion_limit so it has more chances to succeed", misconception: "More iterations of an identical failing call just burns more money — the loop is thrashing, not progressing. Raising the cap makes the bill worse, not the outcome." },
+    { label: "Retry the tool automatically with the same arguments until it works", misconception: "Same arguments give the same empty result; blind retries are the infinite-loop bug, not the fix. Recovery means changing the approach or accepting 'not found' as terminal." },
+    { label: "Remove the tool from the agent entirely", misconception: "The tool may be needed for other inputs; the bug is the missing dedup/termination logic, not the tool's existence." },
+  ]}
+/>
+
+<DragOrder
+  id="06-agents-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order one iteration of the ReAct agent loop:"
+  items={[
+    { id: "a", label: "Send the full message history + tool definitions to the model (THINK)" },
+    { id: "b", label: "Model returns either a final answer or a tool call" },
+    { id: "c", label: "If it's a final answer with no tool call → break the loop" },
+    { id: "d", label: "Otherwise execute the chosen tool (ACT)" },
+    { id: "e", label: "Append the tool's result to the history (OBSERVE) and loop again" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>An agent is a while-loop around the model. Cost is quadratic in steps since history is re-sent each turn, so give the loop several exits — stop, step cap, token budget, dedup — and script known paths.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-agents-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk a teammate through why an agent's cost grows quadratically with the number of steps, and what overflows at the far end.", a: "Each iteration of the loop appends three things to the message list — the model's reasoning, the tool call it chose, and the tool's result — and then the next iteration re-sends the entire accumulated history to the model. So you are not paying once per step; you are paying to re-read the whole transcript on every step. If each step adds about k tokens, step N reads roughly N·k tokens, and the run's total is 1+2+3+...+N, which is quadratic in N. That is why a 15-step task is closer to nine times a 5-step task, not three times, and why a ten-cycle reflexion loop has been measured at ~50x the tokens of a single pass — and latency climbs too, since every call waits on a bigger prompt. At the far end the history eventually exceeds the model's context window: the framework either errors out mid-task or silently truncates the oldest messages, which usually includes the original instructions, so the agent forgets the task and confidently finishes the wrong one." },
+    { q: "Why is a hard max-step cap necessary but not sufficient for safe termination, and what else does a senior add?", a: "A naive loop has exactly one exit: the model declines to call a tool and returns an answer. That fails in production because a stuck, confused, or thrashing model will keep calling tools forever, so you need a hard ceiling — LangGraph's recursion_limit, defaulting to 1000 super-steps but usually set to 10-25 — to bound the worst case. But the cap is a seatbelt, not a steering wheel: if the agent routinely hits it, that is hiding a real bug, and a cap of, say, 25 still lets a quadratic loop run up a serious bill before it trips. So a senior adds independent exits: a wall-clock or token budget that actually caps the dollar figure regardless of step count; a progress/dedup check that breaks the loop when the last few steps repeat the same tool with the same arguments; and per-tool retry limits so a failing tool can't be hammered forever. The primary control is the model reaching a genuine done state; everything else is there for the night it doesn't." },
+  ]}
+/>
+
+<Recap lang="en">
+An LLM agent is a while-loop around the model: it thinks (the model reasons and picks an action), acts (your code runs the chosen tool), observes (the result is appended), and repeats — the ReAct pattern, and only the model's freedom to pick the next action makes it "agentic." Two facts drive everything hard about it. The loop can run any number of times, and the history grows on every pass, so cost is quadratic in steps because the whole transcript is re-sent each turn — a 15-step run is ~9× a 5-step run, and a long-horizon task eventually overflows the context window and silently drops its own instructions. A naive loop has one exit (the model stops calling tools), which a stuck or thrashing model never reaches; the billing-spike trace is an agent retrying the same empty tool call 140 times. So give the loop several independent exits: natural completion, a hard max-step guard (LangGraph's recursion_limit), a wall-clock or token budget that caps the actual dollar cost, and a dedup/progress check that kills thrashing. Above all, weigh autonomy against control, cost, and predictability — a scripted workflow is cheaper, faster, and testable wherever the path is known, so reserve the open-ended agent for tasks whose steps you genuinely cannot enumerate in advance.
+</Recap>
