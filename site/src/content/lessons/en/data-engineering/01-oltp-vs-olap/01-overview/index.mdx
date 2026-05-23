@@ -6,12 +6,175 @@ unit: 01-oltp-vs-olap
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Oltp vs olap"
-summary: "Coming soon — Data engineering for fullstack"
+status: ready
+title: "OLTP vs OLAP: the workload split that defines data engineering"
+summary: "Row-store OLTP and column-store OLAP optimize opposite shapes: tiny indexed writes vs huge scans. Running analytics on the prod replica is the classic outage — the fix is a separate columnar store fed by ETL/CDC."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["row-store", "column-store", "column-pruning", "vectorized-execution", "cdc-etl", "htap"]
+estMin: 16
+sources:
+  - https://clickhouse.com/resources/engineering/why-columnar-databases-are-fast
+  - https://clickhouse.com/resources/engineering/database-compression
+  - https://aws.amazon.com/blogs/database/improve-postgresql-performance-diagnose-and-mitigate-lock-manager-contention/
+  - https://clickhouse.com/resources/engineering/unifying-oltp-and-olap
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The growth team ships a dashboard: "revenue by country, last 90 days." It points at the prod Postgres read replica because "it's just a read." At 9am the query fans out a `SUM` over 40M `orders` rows, evicts the hot B-tree pages every checkout needs out of `shared_buffers`, and pins I/O for 30 seconds. Checkout p99 jumps from 40ms to 2s, replica lag climbs to 90s, and on-call gets paged for "database down." Nothing was down. One analytical scan poisoned a transactional system. Adding an index would not have helped — there was no `WHERE` to narrow; the query needed every row.
+</Hook>
+
+<Crux>OLTP wants tiny indexed writes; OLAP wants huge column scans. One storage layout can't win both — that split defines data engineering.</Crux>
+
+<Explanation>
+
+## Two workloads, two opposite shapes
+
+OLTP — Online Transaction Processing — is the app database: `INSERT` an order, `UPDATE` a balance, fetch one user by id. The access pattern is point lookups and small writes against a few rows, thousands of times per second, each in single-digit milliseconds. OLAP — Online Analytical Processing — is the question machine: average order value by region by month, retention cohorts, "which 1% of users drive 40% of revenue." It scans millions of rows but touches only a handful of the table's columns, and a query running for seconds is fine.
+
+These are not two settings on one knob. They pull the physical design in opposite directions. OLTP optimizes for write latency and single-row retrieval; OLAP optimizes for scan throughput over a few columns across the whole table. A schema, an index, a storage format that is excellent at one is structurally bad at the other. That tension — not any specific tool — is what the rest of data engineering is built to manage.
+
+## Row-store vs column-store: it's about what sits next to what
+
+A row store (Postgres, MySQL, most OLTP engines) keeps a row's columns contiguous on disk: `[id, user, country, total, created_at]` for row 1, then all of row 2, and so on. That is perfect for OLTP — fetching or writing one whole order touches one page. But ask for `SUM(total)` over 40M rows and the engine must read every page of the table, dragging `id`, `user`, `country`, `created_at` through memory just to reach `total`. You pay I/O for 50 columns to use 1.
+
+A column store (ClickHouse, Redshift, BigQuery, Snowflake) flips the layout: all `total` values sit together, all `country` values together. Now `SUM(total)` reads only the `total` column — **column pruning**. A query touching 3 of 50 columns reads roughly 6% of the bytes a row store would. That single property is most of the gap.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Row store (OLTP)</th>
+        <th class="border border-border px-3 py-2 text-left">Column store (OLAP)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Physical layout</td>
+        <td class="border border-border px-3 py-2">All columns of a row together</td>
+        <td class="border border-border px-3 py-2">All values of a column together</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Best at</td>
+        <td class="border border-border px-3 py-2">Point read/write of whole rows</td>
+        <td class="border border-border px-3 py-2">Scan + aggregate a few columns</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Big aggregate cost</td>
+        <td class="border border-border px-3 py-2">Reads every byte of every row</td>
+        <td class="border border-border px-3 py-2">Reads only referenced columns (~6%)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Compression</td>
+        <td class="border border-border px-3 py-2">~1.5–3× (mixed types per page)</td>
+        <td class="border border-border px-3 py-2">~5–10× (same type per column)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Single-row write</td>
+        <td class="border border-border px-3 py-2">Cheap — one row, one place</td>
+        <td class="border border-border px-3 py-2">Expensive — touches every column file</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why columnar compresses 5–10× and runs vectorized
+
+Storing one column together means storing values of one type and often low cardinality next to each other — and that compresses far better than a row's grab-bag of an int, a string, a timestamp, a float. A `country` column is a few hundred distinct strings repeated millions of times: dictionary-encode it to small ints, then run-length-encode the runs, then LZ4/ZSTD on top. Row stores typically reach 1.5–3×; column stores hit 5–10× on analytical data and 30×+ on low-cardinality columns. On the 100M-row ClickBench, ClickHouse stores the dataset in ~9 GiB where Postgres needs ~100 GiB. Less data on disk is less I/O, and I/O is the bottleneck for scans — so the compression gap *widens* the throughput gap to 50–100×.
+
+The second multiplier is **vectorized execution**. A row engine processes a query tuple-by-tuple: per row, a function call, a type check, a branch. A column engine processes a column in batches of thousands of contiguous, same-type values, so the CPU runs tight loops over arrays, SIMD-friendly, with predictable branches and warm caches. Same arithmetic, an order of magnitude less per-value overhead. Pruning, compression, and vectorization stack: columnar beats row stores by 10×–1000× on analytical queries — and "add an index" cannot close that, because a full-table aggregate has nothing to seek.
+
+<Inset kind="why" lang="en">
+"Just add an index" is the instinct that fails here, and it's worth knowing exactly why. An index turns a scan into a seek when a query selects a *small fraction* of rows. An analytical aggregate — `SUM`, `AVG`, `COUNT(*)`, a 90-day rollup — needs *most or all* of the rows, so the planner correctly ignores the index and does a sequential scan; an index would only add write cost. Indexes fix selectivity, not scan volume. The fix for scan volume is a layout that reads fewer bytes per row: a column store.
+</Inset>
+
+## The failure mode: analytics on the prod OLTP replica
+
+The Hook is the senior failure mode in full. A read replica is still a row store with a buffer cache sized for transactional working sets. Point it at a long analytical scan and three things go wrong at once. First, **buffer-cache eviction**: the scan pulls cold pages through `shared_buffers` and evicts the hot OLTP pages, so transactional queries that were memory-hits start hitting disk and slow 10–100×. Second, **lock and resource contention**: sustained CPU, memory for hash joins, and I/O bandwidth are zero-sum — the analytical query starves the transactional threads sharing the engine. Third, **replica lag**: a long query holding resources delays apply of the WAL stream, so the replica falls behind the primary, and anything reading it serves stale data.
+
+The fix is architectural, not a tuning flag: give analytics its own home. Stand up a separate OLAP store (a columnar warehouse — Redshift/BigQuery/Snowflake — or ClickHouse) and feed it from OLTP continuously via **CDC** (change data capture, e.g. Debezium streaming the WAL into Kafka) or batch **ETL/ELT**. The two systems now have independent storage, independent caches, independent failure domains. The dashboard hits the warehouse; checkout never feels it. The cost you take on is a pipeline to own and a few seconds-to-minutes of data latency — almost always the right trade.
+
+<TradeoffMatrix
+  id="01-oltp-vs-olap-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Product wants a 'revenue by country, last 90 days' dashboard over a 40M-row orders table in prod Postgres. Pick the architecture."
+  options={[
+    { name: "Stand up a columnar warehouse/ClickHouse, feed it from Postgres via CDC or ETL, point the dashboard there", summary: "Separate OLAP store.", correct: true, justification: "This is the standard answer because it separates the workloads physically. The warehouse is column-oriented, so the 90-day SUM prunes to the columns it needs, scans compressed data (5–10× smaller), and runs vectorized — seconds, with zero impact on checkout. OLTP keeps its row store and warm buffer cache; OLAP gets its own caches, CPU, and failure domain. The cost is a CDC/ETL pipeline to operate and seconds-to-minutes of data lag, which a dashboard tolerates easily." },
+    { name: "Run the dashboard query against the prod read replica — it's a read, replicas exist for reads", summary: "Use the replica.", justification: "This is the exact outage in the Hook. A replica is still a row store: the scan reads every byte of 40M rows, evicts the hot OLTP pages from shared_buffers (so checkout starts hitting disk), competes for CPU/I/O with replication apply, and drives replica lag up. 'It's just a read' ignores that a full-table analytical read is the most destructive kind on a transactional engine." },
+    { name: "Add a composite index on (country, created_at) so the aggregate uses the index", summary: "Index it.", justification: "Indexes fix selectivity, not scan volume. A 90-day, all-countries aggregate needs most rows, so the planner ignores the index and does a sequential scan anyway — you've added write cost for no read benefit. There is nothing to seek when you must read most of the table." },
+    { name: "Cache the dashboard result in Redis and recompute it hourly from the replica", summary: "Cache the output.", justification: "Caching hides the symptom for viewers but the hourly recompute still runs the destructive full scan on the replica — checkout still degrades once an hour, and the cache is stale between runs. It treats a storage-layout problem as a presentation problem. You still need a real OLAP store underneath." },
+  ]}
+/>
+
+<Quiz
+  id="01-oltp-vs-olap-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A query computes SUM(total) over 40M rows but reads only the total column. Why does a column store crush a row store here?"
+  choices={[
+    { label: "Column pruning: it reads only the total column (~6% of bytes), then scans it compressed and vectorized", correct: true },
+    { label: "It has a better index on total that turns the scan into a seek", misconception: "A full-table aggregate touches most rows, so there is nothing to seek — the planner does a scan regardless. The win is reading fewer columns, not an index." },
+    { label: "Column stores keep the whole table in RAM and row stores don't", misconception: "Neither is defined by caching everything; the structural win is the on-disk layout (one column contiguous) enabling pruning, compression, and vectorized scans." },
+    { label: "It writes single rows faster, so reads are faster too", misconception: "Column stores are slower at single-row writes, not faster. The advantage is on column scans, a different axis entirely." },
+  ]}
+/>
+
+<Quiz
+  id="01-oltp-vs-olap-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="An analytics dashboard pointed at the prod OLTP read replica causes checkout p99 to spike. What's the root cause a senior names first?"
+  choices={[
+    { label: "The analytical scan evicts hot OLTP pages from shared_buffers and competes for I/O, so transactional reads hit disk and replica lag climbs", correct: true },
+    { label: "The replica is missing an index the dashboard needs", misconception: "Adding an index does not help a full-table aggregate, and the symptom is OLTP slowdown from cache eviction and resource contention, not a slow dashboard query." },
+    { label: "Replicas are read-only, so writes queue up behind the dashboard", misconception: "The dashboard runs on the replica, not the primary; writes go to the primary. The damage is buffer-cache eviction and resource contention on the replica plus replication lag." },
+    { label: "The connection pool is too small", misconception: "Pool size isn't the mechanism: even one analytical scan poisons the buffer cache and competes for I/O on a row store sized for transactional working sets." },
+  ]}
+/>
+
+<DragOrder
+  id="01-oltp-vs-olap-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the steps to move heavy analytics off the prod OLTP database the right way:"
+  items={[
+    { id: "a", label: "Recognize the query is OLAP — a full-table scan/aggregate, not a selective lookup an index can fix" },
+    { id: "b", label: "Stand up a separate OLAP store (columnar warehouse or ClickHouse) with its own storage and caches" },
+    { id: "c", label: "Feed it from OLTP continuously via CDC (e.g. Debezium → Kafka) or batch ETL/ELT" },
+    { id: "d", label: "Point dashboards/analysts at the OLAP store, leaving the OLTP buffer cache for transactions" },
+    { id: "e", label: "Accept seconds-to-minutes of data latency as the trade for an isolated failure domain" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>OLTP row stores win point reads/writes; OLAP column stores win scans via pruning, 5–10× compression, and vectorization. Never run analytics on the prod replica — feed a separate columnar store via CDC/ETL.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-oltp-vs-olap-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate asks why you can't just add an index to make the 90-day revenue aggregate fast on Postgres. Explain.", a: "An index speeds up queries that select a small fraction of rows — it turns a scan into a seek. A 90-day, all-countries SUM needs most or all of the rows, so there is nothing selective to seek; the planner correctly chooses a sequential scan and the index just sits there, adding write cost on every insert/update. Indexes fix selectivity, not scan volume. The aggregate is slow because a row store must read every byte of every row (all 50 columns) to reach the one column it sums. The real fix is a different physical layout: a column store keeps each column contiguous, so the query prunes to just that column, reads it compressed at 5–10×, and scans it vectorized — orders of magnitude less I/O and CPU, and no index could ever achieve that on a row store." },
+    { q: "Why is running the analytics dashboard on the prod read replica an outage waiting to happen, and what's the correct architecture?", a: "A read replica is still a row store with a buffer cache sized for the transactional working set. A long analytical scan does three damaging things at once: it pulls cold pages through shared_buffers and evicts the hot OLTP pages, so transactional reads that were memory-hits start hitting disk and slow 10–100×; it consumes CPU, hash-join memory, and I/O bandwidth that are zero-sum with the transactional threads on the same engine; and by holding resources it delays WAL apply, driving replica lag up so reads return stale data. 'It's just a read' is wrong — a full-table analytical read is the most destructive kind on a transactional engine. The correct architecture is to give analytics its own home: a separate columnar OLAP store (Redshift/BigQuery/Snowflake or ClickHouse) fed continuously from OLTP via CDC (e.g. Debezium streaming the WAL into Kafka) or batch ETL/ELT. The two systems then have independent storage, caches, and failure domains; the dashboard hits the warehouse and checkout never feels it. The price is a pipeline to operate and a small data-latency window — almost always worth it." },
+  ]}
+/>
+
+<Recap lang="en">
+OLTP and OLAP are two workloads with opposite physical needs: OLTP wants tiny indexed reads and writes of whole rows, so it uses a row store where a row's columns sit contiguous; OLAP wants to scan and aggregate a few columns across the whole table, so it uses a column store where each column sits contiguous. That layout gives the column store its three multipliers — column pruning (read ~6% of the bytes for a query touching 3 of 50 columns), 5–10× compression because same-type values pack tightly, and vectorized batch execution — which together make analytical queries 10×–1000× faster, a gap no index can close because a full-table aggregate has nothing to seek. The classic senior failure is running heavy analytics on the prod OLTP replica, where one scan evicts the hot buffer cache, contends for I/O and CPU, and drives replica lag, turning "it's just a read" into a checkout outage. The fix is architectural: a separate columnar OLAP store fed from OLTP by CDC or ETL, accepting a little data latency in exchange for isolated storage, caches, and failure domains. HTAP systems that try to serve both on one engine exist, but no production HTAP eliminates the resource contention — it can be managed, not avoided, which is why the two-store split remains the default.
+</Recap>
