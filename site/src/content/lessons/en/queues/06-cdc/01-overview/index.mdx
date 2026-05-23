@@ -6,12 +6,187 @@ unit: 06-cdc
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Change-Data Capture"
-summary: "Reading the database write-ahead log to stream every row change as an event — Debezium, Postgres logical replication, and the operational gotchas."
+status: ready
+title: "Change-Data Capture: streaming the write-ahead log without filling the disk"
+summary: "CDC tails the database's replication log so every committed insert/update/delete becomes an event — lower latency than polling, no app changes, but the replication slot can grow WAL until the primary halts."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["change-data-capture", "logical-replication-slot", "wal-retention", "debezium", "snapshot-then-stream", "idempotent-consumers"]
+estMin: 16
+sources:
+  - https://www.morling.dev/blog/mastering-postgres-replication-slots/
+  - https://debezium.io/documentation/reference/stable/connectors/postgresql.html
+  - https://debezium.io/blog/2021/10/07/incremental-snapshots/
+  - https://streamkap.com/resources-and-guides/debezium-replication-slot-issues
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+3am page: "Primary database is read-only." Not a crash — Postgres ran out of disk and stopped accepting writes to protect itself. The culprit was not the app. A Kafka Connect worker had OOM'd six hours earlier, the Debezium connector died, and its replication slot quietly pinned every WAL segment since. On a busy OLTP box producing ~30 GB of WAL per hour, the data volume went from 40% to full overnight. The fix was one line — drop the dead slot — but nobody knew the slot existed until the disk was gone.
+</Hook>
+
+<Crux>CDC tails the database write-ahead log to turn each commit into an event — but a stalled slot retains WAL until the disk fills.</Crux>
+
+<Explanation>
+
+## Reading the log instead of asking the table
+
+Every relational database already writes a durable, ordered record of every committed change: the write-ahead log (WAL in Postgres, the binlog in MySQL). It exists for crash recovery and replication. Change-Data Capture hijacks that log for a second purpose — instead of *polling* a table ("any rows newer than my last cursor?") or having the app *dual-write* to both the database and a message bus, a CDC connector tails the replication log and emits one event per row change.
+
+The mechanism in Postgres: you create a **logical replication slot** backed by a logical-decoding output plugin (`pgoutput`, shipped since Postgres 10). The slot is a server-side bookmark — it records the LSN (log sequence number) the consumer has confirmed, and the server promises not to recycle WAL past that point. A connector like **Debezium** opens a replication connection, decodes the WAL into structured change events, and ships each one — typically to Kafka — as an insert, update, or delete with a `before` and `after` image of the row.
+
+The payoff is real. Polling every 5 minutes means up to 5 minutes of latency and a row inserted-then-deleted between polls is missed entirely. Log-based CDC delivers changes within **milliseconds of commit**, captures every intermediate state, and adds **zero query load** to your tables because it reads the log, not the rows. And it needs no application change at all — the app keeps doing plain `INSERT`/`UPDATE`/`DELETE`.
+
+## The slot is a loaded gun pointed at your disk
+
+Here is the part that turns a feature into a 3am outage. The slot's promise — "I won't recycle WAL you haven't confirmed" — is unconditional. If the consumer stalls, lags, or dies, the server keeps every WAL segment since the slot's `restart_lsn`, forever, even as new writes pile more on. WAL is not a small thing: a busy OLTP system can generate **20–50 GB of WAL per hour**, so a dead slot can take a healthy disk from comfortable to full in **under two hours**.
+
+The insidious failure modes are the quiet ones:
+
+- **Consumer down** — a connector crash or Kafka Connect OOM stops confirmations; WAL grows until disk-full → Postgres rejects all writes → full outage.
+- **Long-running transaction** — logical decoding cannot advance past an open transaction, so `restart_lsn` is frozen and WAL accumulates *even though the connector looks healthy*.
+- **A low-traffic database** — counterintuitively, an idle DB can bloat too: with no commits, the slot never advances its confirmed position, so Debezium emits periodic **heartbeats** to nudge it forward.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Approach</th>
+        <th class="border border-border px-3 py-2 text-left">Latency</th>
+        <th class="border border-border px-3 py-2 text-left">App change</th>
+        <th class="border border-border px-3 py-2 text-left">Main risk</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Poll a table on a cursor</td>
+        <td class="border border-border px-3 py-2">Up to the poll interval (minutes)</td>
+        <td class="border border-border px-3 py-2">Query + cursor logic</td>
+        <td class="border border-border px-3 py-2">Misses intra-interval changes; query load</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">App dual-write (DB + bus)</td>
+        <td class="border border-border px-3 py-2">Immediate</td>
+        <td class="border border-border px-3 py-2">Yes — every write path</td>
+        <td class="border border-border px-3 py-2">No atomicity: one write succeeds, the other fails</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Outbox + polling relay</td>
+        <td class="border border-border px-3 py-2">Poll interval (often sub-second)</td>
+        <td class="border border-border px-3 py-2">Yes — write to outbox table</td>
+        <td class="border border-border px-3 py-2">Relay polling load; outbox table growth</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Log-based CDC (Debezium)</td>
+        <td class="border border-border px-3 py-2">Milliseconds</td>
+        <td class="border border-border px-3 py-2">None</td>
+        <td class="border border-border px-3 py-2">Slot retains WAL → disk-full halts the primary</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The senior mitigation is two-layered: **alert** on slot lag (`pg_replication_slots`, watch the byte distance between `confirmed_flush_lsn` and the current WAL position) so you act before disk pressure, and **cap** the damage with `max_slot_wal_keep_size` so Postgres will invalidate a runaway slot rather than die. Capping has its own tradeoff — an invalidated slot means the connector must re-snapshot — but a re-snapshot beats a primary outage.
+
+<Inset kind="why" lang="en">
+CDC and the outbox pattern are not rivals; they compose. The outbox pattern solves *atomicity* — write your business row and an event row in the same transaction so they commit together. But you still need something to ship the outbox rows out. A polling relay is the simple option; pointing Debezium at the outbox table is the log-based one (Debezium even has an outbox event router). So "CDC vs outbox" is the wrong axis: the real choice is whether to capture your domain tables directly or capture a purpose-built outbox table that you control the shape of.
+</Inset>
+
+## Snapshot, then stream — and the moment they meet
+
+A connector starting on an existing database has a cold-start problem: the WAL only contains *recent* changes, but a downstream consumer needs the *current* state of every row. So Debezium does a **snapshot then stream**: read the whole table (or a filtered set) to seed initial state, then switch to tailing the log from the LSN captured at snapshot start.
+
+The snapshot is where load and locking bite. A classic blocking snapshot on MySQL takes a global read lock (`FLUSH TABLES WITH READ LOCK`) for consistency, which can freeze writes on a large table for an uncomfortable window; MySQL 8.0.17+ with `snapshot.locking.mode=minimal` narrows that. Debezium's **incremental snapshot** (the signal-based, watermark approach) is the modern answer: it snapshots in chunks *while streaming continues*, can be paused and resumed, and never takes a long lock — at the cost of more moving parts. For a multi-terabyte table, the difference is between a multi-hour write freeze and a background trickle.
+
+## Deletes, ordering, and exactly-once that isn't
+
+Three more sharp edges that bite in production:
+
+**Capturing deletes needs the right `REPLICA IDENTITY`.** A Postgres `DELETE` only logs the primary key by default, so the change event's `before` image is just the key. To capture the full pre-delete row you must set `REPLICA IDENTITY FULL` on the table — which makes *every* update log the entire old row, increasing WAL volume. Debezium also emits a **tombstone** (a null-value record after a delete) so compacted Kafka topics can drop the key entirely. Forget the tombstone semantics and your compacted topic keeps ghosts.
+
+**Ordering is per-key, not global.** Debezium preserves order within a table/key by routing each key to the same Kafka partition. Across partitions there is no global order — so a consumer joining two tables cannot assume it sees their changes in commit order.
+
+**Delivery is at-least-once; design for it.** The slot/LSN bookmark means that on crash the connector resumes from the last confirmed position — but it may **re-emit** events committed after that point. Debezium 2.x can do exactly-once *to Kafka* via Kafka transactions, but the moment your consumer reads and acts, you are back to at-least-once end-to-end. The only safe stance: **consumers must be idempotent** — dedupe on the event's LSN/key, or make the downstream operation a no-op on replay.
+
+<TradeoffMatrix
+  id="06-cdc-overview-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="You need a search index kept fresh from a high-write Postgres `orders` table, with no app code changes and sub-second freshness. Pick the capture approach."
+  options={[
+    { name: "Log-based CDC: a Debezium connector on a logical replication slot, streaming to Kafka", summary: "Tail the WAL.", correct: true, justification: "Right for sub-second freshness with zero app changes: it reads the WAL, so it adds no query load to the orders table and captures every insert/update/delete within milliseconds of commit. The price you accept is operational — you now own a replication slot that retains WAL if the consumer stalls, so you must alert on slot lag and cap it with max_slot_wal_keep_size. That is the correct tradeoff when freshness and not touching the app both matter." },
+    { name: "Poll the table every minute on an updated_at cursor", summary: "Cursor query.", justification: "Simple and app-free-ish, but it fails the brief: up to a minute of latency, it misses rows inserted-and-deleted within the interval, and it adds a recurring scan against a high-write table. Cursor polling also can't see hard deletes without a tombstone column. Wrong when freshness must be sub-second." },
+    { name: "Dual-write from the app: one write to Postgres, one to Kafka", summary: "Write twice.", justification: "Violates 'no app changes' and, worse, has no atomicity — the DB write can commit while the Kafka publish fails (or vice versa), leaving the index permanently out of sync. This is the exact split-brain CDC and the outbox pattern exist to avoid." },
+    { name: "Add an outbox table and a polling relay", summary: "Outbox + relay.", justification: "A solid pattern and atomic, but it requires app changes (write to the outbox in the same transaction) which the prompt forbids, and the relay reintroduces polling latency. Reasonable in general; not the fit when the constraint is explicitly no app changes plus sub-second." },
+  ]}
+/>
+
+<Quiz
+  id="06-cdc-overview-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A Debezium connector's Kafka Connect worker OOMs and stays down for hours. What happens to the source Postgres?"
+  choices={[
+    { label: "WAL accumulates because the slot won't let it be recycled, and the disk eventually fills — halting writes on the primary", correct: true },
+    { label: "Nothing — Postgres drops the slot automatically after the consumer disconnects", misconception: "A logical slot persists across disconnects by design; that persistence is the whole point and exactly why it's dangerous. Postgres only invalidates it if you've set max_slot_wal_keep_size and the cap is exceeded." },
+    { label: "Events are lost but the database is fine", misconception: "Events aren't lost — the slot holds the WAL so the connector can resume from its LSN. The danger is the opposite: retained WAL grows until the disk fills." },
+    { label: "Postgres pauses new writes until the consumer returns", misconception: "Postgres keeps accepting writes (that's what grows the WAL); it only stops when the disk is actually full." },
+  ]}
+/>
+
+<Quiz
+  id="06-cdc-overview-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why must a CDC consumer be idempotent?"
+  choices={[
+    { label: "On crash recovery the connector resumes from its last confirmed LSN and may re-emit events, so delivery is at-least-once end-to-end", correct: true },
+    { label: "Because CDC events arrive out of order across the whole stream", misconception: "Order is preserved per table/key (same Kafka partition); the reason for idempotency is duplicate delivery on resume, not global reordering." },
+    { label: "Because Debezium can't track offsets", misconception: "It tracks offsets precisely via the slot/LSN — that's how it resumes. Precise resume is exactly what can cause a replay of events after the confirmed point." },
+    { label: "It doesn't — Debezium 2.x guarantees exactly-once everywhere", misconception: "Exactly-once applies only to delivery into Kafka via transactions; once your consumer reads and acts, you're back to at-least-once, so idempotency is still required." },
+  ]}
+/>
+
+<DragOrder
+  id="06-cdc-overview-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order how a Debezium connector starts capturing an existing Postgres table:"
+  items={[
+    { id: "a", label: "Create a logical replication slot + publication; record the current LSN" },
+    { id: "b", label: "Snapshot: read existing rows to seed initial state (blocking, or incremental in chunks)" },
+    { id: "c", label: "Switch to streaming: tail the WAL from the LSN captured at snapshot start" },
+    { id: "d", label: "Decode each change into an insert/update/delete event with before/after images" },
+    { id: "e", label: "Confirm consumed LSN back to the slot so Postgres can recycle old WAL" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Log-based CDC streams every commit as an event in milliseconds with no app changes — but its replication slot retains WAL until consumed. Alert on slot lag, cap it, snapshot carefully, and make consumers idempotent.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-cdc-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why a logical replication slot can take down the primary database, and what you'd put in place before shipping CDC.", a: "A logical replication slot is a server-side bookmark: it records the LSN your consumer has confirmed and promises Postgres won't recycle any WAL past that point, so the consumer can always resume exactly where it left off. That promise is unconditional — it holds even when the consumer is dead. So if the Debezium connector or its Kafka Connect worker crashes, OOMs, or just lags, WAL stops being recycled and piles up. On a busy OLTP system generating 20–50 GB of WAL per hour, a healthy disk can fill in under two hours, and when Postgres runs out of disk it stops accepting writes to protect itself — a full primary outage. The same thing happens silently if a long-running transaction blocks logical decoding from advancing restart_lsn even while the connector looks healthy. Before shipping CDC I'd add two layers: alerting on slot lag by watching the byte distance between confirmed_flush_lsn and the current WAL position in pg_replication_slots so I act before disk pressure, and a hard safety cap with max_slot_wal_keep_size so Postgres invalidates a runaway slot instead of dying. The cap forces a re-snapshot, which is annoying but far better than an outage." },
+    { q: "Why is CDC delivery effectively at-least-once, and how does that change how you write the consumer?", a: "The slot/LSN mechanism gives precise resume, not exactly-once. On a crash the connector restarts from the last LSN it confirmed, which means any events it emitted but hadn't confirmed get re-emitted — so a downstream consumer can see the same change twice. Debezium 2.x can achieve exactly-once delivery into Kafka using Kafka transactions, but that guarantee ends at Kafka: the moment your consumer reads a record and performs a side effect (writes a row, calls an API, updates a search index), a replay of that record means the side effect happens again. So end-to-end you must design for at-least-once. The fix is idempotency: dedupe on a stable key plus the event's LSN/position, or make the downstream operation naturally idempotent — an upsert keyed by primary key, a set-to-this-value rather than increment, a no-op when the target already reflects the change. Ordering helps you here too: Debezium keeps per-key order by routing a key to one Kafka partition, so an upsert-by-key consumer converges correctly even with duplicates, but you cannot assume global cross-table commit order." },
+  ]}
+/>
+
+<Recap lang="en">
+Change-Data Capture turns the database's own write-ahead log into an event stream: instead of polling a table or dual-writing from the app, a connector like Debezium tails the WAL via a logical replication slot and emits every insert, update, and delete within milliseconds of commit, with no application change and no query load on your tables. That power comes attached to one dangerous mechanism — the slot retains WAL until the consumer confirms it, so a stalled, lagging, or dead consumer (or a long-running transaction) grows WAL until the disk fills and the primary stops accepting writes, a real outage class on busy systems doing tens of GB of WAL per hour. You manage it by alerting on slot lag and capping with max_slot_wal_keep_size. Starting up means snapshot-then-stream, where blocking snapshots can lock large tables and incremental snapshots trade simplicity for a lock-free background load. Deletes need the right REPLICA IDENTITY and tombstone handling, ordering is per-key not global, and because resume is at-least-once your consumers must be idempotent. Get the operational discipline right and CDC is the lowest-latency, least-invasive way to fan database changes out to the rest of your system.
+</Recap>

@@ -6,12 +6,195 @@ unit: 05-outbox
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "The transactional outbox pattern"
-summary: "Write a database row and a message atomically — how the outbox table, polling relay, and CDC eliminate the dual-write problem."
+status: ready
+title: "The transactional outbox: ending the dual-write between DB and broker"
+summary: "You cannot atomically write your database and publish to a broker. The outbox writes the business row and an event row in one local transaction, then a relay ships the event — at-least-once, so consumers must be idempotent."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["dual-write-problem", "transactional-outbox", "polling-publisher", "change-data-capture", "at-least-once-delivery", "idempotent-consumer"]
+estMin: 16
+sources:
+  - https://microservices.io/patterns/data/transactional-outbox.html
+  - https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+  - https://www.npiontko.pro/2025/05/19/outbox-pattern
+  - https://chairnerd.seatgeek.com/transactional-outbox-pattern/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+An order is placed. The handler does two things: `INSERT` the order row, then `kafka.publish("OrderPlaced")`. Both succeed in the happy path for months. Then one night the broker has a 400ms blip; the publish call hangs and the pod gets OOM-killed mid-call. The order row is committed and visible — the customer was charged — but `OrderPlaced` never landed. Fulfillment never hears about it. The package never ships. There is no error in any log, because nothing threw. Reconciliation finds it a week later, by hand.
+</Hook>
+
+<Crux>You can't atomically commit your DB and publish to a broker; the outbox writes both as one local row, and a relay ships it.</Crux>
+
+<Explanation>
+
+## Why the dual write has no safe order
+
+You have two systems with no shared transaction: your database and your message broker. Any handler that must update one and notify the other is doing a *dual write*, and there is no ordering of those two calls that survives a crash in the gap between them.
+
+Write the row, then publish: crash after commit, before publish, and you have **lost an event**. The state changed but nobody downstream knows. Publish, then write the row: crash after publish, before commit, and you have a **phantom event** — consumers react to an order that was rolled back and never existed. Wrap both in a try/catch and "compensate" on failure, and you have just written a tiny, buggy distributed-transaction coordinator that itself can crash between steps. Two-phase commit across a DB and Kafka would close the gap, but Kafka doesn't offer XA participation you'd want in production, and 2PC's blocking coordinator is a worse problem than the one you started with.
+
+The dual write is not a bug you can code around inside the handler. It is the absence of atomicity across two stores.
+
+## One transaction, one source of truth
+
+The outbox pattern collapses the dual write into a single write. In the same local database transaction that changes the business state, you also `INSERT` a row into an `outbox` table describing the event. Because both writes are in one ACID transaction against one database, they commit together or roll back together — atomically, for free, with no coordinator.
+
+```
+BEGIN;
+  INSERT INTO orders (id, status, ...) VALUES (...);
+  INSERT INTO outbox (id, aggregate, type, payload, created_at)
+    VALUES (uuid, 'order', 'OrderPlaced', '{...}', now());
+COMMIT;
+```
+
+After commit, the truth that "an OrderPlaced event must be delivered" is now durable in the same database as the order itself. Publishing to the broker becomes a *separate, retryable* step performed by a **relay** (a.k.a. message relay / dispatcher) that reads unsent outbox rows and pushes them to Kafka. The handler's job is done at `COMMIT`; it never talks to the broker at all. You have traded an impossible atomic dual-write for a trivially-atomic single write plus an asynchronous, crash-safe pump.
+
+## Two relay flavors: polling vs log-tailing
+
+The relay reads the outbox in one of two ways, and choosing between them is the senior decision in this pattern.
+
+**Polling publisher** — a worker runs `SELECT ... WHERE sent = false ORDER BY created_at LIMIT N` on an interval, publishes each row, then marks it sent. Dead simple, works on any database, no extra infrastructure. The costs: every poll is load on your primary OLTP database whether or not there's work, and end-to-end latency is bounded by your interval. Intervals of **100ms–1s** are typical; pushing to 25–50ms to chase freshness multiplies query load, and at 10–30 relay replicas that constant polling becomes a real burden on the primary.
+
+**Change Data Capture (CDC)** — instead of querying the table, a tool like Debezium tails the database's write-ahead log (the WAL in Postgres) and emits an event the moment the outbox `INSERT` is committed. Latency drops to **single-digit milliseconds**, there is zero polling load on the table, and you get the log's natural commit ordering. The price is operational: you now run and monitor a CDC connector, manage replication slots, and reason about WAL retention. CDC is where the *next unit* picks up.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Polling publisher</th>
+        <th class="border border-border px-3 py-2 text-left">CDC / log-tailing</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">End-to-end latency</td>
+        <td class="border border-border px-3 py-2">Bounded by interval (100ms–1s)</td>
+        <td class="border border-border px-3 py-2">Single-digit ms</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Load on primary DB</td>
+        <td class="border border-border px-3 py-2">Constant query traffic, even when idle</td>
+        <td class="border border-border px-3 py-2">Reads the WAL, near-zero table load</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Ordering</td>
+        <td class="border border-border px-3 py-2">By <code>ORDER BY</code>; lost with parallel relays</td>
+        <td class="border border-border px-3 py-2">Natural commit order from the log</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Operational cost</td>
+        <td class="border border-border px-3 py-2">A cron-like worker; trivial</td>
+        <td class="border border-border px-3 py-2">A connector, replication slots, WAL retention</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Best when</td>
+        <td class="border border-border px-3 py-2">Modest volume, latency tolerant, no new infra</td>
+        <td class="border border-border px-3 py-2">High throughput, low latency, ordering matters</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The guarantee is at-least-once — so consumers must be idempotent
+
+The outbox closes the lost-event gap, but it does not give you exactly-once delivery, and believing it does is the failure mode that bites in production. The relay does two non-atomic things: publish to the broker, then mark the row sent. If it crashes *after* the broker accepted the message but *before* the `UPDATE` commits, the row still looks unsent — so on restart it publishes the same event again. You get **at-least-once**: every event is delivered one or more times.
+
+That means the contract for everyone downstream is non-negotiable: **consumers must be idempotent.** Stamp each outbox row with a stable event id, carry it through the broker, and have consumers dedupe on it — typically an `inbox` table of processed ids (kept for a few hours to a couple of days) or a unique constraint on the side effect. Processing `OrderPlaced` twice must charge the card once. Without idempotency, the outbox doesn't make your system reliable; it makes it reliably double-fire.
+
+<Inset kind="why" lang="en">
+Couldn't the relay mark the row sent *first*, then publish? No — that just moves the gap and turns a duplicate into a lost event: crash after the `UPDATE` and before the publish, and the row looks done but nothing was ever sent. The only orderings available are publish-then-mark (duplicates, recoverable) or mark-then-publish (loss, unrecoverable). At-least-once is the strictly safer choice, which is why idempotent consumers are the load-bearing half of the pattern, not an optional nicety.
+</Inset>
+
+## The operational tax: bloat, ordering, and competing relays
+
+Three things will eventually page someone:
+
+- **Table bloat.** The outbox grows with every event. Sent rows must be reaped or the table — and its indexes — balloon into the hundreds of thousands of rows where polling queries degrade. Don't `DELETE` huge ranges in one statement (it fights inserts for locks); delete sent rows in small batches, or partition the outbox by day so cleanup is a metadata-only `DROP PARTITION` instead of index-thrashing row deletes.
+- **Ordering.** A single relay preserves `created_at` order. The moment you scale to multiple relays for throughput, two workers can publish concurrently and events arrive out of order. If a consumer needs per-aggregate order, key by aggregate id so all events for one order go to the same partition and one worker.
+- **Competing relays.** Run two relay replicas naively and both `SELECT` the same unsent rows and double-publish. The fix is `SELECT ... FOR UPDATE SKIP LOCKED` (Postgres / MySQL 8.0+): each worker grabs and locks a disjoint batch, skipping rows another worker already holds, so replicas scale out without stepping on each other.
+
+<TradeoffMatrix
+  id="05-outbox-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="An order service must update the DB and notify fulfillment via Kafka. A crash in the gap loses the event. Pick the design."
+  options={[
+    { name: "Write the order and an outbox row in one local transaction; a relay publishes outbox rows and marks them sent", summary: "Transactional outbox.", correct: true, justification: "The two writes share one ACID transaction against one database, so they commit or roll back atomically with no coordinator. Delivery becomes a separate retryable step, eliminating the lost-event gap. The relay is at-least-once (crash after publish before marking sent → duplicate), so you pair it with idempotent consumers — the standard, production-proven shape." },
+    { name: "INSERT the order, then call kafka.publish in the same handler; wrap both in try/catch", summary: "Direct dual write.", justification: "This is exactly the dual write the pattern exists to kill. No shared transaction spans the DB and Kafka, so a crash between commit and publish loses the event silently, and try/catch can't compensate a process that was OOM-killed mid-call." },
+    { name: "kafka.publish('OrderPlaced') first, then INSERT the order row", summary: "Publish-first.", justification: "Reverses the failure into a phantom event: crash after publish and before commit, and consumers act on an order that was rolled back and never existed. You traded silent loss for silent fiction — no better." },
+    { name: "Use two-phase commit (XA) across Postgres and Kafka so the dual write is atomic", summary: "Distributed transaction.", justification: "2PC would close the gap in theory, but Kafka isn't a practical XA participant and a blocking 2PC coordinator becomes a worse availability problem than the one you started with. The outbox gets atomicity from a single local transaction instead." },
+  ]}
+/>
+
+<Quiz
+  id="05-outbox-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="The relay publishes a message to the broker, then crashes before it can UPDATE the row to sent. What happens on restart?"
+  choices={[
+    { label: "It re-reads the still-unsent row and publishes the event again — a duplicate, which is why consumers must be idempotent", correct: true },
+    { label: "The event is lost, because the broker rolled back when the relay died", misconception: "The broker already accepted and persisted the message before the crash; broker acceptance is independent of your relay marking the row sent." },
+    { label: "Nothing — the broker deduplicates it automatically", misconception: "General brokers don't dedupe arbitrary application events for you; the outbox guarantee is at-least-once, and dedupe is the consumer's job." },
+    { label: "The transaction that wrote the order rolls back too", misconception: "The business transaction committed long ago and is unrelated to the relay's separate publish step — that's the whole point of decoupling them." },
+  ]}
+/>
+
+<Quiz
+  id="05-outbox-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You scale the polling relay to three replicas for throughput. What must change so they don't double-publish the same rows?"
+  choices={[
+    { label: "Claim rows with SELECT ... FOR UPDATE SKIP LOCKED so each replica locks a disjoint batch", correct: true },
+    { label: "Lower the polling interval so they don't overlap", misconception: "A shorter interval doesn't coordinate the workers; all three can still SELECT the same unsent rows in the same tick and each publish them." },
+    { label: "Have each replica handle a random subset by chance", misconception: "Without a lock, 'by chance' still collides constantly — two workers reading the same WHERE sent=false set will grab overlapping rows." },
+    { label: "Nothing; duplicates are fine because delivery is at-least-once", misconception: "At-least-once tolerates the rare crash-induced duplicate, but deliberately double-publishing every row 3x wastes throughput and amplifies load on consumers — coordinate the relays." },
+  ]}
+/>
+
+<DragOrder
+  id="05-outbox-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the lifecycle of one event through the outbox pattern:"
+  items={[
+    { id: "a", label: "In one local transaction, INSERT the business row AND an outbox row, then COMMIT" },
+    { id: "b", label: "The relay reads unsent outbox rows (polling on an interval, or tailing the WAL via CDC)" },
+    { id: "c", label: "The relay publishes each event to the broker" },
+    { id: "d", label: "The relay marks the row sent (the gap here makes delivery at-least-once)" },
+    { id: "e", label: "The idempotent consumer dedupes on the event id and applies the effect once" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>No transaction spans your DB and broker. Write the business row and an outbox row in one local transaction; a relay ships outbox rows at-least-once. Consumers must dedupe on event id.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-outbox-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why writing the DB and publishing to Kafka in the same handler is unsafe, and how the outbox fixes it.", a: "The DB and the broker are two separate systems with no shared transaction, so a handler that updates one and notifies the other is doing a dual write. There is no safe order: write-then-publish loses the event if you crash after commit and before the publish lands; publish-then-write emits a phantom event for state that rolled back if you crash after publish and before commit. try/catch can't help because an OOM kill mid-call throws nothing to catch, and 2PC across Postgres and Kafka isn't practical. The outbox collapses the dual write into one write: in the same local transaction that changes the business state, you INSERT a row into an outbox table describing the event. Both commit or roll back together atomically against one database. A separate relay then reads unsent outbox rows and publishes them, retrying safely because the intent to publish is now durable in the DB." },
+    { q: "Why is the outbox at-least-once rather than exactly-once, and what does that force on the rest of the system?", a: "The relay does two things that can't be made atomic across systems: publish to the broker, then UPDATE the row to sent. If it crashes after the broker accepted the message but before the UPDATE commits, the row still looks unsent, so on restart the relay publishes the same event again — a duplicate. Reversing the order (mark sent first, then publish) doesn't help; it converts the duplicate into a lost event if the crash lands between the UPDATE and the publish. So the only safe choice is publish-then-mark, which is at-least-once. That forces every consumer to be idempotent: each outbox row carries a stable event id, and consumers dedupe on it — usually an inbox table of processed ids kept for hours to days, or a unique constraint on the side effect — so processing OrderPlaced twice still charges the card exactly once. Idempotent consumers aren't optional polish; they're the half of the pattern that makes the guarantee usable." },
+  ]}
+/>
+
+<Recap lang="en">
+A handler that updates your database and publishes to a broker is doing a dual write across two systems with no shared transaction, and no ordering of those calls survives a crash in the gap — you either lose an event or emit a phantom one. The transactional outbox removes the dual write entirely: in the same local transaction that changes business state, you INSERT an outbox row, so both commit atomically against one database with no coordinator. A separate relay then ships outbox rows to the broker, either by polling on a 100ms–1s interval (simple, but adds latency and constant DB load) or by tailing the WAL with CDC like Debezium (single-digit-ms latency and natural ordering, at the cost of running a connector). Because the relay publishes then marks sent in two non-atomic steps, delivery is at-least-once, so consumers must dedupe on a stable event id. The operational tax is real — reap or partition the outbox to fight bloat, key by aggregate to preserve order, and use FOR UPDATE SKIP LOCKED so competing relays don't double-publish — but in exchange you get an event pipeline that never silently loses a write.
+</Recap>

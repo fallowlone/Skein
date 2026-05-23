@@ -6,12 +6,155 @@ unit: 03-rabbit-exchanges
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "RabbitMQ exchanges and routing"
-summary: "Direct, fanout, topic, and headers exchanges — how binding keys route messages and where each pattern fits in production."
+status: ready
+title: "RabbitMQ exchanges: the routing layer that decides who gets a copy"
+summary: "Producers never publish to a queue — they publish to an exchange, and bindings plus routing keys decide which queues get a copy. Pick the wrong exchange type and messages either fan out everywhere or vanish silently."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["exchange-types", "routing-keys-bindings", "smart-broker-push", "prefetch-qos", "dead-letter-exchange", "rabbitmq-vs-kafka"]
+estMin: 16
+sources:
+  - https://www.rabbitmq.com/docs/exchanges
+  - https://www.rabbitmq.com/docs/consumer-prefetch
+  - https://www.rabbitmq.com/docs/quorum-queues
+  - https://aws.amazon.com/compare/the-difference-between-rabbitmq-and-kafka/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A payments service goes live. Orders flow, but the fraud team's queue is empty — zero messages, no errors, no exception in any log. The producer is publishing happily; the broker is accepting. Three days later someone notices: the new fraud queue was never *bound* to the exchange. RabbitMQ routed every message to nowhere and dropped it without a sound. The publish call returned success the whole time, because by default an exchange with no matching binding silently discards the message.
+</Hook>
+
+<Crux>In RabbitMQ producers publish to an exchange, never a queue; bindings and routing keys decide which queues get a copy — or none.</Crux>
+
+<Explanation>
+
+## You publish to an exchange, not a queue
+
+The first surprise for anyone arriving from a job-queue mental model: a RabbitMQ producer cannot send a message to a queue. It sends to an *exchange*, and the exchange decides — using its type, the message's **routing key**, and the **bindings** that connect it to queues — which queues (if any) receive a copy. A binding is a rule that says "exchange X, deliver to queue Q when the routing key matches pattern P." One message can land in zero queues, one queue, or many; each matched queue gets its own independent copy.
+
+This indirection is the whole point. The producer knows nothing about consumers, queues, or how many of them exist. You can add a new consumer — that fraud queue — by creating a queue and binding it, with zero changes to the producer. That decoupling is why RabbitMQ is described as a *smart broker*: routing logic lives in the broker, not in the producer or consumer.
+
+## The four exchange types are four routing strategies
+
+Every exchange has a type, and the type is the routing algorithm. There are four you will actually use:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+| Type | Routes when… | Use it for |
+| :--- | :--- | :--- |
+| `direct` | routing key **exactly** equals the binding key | point-to-point work routing (`payments.refund` → one worker pool) |
+| `fanout` | always — routing key is ignored | broadcast: every bound queue gets a copy (cache invalidation, pub/sub) |
+| `topic` | routing key matches a dotted pattern with `*` / `#` | selective subscription (`order.*.eu`, `logs.#`) |
+| `headers` | message header attributes match the binding's args | multi-attribute routing where a flat key isn't enough |
+</div>
+
+**Direct** is exact-match: bind queue `Q` with key `payments.refund`, and only messages whose routing key is exactly `payments.refund` reach it. **Fanout** ignores the routing key entirely and copies every message to every bound queue — the cheapest, fastest path, ideal when N independent consumers all need the same event. **Topic** is the workhorse: routing keys are dot-delimited words (`order.created.eu`), and a binding pattern uses `*` to match exactly one word and `#` to match zero or more. So `order.*.eu` catches `order.created.eu` but not `order.created.us`; `logs.#` catches everything under `logs`. **Headers** ignores the routing key and matches on a map of header attributes, with an `x-match` of `all` or `any` — powerful but slower and rarely worth it; a topic key usually expresses the same intent more cheaply.
+
+<Inset kind="why" lang="en">
+A topic exchange with a binding key of `#` behaves exactly like a fanout (matches everything), and a topic with no wildcards behaves like a direct. People sometimes "just use topic for everything." It works, but fanout and direct are simpler to reason about and marginally faster because they skip pattern matching — reach for the specific type when the intent is specific.
+</Inset>
+
+## Smart broker, dumb consumer — and why that's the opposite of Kafka
+
+This is the senior framing that decides whether RabbitMQ even fits your problem. RabbitMQ **pushes** messages to consumers and deletes each one once it's acknowledged. The broker is smart (it routes, tracks per-message acks, redelivers on failure); the consumer is relatively dumb (it processes what it's handed and acks). A consumed-and-acked message is *gone* — there's no log to rewind.
+
+Kafka is the mirror image: a **dumb broker, smart consumer** pull model. Kafka is an append-only log; the broker just stores ordered records and consumers track their own offset and pull at their own pace. Nothing is deleted on consume — a message stays for the retention window, so you can replay it, add a new consumer group that reads from the beginning, or reprocess after a bug fix. RabbitMQ's per-message ack-and-delete gives you fine-grained workflow control and complex routing; Kafka's log gives you replay and raw throughput.
+
+The throughput gap is large and structural. RabbitMQ classic queues top out around **40–50K messages/sec per queue** on a node; a single Kafka partition sustains on the order of **1 million messages/sec** because it batches sequential writes to a log. The flip side: RabbitMQ delivers with **sub-millisecond** p50 latency (it pushes as messages arrive), while Kafka's batching imposes a structural floor of roughly **5–15 ms** p50. So the choice isn't "which is better" — it's *complex per-message routing and low latency* (RabbitMQ) versus *replayable high-throughput streams* (Kafka).
+
+<TradeoffMatrix
+  id="03-rabbit-exchanges-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="You need to deliver order events to 3 services today, expect to add more later, and some only care about EU orders. Pick the exchange topology."
+  options={[
+    { name: "Topic exchange; producers publish with keys like order.created.eu, consumers bind patterns (order.#, order.*.eu)", summary: "Pattern routing.", correct: true, justification: "Topic is built for exactly this: a stable, descriptive routing key per event and per-consumer binding patterns. The EU-only service binds order.*.eu; a future analytics service binds order.# with zero producer changes. The producer stays ignorant of who consumes — new subscribers are an ops change (declare queue + binding), not a code deploy. This is the decoupling exchanges exist to give you." },
+    { name: "Fanout exchange; every service gets every message and filters in code", summary: "Broadcast + filter.", justification: "Works and is the fastest path, but it pushes routing into every consumer: the EU service receives all US orders just to discard them, wasting bandwidth and CPU at scale, and any filtering bug means silent data loss inside a consumer. Use fanout when consumers genuinely all want everything, not when they want selective slices." },
+    { name: "Direct exchange with one binding key per service", summary: "Exact match.", justification: "Direct is exact-match, so 'all order events for EU' isn't expressible as one binding — you'd enumerate every concrete key (order.created.eu, order.cancelled.eu, …) and re-bind whenever a new event type appears. Fine for fixed point-to-point routing; brittle for an evolving event taxonomy." },
+    { name: "Publish directly to each service's queue from the producer", summary: "No exchange.", justification: "Not possible in RabbitMQ — producers always publish to an exchange. Even the 'default exchange' is a direct exchange where the routing key is the queue name. Modeling it this way recouples the producer to the full list of consumer queues, defeating the indirection." },
+  ]}
+/>
+
+## The failure modes that page you at 3am
+
+Three exchange-and-queue mistakes cause most production incidents:
+
+**Unbound exchange → silent drops.** This is the Hook. By default, `basic.publish` does not tell the producer whether the message was routed. If no binding matches, the broker drops it and the publish still returns success. The fix is the **mandatory** flag: set it, and an unroutable message is returned to the producer via a `basic.return` instead of vanishing — or route a catch-all queue with `#` so nothing is lost unobserved. Always alert on unroutable counts.
+
+**Prefetch (QoS) starvation and memory blowup.** RabbitMQ pushes messages, and the prefetch count (`basic.qos`) caps how many *unacknowledged* messages a consumer may hold at once. Set it too high — say 1000 — and one slow consumer grabs a huge backlog while fast consumers sit idle, starving them; worse, those unacked messages stay resident in broker memory, and if processing stalls the unacked count climbs unbounded until the node hits its memory watermark and blocks all publishers. The senior default is a *low* prefetch (start at 1, tune up with metrics), so work spreads fairly and memory stays bounded.
+
+**Poison messages with no DLX → infinite redelivery loop.** A consumer that nacks-with-requeue on a message it can never process (malformed payload, a bug it always trips) gets the same message back, forever, pinning a worker. The fix is a **dead-letter exchange (DLX)**: configure the queue to dead-letter messages that are rejected or expire, routing them to a separate exchange and quarantine queue you can inspect and reprocess. Without a DLX, a single poison message can stall an entire pipeline.
+
+## Durability and HA: classic, mirrored, quorum
+
+A message is only as safe as the queue holding it. Classic queues live on one node; if it dies, the queue's messages go with it. The old answer was **classic mirrored queues** (replicas on other nodes), but those were deprecated and **removed in RabbitMQ 4.0** — they could confirm a message before it was safely replicated, risking loss on failover. The modern answer is **quorum queues**: a Raft-based replicated queue that only confirms once a majority of nodes have the message. The tradeoff is concrete — replication across 3 nodes sustains roughly **30K msg/sec** for 1KB messages, lower than an unreplicated classic queue, in exchange for not losing data when a node falls over. For anything you can't afford to lose, that's the trade a senior takes.
+
+<Quiz
+  id="03-rabbit-exchanges-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A producer publishes to a topic exchange, but a newly added consumer's queue receives nothing while no errors appear anywhere. What's the most likely cause?"
+  choices={[
+    { label: "The queue isn't bound to the exchange with a matching pattern, so the broker routes the message to nowhere and drops it silently", correct: true },
+    { label: "The producer is publishing to a queue instead of the exchange", misconception: "RabbitMQ producers can only publish to exchanges; you cannot publish to a queue directly, so this isn't the failure here." },
+    { label: "Kafka-style retention expired the messages before the consumer read them", misconception: "RabbitMQ has no replayable log; messages aren't retained for late readers. Routing is decided at publish time by bindings, not by a retention window." },
+    { label: "The consumer's prefetch count is too low", misconception: "A low prefetch slows throughput but still delivers messages; an empty queue with no errors points at a missing or non-matching binding, not QoS." },
+  ]}
+/>
+
+<Quiz
+  id="03-rabbit-exchanges-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You need late-arriving consumers to be able to replay the last week of events from the beginning. Which system fits, and why?"
+  choices={[
+    { label: "Kafka — it's an append-only log with retention, so a new consumer group can read from offset zero and replay; nothing is deleted on consume", correct: true },
+    { label: "RabbitMQ with a fanout exchange", misconception: "Fanout copies live messages to currently-bound queues, but RabbitMQ deletes each message on ack — there's no log to rewind, so a consumer added later can't replay past events." },
+    { label: "RabbitMQ with a high prefetch count", misconception: "Prefetch governs in-flight unacked delivery, not retention or replay. Consumed-and-acked messages in RabbitMQ are gone regardless of prefetch." },
+    { label: "RabbitMQ quorum queues", misconception: "Quorum queues add replication for durability across node failures, not replay — an acked message is still deleted and cannot be re-read by a new consumer." },
+  ]}
+/>
+
+<DragOrder
+  id="03-rabbit-exchanges-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the path a message takes from producer to consumer in RabbitMQ:"
+  items={[
+    { id: "a", label: "Producer publishes a message with a routing key to a named exchange" },
+    { id: "b", label: "The exchange applies its type's rule to the routing key against its bindings" },
+    { id: "c", label: "Each matching binding delivers an independent copy to its bound queue" },
+    { id: "d", label: "The broker pushes a message to a consumer, up to the prefetch (QoS) limit" },
+    { id: "e", label: "The consumer acks; the broker deletes that copy from the queue" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Producers publish to an exchange; type + routing key + bindings decide which queues get a copy. Smart-broker push with ack-and-delete, unlike Kafka's replayable log. Guard against unbound drops and prefetch starvation.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-rabbit-exchanges-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate insists RabbitMQ and Kafka are interchangeable message queues. Explain the architectural difference and when each is the right tool.", a: "They sit at opposite ends of one spectrum. RabbitMQ is a smart broker with dumb consumers: producers publish to an exchange, the broker routes via bindings and routing keys, pushes each message to a consumer, tracks a per-message ack, and deletes the message once acked. There is no log to rewind — a consumed message is gone. That makes it excellent at complex routing (direct/fanout/topic/headers), per-message workloads, and low sub-millisecond latency, but it tops out around tens of thousands of msg/sec per queue. Kafka is the inverse: a dumb broker with smart consumers. It is an append-only log; the broker just stores ordered records and consumers pull at their own offset. Nothing is deleted on consume, so you can replay, add a new consumer group reading from the start, or reprocess after a bug fix, and a single partition sustains around a million msg/sec — at the cost of a ~5-15ms batching latency floor and no built-in content-based routing. Reach for RabbitMQ when you need rich routing, per-message acks, and task distribution; reach for Kafka when you need replayable, high-throughput event streams." },
+    { q: "Why does a high prefetch count cause both unfairness and outages, and what's the safe default?", a: "Prefetch (basic.qos) caps how many unacknowledged messages the broker will push to a single consumer before it must ack. RabbitMQ is push-based, so with a high prefetch like 1000 the broker hands a slow consumer a huge batch up front; those messages are now reserved and in-flight, so faster consumers sitting idle can't take them — that's the unfairness, one slow worker hogging the backlog while others starve. The outage angle is memory: every unacked message stays resident in broker memory. If processing stalls or the consumer is slow, the unacked count climbs without bound until the node hits its memory high-watermark, at which point RabbitMQ applies back-pressure and blocks all publishers — a full pipeline stall. The safe default is a low prefetch, often 1, increased only with metrics in hand: it spreads work fairly across consumers and keeps unacked memory bounded, trading a little throughput for fairness and stability." },
+  ]}
+/>
+
+<Recap lang="en">
+RabbitMQ's defining move is that producers publish to an exchange, never a queue, and the exchange's type plus the message's routing key plus the bindings decide which queues receive an independent copy — possibly none. Direct routes on exact key match, fanout broadcasts to every bound queue, topic matches dotted patterns with `*` and `#`, and headers matches header attributes. This is the smart-broker, dumb-consumer push model: the broker routes, pushes, tracks per-message acks, and deletes on consume — the opposite of Kafka's dumb-broker, smart-consumer pull log that retains messages for replay. The trade is routing richness and sub-millisecond latency at tens of thousands of msg/sec per queue (RabbitMQ) versus replay and roughly a million msg/sec per partition (Kafka). The production failures are predictable: an unbound exchange silently drops messages unless you set the mandatory flag or a catch-all binding; a too-high prefetch starves fast consumers and grows unacked memory until publishers block; a poison message with no dead-letter exchange loops forever. And for durability, classic mirrored queues are gone as of RabbitMQ 4.0 — quorum queues replicate via Raft and confirm only on majority, costing throughput (around 30K msg/sec replicated across three nodes) to stop losing data on failover. Get the exchange type and the bindings right first; everything downstream depends on routing being correct.
+</Recap>

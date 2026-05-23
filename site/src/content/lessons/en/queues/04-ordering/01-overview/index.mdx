@@ -6,12 +6,181 @@ unit: 04-ordering
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Message ordering guarantees"
-summary: "Why total order is expensive, how Kafka delivers per-partition FIFO, and the practical patterns for preserving order in distributed consumers."
+status: ready
+title: "Message ordering: total order is a throughput tax, partial order is the deal"
+summary: "Global total order needs a single serialization point that caps throughput at one consumer. The real-world model is partial order — per-key FIFO — and the senior skill is knowing where it silently breaks."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["total-order", "partial-order", "partition-key", "idempotency", "sequence-numbers", "message-group-id"]
+estMin: 16
+sources:
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/FIFO-queues-understanding-logic.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/using-messagegroupid-property.html
+  - https://kafka.apache.org/41/configuration/producer-configs/
+  - https://cwiki.apache.org/confluence/display/KAFKA/KIP-185:+Make+exactly+once+in+order+delivery+per+partition+the+default+producer+setting
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A wallet service emits `balance.credit` then `balance.debit` for the same account. In staging, with one consumer, it works for months. In prod you scale to eight consumers for throughput and the debit lands first: a customer briefly goes negative, a fraud rule trips, the account is frozen. Nothing in the code changed. You just removed the accidental single-threaded ordering that staging gave you for free, and discovered the queue never promised order across consumers in the first place.
+</Hook>
+
+<Crux>Global total order needs one serialization point that caps throughput; the practical model is partial order — per-key FIFO.</Crux>
+
+<Explanation>
+
+## Total order has exactly one shape, and it is slow
+
+"Process everything in the exact order it was produced" sounds like a config flag. It is not. The only way to get a single global sequence is a single serialization point: one partition, written by one producer ordering, drained by one consumer at a time. The moment two consumers can run in parallel, there is no longer a single timeline — message 5 and message 6 race, and whichever handler finishes first wins. Total order and parallelism are physically opposed: the ordering you want is a queue of one.
+
+That is the throughput tax. SQS FIFO with a single message group is capped at 300 messages/second (3,000 with batching of 10), because everything in one group is delivered one-at-a-time — SQS will not hand you the next message in a group until the previous one is deleted. Kafka with one partition is limited to that single partition's throughput and a single consumer in the group; adding consumers does not help because a partition is assigned to exactly one consumer. You bought total order with your scalability.
+
+## Partial order is what you actually want
+
+The senior insight is that you almost never need total order across *everything* — you need order within a *thing*. The wallet does not care whether account A's credit is ordered relative to account B's debit; those are independent. It cares intensely that A's own events stay in sequence. That is **partial order**: messages sharing a key are FIFO with respect to each other, while different keys parallelize freely.
+
+This is the model both major systems give you:
+
+- **Kafka** orders within a partition. Choose a partition key (the account id) and Kafka hashes it to a partition; all events for that key land in the same partition, in order, at full per-partition throughput. Different keys spread across partitions and consumers.
+- **SQS FIFO** orders within a `MessageGroupId`. Same group = strict FIFO and one-at-a-time delivery; different groups process concurrently. High-throughput mode lifts the ceiling to roughly 300 messages/second *per group* (up to ~70,000/second across many groups, more with batching).
+
+Pick the key as the entity that must stay consistent — per-account, per-aggregate, per-user — and you get order exactly where it matters and parallelism everywhere else.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Model</th>
+        <th class="border border-border px-3 py-2 text-left">Serialization point</th>
+        <th class="border border-border px-3 py-2 text-left">Throughput</th>
+        <th class="border border-border px-3 py-2 text-left">Use when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Total order</td>
+        <td class="border border-border px-3 py-2">One partition / one consumer</td>
+        <td class="border border-border px-3 py-2">1 group: ~300 msg/s (SQS), one partition (Kafka)</td>
+        <td class="border border-border px-3 py-2">Rare — a single global ledger that truly must serialize</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Partial order (per-key FIFO)</td>
+        <td class="border border-border px-3 py-2">One per key/partition/group</td>
+        <td class="border border-border px-3 py-2">Scales with key count; full per-partition throughput</td>
+        <td class="border border-border px-3 py-2">Almost always — order within an entity, parallel across entities</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">No order</td>
+        <td class="border border-border px-3 py-2">None</td>
+        <td class="border border-border px-3 py-2">Maximum — every consumer fully independent</td>
+        <td class="border border-border px-3 py-2">Commutative/idempotent work where order is irrelevant</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How ordering silently breaks in production
+
+Partial order is not free — it holds only while three things stay true, and prod loves to break each one.
+
+**1. You add partitions.** Kafka maps a key to a partition by hashing modulo the partition count. Increase partitions from 6 to 12 and the same key now hashes to a *different* partition. In-flight events for that key are still being drained from the old partition while new ones pile into the new one — for a window, two partitions hold the same key's events and two consumers process them concurrently. Repartitioning is the classic ordering-corruption event; it is why teams over-provision partitions up front rather than grow them.
+
+**2. Retries and the DLQ reinsert messages out of band.** A handler fails on message 5, the message goes to a dead-letter queue, and later someone replays it — but messages 6, 7, 8 already committed. Now 5 lands *after* its successors. Even within a single partition, a retry that re-enqueues to the tail reorders against everything produced in the meantime. DLQ replay at full speed also reorders a whole batch against live traffic, which is why you replay rate-limited, not all at once.
+
+**3. The producer reorders under retry.** This one bites at the source. With Kafka, if `enable.idempotence` is false and `max.in.flight.requests.per.connection` is greater than 1, a batch that fails and retries can land *after* a later batch that succeeded — silently swapping two messages on the same partition. KIP-185 made the idempotent producer the default precisely to close this: the broker tracks a per-producer, per-partition sequence number, drops duplicates, and refuses out-of-sequence batches, preserving order even with up to 5 in-flight requests.
+
+<Inset kind="why" lang="en">
+"At-least-once delivery" and "ordered" are independent properties, and most queues give you at-least-once. That means a message can be delivered twice *and* a redelivery can arrive after newer messages. So even a correctly partitioned per-key FIFO stream can show you `[5, 6, 5]` after a redelivery of 5. Ordering guarantees describe the happy path; the duplicate-and-reorder path is the one your handler must survive.
+</Inset>
+
+## The patterns that make order survivable
+
+You cannot make a distributed system perfectly ordered cheaply, so seniors design so that *occasional* disorder is harmless. Four moves, roughly in order of leverage:
+
+1. **Partition by the entity that needs order.** Choose the key as the consistency boundary — `accountId`, aggregate id, `userId`. This is the foundation; the other three handle the gaps it leaves.
+2. **Make handlers idempotent.** Persist the message id (or an idempotency key) and skip anything seen before. Now at-least-once redelivery is a no-op instead of a double-charge, and DLQ replay is safe.
+3. **Make effects commutative where you can.** If the operation is `set balance = X` rather than `add X`, order stops mattering — the last write wins and re-applying is harmless. Commutative or last-write-wins effects turn an ordering problem into a non-problem.
+4. **Carry a sequence number / version and drop stale updates.** Stamp each event with a monotonic version per entity; the consumer remembers the highest version applied and discards anything lower. An out-of-order or replayed update is detected and dropped. This is single-flight-per-key plus a version check — the strongest defense when effects are not commutative.
+
+<TradeoffMatrix
+  id="04-ordering-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A profile service consumes user.updated events. Concurrent consumers + an at-least-once queue mean updates for one user can arrive out of order or twice. Pick the design."
+  options={[
+    { name: "Partition by userId AND stamp each event with a version, dropping any version ≤ the last applied", summary: "Per-key FIFO + version guard.", correct: true, justification: "Partitioning by userId routes one user's events to one partition for in-order delivery; the version guard catches the residual cases partial order does not — a redelivery after a newer event, or a DLQ replay landing late. The consumer keeps the highest applied version per user and discards stale ones, so an out-of-order update is detected and dropped instead of overwriting good data. Belt and suspenders, and the standard answer when effects are not commutative." },
+    { name: "Force a single consumer and a single partition so everything is totally ordered", summary: "Serialize globally.", justification: "It does guarantee order, but at the cost of all parallelism: one partition, one consumer, capped throughput. You serialized unrelated users' updates against each other to solve a per-user problem. Correct only for a genuinely global ledger, which a profile service is not." },
+    { name: "Make the handler idempotent by message id and assume order is then fine", summary: "Dedupe only.", justification: "Idempotency stops double-application of the same message, which is necessary — but it does not order two different messages. Update A (name) and update B (name) for the same user can still apply in the wrong order; the older value wins and sticks. Dedup plus a version check is what you need." },
+    { name: "Switch the queue to exactly-once and rely on it for ordering", summary: "Trust the broker.", justification: "Exactly-once addresses duplicates, not cross-message ordering across concurrent consumers, and true end-to-end exactly-once is narrow and costly. Treating it as an ordering guarantee is the misunderstanding that ships the bug. Order comes from partitioning by key, not from a delivery flag." },
+  ]}
+/>
+
+<Quiz
+  id="04-ordering-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does scaling a Kafka topic from one consumer to eight break the ordering you saw in staging?"
+  choices={[
+    { label: "Staging's single consumer accidentally serialized everything; with eight consumers, events on different partitions are processed in parallel and there is no single global order", correct: true },
+    { label: "Eight consumers each read the whole topic, so every message is processed eight times in random order", misconception: "In a consumer group, each partition is assigned to exactly one consumer; messages are not all read by everyone. The issue is parallelism across partitions, not duplicate reads." },
+    { label: "Kafka loses ordering whenever there is more than one consumer, regardless of partitioning", misconception: "Kafka preserves order within a partition no matter how many consumers exist. Order within a single key/partition holds; what breaks is any expectation of total order across partitions." },
+    { label: "More consumers increase network latency, which shuffles message arrival", misconception: "Reordering here is structural — parallel processing of independent partitions — not a latency artifact." },
+  ]}
+/>
+
+<Quiz
+  id="04-ordering-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="With a Kafka producer, which combination can silently reorder two messages on the same partition?"
+  choices={[
+    { label: "enable.idempotence=false with max.in.flight.requests.per.connection > 1 — a failed batch can retry and land after a later batch that succeeded", correct: true },
+    { label: "enable.idempotence=true with max.in.flight=5 — the broker's per-partition sequence numbers preserve order", misconception: "This is the safe default since KIP-185: idempotence keeps order even with up to 5 in-flight requests by tracking sequence numbers and rejecting out-of-sequence batches." },
+    { label: "acks=all with a single in-flight request", misconception: "One in-flight request means no later batch can overtake a retrying one; this is ordered regardless of idempotence." },
+    { label: "Any producer config — Kafka cannot guarantee per-partition order", misconception: "Per-partition order is a core Kafka guarantee; it is only broken by the specific non-idempotent, multi-in-flight retry case." },
+  ]}
+/>
+
+<DragOrder
+  id="04-ordering-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the senior decisions for designing an ordered consumer, strongest leverage first:"
+  items={[
+    { id: "a", label: "Decide the consistency boundary: what entity must its events stay ordered within (account, aggregate, user)?" },
+    { id: "b", label: "Partition / set MessageGroupId by that key so its events are per-key FIFO" },
+    { id: "c", label: "Make the handler idempotent by message id so at-least-once redelivery and DLQ replay are safe" },
+    { id: "d", label: "Prefer commutative / last-write-wins effects so residual disorder is harmless" },
+    { id: "e", label: "Stamp a per-entity version and drop any update older than the last applied" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Total order needs one serialization point — one partition, one consumer, ~300 msg/s. Use partial order: partition by the entity that needs order, make handlers idempotent, and version-guard against out-of-order replays.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-ordering-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate says 'just turn on FIFO and we get ordered processing.' Explain what FIFO actually buys and what it costs.", a: "FIFO does not give you a single global ordered stream for free — it gives you order within a scope, and that scope costs throughput. In SQS FIFO, the scope is the MessageGroupId: messages in the same group are delivered strictly one-at-a-time and SQS will not release the next one until the current is deleted, which caps a single group at about 300 messages/second (3,000 with batching of 10). So if you put everything in one group to get 'total order', you have built a single-threaded pipeline. The right use is to set the group id to the entity that needs order — accountId, userId — so each entity is FIFO but different entities process concurrently. That is partial order, and it is what scales. FIFO also does not by itself make handlers safe against the at-least-once redeliveries and DLQ replays that reorder against live traffic; you still need idempotency and often a version check on top." },
+    { q: "Why does adding partitions to a Kafka topic risk corrupting per-key ordering, and how do teams avoid it?", a: "Kafka decides a message's partition by hashing the key modulo the partition count. That modulus is the problem: change the partition count and the same key maps to a different partition. During and after a repartition there is a window where in-flight events for a key are still being drained from its old partition while new events for that key are produced to the new one — two partitions hold the same key's events, two consumers process them in parallel, and the per-key FIFO guarantee is gone for that window. This is a classic source of ordering corruption in production. The standard avoidance is to over-provision partitions up front — pick a count high enough for projected growth so you rarely have to grow it — because adding partitions later is an ordering-breaking operation, not a transparent scale knob. If you must repartition, you typically drain the topic or accept that ordering is temporarily relaxed and lean on idempotent, version-guarded consumers to absorb the disorder." },
+  ]}
+/>
+
+<Recap lang="en">
+Global total order has exactly one shape — a single serialization point, one partition drained by one consumer — and it caps throughput at roughly 300 messages/second on an SQS FIFO group or a single Kafka partition. You almost never need it. What you need is partial order: per-key FIFO, where messages sharing a key (account, aggregate, user) stay in sequence while different keys parallelize across partitions and consumers. That order is fragile in production: it breaks when you add partitions and a key rehashes, when retries or DLQ replays reinsert a message behind newer ones, and when a non-idempotent producer with multiple in-flight requests lets a retried batch overtake a later one — which is why the idempotent producer with per-partition sequence numbers became Kafka's default. The durable design assumes occasional disorder and survives it: partition by the entity that needs order, make handlers idempotent so redelivery is a no-op, prefer commutative or last-write-wins effects, and stamp a per-entity version so out-of-order updates are detected and dropped. Order where it matters, parallelism everywhere else.
+</Recap>
