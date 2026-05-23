@@ -6,13 +6,193 @@ unit: 02-tool-calls
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Tool calls"
-summary: "Coming soon — AI / LLM integration"
+status: ready
+title: "Tool calls: the round-trip loop, schema validation, and the guard against runaway agents"
+summary: "Tool calling turns a model into a function caller, but the model only emits a request — you execute it. Every call is a full extra round trip, the arguments can be hallucinated, and an unguarded loop will burn tokens forever."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["tool-use-loop", "json-schema-tools", "tool-choice", "parallel-tool-calls", "argument-validation", "max-iteration-guard"]
+estMin: 17
 sources:
-  - https://example.com/placeholder
-estMin: 5
+  - https://platform.claude.com/docs/en/agents-and-tools/tool-use/how-tool-use-works
+  - https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview
+  - https://www.anthropic.com/engineering/advanced-tool-use
+  - https://www.codeant.ai/blogs/poor-tool-calling-llm-cost-latency
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A support agent ships. A customer types "cancel my last order." The model confidently emits a tool call: `POST /orders/{id}/cancel` with `id: "ord_9f3c"` — an id it never saw, fabricated to look plausible. The handler ran `eval`-style: it trusted the arguments and fired the request. Wrong customer's order, cancelled. Worse, the next week a different bug had the model re-calling a failing `lookup_order` tool 40 times in one turn before anyone killed it — $9 of tokens for a question that had no answer. Both bugs share one root cause: the loop trusted the model.
+</Hook>
+
+<Crux>The model only emits a tool request — you execute it. Validate every argument, cap the loop, and price each call as a full extra round trip.</Crux>
+
+<Explanation>
+
+## The round-trip loop is a contract, not a function
+
+Tool calling makes a model behave like a function you call, but the wiring is inverted: the model is the caller and your code is the callee. You declare the tools; the model decides when to invoke one and emits a structured request; **your code runs it**. The model never executes anything itself.
+
+The canonical shape is a `while` loop keyed on the response's `stop_reason`:
+
+1. Send the request with your `tools` array and the user message.
+2. The model responds with `stop_reason: "tool_use"` and one or more `tool_use` blocks (each has a tool name and a JSON arguments object).
+3. Execute each tool. Format outputs as `tool_result` blocks.
+4. Send a new request with the full history plus those `tool_result` blocks.
+5. Repeat while `stop_reason` is still `"tool_use"`. Exit on `"end_turn"` (final answer), `"max_tokens"`, `"stop_sequence"`, or `"refusal"`.
+
+The load-bearing detail seniors internalize: **step 4 is a brand-new model call.** A three-tool task is four model invocations, each re-sending the whole growing transcript. This is why tool latency dominates — and why the loop guard below is not optional.
+
+## Tools are JSON-schema declarations
+
+Each tool is a name, a description, and an `input_schema` — a JSON Schema object describing the arguments. The model reads the schema the same way a developer reads a function signature. The schema is doing real work: it both tells the model how to call the tool and gives you the contract to **validate against** before you execute.
+
+Schemas are not free. A typical tool definition costs roughly 500 tokens; ten tools is ~5,000 tokens of overhead on *every* request in the loop, since the full `tools` array is re-sent each round. A 10-tool agent running a 6-step task pays that 5,000-token tax six times. This is the first place prompt caching earns its keep — caching the static tools block can cut input cost 40–80% and improve time-to-first-token.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left"><code>tool_choice</code></th>
+        <th class="border border-border px-3 py-2 text-left">Behavior</th>
+        <th class="border border-border px-3 py-2 text-left">When a senior picks it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>auto</code></td>
+        <td class="border border-border px-3 py-2">Model decides: call a tool or answer in prose</td>
+        <td class="border border-border px-3 py-2">Default for agents; the model judges if a tool is needed</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>any</code></td>
+        <td class="border border-border px-3 py-2">Must call some tool, model picks which</td>
+        <td class="border border-border px-3 py-2">When prose is never a valid answer (a router that must dispatch)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>tool</code> (forced)</td>
+        <td class="border border-border px-3 py-2">Must call this exact named tool</td>
+        <td class="border border-border px-3 py-2">Structured extraction: force one schema to get guaranteed-shape JSON</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>none</code></td>
+        <td class="border border-border px-3 py-2">Forbid all tools this turn</td>
+        <td class="border border-border px-3 py-2">Force a text summary after results are in</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Parallel calls cut latency — but not every chain can use them
+
+Modern models (Claude 4-class) will, when several independent tools are needed, emit **multiple `tool_use` blocks in a single response**. You run them concurrently and return all the `tool_result` blocks together. That collapses three sequential round trips into one — a real latency win, because each round trip is a fresh model call of hundreds of ms to seconds.
+
+The catch is dependency. Parallelism only helps when the calls are independent (`get_weather(NYC)` and `get_weather(SF)`). A chain where call two needs the output of call one (`find_user` then `cancel_user_order`) is inherently serial and cannot be parallelized — the model has to see the first result before it can fill the second tool's arguments. You can set `disable_parallel_tool_use: true` to force one tool per turn when your execution layer can't safely run things concurrently.
+
+<Inset kind="why" lang="en">
+Server-executed tools (web search, code execution) run their *own* loop inside the provider and have a built-in iteration cap. When they hit it mid-task the response comes back with `stop_reason: "pause_turn"` rather than `"end_turn"` — you re-send the conversation to continue. Client tools have no such built-in cap; the guard is yours to write.
+</Inset>
+
+## Validate arguments — never trust them
+
+The model emits *plausible* JSON, not *correct* JSON. It can hallucinate an id, invent an enum value the schema never listed, omit a required field, or pass a string where a number belongs. The opening disaster — a fabricated `ord_9f3c` fed straight into a cancel endpoint — is the canonical failure: the handler treated model output as trusted input.
+
+The senior discipline is a hard gate before execution:
+
+- **Schema-validate the arguments** against the tool's `input_schema` (a validator like Pydantic or `jsonschema`). Reject malformed shapes outright; never `eval` or blindly destructure them.
+- **Authorize and existence-check** the referenced entities. A well-formed `id` is still untrusted — confirm the order exists *and* belongs to this caller before acting on it.
+- **On rejection, return a `tool_result` with an error**, not an exception that breaks the loop. The model reads the error and can self-correct on the next turn — that feedback path is the whole point of returning structured tool errors.
+
+Treat tool arguments exactly like any other untrusted user input crossing a trust boundary, because that is precisely what they are.
+
+## The max-iteration guard against runaway loops
+
+Without a turn cap, a confused model loops forever: it calls `lookup_order`, gets an error, calls it again with the same arguments, gets the same error, and repeats. Each iteration is a full model call billing the entire accumulating transcript — costs and tokens climb with every step. This is a real outage and a real bill (one stuck turn quietly burned $9 of tokens before a human intervened).
+
+Two guards, both mandatory in production:
+
+1. **A hard iteration cap** — `for step in range(MAX_STEPS)` (often 8–15). Hit the cap, stop the loop, return a graceful failure to the user. Never `while True`.
+2. **Loop / repeat detection** — if the model calls the same tool with the same arguments twice in a row, that is a stuck signal. Break, or inject a message telling it the call already failed so it stops repeating.
+
+<TradeoffMatrix
+  id="02-tool-calls-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Your agent loop calls real mutating endpoints (cancel order, issue refund). How do you handle the arguments the model emits?"
+  options={[
+    { name: "Schema-validate, then authorize/existence-check the referenced entity, then execute — return errors as tool_result", summary: "Trust boundary.", correct: true, justification: "This is the production discipline. Model output is untrusted input crossing a trust boundary, so you validate shape against input_schema, then confirm the entity exists and belongs to the caller before any mutation. Rejections come back as a tool_result error the model can read and self-correct from, which keeps the loop alive instead of crashing it. It is the only option that survives a hallucinated id." },
+    { name: "Trust the arguments — the schema in the request already constrains the model", summary: "Schema is enough.", justification: "The schema guides the model but does not bind it: models routinely emit plausible-but-wrong JSON — a hallucinated id, an invented enum, a missing field. The schema is your spec to validate against, not a guarantee the model obeyed it. Executing unvalidated args is how a fabricated ord_9f3c cancels the wrong customer's order." },
+    { name: "Wrap execution in a try/catch and let exceptions bubble out of the loop", summary: "Catch at the edge.", justification: "Catching prevents a crash but throwing out of the loop ends the turn — the model never learns what went wrong and cannot retry correctly. Worse, a bare catch around an unvalidated mutation can still fire the bad request before it throws. Validate first; return errors as tool_result so the model can recover." },
+    { name: "Add a confirmation step in the system prompt asking the model to double-check ids", summary: "Prompt the model.", justification: "A prompt is advisory, not a control: the same model that hallucinated the id is the one you are asking to verify it. Prompting can reduce error rates but cannot be your trust boundary for a mutating action. Enforcement must live in code, outside the model." },
+  ]}
+/>
+
+<Quiz
+  id="02-tool-calls-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A 5-step agent task uses tools at every step. Roughly how many model calls is that, and why does it matter?"
+  choices={[
+    { label: "About 6 model calls — each tool round trip is a fresh request re-sending the whole transcript, so latency and token cost compound", correct: true },
+    { label: "One call — the model runs all the tools internally in a single request", misconception: "The model never executes client tools; it only emits a tool_use request. Every execution requires your code to run it and send a new request back." },
+    { label: "Five calls, but cost is flat because only the new turn is billed", misconception: "Each request re-sends the full growing history plus the tools array, so input tokens (and cost) grow every step — this is why prompt caching matters." },
+    { label: "Two calls — one to plan and one to execute everything", misconception: "There is no separate plan/execute split; the loop iterates one model call per round of tool_use until stop_reason is end_turn." },
+  ]}
+/>
+
+<Quiz
+  id="02-tool-calls-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="The model returns a tool_use for cancel_order with id 'ord_9f3c', an id never present in the conversation. What's the senior move?"
+  choices={[
+    { label: "Validate the shape, then confirm the order exists and belongs to this caller before mutating; on failure return a tool_result error", correct: true },
+    { label: "Execute it — the model wouldn't emit an id it didn't have", misconception: "Models hallucinate plausible-looking ids. Treating tool arguments as trusted is exactly how a fabricated id mutates the wrong record." },
+    { label: "Throw an exception so the request fails loudly", misconception: "Throwing out of the loop ends the turn and gives the model no chance to self-correct. Return the error as a tool_result instead." },
+    { label: "Retry the same tool call automatically a few times", misconception: "Blind retries on a bad/hallucinated argument just burn tokens and can repeat a destructive action; the argument is wrong, not transient." },
+  ]}
+/>
+
+<DragOrder
+  id="02-tool-calls-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order one safe iteration of a client-side tool-use loop:"
+  items={[
+    { id: "a", label: "Send request with tools array; read stop_reason from the response" },
+    { id: "b", label: "If stop_reason is tool_use, extract each tool_use block's name and arguments" },
+    { id: "c", label: "Schema-validate the arguments, then authorize/existence-check referenced entities" },
+    { id: "d", label: "Execute valid calls (parallel if independent); format outputs as tool_result blocks" },
+    { id: "e", label: "Send a new request with the full history + tool_result blocks — under the max-iteration cap" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The model only requests a tool; your code executes it. Schema-validate and authorize every argument (it can be hallucinated), cap the loop against runaways, and budget each call as a full extra model round trip.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-tool-calls-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through why an unguarded tool-use loop is both a correctness risk and a cost risk, and the two guards you add.", a: "The loop re-invokes the model after every tool result, so a confused model can get stuck: it calls a tool, gets an error, and calls the same tool with the same arguments again, forever. Each iteration is a full model call that re-sends the entire accumulating transcript plus the tools array, so input tokens and cost climb every step — a single stuck turn can quietly burn several dollars and never terminate. That is the cost risk. The correctness risk is that nothing stops the model from re-firing a partially-effective or destructive call. The two guards: first, a hard iteration cap (a for-loop over MAX_STEPS, typically 8–15, never while True) that exits gracefully when hit; second, loop/repeat detection — if the model calls the same tool with identical arguments twice in a row, treat it as stuck and break or inject a message telling it the call already failed so it stops repeating." },
+    { q: "Why must you validate tool arguments, and what does 'validate' actually mean for a mutating endpoint like cancel_order?", a: "The model emits plausible JSON, not guaranteed-correct JSON: it can hallucinate an id, invent an enum value the schema never listed, drop a required field, or pass the wrong type. The input_schema guides the model but does not bind it, so tool arguments are untrusted input crossing a trust boundary — exactly like a raw form post. Validate means three layers, in order. One: schema-validate the arguments against the tool's input_schema with a real validator (Pydantic, jsonschema) and reject malformed shapes — never eval or blindly destructure them. Two: authorize and existence-check the referenced entity; a well-formed id is still untrusted, so confirm the order exists and belongs to this caller before mutating. Three: on any rejection, return a tool_result with an error rather than throwing out of the loop, so the model reads the error and can self-correct on the next turn. Skipping any layer is how a fabricated ord_9f3c cancels the wrong customer's order." },
+  ]}
+/>
+
+<Recap lang="en">
+Tool calling inverts the usual contract: the model is the caller and your code is the callee. The model emits a structured `tool_use` request with a tool name and JSON arguments; your code executes it and returns a `tool_result`, and the loop repeats while `stop_reason` stays `"tool_use"`. Three things define senior-grade tool use. First, latency and cost: every tool round trip is a brand-new model call re-sending the whole growing transcript plus a ~500-tokens-per-tool schema array, so a 5-step task is ~6 model calls — prompt caching the static tools block is the standard mitigation. Second, validation: model arguments are untrusted input that can be hallucinated, so you schema-validate, then authorize and existence-check referenced entities, then execute, returning errors as `tool_result` so the model can self-correct — never `eval` a fabricated id into a mutating endpoint. Third, the guard: a hard iteration cap plus repeat-detection, because an unguarded loop will re-call a failing tool forever and burn real money. Use `tool_choice` (`auto`/`any`/`tool`/`none`) to control whether and which tool fires, and parallel tool calls to collapse independent round trips — but only when the calls don't depend on each other.
+</Recap>
