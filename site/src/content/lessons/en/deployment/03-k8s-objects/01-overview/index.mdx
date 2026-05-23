@@ -6,12 +6,177 @@ unit: 03-k8s-objects
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "K8s objects"
-summary: "Coming soon — Deployment and infra"
+status: ready
+title: "Kubernetes objects: the reconciliation loop behind every Pod, Service, and rollout"
+summary: "Kubernetes is declarative — you submit desired state and controllers reconcile actual toward it forever. The object hierarchy (Pod → ReplicaSet → Deployment) plus Services and probes is why a rollout heals itself, or 500s when you forget a readiness probe."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["reconciliation-loop", "declarative-desired-state", "pod-replicaset-deployment", "service-label-selector", "readiness-probe"]
+estMin: 17
+sources:
+  - https://kubernetes.io/docs/concepts/architecture/controller/
+  - https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+  - https://kubernetes.io/docs/concepts/services-networking/service/
+  - https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A team ships a routine version bump. The rollout looks green in `kubectl get pods` — new pods are `Running`. But the on-call dashboard lights up: error rate spikes to 4% for ninety seconds on every deploy, then settles. It happens every single rollout. The cause is one missing field: the Deployment has no readiness probe. The instant a pod's container process starts, Kubernetes marks it `Ready` and the Service begins routing live traffic to it — while the app is still loading config, warming a connection pool, and JIT-compiling. Requests land on a process that isn't actually serving yet, and they 500.
+</Hook>
+
+<Crux>Kubernetes is declarative: you submit desired state and controllers reconcile actual toward it forever — never run a bare Pod.</Crux>
+
+<Explanation>
+
+## Declarative, not imperative: the reconciliation loop
+
+The single idea that makes Kubernetes coherent is this: you do not tell the cluster *what to do*, you tell it *what you want to be true*. You submit a desired state — "I want 5 replicas of this image" — and the cluster's controllers run a loop forever, comparing actual state against desired state and taking corrective action to close the gap. This is the **reconciliation loop**, and it is why Kubernetes is self-healing. A node dies and three pods vanish? The ReplicaSet controller observes `actual=2, desired=5`, and creates three more. You never wrote "restart on failure" — you declared an invariant, and a controller enforces it.
+
+This is the deepest reason you never `kubectl run` a bare Pod in production. A bare Pod is imperative: nothing owns it, nothing reconciles it. The node it lives on reboots and the Pod is gone — permanently, with no controller to recreate it. The same loop that heals your Deployment ignores the orphan Pod because no controller has it as a desired-state target.
+
+<Inset kind="why" lang="en">
+The loop must be idempotent: running it twice with the same desired state must not double anything. That is why controllers compare-then-act instead of just acting. A controller that "creates a pod when it sees a Deployment" would create infinite pods on every loop tick; a controller that "ensures pod count equals replicas" converges and then does nothing. Idempotence is what lets the loop run continuously without thrashing.
+</Inset>
+
+## The workload hierarchy: Pod → ReplicaSet → Deployment
+
+Three nested objects, each adding one capability:
+
+- **Pod** — the smallest deployable unit. One or more containers that share a network namespace (same IP, talk over `localhost`) and can share volumes. Pods are *ephemeral*: they get a new IP every time they restart, and they are designed to be thrown away and replaced, never repaired.
+- **ReplicaSet** — keeps exactly N identical pods alive. Its whole job is the count: it watches its pods and reconciles toward `replicas: N`. You almost never create one directly.
+- **Deployment** — manages ReplicaSets to enable rollouts and rollback. When you change the image, the Deployment creates a *new* ReplicaSet and scales it up while scaling the old one down, governed by `maxSurge` and `maxUnavailable` (both default 25%). The old ReplicaSet sticks around at scale 0, which is exactly how `kubectl rollout undo` works — it scales the previous ReplicaSet back up.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Object</th>
+        <th class="border border-border px-3 py-2 text-left">Owns</th>
+        <th class="border border-border px-3 py-2 text-left">The one job it adds</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>Pod</code></td>
+        <td class="border border-border px-3 py-2">Containers</td>
+        <td class="border border-border px-3 py-2">Run containers together (shared net + volumes); ephemeral</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ReplicaSet</code></td>
+        <td class="border border-border px-3 py-2">Pods</td>
+        <td class="border border-border px-3 py-2">Keep exactly N copies alive (reconcile the count)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>Deployment</code></td>
+        <td class="border border-border px-3 py-2">ReplicaSets</td>
+        <td class="border border-border px-3 py-2">Rollouts + rollback (swap ReplicaSets gradually)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>Service</code></td>
+        <td class="border border-border px-3 py-2">(selects Pods)</td>
+        <td class="border border-border px-3 py-2">Stable IP + DNS over a changing set of pod IPs</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Services and the label-selector glue
+
+Pods are ephemeral and their IPs change constantly, so nothing should ever talk to a Pod IP directly. A **Service** gives you a stable virtual IP and a DNS name (`my-svc.my-namespace.svc.cluster.local`) that stays fixed while the pods behind it churn. The magic that wires a Service to its pods is **labels and selectors**: the Service declares `selector: { app: web }`, and Kubernetes maintains an Endpoints (or EndpointSlice) object listing the IPs of every Pod whose labels match. `kube-proxy` then load-balances traffic across those endpoints. Labels are the universal glue across Kubernetes — Deployments use the same mechanism to know which pods they own.
+
+The three core Service types are a layered escalation of exposure:
+
+- **ClusterIP** (default) — a virtual IP reachable only inside the cluster. Internal service-to-service traffic.
+- **NodePort** — opens a static port (default range `30000–32767`) on every node's IP, forwarding to the ClusterIP. Crude external access; rarely the right answer for production HTTP.
+- **LoadBalancer** — provisions a cloud load balancer pointing at the NodePort. The traffic chain is: external client → cloud LB → node:NodePort → ClusterIP → Pod. One LB per Service, which gets expensive fast.
+- **Ingress** — not a Service type but an L7 HTTP router *in front of* Services. One LoadBalancer feeds an Ingress controller (NGINX, Traefik), which routes by host and path to many ClusterIP Services. This is how you expose dozens of apps behind a single external IP and TLS cert.
+
+## ConfigMaps, Secrets, and the production failure
+
+Config and credentials live in their own objects so you don't bake them into the image: **ConfigMap** for non-sensitive config, **Secret** for credentials (base64-encoded, and *not* encrypted at rest unless you enable encryption). Both mount as env vars or files. One sharp edge: changing a ConfigMap does **not** trigger a rollout — pods keep the old values until they restart, so teams hash the config into a pod annotation to force a new ReplicaSet on change.
+
+Now the failure from the Hook, mechanically. A Service routes to a pod the moment that pod is `Ready`. Without a **readiness probe**, "ready" means only "the container process started" — not "the app can serve requests." So during every rollout, the Service adds the new pod to its endpoints while the app is still warming up, and a slice of traffic 500s until it finishes. The fix is a readiness probe (an HTTP `GET /healthz`, a TCP check, or an exec) that returns success only when the app is genuinely serving. A failing readiness probe pulls the pod *out* of the Service endpoints — no traffic until it passes. This is distinct from a **liveness probe**, which *restarts* a pod that has wedged. The classic outage: using a liveness probe where you needed readiness, so a slow-starting app gets killed and restarted in a loop instead of just being held out of rotation. Probe defaults are aggressive — `periodSeconds: 10`, `timeoutSeconds: 1`, `failureThreshold: 3` — and a slow `/healthz` under load will flap; for slow boots use a `startupProbe` to hold the others off.
+
+<TradeoffMatrix
+  id="03-k8s-objects-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A stateless HTTP API takes ~20s to warm (config load + connection pool + cache prime) before it can serve. You need zero-error rollouts. What do you configure?"
+  options={[
+    { name: "A readiness probe (HTTP GET /healthz) that returns 200 only after warmup; plus a startupProbe to cover the 20s boot", summary: "Hold traffic until truly ready.", correct: true, justification: "Readiness gates Service endpoint membership: the pod stays out of rotation until /healthz reports the pool and cache are primed, so no request hits a cold process. The startupProbe gives the slow boot a generous window before liveness/readiness begin their tight loops, preventing a kill during warmup. This is the canonical zero-downtime rollout setup." },
+    { name: "A liveness probe only, with a long initialDelaySeconds to cover warmup", summary: "Restart on failure.", justification: "Liveness restarts unhealthy pods — it does NOT control whether the Service routes traffic to them. A pod can be 'live' and receiving traffic while still warming, so you still 500 during rollout. Worse, a too-short liveness window kills slow-starting pods in a loop." },
+    { name: "No probes; bump maxUnavailable to 0 so old pods stay until new ones are Running", summary: "Lean on rollout pacing.", justification: "maxUnavailable controls how many old pods drain, but 'Running' without a readiness probe still means 'process started, not serving'. The Service routes to the new pod the instant it's Running, so traffic still lands on a cold app. Rollout pacing can't substitute for a readiness signal." },
+    { name: "Add a 30s sleep to the container entrypoint before starting the server", summary: "Delay startup.", justification: "A fixed sleep is a guess, not a signal: too short and you still serve cold, too long and you waste rollout time and capacity. Warmup time varies with load and dependencies. A readiness probe measures the real condition instead of guessing a constant." },
+  ]}
+/>
+
+<Quiz
+  id="03-k8s-objects-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A node reboots and takes three of your pods with it. Your Deployment requested 5 replicas. What happens, and why?"
+  choices={[
+    { label: "The ReplicaSet controller observes actual=2 vs desired=5 and creates three new pods — the reconciliation loop closing the gap", correct: true },
+    { label: "Nothing — the pods are gone until someone runs kubectl apply again", misconception: "That would be imperative thinking. The Deployment declared a desired count; a controller reconciles toward it continuously without human action." },
+    { label: "The whole Deployment is recreated from scratch, including a new ReplicaSet", misconception: "Reconciliation is incremental — it creates only the missing pods to reach the desired count, not a fresh ReplicaSet." },
+    { label: "The pods come back only if a liveness probe is configured", misconception: "Liveness restarts a wedged container in place; recreating pods lost with a node is the ReplicaSet's count reconciliation, independent of probes." },
+  ]}
+/>
+
+<Quiz
+  id="03-k8s-objects-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="How does a Service know which pods to send traffic to?"
+  choices={[
+    { label: "By its label selector — Kubernetes maintains an Endpoints list of every pod whose labels match the selector", correct: true },
+    { label: "By the pod IPs you list in the Service spec", misconception: "Pod IPs change on every restart; hardcoding them would break instantly. The selector tracks pods dynamically by label." },
+    { label: "By the Deployment name the Service references", misconception: "Services don't reference Deployments at all — they select pods directly by label, which is why a Service can front pods from multiple Deployments." },
+    { label: "By node name — it routes to whichever node the pods run on", misconception: "Routing is by pod label, not node. kube-proxy load-balances across matching pod endpoints regardless of which node they sit on." },
+  ]}
+/>
+
+<DragOrder
+  id="03-k8s-objects-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order what happens during a Deployment image change (a rolling update):"
+  items={[
+    { id: "a", label: "You apply the new image; the Deployment records a new desired state" },
+    { id: "b", label: "The Deployment creates a new ReplicaSet for the new image" },
+    { id: "c", label: "New RS scales up and old RS scales down, bounded by maxSurge / maxUnavailable" },
+    { id: "d", label: "Each new pod passes its readiness probe before the Service routes traffic to it" },
+    { id: "e", label: "Old ReplicaSet reaches scale 0 but is kept, so rollout undo can scale it back up" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Declare desired state; controllers reconcile actual toward it. Learn the Pod→ReplicaSet→Deployment chain and Services, or rollouts 500.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-k8s-objects-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a Deployment self-heals after a node failure but a bare Pod does not.", a: "A Deployment owns a ReplicaSet, and the ReplicaSet controller runs a reconciliation loop: it continuously compares the actual number of running pods against the desired replica count and creates or deletes pods to close the gap. When a node dies and takes pods with it, the controller sees actual below desired and creates replacements — you never wrote 'restart on failure', you declared an invariant (replicas: N) that a controller enforces forever. A bare Pod created with kubectl run is imperative: no controller has it as a desired-state target. Nothing reconciles it, so when its node reboots the Pod is gone permanently. That ownership-by-a-controller is the entire reason production workloads run under Deployments, not bare Pods." },
+    { q: "Walk through exactly how a missing readiness probe causes 500s during a rollout, and how the probe fixes it.", a: "A Service routes traffic to a pod the moment that pod reports Ready. Without a readiness probe, 'Ready' degrades to merely 'the container process started' — Kubernetes has no app-level signal, so it assumes a started process is serving. During a rolling update the Deployment brings up new pods; the instant each is Running, the Service adds its IP to the Endpoints list and kube-proxy load-balances live traffic to it. But the app is still loading config, warming its connection pool, and JIT-compiling, so those early requests hit a process that can't serve yet and return 500 — spiking error rate on every deploy until warmup finishes. A readiness probe (e.g. HTTP GET /healthz) fixes this by returning success only once the app can actually serve; until then the pod is held out of the Service endpoints and receives no traffic. For slow boots, pair it with a startupProbe so the tight readiness/liveness loops don't fire during the warmup window." },
+  ]}
+/>
+
+<Recap lang="en">
+Kubernetes is declarative: you submit a desired state and controllers run a reconciliation loop forever, comparing actual against desired and acting to close the gap — which is what makes the cluster self-healing and why you never run a bare, unowned Pod in production. The workload hierarchy stacks one capability per layer: a Pod runs containers that share network and volumes but is ephemeral; a ReplicaSet keeps exactly N pods alive by reconciling the count; a Deployment manages ReplicaSets to roll out and roll back, swapping them gradually under maxSurge and maxUnavailable. Services give a stable virtual IP and DNS over the churning pod IPs, wired by label selectors into an Endpoints list, escalating from ClusterIP to NodePort to LoadBalancer, with Ingress doing L7 routing in front. ConfigMaps and Secrets externalize config and credentials. And the production lesson that ties it together: a Service routes to a pod the instant it's Ready, so without a readiness probe every rollout sends traffic to apps that have started but can't yet serve — and they 500 until they warm up.
+</Recap>
