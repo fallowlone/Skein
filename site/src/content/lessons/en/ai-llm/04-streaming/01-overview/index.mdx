@@ -6,13 +6,181 @@ unit: 04-streaming
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Streaming"
-summary: "Coming soon — AI / LLM integration"
+status: ready
+title: "Streaming LLM responses: SSE, partial tokens, and the proxy that eats them"
+summary: "Streaming trades total generation time for time-to-first-token. SSE emits delta events you accumulate; tool-call args arrive as partial JSON you can't parse until done. The classic prod kill: a buffering proxy holds the whole response and streaming silently dies."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["sse-protocol", "time-to-first-token", "delta-accumulation", "partial-json-tool-args", "proxy-buffering", "stream-reconnect"]
+estMin: 16
 sources:
-  - https://example.com/placeholder
-estMin: 5
+  - https://docs.anthropic.com/en/docs/build-with-claude/streaming
+  - https://www.ibm.com/think/topics/time-to-first-token
+  - https://platform.openai.com/docs/api-reference/responses-streaming
+  - https://oneuptime.com/blog/post/2025-12-16-server-sent-events-nginx/view
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The demo was flawless on a laptop: type a prompt, words appear instantly, the cursor races across the screen. Then it shipped behind the company's nginx. Now every user stares at a spinner for nine seconds, then the whole answer slams in at once. Nothing in the app changed. The model still streamed token by token — but a proxy with `proxy_buffering on` quietly held the entire response in a buffer and flushed it only at the end. The streaming was real; the user never saw a byte of it.
+</Hook>
+
+<Crux>Streaming wins on time-to-first-token, not total time — and one buffering proxy between you and the user erases the entire win.</Crux>
+
+<Explanation>
+
+## Why stream at all: TTFT beats total time
+
+A non-streamed completion makes the user wait for the *entire* generation. A 400-token answer at 60 tokens/sec is roughly seven seconds of blank screen, then everything at once. Streaming changes nothing about that total — it still takes seven seconds to finish — but it changes the only number the user feels: **time-to-first-token (TTFT)**, the gap between sending the request and the first visible word.
+
+For chat-style apps, a TTFT under ~1 second feels instant; production systems on hot paths target 200–500 ms. Once tokens start flowing, **time-per-output-token (TPOT)** governs the read: 50 tok/s feels sluggish, 200 tok/s (~150 words/sec) reads faster than anyone can. Streaming buys roughly a 10–20x improvement in *perceived* responsiveness for zero change in actual compute. The senior framing: you are not making it faster, you are paying down latency with the user's own reading speed.
+
+Two failure shapes hide behind this. Reasoning models with chain-of-thought can sit at 10–150 seconds of TTFT before any token — there is nothing to stream while it thinks, so a naive UI looks frozen. And if your transport buffers (next section), TTFT collapses back to total time and you have the worst of both worlds: streaming complexity, batch latency.
+
+## The SSE event protocol
+
+Every major provider streams over **Server-Sent Events (SSE)** — a long-lived HTTP response with `Content-Type: text/event-stream`, where the server pushes newline-delimited `data:` frames over one connection. It is one-directional (server→client), survives ordinary HTTP infrastructure, and auto-reconnects in the browser `EventSource` — which is exactly why it won over WebSockets for this job.
+
+The frames are a typed lifecycle, not raw text. Anthropic's sequence: `message_start` (envelope, empty content) → one or more content blocks, each `content_block_start` → many `content_block_delta` → `content_block_stop` → then `message_delta` (carries stop reason and final token usage) → `message_stop`. OpenAI's shape differs in names but follows the same idea: a start, a stream of deltas, a terminal event. You never get the answer in one frame; you **accumulate** deltas into a snapshot.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">SSE event</th>
+        <th class="border border-border px-3 py-2 text-left">Carries</th>
+        <th class="border border-border px-3 py-2 text-left">What you do</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>message_start</code></td>
+        <td class="border border-border px-3 py-2">Message id, role, empty content</td>
+        <td class="border border-border px-3 py-2">Open the assistant bubble; start a TTFT timer</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>content_block_start</code></td>
+        <td class="border border-border px-3 py-2">Block index + type (<code>text</code> / <code>tool_use</code>)</td>
+        <td class="border border-border px-3 py-2">Decide: render as text, or buffer as tool args</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>content_block_delta</code></td>
+        <td class="border border-border px-3 py-2"><code>text_delta</code> or <code>input_json_delta</code></td>
+        <td class="border border-border px-3 py-2">Append the chunk to your accumulator</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>content_block_stop</code></td>
+        <td class="border border-border px-3 py-2">Block index</td>
+        <td class="border border-border px-3 py-2">Now the block is complete — safe to parse tool JSON</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>message_delta</code> / <code>message_stop</code></td>
+        <td class="border border-border px-3 py-2">Stop reason, final usage</td>
+        <td class="border border-border px-3 py-2">Finalize; record tokens for billing/metrics</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Accumulating partial tokens — and the partial-JSON trap
+
+Text is forgiving: each `text_delta` is a valid string fragment, so you append and render immediately. The accumulator is just `text += delta` and the UI paints as it goes.
+
+Tool calls are not forgiving. When the model calls a function, the arguments stream as `input_json_delta` chunks — and **each chunk is a fragment of a JSON document, not valid JSON on its own.** A delta might be `{"city": "San Fran`, then `cisco", "unit":`, then ` "celsius"}`. If you call `JSON.parse` on any intermediate buffer, you throw on a syntax error. The rule is hard: **accumulate every `input_json_delta` into a string buffer and parse only after `content_block_stop`.** You can show the partial string as a "calling tool..." indicator, but you cannot act on the arguments until the block closes.
+
+This is a real and recurring production bug. Proxy and adapter layers (LiteLLM has shipped several such regressions) sometimes drop or mishandle `input_json_delta` frames — the tool call arrives with `input` as an empty `{}` and your function runs with no arguments. If a tool call mysteriously fires with empty args, suspect a layer between you and the model swallowing the JSON deltas, not your own parser.
+
+<Inset kind="why" lang="en">
+Why ship JSON args as un-parseable fragments at all? Because the model generates them token by token like any other text — there is no point at which the provider has "the whole arguments object" early. Streaming them lets your UI show progress and lets the provider start sending the moment the first token exists. The contract pushes the one-time parse cost to the block boundary, where the JSON is guaranteed complete.
+</Inset>
+
+## Reconnect, resume, and the buffering proxy that kills it all
+
+SSE is built to reconnect: the server can send an `id:` with each event, and on a dropped connection the browser reissues the request with a `Last-Event-ID` header so the server can resume after the last delivered event. In practice, mid-generation LLM resume is rare to implement (you would need to replay buffered deltas server-side); most apps treat a dropped stream as "retry the whole turn" and rely on idempotency. The honest senior default is: design for the stream dying at token 200 of 400, and make a fresh request safe to repeat.
+
+But the failure that bites hardest needs no dropped connection at all — it is **buffering in the path**. nginx ships with `proxy_buffering on` by default: it reads the upstream response into a buffer and forwards it to the client only when the buffer fills or the response ends. For a normal page that is an optimization; for SSE it is fatal — the client receives nothing until the model finishes, so TTFT becomes total time and your spinner hangs for the full generation. The same trap appears in serverless platforms and CDNs that buffer or impose response-size/time limits, and in any gzip layer that waits for enough bytes to compress.
+
+The fixes are specific. On nginx: `proxy_buffering off`, `proxy_http_version 1.1`, clear `Connection`, and a long `proxy_read_timeout`. When you can't touch the proxy config, set the response header `X-Accel-Buffering: no` (nginx honors it per-response) plus `Cache-Control: no-cache`. The diagnostic that saves hours: if streaming works against `localhost` but flushes all-at-once in staging, stop debugging your code — something in the network path is buffering.
+
+<TradeoffMatrix
+  id="04-streaming-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Your chat app streams fine locally but in production every response appears all at once after a long pause. Pick the first fix to investigate."
+  options={[
+    { name: "Reverse proxy / platform buffering: set proxy_buffering off (or X-Accel-Buffering: no) and disable gzip on the SSE route", summary: "It's the path, not the code.", correct: true, justification: "The signature 'works on localhost, batches in prod' almost always means a layer between server and client is buffering. nginx defaults to proxy_buffering on, which holds the whole response until the buffer fills or the stream ends — collapsing TTFT into total time. The fix lives in the proxy/CDN/serverless config, not the app: proxy_buffering off, X-Accel-Buffering: no, and no compression on the event stream." },
+    { name: "Switch from SSE to WebSockets, assuming SSE is the bottleneck", summary: "Change transport.", justification: "A heavy rewrite that doesn't address the cause. SSE streams token-by-token perfectly when nothing buffers it; the same proxy that buffers SSE can also break WS upgrades. You'd swap one transport for another and still hit a buffering layer." },
+    { name: "Reduce max_tokens so the response is shorter and the buffer flushes sooner", summary: "Shrink output.", justification: "A band-aid that hides the bug for short replies and reappears on long ones. It doesn't restore incremental delivery — the user still waits for the full (shorter) generation before seeing anything. The streaming is still dead." },
+    { name: "Add a client-side typewriter animation that reveals the text gradually", summary: "Fake the stream.", justification: "Cosmetic and dishonest about latency: you can only animate text you've already fully received, so TTFT is unchanged — the user still waits the full generation, then watches a fake reveal. It masks the symptom while the real stream stays buffered." },
+  ]}
+/>
+
+<Quiz
+  id="04-streaming-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A tool call streams its arguments as input_json_delta chunks. When is it safe to JSON.parse the accumulated buffer?"
+  choices={[
+    { label: "Only after content_block_stop for that block — each delta is a fragment, so the JSON is valid only when complete", correct: true },
+    { label: "After every delta, so you always have the latest parsed object", misconception: "Each input_json_delta is a slice of a JSON document, not valid JSON on its own. Parsing an intermediate buffer like '{\"city\": \"San Fran' throws a syntax error. Accumulate, then parse once at the block boundary." },
+    { label: "After message_start, since that's when the arguments begin", misconception: "message_start carries only the envelope with empty content. No argument deltas have arrived yet — there is nothing to parse." },
+    { label: "Never parse — pass the raw partial string straight to the tool", misconception: "The tool needs structured arguments. Passing a half-formed JSON string runs the function with broken or missing inputs; you must parse the completed buffer first." },
+  ]}
+/>
+
+<Quiz
+  id="04-streaming-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does streaming improve UX even though it doesn't reduce total generation time?"
+  choices={[
+    { label: "It collapses time-to-first-token: the user reads early tokens while later ones are still generating", correct: true },
+    { label: "It makes the model generate tokens faster", misconception: "Streaming changes delivery, not generation speed. The model produces tokens at the same rate; you just show them as they arrive instead of after the last one." },
+    { label: "It reduces the total number of tokens the model produces", misconception: "Token count is determined by the prompt and the answer, not by whether you stream. Streaming is purely a transport/UX choice." },
+    { label: "It compresses the response so it transfers faster", misconception: "SSE doesn't compress content; in fact gzip on the stream route can cause buffering. The win is perceptual — first token arrives in hundreds of ms instead of after the full generation." },
+  ]}
+/>
+
+<DragOrder
+  id="04-streaming-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the SSE lifecycle for a single streamed message:"
+  items={[
+    { id: "a", label: "message_start — envelope arrives with empty content; start the TTFT timer" },
+    { id: "b", label: "content_block_start — a text or tool_use block opens" },
+    { id: "c", label: "content_block_delta (×N) — append each text_delta or input_json_delta to the accumulator" },
+    { id: "d", label: "content_block_stop — block complete; now safe to JSON.parse tool args" },
+    { id: "e", label: "message_delta then message_stop — stop reason + final usage; finalize" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Stream to win TTFT, not total time. Accumulate SSE deltas; parse tool-call JSON only at content_block_stop. The number-one prod failure is a buffering proxy — set proxy_buffering off / X-Accel-Buffering: no.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-streaming-retrieval"
+  lang="en"
+  questions={[
+    { q: "An app streams perfectly on localhost but in production every reply appears all at once after a long pause. Walk through the diagnosis and fix.", a: "The 'fine on localhost, batched in prod' signature is the fingerprint of buffering in the network path, not a bug in your streaming code — your code is provably working since localhost has no proxy in between. The default culprit is nginx with proxy_buffering on, which reads the entire upstream response into a buffer and forwards it only when the buffer fills or the response ends. For a normal page that's an optimization; for an SSE stream it's fatal, because the client receives zero bytes until the model finishes generating, so time-to-first-token collapses into total time and the spinner hangs for the full answer. The same trap appears in CDNs, serverless platforms with response buffering or size/time limits, and gzip layers that wait for enough bytes to compress. The fix is in the path config, not the app: on nginx set proxy_buffering off, proxy_http_version 1.1, clear the Connection header, and raise proxy_read_timeout. When you can't edit the proxy, send X-Accel-Buffering: no plus Cache-Control: no-cache on the SSE response, and make sure compression is off for that route." },
+    { q: "Why must tool-call arguments be accumulated before parsing, and what bug appears when a middle layer mishandles those deltas?", a: "Tool-call arguments stream as a sequence of input_json_delta chunks, and each chunk is a fragment of one JSON document rather than valid JSON on its own — you might see '{\"city\": \"San Fran', then 'cisco\", \"unit\":', then ' \"celsius\"}'. Calling JSON.parse on any intermediate buffer throws a syntax error, so the contract is to append every delta into a string buffer and parse exactly once, after content_block_stop closes the block, when the document is guaranteed complete. You may display the partial string as a 'calling tool…' hint, but you must not act on the arguments until then. The classic production bug is a proxy or SDK-adapter layer (LiteLLM has shipped several such regressions) that drops or misroutes the input_json_delta frames: the tool call still arrives, but its input is an empty {} and your function runs with no arguments. So if a tool fires with empty args, suspect a layer between you and the model swallowing the JSON deltas before you ever blame your own accumulator." },
+  ]}
+/>
+
+<Recap lang="en">
+Streaming does not make generation faster — it pays down latency with the user's reading speed by collapsing time-to-first-token from the full seven-second generation to a few hundred milliseconds, while time-per-output-token governs the read once tokens flow. The transport is SSE: a long-lived text/event-stream where the server pushes a typed lifecycle — message_start, content_block_start, a run of content_block_delta, content_block_stop, then message_delta and message_stop — and you accumulate deltas into a snapshot rather than ever receiving the answer whole. Text deltas are safe to render immediately; tool-call arguments arrive as input_json_delta fragments that are not valid JSON until the block closes, so you buffer and parse only at content_block_stop, and an empty-args tool call usually means a middle layer ate those deltas. SSE can reconnect via Last-Event-ID, but most apps treat a dropped stream as a repeatable whole-turn retry. The failure that erases every gain needs no dropped connection: a buffering reverse proxy or serverless layer (nginx proxy_buffering on by default) holds the whole response and flushes at the end, turning TTFT back into total time. The tell is "works on localhost, batches in prod," and the fix lives in the path config — proxy_buffering off or X-Accel-Buffering: no, with compression disabled on the stream route.
+</Recap>
