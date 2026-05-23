@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 3
 title: "Batching in Kafka and Postgres"
-summary: "Kafka producer batching (batch.size, linger.ms) and Postgres COPY vs INSERT for efficient bulk writes; compression benefits."
+summary: "Kafka producer batching (batch.size, linger.ms) and Postgres COPY vs INSERT for efficient bulk writes; why compression needs batching first."
 estMin: 15
-status: stub
+status: ready
 lessonType: topic
 level: middle
 prereqs: ["performance/06-batching/01-basics", "performance/06-batching/02-window"]
@@ -24,35 +24,179 @@ sources:
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-Ever wonder how Kafka handles millions of messages per second or how Postgres loads terabytes of data quickly? The answer lies in batching: grouping operations to amortize fixed costs. In Kafka, it's about batch.size and linger.ms; in Postgres, it's COPY versus INSERT.
+A team migrates a logging pipeline to Kafka. Throughput tops out at 40 MB/s and the brokers are bored — disk and network both under 20%. They add producers, add partitions, nothing moves. The cause was one default no one looked at: `linger.ms=0`. Every message was flushed as its own request the instant `send()` returned, so "batching" never happened. One line — `linger.ms=20`, `batch.size=131072` — and the same cluster pushed 300 MB/s. The bottleneck was never the brokers. It was a producer that refused to wait.
 </Hook>
 
-<Crux>Kafka batches by size or time; Postgres COPY beats INSERT by amortizing parse/commit overhead. Compression amplifies both.</Crux>
+<Crux>Kafka batches by size or time; Postgres COPY beats INSERT by amortizing parse/plan/commit. Compression needs a batch to bite.</Crux>
 
 <Explanation>
-Every operation has a fixed cost (network round-trip, syscall, ACK) and variable cost (payload size). When fixed cost dominates, batching amortizes it across N operations. The two-dimensional window (max-size + max-wait) decides when to send the batch.
 
-<strong>Kafka producer batching</strong>
-The Kafka producer accumulates messages per (topic, partition). A batch is sent when either:
-  • batch.size limit is reached (default 16 KB), or
-  • linger.ms timer expires (default 0 ms — disabled).
-For throughput, tune linger.ms (5-100 ms) and increase batch.size (64-512 KB). Compression.type (lz4/snappy) applies per batch — bigger batches compress better, reducing network and disk cost. Example: 128 KB batch with lz4 often compresses 2-4x, cutting bytes on wire and broker fsync cost.
+Every write has a fixed cost (network round-trip, syscall, ACK, an fsync) and a variable cost (the bytes themselves). When the fixed cost dominates — and for small messages it always does — batching amortizes it across N records. The two-dimensional window from the previous lesson (max-size OR max-wait) is exactly how both Kafka and Postgres decide *when* the batch goes out. The systems differ only in the mechanism, not the idea.
 
-<strong>Postgres bulk inserts</strong>
-Postgres INSERT VALUES (..., (...), ...) parses and plans once, then commits once — far faster than per-row INSERT. COPY is fastest: streams data in a custom protocol, bypassing per-row parser and using a single commit. Benchmarks:
-  • Single-row INSERT: ~1-5k rows/sec
-  • INSERT VALUES (1000 rows): ~5-50k rows/sec
-  • COPY: ~50-500k rows/sec
-Use COPY for bulk loads; INSERT VALUES for moderate batches; avoid per-row INSERT in hot paths. ORMs expose this: Django bulk_create, SQLAlchemy executemany.
+## Kafka producer batching
 
-<strong>Why compression helps in Kafka</strong>
-Compression reduces the payload size (variable cost), making the fixed cost proportionally larger and batching more effective. For repetitive data (logs, events), lz4/snappy achieve 2-4x compression on 64-128 KB batches. CPU cost is low (~50-100 MB/s/core) compared to network/disk savings. Without batching, small messages compress poorly; batching first enables effective compression.
+The Kafka producer does not send one request per `send()`. It accumulates records in an in-memory buffer, **one batch per (topic, partition)**, and ships a batch when either trigger fires first:
+
+- `batch.size` is reached — the per-partition byte cap, default **16 KB** (16384 bytes).
+- `linger.ms` expires — the max time the producer will wait for more records to fill a batch.
+
+Here is the trap that bit the team above. Through Kafka 3.x, `linger.ms` defaulted to **0**, meaning "send as soon as you can." That does *not* disable batching outright — records that pile up while a request is in flight still coalesce — but under steady, well-paced load it effectively sends tiny batches, capping throughput far below the hardware. **Kafka 4.0 changed the default to `linger.ms=5`** precisely because so many deployments left throughput on the table. The fix for a throughput-bound producer is to *deliberately wait*: `linger.ms` in the 5–100 ms range, `batch.size` raised to 64–512 KB. You trade a few ms of producer-side latency for fewer, fatter requests.
+
+The senior tradeoff is sharp: `linger.ms` adds latency *only when the batch is not already full*. Under high load, `batch.size` fills before the timer expires, so the timer never costs you anything — you get big batches for free. Under low load, `linger.ms` is a small, bounded tax that buys efficiency. That is why a non-zero linger almost always wins: it can only help when you have spare time anyway.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Knob</th>
+        <th class="border border-border px-3 py-2 text-left">Default</th>
+        <th class="border border-border px-3 py-2 text-left">Throughput tuning</th>
+        <th class="border border-border px-3 py-2 text-left">What it controls</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>linger.ms</code></td>
+        <td class="border border-border px-3 py-2">0 (3.x) → 5 (4.0)</td>
+        <td class="border border-border px-3 py-2">5–100 ms</td>
+        <td class="border border-border px-3 py-2">Max wait to fill a batch (time trigger)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>batch.size</code></td>
+        <td class="border border-border px-3 py-2">16 KB</td>
+        <td class="border border-border px-3 py-2">64–512 KB</td>
+        <td class="border border-border px-3 py-2">Per-partition byte cap (size trigger)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>compression.type</code></td>
+        <td class="border border-border px-3 py-2">none</td>
+        <td class="border border-border px-3 py-2">lz4 / zstd</td>
+        <td class="border border-border px-3 py-2">Per-batch compression on the wire + on disk</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>buffer.memory</code></td>
+        <td class="border border-border px-3 py-2">32 MB</td>
+        <td class="border border-border px-3 py-2">raise if blocking on send</td>
+        <td class="border border-border px-3 py-2">Total producer buffer across all partitions</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Postgres bulk writes: INSERT vs COPY
+
+The same shape appears on the database side, three rungs of amortization:
+
+- **Per-row `INSERT`** — every statement is parsed, planned, executed, and (with autocommit) committed on its own. The commit forces a WAL flush. Throughput lands around **1–5k rows/s**. In a hot path this is where ingestion goes to die.
+- **Multi-row `INSERT ... VALUES (...), (...), ...`** — one parse, one plan, one commit for the whole statement. Now the fixed cost is amortized across the rows in the statement: roughly **5–50k rows/s**. The catch is a practical cap on rows per statement (parameter limits, statement size), so you chunk into batches of a few hundred to a few thousand.
+- **`COPY`** — Postgres's bulk path. It streams rows over a dedicated wire protocol, **bypassing the per-row SQL parser and planner entirely**, and commits once. The docs are explicit that `COPY` is "significantly more optimized" than a series of `INSERT`s and that disabling autocommit isn't even needed because it is already a single command. Throughput reaches **50–500k rows/s**.
+
+ORMs expose the middle and top rungs so you rarely hand-write them: Django's `bulk_create`, SQLAlchemy's `executemany` and `COPY` helpers, Rails' `insert_all`. The senior move is to recognize *which rung a code path is silently on* — an ORM loop that calls `save()` per object is per-row `INSERT` wearing a nicer API, and it will quietly cap a bulk import at a few thousand rows a second.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Method</th>
+        <th class="border border-border px-3 py-2 text-left">Parse / plan</th>
+        <th class="border border-border px-3 py-2 text-left">Commits</th>
+        <th class="border border-border px-3 py-2 text-left">Rows/s (order of magnitude)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Per-row <code>INSERT</code></td>
+        <td class="border border-border px-3 py-2">Per row</td>
+        <td class="border border-border px-3 py-2">Per row (autocommit)</td>
+        <td class="border border-border px-3 py-2">1–5k</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Multi-row <code>INSERT VALUES</code></td>
+        <td class="border border-border px-3 py-2">Once per statement</td>
+        <td class="border border-border px-3 py-2">Once per statement</td>
+        <td class="border border-border px-3 py-2">5–50k</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>COPY</code></td>
+        <td class="border border-border px-3 py-2">None (streaming protocol)</td>
+        <td class="border border-border px-3 py-2">Once</td>
+        <td class="border border-border px-3 py-2">50–500k</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why compression needs batching first
+
+Compression and batching are not two separate wins — compression *depends on* batching. Dictionary-based codecs (lz4, snappy, zstd) find repetition within their input window. A single 200-byte log line has almost no internal repetition, so compressing it alone saves little and can even add overhead. Batch a few hundred of those similar lines together and the shared structure — same field names, same hostnames, same JSON keys — becomes highly compressible. In Kafka the codec runs **per batch**, on the whole record set, which is why `compression.type` does so little with `linger.ms=0` and so much with fat batches.
+
+The numbers favor it overwhelmingly. A 128 KB batch of repetitive event data routinely compresses **2–4x** with lz4 or zstd (zstd typically 20–30% better than lz4 at higher CPU cost). Compression CPU runs around **50–100 MB/s per core** — cheap next to the network bytes and the broker fsync you avoid, since the compressed batch is what hits the disk *and* what replicas copy. Batch first, then compress: the order is not optional.
+
+<Inset kind="why" lang="en">
+The two classic Kafka producer failures are mirror images. `linger.ms=0` (the old default) silently caps throughput because batches never fill. The opposite — a huge `batch.size`/`buffer.memory` in front of a slow or lagging broker — lets the producer buffer until `buffer.memory` is exhausted, at which point `send()` blocks (or throws after `max.block.ms`) and backpressure rips through the app. Bigger batches help right up until the broker can't keep up; then the buffer is just a queue hiding a capacity problem.
+</Inset>
+
+<Quiz
+  id="03-kafka-postgres-quiz-1"
+  lessonSlug="03-kafka-postgres"
+  lang="en"
+  question="A Kafka producer is throughput-bound: brokers are idle but you can't push more than a fraction of the cluster's capacity. The producer runs Kafka 3.x defaults. What's the first fix?"
+  choices={[
+    { label: "Raise linger.ms to 5–100 ms and batch.size to 64–512 KB so requests are fewer and fatter", correct: true },
+    { label: "Add more partitions and more producer instances", misconception: "More parallelism doesn't help when each request is a tiny batch — you just have more clients sending small requests. The fix is to make each request larger, not to add more of them." },
+    { label: "Turn on compression.type=zstd and leave linger.ms at 0", misconception: "Compression runs per batch; with linger.ms=0 batches stay tiny, so the codec has little to work with. Compression amplifies batching — it can't substitute for it." },
+  ]}
+/>
+
+<Quiz
+  id="03-kafka-postgres-quiz-2"
+  lessonSlug="03-kafka-postgres"
+  lang="en"
+  question="You're loading 50 million rows into Postgres for a one-time import. Which path is fastest?"
+  choices={[
+    { label: "COPY — it streams over a dedicated protocol, skips per-row parse/plan, and commits once", correct: true },
+    { label: "A loop of single-row INSERTs inside one transaction", misconception: "One transaction removes the per-row commit, but you still pay per-row parse and plan on every statement. That caps you around 1–5k rows/s — orders of magnitude below COPY." },
+    { label: "Multi-row INSERT VALUES with 50 million rows in one statement", misconception: "INSERT VALUES helps, but you can't put 50M rows in one statement (parameter and size limits). You'd chunk it, and even chunked it sits below COPY because it still goes through the SQL parser/planner." },
+  ]}
+/>
+
+<DragOrder
+  id="03-kafka-postgres-drag-1"
+  lessonSlug="03-kafka-postgres"
+  lang="en"
+  prompt="Order these write paths from lowest to highest throughput:"
+  items={[
+    { id: "a", label: "Per-row INSERT with autocommit (~1–5k rows/s)" },
+    { id: "b", label: "Multi-row INSERT VALUES, batched (~5–50k rows/s)" },
+    { id: "c", label: "COPY streaming protocol, single commit (~50–500k rows/s)" },
+  ]}
+  correctOrder={["a", "b", "c"]}
+/>
+
+<TradeoffMatrix
+  id="03-kafka-postgres-tradeoff-1"
+  lessonSlug="03-kafka-postgres"
+  lang="en"
+  prompt="A Kafka producer ships clickstream events with a relaxed latency budget (a few hundred ms is fine) and a tight cost budget on network egress. Pick the config a senior defends."
+  options={[
+    { name: "linger.ms=50, batch.size=256 KB, compression.type=zstd", summary: "Wait, fill, compress.", correct: true, justification: "The relaxed latency budget means 50 ms of linger costs nothing the user notices, and it lets batches fill to 256 KB. Big batches are what make zstd effective — per-batch compression of repetitive clickstream JSON hits 2–4x, directly cutting the egress bytes the cost budget cares about. Throughput and cost both win." },
+    { name: "linger.ms=0, compression.type=zstd", summary: "Compress immediately.", justification: "Compression runs per batch, and linger.ms=0 keeps batches small under steady load, so zstd has little repetition to exploit. You pay CPU for compression while barely shrinking the bytes — the worst of both. Compression needs a batch first." },
+    { name: "linger.ms=200, batch.size=8 MB, no compression", summary: "Huge raw batches.", justification: "Giant uncompressed batches saturate the producer buffer and waste the egress budget the prompt explicitly constrains — you're shipping raw bytes when 2–4x compression was available for cheap CPU. 200 ms also overshoots a budget that only needed a few hundred ms total, leaving no room downstream." },
+  ]}
+/>
+
 </Explanation>
+
+<KeyTakeaway>Kafka batches by batch.size or linger.ms, whichever fires first; non-zero linger trades a few ms for far more throughput. Postgres COPY beats INSERT by skipping per-row parse/plan/commit. Compression needs a batch first.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -60,20 +204,16 @@ Compression reduces the payload size (variable cost), making the fixed cost prop
   lang="en"
   questions={[
     {
-      q: "What two triggers cause a Kafka producer to send a batch?",
-      a: "The batch reaches batch.size limit or the linger.ms timer expires — whichever happens first."
+      q: "What two triggers cause a Kafka producer to send a batch, and why does a non-zero linger.ms usually win on throughput without hurting latency much?",
+      a: "A batch is sent when batch.size (the per-partition byte cap, default 16 KB) is reached OR linger.ms expires — whichever happens first. A non-zero linger.ms (5–100 ms) wins because it only adds latency when the batch is NOT already full. Under high load, batch.size fills before the timer, so the timer costs nothing and you get big batches for free. Under low load, linger.ms is a small bounded tax that buys far fewer, fatter requests. That asymmetry is why Kafka 4.0 changed the default from 0 to 5 — linger.ms=0 silently caps throughput because batches never fill under steady load."
     },
     {
-      q: "Why does Postgres COPY outperform INSERT VALUES for bulk loads?",
-      a: "COPY uses a streaming protocol that avoids per-row parsing and planning, committing once for the entire batch. INSERT VALUES still parses and plans the multi-row statement, though only once per batch."
+      q: "Why does Postgres COPY outperform INSERT VALUES, and why does compression need batching first?",
+      a: "COPY streams rows over a dedicated wire protocol that bypasses the per-row SQL parser and planner entirely, and commits once for the whole load — reaching 50–500k rows/s. INSERT VALUES still goes through the parser/planner (once per statement) and is capped by how many rows fit in a statement, landing around 5–50k rows/s; per-row INSERT with autocommit is 1–5k. Compression needs batching because codecs (lz4/zstd) exploit repetition within their input window: a single small message has little internal repetition and barely compresses, but a 128 KB batch of similar records shares field names and structure and compresses 2–4x. Kafka runs the codec per batch, so compression.type does almost nothing with linger.ms=0 and a lot with fat batches."
     }
   ]}
 />
 
-<KeyTakeaway>
-Kafka batching uses batch.size and linger.ms; Postgres COPY beats INSERT by amortizing parse/commit overhead. Compression amplifies batching gains.
-</KeyTakeaway>
-
 <Recap lang="en">
-Kafka producer batches messages by size (batch.size) or time (linger.ms); whichever triggers first sends the batch. Postgres COPY outperforms INSERT by avoiding per-row parse/plan overhead and committing once. Compression (lz4/snappy) applied per batch improves gains — bigger batches compress better. Both technologies amortize fixed costs: Kafka reduces network round-trips, Postgres reduces SQL overhead. Tune batch.size and linger.ms to hit latency SLOs while maximizing throughput; for Postgres, use COPY for bulk ingest, INSERT VALUES for moderate batches.
+Kafka and Postgres batch with the same two-dimensional window. The Kafka producer buffers records per (topic, partition) and ships a batch when batch.size (default 16 KB) is hit or linger.ms expires; the old linger.ms=0 default silently caps throughput, which is why 4.0 raised it to 5 — set it to 5–100 ms with batch.size 64–512 KB to trade a few ms of latency for far fatter requests. Postgres climbs three rungs: per-row INSERT (1–5k rows/s) pays parse, plan, and commit on every row; multi-row INSERT VALUES (5–50k) amortizes them per statement; COPY (50–500k) streams over a custom protocol that skips per-row parse/plan and commits once. Compression depends on batching — lz4 and zstd find repetition only across a full batch, hitting 2–4x at cheap CPU, so you batch first and compress second. The failure modes are mirror images: linger.ms=0 starves batches, while an oversized buffer in front of a slow broker just hides a capacity problem until send() blocks.
 </Recap>
