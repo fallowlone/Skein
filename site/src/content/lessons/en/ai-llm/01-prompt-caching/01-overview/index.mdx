@@ -6,13 +6,199 @@ unit: 01-prompt-caching
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Prompt caching"
-summary: "Coming soon — AI / LLM integration"
+status: ready
+title: "Prompt caching: how a stable prefix cuts input cost 10x"
+summary: "Prompt caching reuses an exact token-for-token prefix at ~0.1x the input price. Any byte that shifts that prefix — a timestamp, a reordered tool — invalidates the whole cache and silently 10x's your bill."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["prefix-caching", "cache-breakpoints", "cache-ttl", "cache-write-premium", "prefix-invalidation", "prompt-ordering"]
+estMin: 16
 sources:
-  - https://example.com/placeholder
-estMin: 5
+  - https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+  - https://platform.claude.com/docs/en/about-claude/pricing
+  - https://www.finout.io/blog/anthropic-api-pricing
+  - https://dev.to/whoffagents/claude-prompt-caching-in-2026-the-5-minute-ttl-change-thats-costing-you-money-4363
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The dashboard said cache hit rate: 94%. The invoice said otherwise — input spend had tripled month over month for a workload whose traffic was flat. The culprit was four characters: someone had added `Current time: {now}` to the top of the system prompt "for context." Every single request now had a unique prefix from token zero, so every request paid the cache-write premium and never once read from cache. The 94% was measuring a metric that no longer fired. A timestamp at the top of a prompt is one of the most expensive lines of code you can ship.
+</Hook>
+
+<Crux>Caching reuses an exact token-for-token prefix at ~0.1x input cost; one changed byte in that prefix invalidates everything after it.</Crux>
+
+<Explanation>
+
+## What actually gets cached: a prefix, matched token-for-token
+
+Prompt caching is not semantic. The provider does not understand that two prompts "mean the same thing." It hashes the prefix of your request — the leading run of tokens — and looks for a stored entry that matches it exactly, token for token, from position zero. The match must be identical up to and including a marked boundary called a cache breakpoint. The instant the streams diverge — a different word, an extra space, a reordered block — the match ends there, and everything from that point on is processed (and billed) as fresh input.
+
+This is why the *order* of your prompt is the whole game. The cacheable thing is always the front. Anthropic's request hierarchy is fixed: `tools` come first, then `system`, then `messages`. So the design rule writes itself: put everything stable at the front (tool definitions, the system prompt, a large document, few-shot examples) and everything volatile at the back (the user's actual question, per-request data, anything with a timestamp). You set the breakpoint on the last block that is identical across requests. Set it one block too late — on something that changes — and the lookback finds no prior write at that position, so you get a clean miss every time while still paying to write.
+
+## The economics: a 1.25x toll for a 10x discount
+
+Caching is a bet, and the odds are printed on the box. Writing to the cache costs *more* than a normal request: the 5-minute tier bills the cached tokens at 1.25x the base input rate, and the 1-hour tier at 2x. Reading from the cache is where you win: a hit bills those tokens at 0.1x — a 90% discount. Concretely, on Opus 4.7 the standard input rate is $5.00 / MTok and a cache hit drops it to $0.50 / MTok; on Sonnet 4.6 it goes $3.00 to $0.30.
+
+The break-even falls out of that ratio. You pay 1.25x once on the write, then 0.1x on every subsequent read. The first cached request is a small loss; by the second request you are ahead, and the third onward is nearly free. The senior framing is not "should I cache" but "will this prefix be re-read inside the TTL window often enough to amortise the write premium." A prefix that is written and then never re-read before it expires is strictly worse than not caching at all — you paid the 1.25x toll for nothing.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Factor</th>
+        <th class="border border-border px-3 py-2 text-left">Multiplier vs base input</th>
+        <th class="border border-border px-3 py-2 text-left">What it means</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Cache write, 5-min TTL</td>
+        <td class="border border-border px-3 py-2">1.25x</td>
+        <td class="border border-border px-3 py-2">One-time premium to store the prefix; default tier</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Cache write, 1-hour TTL</td>
+        <td class="border border-border px-3 py-2">2x</td>
+        <td class="border border-border px-3 py-2">Costs more to write but survives 12x longer</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Cache read (hit)</td>
+        <td class="border border-border px-3 py-2">0.1x</td>
+        <td class="border border-border px-3 py-2">90% discount; the entire reason caching exists</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Uncached input</td>
+        <td class="border border-border px-3 py-2">1.0x</td>
+        <td class="border border-border px-3 py-2">Anything after the divergence point pays full rate</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## TTL: 5 minutes by default, 1 hour if you pay up front
+
+The cache entry is ephemeral. The default time-to-live is 5 minutes, and crucially the clock resets on every read — an active prefix stays warm as long as it keeps getting hit. The 1-hour tier exists for slower or bursty traffic where requests arrive more than 5 minutes apart but still within the hour. The trade is direct: 1-hour costs 2x to write instead of 1.25x, so it only pays if the longer window converts misses into hits you would otherwise have lost. As of early 2026 the default sits at 5 minutes; teams that built their cost model assuming a longer default got a quiet bill shock when an entry they expected to survive between requests had already expired.
+
+There is also a floor: a prefix below the model's minimum cacheable length is silently not cached — no error, just full-rate billing. The threshold depends on the model.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Model</th>
+        <th class="border border-border px-3 py-2 text-left">Minimum cacheable tokens</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Opus 4.7 / 4.6 / 4.5</td>
+        <td class="border border-border px-3 py-2">4,096</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Sonnet 4.6 / 4.5, Opus 4.1</td>
+        <td class="border border-border px-3 py-2">1,024</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Haiku 4.5</td>
+        <td class="border border-border px-3 py-2">4,096</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Haiku 3.5</td>
+        <td class="border border-border px-3 py-2">2,048</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+You get at most 4 explicit `cache_control` breakpoints per request, and each searches back a limited window for a prior write. This is why people stack breakpoints on a long, layered prompt — one after the tools, one after the static system block, one after a big document — so a change low down only invalidates the tail, not the expensive top. The breakpoints are nested prefixes, not independent caches: a hit at a later breakpoint implies the earlier ones matched too.
+</Inset>
+
+## The production failure mode: silent prefix poisoning
+
+The dangerous part is that breaking the cache never throws. Nothing in the response says "you missed." Output is byte-identical whether you hit or paid full rate; the only signal lives in the `usage` block, in `cache_read_input_tokens` versus `cache_creation_input_tokens`. So a single careless edit can take a workload from 90% reads to 0% reads and the only symptom is the invoice three weeks later.
+
+The classic poisoners are all things that feel harmless: a timestamp or request id injected at the top of the system prompt; tools serialized in a non-deterministic order (a `Map` or a `dict` that doesn't preserve insertion order across runs); a library upgrade that re-pretty-prints your JSON tool schema with different whitespace; appending the user's message *before* the static context instead of after. Each one shifts the prefix at or near token zero, so the entire cached body — possibly tens of thousands of tokens of system prompt and documents — re-bills at the 1.25x write rate on every call. The fix is discipline: freeze the prefix, assert it byte-for-byte in a test, and gate any change to system/tools behind a review that asks "does this move the cache breakpoint."
+
+<TradeoffMatrix
+  id="01-prompt-caching-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A RAG service sends a 30k-token system prompt + retrieved docs, then the user question. Traffic is bursty: requests cluster, then go quiet for ~15 minutes. Pick the caching setup."
+  options={[
+    { name: "Cache the 30k stable prefix with the 1-hour TTL; put the user question last, after the breakpoint", summary: "Long TTL, stable-first.", correct: true, justification: "The prefix is large and stable, so it dominates the bill — exactly what caching is for. The 1-hour TTL (2x write) is the right call because the 15-minute quiet gaps would expire a 5-minute entry, turning every burst's first request back into a full write; the longer window keeps the prefix warm across gaps. Putting the volatile question after the breakpoint preserves a token-for-token prefix so every request in a burst reads at 0.1x." },
+    { name: "Cache with the default 5-minute TTL to keep the write cheaper at 1.25x", summary: "Default tier.", justification: "Cheaper per write, but the workload's own description kills it: 15-minute quiet gaps exceed the 5-minute TTL, so the entry expires between bursts and each burst pays a fresh 1.25x write on 30k tokens. You optimized the write multiplier and lost the read discount that actually matters." },
+    { name: "Put the retrieved docs and user question first so the 'important' content is cached", summary: "Volatile-first.", justification: "Inverts the rule. Retrieved docs and the question change per request, so a prefix that leads with them diverges at token zero — nothing stable is ever cached. Order is fixed: stable content first, volatile last." },
+    { name: "Skip caching; 30k tokens is small enough that full-rate input is fine", summary: "No cache.", justification: "30k re-billed at 1.0x on every request, when 0.1x is available after a single 1.25x write, is leaving ~90% of input spend on the table. For a large, re-read, stable prefix this is the textbook case to cache." },
+  ]}
+/>
+
+<Quiz
+  id="01-prompt-caching-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your cache hit rate dropped to near zero after a deploy, but no errors appeared and outputs look correct. What is the most likely cause?"
+  choices={[
+    { label: "A change near the top of the prompt (timestamp, reordered tools, reformatted schema) shifted the prefix, so nothing matches token-for-token anymore", correct: true },
+    { label: "The cache server is down — a missed cache always raises an error you can catch", misconception: "A cache miss is silent: output is identical whether you hit or pay full rate. The only signal is in the usage fields, never an exception." },
+    { label: "The model version changed its answers, which broke the semantic match", misconception: "Caching is not semantic — it matches a token-for-token prefix, not meaning. Identical-meaning prompts with different bytes do not hit." },
+    { label: "TTL expired, which permanently disables caching for that prompt", misconception: "TTL expiry just means the next request re-writes the entry; it does not disable caching. Near-zero sustained hits points to a changed prefix, not expiry." },
+  ]}
+/>
+
+<Quiz
+  id="01-prompt-caching-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A prefix is written to cache (1.25x) and then read three times (0.1x each) before it expires. Versus paying full input rate (1.0x) four times, did caching save money?"
+  choices={[
+    { label: "Yes — 1.25 + 0.1 + 0.1 + 0.1 = 1.55x total vs 4.0x uncached; the write premium is recovered after the first read", correct: true },
+    { label: "No — the 1.25x write premium means you always lose money on the first request", misconception: "You lose only on a write that is never re-read. With even one read the math flips; by the third read it's a large win." },
+    { label: "It's a wash — write premium and read discount cancel out", misconception: "They don't cancel: 1.25x once plus 0.1x per read is far below 1.0x per request once you have two or more hits." },
+    { label: "Only if you use the 1-hour TTL", misconception: "TTL choice affects whether the entry survives to be read, not the per-token discount. With reads inside the window, the default 5-min tier already wins." },
+  ]}
+/>
+
+<DragOrder
+  id="01-prompt-caching-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order a prompt from front (cached) to back (fresh each request) for maximum cache reuse:"
+  items={[
+    { id: "a", label: "Tool definitions (stable JSON schemas, deterministic order)" },
+    { id: "b", label: "System prompt / role instructions (stable across requests)" },
+    { id: "c", label: "Large static context or few-shot examples (the cache breakpoint goes here)" },
+    { id: "d", label: "Per-request retrieved documents (change every call)" },
+    { id: "e", label: "The user's actual question (most volatile, always last)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Put stable content (tools, system, context) first, volatile content (user input, timestamps) last, breakpoint on the last unchanging block, never mutate the prefix. One shifted byte turns a 0.1x hit into a 1.25x write.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-prompt-caching-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through exactly how a single injected timestamp at the top of a system prompt can 10x your input bill, and why no error fires.", a: "Caching matches a prefix token-for-token from position zero. If the first thing in your prompt is `Current time: 2026-05-23T14:02:09Z`, then every request has a unique leading token run, so the stored entry from the previous request never matches — the divergence is at token zero, before any of your stable system prompt and documents. As a result the entire body re-bills as a cache write at 1.25x the base input rate instead of being read at 0.1x. That is a 12.5x jump on those tokens (1.25 vs 0.1), and across tens of thousands of cached tokens it shows up as input spend ballooning. No error fires because a cache miss is not an error condition: the model still produces a correct, byte-identical response; the only place the truth appears is the usage block, where cache_creation_input_tokens is high and cache_read_input_tokens is near zero. The fix is to move anything volatile — timestamps, ids, the user message — to the end, after the breakpoint, so the stable prefix stays identical." },
+    { q: "When is the 1-hour TTL worth its 2x write premium over the default 5-minute tier, and how do you reason about the break-even?", a: "The TTL only decides how long an entry survives between reads; it does not change the per-token read discount (always 0.1x). So the choice is purely about whether your traffic re-reads the prefix before it expires. With the 5-minute default, an entry stays warm only if requests keep arriving inside a rolling 5-minute window (each read resets the clock). If your traffic is bursty or low-volume — gaps longer than 5 minutes but shorter than an hour — the 5-minute entry expires in the gap, so each burst pays a fresh write. The 1-hour tier costs 2x to write instead of 1.25x but keeps the prefix alive across those gaps, converting what would have been repeated writes into reads. The break-even reasoning: 1-hour pays off when the number of reads it rescues (that the 5-minute entry would have missed) saves more than the extra 0.75x you paid on the write. For steady high-frequency traffic the 5-minute default is cheaper and already keeps the entry warm; for sparse-but-sustained traffic the 1-hour tier wins." },
+  ]}
+/>
+
+<Recap lang="en">
+Prompt caching reuses an exact, token-for-token prefix at roughly 0.1x the base input price, but it costs a one-time premium to write — 1.25x for the default 5-minute tier, 2x for the 1-hour tier. The match is positional, not semantic, so the design rule is absolute: stable content (tools, then system, then large context and examples) goes first, volatile content (per-request data, timestamps, the user's question) goes last, and the breakpoint sits on the final unchanging block. Below the model's minimum cacheable length (1,024 to 4,096 tokens depending on the model) nothing is cached and you are billed at full rate with no warning. The production failure mode is silent prefix poisoning: a timestamp, a reordered tool schema, or a reformatted whitespace change near token zero invalidates the whole cached body, flipping every request from a 0.1x read to a 1.25x write with no error and identical output. The only signal is the usage block. Freeze the prefix, assert it byte-for-byte in tests, and the discount holds.
+</Recap>
