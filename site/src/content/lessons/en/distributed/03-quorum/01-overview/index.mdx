@@ -6,12 +6,185 @@ unit: 03-quorum
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Quorum"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Quorums: the R + W > N invariant and how it quietly breaks"
+summary: "A quorum is a tunable promise: if read replicas and write replicas overlap (R + W > N), a read sees the latest write. Sloppy quorums and W=1 trade that promise away — and that is where prod loses writes."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["read-write-quorum", "rw-overlap-invariant", "tunable-consistency", "sloppy-quorum", "hinted-handoff", "read-repair"]
+estMin: 16
+sources:
+  - https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html
+  - https://docs.datastax.com/en/cassandra-oss/3.0/cassandra/dml/dmlAboutDataConsistency.html
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
+  - https://www.allthingsdistributed.com/2007/10/amazons_dynamo.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A payments team runs Cassandra at RF=3 and, chasing write latency, sets writes to consistency `ONE` (W=1) and reads to `ONE` (R=1). For months it is fast and fine. Then one node hiccups during a deploy. A user updates their payout account; the single ack came from a node that died seconds later before replicating. The next read hits a different replica and serves the *old* account number. The write was acknowledged, durable to nobody, and silently gone. R=1 + W=1 means R + W = 2, and 2 is not greater than 3 — there was never a guarantee the read and the write touched the same node.
+</Hook>
+
+<Crux>A read sees the latest write only if read and write sets overlap: R + W > N. Below that, stale reads are legal, not bugs.</Crux>
+
+<Explanation>
+
+## The overlap invariant is the whole game
+
+Replicate one key to N nodes. A write succeeds when W of them acknowledge it; a read succeeds when R of them respond and you take the newest version. The single fact that makes this useful: if `R + W > N`, the set of nodes that acked the write and the set that answered the read must share **at least one** node by the pigeonhole principle — and that shared node carries the latest value. That is the entire guarantee. There is no magic, no consensus log, no leader: just two subsets of N forced to intersect.
+
+Flip it around and the failure is just as mechanical. If `R + W <= N`, the two sets *can* be disjoint. A read is then allowed to pick R nodes that all missed the last write, and it will hand back stale data while believing it succeeded. Nothing logged an error, because nothing was wrong by the rules you configured — you just configured away the guarantee.
+
+The canonical strong-consistency setting at N=3 is `R=2, W=2`: 2 + 2 = 4 > 3, so every read overlaps every write by one node. This is exactly what Cassandra's `QUORUM` / `LOCAL_QUORUM` (`floor(N/2) + 1` = 2 at RF=3) gives you, and what DynamoDB calls a *strongly consistent read*.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Config (N=3)</th>
+        <th class="border border-border px-3 py-2 text-left">R + W</th>
+        <th class="border border-border px-3 py-2 text-left">Overlap?</th>
+        <th class="border border-border px-3 py-2 text-left">What you actually get</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>W=2, R=2</code> (QUORUM)</td>
+        <td class="border border-border px-3 py-2">4 &gt; 3</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Read sees latest write; survives 1 node down</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>W=3, R=1</code> (write-ALL)</td>
+        <td class="border border-border px-3 py-2">4 &gt; 3</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Fast reads, but ANY node down blocks writes</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>W=1, R=3</code> (read-ALL)</td>
+        <td class="border border-border px-3 py-2">4 &gt; 3</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Fast writes, but ANY node down blocks reads</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>W=1, R=1</code> (ONE/ONE)</td>
+        <td class="border border-border px-3 py-2">2 &lt;= 3</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Fastest + most available; stale reads are legal</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Tunable consistency: you pick the corner of the triangle
+
+R and W are knobs, often per-query, not a global mode. That is the point of "tunable consistency" — the same N=3 cluster can serve a `W=1` fire-and-forget metrics write and a `W=2,R=2` strongly-consistent balance read in the same process. You are choosing, per operation, where you land on the consistency/availability/latency triangle.
+
+Two extremes show why nobody runs them in production. `W=N` (write to ALL) gives the strongest write but kills write availability: with W=3 at RF=3, a *single* node being down — a routine deploy, a GC pause, a slow disk — fails every write, because all three must ack. Symmetrically `R=N` blocks all reads on one slow node. Quorum (`W=2,R=2`) is the sweet spot precisely because it tolerates one node down on *both* paths while still guaranteeing overlap. That single-node-failure tolerance is why "quorum" became the default mental model rather than ALL.
+
+<Inset kind="why" lang="en">
+Overlap guarantees you *read the latest write*, but not that reads are monotonic or that concurrent writes are ordered. Two clients writing the same key at `W=2` can both succeed against different majorities at the same logical time; the database stores both as a conflict (sibling versions / last-write-wins by timestamp). Quorum is about visibility of a completed write, not about serialising racing writes — that is what `LWT`/Paxos or a consensus store is for.
+</Inset>
+
+## Sloppy quorum + hinted handoff: trading the invariant for uptime
+
+Strict quorum has a hard edge: if fewer than W of the *designated* replicas (the preference list) are reachable, the write fails. During a network partition or a multi-node outage that means downtime. Dynamo's answer, inherited by Cassandra and DynamoDB, is the **sloppy quorum**: when a home replica is unreachable, the write goes to the next healthy node in the ring instead, which stores it as a **hint** — a parcel tagged "this really belongs to node X." When X comes back, the holder replays the hint to it (**hinted handoff**) and deletes its copy.
+
+This keeps writes flowing through failures, and that availability is the entire reason it exists. But read the fine print: the write was accepted by nodes that are *not* in the normal read set. A reader doing a strict R against the home replicas can completely miss a hinted write — so during the failure window, sloppy quorum **does not** satisfy R + W > N against the canonical N. The overlap guarantee is suspended exactly when you most want it. Worse, if the node holding the hint dies before handoff completes and you were at low durability, that write is simply lost, recoverable only by a slower anti-entropy repair if at all.
+
+## The production failure modes, and the repair that hides them
+
+Three ways this bites in prod, all subtle because nothing errors:
+
+1. **W=1 lost write.** The lone acking node fails before replicating. The write was "successful" and is now on zero live replicas. This is the Hook.
+2. **Sloppy-quorum stale read.** During a partition, the write landed on hint-holders; a strict read on the home replicas serves the old value. Reads look healthy on both sides of the partition.
+3. **`R + W <= N` drift.** `R=1,W=2` (or any sub-overlap mix) lets a read pick the one replica that lagged. Intermittent, unreproducible "ghost stale data" tickets.
+
+Two anti-entropy mechanisms paper over the gaps so the system is *eventually* consistent. **Read repair**: when a quorum read notices replicas disagree, the coordinator pushes the newest version to the stale ones inline — cheap, but only fixes keys you actually read. **Anti-entropy repair** (`nodetool repair`): replicas build Merkle trees, hash-tree diffs, and stream only mismatched ranges to reconcile data nobody has read. Skip scheduled repair within the tombstone GC window (`gc_grace_seconds`, default 10 days) and deleted data can resurrect — a separate, nasty class of bug.
+
+## Latency: a quorum read is only as fast as its slowest required replica
+
+R is not just a correctness knob, it is a tail-latency knob. A `QUORUM` read at RF=3 waits for 2 of 3 replicas, so its latency is the **second-fastest** of three — meaning one slow replica (GC pause, hot partition, throttled disk) drags the read's p99 even though the cluster as a whole is fine. Raising R to ALL makes you wait on the *slowest* of all replicas, multiplying tail risk. This is why DynamoDB strongly-consistent reads cost ~2x the throughput of eventually-consistent ones and run measurably slower, and why systems use **request hedging** — fire a duplicate request after a short delay and take whichever returns first — to clip the p99 that quorum's "wait for the slowest needed replica" otherwise creates.
+
+<TradeoffMatrix
+  id="03-quorum-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="N=3 cluster. A balance/ledger read must never show a stale value, but you also need writes to survive a single node being down for a deploy. Pick R and W."
+  options={[
+    { name: "W=2, R=2 (QUORUM on both)", summary: "The default sweet spot.", correct: true, justification: "R + W = 4 > 3, so every read overlaps every write by at least one node — the read is guaranteed to see the latest committed write. And because each path only needs 2 of 3, a single node down (deploy, GC pause) still lets both reads and writes complete. This is exactly Cassandra QUORUM / DynamoDB strongly-consistent reads, and it is the reason quorum, not ALL, is the production default." },
+    { name: "W=3, R=1 (write to ALL, read from one)", summary: "Cheap reads.", justification: "R + W = 4 > 3 so reads do see the latest write, and reads are fast. But W=3 means a single replica being down fails EVERY write — the exact deploy scenario the prompt says must survive. Write availability collapses on one node, which is why write-ALL is rare outside read-mostly data." },
+    { name: "W=1, R=1 (ONE/ONE)", summary: "Fastest, most available.", justification: "R + W = 2, not greater than 3, so reads and writes can touch disjoint nodes: stale reads are legal and a W=1 ack can be lost if the lone node dies before replicating. Great for metrics or logs where loss is fine; wrong for a balance that must never read stale." },
+    { name: "Sloppy quorum with W=2, R=2", summary: "Same numbers, looser nodes.", justification: "In steady state this behaves like strict QUORUM, but during a partition writes land on hint-holders outside the read set, so a strict read can miss them — overlap is suspended exactly when a node is down. For a ledger that must never be stale, the partition-window hole is unacceptable; you want strict quorum (or LWT) here." },
+  ]}
+/>
+
+<Quiz
+  id="03-quorum-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="At N=3, which (R, W) pair guarantees a read always sees the most recent successful write?"
+  choices={[
+    { label: "R=2, W=2 — because R + W = 4 > 3, the read and write sets must overlap on at least one node", correct: true },
+    { label: "R=1, W=1 — fewer replicas to wait for, so it's faster and still safe", misconception: "R + W = 2, which is not greater than 3. The read set and write set can be completely disjoint, so a read may legally pick replicas that all missed the last write and serve stale data." },
+    { label: "R=1, W=2 — the write is on a majority, so any read is fine", misconception: "R + W = 3, still not strictly greater than 3. A single-replica read can land on the one node that lagged. You need strict > N, not >= N." },
+    { label: "Any pair works as long as W >= 2", misconception: "Overlap depends on R + W > N, not on W alone. W=2 with R=1 sums to 3 and does not guarantee overlap at N=3." },
+  ]}
+/>
+
+<Quiz
+  id="03-quorum-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why can a sloppy quorum serve a stale read even when you configured W=2, R=2?"
+  choices={[
+    { label: "During a failure, writes land on hint-holding nodes outside the normal read set, so a strict read on the home replicas can miss them — overlap is suspended", correct: true },
+    { label: "Sloppy quorum uses smaller R and W values automatically", misconception: "It keeps your R and W counts; what changes is WHICH nodes can satisfy them — healthy substitutes via hinted handoff, not the designated replicas." },
+    { label: "Read repair is disabled in sloppy mode", misconception: "Read repair still runs; the issue is that during the partition the latest write isn't on any replica the read contacts, so there's nothing to repair from at read time." },
+    { label: "It only happens if W=1", misconception: "The stale-read window is about hinted writes living off the read set during a failure, independent of the exact W; even W=2 sloppy can miss them mid-partition." },
+  ]}
+/>
+
+<DragOrder
+  id="03-quorum-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order what happens when a strict quorum write can't reach a home replica and falls back to sloppy quorum + hinted handoff:"
+  items={[
+    { id: "a", label: "A designated replica for the key is unreachable (node down or partitioned)" },
+    { id: "b", label: "The coordinator writes to the next healthy node on the ring instead, to still reach W acks" },
+    { id: "c", label: "That node stores the value as a hint tagged 'belongs to node X'" },
+    { id: "d", label: "Node X recovers; the hint holder replays the write to X (hinted handoff)" },
+    { id: "e", label: "If a read raced the recovery, read repair / anti-entropy reconciles the stragglers" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>R + W > N is the only thing guaranteeing a read sees the latest write. W=1 and sloppy quorums trade that overlap for availability — and that trade is exactly where prod silently loses writes or serves stale reads.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-quorum-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate wants to set writes to ONE (W=1) at RF=3 'just for the latency win.' Explain precisely what guarantee they give up and the concrete failure that follows.", a: "With RF=3, a strongly-consistent setup needs R + W > 3, and QUORUM gives that with W=2, R=2 (sum 4). Dropping to W=1 means the write is acknowledged the moment a single replica accepts it, before the other two have a copy. Two things break. First, the overlap math: unless reads compensate with R=3, R + W can fall to or below N, so a read is allowed to contact replicas that never received the write and return stale data with no error — by your own configuration that read is 'correct.' Second, durability: if that one acking node dies before it replicates (a deploy, a crash, a disk failure in the seconds after the ack), the write existed on exactly zero live replicas and is gone. The client saw success; the data is lost, recoverable only by anti-entropy repair if a copy survived anywhere. W=1 is fine for loss-tolerant data like metrics or access logs; for anything a user expects to persist, it silently removes the guarantee they assume they have." },
+    { q: "Sloppy quorum keeps writes available during a partition — so why isn't it a free win, and what hides the problem in normal operation?", a: "Strict quorum requires W of the DESIGNATED replicas (the preference list) to ack; if too few are reachable, the write fails — downtime. Sloppy quorum instead writes to the next healthy nodes on the ring and stores the value as a hint to be handed off when the real owners return. That keeps the write path up, which is the whole reason it exists. The catch: those hint-holders are not in the normal read set, so during the failure window a strict read against the home replicas can completely miss the freshly-written value — the R + W > N overlap is suspended exactly when a node is down, which is when you most want it. It hides because in steady state hinted handoff completes quickly and read repair plus scheduled anti-entropy (Merkle-tree nodetool repair) reconcile any divergence, so the data converges and nobody notices. The danger surfaces under a long partition or if a hint holder dies before handoff: then a write can be stale-read or lost outright. So sloppy quorum buys availability by spending the consistency guarantee during failures and relying on background repair to pay it back — usually, but not always." },
+  ]}
+/>
+
+<Recap lang="en">
+A quorum turns replication into a tunable promise built on one piece of arithmetic: if read and write replica counts satisfy R + W > N, the two sets are forced to intersect and the read is guaranteed to see the latest committed write. At N=3 the workhorse is W=2, R=2 (QUORUM / strongly-consistent read), which keeps the overlap while tolerating a single node down on both paths — the reason quorum beats ALL, since W=N or R=N hands all your availability to your unluckiest node. Tunable consistency means you set R and W per operation to slide along the consistency/availability/latency triangle, remembering that a quorum read waits on the slowest replica it needs, so R is also a p99 knob (hence request hedging and DynamoDB's pricier strongly-consistent reads). Sloppy quorum with hinted handoff keeps writes flowing during failures by parking them on substitute nodes, but that suspends the overlap guarantee precisely during a partition — the seam where prod silently serves stale reads or, with W=1, loses an acknowledged write outright. Read repair and Merkle-tree anti-entropy converge the data afterward, but the senior lesson is to choose R and W to keep R + W > N for anything that must not be stale, and to know exactly which guarantee you forfeit the moment you tune below it.
+</Recap>
