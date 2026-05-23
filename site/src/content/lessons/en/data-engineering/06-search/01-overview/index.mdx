@@ -6,12 +6,198 @@ unit: 06-search
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Search"
-summary: "Coming soon — Data engineering for fullstack"
+status: ready
+title: "Full-text search: inverted indexes, analysis, and why ranking beats matching"
+summary: "LIKE '%term%' scans every row and ignores relevance. Full-text search flips the problem: an inverted index finds candidate docs in milliseconds, an analysis pipeline normalizes text, and BM25 ranks by usefulness, not just presence."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["inverted-index", "text-analysis-pipeline", "bm25-ranking", "tsvector-gin", "analyzer-mismatch", "near-real-time-indexing"]
+estMin: 17
+sources:
+  - https://www.elastic.co/blog/practical-bm25-part-3-considerations-for-picking-b-and-k1-in-elasticsearch
+  - https://www.postgresql.org/docs/current/textsearch-indexes.html
+  - https://www.elastic.co/docs/manage-data/data-store/text-analysis/index-search-analysis
+  - https://www.elastic.co/blog/changing-mapping-with-zero-downtime
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A product search ships with `WHERE title LIKE '%running shoes%'`. It works in the demo. At 50k rows it's a 400ms full table scan because the leading `%` kills any index. Then a customer searches "running shoe" — singular — and gets zero results, while "Running Shoes" returns nothing because the match is case-sensitive. The query is doing string matching when the job was search. Two different problems wearing the same `=` operator.
+</Hook>
+
+<Crux>Search is matching plus ranking: an inverted index finds candidate docs fast, but BM25-style scoring is what makes the results useful.</Crux>
+
+<Explanation>
+
+## Why `LIKE '%term%'` can never be search
+
+`LIKE '%running%'` has two fatal properties. First, the leading wildcard means no B-tree index can help — the database scans every row and runs a substring match on each, so cost grows linearly with table size. At a few thousand rows nobody notices; at a few million it's a timeout. Second, it matches *substrings of bytes*, not *words of language*. "running" won't match "run", "Run", "ran", or "runs". It happily matches "scunthorpe" inside a longer word and misses "shoe" when the text says "shoes". And critically, `LIKE` has no notion of relevance: a row where your term appears once in a footer ranks identically to one where it's the title repeated three times. Matching is binary; search is ordered.
+
+Full-text search replaces both halves. The inverted index solves *finding* — turning a linear scan into a hash lookup. Relevance scoring solves *ordering* — deciding which of the 10,000 matches a human should see first. You need both. A system that finds everything but ranks badly is as useless as one that ranks perfectly but is too slow to run.
+
+## The inverted index: term → posting list
+
+A normal (forward) index maps a document to its words. An *inverted* index maps the other way: each term points to a **posting list** of the document ids that contain it, usually with positions and term frequencies attached. Searching for "running shoes" becomes: look up the posting list for `running`, look up the posting list for `shoes`, intersect them. That's two dictionary lookups and a merge of two sorted id lists — milliseconds regardless of corpus size, because you never touch documents that don't contain the terms.
+
+```
+Documents:                  Inverted index:
+  doc1: "running shoes"       running -> [doc1, doc3]
+  doc2: "blue dress"          shoes   -> [doc1]
+  doc3: "trail running gear"  blue    -> [doc2]
+                              dress   -> [doc2]
+                              trail   -> [doc3]
+                              gear    -> [doc3]
+Query "running shoes" -> intersect [doc1,doc3] & [doc1] = [doc1]
+```
+
+This is the data structure inside Postgres `tsvector`/GIN and inside Lucene (the engine under Elasticsearch and OpenSearch). The hard part isn't the lookup — it's deciding what counts as a "term", which is the analysis pipeline.
+
+## Analysis: the pipeline that decides what matches
+
+Raw text never goes into the index directly. It runs through an **analyzer**: tokenize → lowercase → remove stopwords → stem or lemmatize. "The Runners Were Running" becomes roughly `[run, run]` after splitting on whitespace, lowercasing, dropping the stopwords "the"/"were", and stemming "runners"/"running" down to the root "run". Now a query for "run", "running", or "runners" all hit the same indexed token. *This* is why full-text search matches singular and plural where `LIKE` can't — the matching happens on normalized tokens, not raw strings.
+
+The senior trap is hiding in plain sight: **the same analyzer must run at index time and at query time.** If you stem documents to "run" when indexing but forget to stem the query, a search for "running" produces the token "running", which isn't in the index, and you get zero results — silently, with no error. This is the most common "search is broken and I don't know why" incident. The fix and the diagnostic are the same tool: Elasticsearch's `_analyze` API (or Postgres `to_tsvector`) shows you the exact tokens both sides produce, so you can see the mismatch.
+
+<Inset kind="why" lang="en">
+Stemming and lemmatization aren't the same trade. Stemming (Porter, Snowball) chops suffixes with crude rules — fast, but "university" and "universe" both stem to "univers", and "ran" doesn't reduce to "run". Lemmatization uses a dictionary to find the true base form (handling "ran" → "run") — more accurate, more expensive, language-specific. Most production search uses stemming because it's good enough and cheap; you reach for lemmatization when precision matters more than CPU.
+</Inset>
+
+## Relevance: TF-IDF, then BM25
+
+Once you have candidates, you score them. The intuition is TF-IDF: a term matters more in a document the more often it appears there (term frequency), but less if it's common across the whole corpus (inverse document frequency) — "the" appearing 50 times tells you nothing. Modern engines use **BM25**, a refinement that fixes TF-IDF's biggest flaw: raw term frequency grows without bound, so a spammy document repeating "shoes" 200 times would dominate. BM25 *saturates* term frequency — the 10th occurrence adds far less than the 2nd — and normalizes for document length so a long article isn't unfairly boosted just for being long.
+
+BM25 has two knobs every senior should recognize. `k1` (default `1.2` in Elasticsearch and Lucene) controls how fast term frequency saturates — lower saturates sooner. `b` (default `0.75`) controls how strongly document length is normalized: `0` ignores length entirely, `1` normalizes fully. The defaults are good for prose; you tune them when your documents are unusually short (product titles) or long (manuals), and you tune by measuring relevance against judged queries — never by vibes, because a tuning change that helps one query class silently regresses another.
+
+## Postgres vs a dedicated engine: the real decision
+
+Postgres `tsvector` + GIN is genuinely good search, and the right default until it isn't. The decision a senior actually weighs:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Concern</th>
+        <th class="border border-border px-3 py-2 text-left">Postgres tsvector + GIN</th>
+        <th class="border border-border px-3 py-2 text-left">Elasticsearch / OpenSearch</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Setup &amp; ops</td>
+        <td class="border border-border px-3 py-2">Already running; one index, no extra system to operate</td>
+        <td class="border border-border px-3 py-2">A separate cluster to deploy, secure, monitor, and keep in sync</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Relevance</td>
+        <td class="border border-border px-3 py-2"><code>ts_rank</code> is basic; BM25 only via extensions</td>
+        <td class="border border-border px-3 py-2">BM25 by default, tunable <code>k1</code>/<code>b</code> per field</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Fuzzy / typo tolerance</td>
+        <td class="border border-border px-3 py-2">Bolt-on (<code>pg_trgm</code>); not built into FTS</td>
+        <td class="border border-border px-3 py-2">First-class fuzziness + edit distance</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Faceting / aggregations</td>
+        <td class="border border-border px-3 py-2">Hand-rolled <code>GROUP BY</code></td>
+        <td class="border border-border px-3 py-2">Native aggregations, built for facets</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Scale-out</td>
+        <td class="border border-border px-3 py-2">Vertical; one node</td>
+        <td class="border border-border px-3 py-2">Sharding + replicas across nodes</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Inside Postgres there's a second choice: **GIN vs GiST**. GIN looks up roughly 3x faster but is ~3x slower to build, 2–3x larger on disk, and slower to update — and with `fastupdate=on` it batches writes into a pending list that bloats the index and can stall a query when it flushes. GiST is smaller and faster to update but lossy, so it rechecks the table on matches. Rule of thumb: GIN for read-heavy, mostly-static text; GiST when writes are constant or index size hurts. The failure mode at scale is GIN bloat under high write — your "fast" search index quietly degrades until a `REINDEX` or autovacuum tuning rescues it.
+
+## Near-real-time and the reindex-the-world tax
+
+Dedicated engines aren't instantly consistent — they're *near-real-time*. Elasticsearch's `refresh_interval` defaults to `1s`, meaning a freshly indexed document isn't searchable for up to a second. That's a feature: refreshing is expensive, so under heavy bulk loads seniors raise it to `30s` or set it to `-1` during a big import and refresh once at the end — trading visibility latency for throughput. The trap is assuming write-then-read consistency you don't have.
+
+The biggest operational tax is the **reindex-the-world migration**. Lucene won't let you change the type or analyzer of an existing field — the tokens are already committed. Want to add a synonym filter or fix a stemming bug across 200M documents? You build a *new* index with the new mapping, reindex everything into it (hours), then atomically swap a read alias from old to new so clients never see downtime. Forgetting to design behind an alias on day one is the mistake that turns a one-line analyzer fix into a multi-day, all-hands migration.
+
+<TradeoffMatrix
+  id="06-search-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A SaaS app already on Postgres needs search over ~2M support tickets: keyword match, basic relevance, low ops budget, writes are modest. Pick the approach."
+  options={[
+    { name: "Add a tsvector column with a GIN index and rank with ts_rank", summary: "Stay in Postgres.", correct: true, justification: "Right call for the constraints. The data already lives in Postgres, so there's no second system to deploy, secure, monitor, or keep in sync — and no dual-write consistency problem. GIN gives fast lookups on read-heavy text, and 2M rows with modest writes is well inside its comfort zone (GIN's weakness is high write churn, which isn't present here). ts_rank relevance is basic but adequate for keyword ticket search. You graduate to Elasticsearch only when you need real BM25 tuning, faceting, fuzzy matching, or horizontal scale — none of which the prompt asks for." },
+    { name: "Stand up an Elasticsearch cluster and dual-write tickets to it", summary: "Dedicated engine.", justification: "Over-engineered for these constraints. ES is the right answer when you need faceting, fuzzy/typo tolerance, tunable BM25, or scale-out — none required here. The cost is real: a cluster to operate plus a dual-write pipeline that introduces its own consistency and lag problems. Reach for it when Postgres FTS actually runs out, not preemptively." },
+    { name: "Keep using LIKE '%term%' but add a B-tree index on the column", summary: "Index the LIKE.", justification: "Doesn't work. A leading-wildcard LIKE can't use a B-tree index, so you still full-scan 2M rows on every query, and you still have no stemming, no case-folding, and no relevance ranking. This is the exact problem full-text search exists to replace." },
+    { name: "Use GiST instead of GIN for the tsvector index", summary: "GiST index.", justification: "Defensible but not the best fit. GiST shines when writes are constant or index size is a hard limit; here writes are modest and reads dominate, which is exactly GIN's sweet spot — GIN looks up ~3x faster. GiST's lossiness also forces table rechecks that slow queries. Pick GiST when write churn or disk size forces the trade, not by default for read-heavy search." },
+  ]}
+/>
+
+<Quiz
+  id="06-search-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Documents are indexed with a stemming analyzer, but the query is sent without analysis. A user searches 'running' and gets zero results. Why?"
+  choices={[
+    { label: "Index time stored the token 'run', but the unanalyzed query looks up 'running', which isn't in the index — an analyzer mismatch", correct: true },
+    { label: "The GIN index is bloated and needs a REINDEX", misconception: "Bloat slows queries; it doesn't make a correct token return nothing. The token simply isn't there because index-time and query-time produced different tokens." },
+    { label: "BM25 k1 is set too low so the score rounds to zero", misconception: "k1 affects ranking of matched docs; it can't turn a match into a non-match. Zero results means nothing matched, which is a tokenization problem, not a scoring one." },
+    { label: "refresh_interval hasn't elapsed so the docs aren't searchable yet", misconception: "That causes a brief delay for new writes, not a permanent zero for already-indexed docs that a different query phrasing would find." },
+  ]}
+/>
+
+<Quiz
+  id="06-search-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why did search engines move from raw TF-IDF to BM25 for term-frequency scoring?"
+  choices={[
+    { label: "BM25 saturates term frequency and normalizes for document length, so a doc spamming a term 200 times can't dominate", correct: true },
+    { label: "BM25 is faster to compute than TF-IDF at query time", misconception: "Speed isn't the point; BM25 is a relevance refinement. Both are cheap to compute once the posting lists are found." },
+    { label: "BM25 removes the need for an inverted index", misconception: "BM25 is a scoring function that runs on candidates the inverted index already produced. It doesn't replace the index — it ranks its output." },
+    { label: "BM25 makes stemming unnecessary", misconception: "Stemming happens in the analysis pipeline before scoring. BM25 scores whatever tokens analysis produced; the two are separate stages." },
+  ]}
+/>
+
+<DragOrder
+  id="06-search-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the stages a piece of text passes through, from raw input to a ranked result:"
+  items={[
+    { id: "a", label: "Analyze: tokenize, lowercase, drop stopwords, stem/lemmatize into normalized terms" },
+    { id: "b", label: "Index: write each term to its posting list in the inverted index" },
+    { id: "c", label: "Query: run the SAME analyzer over the search string to produce query terms" },
+    { id: "d", label: "Match: look up and intersect the posting lists for the query terms" },
+    { id: "e", label: "Rank: score the candidates with BM25 and return them ordered" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Use an inverted index plus a real analyzer instead of LIKE, run the same analyzer at index and query time, and rank with BM25. Start on Postgres GIN; move to Elasticsearch only when you need facets, fuzziness, or scale.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-search-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate says full-text search 'just returns nothing' for some queries and there are no errors in the logs. Walk through how you'd diagnose it.", a: "Zero results with no error almost always means the index-time and query-time tokens don't match — an analyzer mismatch. The matching happens on normalized tokens, not raw strings, so if documents were stemmed to 'run' at index time but the query for 'running' isn't analyzed (or uses a different analyzer), it looks up the token 'running', which was never written, and matches nothing. The diagnostic is to run both sides through the analyzer and compare: in Elasticsearch the _analyze API shows the exact tokens for a given text and analyzer; in Postgres you compare to_tsvector(doc) against plainto_tsquery(query). The moment you see one side produced 'run' and the other 'running', you've found it. The fix is to make the query use the same analysis as the index — that's why the same analyzer at index and query time is the rule, and breaking it is the single most common silent search failure." },
+    { q: "When is Postgres tsvector/GIN the right choice, and what specifically pushes you to a dedicated engine like Elasticsearch?", a: "Postgres full-text search is the right default when the data already lives in Postgres, the corpus is moderate, writes aren't extreme, and you need keyword matching with basic relevance — because there's no second system to deploy, secure, monitor, or keep consistent via dual writes. You move to Elasticsearch/OpenSearch when you hit things Postgres FTS handles poorly: real BM25 relevance tuning per field (k1, b), faceting and aggregations over results, built-in fuzzy/typo tolerance, near-real-time indexing at high write volume, and horizontal scale-out via sharding and replicas. The cost of moving is real — a cluster to operate plus a sync pipeline — so you do it when Postgres actually runs out, not preemptively. And whichever engine you choose, design behind a read alias from day one, because changing an analyzer or field type later forces a full reindex, and an alias is what lets you swap to the rebuilt index with zero downtime instead of an all-hands migration." },
+  ]}
+/>
+
+<Recap lang="en">
+Full-text search exists because `LIKE '%term%'` is two failures at once: a full scan that can't use an index, and byte-substring matching with no concept of relevance. The inverted index fixes finding — each term points to a posting list of doc ids, so a query is a dictionary lookup and a merge, fast regardless of corpus size. The analysis pipeline (tokenize, lowercase, stopword, stem/lemmatize) decides what counts as a term, and its iron rule is that the same analyzer must run at index and query time, or you get silent zero results. Ranking is the other half: BM25, with its k1 and b knobs, saturates term frequency and normalizes for length so the most useful documents surface, not just any that contain the word. Postgres tsvector with a GIN index is the right default — fast lookups, no extra system — and you weigh GIN's bloat-under-write against GiST's lossiness inside it. You graduate to Elasticsearch or OpenSearch when you need faceting, fuzzy matching, BM25 tuning, or scale, accepting near-real-time refresh and designing behind a read alias so the inevitable reindex-the-world migration stays a zero-downtime alias swap.
+</Recap>
