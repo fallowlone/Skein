@@ -6,12 +6,178 @@ unit: 02-kafka-partitions
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Kafka partitions"
-summary: "How Kafka distributes messages across partitions, assigns consumer group members, and why partition count is a one-way door."
+status: ready
+title: "Kafka partitions: the unit of parallelism, ordering, and a one-way door"
+summary: "A topic splits into N partitions; the key's hash picks one; ordering holds only within a partition; one consumer per partition caps your parallelism. Partition count is a decision you can't take back."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["partition-key-hashing", "partition-ordering", "consumer-group-assignment", "partition-count-one-way-door", "hot-partition-skew", "consumer-rebalancing"]
+estMin: 17
+sources:
+  - https://www.confluent.io/blog/how-choose-number-topics-partitions-kafka-cluster/
+  - https://www.confluent.io/blog/incremental-cooperative-rebalancing-in-kafka/
+  - https://cwiki.apache.org/confluence/display/KAFKA/KIP-345:+Introduce+static+membership+protocol+to+reduce+consumer+rebalances
+  - https://www.instaclustr.com/blog/apache-kafka-kraft-abandons-the-zookeeper-part-3-maximum-partitions-and-conclusions/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The order-events topic was lagging, so someone bumped it from 6 partitions to 12 to "add throughput." It worked for ten minutes. Then support flooded in: a cancel for an order arrived and got processed *before* the create. Same `orderId`, two events, now landing on different partitions because `hash(orderId) % 12` no longer equals `hash(orderId) % 6`. Per-key ordering — the one guarantee the whole pipeline relied on — silently evaporated the instant the partition count changed. There is no rollback that puts the old keys back.
+</Hook>
+
+<Crux>A topic is N partitions; the key's hash picks one; ordering holds only within a partition; one consumer per partition caps parallelism.</Crux>
+
+<Explanation>
+
+## A topic is N independent logs, and the key picks the log
+
+A Kafka topic is not one stream — it is N partitions, each an independent append-only log with its own offsets. When a producer sends a keyed record, the default partitioner computes `murmur2(key) % N` to choose exactly which partition the record lands in. Same key, same partition, every time — as long as N never changes. Records with no key are spread across partitions (round-robin or sticky batching) since they have nothing to pin them.
+
+This single mechanism is doing three jobs at once, and conflating them is where designs go wrong:
+
+- **Distribution** — spreading load across brokers and disks.
+- **Ordering** — Kafka guarantees order *only within a single partition*, never across the topic. There is no global order.
+- **Co-location** — every record for one key is in one place, so a consumer sees that key's full history in sequence.
+
+So "ordering" in Kafka really means *per-key ordering*, and you get it for free only because all of a key's records hash to the same partition. The choice of key is therefore the choice of what stays ordered: key by `orderId` and an order's events are sequenced; key by `customerId` and you serialize everything for a customer (and risk one big customer overwhelming a partition — more on that below).
+
+## Consumer groups: one partition, one consumer
+
+On the read side, a consumer group splits the partitions among its members so each partition is owned by **exactly one consumer in the group** at a time. That assignment is the source of Kafka's parallelism — and its hardest cap. If a topic has 6 partitions, at most 6 consumers in a group do useful work. Start a 7th and it sits idle with nothing assigned. Your maximum consumer parallelism is permanently bounded by the partition count.
+
+This is why partition count is a capacity-planning decision, not a tuning knob. You pick N up front to cover the parallelism you'll need at peak, because raising it later is the dangerous move this lesson keeps circling back to.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">If you have…</th>
+        <th class="border border-border px-3 py-2 text-left">…then</th>
+        <th class="border border-border px-3 py-2 text-left">Consequence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">6 partitions, 4 consumers</td>
+        <td class="border border-border px-3 py-2">Some consumers own 2 partitions</td>
+        <td class="border border-border px-3 py-2">Fine — headroom to scale to 6</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">6 partitions, 6 consumers</td>
+        <td class="border border-border px-3 py-2">1:1 mapping</td>
+        <td class="border border-border px-3 py-2">Max parallelism reached</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">6 partitions, 8 consumers</td>
+        <td class="border border-border px-3 py-2">2 consumers get nothing</td>
+        <td class="border border-border px-3 py-2">Idle capacity — partitions cap you</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">A hot key on 1 partition</td>
+        <td class="border border-border px-3 py-2">1 consumer overloaded, others idle</td>
+        <td class="border border-border px-3 py-2">Skew — adding consumers won't help</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The one-way door: changing N rehashes everything
+
+You can increase a topic's partition count. You cannot decrease it, and increasing it is rarely as cheap as it looks. The problem is the partitioner: `hash(key) % N` is a function of N. Change N from 6 to 12 and the modulo result changes for most keys, so a key that always went to partition 2 now goes to partition 8. Future records for that key route to the new partition while its history sits in the old one — the two streams are no longer ordered relative to each other, and any consumer that built per-key state (a running balance, a state-machine position) now reads a split, out-of-order history.
+
+For stateful Kafka Streams apps this is worse than a hiccup: the changelog/state store is keyed by partition, so a partition-count change can effectively corrupt the local state. The standard senior move is therefore *not* to resize in place. You over-provision partitions up front for expected growth, or — when you truly must scale — you create a new topic with the larger count and migrate (dual-write to old and new, drain the old, cut consumers over). It is a migration, not a config edit.
+
+<Inset kind="why" lang="en">
+Why can't you decrease partitions? A partition is an ordered log with committed offsets and possibly compacted state. Merging two logs would have to interleave their records into one timeline, but there is no correct interleaving — their offsets and orderings are independent. Kafka refuses rather than silently destroy ordering, so the count only ratchets upward. Treat it as permanent.
+</Inset>
+
+## Hot partitions, rebalances, and the cost of too many
+
+Two production failure modes dominate. The first is **skew**: if one key (a whale customer, a viral product) dominates traffic, all of it hashes to one partition, so one consumer is pegged at 100% while the rest idle. More partitions and more consumers do nothing — the bottleneck is a single key on a single partition. The fix is at the key level (salt the key, split the hot entity), not the partition level.
+
+The second is **rebalancing**. When a consumer joins, leaves, or is presumed dead (a missed heartbeat, a long GC pause, a slow deploy), the group reassigns partitions. The classic "eager" protocol is **stop-the-world**: every consumer revokes all its partitions and consumption halts across the whole group for the duration — often seconds, sometimes longer in a rebalance storm. Two mitigations matter: **incremental cooperative rebalancing** (Kafka 2.4+) reassigns only the partitions that must move so most consumers keep processing, and **static membership** (KIP-345) gives each consumer a stable `group.instance.id` so a quick restart doesn't trigger a rebalance at all.
+
+Numbers ground the tradeoff. A single partition handles roughly tens of MB/s, so throughput scales with partition count — up to a point. Push past ~1,000 partitions per broker and producer throughput and p99 latency degrade sharply (Confluent's own tests show throughput collapsing as you climb from hundreds toward 10K partitions). Under the legacy ZooKeeper metadata plane, a broker failure meant leader elections that scaled with partition count, pushing controller failover into the 5–7 second range with thousands of partitions; KRaft cut that to under a second and lifts the practical ceiling into the hundreds of thousands of partitions per cluster. The senior balance: enough partitions for parallelism and headroom, not so many that failover latency and per-partition overhead dominate.
+
+<TradeoffMatrix
+  id="02-kafka-partitions-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="An order-events topic (keyed by orderId, 6 partitions) is lagging at peak and you need more consumer throughput. Per-order ordering must hold. Pick the move."
+  options={[
+    { name: "Create a new topic with more partitions, dual-write, drain the old, then cut consumers over", summary: "Migrate, don't resize.", correct: true, justification: "Increasing partitions in place changes hash(key) % N, so existing orderIds rehash to new partitions and per-order ordering breaks — exactly the outage the lesson opens with. A migration to a fresh, larger topic preserves each key's history in one place during the cutover and lets you move consumers deliberately. It is more work, but it is the only path that keeps the ordering guarantee intact." },
+    { name: "Increase the live topic from 6 to 12 partitions to double consumer parallelism", summary: "Just bump N.", justification: "This is the trap. Raising the count rehashes most keys, so an order's create and cancel can land on different partitions and be processed out of order. For stateful consumers it can corrupt per-key state. The throughput might improve while ordering silently breaks." },
+    { name: "Add more consumers to the existing group beyond 6", summary: "Scale the readers.", justification: "Useless here: with 6 partitions, consumers 7+ get no assignment and sit idle. Consumer parallelism is hard-capped at the partition count, so adding readers without adding partitions buys nothing." },
+    { name: "Investigate whether one orderId / customer is a hot key skewing one partition", summary: "Check for skew first.", justification: "A reasonable diagnostic — if the lag is one hot partition, no amount of repartitioning helps and the fix is at the key level. But the prompt asks for the move to raise throughput safely; if it is genuine volume, you still need the migration, not an in-place resize." },
+  ]}
+/>
+
+<Quiz
+  id="02-kafka-partitions-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A topic has 8 partitions. A consumer group running 12 consumers is still lagging. What's the real constraint?"
+  choices={[
+    { label: "Partition count caps parallelism — only 8 consumers can be assigned work; the other 4 are idle", correct: true },
+    { label: "The 12 consumers are fighting over partitions and need a lock", misconception: "There's no contention — each partition is owned by exactly one consumer in the group. Extras simply get nothing assigned." },
+    { label: "Increase the consumer poll size and the lag clears", misconception: "Poll tuning helps a busy consumer, but it can't manufacture parallelism that the partition count forbids; 4 consumers still have no partitions." },
+    { label: "Switch to round-robin assignment so all 12 share the 8 partitions", misconception: "No assignor lets two consumers in one group co-own a partition; the one-consumer-per-partition rule is fundamental, not an assignor choice." },
+  ]}
+/>
+
+<Quiz
+  id="02-kafka-partitions-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does raising a keyed topic from 6 to 12 partitions risk breaking ordering?"
+  choices={[
+    { label: "The partitioner is hash(key) % N, so changing N reroutes most keys; a key's new records go to a different partition than its history", correct: true },
+    { label: "Kafka reshuffles all existing messages across the new partitions", misconception: "Existing records are not moved — they stay where they were written. The break is that *future* records for a key now hash elsewhere, splitting the key across two partitions." },
+    { label: "More partitions means more brokers, and brokers process out of order", misconception: "Brokers preserve order within each partition regardless of count; the problem is the key-to-partition mapping changing, not broker behavior." },
+    { label: "It doesn't — Kafka rebalances ordering automatically when you add partitions", misconception: "There is no automatic re-ordering. Per-key order across the old and new partition is simply lost; this is why partition count is treated as a one-way door." },
+  ]}
+/>
+
+<DragOrder
+  id="02-kafka-partitions-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order what happens when a producer sends a keyed record and a consumer group reads it:"
+  items={[
+    { id: "a", label: "Producer computes hash(key) % N to pick one partition" },
+    { id: "b", label: "Record is appended to that partition's log at the next offset" },
+    { id: "c", label: "The group assigns that partition to exactly one consumer" },
+    { id: "d", label: "That consumer reads the partition in offset order, seeing the key's history in sequence" },
+    { id: "e", label: "If the consumer dies, a rebalance reassigns its partitions to another member" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Partitions are Kafka's unit of parallelism and ordering: a key hashes to one partition, order holds only there, consumers cap at one per partition. Raising the count rehashes keys, breaking ordering — a one-way door.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-kafka-partitions-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate wants to bump a live keyed topic from 6 to 24 partitions to fix consumer lag. Explain the risk and the safer path.", a: "The default partitioner routes records by hash(key) % N, so the partition for a key depends on the partition count. Going from 6 to 24 changes the modulo for most keys: a key that always landed on partition 2 now lands somewhere else. Its old records stay in partition 2 while new ones go to the new partition, so the two are no longer ordered relative to each other — and any per-key guarantee the pipeline relied on (an order's create-then-cancel sequence, a running aggregate, a Kafka Streams state store) silently breaks at the moment of the change. You also can never reduce the count back. The safer path is a migration, not an in-place resize: create a new topic with 24 partitions, dual-write to both old and new, let consumers drain the old topic, then cut the consumer group over to the new one. If the real problem is a single hot key pinning one partition, repartitioning won't help at all — fix it at the key level by salting or splitting the hot entity." },
+    { q: "What is a stop-the-world rebalance, why does it hurt, and what reduces it?", a: "When a consumer joins, leaves, or is presumed dead (missed heartbeat, long GC pause, slow deploy), the group must reassign partitions among its members. Under the classic eager protocol every consumer revokes all of its partitions and consumption halts across the entire group until the new assignment is computed and accepted — often a pause of seconds, and worse during a rebalance storm where consumers keep flapping. It hurts because it converts one consumer's blip into downtime for every partition. Two things reduce it. Incremental cooperative rebalancing (Kafka 2.4+) only revokes the partitions that actually need to move, so most consumers keep processing through the rebalance. Static membership (KIP-345) gives each consumer a stable group.instance.id, so a quick restart within the session timeout is recognized as the same member and triggers no rebalance at all. Together they turn rebalancing from a stop-the-world event into something much closer to background bookkeeping." },
+  ]}
+/>
+
+<Recap lang="en">
+A Kafka topic is N independent partitions, and the default partitioner sends each keyed record to hash(key) % N — so a key always lands on the same partition, which is why ordering is guaranteed only within a partition and never across the topic. On the read side a consumer group gives each partition to exactly one consumer, so the partition count is a hard ceiling on consumer parallelism: extra consumers just sit idle. That makes the count a capacity decision, and a near-permanent one — you can raise it but never lower it, and raising it rehashes most keys, splitting each key's history across old and new partitions and silently breaking per-key ordering (and corrupting Kafka Streams state). So you over-provision up front or migrate to a new topic rather than resize in place. In production the pain shows up as hot-partition skew (one key pegs one consumer while the rest idle — fix at the key level) and rebalances (stop-the-world pauses of seconds, tamed by incremental cooperative rebalancing and static membership). A partition does tens of MB/s, but past ~1,000 partitions per broker throughput and p99 degrade, and on legacy ZooKeeper controller failover ran 5–7 seconds with thousands of partitions — KRaft cuts that under a second. The whole game is choosing N to buy parallelism and ordering you can live with for a long time.
+</Recap>

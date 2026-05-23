@@ -6,12 +6,196 @@ unit: 08-putting-it-together
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Putting it together: event-driven service mesh"
-summary: "End-to-end design of an order-processing pipeline — outbox, Kafka topics, consumer groups, CDC, dead-letter queues, and observability."
+status: ready
+title: "End-to-end order pipeline: where each delivery guarantee lives"
+summary: "Wire one order write through outbox, CDC, partitioned Kafka topics, idempotent consumer groups, a dead-letter queue, and an eventually-consistent UI — and see why idempotency is the one invariant that holds the whole thing together."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["transactional-outbox", "change-data-capture", "partition-key-ordering", "idempotent-consumer", "dead-letter-queue", "eventual-consistency-ux"]
+estMin: 17
+sources:
+  - https://medium.com/airbnb-engineering/avoiding-double-payments-in-a-distributed-payments-system-2981f6b070bb
+  - https://www.uber.com/us/en/blog/reliable-reprocessing/
+  - https://docs.stripe.com/api/idempotent_requests
+  - https://stripe.com/blog/idempotency
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A customer is charged twice for one order. The trace tells the story: the payment consumer processed the `order.placed` event, called the gateway, succeeded — and then the pod was killed mid-commit, before the Kafka offset moved. The group rebalanced, a new consumer picked up the same offset, and replayed the event. Two charges, one order. The gateway call had no idempotency key, so it had no way to know it was the same charge. The pipeline was correct everywhere except the one place that mattered.
+</Hook>
+
+<Crux>Pick a delivery guarantee per hop, then make every consumer idempotent — that invariant is what makes the whole pipeline safe.</Crux>
+
+<Explanation>
+
+## One write, six hops, one guarantee that ties them
+
+Follow a single order through an event-driven pipeline and you cross six boundaries, each with its own failure mode. The write happens once. Everything after is a relay across networks and processes that can each retry, crash, reorder, or stall. The capstone insight is that you do not get one global "exactly-once" knob. You choose a guarantee at each hop, and then you defend the seams with one invariant — idempotency — because every honest hop in this chain is *at-least-once*.
+
+The flow:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Hop</th>
+        <th class="border border-border px-3 py-2 text-left">Mechanism</th>
+        <th class="border border-border px-3 py-2 text-left">Guarantee it gives</th>
+        <th class="border border-border px-3 py-2 text-left">What defends it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. Order write</td>
+        <td class="border border-border px-3 py-2">DB row + outbox row in one txn</td>
+        <td class="border border-border px-3 py-2">Atomic: event exists iff order does</td>
+        <td class="border border-border px-3 py-2">ACID transaction</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. Publish</td>
+        <td class="border border-border px-3 py-2">CDC relay tails the WAL → Kafka</td>
+        <td class="border border-border px-3 py-2">At-least-once to the topic</td>
+        <td class="border border-border px-3 py-2">Resume from log offset</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Route</td>
+        <td class="border border-border px-3 py-2">Topic partitioned by order id</td>
+        <td class="border border-border px-3 py-2">Ordering per key</td>
+        <td class="border border-border px-3 py-2">Stable partition assignment</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4. Process</td>
+        <td class="border border-border px-3 py-2">Consumer group: payment / inventory / notify</td>
+        <td class="border border-border px-3 py-2">At-least-once delivery</td>
+        <td class="border border-border px-3 py-2">Idempotent handler + dedup</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">5. Quarantine</td>
+        <td class="border border-border px-3 py-2">Retry with backoff → DLQ</td>
+        <td class="border border-border px-3 py-2">Poison messages don't block</td>
+        <td class="border border-border px-3 py-2">Retry budget + DLQ alarm</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">6. Display</td>
+        <td class="border border-border px-3 py-2">UI shows optimistic + pending</td>
+        <td class="border border-border px-3 py-2">Eventual consistency, honestly</td>
+        <td class="border border-border px-3 py-2">Pending state + reconcile</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Hop 1–2: the write is atomic, the publish is not
+
+The first decision is the famous dual-write problem: you must save the order *and* emit `order.placed`. If you write to the DB and then publish to Kafka as two separate calls, a crash between them either loses the event (order exists, nobody knows) or emits a phantom (event sent, order rolled back). The transactional **outbox** removes the gap: in one local DB transaction you write the order row *and* an `outbox` row. Either both commit or neither does. The event now exists if and only if the order does.
+
+Publishing is a separate concern, and it is honestly at-least-once. A **CDC** relay (Debezium tailing the Postgres WAL is the canonical setup) reads committed outbox rows from the log and pushes them to Kafka. Its superpower is recoverability: it tracks its log offset, so on restart it resumes from the exact position — zero polling, near-zero DB load because it reads the log, not the table. But "resume from offset" means it can re-emit a row it published just before crashing. That is fine, and it is the whole point: you are not chasing exactly-once on the wire; you are pushing the dedup responsibility to the consumer, where it belongs.
+
+<Inset kind="why" lang="en">
+A senior team starts with the *polling publisher* (a worker that `SELECT`s unsent outbox rows and marks them sent) before reaching for CDC. It is trivial to build, debug, and operate, and it is correct. You migrate to log-tailing CDC only when polling latency or the load of the marker write becomes a real problem — not by default. The pattern is the same; only the relay changes.
+</Inset>
+
+## Hop 3: partition by the key that owns the order
+
+Kafka guarantees ordering only *within a partition*, and the partition is chosen by the record key. Key your order events by `order_id` (or `customer_id` when you need a customer's events serialized) and every event for that order lands in the same partition, processed in commit order by one consumer. `payment.authorized` can never overtake `order.placed` for the same order. Cross-order ordering is neither guaranteed nor needed — that is exactly what lets you scale by adding partitions.
+
+The trap is operational: the default partitioner is `hash(key) % partitionCount`. The moment you *add* partitions to scale, the modulus changes, the same key maps to a different partition, and in-flight ordering for that key breaks at the seam. Senior teams over-provision partitions up front, or migrate keys deliberately, rather than bumping partition count on a hot Friday. Partition count is a one-way door for key ordering.
+
+## Hop 4–5: at-least-once is a promise to deliver duplicates
+
+The consumer group is where the load-bearing rule lives. To get at-least-once you **commit the offset only after the handler succeeds** — process, then commit. The cost is duplicates: if the pod dies after processing but before the commit (exactly the Hook), the next consumer replays that offset. At-least-once is not a bug to be fixed; it is a contract that says "I will deliver your message, possibly more than once." The only correct response is an **idempotent** handler.
+
+Idempotency means processing the same event twice has the same effect as once. The mechanism is a dedup key — the event id, or a business idempotency key — recorded in a dedup table with a unique constraint, inside the same transaction as the side effect. Re-delivery hits the constraint and is a no-op. For external calls, propagate the key downstream: Stripe's `Idempotency-Key` header dedups for 24 hours, so passing your event's key into the charge call means a retry returns the *original* charge instead of creating a second one. That single header is the difference between the Hook being a near-miss and a double charge.
+
+Some failures are not transient — a malformed payload, a permanently-rejected card. Retrying those forever blocks the partition (head-of-line blocking) and lets lag grow without bound. So you give each message a **retry budget** with exponential backoff for transient errors, and on exhaustion route it to a **dead-letter queue**. Uber's reliable-reprocessing design uses tiered retry topics feeding a DLQ precisely so a poison message is quarantined instead of stalling the live stream. The DLQ is not a graveyard; it is an inbox you must drain.
+
+<TradeoffMatrix
+  id="08-putting-it-together-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="The payment consumer occasionally double-charges on retry after a crash. Where do you put the fix?"
+  options={[
+    { name: "Idempotent handler: persist a dedup key (event id) under a unique constraint in the same txn, and pass an Idempotency-Key to the gateway", summary: "Make replay a no-op.", correct: true, justification: "This is the load-bearing fix. At-least-once means the same event will be redelivered after a crash-before-commit, so the only safe handler is one where processing twice equals processing once. A unique dedup key inside the side-effect transaction makes the second delivery a no-op, and propagating an Idempotency-Key to the gateway means the gateway itself returns the original charge instead of creating a second. The defence lives at the consumer and the external call, exactly where the duplicate appears." },
+    { name: "Switch the consumer to commit the offset BEFORE processing, so a crash can't replay", summary: "Commit-first.", justification: "This trades duplicates for lost messages — at-most-once. If you commit before processing and then crash, the offset has moved and the event is gone forever, so the order silently never gets charged. For payments that is worse than a duplicate. Commit-after-process plus idempotency is the correct combination." },
+    { name: "Add more partitions so each consumer has less load and crashes less", summary: "Scale out.", justification: "More partitions reduces lag, not duplicates — a crash-before-commit replays regardless of how lightly loaded the consumer is. Worse, bumping partition count rehashes keys and can break per-order ordering. This treats a correctness bug as a capacity problem." },
+    { name: "Route every failed charge straight to the DLQ and reconcile by hand", summary: "DLQ everything.", justification: "The DLQ is for poison messages that exhausted their retry budget, not for transient crashes that idempotency already handles. Sending normal retries to the DLQ floods it, hides the real defect, and turns an automatic recovery into manual toil. Fix idempotency first; reserve the DLQ for genuinely unprocessable events." },
+  ]}
+/>
+
+## Hop 6: the UI must tell the truth about lag
+
+Because every hop is asynchronous, the moment the user clicks "Place order" the answer is *not yet known*. Inventory and notification may settle hundreds of milliseconds later; under load they settle when consumer lag drains. A senior UI does not lie about this. It applies an **optimistic** update so the order appears instantly, marks it `pending` until a confirmation event arrives, and reconciles to `confirmed` or `failed` from the real state. The eventual-consistency window is a product surface, not a defect to hide.
+
+This is also where observability earns its keep. The metrics that catch the silent killers are **consumer lag** (the gap between latest offset and committed offset — Burrow watches its *trend* over a sliding window, flagging OK / WARNING / ERR rather than a raw number), **DLQ depth** (a rising DLQ means handlers are failing faster than you drain), and **end-to-end latency** with a **correlation id** stamped on the event at hop 1 and carried through every async hop so one trace spans the whole journey. The Hook's double charge is invisible without that trace. Lag growing until the DLQ overflows is invisible without those two gauges and an alarm on each.
+
+<Quiz
+  id="08-putting-it-together-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your CDC relay restarts and re-emits a handful of outbox rows it had already published. Is the pipeline broken?"
+  choices={[
+    { label: "No — re-emission is expected at-least-once behaviour; the idempotent consumers dedup the replays", correct: true },
+    { label: "Yes — the relay must guarantee exactly-once or events will be processed twice", misconception: "No hop on the wire gives true exactly-once; the relay resuming from its log offset can replay by design. Correctness comes from idempotent consumers, not from a perfect relay." },
+    { label: "Yes — you must disable WAL tailing and switch to synchronous publish in the request", misconception: "Synchronous publish reintroduces the dual-write problem the outbox exists to solve: a crash between DB commit and publish loses or phantoms events." },
+    { label: "No — but only if the topic has a single partition so nothing reorders", misconception: "Single-partition kills throughput and isn't why replays are safe. Per-key partitioning keeps order; idempotency handles replays." },
+  ]}
+/>
+
+<Quiz
+  id="08-putting-it-together-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Consumer lag has been climbing for an hour and the DLQ is filling. What does this combination most likely mean?"
+  choices={[
+    { label: "Handlers are failing or too slow, exhausting retry budgets and routing poison messages to the DLQ faster than anyone drains it", correct: true },
+    { label: "The producers are sending too few events", misconception: "Lag is consumers falling behind the log, not producers slowing down — fewer events would shrink lag, not grow it." },
+    { label: "The UI optimistic updates are out of sync", misconception: "Optimistic UI is a display concern downstream of processing; it can't cause backend lag or DLQ growth." },
+    { label: "Partition count is too high", misconception: "More partitions generally reduces lag by parallelising; rising lag plus a filling DLQ points at failing or slow handlers, not over-partitioning." },
+  ]}
+/>
+
+<DragOrder
+  id="08-putting-it-together-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order one order event's journey through the pipeline:"
+  items={[
+    { id: "a", label: "Write the order row and an outbox row in one DB transaction" },
+    { id: "b", label: "CDC relay tails the WAL and publishes the committed row to Kafka" },
+    { id: "c", label: "Topic is partitioned by order id, preserving per-order ordering" },
+    { id: "d", label: "Consumer group processes it; idempotent handler dedups any replay" },
+    { id: "e", label: "On exhausted retries, the poison message goes to the dead-letter queue" },
+    { id: "f", label: "UI reconciles its optimistic pending row to confirmed or failed" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>You don't get one exactly-once knob. Choose a guarantee per hop — atomic outbox, at-least-once publish, per-key ordering — then make every consumer idempotent. That one invariant is what makes the whole pipeline safe.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-putting-it-together-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through why idempotency, not exactly-once delivery, is the invariant that holds an event-driven order pipeline together.", a: "Every hop on the wire is honestly at-least-once. The CDC relay resumes from its last log offset, so it can re-emit a row it published just before crashing. The consumer commits its Kafka offset only after the handler succeeds, so a crash between processing and commit replays the same event to the next consumer. There is no global exactly-once knob you can turn — chasing it means fighting physics. Instead you accept duplicates as the contract and neutralise them at the consumer: record a dedup key (the event id or a business idempotency key) under a unique constraint inside the same transaction as the side effect, so a redelivery hits the constraint and becomes a no-op. For external effects you propagate the key downstream — Stripe's Idempotency-Key header, for example, returns the original charge for 24 hours instead of creating a second. Because this one invariant lives at every consumer, the atomic outbox, the at-least-once publish, and the per-key ordering can all stay simple. Idempotency is what lets the rest of the pipeline be honest about its guarantees instead of pretending to be perfect." },
+    { q: "Two metrics together — rising consumer lag and a filling dead-letter queue — describe a specific failure. Explain it and where observability has to live.", a: "Consumer lag is the gap between the latest offset on a partition and the offset the group has committed; it grows when consumers fall behind the producers. A filling DLQ means messages are exhausting their retry budget and being quarantined. Together they describe handlers that are failing or too slow: each poison message burns its retries (growing lag while it blocks the partition) and then lands in the DLQ, and if nobody drains the DLQ it overflows while the live stream silently falls further behind. The danger is that both grow quietly — there is no exception in the request path because the whole pipeline is asynchronous. So observability cannot be an afterthought: you stamp a correlation id on the event at the write (hop 1) and carry it through every async hop so a single trace spans the journey and a double charge is actually findable; you gauge consumer lag (Burrow watches the trend over a sliding window and flags OK/WARNING/ERR rather than a raw count); and you alarm on DLQ depth so a rising backlog pages someone before it overflows. The metrics live at the seams between hops, because that is where the silent failures hide." },
+  ]}
+/>
+
+<Recap lang="en">
+An event-driven order pipeline is six hops, and you choose a guarantee at each: the order write is atomic because the row and its outbox event commit in one transaction; the CDC relay publishes at-least-once by resuming from its log offset; the topic preserves ordering per key by partitioning on order id, which is also why bumping partition count is a one-way door that can break key ordering; the consumer group delivers at-least-once by committing offsets only after processing; poison messages that exhaust a retry budget go to a dead-letter queue instead of blocking the partition; and the UI tells the truth about the eventual-consistency window with optimistic-then-pending state. The thread through all of it is idempotency — a dedup key under a unique constraint, plus an Idempotency-Key propagated to external calls — because every honest hop is at-least-once and duplicates are the contract, not the bug. Observability lives at the seams: a correlation id across every async hop, consumer lag watched by trend, and an alarm on DLQ depth, so the two silent killers — a missing idempotency key that double-charges, and lag that grows until the DLQ overflows — are caught before a customer is.
+</Recap>
