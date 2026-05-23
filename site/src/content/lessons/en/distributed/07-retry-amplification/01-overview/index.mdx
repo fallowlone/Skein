@@ -6,12 +6,175 @@ unit: 07-retry-amplification
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Retry amplification"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Retry amplification: how 3 retries per layer becomes a metastable outage"
+summary: "A naive retry on every layer of a deep call chain multiplies load geometrically — one request becomes 3^depth backend calls — and the retry traffic itself keeps the system down long after the trigger clears. Backoff with jitter, retry budgets, and circuit breakers are the fixes."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["retry-amplification", "metastable-failure", "exponential-backoff-jitter", "retry-budget", "circuit-breaker", "deadline-propagation"]
+estMin: 17
+sources:
+  - https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+  - https://sre.google/sre-book/addressing-cascading-failures/
+  - https://www.usenix.org/publications/loginonline/metastable-failures-wild
+  - https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A database failover takes 8 seconds. Trivial — clients should just retry. Except every layer retries: the API gateway retries the service 3x, the service retries the data layer 3x, the data layer retries the connection pool 3x. The failover finishes at second 8. The outage does not. The backend is now buried under a flood of retries that arrived all at once, times out, and triggers *more* retries. Forty minutes later someone realizes the trigger cleared half an hour ago — the retries are the only thing still keeping the system down.
+</Hook>
+
+<Crux>Naive retries multiply: one request becomes 3^depth backend calls, and the retry traffic itself sustains the outage after recovery.</Crux>
+
+<Explanation>
+
+## The multiplication is geometric, not linear
+
+A retry feels free. The intuition is "send it again, one extra call." That intuition is correct only at the leaf. In a layered system every hop has its own retry policy, and the policies *compose by multiplication*. If a call chain is 4 services deep and each layer retries 3 times on failure, a single user request that fails at the bottom can generate up to 3 × 3 × 3 × 3 = **3⁴ = 81** calls to the deepest dependency. The Google SRE book uses exactly this framing: four layers retrying three times each turns one user action into roughly 64 attempts on the database.
+
+The number is geometric in depth, which is why it ambushes people. Two layers of 3 retries is 9 — annoying but survivable. Four layers is 81. Add a fifth and it is 243. The amplification factor is `retries^depth`, and depth in a modern microservice mesh is rarely just two. The worst part: this multiplication only kicks in *during* an incident, exactly when the backend has the least spare capacity to absorb it.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Chain depth</th>
+        <th class="border border-border px-3 py-2 text-left">Retries per layer</th>
+        <th class="border border-border px-3 py-2 text-left">Calls to deepest dependency</th>
+        <th class="border border-border px-3 py-2 text-left">Effect</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1 (leaf only)</td>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">What the intuition assumes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2</td>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">3² = 9</td>
+        <td class="border border-border px-3 py-2">Survivable, mostly</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">4</td>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">3⁴ = 81</td>
+        <td class="border border-border px-3 py-2">A 1% error rate becomes ~81% extra load</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">5</td>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">3⁵ = 243</td>
+        <td class="border border-border px-3 py-2">Self-inflicted DDoS</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why it does not stop: metastable failure
+
+The deeper trap is what happens *after* the original problem heals. The 8-second failover is over. Capacity is restored. And the system stays down. This is a **metastable failure** — a term Bronson et al. coined in their 2021 HotOS paper to unify retry storms, congestion collapse, and death spirals under one frame. The system has two stable states: a healthy one and a degraded one. A temporary trigger (a spike, a failover, a brief dependency blip) shoves it into the degraded state, and a *sustaining feedback loop* keeps it there even though the trigger is long gone.
+
+Retries are the canonical sustaining loop. Walk the cycle: backend slows → requests time out → timeouts trigger retries → retries add load → backend slows more → more timeouts → more retries. The retries are now the dominant traffic. The work the system is doing is almost entirely re-attempts of requests whose original deadlines have already passed — wasted work that produces nothing but more load. The trigger is irrelevant; the loop is self-sustaining. This is why "wait for it to recover" does not work and why operators end up shedding load or restarting tiers to break the cycle by force.
+
+<Inset kind="why" lang="en">
+The reason metastable failure is so disorienting in a postmortem is that the root cause in the timeline (the failover) and the root cause of the *sustained* outage (the retry loop) are different things. People burn the incident hunting the trigger, which already cleared. The honest postmortem line is: the trigger started it, but the retry amplification is what kept us down — and the only fix that worked was reducing load, not fixing the trigger.
+</Inset>
+
+## Fix 1: exponential backoff with jitter
+
+The first reason retries are deadly is *synchronization*. When a dependency blips, every client times out at roughly the same instant and retries at roughly the same instant — a thundering herd that arrives as a spike. Fixed-interval retries make this worse: they re-synchronize the herd on every round. Exponential backoff (wait `base`, then `2×base`, then `4×base`) spreads attempts out in time, but does not de-correlate them — clients that started together still step together.
+
+The fix is **jitter**: add randomness so clients spread across the window. AWS's analysis in the Architecture Blog is the canonical reference. *Full jitter* picks `sleep = random(0, base × 2^attempt)` — maximum spread, fewest total calls. *Equal jitter* keeps a guaranteed floor: `sleep = base/2 + random(0, base/2)`, so no client sleeps less than half the backoff. AWS found full and equal jitter complete in roughly the same number of calls; full jitter does slightly less work, equal jitter avoids very-short sleeps. The headline result: jittered backoff dramatically reduces both total calls and time-to-recovery versus plain exponential backoff. Fixed backoff with no jitter is the one to never ship.
+
+## Fix 2: retry budgets and circuit breakers
+
+Backoff smooths the *timing* of retries; it does not cap their *volume*. A **retry budget** does. Instead of a per-request retry count, you bound retries as a fraction of total traffic — Google SRE and Finagle both use ~**10%**: a client may only spend retries up to 10% of its request volume, and once that budget is exhausted it fails fast instead of retrying. This converts unbounded amplification into a hard ceiling: even in a full outage, retry traffic can add at most 10% extra load, not 80×.
+
+A **circuit breaker** attacks the same problem from the other end. It watches the failure rate to a dependency; once failures cross a threshold it *opens* — every call fails instantly without touching the network — for a cooldown. After the cooldown it goes *half-open*, letting a single probe through; success closes it, failure re-opens it. An open breaker is what stops the sustaining loop: the backend gets a window of zero retry traffic, recovers, and the probe lets it back in gracefully. Pair both with two non-negotiable rules: **only retry idempotent operations and retryable errors** (never retry a `400`, never blindly retry a non-idempotent `POST`), and **propagate the deadline** — pass the remaining time budget down the chain so a service never retries a request whose caller has already given up. Retrying a dead request is the purest form of wasted, amplifying work.
+
+<TradeoffMatrix
+  id="07-retry-amplification-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A 4-deep service chain is collapsing under retry amplification during dependency blips. Pick the highest-leverage fix."
+  options={[
+    { name: "Retry budget capping retries at ~10% of request volume, plus a circuit breaker that opens on the failure threshold", summary: "Cap the volume.", correct: true, justification: "This is the fix that bounds amplification. A 10% retry budget (Google SRE / Finagle) turns unlimited geometric growth into at most 10% extra load even in a full outage; the circuit breaker opens to give the backend a window of zero retry traffic so it can recover, then half-open probes let it back in. Together they break the metastable sustaining loop instead of just reshaping its timing." },
+    { name: "Add exponential backoff with full jitter at every layer", summary: "Smooth timing.", justification: "Necessary and high-value — jitter de-synchronizes the thundering herd and cuts time-to-recovery — but backoff only spreads retries over time, it does not cap their total volume. With 4 layers retrying you can still reach 3⁴ = 81 calls, just spread out. Do this, but it is not sufficient alone." },
+    { name: "Increase timeouts so requests have more time to succeed before retrying", summary: "Wait longer.", justification: "Backfires. Longer timeouts mean each in-flight request occupies a thread/connection longer during overload, so the pool exhausts faster and you queue more work the backend can never finish in time. Under a metastable failure this deepens the hole. Shorter deadlines plus deadline propagation are usually the right direction." },
+    { name: "Remove retries entirely so nothing can amplify", summary: "No retries.", justification: "Throws away the legitimate value of retries — most transient blips (a packet drop, a brief GC pause, a failover) genuinely succeed on a second attempt. Zero retries trades a rare amplification incident for constant avoidable user-facing errors. The goal is bounded retries, not no retries." },
+  ]}
+/>
+
+<Quiz
+  id="07-retry-amplification-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A request passes through 4 service layers and each layer retries 3 times on failure. In the worst case, how many calls hit the deepest dependency for one failing user request?"
+  choices={[
+    { label: "3⁴ = 81 — the retries multiply across layers", correct: true },
+    { label: "3 × 4 = 12 — one set of retries per layer, added up", misconception: "Retries compose by multiplication, not addition: each layer's retry re-triggers the full retry behavior of every layer below it. That makes it retries^depth, not retries × depth." },
+    { label: "3 — only the bottom layer actually retries", misconception: "Every layer with its own retry policy contributes a factor. The leaf retrying 3x is just the innermost term of 3 × 3 × 3 × 3." },
+    { label: "12 only if all layers fail simultaneously, otherwise 3", misconception: "Amplification is about a single failing path being re-attempted at every level on its way down, not about simultaneous independent failures." },
+  ]}
+/>
+
+<Quiz
+  id="07-retry-amplification-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="The triggering dependency outage cleared 30 minutes ago, but the system is still down under a retry storm. What is actually keeping it down?"
+  choices={[
+    { label: "A metastable sustaining loop: the retry traffic is now its own load source, independent of the original trigger", correct: true },
+    { label: "The original outage must still be ongoing — find and fix it", misconception: "The defining property of a metastable failure is that it persists after the trigger clears. Hunting the already-cleared trigger is the classic time sink; the sustaining loop is the real cause." },
+    { label: "A second, unrelated bug that started at the same time", misconception: "No new bug is needed — the retry feedback loop alone (timeouts → retries → more load → more timeouts) sustains the degraded state on its own." },
+    { label: "Nothing — it will recover on its own if you wait", misconception: "Metastable failures generally do not self-heal, because the load that sustains them does not drop. Operators usually have to shed load or restart tiers to force the system back to the healthy state." },
+  ]}
+/>
+
+<DragOrder
+  id="07-retry-amplification-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the defenses a senior layers on, from broadest blast-radius reduction to finest correctness rule:"
+  items={[
+    { id: "a", label: "Retry budget: cap retries at ~10% of request volume so amplification has a hard ceiling" },
+    { id: "b", label: "Circuit breaker: open on the failure threshold to give the backend a zero-retry recovery window" },
+    { id: "c", label: "Exponential backoff with jitter: de-synchronize the thundering herd across time" },
+    { id: "d", label: "Only retry idempotent operations and retryable errors — never a 400, never a blind POST" },
+    { id: "e", label: "Propagate the deadline so no layer retries a request whose caller already gave up" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Retries compose by multiplication: 4 layers × 3 retries = 3⁴ = 81 backend calls. The storm sustains the outage past the trigger (metastable). Cap it with a ~10% retry budget, a circuit breaker, and backoff with jitter.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-retry-amplification-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why a system can stay down for 30 minutes after the triggering outage has already cleared.", a: "Because the retries themselves have become the load. This is a metastable failure: the system has a healthy stable state and a degraded stable state, and a temporary trigger (a failover, a spike, a brief dependency blip) pushes it into the degraded state where a self-sustaining feedback loop keeps it. The loop is: the backend slows, requests time out, timeouts trigger retries, retries add load, the backend slows further, more requests time out, and so on. Once that loop is running, most of the traffic is re-attempts of requests whose original deadlines have already passed — pure wasted work that produces nothing but more load. The original trigger is now irrelevant; removing it does nothing because it is no longer what is generating the load. That is why waiting does not help and why the only fixes that work are reducing load directly — shedding traffic, opening circuit breakers, or restarting tiers — to break the loop and let the system fall back into its healthy stable state." },
+    { q: "Why is exponential backoff with jitter not enough on its own, and what do you add to actually bound amplification?", a: "Backoff with jitter fixes the timing of retries, not their volume. Jitter is essential — without it, every client that timed out at the same instant retries at the same instant, creating a thundering herd that arrives as a synchronized spike, and fixed-interval retries re-synchronize that herd every round. Adding randomness (full jitter picks a sleep uniformly in [0, base×2^attempt]; equal jitter guarantees a floor of base/2) spreads attempts across the window and dramatically cuts both total calls and time-to-recovery. But spreading 81 calls over time is still 81 calls. To cap the actual volume you need a retry budget — bound retries to roughly 10% of request volume (Google SRE and Finagle) so even in a full outage retry traffic adds at most 10% extra load instead of 80x — plus a circuit breaker that opens once the failure rate crosses a threshold, giving the backend a window of zero retry traffic to recover before a half-open probe lets traffic back in. Backoff smooths; the budget and breaker are what bound." },
+  ]}
+/>
+
+<Recap lang="en">
+Retries feel free but compose by multiplication, not addition: in a 4-deep call chain where each layer retries 3 times, one failing request can become 3⁴ = 81 calls on the deepest dependency, and amplification grows geometrically with depth. Worse, the retry traffic becomes self-sustaining — a metastable failure, where a temporary trigger pushes the system into a degraded stable state and the feedback loop (slow → timeout → retry → more load → slower) keeps it there long after the trigger has cleared, which is why systems stay down for 30 minutes after the outage that caused them ended. The defenses layer up: exponential backoff with jitter de-synchronizes the thundering herd and cuts time-to-recovery (full or equal jitter, never fixed backoff); a retry budget caps retries at roughly 10% of request volume so amplification has a hard ceiling; a circuit breaker opens on the failure threshold to hand the backend a zero-retry recovery window. Bound it further by only retrying idempotent operations and retryable errors, and by propagating deadlines so no layer ever retries a request whose caller has already given up. The goal is never zero retries — transient blips genuinely succeed on a second try — it is retries that cannot multiply into the storm that takes you down.
+</Recap>
