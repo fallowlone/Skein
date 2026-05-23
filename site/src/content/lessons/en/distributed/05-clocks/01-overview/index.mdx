@@ -6,12 +6,177 @@ unit: 05-clocks
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Clocks"
-summary: "Coming soon — Distributed systems in practice"
+status: ready
+title: "Time and ordering: why wall-clock timestamps lie"
+summary: "Across a fleet, wall clocks drift and jump backward on NTP sync, so ordering writes by client timestamp silently drops data. Logical clocks order events without trusting the wall; Spanner's TrueTime buys ordering with hardware and a deliberate wait."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["clock-skew", "lamport-timestamps", "vector-clocks", "happens-before", "truetime", "last-write-wins"]
+estMin: 17
+sources:
+  - https://research.google.com/pubs/archive/39966.pdf
+  - https://aphyr.com/posts/299-the-trouble-with-timestamps
+  - https://en.wikipedia.org/wiki/Vector_clock
+  - https://cloud.google.com/blog/products/databases/strict-serializability-and-external-consistency-in-spanner
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A user updates their shipping address, sees the success toast, refreshes — and the old address is back. No error, no log line, no exception. The Cassandra cluster used last-write-wins keyed on the client's timestamp, and the node that handled the update had a clock running 1.2 seconds behind. So the "new" write arrived stamped *earlier* than the row it was supposed to replace. The database compared two numbers, kept the larger one, and discarded the user's change as stale. It was telling the truth about the timestamps and lying about reality.
+</Hook>
+
+<Crux>Wall-clock time lies across a fleet: NTP skew makes the later write carry the smaller timestamp, and last-write-wins silently drops it.</Crux>
+
+<Explanation>
+
+## The wall clock is not a clock you can order by
+
+Every machine has a quartz crystal that drifts — typically tens of parts per million, so a free-running clock wanders by milliseconds per minute and seconds per day. NTP corrects this by periodically slewing or stepping the clock toward a reference. Stepping is the dangerous part: when the local clock is far enough off, `ntpd` jumps it, and that jump can go *backward*. For a few hundred milliseconds, "now" is earlier than a "now" you already read. Across a fleet of dozens of nodes, even healthy NTP leaves you with skew on the order of milliseconds; a failed NTP daemon or a VM paused by its hypervisor pushes that to seconds or minutes.
+
+This is why a timestamp generated on machine A and a timestamp generated on machine B are not comparable as an ordering. They share units and nothing else. The moment your correctness depends on `tsA < tsB` meaning "A happened before B," you have built on sand.
+
+## Last-write-wins is data loss waiting for a clock to slip
+
+The address bug is the canonical production failure, and it is built into any system that resolves conflicts by comparing wall-clock timestamps: Cassandra, Riak, DynamoDB-style stores in LWW mode. The rule is "keep the write with the highest timestamp." When clocks are skewed, the highest timestamp is not the latest write — it is the write from the node whose clock runs fast. The genuinely newer write loses, and crucially **the client gets a success response**. There is no error to catch, no metric to alert on. The data is simply gone, and you find out when a customer complains.
+
+It gets worse with deletes. A tombstone written with a far-future timestamp — a buggy client, a node whose clock jumped forward — will suppress every real write below it until compaction garbage-collects the tombstone, which can be days. One slipped clock can erase a key for a week. Jepsen's analysis put it bluntly: wall-clock timestamps are fundamentally unsafe ordering constructs.
+
+<Inset kind="why" lang="en">
+"Just run NTP" does not save you. NTP keeps skew small *on average*, but LWW is not an average — it is a worst case. You lose data on the one node, the one minute, where the clock slipped. And the failure is silent: the write returns `200 OK`, the row is dropped, and nothing in your logs distinguishes it from a write that simply never happened.
+</Inset>
+
+## Logical clocks: order events without trusting the wall
+
+The fix is to stop measuring physical time and start measuring causality. A **Lamport timestamp** is a single counter per process: increment on every local event, and on receiving a message set your counter to `max(local, received) + 1`. This guarantees that if event A *happens-before* B (A causally precedes B), then `L(A) < L(B)`. It gives you a consistent total order for free, in O(1) space per event.
+
+What Lamport clocks *cannot* do is tell you the converse: `L(A) < L(B)` does not mean A caused B. Two events on nodes that never communicated can be genuinely concurrent, yet Lamport hands them an arbitrary order anyway — it cannot detect concurrency, only impose an order. For a conflict-resolution system, that blindness is the whole problem: you need to know two writes were concurrent so you can *merge* them, not silently pick one.
+
+**Vector clocks** recover that. Each node carries a vector — one counter per node in the system — and ships the whole vector with each message. Now you can compare two events: if every component of A is ≤ B's and at least one is strictly less, A happened-before B; if neither dominates the other, they are **concurrent**, and the system can surface both versions (siblings) for the application to merge. The cost is the catch: O(n) space per stamped value, where n is the number of nodes, plus the metadata travels with every write. On a 200-node cluster that is 200 counters attached to data, and the vector grows as the cluster grows.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Approach</th>
+        <th class="border border-border px-3 py-2 text-left">Detects concurrency?</th>
+        <th class="border border-border px-3 py-2 text-left">Cost per stamp</th>
+        <th class="border border-border px-3 py-2 text-left">Production gotcha</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Wall-clock timestamp (LWW)</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">O(1), one number</td>
+        <td class="border border-border px-3 py-2">Silent data loss on clock skew; no error returned</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Lamport timestamp</td>
+        <td class="border border-border px-3 py-2">No — only total order</td>
+        <td class="border border-border px-3 py-2">O(1), one counter</td>
+        <td class="border border-border px-3 py-2">Orders concurrent writes arbitrarily; can't merge conflicts</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Vector clock</td>
+        <td class="border border-border px-3 py-2">Yes — flags concurrent events</td>
+        <td class="border border-border px-3 py-2">O(n), one counter per node</td>
+        <td class="border border-border px-3 py-2">Metadata grows with the cluster; needs pruning</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">TrueTime (Spanner)</td>
+        <td class="border border-border px-3 py-2">N/A — gives real ordering</td>
+        <td class="border border-border px-3 py-2">GPS + atomic clocks per datacenter</td>
+        <td class="border border-border px-3 py-2">Commit-wait adds latency; needs special hardware</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## TrueTime: pay hardware to make the wall clock honest
+
+Google's Spanner takes the opposite bet: instead of giving up on physical time, make it trustworthy and *quantify your ignorance*. TrueTime equips every datacenter with GPS receivers and atomic clocks, synced roughly every 30 seconds, and exposes `TT.now()` not as a single instant but as an interval `[earliest, latest]`. The width of that interval is the uncertainty ε — typically around 1ms (under 1ms at the 99th percentile in Google's reported numbers, occasionally widening to single-digit milliseconds when a time master is slow to reach).
+
+The clever part is **commit-wait**. Spanner assigns a commit timestamp `s`, then deliberately *sleeps* until `TT.now().earliest > s` — until it is certain the timestamp lies in the past everywhere. That wait is the size of ε, a few milliseconds, and it runs in parallel with Paxos replication so it often costs little wall time. The payoff is **external consistency** (linearizability across the whole database): if transaction T1 commits before T2 starts, T1's timestamp is guaranteed smaller than T2's — globally, with no skew caveat. Spanner converts clock uncertainty from a silent correctness bug into an explicit, bounded latency cost.
+
+<TradeoffMatrix
+  id="05-clocks-overview-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A multi-region key-value store needs to resolve concurrent writes to the same key without silently dropping a user's update. What ordering mechanism fits?"
+  options={[
+    { name: "Vector clocks: stamp each version with a per-node counter vector and surface concurrent versions as siblings", summary: "Detect, don't guess.", correct: true, justification: "The requirement is precisely 'don't silently drop a concurrent update,' which means you must DETECT concurrency, not impose an arbitrary order on it. Vector clocks compare two versions and tell you whether one happened-before the other or whether they are concurrent — and when they're concurrent the store keeps both as siblings for the app (or a merge function) to resolve. The cost is O(n) metadata per value that grows with the cluster, which is the price of never losing a write." },
+    { name: "Wall-clock last-write-wins: keep the write with the highest client timestamp", summary: "Compare two numbers.", justification: "This is the exact failure the prompt is trying to avoid. Under clock skew the highest timestamp is the write from the fastest clock, not the latest write, so the genuinely newer update is discarded — and the client still gets a success response. It's cheap and it silently loses data, which is the opposite of the requirement." },
+    { name: "Lamport timestamps: a single counter per node, take max+1 on receive", summary: "One total order.", justification: "Lamport clocks give a consistent total order in O(1) space, but they cannot detect concurrency: L(A) < L(B) does not mean A caused B. Concurrent writes get an arbitrary order rather than being flagged as conflicts, so the store would still pick one and drop the other — just deterministically instead of by clock skew. Good for logs and mutual exclusion, wrong for conflict detection." },
+    { name: "TrueTime-style commit-wait with GPS and atomic clocks", summary: "Buy real ordering.", justification: "TrueTime genuinely solves global ordering, but it requires GPS receivers and atomic clocks in every datacenter plus a commit-wait that adds latency — Spanner-scale infrastructure. For a generic multi-region KV store it is wildly over-engineered; vector clocks solve the stated detect-don't-drop problem in software." },
+  ]}
+/>
+
+<Quiz
+  id="05-clocks-overview-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A Cassandra cluster uses last-write-wins on client timestamps. One node's clock is 1.5s behind. A user's update routed through that node disappears after a refresh. Why did the client see no error?"
+  choices={[
+    { label: "LWW just compares timestamps and keeps the larger one — the skewed write got a smaller timestamp and was dropped during conflict resolution, which is not an error condition", correct: true },
+    { label: "The write failed quorum and was rolled back", misconception: "The write succeeded and was acknowledged; nothing was rolled back. It was accepted, then lost when a conflict was resolved by timestamp — a silent drop, not a failed write." },
+    { label: "Cassandra retried the write against a healthy node and the retry overwrote it", misconception: "There is no automatic 'fix' retry here. The data loss is the conflict-resolution rule itself keeping the higher (older-clock) timestamp, not a retry." },
+    { label: "The user's session token expired mid-write", misconception: "Auth has nothing to do with it. The mechanism is purely timestamp comparison under clock skew." },
+  ]}
+/>
+
+<Quiz
+  id="05-clocks-overview-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="What does Spanner's commit-wait actually do, and what does it buy?"
+  choices={[
+    { label: "It sleeps until TrueTime is certain the commit timestamp is in the past everywhere (about ε ≈ a few ms), buying external consistency with no skew caveat", correct: true },
+    { label: "It waits for all replicas to flush to disk before acknowledging the commit", misconception: "That's durability/replication, not commit-wait. Commit-wait is specifically about outlasting the TrueTime uncertainty interval ε so the timestamp is unambiguously in the past." },
+    { label: "It blocks new transactions until the previous one's locks are released", misconception: "That's lock contention, a different concern. Commit-wait is about clock uncertainty, and it overlaps with Paxos so it often adds little real latency." },
+    { label: "It re-reads the system clock until two consecutive reads agree exactly", misconception: "TrueTime never claims an exact instant — it returns an interval [earliest, latest]. Commit-wait sleeps out that interval rather than chasing an exact reading." },
+  ]}
+/>
+
+<DragOrder
+  id="05-clocks-overview-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the chain of events that turns clock skew into silent data loss under last-write-wins:"
+  items={[
+    { id: "a", label: "One node's clock drifts (or NTP steps it) behind the rest of the fleet" },
+    { id: "b", label: "A genuinely newer write is routed through that node and stamped with a past timestamp" },
+    { id: "c", label: "Conflict resolution compares timestamps and keeps the existing (higher-timestamp) row" },
+    { id: "d", label: "The newer write is discarded — but the client still receives a success response" },
+    { id: "e", label: "Weeks later a customer reports the change vanished; no log or metric flagged it" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Never order distributed writes by wall-clock time — skew silently drops data under last-write-wins. Use logical clocks (Lamport for order, vector clocks to detect concurrency) or TrueTime commit-wait for real ordering.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-clocks-overview-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate says 'we run NTP on every node, so last-write-wins by timestamp is safe.' Explain why that reasoning is wrong and what actually happens.", a: "NTP reduces clock skew on average but does not eliminate it, and LWW does not care about the average — it fails on the worst case. NTP periodically corrects each clock by slewing or stepping it, and a step can move the clock backward by hundreds of milliseconds; a failed NTP daemon or a paused VM can leave a node seconds or minutes off. During that window, a write routed through the skewed node is stamped with a timestamp that is earlier than writes that genuinely happened before it. When conflict resolution runs, LWW keeps the row with the highest timestamp, so the newer write loses to the older one. The killer detail is that the client still gets a success response: there is no exception, no failed-quorum signal, no log line distinguishing the dropped write from one that never happened. So 'we run NTP' buys you a smaller skew window, not safety — you still lose data on the one node and the one minute the clock slips, and you find out from a customer, not from monitoring." },
+    { q: "When would you reach for vector clocks over Lamport timestamps, and what does it cost you?", a: "Reach for vector clocks when you need to detect concurrency, not just impose an order — typically conflict resolution in a replicated store where two clients can write the same key without seeing each other. Lamport timestamps give a consistent total order in O(1) space, but the implication only runs one way: if A happens-before B then L(A) < L(B), but L(A) < L(B) does not mean A caused B. So Lamport cannot tell a real causal chain from two genuinely concurrent writes — it just assigns them some order, which means a conflict-resolution layer would silently pick a winner. Vector clocks fix this by carrying one counter per node; comparing two vectors tells you whether one happened-before the other or whether neither dominates, in which case the writes are concurrent and the store can keep both as siblings for the application to merge. The cost is O(n) metadata per stamped value where n is the number of nodes, and that metadata rides along with every write and grows as the cluster grows, so real systems prune or cap the vectors. The tradeoff a senior weighs is exactly this: Lamport's blindness to concurrency versus the vector's per-node metadata bloat." },
+  ]}
+/>
+
+<Recap lang="en">
+Across a fleet, wall-clock time is not an ordering primitive: quartz drift plus NTP steps (which can jump a clock backward) leave you with skew of milliseconds normally and seconds-to-minutes when something breaks. Any system that resolves conflicts by comparing client timestamps — last-write-wins in Cassandra, Riak, DynamoDB LWW mode — turns that skew into silent data loss, because the highest timestamp belongs to the fastest clock, not the latest write, and the client still gets a success. Logical clocks fix ordering by measuring causality instead of physical time: Lamport timestamps give a cheap O(1) total order but cannot detect concurrency, so they impose an arbitrary order on concurrent writes; vector clocks carry one counter per node, detect concurrency, and let the store keep conflicting siblings — at O(n) metadata that grows with the cluster. Google Spanner takes the third path: TrueTime quantifies clock uncertainty as a bounded interval ε (about 1ms via GPS and atomic clocks) and commit-wait deliberately sleeps out that window to deliver external consistency, converting a silent correctness bug into an explicit, bounded latency cost. The senior instinct is simple: never trust the wall to order distributed writes.
+</Recap>
