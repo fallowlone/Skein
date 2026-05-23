@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 1
 title: "Batching: амортизируй фиксированную цену каждой операции"
-summary: "Когда per-operation цена в основном фиксирована (syscall, network round-trip, ACK), группировка операций амортизирует её; окно размер/время решает, где throughput встречается с tail-latency."
+summary: "Когда цена операции в основном фиксирована (syscall, round-trip, ACK), группировка амортизирует её. Окно — размер плюс max-wait — решает, где throughput встречается с tail-latency."
 estMin: 8
-status: stub
+status: ready
 lessonType: topic
 level: junior
 prereqs: ["performance/01-profile-first/01-why-profile-first", "performance/02-hot-paths/01-what-makes-a-hot-path"]
@@ -21,25 +21,154 @@ sources:
   - https://www.postgresql.org/docs/current/populate.html
   - https://redis.io/docs/manual/pipelining/
 ---
-
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-Интересно, почему отправка 1000 крошечных сетевых пакетов по одной перегружает ваш сервер, а отправка их пакетами летит? Исправление — не более быстрая сеть, а амортизация фиксированной стоимости каждой операции.
+Команда две недели гоняется за медленным ingest-пайплайном. CPU простаивает, сеть простаивает, диск простаивает — а 1000 строк вставляются 9 секунд. Ничто не «занято». Профайлер наконец указывает на очевидное: 1000 отдельных `INSERT`, 1000 отдельных round-trip к Postgres, и каждый ждёт ACK перед следующим. Заменили цикл на один `COPY`. То же железо, те же строки: 14 миллисекунд. Они ничего не ускорили — просто перестали платить пошлину тысячу раз.
 </Hook>
 
-<Crux>Per-op фикс. цена доминирует? Батч. Окно = размер и max wait; бо́льшие батчи покупают throughput, платят tail-latency.</Crux>
+<Crux>Если цена операции в основном фиксирована — батчи: заплати фикс. цену один раз за N элементов вместо N раз.</Crux>
 
 <Explanation>
-У каждой операции есть фиксированная цена (header, ACK, syscall переход, запись в лог, планировщик overhead) и переменная цена (размер полезной нагрузки). Когда фиксированная доминирует и rate высок, per-operation throughput пол — это фиксированная цена. Batching сворачивает фикс. цену N операций в одну.
 
-Production-системы используют это везде: TCP Nagle, Kafka linger.ms, Postgres COPY, Redis pipelining, io_uring submission queues, syslog buffering. Сеньорный вопрос никогда не «батчить или нет», а «какой размер окна максимизирует throughput, не ломая SLO tail latency?».
+## Модель фиксированной vs переменной цены
+
+У каждой операции две цены. **Переменная** масштабируется с данными: сериализовать 4 КБ дороже, чем 40 байт. **Фиксированная** платится за вызов независимо от размера — и обычно это дорогая половина. Syscall платит переход user→kernel и обратно. Сетевой вызов платит полный round-trip плюс ACK. Запись в БД платит планирование запроса, commit транзакции и WAL flush. Строка лога платит `fsync`.
+
+Запишем общую цену N операций как `total = N * (F + V)`, где `F` — фиксированная, `V` — переменная на элемент. Когда `F` доминирует над `V`, а N велик, почти всё, что ты платишь — это `F`, повторённый N раз, и сами данные — погрешность округления. Batching меняет форму на `total = F + N * V`: ты платишь `F` **один раз** и `V` на элемент. Фиксированная цена амортизирована по всему батчу. Это единственное алгебраическое движение — вынести `F` за пределы цикла — и есть вся идея.
+
+Вот почему медленный пайплайн был медленным. CPU, диск и сеть выглядели простаивающими, потому что узкое место — это *latency*, а не utilization: каждая операция жила в ожидании завершения предыдущего round-trip. Фиксированная цена никогда не была временем CPU, видимым во flame graph — это было мёртвое время на проводе и в ядре.
+
+## Фиксированная цена живёт на каждом слое
+
+Причина, по которой batching встречается всюду — TCP Nagle, Kafka `linger.ms`, Postgres `COPY`, Redis pipelining, `io_uring` submission queues, syslog buffering — в том, что у каждого слоя стека своя пошлина за операцию. Знание, *какую именно* фикс. цену ты амортизируешь, говорит, насколько большим будет выигрыш.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Слой</th>
+        <th class="border border-border px-3 py-2 text-left">Фикс. цена на операцию</th>
+        <th class="border border-border px-3 py-2 text-left">Как батчится</th>
+        <th class="border border-border px-3 py-2 text-left">Заявленный выигрыш</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Syscall</td>
+        <td class="border border-border px-3 py-2">переход user↔kernel (~сотни нс каждый)</td>
+        <td class="border border-border px-3 py-2"><code>io_uring</code> / <code>writev</code> / батч-submission</td>
+        <td class="border border-border px-3 py-2">миллионы IOPS без syscall на операцию</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Сеть (Redis)</td>
+        <td class="border border-border px-3 py-2">полный RTT + ACK, на каждую команду</td>
+        <td class="border border-border px-3 py-2">pipelining (шлёшь много, читаешь ответы разом)</td>
+        <td class="border border-border px-3 py-2">10k PING: 1.19s → 0.25s (~5x)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Брокер (Kafka)</td>
+        <td class="border border-border px-3 py-2">produce request + ACK репликации</td>
+        <td class="border border-border px-3 py-2"><code>batch.size</code> + <code>linger.ms</code></td>
+        <td class="border border-border px-3 py-2">~8k → ~150k msg/s с включённым batching</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">База (Postgres)</td>
+        <td class="border border-border px-3 py-2">parse + plan + commit + WAL flush</td>
+        <td class="border border-border px-3 py-2"><code>COPY</code> / multi-row <code>INSERT</code></td>
+        <td class="border border-border px-3 py-2">10M строк: 9000s одиночных INSERT → 14s COPY</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Случай Redis — самая чистая иллюстрация модели. Через линию с 250 мс RTT сервер, способный обслуживать 100k запросов/сек, ограничен **4 запросами/сек**, если клиент ждёт каждый ответ — потому что узкое место это RTT, платимый на каждую команду. Запайплайнь команды — и платишь один RTT за весь батч: throughput прыгает обратно к реальному потолку сервера. Железо не менялось; фиксированная цена просто перестала повторяться.
+
+## Окно: размер и max-wait
+
+Батч не собирается бесплатно — элементы должны *накопиться* перед отправкой. Это накопление управляется **окном** с двумя ручками, и что сработает первым — закрывает батч:
+
+- **Размер** — лимит по числу или байтам. `batch.size` Kafka по умолчанию 16 КБ; заполнил — батч сбрасывается немедленно.
+- **Max-wait** — лимит по времени. `linger.ms` Kafka (по умолчанию 5 мс в современных версиях) — это максимум, сколько producer держит недозаполненный батч в надежде, что придёт ещё.
+
+Под высокой нагрузкой батчи заполняются раньше таймера, так что ты едешь на лимите размера и получаешь почти максимальную амортизацию бесплатно. Под лёгкой нагрузкой батч закрывает таймер — и вот тут прячется цена. Элемент, пришедший в пустое окно, платит полный `linger.ms` мёртвого времени, хотя система простаивает. Бо́льшие окна покупают больше throughput на единицу фикс. цены, но списывают это с **tail-latency**: элементы в начале окна ждут дольше всех. Поздние уроки уйдут глубоко в тюнинг этого; пока держи форму — окно это диал между throughput и tail-latency, и сеньорный вопрос никогда не «батчить или нет», а «какое окно держит p99 под SLO?».
+
+## Где НЕ батчить
+
+Batching не бесплатен, и сеньор знает случаи, где это чистый убыток:
+
+1. **Редкие операции.** Нет queue depth — нет элементов для амортизации, ты просто добавляешь `linger.ms` чистой latency к одному вызову. Батч из одного медленнее, чем без батча.
+2. **Жёсткий sub-миллисекундный SLO.** Если контракт `p99 < 1ms`, любое окно ожидания его ломает. Математика амортизации выигрывает по throughput, но latency тебе тратить нечем.
+3. **Causal зависимость между операциями.** Если вход операции N+1 зависит от подтверждённого результата операции N, ты не можешь запустить их группой — они последовательны по определению.
+4. **Нельзя терпеть partial-batch loss.** Батч часто подтверждается или теряется как единица. Если падение одной записи не должно откатывать её 999 соседей, или крах в середине батча не должен терять забуференные-но-неподтверждённые элементы — твоя failure model дерётся с границей батча.
+
+<TradeoffMatrix
+  id="01-basics-tradeoff-1"
+  lessonSlug="01-basics"
+  lang="ru"
+  prompt="Платёжный сервис пишет одну строку леджера на транзакцию. Объём ~30 записей/сек, SLA — «строка durable до того, как мы вернём пользователю success». Коллега предлагает буферизовать записи в 50 мс COPY-батчи, чтобы снизить нагрузку на БД. Выбери решение, которое защитит сеньор."
+  options={[
+    { name: "Отклонить batching здесь; оставить per-транзакционные durable записи", summary: "Верный инструмент, неверное место.", correct: true, justification: "При 30 записях/сек почти нет queue depth для амортизации, так что выигрыш по фикс. цене крошечный — а цена реальна: каждая транзакция теперь ждёт до 50 мс, и крах до сброса батча теряет подтверждённые-пользователю платежи. Failure model (durable до success) несовместима с partial-batch loss. Batching меняет latency и данные под риском на throughput, который тебе не нужен." },
+    { name: "Батчить в 50 мс COPY-окна, чтобы снизить нагрузку на базу", summary: "Throughput сначала.", justification: "Оптимизирует число, за которое никто не платит — 30 записей/сек это не проблема нагрузки. Покупает запас throughput, ломая фактический SLA, потому что забуференные строки не durable и могут пропасть при крахе. Неверная ось." },
+    { name: "Батчить, но подтверждать пользователю сразу, до сброса", summary: "Спрятать latency.", justification: "Хуже: ты сказал пользователю, что платёж прошёл, пока он лежит в волатильном буфере. Это превращает проблему latency в проблему потери-данных-и-лжи — ровно тот сбой, который запрещает SLA durability." },
+  ]}
+/>
+
+<Quiz
+  id="01-basics-quiz-1"
+  lessonSlug="01-basics"
+  lang="ru"
+  question="Пайплайн делает 1000 одиночных INSERT, и CPU, диск и сеть все около простоя, но это занимает 9 секунд. В чём узкое место?"
+  choices={[
+    { label: "Фикс. цена операции, платимая последовательно — каждый round-trip ждёт предыдущий ACK, так что время это мёртвая latency, а не utilization", correct: true },
+    { label: "CPU тайно насыщен, а профайлер ошибается", misconception: "Простаивающий CPU — это симптом, а не ошибка измерения: работа ждёт round-trip, так что CPU нечего делать. Добавление ядер не поможет." },
+    { label: "Строки слишком большие; уменьши размер payload", misconception: "Это атакует переменную цену. Проблема — фикс. цена операции, повторённая 1000 раз; COPY платит её один раз, независимо от размера payload." },
+  ]}
+/>
+
+<Quiz
+  id="01-basics-quiz-2"
+  lessonSlug="01-basics"
+  lang="ru"
+  question="Что отдаёт увеличение batching-окна (больший размер, дольше max-wait)?"
+  choices={[
+    { label: "Tail-latency — элементы в начале окна дольше ждут его закрытия", correct: true },
+    { label: "Throughput — большие батчи обрабатывают меньше элементов в секунду", misconception: "Наоборот: большие батчи поднимают throughput, амортизируя фикс. цену по большему числу элементов. Цена, которую они списывают — это latency, а не throughput." },
+    { label: "Ничего — большее окно строго лучше", misconception: "Бесплатного нет. Окно — это диал между throughput и tail-latency; слишком большое окно может сломать твой p99 SLO." },
+  ]}
+/>
+
+<DragOrder
+  id="01-basics-drag-1"
+  lessonSlug="01-basics"
+  lang="ru"
+  prompt="Упорядочи рассуждение сеньора перед решением батчить операцию:"
+  items={[
+    { id: "a", label: "Цена операции в основном фиксирована (syscall, RTT, commit), а не переменный payload?" },
+    { id: "b", label: "Rate операций достаточно высок, чтобы создать queue depth для амортизации?" },
+    { id: "c", label: "Producer терпит добавленное ожидание (нет жёсткого sub-мс SLO, нет causal зависимости)?" },
+    { id: "d", label: "Failure model переживёт потерю/откат на гранулярности батча?" },
+    { id: "e", label: "Только тогда: выбери окно (размер + max-wait), держащее p99 под SLO" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Inset kind="why" lang="ru">
+Причина, по которой простаивающая на вид система всё ещё медленна, в том, что batching атакует *цену latency*, а не *цену CPU*. Flame graph показывает, куда уходит время CPU; он слеп к потоку, припаркованному в ожидании round-trip. Когда utilization низкий, а throughput плохой — подозревай последовательные фикс. цены и тянись за батчем раньше, чем за железом покрупнее.
+</Inset>
+
 </Explanation>
+
+<KeyTakeaway>Batching превращает `N * (F + V)` в `F + N * V` — фикс. цена платится один раз вместо N. Стоит того лишь при queue depth и запасе latency. Окно (размер + max-wait) — диал: больше покупает throughput, списывает tail-latency.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -48,21 +177,19 @@ Production-системы используют это везде: TCP Nagle, Kaf
   questions={[
     {
       q: "В одном абзаце: объясни, почему batching существует и где его использовать, а где нет.",
-      a: "Batching существует, потому что у многих операций есть фиксированная цена per-call (network round-trip, syscall, disk seek, ACK overhead), доминирующая над переменной (сами данные). Без batching'а фикс. цена платится per-item; с batching'ом — per-batch. Для high-rate операций экономия драматична: Kafka producer с 8k msg/sec до 150k msg/sec — только включением batching'а; БД с 5k вставок/сек до 500k/сек через COPY. Используй batching когда (1) операция имеет высокую фикс. цену per-call (network, syscall, transactional commit), (2) операции приходят с rate'ом, создающим queue depth, (3) producer терпит малый latency penalty (типично мс - десятки мс). Не батчить когда (1) операция редка (нет queue depth), (2) каждая операция должна быть подтверждена до следующей (causal dependency), (3) система имеет hard sub-мс latency требования, (4) failure model не терпит partial-batch loss."
+      a: "Batching существует, потому что у многих операций есть фиксированная цена per-call (network round-trip, syscall, commit транзакции, запись в лог), доминирующая над переменной (сами данные). Без batching'а фикс. цена платится per-item; с batching'ом — один раз per-batch, превращая N*(F+V) в F+N*V. Для high-rate операций экономия драматична: Kafka producer прыгает примерно с 8k до 150k msg/sec только включением batching'а; Postgres вставляет 10M строк за 14s через COPY там, где одиночные INSERT занимали 9000s; Redis pipelining делает 10k PING за 0.25s вместо 1.19s. Используй batching когда (1) у операции высокая фикс. цена per-call, (2) операции приходят достаточно быстро, чтобы создать queue depth, и (3) producer терпит малый latency penalty (мс - десятки мс). Не батчить когда (1) операция редка, и нет queue depth для амортизации, (2) каждая операция должна быть подтверждена до начала следующей (causal dependency), (3) у системы жёсткий sub-миллисекундный latency SLO, или (4) failure model не терпит partial-batch loss или отката на гранулярности батча."
     },
     {
-      q: "Какие два измерения имеет batching-окно?",
-      a: "Размер батча (или max bytes/max records) и max wait time. Что наступило первым — завершает окно."
+      q: "Какие два измерения имеет batching-окно и что закрывает окно?",
+      a: "Размер (лимит по числу или max-bytes, напр. Kafka batch.size) и max-wait время (напр. Kafka linger.ms). Что наступило первым — закрывает окно и отправляет батч. Под высокой нагрузкой первым срабатывает лимит размера, давая почти максимальную амортизацию бесплатно; под лёгкой нагрузкой первым срабатывает таймер — и вот тут проявляется цена latency."
     },
     {
-      q: "Почему batching добавляет latency для первых элементов в окне?",
-      a: "Элементы, пришедшие сразу после отправки батча, должны ждать либо заполнения батча, либо истечения max wait времени перед обработкой, что добавляет_latency, пропорциональное настройкам окна."
+      q: "Почему система может выглядеть полностью простаивающей (простой CPU, диск, сеть) и всё ещё быть медленной, и почему batching это чинит?",
+      a: "Потому что узкое место — это latency, а не utilization. Каждая операция живёт в ожидании завершения предыдущего round-trip или commit, так что ни один ресурс не насыщен — потоки припаркованы. Flame graph слеп к этому, потому что измеряет время CPU, а не мёртвое время на проводе. Batching чинит это, платя фикс. цену round-trip/commit один раз за всю группу вместо последовательно per-item, убирая мёртвое время, не делая ни одну отдельную операцию быстрее."
     }
   ]}
 />
 
-<KeyTakeaway>Batching амортизирует фикс. цену по N операциям. Окно = max-size + max-wait. Большие батчи увеличивают throughput, но увеличивают tail-latency. Настраивай под SLO ceiling, а не под максимальный throughput.</KeyTakeaway>
-
 <Recap lang="ru">
-Batching существует, чтобы амортизировать фиксированные расходы, доминирующие над переменными в высокоскоростных операциях. Двумерное окно из batch size и max wait времени контролирует tradeoff throughput-latency. Элементы в начале окна испытывают увеличенную latency из-за ожидания закрытия окна. Production-системы применяют batching на нескольких слоях, чтобы усилить эффект, но каждый слой требует правильной конфигурации и наблюдаемости, чтобы не создавать новые bottleneck'и downstream.
+Batching существует, чтобы амортизировать фиксированную цену операции — переход syscall, network round-trip, ACK, commit транзакции или запись в лог — по многим элементам, превращая N*(F+V) в F+N*V. Он окупается, когда фикс. цена доминирует над переменной, когда rate достаточно высок для queue depth, и когда есть запас latency, чтобы его потратить. У окна две ручки, размер и max-wait, и что сработает первым — закрывает батч: под нагрузкой едешь на лимите размера, под лёгкой нагрузкой таймер закрывает окно и списывает ожидание с tail-latency. Не батчь редкие операции, жёсткие sub-мс SLO, causally зависимые операции или системы, не переживающие partial-batch loss. Повторяющаяся сеньорная ловушка — оптимизировать throughput, за который никто не платит, ломая контракт latency или durability — так что настраивай окно под SLO, а не под максимальный throughput.
 </Recap>
