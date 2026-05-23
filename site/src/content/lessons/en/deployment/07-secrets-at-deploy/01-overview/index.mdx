@@ -6,12 +6,173 @@ unit: 07-secrets-at-deploy
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Secrets at deploy"
-summary: "Coming soon — Deployment and infra"
+status: ready
+title: "Secrets at deploy: where they enter, where they leak"
+summary: "Secrets must enter at deploy/runtime, never baked into the image. A Kubernetes Secret is base64-encoded, not encrypted — anyone with read access or a leaked manifest reads it in one second."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["runtime-injection", "base64-not-encryption", "etcd-encryption-at-rest", "env-vs-file-mounts", "external-secrets-operator", "secret-rotation"]
+estMin: 16
+sources:
+  - https://kubernetes.io/docs/concepts/configuration/secret/
+  - https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/
+  - https://external-secrets.io/latest/introduction/overview/
+  - https://developer.cyberark.com/blog/environment-variables-dont-keep-secrets-best-practices-for-plugging-application-credential-leaks/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A teammate commits `secret.yaml` to the GitOps repo. It looks safe — the password field is `cGFzc3dvcmQxMjM=`, an opaque-looking blob. Six months later a security audit runs `base64 -d` on it and reads `password123` in under a second. The repo is private, but it has 40 contributors, three forks, and a full git history that no force-push can scrub. The "encrypted" secret was never encrypted. base64 is encoding, not a lock.
+</Hook>
+
+<Crux>Secrets enter at deploy/runtime, never baked into the image — and a Kubernetes Secret is base64-encoded, not encrypted.</Crux>
+
+<Explanation>
+
+## The cardinal rule: never bake secrets into the image
+
+The first failure happens before deploy. A `Dockerfile` with `ENV API_KEY=sk-live-...` or a `COPY .env .` bakes the secret into an image layer. That layer is content-addressed, cached, and pushed to a registry — and `docker history` plus `docker save` will replay every layer's contents. Deleting the secret in a later layer does not remove it; the earlier layer still exists and is pullable by anyone with registry read access. The same applies to build args: `--build-arg TOKEN=...` lands in image metadata.
+
+The rule a senior never breaks: **secrets enter at deploy or runtime, not at build time.** The image is a public-ish artifact — treat it as if it will leak. Configuration that changes per environment (dev, staging, prod) and anything secret is injected when the container starts, from outside the image. This is also why the same image promotes cleanly from staging to prod: it carries no environment inside it.
+
+## The Kubernetes Secret trap: base64 is not encryption
+
+A Kubernetes `Secret` stores values base64-encoded. New engineers read the opaque string and assume it is protected. It is not. base64 is a reversible transport encoding — `echo cGFzcw== | base64 -d` reverses it in one second with zero key. Anyone who can read the Secret object, or who gets a copy of the manifest, reads the plaintext. The threat model is wide: a leaked YAML in a ticket, a backup, a misconfigured RBAC role, or the git history of a GitOps repo.
+
+Worse, by default the value sits **unencrypted in etcd**, the cluster's key-value store. Anyone with etcd access — a node compromise, a stolen backup — reads every secret in the cluster as plaintext. Encryption at rest is **not on by default**; you must explicitly configure an `EncryptionConfiguration` so the API server encrypts before writing to etcd. Even then, there is a trap: enabling it does not re-encrypt existing secrets. You must rewrite every Secret (e.g. `kubectl get secrets -A -o json | kubectl replace -f -`) after turning it on, or old values stay in the clear. Production setups back the encryption with a KMS provider (AWS KMS, GCP KMS) so the key lives outside the cluster.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Belief</th>
+        <th class="border border-border px-3 py-2 text-left">Reality</th>
+        <th class="border border-border px-3 py-2 text-left">Consequence</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">"base64 hides the value"</td>
+        <td class="border border-border px-3 py-2">Reversible in &lt;1s, no key</td>
+        <td class="border border-border px-3 py-2">A leaked manifest = a leaked password</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">"etcd encrypts my Secrets"</td>
+        <td class="border border-border px-3 py-2">Plaintext by default</td>
+        <td class="border border-border px-3 py-2">etcd backup theft = full secret dump</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">"I turned on encryption"</td>
+        <td class="border border-border px-3 py-2">Old Secrets not re-encrypted</td>
+        <td class="border border-border px-3 py-2">Pre-existing values stay in the clear</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">"Env vars are fine"</td>
+        <td class="border border-border px-3 py-2">Leak via crash dumps + <code>/proc</code></td>
+        <td class="border border-border px-3 py-2">Secrets indexed in error trackers</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Env vars vs file mounts: the injection style matters
+
+Once a secret is outside the image, you inject it two ways, and the choice has real security weight. **Environment variables** are simple — `process.env.DB_PASSWORD` — but they leak. They are inherited by every child process you spawn, they are readable at `/proc/<pid>/environ` by anything with the right access, and the killer one: a crash dump captures the full environment. Observability SDKs (Sentry, Datadog) routinely serialize process state on an error, so a stack trace ends up with your live API key indexed in plaintext in a third-party log store. Many app frameworks also print the environment on a fatal error page.
+
+**Mounted files** are the safer default. The secret lands as a file (e.g. `/run/secrets/db-password`, mode `0400`, on a tmpfs that never hits disk). It is not in the environment, not inherited by children, and not in `/proc/.../environ`. The decisive operational win: **file mounts update in place when the secret rotates**, while env vars are frozen at container start and need a pod restart to pick up a new value. For a credential you rotate every 30–90 days, that difference is the gap between a rolling restart and a silent in-place swap.
+
+<Inset kind="why" lang="en">
+Env vars feel safe because they are invisible in the code. But "invisible to me" is not "invisible to an attacker." The exact properties that make env vars convenient — global to the process, inherited by children, dumped on crash — are the properties that leak them. A file you read once and never re-export has a far smaller blast radius.
+</Inset>
+
+## The real toolchain: pull from a manager, encrypt before commit
+
+Hand-managed Secrets do not scale. The production answer is to keep the source of truth in a dedicated secrets manager (HashiCorp Vault, AWS/GCP Secrets Manager) and pull from it at deploy/runtime:
+
+- **External Secrets Operator (ESO)** — a controller that watches an external manager and syncs values into native Kubernetes Secrets on a `refreshInterval`. Your manifests reference an `ExternalSecret`, never the raw value.
+- **Secrets Store CSI Driver** — mounts secrets from the manager directly into the pod as files, bypassing etcd entirely; the value lives only in the pod's tmpfs.
+- **Sealed Secrets** — for GitOps where you must commit something: it asymmetrically *encrypts* the secret so only the in-cluster controller can decrypt. Now the blob in git is genuinely safe to commit, unlike a base64 Secret.
+- **Vault dynamic secrets** — Vault generates a short-lived, per-app credential on demand (a DB user that exists for an hour, then auto-revokes). Nothing long-lived to leak; a stolen credential expires before it is useful.
+
+<TradeoffMatrix
+  id="07-secrets-deploy-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A GitOps team must commit secret config to a private repo so Argo CD can apply it. Pick the approach."
+  options={[
+    { name: "Sealed Secrets: asymmetrically encrypt the value; only the in-cluster controller can decrypt", summary: "Encrypt before commit.", correct: true, justification: "This is the GitOps-native answer. The committed SealedSecret is real ciphertext — the public key encrypts, and only the controller's private key in the cluster decrypts. A leaked repo, fork, or full git history reveals nothing usable. It needs no external vault, which fits a small team's minimal-dependency posture. The tradeoff is that it is static: rotation means re-sealing and re-committing." },
+    { name: "Commit a normal Kubernetes Secret with base64 values", summary: "Base64 it.", justification: "The classic trap. base64 is encoding, not encryption — anyone with repo read access runs base64 -d and reads the plaintext in a second. Forks and git history make this irreversible once leaked. This is exactly the failure the lesson opens with." },
+    { name: "External Secrets Operator pulling from Vault", summary: "Sync from a manager.", justification: "Excellent for dynamic, externally-managed secrets and the right choice at scale — but it adds an external manager dependency the prompt's GitOps team did not ask for, and it does not put a committable artifact in the repo. Strong, but heavier than needed here." },
+    { name: "Put the values in plaintext in a ConfigMap", summary: "ConfigMap.", justification: "A ConfigMap is for non-sensitive config and is plaintext by design — no encoding, no encryption, no access separation from regular config. Committing secrets there is strictly worse than even a base64 Secret." },
+  ]}
+/>
+
+<Quiz
+  id="07-secrets-deploy-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A Kubernetes Secret's data field shows cGFzc3dvcmQ=. How protected is the value?"
+  choices={[
+    { label: "Not protected — base64 is reversible encoding; base64 -d reveals it instantly", correct: true },
+    { label: "Encrypted with the cluster's key; only the API server can read it", misconception: "base64 is not encryption — there is no key involved. Anyone who can read the Secret or its manifest decodes it in one second." },
+    { label: "Hashed, so the original can't be recovered", misconception: "base64 is fully reversible, not a hash. The plaintext is trivially recovered." },
+    { label: "Encrypted at rest in etcd by default", misconception: "Encryption at rest is off by default; you must configure EncryptionConfiguration explicitly, and even then re-encrypt existing secrets." },
+  ]}
+/>
+
+<Quiz
+  id="07-secrets-deploy-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why are mounted secret files often preferred over environment variables in production?"
+  choices={[
+    { label: "Files aren't inherited by child processes, aren't in /proc/.../environ, and update in place on rotation", correct: true },
+    { label: "Files are encrypted on disk while env vars are plaintext", misconception: "Mounted secrets typically sit on a tmpfs and aren't 'encrypted on disk' — the win is reduced leak surface and in-place rotation, not disk encryption." },
+    { label: "Env vars can only hold short strings", misconception: "Length isn't the issue; the issue is that env vars leak via crash dumps, child processes, and /proc, and are frozen until a restart." },
+    { label: "Files load faster than environment variables", misconception: "Performance is not the reason — the reason is leak surface and rotation behavior." },
+  ]}
+/>
+
+<DragOrder
+  id="07-secrets-deploy-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the secrets-handling decisions a senior makes, safest-first:"
+  items={[
+    { id: "a", label: "Never bake the secret into the image — no ENV, no COPY .env, no --build-arg" },
+    { id: "b", label: "Keep the source of truth in a secrets manager (Vault / cloud Secrets Manager)" },
+    { id: "c", label: "Pull at deploy/runtime via ESO or the CSI driver (or seal it for GitOps)" },
+    { id: "d", label: "Prefer file mounts over env vars to shrink the leak surface" },
+    { id: "e", label: "Rotate on a schedule; dynamic short-lived creds remove long-lived secrets entirely" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Secrets enter at deploy/runtime, never in the image. A k8s Secret is base64-encoded, not encrypted, and etcd is plaintext by default — enable encryption at rest, prefer file mounts, and pull from a real manager.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-secrets-deploy-retrieval"
+  lang="en"
+  questions={[
+    { q: "A colleague says 'our Kubernetes Secrets are safe because the values are base64-encoded.' Correct them precisely.", a: "base64 is a reversible transport encoding, not encryption — there is no key, and base64 -d recovers the plaintext in about one second. So a base64 Secret offers zero confidentiality against anyone who can read the Secret object or get a copy of the manifest: a leaked YAML in a ticket, a backup, a misconfigured RBAC role, or the git history of a GitOps repo. On top of that, by default the value sits unencrypted in etcd, so an etcd backup theft or node compromise dumps every secret in the cluster as plaintext. The real protections are: enable encryption at rest with an EncryptionConfiguration (ideally backed by a KMS so the key lives outside the cluster), and remember it does not re-encrypt existing Secrets — you must rewrite them after enabling it. For committing to git, use Sealed Secrets, which actually encrypts so only the in-cluster controller can decrypt." },
+    { q: "Why do many teams inject secrets as mounted files rather than environment variables, and what does that buy them?", a: "Environment variables are convenient but leaky. They are global to the process and inherited by every child process you spawn, they are readable at /proc/<pid>/environ, and a crash dump captures the entire environment — so observability SDKs like Sentry or Datadog can serialize a live API key into a third-party log store in plaintext, and many frameworks print the environment on a fatal error page. Mounted files avoid all of that: the secret lands as a file (often mode 0400 on a tmpfs that never hits disk), it is not in the environment, not inherited by children, and not in /proc/.../environ. The decisive operational benefit is rotation — a mounted file can be updated in place when the secret rotates, while an env var is frozen at container start and needs a pod restart to pick up a new value. For credentials rotated every 30 to 90 days, that is the difference between a rolling restart and a silent in-place swap." },
+  ]}
+/>
+
+<Recap lang="en">
+Getting secrets into a deployed app safely starts with one rule: they enter at deploy or runtime, never baked into the image, because image layers are cached, pushed to a registry, and replayable with docker history — a secret deleted in a later layer still lives in an earlier one. The Kubernetes Secret trap is that base64 is encoding, not encryption: a leaked manifest is a leaked password, and by default the value sits in etcd as plaintext, so you must explicitly enable encryption at rest (KMS-backed) and re-encrypt the existing Secrets afterward. Injection style matters too — environment variables leak through child processes, /proc, and crash dumps that get indexed by error trackers, while mounted files shrink that surface and, crucially, rotate in place without a restart. At scale the answer is a real toolchain: keep the source of truth in Vault or a cloud Secrets Manager, pull at runtime with the External Secrets Operator or the CSI driver, encrypt-before-commit with Sealed Secrets for GitOps, and prefer short-lived dynamic credentials so a stolen secret expires before it is useful.
+</Recap>
