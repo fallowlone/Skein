@@ -6,12 +6,178 @@ unit: 07-dogpile
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Dogpile effect: concurrent cache misses that crush the origin"
-summary: "When a popular key expires, all concurrent requests miss simultaneously and pile onto the database — the pattern, why it differs from stampede, and how mutex locks and probabilistic early expiry prevent it."
+status: ready
+title: "Dogpile effect: the concurrency collision at the instant a hot key expires"
+summary: "When a hot key expires, every in-flight request misses at the same instant and recomputes the same value in parallel — one expensive query becomes N. Single-flight locks, XFetch early expiry, and TTL jitter break the collision."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["dogpile-effect", "single-flight", "probabilistic-early-expiration", "stale-while-revalidate", "ttl-jitter", "recompute-lock"]
+estMin: 16
+sources:
+  - https://en.wikipedia.org/wiki/Cache_stampede
+  - https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+  - https://pkg.go.dev/golang.org/x/sync/singleflight
+  - https://pjatk.in/avoiding-cache-stampede.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+3am page. The homepage feed query — a 200ms aggregation that normally runs maybe twice a minute — is suddenly running thousands of times a second. The database is at 100% CPU and the connection pool is exhausted. Nothing was deployed. Then someone reads the cache config: the feed key has a 5-minute TTL, and at 02:55:00 it expired. At that instant ~5000 requests were in flight, every one of them missed the same key, and all 5000 went to the database at once. One expired key, 5000 simultaneous identical queries.
+</Hook>
+
+<Crux>The dogpile is a timing collision: one hot key expires and every in-flight request misses at the same instant and stampedes the origin.</Crux>
+
+<Explanation>
+
+## Dogpile is the concurrency-at-expiry angle
+
+There is a broader topic — cache stampede / thundering herd — about a missing key flooding the origin. The dogpile effect is the sharpest, most specific face of it: the collision that happens *precisely at the moment of expiry* on a *single hot key*. The hotter the key, the worse the dogpile, because hotness means many requests are concurrently in flight, and a TTL expiry is an event that hits all of them in the same millisecond.
+
+Walk the timeline. The key is cached and serving thousands of reads per second straight from memory — the origin is idle. The TTL clock ticks to zero. Request #1 reads the cache, gets a miss, and starts recomputing. While it is still recomputing (it takes 200ms), requests #2 through #5000 arrive, each reads the cache, each *also* gets a miss — because #1 has not written the new value yet — and each *also* starts recomputing. The gap between "first miss" and "value rewritten" is the entire window in which the dogpile forms. A naive cache-aside read has no coordination across those concurrent misses, so the origin goes from idle to N-parallel in one tick.
+
+## The cost math is the whole problem
+
+The reason the dogpile is dangerous is multiplicative, and the numbers are unforgiving. Take an expensive operation — say a 200ms database aggregation. At steady state behind a warm cache, it runs almost never. At the expiry instant, it runs once *per concurrent request*. One expensive query × N concurrent requests = origin meltdown.
+
+Plug in real traffic. The Wikipedia framing: a page that takes 3 seconds to render at 10 requests per second means 30 processes recomputing simultaneously the moment it expires. Now scale it: 5000 requests/sec hitting a 200ms query means up to 5000 simultaneous database connections, each holding the query for 200ms — far past most pool limits (a Postgres pool is often 20–100 connections). The pool exhausts, healthy unrelated queries queue behind the herd, and a cache *miss* on one key takes the whole database down. The query cost was never the issue at steady state; the concurrency multiplier at the expiry instant is.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+        <th class="border border-border px-3 py-2 text-left">How it breaks the collision</th>
+        <th class="border border-border px-3 py-2 text-left">Cost / failure mode a senior weighs</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Single-flight lock (mutex)</td>
+        <td class="border border-border px-3 py-2">One request recomputes; the other N−1 wait or serve stale</td>
+        <td class="border border-border px-3 py-2">The lock itself serializes; no timeout → deadlock if the recomputer crashes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">XFetch (probabilistic early expiry)</td>
+        <td class="border border-border px-3 py-2">Each reader may recompute slightly <em>before</em> expiry, alone, so the key never expires under N readers</td>
+        <td class="border border-border px-3 py-2">Needs to store delta (recompute cost); tune β; a little extra recompute work</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Stale-while-revalidate</td>
+        <td class="border border-border px-3 py-2">Serve the stale value instantly; one background job refreshes</td>
+        <td class="border border-border px-3 py-2">Readers briefly see stale data; needs a soft-TTL / hard-TTL split</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">TTL jitter</td>
+        <td class="border border-border px-3 py-2">Randomize each key's TTL so a batch of keys never expires together</td>
+        <td class="border border-border px-3 py-2">Spreads keys apart but does nothing for a single hot key's own herd</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Single-flight: collapse N misses into one recompute
+
+The first reflex is a lock. On a miss, the first request acquires a lock for that key and recomputes; everyone else who misses during the window blocks on the lock and, when it's released, reads the freshly written value instead of recomputing. Go's `golang.org/x/sync/singleflight` is the canonical implementation: call `Do(key, fn)` and if a call for that key is already in flight, additional callers wait and receive the original call's result rather than re-executing `fn`. Reported impact is dramatic — Reddit cut database peak load ~3× with request coalescing on feed endpoints, and flooding a server with 100 concurrent requests for one key can deduplicate ~95% of the redundant expensive runs, turning many 3–5s waits into one 3–5s run shared by all callers.
+
+The senior caveat: a *local* mutex only coalesces within one process. With 20 app instances behind a load balancer, each instance runs its own single-flight, so the origin still sees up to 20 concurrent recomputes — better than 5000, but not one. To get one recompute across the fleet you need a *distributed* lock (a Redis `SET key val NX PX 30000`, for example), which buys cross-process coordination at the cost of a network round-trip and a new dependency on the lock store's availability.
+
+<Inset kind="why" lang="en">
+The reason "serve stale while one recomputes" is so attractive is that the dogpile only exists in the window between first-miss and value-rewritten. If readers never have to *wait* on that window — they get the previous value instantly and a single worker refreshes in the background — the collision has nothing to collide over. You trade a few seconds of staleness for never paying the herd. For a homepage feed, staleness of a few seconds is invisible; for a bank balance it is not. That domain judgement is the actual decision.
+</Inset>
+
+## XFetch: never let the hot key expire under load
+
+Locking fixes the symptom after the miss; probabilistic early expiration (XFetch, from the VLDB 2015 paper "Optimal Probabilistic Cache Stampede Prevention" by Vattani, Chierichetti, and Lowenstein) attacks the cause — it makes the key practically never expire while it is hot. Each reader, on a hit, rolls a die: it *voluntarily* recomputes early with a probability that rises as expiry approaches. The decision rule is:
+
+`time() − delta * beta * log(rand(0,1)) ≥ expiry`
+
+where `delta` is how long the last recompute took, `beta` is a tuning knob (the paper proves `beta = 1` is effectively optimal), and `log(rand(0,1))` draws from an exponential distribution. The elegance: a more expensive value (large `delta`) gets refreshed earlier and more eagerly, and because each reader decides independently, the *first* lucky reader recomputes alone — well before the TTL hits zero — and rewrites the key, so when the herd arrives the value is fresh and nobody else misses. The collision is dissolved because the expiry event no longer coincides with peak concurrency.
+
+## Senior failure modes: the cure that becomes the disease
+
+Each fix introduces its own production hazard, and the dogpile postmortems are usually about the *fix* failing, not the original miss.
+
+The recompute lock can become a serialization bottleneck. If the recompute is slow and the key is extremely hot, every reader now blocks on one lock holder for the full recompute duration — you have converted a parallelism storm into a latency cliff where p99 for that endpoint becomes the recompute time for *everyone*. Worse is a lock *without a timeout*: if the single recomputer crashes or hangs mid-flight while holding the lock, every reader blocks forever — a self-inflicted total outage where the database is healthy and idle but every request is deadlocked waiting on a lock that will never be released. Always set a lock TTL (and make it longer than the worst-case recompute, or the lock expires mid-recompute and you re-open the dogpile). TTL jitter is real but narrow: it stops a *batch* of keys cached together from expiring in the same second, but it does nothing for one individual hot key — that key still has exactly one expiry instant and its own herd waiting on it. Reaching for jitter to fix a single-hot-key dogpile is a common misdiagnosis.
+
+<TradeoffMatrix
+  id="07-dogpile-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A single hot key (the homepage feed, 200ms to recompute) takes the DB down every time its TTL expires under ~5000 concurrent req/s. Pick the primary fix."
+  options={[
+    { name: "Single-flight / request coalescing: one recompute runs, the rest wait or serve stale until it's written", summary: "Collapse N→1.", correct: true, justification: "This directly targets the dogpile window: the first miss recomputes, and every other concurrent miss is deduplicated onto that one in-flight call instead of hitting the DB. It is the most direct collapse of N concurrent recomputes into one. Use a distributed lock if you have multiple instances, and crucially give the lock a timeout so a crashed recomputer can't deadlock all readers." },
+    { name: "Add TTL jitter (randomize the TTL by ±10%) to the feed key", summary: "Stagger expiries.", justification: "Jitter is the right tool for a batch of keys that were cached together and would otherwise expire in the same second. It does nothing here: there is exactly one hot key, so there is exactly one expiry instant and one herd. Randomizing when that single instant occurs doesn't reduce the herd that piles on at it." },
+    { name: "Lower the TTL so the value is fresher", summary: "Shorter TTL.", justification: "Backwards. A shorter TTL means the key expires more often, so the dogpile fires more frequently, not less. TTL controls staleness, not the concurrency collision at the expiry instant." },
+    { name: "Add a recompute lock with no timeout so exactly one request ever recomputes", summary: "Strict lock.", justification: "Half right and dangerously incomplete. One recompute is the goal, but a lock without a timeout is the classic deadlock-all-readers failure: if the single recomputer crashes or hangs while holding the lock, every reader blocks forever on a lock that is never released — a total outage with a healthy, idle DB." },
+  ]}
+/>
+
+<Quiz
+  id="07-dogpile-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why does the dogpile form even though only one key expired?"
+  choices={[
+    { label: "Between the first miss and the moment the recomputed value is written back, every other concurrent request also reads a miss and starts its own recompute", correct: true },
+    { label: "The cache deletes neighbouring keys when one key expires", misconception: "TTL expiry is per-key; one key expiring does not evict others. The herd comes from concurrency on that one key, not from collateral eviction." },
+    { label: "The database slows down and that causes the cache to expire", misconception: "Causality is reversed: the expiry comes first (TTL hits zero), and the resulting herd is what slows the database — not the other way around." },
+    { label: "Cache reads are slower than database reads under load", misconception: "Cache reads are far faster; the problem is that thousands of those fast reads all return a miss at the same instant and fall through to the slow origin together." },
+  ]}
+/>
+
+<Quiz
+  id="07-dogpile-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You add a recompute lock but skip the lock timeout. What's the senior-level risk?"
+  choices={[
+    { label: "If the single recomputer crashes while holding the lock, every reader blocks forever — a total outage even though the database is healthy and idle", correct: true },
+    { label: "The lock makes recompute faster", misconception: "A lock never makes the recompute itself faster; it only ensures one recompute runs. The risk is in what happens to the holder, not its speed." },
+    { label: "Readers will see stale data", misconception: "A lock-and-wait pattern serves the fresh value once it's written; the staleness concern belongs to stale-while-revalidate, not to a missing lock timeout." },
+    { label: "The TTL will be ignored", misconception: "The cache TTL and the lock TTL are independent; omitting the lock timeout doesn't disable the cache TTL — it just removes the deadlock escape hatch." },
+  ]}
+/>
+
+<DragOrder
+  id="07-dogpile-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order the timeline of a dogpile on one hot key:"
+  items={[
+    { id: "a", label: "The hot key is served from cache for thousands of req/s; the origin is idle" },
+    { id: "b", label: "The TTL clock reaches zero and the key expires" },
+    { id: "c", label: "Request #1 reads a miss and starts the 200ms recompute" },
+    { id: "d", label: "Requests #2..N arrive, all read a miss (no value written yet) and each starts its own recompute" },
+    { id: "e", label: "N parallel identical queries hit the origin at once; pool exhausts, p99 explodes" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The dogpile is the collision at one hot key's expiry instant: every in-flight miss recomputes in parallel. Collapse N→1 with a single-flight lock (with a timeout) or stop the key expiring under load with XFetch.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-dogpile-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain to a teammate why the dogpile is specifically a concurrency-at-expiry problem, not just 'the cache missed', and why a single hot key is the worst case.", a: "A single cache miss is harmless — one request goes to the origin and writes the value back. The dogpile is what happens when many requests miss the same key in the same instant before any of them has written the value back. The dangerous window is the gap between the first miss and the value being rewritten: during that window, a naive cache-aside read has no coordination, so every concurrent request that arrives also sees a miss and also starts recomputing. A hot key is the worst case precisely because hotness means many requests are concurrently in flight at all times, so when its single TTL expiry event fires, it hits the maximum number of in-flight requests simultaneously. One expensive query times N concurrent requests is the meltdown: a 200ms query at 5000 req/s becomes 5000 simultaneous connections, exhausting a pool that holds 20–100. The fix has to address the concurrency in that window — collapse the N misses into one recompute (single-flight) or make sure the key never actually expires while it's hot (XFetch early recompute)." },
+    { q: "A junior adds a recompute lock and the next dogpile is worse, not better. What are the two ways the lock itself became the failure?", a: "First, the lock can become a serialization bottleneck. If the recompute is slow and the key is very hot, every reader now blocks on the single lock holder for the full recompute duration. You have traded a parallelism storm for a latency cliff: instead of the database being hammered, every request to that endpoint now waits the entire recompute time, so p99 for the endpoint becomes the recompute latency for everyone — and if requests pile up faster than they drain, queues and timeouts cascade. Second, and worse, is a lock with no timeout. If the one request holding the lock crashes or hangs mid-recompute, the lock is never released, and every subsequent reader blocks forever waiting on it. That is a total outage where the database is completely healthy and idle but every request is deadlocked on a dead lock. The fixes are to give the lock a timeout that is longer than the worst-case recompute (so a dead holder is auto-released, but a live recompute isn't cut off mid-flight), and to let waiters serve the stale value rather than block, so a slow recompute degrades to slight staleness instead of a latency cliff." },
+  ]}
+/>
+
+<Recap lang="en">
+The dogpile effect is the concurrency collision at the exact instant a single hot key expires: every request in flight reads a miss in the same window — before the first recompute has written the value back — and they all stampede the origin in parallel. The danger is multiplicative, not about the query cost itself: one expensive operation times N concurrent requests is the meltdown, and a 200ms query at 5000 req/s becomes 5000 simultaneous connections that exhaust a 20–100 connection pool and take down healthy unrelated traffic with it. Three fixes attack it from different angles. A single-flight lock collapses the N concurrent misses into one recompute while the rest wait or serve stale — but a local mutex only coalesces per process (use a distributed lock across instances), and a lock without a timeout deadlocks every reader if the recomputer crashes. XFetch (probabilistic early expiration, VLDB 2015) makes the hot key never actually expire under load by having each reader independently roll to recompute slightly early, so the first lucky reader refreshes alone before the herd arrives. TTL jitter staggers a batch of keys cached together but does nothing for one individual hot key's own herd. The senior judgement is matching the fix to the shape of the problem — and remembering that most dogpile postmortems are about the fix deadlocking or serializing, not the original miss.
+</Recap>
