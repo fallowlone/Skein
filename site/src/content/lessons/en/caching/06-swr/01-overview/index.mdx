@@ -6,12 +6,189 @@ unit: 06-swr
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Stale-while-revalidate: serve stale, refresh in background"
-summary: "How SWR decouples freshness from latency — serve the cached version immediately, then update it silently, eliminating the tail-latency spike of synchronous revalidation."
+status: ready
+title: "Stale-while-revalidate: serve stale now, refresh in the background"
+summary: "SWR decouples freshness from latency at two layers — the HTTP Cache-Control directive and the client data-fetching model. You trade bounded staleness for an erased p99 revalidation spike, because no request ever blocks on the origin."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["stale-while-revalidate", "cache-control-directives", "stale-if-error", "background-revalidation", "request-coalescing", "bounded-staleness"]
+estMin: 16
+sources:
+  - https://datatracker.ietf.org/doc/html/rfc5861
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control
+  - https://swr.vercel.app/docs/api
+  - https://www.fastly.com/documentation/guides/concepts/edge-state/cache/stale/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A pricing API has `max-age=60`. p50 latency is 8ms — gorgeous on the dashboard. But every 60 seconds the entry expires, and the next request blocks on a 400ms origin round-trip to refresh it. With thousands of req/s, that "next request" is hundreds of users, every minute, sampled straight into your p99. The graph is a sawtooth: flat at 8ms, then a 400ms spike on the dot of every TTL boundary. The team spent a sprint chasing a "slow origin" that was never slow — it was just synchronously revalidating in the hot path of a real user.
+</Hook>
+
+<Crux>Serve the stale value instantly, refresh it in the background — so revalidation never lands in a user's request, only its result does.</Crux>
+
+<Explanation>
+
+## The sawtooth is the cost of synchronous revalidation
+
+Plain TTL caching has one cruel property: the moment an entry expires, *someone* pays the full origin cost to refill it. With `max-age` alone, that someone is a live user — the unlucky request that arrives first after expiry blocks until the origin answers. Your steady-state latency is the cache-hit time; your tail latency is the cache-miss time; and a TTL guarantees you periodically sample the miss into real traffic. The higher your request rate, the more users hit each boundary, the fatter your p99.
+
+Stale-while-revalidate breaks the link. When an entry crosses its freshness window but is still inside the SWR window, the cache does two things at once: it returns the **stale** value immediately (the user gets the cache-hit latency, ~8ms) and it kicks off an **asynchronous** refresh against the origin. The user who triggered the refresh never waits for it. The fresh value lands a few hundred milliseconds later and serves *the next* requests. Revalidation still happens — it just stopped happening in the foreground.
+
+The trade you are making is explicit and bounded: **you accept that some responses are slightly stale in exchange for deleting the p99 spike.** Staleness is capped by your SWR window; latency is capped by your cache-hit time. A senior reads `stale-while-revalidate=N` as "I am fine with data up to N seconds past its freshness deadline, as long as no human waits on the refresh."
+
+## RFC 5861: two windows, then stale-if-error as the floor
+
+This is a real HTTP directive, standardised in RFC 5861, and it works in CDNs *and* browsers. Two `Cache-Control` extensions matter:
+
+- `stale-while-revalidate=N` — for N seconds after the entry goes stale, serve it immediately and revalidate in the background.
+- `stale-if-error=N` — for N seconds after it goes stale, if the origin returns an error (500/502/503/504) or is unreachable, keep serving the stale copy instead of propagating the error.
+
+A production header reads like a layered defence:
+
+```
+Cache-Control: max-age=60, stale-while-revalidate=300, stale-if-error=86400
+```
+
+Read it as three nested windows. **0–60s:** fresh, served directly. **60–360s:** stale, served instantly while a background refresh runs (the SWR window). **on origin failure, up to 24h:** still served from the last good copy rather than throwing a 503 at the user (the SIE floor). The first window optimises freshness, the second kills tail latency, the third turns an outage into degraded-but-up.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Strategy</th>
+        <th class="border border-border px-3 py-2 text-left">Who pays the origin round-trip</th>
+        <th class="border border-border px-3 py-2 text-left">Max staleness</th>
+        <th class="border border-border px-3 py-2 text-left">p99 at TTL boundary</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>max-age=60</code> only</td>
+        <td class="border border-border px-3 py-2">A live user, every 60s</td>
+        <td class="border border-border px-3 py-2">0 (always fresh)</td>
+        <td class="border border-border px-3 py-2">Spikes to origin latency</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>max-age=60, swr=300</code></td>
+        <td class="border border-border px-3 py-2">A background fetch — no user</td>
+        <td class="border border-border px-3 py-2">Up to 60+300s</td>
+        <td class="border border-border px-3 py-2">Flat (no foreground miss)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">SWR + <code>stale-if-error</code></td>
+        <td class="border border-border px-3 py-2">Background; none during outage</td>
+        <td class="border border-border px-3 py-2">Up to the SIE window</td>
+        <td class="border border-border px-3 py-2">Flat, survives origin down</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+The names are mirror images. `stale-while-revalidate` is the *happy-path* tool — the origin is fine, you just don't want users to wait for the refresh. `stale-if-error` is the *failure-path* tool — the origin is sick, and stale is better than a 503. They are independent: you can ship one without the other, but pairing them is the senior default, because SWR alone still hands the user an error once the origin breaks and the SWR window lapses.
+</Inset>
+
+## The same idea, one layer up: SWR/React Query on the client
+
+The HTTP directive lives in the network. The exact same pattern lives in client data-fetching libraries — the library `SWR` is literally named after it, and React Query (TanStack Query) implements the same model. When a component asks for a key, the library returns the **cached value from the last fetch immediately** (no spinner if it has seen the key before), then fires a background request and swaps in the fresh data when it arrives. The user sees instant content that quietly self-corrects.
+
+The client model adds two production-grade behaviours the raw header doesn't:
+
+- **Request coalescing / single-flight.** If two components call `useSWR("/api/user")` in the same tick, SWR makes **one** request and both get the same result. The default `dedupingInterval` is 2000ms — repeat calls for the same key inside 2s are collapsed onto the in-flight promise. React Query does the same; its analogous `staleTime` defaults to 0 (refetch eagerly) versus SWR's 2s.
+- **Revalidation triggers.** Both libraries revalidate on window focus and on network reconnect by default, so a tab left open for an hour shows fresh data the instant you click back into it — again, served stale-first, refreshed in the background.
+
+Whether it is a CDN edge node or a React hook, the contract is identical: *return what you have now, fetch what's correct next, never block the human on the refresh.*
+
+<TradeoffMatrix
+  id="06-swr-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A product-listing API behind a CDN sees the classic per-minute p99 sawtooth from synchronous revalidation. Catalogue data can be a few minutes stale without harm. Pick the header."
+  options={[
+    { name: "max-age=60, stale-while-revalidate=300, stale-if-error=86400", summary: "Layered windows.", correct: true, justification: "This is the textbook fit. The 60s freshness window keeps normal staleness tiny; the 300s SWR window means once an entry expires the edge serves it instantly and refreshes in the background, so no live request ever eats the origin round-trip — the p99 sawtooth flattens. The 24h stale-if-error floor turns an origin outage into degraded-but-up instead of a wall of 503s. Bounded staleness (a few minutes) is exactly what the prompt allows." },
+    { name: "max-age=600 — just lengthen the TTL so the spike happens less often", summary: "Bigger TTL.", justification: "It moves the spike from once a minute to once every ten minutes, but it does not remove it: a live user still blocks on revalidation at every boundary, so your p99 still has teeth. It also makes worst-case staleness worse (10 min) without ever decoupling freshness from latency. SWR is strictly better here — same or smaller staleness, zero foreground miss." },
+    { name: "no-cache — revalidate with the origin on every request", summary: "Always check.", justification: "This forces a conditional request to the origin on every hit, reintroducing exactly the round-trip latency SWR exists to hide, on every single request rather than once per TTL. It guarantees freshness the prompt explicitly says it doesn't need, and pays the maximum possible latency for it." },
+    { name: "max-age=300, no SWR, no stale-if-error", summary: "Plain TTL.", justification: "Still a synchronous-revalidation cache: every 5 minutes a real user pays the origin round-trip, and the moment the origin errors the user gets the error. You keep the sawtooth and have no protection against an outage. Adding the two stale-* directives is the whole point." },
+  ]}
+/>
+
+## Where it bites: stampedes, unbounded staleness, and auth
+
+SWR is not free of failure modes — it relocates them. Three bite in production.
+
+**The background-refresh stampede.** A naive edge fires one background revalidation *per request* that finds the entry stale. If a popular key expires while it's taking 10k req/s, you can launch thousands of simultaneous refreshes at an origin that expected one — a self-inflicted thundering herd, except now it's background fetches melting the origin instead of users seeing latency. The fix is single-flight: the first stale request triggers exactly one refresh (Cloudflare marks it `UPDATING`), and everyone else is served stale until it lands. Add jitter to refresh timing so many keys don't expire and revalidate in lockstep.
+
+**Unbounded staleness when the origin is down.** This is the classic `stale-if-error` mistake in reverse. If the origin is unreachable, a background revalidation *fails* — and a poorly built cache may then keep extending the stale copy forever, "cache until heat death." You need a hard ceiling: a finite SWR window, a finite stale-if-error window. Past those, the cache must fail loudly rather than serve content of unknown age. Staleness must always be *bounded*.
+
+**Serving stale auth and permissions.** This is the dangerous one. SWR is correct for content that is fine a few minutes old — a product list, a blog post, an analytics tile. It is *wrong* for authorization decisions, feature flags that gate access, or anything where stale = a security regression. Serve a revoked user a 5-minute-stale "you still have access" and you have shipped a vulnerability. The senior rule: never SWR a permission check. Per-user, security-sensitive responses get short, synchronous, validated freshness — or they aren't cached at all.
+
+<Quiz
+  id="06-swr-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="With `Cache-Control: max-age=60, stale-while-revalidate=300`, a request arrives 90 seconds after the entry was cached. What does the user get?"
+  choices={[
+    { label: "The stale cached value immediately, plus a background refresh is triggered for the next requests", correct: true },
+    { label: "A blocking wait while the cache revalidates with the origin, then the fresh value", misconception: "That's plain max-age behaviour. Inside the SWR window the whole point is that the user is NOT blocked — they get stale instantly while the refresh happens out of band." },
+    { label: "A 504, because the entry is past its 60-second max-age", misconception: "Past max-age but inside the 300s SWR window the entry is serveable as stale; it only becomes a hard miss after 60+300s." },
+    { label: "Fresh data, because stale-while-revalidate revalidates synchronously before responding", misconception: "Synchronous revalidation is exactly what SWR removes. The 'while' means the refresh runs WHILE the stale response is already on its way to the user." },
+  ]}
+/>
+
+<Quiz
+  id="06-swr-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A popular key expires under heavy traffic and your edge fires one background revalidation per stale-hit. What's the production risk, and the fix?"
+  choices={[
+    { label: "A thundering herd of background refreshes hits the origin at once; fix it with single-flight coalescing so only one refresh runs per key", correct: true },
+    { label: "Nothing — background refreshes are free because the user isn't waiting", misconception: "The user isn't waiting, but the origin still receives every one of those refreshes. Thousands of simultaneous background fetches can melt the origin just like a foreground stampede." },
+    { label: "The stale value gets served forever; fix it by removing the SWR window", misconception: "Removing SWR brings back the synchronous-revalidation spike. The herd problem is about coalescing concurrent refreshes, not about the staleness window." },
+    { label: "Users get errors; fix it by raising max-age", misconception: "Users get stale-but-fast responses, not errors. Raising max-age doesn't address concurrent background fetches stampeding the origin." },
+  ]}
+/>
+
+<DragOrder
+  id="06-swr-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order what happens to a request that arrives during the stale-while-revalidate window:"
+  items={[
+    { id: "a", label: "The cache finds the entry is past max-age but still inside the SWR window" },
+    { id: "b", label: "It returns the stale cached value to the user immediately — no origin wait" },
+    { id: "c", label: "It triggers exactly one background revalidation against the origin (single-flight)" },
+    { id: "d", label: "The fresh response arrives and replaces the cached entry out of band" },
+    { id: "e", label: "Subsequent requests are served the fresh value (or stale again, if it lapsed)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>SWR serves stale instantly and revalidates in the background, trading bounded staleness for an erased p99 spike. Single-flight the refresh, cap staleness with a hard window, and never SWR auth.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-swr-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why max-age alone produces a p99 sawtooth, and how adding stale-while-revalidate flattens it.", a: "With max-age alone, an entry is either fresh (served from cache, fast) or expired (the next request must block on a full origin round-trip to refill it). Because a TTL guarantees periodic expiry, you periodically force a live user to pay the cache-miss latency, and at high request rates many users hit each boundary at once — those blocked requests are sampled straight into your p99, producing a sawtooth that spikes to origin latency on every TTL boundary. stale-while-revalidate=N adds a second window after expiry during which the cache returns the stale value immediately AND launches the refresh asynchronously. The user who triggered the refresh is served instantly from the stale copy and never waits; the fresh value lands a few hundred milliseconds later and serves the next requests. Revalidation still happens, it just moved out of the user's request path, so the foreground miss — and the spike it caused — disappears. You are trading bounded staleness (up to N seconds past freshness) for a flat tail latency." },
+    { q: "When is stale-while-revalidate the wrong tool, and what failure modes must a senior guard against?", a: "SWR is correct only when slightly-stale data is harmless: catalogues, articles, analytics tiles. It is the wrong tool for authorization, permission checks, feature flags gating access, or anything where stale equals a security regression — serving a revoked user a few-minutes-stale 'you still have access' is a shipped vulnerability, so per-user security-sensitive responses get short synchronous validated freshness or no caching. Even on safe content, two failure modes bite. First, a background-refresh stampede: a naive cache fires one refresh per stale-hit, so a hot key under load launches thousands of simultaneous origin fetches — a self-inflicted thundering herd. Fix it with single-flight coalescing (one refresh per key, everyone else served stale until it lands) plus jitter so keys don't revalidate in lockstep. Second, unbounded staleness when the origin is down: background revalidation fails and a sloppy cache extends the stale copy forever. Staleness must always be bounded by finite SWR and stale-if-error windows; past them the cache fails loudly rather than serve content of unknown age." },
+  ]}
+/>
+
+<Recap lang="en">
+Stale-while-revalidate decouples freshness from latency: instead of letting a live user pay the origin round-trip every time a TTL expires, the cache returns the stale value instantly and revalidates in the background, so the p99 sawtooth of synchronous revalidation flattens. It lives at two layers — the HTTP `Cache-Control: stale-while-revalidate=N` directive (RFC 5861, honoured by CDNs and browsers), and client libraries like SWR and React Query that return last-known data immediately, coalesce duplicate requests via dedupingInterval, and revalidate on focus and reconnect. The trade is explicit: bounded staleness for erased tail latency. Pair it with `stale-if-error` so an origin outage degrades gracefully instead of throwing 503s. Then mind the three failure modes: single-flight the background refresh or a hot key triggers a thundering herd, cap staleness with finite windows or a down origin serves content of unknown age forever, and never apply SWR to auth, permissions, or anything where stale data is a security bug.
+</Recap>
