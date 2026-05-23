@@ -6,12 +6,188 @@ unit: 08-putting-it-together
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Caching system design: combining all layers"
-summary: "How to compose CDN, reverse-proxy, application, and database caches into a coherent strategy — choosing TTLs, invalidation triggers, and fallback paths that hold under real traffic."
+status: ready
+title: "Composing the cache stack: one coherent strategy across CDN, proxy, Redis, and the DB"
+summary: "A multi-layer cache is only as correct as the way its layers compose. This capstone is the senior framework: which layer owns which data, how TTLs cascade, where a purge propagates, and how each layer fails open under origin loss."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["cache-layering", "ttl-composition", "cache-invalidation", "private-vs-public-caching", "stale-if-error", "purge-propagation"]
+estMin: 17
+sources:
+  - https://www.theregister.com/2015/12/30/steam_security_blip_explained/
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control
+  - https://blog.cloudflare.com/instant-purge/
+  - https://cloud.google.com/cdn/docs/cache-invalidation-overview
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+On 25 December 2015, under a Christmas-load DoS attack, Valve deployed a caching config that "incorrectly cached web traffic for authenticated users." For roughly an hour, Steam Store pages built for one logged-in user were cached at the edge and served to others: billing addresses, purchase history, the last two digits of a credit card, the last four of a Steam Guard phone number, email. Around 34,000 users were exposed before Valve took the store down. The application was correct. The bug lived in the seam *between* layers: an authenticated page that never said `private`, sitting in a shared cache that assumed it could.
+</Hook>
+
+<Crux>A multi-layer cache is only as correct as its layers compose; a TTL or policy ignoring the layer below serves stale or leaked data.</Crux>
+
+<Explanation>
+
+## Every layer is a cache; the question is who owns what
+
+By the time a byte reaches a user it may have passed through four caches: the CDN edge, a reverse proxy (Varnish/nginx) in front of the app, an application cache (Redis), and the database's own buffer/query cache. Each one is a correctness boundary, not just a speed trick. The senior move is to assign **ownership** before tuning anything: decide which layer is the source of truth for each kind of data, and let the others hold copies only with rules that respect that source.
+
+The clean division most teams converge on:
+
+- **CDN edge** owns *shared, public, cacheable-by-URL* responses: static assets, anonymous HTML, public API reads. It must never hold anything user-specific.
+- **Reverse proxy** owns *origin-shielding*: collapsing duplicate requests (request coalescing) so a cold cache doesn't dogpile the app, plus a short cache of hot public responses close to origin.
+- **Redis** owns *computed application state*: the expensive query result, the rendered fragment, the session — keyed by something the app controls, so the app can invalidate it precisely.
+- **DB** owns *truth*. Its query/buffer cache accelerates reads but is invalidated by writes automatically; you rarely tune it, you respect it.
+
+Get ownership wrong and no TTL saves you. The Steam failure was an ownership violation: a personalized response (Redis/origin's job) ended up owned by a shared CDN cache that had no way to know it was personalized.
+
+## TTLs must cascade downward, not upward
+
+The single most common composition bug: an *outer* layer holds a longer TTL than an *inner* one. If the CDN's `s-maxage=3600` but the app revalidates its Redis fragment every 60s, then for up to an hour the CDN serves a version the app already considers dead. Invalidation at the inner layer is invisible to the outer layer — the edge keeps shipping the corpse.
+
+The rule: **freshness windows should shrink as you move away from the origin, or you must purge the outer layer explicitly on every inner change.** `Cache-Control: public, s-maxage=60, stale-while-revalidate=600` is read by the *shared* cache (CDN) via `s-maxage`; `max-age` targets the *private* browser cache; they are deliberately different numbers for different layers. Mixing them up — giving the browser a year and the CDN a minute, when you meant the reverse — is how a deploy goes live everywhere except the one cache users actually hit.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Resource</th>
+        <th class="border border-border px-3 py-2 text-left">CDN (shared)</th>
+        <th class="border border-border px-3 py-2 text-left">Browser (private)</th>
+        <th class="border border-border px-3 py-2 text-left">Invalidation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Hashed JS/CSS asset</td>
+        <td class="border border-border px-3 py-2"><code>public, max-age=31536000, immutable</code></td>
+        <td class="border border-border px-3 py-2">same — 1 year</td>
+        <td class="border border-border px-3 py-2">New hash = new URL. Never purge.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Anonymous marketing HTML</td>
+        <td class="border border-border px-3 py-2"><code>s-maxage=300, stale-while-revalidate=86400</code></td>
+        <td class="border border-border px-3 py-2"><code>max-age=0, must-revalidate</code></td>
+        <td class="border border-border px-3 py-2">Tag-based purge on publish.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Logged-in dashboard HTML</td>
+        <td class="border border-border px-3 py-2"><code>private, no-store</code> (CDN must skip)</td>
+        <td class="border border-border px-3 py-2"><code>private, no-cache</code></td>
+        <td class="border border-border px-3 py-2">Never enters a shared cache.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Public API read (price list)</td>
+        <td class="border border-border px-3 py-2"><code>s-maxage=30, stale-if-error=3600</code></td>
+        <td class="border border-border px-3 py-2"><code>no-cache</code></td>
+        <td class="border border-border px-3 py-2">Surrogate-key purge on price change.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## `private` is the seam where data leaks
+
+The Steam lesson is that **shared caches default to caching cacheable-looking GETs**, and a 200 with no `Cache-Control` looks cacheable. The protection for personalized content is one token: `private` tells shared caches "this is for one user, do not store me" while still letting the browser cache it. For genuinely sensitive responses you escalate to `no-store` (nobody caches, anywhere). The dangerous middle ground is a logged-in page that *omits* the directive and trusts that the app delivers it straight to the client — true until a CDN, a proxy, or a misconfigured surrogate-key rule sits in the path. Developers rarely harden GET endpoints for intermediary caching because they assume direct-to-client delivery; that assumption is exactly what an edge config change can revoke without telling them.
+
+<Inset kind="why" lang="en">
+Why not just cache everything and add `Vary: Cookie`? Because `Vary: Cookie` makes the cache key include the *entire* cookie, so every distinct session is a separate cache entry — hit rate collapses toward zero and you've paid CDN cost for a private cache. Worse, one missed cookie normalization and two users share a key. For per-user content the correct answer is almost always `private`/`no-store`, not a clever `Vary`.
+</Inset>
+
+## Invalidation is a propagation problem, not an event
+
+When the source of truth changes, the change has to walk *outward* through every layer that holds a copy — and each layer invalidates differently. Flushing Redis does nothing to the CDN; purging the CDN does nothing to the reverse proxy still holding a stale object. Three mechanisms, in order of preference:
+
+1. **Versioned/immutable URLs** for static assets: a new content hash is a new URL, so there is nothing to invalidate — old and new coexist and the old simply ages out. This is why hashed bundles ship `immutable, max-age=31536000`.
+2. **Tag / surrogate-key purge** for dynamic content: tag every response with keys (`product:42`, `category:shoes`), then one purge call drops every cached response carrying that tag across the edge, regardless of URL. Cloudflare's instant purge propagates globally in **under 150ms**; tag-based and broad purges typically take **seconds to a few minutes** to reach every edge node.
+3. **TTL + stale-while-revalidate** as the eventual-consistency floor: even with no purge, the data self-heals within its freshness window.
+
+The senior design wires the purge into the *write path*: the mutation that changes truth also enqueues the purge for every outer layer, in order. Skip a layer and you've built a system that is correct in the database and wrong at the edge — the hardest class of bug to reproduce, because it only shows up on the cached request.
+
+## Fail open: stale beats down
+
+Composition has to survive the origin disappearing. `stale-if-error` lets each shared layer keep serving its last good copy when origin returns 5xx or is unreachable — `s-maxage=60, stale-if-error=86400` means "fresh for a minute, but rather than 503 the user, serve up-to-a-day-old content while origin is down." This turns an origin outage into a soft degradation instead of a wall of errors. The tradeoff a senior weighs: how stale is *acceptable* per resource. A price list served an hour stale during an outage is fine; a stock-availability flag served stale can oversell. Set `stale-if-error` long for things that tolerate staleness, short or zero for things that must be correct or absent.
+
+<TradeoffMatrix
+  id="08-putting-it-together-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A logged-in dashboard page renders per-user data and sits behind a CDN. Pick the caching policy for that HTML response."
+  options={[
+    { name: "Cache-Control: private, no-cache — the CDN must not store it; the browser may cache but must revalidate", summary: "Keep it off shared caches.", correct: true, justification: "private is the single directive that scopes a response to one user: shared caches (CDN, proxy) refuse to store it, while the browser may keep a copy and revalidate. This is exactly the protection the Steam 2015 incident showed is non-optional — a personalized 200 with no directive is treated as cacheable by shared caches and can be served to the wrong user. For data this sensitive many teams go further to no-store, but private/no-cache is the correct floor." },
+    { name: "Cache-Control: public, s-maxage=30 — short edge TTL so it refreshes often", summary: "Just keep the TTL short.", justification: "A short TTL does not make per-user content safe at a shared cache. For up to 30s the CDN serves one user's dashboard to everyone who hits that edge — the exact leak class from the incident. TTL controls staleness, not audience; public on personalized data is the bug." },
+    { name: "Cache it publicly but add Vary: Cookie so each session gets its own entry", summary: "Vary on the cookie.", justification: "Vary: Cookie keys the cache on the whole cookie, so every session is a distinct entry — hit rate collapses and you pay CDN cost for a private cache. One missed cookie normalization and two users collide on a key. For per-user content private/no-store beats a fragile Vary." },
+    { name: "No Cache-Control header — trust the app to deliver it straight to the client", summary: "Say nothing.", justification: "This is precisely the Steam failure: a cacheable-looking GET with no directive is stored by shared caches by default. Omitting the header does not mean private; it means undefined, and an edge config change can start caching it without warning." },
+  ]}
+/>
+
+<Quiz
+  id="08-putting-it-together-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your CDN has s-maxage=3600 on a page, but the app revalidates its Redis fragment for that page every 60s. After a content edit, what does a user see?"
+  choices={[
+    { label: "Potentially the old content for up to an hour — the CDN keeps serving its copy regardless of the Redis change, unless you purge the edge", correct: true },
+    { label: "The new content within 60s, because Redis is the source of truth and propagates up", misconception: "Inner-layer invalidation does not propagate outward on its own. The CDN holds its own copy for s-maxage=3600 and never asks Redis until that expires or you purge it." },
+    { label: "An error, because the two TTLs conflict", misconception: "Mismatched TTLs don't error — they silently serve stale. The outer/longer TTL wins for the user until it expires or is purged." },
+    { label: "The new content immediately, because s-maxage only affects browsers", misconception: "s-maxage is precisely the directive shared caches like the CDN obey; max-age targets the private browser cache." },
+  ]}
+/>
+
+<Quiz
+  id="08-putting-it-together-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You want a hashed asset bundle (app.a1b2c3.js) to be cached as aggressively as possible. What's the right policy?"
+  choices={[
+    { label: "Cache-Control: public, max-age=31536000, immutable — and ship a new filename when content changes", correct: true },
+    { label: "public, max-age=60 and purge the CDN on every deploy", misconception: "A versioned URL never needs purging or a short TTL: new content gets a new hash = new URL. A 60s TTL throws away the whole point of content hashing." },
+    { label: "no-store, so users always fetch the latest", misconception: "no-store on a hashed immutable asset defeats caching entirely — re-downloading a byte-identical file on every load. Hashing exists so you can cache it forever." },
+    { label: "private, max-age=31536000 so only the browser caches it", misconception: "A public static asset benefits from being cached at the shared CDN edge too; private needlessly forces every user to re-fetch from origin." },
+  ]}
+/>
+
+<DragOrder
+  id="08-putting-it-together-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A product is edited. Order how a correct invalidation propagates outward through the stack:"
+  items={[
+    { id: "a", label: "The write commits to the DB — the source of truth changes; its query cache invalidates automatically" },
+    { id: "b", label: "The write path deletes/updates the affected Redis keys (the computed fragment, the cached query)" },
+    { id: "c", label: "The same path purges the reverse proxy's stale object for that resource" },
+    { id: "d", label: "It issues a tag/surrogate-key purge to the CDN (product:42), dropping every edge copy" },
+    { id: "e", label: "Browsers self-heal on their next revalidate; stale-while-revalidate covers the gap" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Assign each layer its owned data, shrink TTLs outward (or purge the outer layer on every inner change), scope per-user responses with `private`/`no-store`, version static assets, and let `stale-if-error` fail open.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-putting-it-together-retrieval"
+  lang="en"
+  questions={[
+    { q: "A page is correct in the database and correct in Redis, but users still see stale content. Walk through where the bug is and how the layers should have been wired.", a: "The bug is in an outer cache that nobody invalidated. A request passes through CDN edge, reverse proxy, Redis, and the DB; each holds an independent copy with its own freshness rules. Invalidation does not propagate outward on its own — flushing Redis does nothing to the CDN, and purging the CDN does nothing to a proxy still holding a stale object. So if the CDN has s-maxage=3600 and you edited the content and updated Redis, the edge keeps serving its hour-old copy until that TTL expires or you explicitly purge it. The correct wiring puts invalidation on the write path: the mutation that changes truth also (1) updates/deletes the relevant Redis keys, (2) purges the reverse proxy, and (3) issues a tag or surrogate-key purge to the CDN, in outward order. Where you can, sidestep invalidation entirely with versioned/immutable URLs for static assets, and lean on stale-while-revalidate so anything you forgot to purge still self-heals within its freshness window." },
+    { q: "Why is a missing `private` directive on an authenticated page a security bug and not just a cache-hit-rate issue, and what's the correct policy spectrum?", a: "Because shared caches (CDN, reverse proxy) treat a 200 GET with no Cache-Control as cacheable by default — that was the root of the Steam Christmas 2015 incident, where authenticated Store pages carrying billing addresses, purchase history, partial card and phone digits, and email were cached and served to other logged-in users for roughly an hour, affecting around 34,000 people. The directive that scopes a response to one user is private: it tells shared caches not to store the response while still allowing the browser's private cache to keep it. The spectrum a senior reaches for, from least to most strict: public for genuinely shared content; private for per-user responses that the browser may cache; no-cache to force revalidation each time; and no-store for sensitive responses that must never be written to any cache. The trap is the un-annotated authenticated page — developers assume direct-to-client delivery, so they never set a directive, and that assumption silently breaks the moment an edge config change, a proxy, or a surrogate-key rule starts caching it." },
+  ]}
+/>
+
+<Recap lang="en">
+A cache stack is correct only when its layers compose. Start by assigning ownership: the CDN holds shared public responses, the reverse proxy shields origin and coalesces requests, Redis holds computed application state under app-controlled keys, and the DB owns truth. TTLs must shrink as you move outward, or every inner invalidation needs an explicit outer purge — otherwise the edge keeps serving content the app already killed, the bug that only appears on the cached request. Scope per-user responses with `private` (or `no-store` when sensitive), because shared caches store an un-annotated 200 by default — the seam where authenticated data leaks, as the Steam 2015 incident showed. Wire invalidation into the write path so a mutation propagates outward through Redis, proxy, and a tag-based CDN purge in order; prefer versioned/immutable URLs so static assets never need purging at all. Finally, fail open: `stale-if-error` lets each layer serve a last-good copy through an origin outage, turning 5xx walls into soft degradation — tuned long for resources that tolerate staleness and short for those that must be correct or absent.
+</Recap>
