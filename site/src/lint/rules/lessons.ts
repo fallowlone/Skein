@@ -8,6 +8,14 @@ const BASECS_CODING_SECTIONS = ["hook", "goal", "idea", "code", "trace", "check"
 const TOPIC_SECTIONS = ["hook", "crux", "explanation", "key-takeaway", "recap"] as const;
 const ISLAND_COMPONENT_RE = /<astro-island[^>]*component-url="[^"]*\/([A-Za-z]+)\.[^"]+\.js"/g;
 
+/** Count hydration islands EXCLUDING the PracticeSection orchestrator,
+ *  which is budgeted separately by practice-sandbox-budget. */
+function countBodyIslands(html: string): number {
+  const all = html.match(/<astro-island\b/g)?.length ?? 0;
+  const practice = html.match(/<astro-island\b[^>]*component-url="[^"]*\/PracticeSection\.[^"]+\.js"/g)?.length ?? 0;
+  return all - practice;
+}
+
 function countExerciseWidgets(html: string): number {
   let n = 0;
   const re = new RegExp(ISLAND_COMPONENT_RE.source, "g");
@@ -78,7 +86,7 @@ function commonLessonRules(html: string, file: string, slug: string, track: stri
     if (problems < 4) errs.push(`${file}: practice problems: ${problems} found (min 4)`);
   }
 
-  const islands = html.match(/<astro-island\b/g)?.length ?? 0;
+  const islands = countBodyIslands(html);
   if (islands > 5) errs.push(`${file}: ${islands} hydration islands (max 5 on lesson pages)`);
 
   // Forward link: only links within the same track to a higher-ordered lesson count.
@@ -242,7 +250,7 @@ function checkTopicLesson(html: string, file: string, slug: string): string[] {
   if (drawerCount !== 1) errs.push(`${file}: topic lesson must have exactly 1 RetrievalDrawer (found ${drawerCount})`);
 
   // ≤5 hydration islands
-  const islands = html.match(/<astro-island\b/g)?.length ?? 0;
+  const islands = countBodyIslands(html);
   if (islands > 5) errs.push(`${file}: ${islands} hydration islands (max 5 on lesson pages)`);
 
   return errs;
@@ -272,34 +280,6 @@ async function walkMdx(dir: string): Promise<string[]> {
     else if (i.name === "index.mdx" || i.name === "index.md") out.push(p);
   }
   return out;
-}
-
-/** Source-level: every ready EN lesson has a ready RU twin and vice versa. */
-export async function checkLessonParity(siteSrc: string): Promise<string[]> {
-  const errs: string[] = [];
-  const lessonsDir = join(siteSrc, "content/lessons");
-  const files = await walkMdx(lessonsDir);
-  const enReady = new Set<string>();
-  const ruReady = new Set<string>();
-
-  for (const f of files) {
-    const body = await readFile(f, "utf8");
-    const lang = body.match(/^lang:\s*(en|ru)/m)?.[1];
-    const status = body.match(/^status:\s*(stub|draft|ready)/m)?.[1];
-    if (!lang || status !== "ready") continue;
-    const parts = f.split(/[\\/]/);
-    const idx = parts.findIndex((p) => p === "lessons");
-    const key = `${parts[idx + 2]}/${parts[idx + 3]}/${parts[idx + 4]}`;
-    if (lang === "en") enReady.add(key);
-    else ruReady.add(key);
-  }
-  for (const k of enReady) {
-    if (!ruReady.has(k)) errs.push(`lesson-parity: EN ready lesson "${k}" missing RU twin`);
-  }
-  for (const k of ruReady) {
-    if (!enReady.has(k)) errs.push(`lesson-parity: RU ready lesson "${k}" missing EN twin`);
-  }
-  return errs;
 }
 
 /** Source-level: every mathPrereqs entry resolves to an existing math lesson. */

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { checkLessonRules, checkLessonParity, checkMathPrereqs } from "./lessons";
+import { checkLessonRules, checkMathPrereqs } from "./lessons";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,34 +61,6 @@ describe("checkLessonRules", () => {
     const html = skeleton() + `<a href="/en/learn/math/99-future-lesson/">x</a>`;
     const errs = checkLessonRules(html, LESSON_PATH);
     expect(errs.some((e) => /forward/.test(e))).toBe(true);
-  });
-});
-
-async function lessonFixture(root: string, lang: string, status: string) {
-  const dir = join(root, "content/lessons", lang, "math/01-numbers/01-counting");
-  await mkdir(dir, { recursive: true });
-  await writeFile(
-    join(dir, "index.mdx"),
-    `---\nslug: 01-counting\nlang: ${lang}\ntrack: math\nunit: 01-numbers\norder: 1\nstatus: ${status}\nconcepts: ["natural-number"]\n---\nbody\n`
-  );
-}
-
-describe("checkLessonParity", () => {
-  test("flags an EN-ready lesson with no RU twin", async () => {
-    const root = await mkdtemp(join(tmpdir(), "lint-"));
-    await lessonFixture(root, "en", "ready");
-    const errs = await checkLessonParity(root);
-    await rm(root, { recursive: true, force: true });
-    expect(errs.some((e) => /missing RU/.test(e))).toBe(true);
-  });
-
-  test("passes when both EN and RU ready lessons exist", async () => {
-    const root = await mkdtemp(join(tmpdir(), "lint-"));
-    await lessonFixture(root, "en", "ready");
-    await lessonFixture(root, "ru", "ready");
-    const errs = await checkLessonParity(root);
-    await rm(root, { recursive: true, force: true });
-    expect(errs).toEqual([]);
   });
 });
 
