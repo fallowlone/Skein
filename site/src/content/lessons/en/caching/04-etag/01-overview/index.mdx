@@ -6,12 +6,231 @@ unit: 04-etag
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "ETags: conditional requests and zero-byte responses"
-summary: "How entity tags enable conditional GET — the server returns 304 Not Modified when content unchanged, saving bandwidth and reducing latency."
+status: ready
+title: "ETags and conditional requests: 304 saves the bytes, not the round-trip"
+summary: "The server fingerprints a resource into an ETag; the client revalidates with If-None-Match and gets a 304 with an empty body when nothing changed. The classic prod failure is an ETag that differs per node, so no client ever sees a 304."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["entity-tag", "conditional-request", "if-none-match", "strong-vs-weak-etag", "etag-vs-last-modified", "revalidation"]
+estMin: 16
+sources:
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/ETag
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/If-None-Match
+  - https://en.wikipedia.org/wiki/HTTP_ETag
+  - https://rednafi.com/misc/etag-and-http-caching/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The dashboard polls `/api/config` every 30 seconds. You added ETags to "save bandwidth," shipped it, and the egress bill didn't move. You open DevTools: every poll is a clean `200 OK` with the full 8 KB body. Not one `304`. The config hasn't changed in days. The bug isn't in the client — you scaled the API to three pods last month, each computes its own ETag from a per-process counter, and the load balancer round-robins every request to a different pod. The client's `If-None-Match` never matches whoever answers next.
+</Hook>
+
+<Crux>An ETag fingerprints content; the client echoes it so a match returns 304 with an empty body — saving the bytes, not the round-trip.</Crux>
+
+<Explanation>
+
+## The mechanism: fingerprint, echo, compare
+
+A conditional request is a two-party agreement about a resource version. On the first response the server attaches an `ETag` header — an opaque token, usually quoted, that identifies *this exact version* of the body: `ETag: "a3f5c901"`. The client stores it next to the cached copy.
+
+On the next request the client asks "give me this only if it changed" by echoing the token in `If-None-Match: "a3f5c901"`. The server recomputes (or looks up) the current ETag and compares:
+
+- **Match** → the client already has the current version. The server replies `304 Not Modified` with **no body** and refreshed headers. The client serves its cached copy.
+- **Mismatch** → the version moved. The server replies `200 OK` with the full new body and a new `ETag`.
+
+The token is opaque on purpose: only the origin that minted it gets to interpret it. The client never parses it, never reasons about it — it just stores and echoes. That opacity is what lets you change your ETag scheme (hash → version number → mtime+size) without touching a single client.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">Direction</th>
+        <th class="border border-border px-3 py-2 text-left">Header / status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1. First fetch</td>
+        <td class="border border-border px-3 py-2">client → server</td>
+        <td class="border border-border px-3 py-2"><code>GET /api/config</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2. Origin fingerprints</td>
+        <td class="border border-border px-3 py-2">server → client</td>
+        <td class="border border-border px-3 py-2"><code>200 OK</code> + <code>ETag: "a3f5c901"</code> + body</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3. Revalidate</td>
+        <td class="border border-border px-3 py-2">client → server</td>
+        <td class="border border-border px-3 py-2"><code>If-None-Match: "a3f5c901"</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">4a. Unchanged</td>
+        <td class="border border-border px-3 py-2">server → client</td>
+        <td class="border border-border px-3 py-2"><code>304 Not Modified</code> — empty body</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">4b. Changed</td>
+        <td class="border border-border px-3 py-2">server → client</td>
+        <td class="border border-border px-3 py-2"><code>200 OK</code> + new <code>ETag</code> + new body</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## What 304 actually saves — and what it doesn't
+
+This is the number that decides whether ETags are worth it: **a 304 saves the body bytes, but you still pay the full round-trip.** The client must send the request and wait for the response before it knows the body is unchanged. If your RTT to origin is 80 ms, every poll still costs 80 ms of latency whether the answer is `200` or `304`.
+
+So the win is purely egress and download time. An 8 KB JSON config that returns `304` ships ~200 bytes of response headers instead of 8 KB — a 40× reduction on the wire, multiplied across every polling client. For a 2 MB product image that rarely changes, a `304` saves the entire 2 MB transfer on every revalidation. The bigger and more rarely-changing the resource, the better the trade.
+
+But ETags are not free on the server. To answer a conditional request you must know the current ETag, which usually means **reading or recomputing the resource** — hashing the file, querying the row, rendering the response — just to compare and then throw the body away. That is the core CPU-vs-bandwidth tradeoff: you spend origin CPU to avoid network bytes. If the ETag is a cheap lookup (a stored version column, a file's mtime+size from `stat`), the trade is obviously good. If it means SHA-256 hashing a 2 MB body on every request, you may burn more CPU than the bandwidth was worth.
+
+<Inset kind="why" lang="en">
+A `304` is not a cache hit in the CDN sense — it is a *revalidation*. The resource still travels the wire (just the headers) and still consumes a connection and a round-trip. This is why `Cache-Control: max-age` and ETags solve different problems: `max-age` lets the client skip the request entirely while fresh; the ETag is what it falls back to *after* freshness expires, to avoid re-downloading something it already has. They compose — fresh-by-max-age, then revalidate-by-ETag — they don't replace each other.
+</Inset>
+
+## Strong vs weak: byte-identical vs semantically equivalent
+
+ETags come in two strengths, and the difference is a `W/` prefix:
+
+- **Strong** — `ETag: "a3f5c901"` — promises **byte-for-byte identity**. Two strong ETags match only if the representations are exactly equal, every byte. Strong validators are required for range requests (`If-Range`): if you're resuming a download at byte 1,000,000, "semantically equivalent" isn't good enough — you need the exact same bytes.
+- **Weak** — `ETag: W/"a3f5c901"` — promises only **semantic equivalence**. A weakly-tagged page might differ in a timestamp comment or an ad slot but is "the same enough" to reuse. Use weak when computing a byte-exact tag is expensive or when trivial differences shouldn't bust the cache.
+
+The subtlety: `If-None-Match` always uses the **weak comparison** algorithm. For revalidation, `W/"x"` and `"x"` are treated as a match — the prefix is ignored. The strong/weak distinction only bites where byte-exactness is mandatory, which in practice means range requests. So for plain "did this change?" caching, picking weak vs strong rarely changes the outcome; for resumable downloads, it absolutely does.
+
+## ETag vs Last-Modified: the one-second blind spot
+
+Before ETags there was `Last-Modified` / `If-Modified-Since`, a timestamp-based validator. It still works and is cheaper (just a `stat` on a file), but it has a hard limitation: **HTTP dates have one-second resolution.** If a resource changes twice within the same second — common for hot config, generated files, or high-write rows — `Last-Modified` can't tell the two versions apart, and the client serves a stale `304`. ETags don't have that blind spot: a content hash or version counter changes on every real change regardless of timing.
+
+The senior default: when both are present, ETags take precedence, and clients are expected to prefer `If-None-Match` over `If-Modified-Since`. Many servers emit both so dumb caches that only understand timestamps still get *some* revalidation, while ETag-aware clients get the precise one. The cost of emitting both is one extra header line.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Validator</th>
+        <th class="border border-border px-3 py-2 text-left">Resolution</th>
+        <th class="border border-border px-3 py-2 text-left">Cost to compute</th>
+        <th class="border border-border px-3 py-2 text-left">Use when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>ETag</code> (content hash)</td>
+        <td class="border border-border px-3 py-2">Per-change, exact</td>
+        <td class="border border-border px-3 py-2">High — read/hash the body</td>
+        <td class="border border-border px-3 py-2">Content changes sub-second; precision matters</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ETag</code> (version/mtime+size)</td>
+        <td class="border border-border px-3 py-2">Per-change, cheap proxy</td>
+        <td class="border border-border px-3 py-2">Low — a lookup or <code>stat</code></td>
+        <td class="border border-border px-3 py-2">You have a version column or stable file metadata</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>Last-Modified</code></td>
+        <td class="border border-border px-3 py-2">One second</td>
+        <td class="border border-border px-3 py-2">Low — a <code>stat</code></td>
+        <td class="border border-border px-3 py-2">Static files that change rarely</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why it breaks in prod: the per-node ETag
+
+The Hook's bug is the canonical ETag failure, and it's worth dwelling on because it's invisible in single-server dev. The contract is simple: **the same content must produce the same ETag, no matter which server answers.** Break that and no client ever sees a `304`.
+
+Three classic ways to break it, all from the same root — the ETag depends on something local to one node instead of on the content:
+
+1. **Inode-based ETags.** Apache's default `FileETag` historically included the file's inode number. Identical files deployed to three servers have three different inodes, so three different ETags. Apache 2.4 dropped inode from the default precisely because it poisoned clustered caching; the fix is `FileETag MTime Size` (content-derived, identical everywhere).
+2. **Timestamp/mtime drift across replicas.** Even mtime-based ETags break if your deploy copies files at slightly different wall-clock times to each replica, or if a CI rebuild touches files. Same bytes, different mtime, different ETag.
+3. **Per-process state.** A counter, a random salt, or a startup timestamp baked into the ETag means each pod mints its own namespace — exactly the Hook's failure.
+
+And one more that surprises people: **compression changes the ETag, or should.** The gzipped and identity versions of a resource are different byte streams, so a *strong* ETag must differ between them — otherwise a client that sent `Accept-Encoding: gzip` and got a gzipped `200` could later revalidate, hit a node serving identity, and the byte-exact `If-Range` semantics break. Some proxies strip or weaken the ETag when they compress on the fly; if yours doesn't, a compression layer added between deploys can silently invalidate every cached validator at once.
+
+<TradeoffMatrix
+  id="04-etag-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A JSON API behind 4 pods serves a 6 KB response polled every 15s by thousands of clients. The body changes a few times a day. You want revalidation to actually return 304s. Pick the ETag strategy."
+  options={[
+    { name: "ETag = a stable version/updated_at column from the row, identical across all pods", summary: "Content-derived, shared.", correct: true, justification: "This is the load-balancer-safe choice: the ETag is a function of the content (a version or last-update value that lives in the data, not the node), so all 4 pods compute the same token for the same row. Clients get 304s regardless of which pod answers, and the cost is a cheap lookup — no body hashing. It also has per-change resolution, so two updates in one second still produce distinct tags." },
+    { name: "ETag = SHA-256 of the serialized body, recomputed per request on each pod", summary: "Hash everything.", justification: "Correct and consistent across pods (same bytes → same hash), so it will return 304s — but you pay to hash 6 KB on every one of thousands of requests just to usually throw the body away. For a frequently-polled, rarely-changing resource that CPU is wasted; a stored version value gives the same consistency for a lookup." },
+    { name: "ETag = a per-process counter or startup timestamp on each pod", summary: "Node-local token.", justification: "This is the exact prod bug from the Hook. Each pod mints tokens in its own namespace, so a client's If-None-Match almost never matches the next pod that answers. You get clean 200s forever and zero bandwidth savings while believing caching is on." },
+    { name: "Drop ETags, rely on Last-Modified from the row's updated_at", summary: "Timestamp only.", justification: "Cheaper and works across pods if updated_at is consistent, but the one-second resolution means two updates within the same second look identical — a client can be served a stale 304. For a feed that can change multiple times a second, the precise validator is an ETag." },
+  ]}
+/>
+
+<Quiz
+  id="04-etag-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A client sends If-None-Match and the resource is unchanged. What does the server send, and what did it save?"
+  choices={[
+    { label: "304 Not Modified with an empty body — it saves the body bytes but still pays the full round-trip", correct: true },
+    { label: "200 OK with the full body — the client re-downloads to confirm it's the same", misconception: "A match means the client already has the current version; re-sending the body defeats the entire purpose of conditional requests." },
+    { label: "Nothing — the connection stays open until the resource changes", misconception: "That's long-polling/SSE, a different mechanism. A conditional GET completes immediately with 200 or 304." },
+    { label: "304 with the body, just so the cache stays warm", misconception: "A 304 carries no message body by definition; if it shipped the body it would save nothing." },
+  ]}
+/>
+
+<Quiz
+  id="04-etag-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You scaled an API from 1 to 3 pods and revalidation stopped returning 304s. What's the most likely cause?"
+  choices={[
+    { label: "Each pod computes the ETag from node-local state, so the same content yields a different token per pod", correct: true },
+    { label: "Browsers stop sending If-None-Match once a service has more than one pod", misconception: "The client behaves identically regardless of your topology; it just echoes the last ETag it received." },
+    { label: "304 responses are disabled by default behind a load balancer", misconception: "Load balancers forward 304s fine; the problem is the origin minting inconsistent ETags, not the LB blocking the status." },
+    { label: "The load balancer strips the ETag header on the way back", misconception: "Possible but rare; the textbook cause of a 3-pod regression is per-node ETag generation, not header stripping." },
+  ]}
+/>
+
+<DragOrder
+  id="04-etag-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order a successful conditional-GET exchange where the resource hasn't changed:"
+  items={[
+    { id: "a", label: "First request: client GETs the resource with no validator" },
+    { id: "b", label: "Server replies 200 OK with the body and an ETag header" },
+    { id: "c", label: "Client caches the body and stores the ETag next to it" },
+    { id: "d", label: "Later: client re-requests with If-None-Match set to the stored ETag" },
+    { id: "e", label: "Server recomputes the ETag, sees a match, replies 304 with an empty body" },
+    { id: "f", label: "Client serves its cached copy — only headers crossed the wire" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>An ETag fingerprints content; a matching If-None-Match returns 304 with an empty body — saving the bytes, never the round-trip. Keep the ETag content-derived so every node agrees, or no client ever sees a 304.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-etag-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate says 'ETags make repeat requests free.' Correct them precisely: what does a 304 actually save, and what does it still cost?", a: "A 304 saves the response body and nothing else. The client still has to send the conditional request and wait for the server to answer, so the full round-trip latency is paid every time — if the RTT to origin is 80 ms, a 304 poll still costs 80 ms. What it removes is the download: an 8 KB JSON body becomes ~200 bytes of response headers, and a 2 MB image transfers zero bytes on a revalidation. So ETags are a bandwidth-and-download-time optimisation, not a latency one. It's also not free on the server: to answer a conditional request the origin must know the current ETag, which usually means reading or recomputing the resource just to compare and discard the body — the CPU-vs-bandwidth tradeoff. The way to skip the request entirely is freshness (Cache-Control max-age); the ETag is the fallback after freshness expires, so you re-download only when the content genuinely changed." },
+    { q: "Why does adding a second and third server commonly kill 304s, and how do you make ETags load-balancer-safe?", a: "The whole contract is that identical content produces an identical ETag no matter which node answers. The moment the ETag depends on something local to one server, that breaks. Classic offenders: Apache's old inode-based FileETag (identical files have different inodes per machine), mtime that drifts because deploys copy files at slightly different times to each replica, and per-process state like a counter, salt, or startup timestamp baked into the token. Behind a round-robin load balancer the client's If-None-Match was minted by pod A but the next request lands on pod B, whose token differs, so it's always a mismatch and you get clean 200s forever — caching looks on but saves nothing. The fix is to derive the ETag purely from the content: a version or updated_at column from the row, a content hash, or FileETag MTime Size with inode removed — anything that is a function of the bytes, not the box. Then every node computes the same token and revalidation works regardless of which one answers. Watch compression too: gzipped and identity bytes differ, so a strong ETag should differ between them, and a proxy that compresses on the fly must adjust or weaken the ETag accordingly." },
+  ]}
+/>
+
+<Recap lang="en">
+A conditional request is a versioning agreement: the server fingerprints a resource into an opaque ETag, the client echoes it in If-None-Match, and a match returns 304 Not Modified with an empty body. That saves the body bytes — a 40× cut on a small JSON, the whole transfer on a large image — but never the round-trip, because the client must still ask and wait; ETags are a bandwidth optimisation, with the cost paid in origin CPU to recompute or read the resource just to compare. Strong ETags promise byte identity (required for range requests); weak ones (W/) promise only semantic equivalence, and If-None-Match compares weakly anyway, so the distinction mostly matters for resumable downloads. Against Last-Modified, ETags win on precision — timestamps have a one-second blind spot — at the cost of being more expensive to compute. The failure that bites in production is the per-node ETag: inode-based tags, mtime drift across replicas, per-process counters, or compression changing the bytes all make the same content hash differently on different servers, so behind a load balancer no client ever matches and you ship full 200s forever while believing caching is on. Keep the ETag a pure function of the content and every node agrees.
+</Recap>
