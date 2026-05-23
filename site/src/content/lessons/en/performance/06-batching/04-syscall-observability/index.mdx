@@ -5,9 +5,9 @@ track: performance
 unit: 06-batching
 order: 4
 title: "io_uring and observability of batching"
-summary: "io_uring deep dive, per-runtime batching primitives, observability metrics (batch size histogram, wait time, buffer depth, drop count)"
+summary: "Syscalls cost 1-5µs each; at 100k ops/s that's 100-500ms/s burned in transitions. io_uring's shared rings remove per-op cost. Then four metrics — batch size, wait, depth, drops — tell you if the batcher is healthy or quietly dropping data."
 estMin: 15
-status: stub
+status: ready
 lessonType: topic
 level: middle
 prereqs: ["performance/06-batching/01-basics", "performance/06-batching/02-window", "performance/06-batching/03-kafka-postgres"]
@@ -24,50 +24,197 @@ sources:
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-Traditional syscalls cost ~1-5 μs each — at 100k ops/sec that's 100-500 ms/sec spent just entering and leaving the kernel. io_uring changes the game: submit N operations to a shared ring, reap results from a completion ring, with potentially zero syscalls per op in polling mode.
+The flamegraph from the ingest service made no sense. CPU was pinned at 90%, but no business function showed up hot. The widest band, eating a third of every core, was `entry_SYSCALL_64` — the cost of *entering and leaving the kernel*, repeated millions of times a second. The service wrote each log line with its own `write()`. It wasn't slow because of what it did. It was slow because of how often it crossed the boundary.
 </Hook>
 
-<Crux>io_uring kills per-op syscall cost via submit/completion rings. Observability: batch-size histogram, wait time, buffer depth, drop count.</Crux>
+<Crux>A syscall costs ~1-5µs; at 100k ops/s that burns 100-500ms/s. Batch the crossings, then watch four metrics to prove the batcher is healthy.</Crux>
 
 <Explanation>
-Traditional POSIX I/O is one syscall per operation: read(), write(), recv(), send(). Each costs ~1-5 μs context switch. For a service doing 100k I/O ops/sec, that's 100-500 ms/sec spent in syscall transitions alone. Batched syscalls reduce this overhead.
 
-<strong>io_uring fundamentals</strong>
-io_uring (Linux 5.1+) uses two ring buffers, mmap'd shared between user and kernel:
-- Submission Queue (SQ): user pushes operation descriptors here
-- Completion Queue (CQ): kernel posts results here
-In polled mode (IORING_SETUP_SQPOLL), a kernel thread polls the SQ continuously — user can submit operations with zero syscalls. Result: at 1M ops/sec, traditional read/write would burn ~1 ms/sec on syscalls alone; io_uring polled mode brings this to near zero.
+## The syscall is a wall, and you keep paying to cross it
 
-<strong>Per-runtime batching primitives</strong>
-Every major runtime ships batching APIs:
-- Node.js: stream.cork()/uncork() for batched writes, setImmediate/process.nextTick for micro-batching
-- Go: bufio.Writer for buffered writes, channels + ticker for time-windowed batching
-- Java: BufferedOutputStream, async-profiler's writer queue
-- Python: asyncio.Queue with batched consumers
-- Rust: tokio mpsc channels with batching adaptors
-Each provides bounded buffer, max-size + max-wait, explicit flush.
+Traditional POSIX I/O is one syscall per operation: `read()`, `write()`, `recv()`, `send()`. Each one is a controlled trap into ring 0 — the CPU saves user registers, switches the page-table and stack to kernel context, runs the handler, then unwinds the whole thing on the way out. That round trip costs roughly **1-5µs**, and that's before the syscall does any actual work. It's pure overhead, paid per call.
 
-<strong>Observability for batching</strong>
-Production-grade observability tracks four per-batch metrics:
-1. Batch size histogram — are batches actually filling or hitting timer? p50/p99 in records/bytes
-2. Batch wait time — how long items waited before shipping
-3. Buffer depth gauge — current items in in-memory buffer (spikes = downstream backpressure)
-4. Drop count — items dropped due to buffer overflow (should be 0; non-zero = backpressure signal)
-Dashboard: time series of all four with alerts on drop count > 0 and buffer depth > 80% cap.
+The arithmetic is brutal at scale. A service handling 100k I/O ops/s spends `100,000 × 1-5µs = 100-500ms` of every wall-clock second just *transitioning* — a tenth to half a core gone before a single byte moves. Push to 1M ops/s and traditional `read`/`write` can burn a full millisecond per second on transitions alone, plus the cache pollution from blowing away the L1/L2 working set on every crossing. This is exactly the flamegraph in the hook: the work was cheap, the boundary was not.
 
-<strong>Why io_uring matters</strong>
-Beyond raw performance, io_uring enables new patterns:
-- Linked operations: next SQE runs after previous completes
-- Buffer selection: kernel picks from registered buffer pool (avoids per-op buffer registration)
-- Fixed files: skip per-syscall file descriptor lookup
-Adoption: PostgreSQL 17 added io_uring backend, Ceph has experimental support, Netflix async-profiler reports 5-15% CPU reduction on TLS proxies.
-Security note: io_uring has had CVEs (CVE-2023-2598, CVE-2024-0582); some container runtimes disable it by default via seccomp.
+The classic fix is to cross less often. Buffer many small writes and flush them as one big `writev()`; one syscall now carries a thousand records. That's the whole game of batching at the syscall layer: amortize a fixed per-crossing cost over a variable payload. The next step removes most of the crossings entirely.
+
+## io_uring: stop crossing the boundary at all
+
+io_uring (Linux 5.1+) replaces "one syscall per op" with two ring buffers `mmap`'d into memory shared between user space and the kernel:
+
+- **Submission Queue (SQ)** — userspace writes operation descriptors (SQEs: read this fd, write this buffer) into a slot, then advances a tail pointer.
+- **Completion Queue (CQ)** — the kernel writes results (CQEs) back into a slot and advances its tail.
+
+In the basic mode you still call `io_uring_enter()` to tell the kernel "I queued N ops" — but that's *one* syscall for the whole batch instead of N. The dramatic mode is `IORING_SETUP_SQPOLL`: the kernel spawns a thread that *continuously polls the SQ tail*. Userspace submits work by writing memory and bumping a pointer, and the kernel thread picks it up on its own — **zero syscalls per op**. (One catch worth knowing: if the SQPOLL thread idles past `sq_thread_idle`, it sleeps and sets `IORING_SQ_NEED_WAKEUP`; you then owe one `io_uring_enter()` to wake it. So zero-syscall holds under sustained load, not on a trickle.)
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Approach</th>
+        <th class="border border-border px-3 py-2 text-left">Syscalls per 1M ops</th>
+        <th class="border border-border px-3 py-2 text-left">Transition cost / s</th>
+        <th class="border border-border px-3 py-2 text-left">Catch</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">One <code>write()</code> per op</td>
+        <td class="border border-border px-3 py-2">1,000,000</td>
+        <td class="border border-border px-3 py-2">~1-5 ms (0.1-0.5 core)</td>
+        <td class="border border-border px-3 py-2">Cache thrash on every crossing</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Buffer + <code>writev()</code></td>
+        <td class="border border-border px-3 py-2">~1,000 (batch=1k)</td>
+        <td class="border border-border px-3 py-2">~1-5 µs</td>
+        <td class="border border-border px-3 py-2">Adds wait latency before flush</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">io_uring (one enter/batch)</td>
+        <td class="border border-border px-3 py-2">~1,000</td>
+        <td class="border border-border px-3 py-2">~1-5 µs</td>
+        <td class="border border-border px-3 py-2">More complex API; CQE reaping</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">io_uring + SQPOLL</td>
+        <td class="border border-border px-3 py-2">~0 (under load)</td>
+        <td class="border border-border px-3 py-2">~0</td>
+        <td class="border border-border px-3 py-2">Burns a poller core; needs privilege</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Beyond removing crossings, io_uring unlocks patterns plain syscalls can't express:
+
+- **Linked operations** (`IOSQE_IO_LINK`) — chain SQEs so the next one runs only after the previous completes, e.g. `accept` → `read` → `write` submitted as one dependent unit.
+- **Provided/registered buffers** — pre-register a buffer pool once; the kernel selects a free buffer per op instead of you registering one each time.
+- **Fixed files** — pre-register fds so the kernel skips the per-syscall descriptor-table lookup.
+
+Adoption is now mainstream, not experimental. **PostgreSQL 18** (released Sep 2025) shipped async I/O with three `io_method` modes — `sync`, `worker` (the default), and `io_uring` — where the io_uring backend cuts syscall overhead on cold-cache sequential and bitmap scans (benchmarks report 2-3x throughput gains in cloud-storage scenarios). Note the default is `worker`, not `io_uring`, precisely because of the dependency and security concerns below. On the networking side, `io_uring` shaves single-digit-to-low-double-digit CPU off TLS-proxy and high-fanout socket workloads (the socket layer is where epoll-based proxies spend 70-80% of cycles outside userspace), which is why low-overhead-proxy teams reach for it.
+
+<Inset kind="why" lang="en">
+Why isn't `io_uring` the default everywhere if it's faster? Security. It has been one of the most exploited kernel subsystems — CVE-2023-2598 (out-of-bounds access) and CVE-2024-0582 (use-after-free in buffer-ring registration) are both local privilege-escalation bugs with public exploits. Google reported that ~60% of kernel exploits submitted to its 2022 bug bounty targeted io_uring, and disabled it by default in several environments. The containerd default seccomp profile and GKE block the `io_uring` syscalls outright. So in a hardened container, your beautiful zero-syscall design may simply return `EPERM`. Always have a fallback path to epoll/threads.
+</Inset>
+
+## You rarely call io_uring directly — your runtime batches for you
+
+Most services never touch the raw rings; they lean on a runtime primitive that buffers in userspace and flushes as one crossing. The shapes rhyme across languages:
+
+- **Node.js** — `stream.cork()` buffers writes in memory; `uncork()` (deferred via `process.nextTick`) flushes them as a single `_writev()` — but *only if the stream implements `_writev`*; corking a stream without it can hurt. Pair with backpressure via the `write()` return value.
+- **Go** — `bufio.Writer` coalesces small writes; combine with a `time.Ticker` to flush on a max-wait, giving the classic size-or-time window.
+- **Java** — `BufferedOutputStream` accumulates until its buffer fills or you `flush()`.
+- **Python** — `asyncio.Queue` feeding a consumer that drains in chunks (`get` until empty or count cap).
+- **Rust** — `tokio::sync::mpsc` channels with a batching loop (`recv_many` / drain-and-flush on a tick).
+
+Every one of these is the same contract: a bounded buffer with a **max-size** trigger, a **max-wait** trigger, and an explicit **flush**. And every one of them is a place data can silently pile up or get dropped — which is why you instrument it.
+
+## The four metrics that tell you the batcher is healthy
+
+A batcher is a tiny queue with a flush policy, and like any queue it can fill, stall, or overflow without throwing an error. Production-grade observability tracks four per-batch metrics; together they let you tune the window and catch backpressure before it becomes data loss.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Metric</th>
+        <th class="border border-border px-3 py-2 text-left">Type</th>
+        <th class="border border-border px-3 py-2 text-left">What it reveals</th>
+        <th class="border border-border px-3 py-2 text-left">Acts on</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Batch-size histogram</td>
+        <td class="border border-border px-3 py-2">Histogram (p50/p99, records & bytes)</td>
+        <td class="border border-border px-3 py-2">Filling to max (good) vs flushing on timer (window too small / traffic light)</td>
+        <td class="border border-border px-3 py-2">Tune max-size / max-wait</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Batch wait time</td>
+        <td class="border border-border px-3 py-2">Histogram (latency)</td>
+        <td class="border border-border px-3 py-2">How long an item sat before shipping — your latency tax</td>
+        <td class="border border-border px-3 py-2">Check against SLO; shrink window</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Buffer-depth gauge</td>
+        <td class="border border-border px-3 py-2">Gauge (current items / % cap)</td>
+        <td class="border border-border px-3 py-2">Sustained spikes = downstream can't keep up (backpressure building)</td>
+        <td class="border border-border px-3 py-2">Alert at &gt; 80% cap; scale/slow producer</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Drop count</td>
+        <td class="border border-border px-3 py-2">Counter</td>
+        <td class="border border-border px-3 py-2">Items discarded on overflow — should be 0; nonzero = you are losing data</td>
+        <td class="border border-border px-3 py-2">Page on `drops > 0`</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The failure mode that hides without these is the quiet drop. Facebook's Scribe log-delivery system is the canonical war story: a buffered, batching pipeline that — under downstream pressure — must choose between blocking the producer (back up the whole app) or dropping messages. If you only watch throughput, a bursty downstream looks fine right up until the buffer overflows and your tail latency p99 metrics start vanishing from the dashboard *because the events that carried them got dropped*. The dashboard says "healthy" because the survivors look healthy. The senior reflex: **buffer depth and drop count are leading indicators; throughput is a lagging one.** Alert on `drops > 0` and `depth > 80%` of cap, and the overflow becomes a page you answer, not an incident you reconstruct.
+
+<Inset kind="why" lang="en">
+"Drop count should be zero" sounds obvious, but the deeper point is *what a nonzero drop means*. It is never a tuning nuance — it is the buffer's last-resort signal that the producer is outrunning the consumer and the bounded queue chose to shed load rather than grow without limit (which would be OOM). A single drop is a backpressure event. Treat one as you would a dropped database write.
+</Inset>
+
+<Quiz
+  id="04-syscall-observability-quiz-1"
+  lessonSlug="04-syscall-observability"
+  lang="en"
+  question="A batching writer's batch-size histogram shows almost every flush is far below the configured max size, and batch wait time sits at exactly the max-wait value. What does this tell you?"
+  choices={[
+    { label: "Batches are flushing on the timer, not by filling — traffic is too light (or the window too short) to amortize the crossing well", correct: true },
+    { label: "The buffer is overflowing and dropping items", misconception: "Overflow shows up as a nonzero drop count and a buffer-depth gauge pinned at cap — not as small batches that flush exactly at the max-wait timer." },
+    { label: "io_uring SQPOLL has fallen asleep and needs a wakeup syscall", misconception: "SQPOLL idle behavior affects syscall count, not your application-level batch-size histogram, which measures records per flush before they ever reach the kernel." },
+  ]}
+/>
+
+## The senior tradeoff: how aggressively to batch
+
+Bigger batches and longer windows save more syscalls and CPU, but every item now waits longer before it ships — directly inflating tail latency. The whole skill is choosing the window against your SLO, and proving the choice with the metrics above rather than guessing.
+
+<TradeoffMatrix
+  id="04-syscall-observability-tradeoff-1"
+  lessonSlug="04-syscall-observability"
+  lang="en"
+  prompt="A telemetry ingest path does ~200k small writes/s and is CPU-bound on syscall transitions. p99 end-to-end latency SLO is 200ms. Pick the approach a senior defends."
+  options={[
+    { name: "Batch with a max-size and a ~20ms max-wait window, and instrument the four metrics", summary: "Bounded window, well below SLO, observed.", correct: true, justification: "A 20ms flush window sits an order of magnitude under the 200ms SLO, so it adds negligible tail latency while collapsing 200k crossings/s into a few thousand batched writes. Instrumenting size/wait/depth/drops proves the window is right (batches filling, not timer-bound) and surfaces backpressure before it drops data. You tune from evidence, not vibes." },
+    { name: "Switch to io_uring with SQPOLL for zero-syscall submission and call it done", summary: "Hardware-level fix.", justification: "SQPOLL can help, but it burns a dedicated poller core, needs privilege, and is blocked by default in many container runtimes (seccomp) — so it may just return EPERM in prod. It also doesn't remove the need for a batch window or observability; you'd still have an uninstrumented buffer that can silently drop." },
+    { name: "Set a huge batch (e.g. 500ms window) to maximize syscall savings", summary: "Maximize amortization.", justification: "500ms blows the 200ms p99 SLO on its own — every item can wait half a second before shipping. You'd cut CPU but violate the latency contract, the exact failure batching is supposed to balance, not ignore." },
+  ]}
+/>
+
+<DragOrder
+  id="04-syscall-observability-drag-1"
+  lessonSlug="04-syscall-observability"
+  lang="en"
+  prompt="Order the diagnosis steps when a batching ingest path starts losing data under load:"
+  items={[
+    { id: "a", label: "Check drop count — nonzero means the bounded buffer is shedding load" },
+    { id: "b", label: "Look at the buffer-depth gauge — pinned near cap confirms the buffer is overrun" },
+    { id: "c", label: "Inspect batch wait time / size — is the flush policy keeping up or stalling?" },
+    { id: "d", label: "Find the bottleneck downstream (the consumer that can't drain fast enough)" },
+    { id: "e", label: "Apply backpressure or scale the consumer; only then retune the window" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
 </Explanation>
+
+<KeyTakeaway>Syscalls cost 1-5µs; batch the crossings (`writev`, or io_uring/SQPOLL for near-zero). Then track batch size, wait, depth, drops — depth and drops lead; throughput lags. Page on `drops > 0`.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -75,20 +222,16 @@ Security note: io_uring has had CVEs (CVE-2023-2598, CVE-2024-0582); some contai
   lang="en"
   questions={[
     {
-      q: "How does io_uring eliminate per-call syscall overhead in polled mode?",
-      a: "A kernel thread continuously polls the submission queue; user submits operations via shared memory with zero syscalls; kernel executes and posts results to completion queue."
+      q: "How does io_uring eliminate per-call syscall overhead, and what's the catch with SQPOLL mode?",
+      a: "io_uring shares two mmap'd ring buffers between user and kernel: a Submission Queue where userspace writes operation descriptors, and a Completion Queue where the kernel writes results. In basic mode one io_uring_enter() submits a whole batch, so N ops cost one syscall instead of N. With IORING_SETUP_SQPOLL a kernel thread continuously polls the SQ tail, so userspace submits by writing memory and bumping a pointer — zero syscalls per op under load. The catch: SQPOLL burns a dedicated poller core, requires privilege, and if it idles past sq_thread_idle it sleeps and sets IORING_SQ_NEED_WAKEUP, costing you one io_uring_enter() to wake it. Plus it's blocked by default in many container runtimes via seccomp (CVE-2023-2598, CVE-2024-0582), so you need an epoll fallback."
     },
     {
-      q: "What are the four key observability metrics for batching systems and what do they indicate?",
-      a: "1) Batch size histogram (filling vs timer), 2) Batch wait time (items waited), 3) Buffer depth gauge (downstream backpressure), 4) Drop count (overflow/backpressure signal)."
+      q: "What are the four batching observability metrics, and which two are leading indicators of trouble?",
+      a: "1) Batch-size histogram (p50/p99 in records and bytes) — are batches filling to max, or flushing on the timer because traffic is light? 2) Batch wait time — how long an item sat buffered before shipping; this is your latency tax against the SLO. 3) Buffer-depth gauge — current items as a percent of cap; sustained spikes mean downstream can't keep up. 4) Drop count — items discarded on overflow, which should always be 0. The two LEADING indicators are buffer depth and drop count: depth rising toward cap warns of backpressure before anything is lost, and a nonzero drop is the buffer shedding load. Throughput is a lagging indicator — it looks fine right up until the buffer overflows. Alert on drops > 0 and depth > 80% of cap."
     }
   ]}
 />
 
-<KeyTakeaway>
-io_uring eliminates per-op syscall overhead via submission/completion rings; observability tracks batch size histogram, wait time, buffer depth, drop count to detect backpressure and tuning needs.
-</KeyTakeaway>
-
 <Recap lang="en">
-io_uring uses two mmap'd ring buffers (submission + completion) to batch syscalls; polled mode achieves near-zero syscall overhead. Per-runtime primitives (bufio.Writer, stream.cork(), etc.) provide max-size + max-wait batching. Observability requires four metrics: batch size histogram (filling behavior), wait time (latency), buffer depth (backpressure), drop count (overflow). Together they enable tuning batch windows to hit SLO latency ceilings while maximizing throughput.
+A syscall costs ~1-5µs in pure transition overhead, so at 100k-1M ops/s a service can burn a tenth to a full core just crossing the kernel boundary. The first fix is to cross less: buffer many small writes and flush as one writev(). io_uring goes further with two mmap'd rings (submission + completion) — one io_uring_enter() submits a whole batch, and SQPOLL mode lets a kernel thread poll the queue for near-zero syscalls under load, at the cost of a poller core, privilege, and seccomp blocking in hardened containers. PostgreSQL 18's io_uring backend and low-overhead TLS proxies are real adopters, but io_uring's CVE history (and Google's 60%-of-exploits finding) is why worker mode is Postgres's default. In practice you batch through a runtime primitive — Node cork()/uncork(), Go bufio.Writer + ticker, Java BufferedOutputStream, Python asyncio.Queue, Rust tokio mpsc — each a bounded buffer with max-size, max-wait, and flush. Instrument all four metrics: batch size (filling vs timer), wait time (latency tax), buffer depth and drop count (the leading backpressure signals). Throughput lags; depth and drops lead. Page on drops > 0 and depth > 80% of cap, and a silent overflow becomes an alert instead of an archaeological dig.
 </Recap>
