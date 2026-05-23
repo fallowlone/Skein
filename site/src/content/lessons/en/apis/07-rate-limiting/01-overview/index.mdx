@@ -6,13 +6,213 @@ unit: 07-rate-limiting
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Rate limiting"
-summary: "Coming soon — API contracts"
+status: ready
+title: "Rate limiting: algorithms, the boundary burst, and the Redis counter"
+summary: "Fixed window is cheap but leaks a 2x burst at the boundary; token bucket smooths it. The real production lesson is that a per-node in-memory limiter multiplies your limit by N behind a load balancer — the counter has to live in Redis."
 prereqs: []
 deepensInto: []
 spiral: []
+concepts: ["fixed-window", "sliding-window", "token-bucket", "distributed-rate-limiting", "retry-after-headers", "thundering-herd"]
+estMin: 17
 sources:
-  - https://example.com/stub
-estMin: 5
+  - https://blog.arcjet.com/rate-limiting-algorithms-token-bucket-vs-sliding-window-vs-fixed-window/
+  - https://redis.io/docs/latest/develop/use-cases/rate-limiter/
+  - https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers
+  - https://redis.io/tutorials/howtos/ratelimiting/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+The limit is "100 requests per minute per API key" and the dashboard swears it is enforced. Then a customer pushes 380 requests through in two seconds and every one returns `200 OK`. Nothing is broken in the limiter code — it works perfectly on one node. The problem: there are four app servers behind the load balancer, each running its own in-memory counter, so the real limit is 400/min. The extra 180 came from a client that hammered the window boundary across all four nodes at once. The limit was never real; it was four separate limits that happened to share a name.
+</Hook>
+
+<Crux>A per-node in-memory limiter is a lie behind a load balancer: N nodes means N times your limit. The counter must live in Redis.</Crux>
+
+<Explanation>
+
+## Fixed window: cheap, and it leaks a 2x burst
+
+The simplest limiter keys a counter by `{key}:{minute}` and does `INCR`; if the value exceeds the limit, reject. One integer per key, O(1), trivial to reason about. It is also the one every senior has been burned by, because of the boundary.
+
+A fixed window resets on a wall-clock edge. If the limit is 100/min, a client can send 100 requests at `12:00:59.9` and another 100 at `12:01:00.1` — 200 requests inside a 200ms span, and both bursts are legal because they fall in different windows. The worst case is exactly **2x the configured limit** concentrated at the seam between two windows. For a coarse internal throttle that is fine. For abuse protection or anything downstream-sensitive, that 2x is the difference between "protected" and "fell over."
+
+## Sliding window: log is exact, counter is the cheap approximation
+
+The **sliding window log** fixes the boundary by storing a timestamp for every request (a Redis sorted set), dropping entries older than the window, and counting what remains. It is exact — the limit is enforced over any rolling 60s, not a fixed minute. The cost is memory: a client doing 10k req/min holds 10k timestamps, and you pay `ZADD` plus a `ZREMRANGEBYSCORE` trim on every call. At scale the log is the memory hog you regret.
+
+The **sliding window counter** is the production compromise. Keep two fixed-window counters — current and previous — and estimate the rolling count as `current + previous * (overlap fraction)`. It is an approximation, but a famously good one: Cloudflare measured roughly **0.003% error across ~400 million requests**, with two integers per key instead of thousands of timestamps. That accuracy-for-near-nothing trade is why it is the default in most edge limiters.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Algorithm</th>
+        <th class="border border-border px-3 py-2 text-left">Memory / key</th>
+        <th class="border border-border px-3 py-2 text-left">Boundary burst?</th>
+        <th class="border border-border px-3 py-2 text-left">When a senior reaches for it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Fixed window</td>
+        <td class="border border-border px-3 py-2">1 integer</td>
+        <td class="border border-border px-3 py-2">Yes — up to 2x at the edge</td>
+        <td class="border border-border px-3 py-2">Coarse internal throttle; approximate is fine</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Sliding window log</td>
+        <td class="border border-border px-3 py-2">N timestamps</td>
+        <td class="border border-border px-3 py-2">No — exact</td>
+        <td class="border border-border px-3 py-2">Auth/payments where an audit-grade exact count matters</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Sliding window counter</td>
+        <td class="border border-border px-3 py-2">2 integers</td>
+        <td class="border border-border px-3 py-2">Smoothed — ~0.003% error</td>
+        <td class="border border-border px-3 py-2">Default edge limiter; great accuracy, tiny cost</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Token bucket</td>
+        <td class="border border-border px-3 py-2">2 values (tokens + ts)</td>
+        <td class="border border-border px-3 py-2">Allows a controlled burst</td>
+        <td class="border border-border px-3 py-2">General-purpose API default (Stripe, AWS) — real traffic is bursty</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Leaky bucket</td>
+        <td class="border border-border px-3 py-2">2 values</td>
+        <td class="border border-border px-3 py-2">No — smooths to constant rate</td>
+        <td class="border border-border px-3 py-2">Protecting a fragile downstream that needs steady throughput</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Token bucket: model the burst instead of fighting it
+
+Real API traffic is bursty — a user opens a page and fires twelve requests at once, then idles. Token bucket embraces this. A bucket holds up to `capacity` tokens and refills at a steady rate (say 100 tokens/min); each request spends one token, and a request is rejected only when the bucket is empty. A client that sat idle accumulates tokens up to the cap, so it can spend a burst instantly, then is throttled to the refill rate. You enforce an *average* rate while allowing short spikes — which is exactly what a friendly API wants. It needs only two stored values (current tokens, last-refill timestamp), which is why Stripe and AWS use it as the general default.
+
+**Leaky bucket** is the mirror image: requests drip out at a fixed rate regardless of how they arrive, smoothing traffic to protect a fragile downstream. The cost is that it adds queuing latency on the client's side and refuses to let legitimate bursts through. Use it when the thing behind you needs a constant, predictable rate more than it needs responsiveness.
+
+<Inset kind="why" lang="en">
+"Token bucket allows bursts" sounds like a weakness until you flip it: the burst is bounded by `capacity`, and `capacity` is a knob you set. A 100/min limit with a `capacity` of 100 lets a fresh client fire 100 at once; set `capacity` to 10 and the same average rate tolerates only a 10-request spike. The burst is not a bug, it is the parameter that lets you match the limiter to how clients actually behave.
+</Inset>
+
+## Distributed: the counter has to be shared, and atomic
+
+The Hook bug is the one that bites in production. An in-memory limiter is correct on a single process and silently wrong the moment you scale horizontally — each of N nodes enforces the limit independently, so the effective limit is N times what you configured, and a client spreading requests across nodes blows straight through. The fix is to move the counter to a shared store, almost always Redis, so every node reads and writes the same number.
+
+But shared is not enough — it has to be **atomic**. The naive fixed-window approach is `INCR` then `EXPIRE`, and that is a race: two requests can both `INCR`, and if the process dies between `INCR` and `EXPIRE` the key never gets a TTL and the counter leaks forever. The robust pattern is a single Lua script, which Redis runs atomically — the whole read-decide-update cycle happens with no other command interleaved, so concurrent requests cannot double-spend tokens. A token-bucket check in Lua is a handful of operations and runs in **sub-millisecond** time, cheap enough to sit on the synchronous request path even at millions of requests per second.
+
+```lua
+-- token_bucket.lua  — KEYS[1] = bucket key, ARGV = rate, capacity, now, requested
+local key       = KEYS[1]
+local rate      = tonumber(ARGV[1])   -- tokens added per second
+local capacity  = tonumber(ARGV[2])   -- max tokens (the burst size)
+local now       = tonumber(ARGV[3])   -- current time, seconds
+local requested = tonumber(ARGV[4])   -- tokens this request costs
+
+local bucket    = redis.call("HMGET", key, "tokens", "ts")
+local tokens    = tonumber(bucket[1]) or capacity
+local ts        = tonumber(bucket[2]) or now
+
+-- refill based on elapsed time, capped at capacity
+local elapsed   = math.max(0, now - ts)
+tokens          = math.min(capacity, tokens + elapsed * rate)
+
+local allowed   = tokens >= requested
+if allowed then tokens = tokens - requested end
+
+redis.call("HSET", key, "tokens", tokens, "ts", now)
+redis.call("EXPIRE", key, math.ceil(capacity / rate) * 2)
+-- return allowed flag + retry-after seconds for the 429
+local retry = allowed and 0 or math.ceil((requested - tokens) / rate)
+return { allowed and 1 or 0, retry }
+```
+
+## The 429 contract and the thundering herd
+
+When you reject, the response is a contract, not just a status. Return `429 Too Many Requests` with `Retry-After` (seconds, computed from when the next token frees up) so well-behaved clients back off instead of retrying in a tight loop. Add the `RateLimit-*` fields the IETF is standardizing — `RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset` — so clients can self-pace *before* they hit the wall. Crucially the draft specifies `RateLimit-Reset` as **delta-seconds, not a UNIX timestamp**: a timestamp would require client clock sync, and it would tell every throttled client to retry at the same absolute instant — a self-inflicted thundering herd at the reset boundary.
+
+That herd is the second production trap. With a fixed window and a hard `Retry-After` of "32 seconds," thousands of throttled clients all wake and retry in the same moment, hammering you at the boundary. The mitigations: prefer a sliding/token-bucket model where capacity frees up continuously rather than all at once, and add **jitter** — spread `Retry-After` values across a small random range so clients return staggered instead of in a synchronized wave. Decide your per-key dimension deliberately too: per-API-key is fair to paying customers, per-IP catches anonymous abuse but punishes everyone behind a corporate NAT, and per-endpoint lets you protect an expensive route without throttling cheap ones.
+
+<TradeoffMatrix
+  id="07-rate-limiting-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A public API serves bursty browser clients across 6 app nodes behind a load balancer. You want a fair average limit that tolerates normal page-load bursts. Pick the design."
+  options={[
+    { name: "Token bucket in Redis, evaluated by an atomic Lua script, keyed per API key", summary: "Shared + atomic + bursty.", correct: true, justification: "Token bucket models bursty traffic directly — a fresh client can fire a page-load burst up to capacity, then is throttled to the refill rate, enforcing a fair average. Putting it in Redis makes all 6 nodes share one counter, so the limit is real and not 6x. Running the check as a single Lua script makes read-decide-update atomic, so concurrent requests can't double-spend tokens. This is the Stripe/AWS-style default." },
+    { name: "Fixed-window counter in per-node memory, INCR on each request", summary: "Fast, local.", justification: "Two compounding failures: per-node memory means 6 independent limiters, so the effective limit is 6x configured and a client spreading load across nodes walks through it; and fixed window leaks a 2x boundary burst on top. Fast and wrong." },
+    { name: "Sliding window log in Redis, storing every request timestamp in a sorted set", summary: "Exact count.", justification: "Exact and boundary-free, but for bursty high-volume browser traffic the per-key memory (one timestamp per request) and the ZADD + trim on every call are a heavy price for accuracy you don't need here. Reserve the log for auth/payments where an audit-grade exact count is worth it." },
+    { name: "Leaky bucket in Redis that drips requests out at a constant rate", summary: "Smooth output.", justification: "Leaky bucket smooths traffic to a constant rate, which actively fights the goal: it refuses the legitimate page-load burst and adds queuing latency. It's the right tool when a fragile downstream needs steady throughput, not for being friendly to bursty clients." },
+  ]}
+/>
+
+<Quiz
+  id="07-rate-limiting-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Your limit is 100/min using a fixed window. What is the worst-case number of requests a client can legitimately push in a ~1-second span?"
+  choices={[
+    { label: "About 200 — 100 at the end of one window plus 100 at the start of the next", correct: true },
+    { label: "Exactly 100 — that's the whole point of the limit", misconception: "Fixed windows reset on a wall-clock edge, so a client can fill one window's tail and the next window's head back-to-back, doubling the burst at the seam." },
+    { label: "About 50 — the window splits the budget", misconception: "The window doesn't split anything; each window grants the full 100 independently, so two adjacent windows allow 200 near the boundary." },
+    { label: "Unlimited — fixed windows don't really cap bursts", misconception: "It does cap: the worst case is bounded at 2x the limit, concentrated at the boundary. That's the known leak, not unlimited." },
+  ]}
+/>
+
+<Quiz
+  id="07-rate-limiting-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="Why run the Redis rate-limit check as a single Lua script instead of an INCR followed by an EXPIRE?"
+  choices={[
+    { label: "Lua runs the read-decide-update atomically, so concurrent requests can't double-spend or leave the key without a TTL", correct: true },
+    { label: "Lua is faster than INCR", misconception: "Speed isn't the point — INCR is already sub-millisecond. The point is atomicity: separate INCR and EXPIRE can race, and a crash between them leaks a TTL-less key forever." },
+    { label: "Lua lets you store the counter on disk", misconception: "Lua scripts run in-memory in Redis like any command; persistence is unrelated. The reason is the atomic read-decide-update cycle." },
+    { label: "It avoids needing Redis at all", misconception: "The Lua script runs inside Redis — it's the opposite of avoiding it. It's how you make the shared Redis counter safe under concurrency." },
+  ]}
+/>
+
+<DragOrder
+  id="07-rate-limiting-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order what happens when a request hits a token-bucket limiter and is allowed:"
+  items={[
+    { id: "a", label: "Read the bucket's stored tokens and last-refill timestamp from Redis" },
+    { id: "b", label: "Refill: add (elapsed time x rate) tokens, capped at capacity" },
+    { id: "c", label: "Check: are there at least as many tokens as the request costs?" },
+    { id: "d", label: "Subtract the request's cost from the token count" },
+    { id: "e", label: "Write tokens + new timestamp back atomically and let the request through" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Fixed window leaks a 2x boundary burst; sliding-counter and token bucket fix it. The real trap is a per-node counter behind a load balancer — share it in Redis, make it atomic with Lua, and answer with 429 + Retry-After.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-rate-limiting-retrieval"
+  lang="en"
+  questions={[
+    { q: "An in-memory rate limiter passes every test on your laptop but lets traffic through far above the configured limit in production. Explain the failure and the fix.", a: "The limiter keeps its counter in the process's own memory. On one machine that is correct, but production runs the app on several nodes behind a load balancer, and each node has its own independent counter. With N nodes the effective limit is N times what you configured, and a client whose requests are spread across nodes by the balancer never sees a single node's counter fill up. Tests pass because they hit one process. The fix is to move the counter to a store every node shares — almost always Redis — so all nodes read and write the same number. And it must be updated atomically: a plain INCR-then-EXPIRE can race and can leak a key with no TTL if the process dies between the two calls, so the robust version runs the whole read-decide-update as a single Lua script, which Redis executes atomically in sub-millisecond time." },
+    { q: "Why does a fixed window allow a 2x burst, and how do sliding window and token bucket each address it?", a: "A fixed window counts requests within a wall-clock bucket like a calendar minute and resets at its edge. A client can send the full limit at the very end of one window and the full limit again at the very start of the next, so up to twice the limit lands in a tiny span across the boundary. The sliding window log fixes it exactly by timestamping every request and counting any rolling 60s, but at the cost of storing one timestamp per request. The sliding window counter approximates that with two counters and a weighted overlap, getting ~0.003% error for two integers. Token bucket sidesteps the boundary entirely: tokens refill continuously rather than resetting on an edge, so there is no seam to exploit, and the maximum burst is whatever you set capacity to — a deliberate, bounded knob rather than an accidental 2x leak." },
+  ]}
+/>
+
+<Recap lang="en">
+Rate limiting is a stack of tradeoffs. Fixed window is one integer and O(1) but leaks up to a 2x burst at the window boundary; the sliding window log fixes that exactly at the cost of a timestamp per request; the sliding window counter approximates it with two integers and roughly 0.003% error, which is why it is the common edge default; and token bucket models bursty real traffic directly, enforcing an average rate while allowing a bounded burst set by capacity, which is why Stripe and AWS reach for it. None of that matters if the counter lives in per-node memory — behind a load balancer that silently multiplies your limit by the node count, so the counter must live in a shared store, almost always Redis, updated atomically with a Lua script so concurrent requests cannot double-spend or leak a TTL-less key. When you reject, honor the contract: 429 with Retry-After plus the IETF RateLimit-* fields, expressed in delta-seconds and jittered so every throttled client does not stampede back at the same reset boundary.
+</Recap>
