@@ -30,4 +30,14 @@ describe("PracticeSection", () => {
     expect(html).toContain("recall");
     expect(html).toContain("3");
   });
+  test("renders the task-card marker for an sql sandbox task", () => {
+    const sandbox = {
+      id: "s1", type: "sandbox", difficulty: "apply", estMin: 5,
+      title: { en: "Run EXPLAIN", ru: "Запусти EXPLAIN" },
+      prompt: { en: "Try it", ru: "Попробуй" },
+      runtime: "sql", setup: "CREATE TABLE t(x int);",
+    } as unknown as PracticeTaskData;
+    const html = render(<PracticeSection lang="en" lessonKey="a/b/c" tasks={[sandbox]} />);
+    expect(html).toContain('data-practice-task="s1"');
+  });
 });

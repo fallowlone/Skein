@@ -1,8 +1,18 @@
 import { useState } from "preact/hooks";
+import { lazy, Suspense } from "preact/compat";
 import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
 import { setTaskStatus } from "~/scripts/practice-state";
+
+const SqlSandbox = lazy(() => import("./SqlSandbox"));
+const JsSandbox = lazy(() => import("./JsSandbox"));
+
+// name → lazy parametric component (must match PARAMETRIC_COMPONENT_NAMES)
+const PARAMETRIC: Record<string, ReturnType<typeof lazy>> = {
+  DBLeverSandbox: lazy(() => import("./sandboxes/DBLeverSandbox")),
+  RequestBudgetSandbox: lazy(() => import("./sandboxes/RequestBudgetSandbox")),
+};
 
 type Props = { lang: Locale; lessonKey: string; tasks: PracticeTaskData[] };
 
@@ -90,9 +100,36 @@ function TaskBody({ lang, lessonKey, task }: { lang: Locale; lessonKey: string; 
           </div>
         );
       }
-      return null; // fix-exec: runtime, filled in P3
-    case "sandbox":
-      return null; // runtime/parametric: filled in P3
+      {
+        const done = () => setTaskStatus(lessonKey, task.id, "done");
+        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => ok && done() };
+        return (
+          <div>
+            {task.starter && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{task.starter}</pre>}
+            <Suspense fallback={<Loading lang={lang} />}>
+              {task.grading.runtime === "sql"
+                ? <SqlSandbox {...common} initialSql={task.starter ?? ""} />
+                : <JsSandbox {...common} initialCode={task.starter ?? ""} />}
+            </Suspense>
+          </div>
+        );
+      }
+    case "sandbox": {
+      const done = () => setTaskStatus(lessonKey, task.id, "done");
+      if (task.runtime === "parametric") {
+        const Comp = task.parametric ? PARAMETRIC[task.parametric.component] : undefined;
+        if (!Comp) return null;
+        return <Suspense fallback={<Loading lang={lang} />}><Comp lang={lang} /></Suspense>;
+      }
+      if (task.runtime === "sql") {
+        return <Suspense fallback={<Loading lang={lang} />}>
+          <SqlSandbox lang={lang} setup={task.setup} initialSql="" check={task.expected} onResult={(ok) => ok && done()} />
+        </Suspense>;
+      }
+      return <Suspense fallback={<Loading lang={lang} />}>
+        <JsSandbox lang={lang} setup={task.setup} initialCode="" check={task.expected} onResult={(ok) => ok && done()} />
+      </Suspense>;
+    }
     default:
       return null;
   }
@@ -208,4 +245,8 @@ function Incident({ lang, lessonKey, taskId, steps }: {
       ))}
     </ol>
   );
+}
+
+function Loading({ lang }: { lang: Locale }) {
+  return <div class="text-xs text-muted py-3">{tt(lang, "Loading runtime…", "Загружаю среду…")}</div>;
 }
