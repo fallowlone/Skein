@@ -7,7 +7,7 @@ order: 6
 title: "Backpressure, failure isolation, and batch security in production"
 summary: "Poison messages, partial-batch failure, bounded queues (block/drop/spill), compression bombs, adaptive windowing — the operational edge cases that crash batched systems."
 estMin: 18
-status: stub
+status: ready
 lessonType: topic
 level: senior
 prereqs: ["performance/06-batching/01-basics", "performance/06-batching/02-window", "performance/06-batching/03-kafka-postgres", "performance/06-batching/04-syscall-observability", "performance/06-batching/05-nagle-io-uring"]
@@ -16,67 +16,189 @@ spiral: ["latency", "statefulness", "failure"]
 concepts: ["poison message", "split and retry", "bounded queue", "backpressure", "spill to disk", "decompression bomb", "adaptive batching"]
 sources:
   - https://kafka.apache.org/documentation/#producerconfigs_linger.ms
-  - https://nvd.nist.gov/vuln/detail/CVE-2018-10872
-  - https://docs.aws.amazon.com/lambda/latest/dg/with-kinesis.html#services-kinesis-errors
+  - https://nvd.nist.gov/vuln/detail/CVE-2023-34455
+  - https://docs.aws.amazon.com/lambda/latest/dg/services-kinesis-batchfailurereporting.html
   - https://www.reactive-streams.org/
   - https://vector.dev/docs/architecture/buffering-model/
-  - https://www.usenix.org/conference/atc23/presentation/yang-juncheng
+  - https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/adaptive_concurrency_filter
 ---
 
 import Hook from "~/components/lesson/Hook.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import Crux from "~/components/prose/Crux.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
 
 <Hook>
-Your Kafka consumer batches 500 messages per poll. One has a corrupt header. The deserializer throws. Without isolation, you've just lost — or replayed — 499 good messages with it. Batching multiplies every failure by the batch size.
+Your Kafka consumer batches 500 messages per poll. One has a corrupt header. The deserializer throws. Without isolation, you've just lost — or replayed — 499 good messages with it. Batching multiplies every failure by the batch size, and the same multiplier is what an attacker reaches for. This is the lesson the throughput tutorials skip.
 </Hook>
 
-<Crux>Batching amplifies failures: one poison kills N, downstream queues N×k, one batch → 1 GB. Needs isolation, backpressure, bounds.</Crux>
+<Crux>Batching amplifies failures: one poison kills N, a fast producer floods the queue, a compressed batch hits 1 GB. Needs isolation and bounds.</Crux>
 
 <Explanation>
-Lessons 01–05 covered the upside: amortize fixed cost, tune the window, hit Pareto. This lesson covers the downside — the failure modes that turn a throughput win into a 3 AM page.
 
-<strong>Failure isolation: the poison message problem</strong>
-A batch is consumed atomically. If processing throws on item 47, what happens to items 1–46 and 48–N?
-  • Naive consumer: retry whole batch → infinite loop, lag explodes, item 47 still poison
-  • Skip-batch-on-error: lose 499 good messages with 1 bad one
-  • Split-and-retry: on failure, halve the batch and retry each half; recurse until you isolate the poison item, then dead-letter only that one. O(log N) extra requests for one poison message.
-  • Per-item ACK with rangewise commit: process items individually but commit the highest contiguous offset; AWS Lambda Kinesis uses `BisectBatchOnFunctionError` for exactly this pattern
-  • Production cost: a dead-letter queue (DLQ) plus a re-drive job is non-negotiable. Items that fail repeatedly land in the DLQ; an operator inspects them out-of-band.
+Lessons 01–05 covered the upside: amortize fixed cost, tune the window, hit the Pareto knee. This is the capstone, and it covers the downside — the operational edge cases that turn a throughput win into a 3 AM page. Every property that makes batching efficient (atomic consume, shared compression, one queue, one window) becomes a failure multiplier the moment something goes wrong. A senior who has run a batched pipeline in production thinks about these four things before the happy path is even merged.
 
-<strong>Backpressure and bounded queues</strong>
-Producer rate &gt; consumer rate is the steady-state of every production system at some point. Where does the overflow go?
-  • Unbounded in-memory queue: works until the JVM heap fills, then OOM kill. Classic anti-pattern.
-  • Bounded queue + block: producer blocks when full (Reactive Streams `request(n)` demand signal, Akka backpressure). Latency degrades gracefully; throughput is capped by the slowest stage. Best default.
-  • Bounded queue + drop: drop new items (head/tail) when full. Lossy. Right for metrics/logs where freshness &gt; completeness — Statsd over UDP is the canonical example.
-  • Bounded queue + spill-to-disk: page overflow to local disk; consumer drains both memory and disk. Fluentd, Vector, Filebeat all do this for log shipping. Trades latency + IOPS for durability under producer spikes.
-  • The choice is a product decision, not a technical one: "what is the cost of one lost item vs. one second of added latency?" Answer once per pipeline, encode it in the queue config.
+## Failure isolation: the poison-message problem
 
-<strong>Security: batch-amplified attacks</strong>
-A batch boundary is an attacker primitive. Three classes of exploit:
-  • Decompression bombs (CVE-2018-10872): Kafka allowed gzip-compressed message batches up to 1 MB on the wire that expanded to multi-GB on the broker, OOMing the JVM. Modern defense: enforce a post-decompression size limit, not just a wire-size limit.
-  • Replay within a batch: if your idempotency key is per-batch not per-item, an attacker resubmits the same payload N times inside one batch and your dedup misses it. Idempotency must be per-item, with a per-item nonce.
-  • Reordering inside a batch: batched writes to a kv store may not preserve submission order under partial failure + retry. If ordering matters (event sourcing, CRDT merge), include a sequence number per item and reject out-of-order on the consumer.
+A batch is consumed atomically: you `poll()` 500 records, process them, then commit one offset. So if processing throws on item 47, what happens to items 1–46 and 48–500? The naive answers are all traps.
 
-<strong>Adaptive batching: closing the loop</strong>
-A static window (`linger.ms=10`) is wrong at every load except the one you tuned for. Adaptive systems treat the window as a control variable.
-  • Signal: observed p99 latency vs. SLO ceiling. If p99 &lt; SLO − margin, grow the window (more throughput). If p99 &gt; SLO, shrink.
-  • AIMD (additive increase, multiplicative decrease): the same control loop TCP uses for congestion. Grow window by +1ms per healthy interval; halve on SLO breach.
-  • Production examples: Kafka's `batch.size` is static but `linger.ms` can be tuned by a sidecar; Envoy's adaptive concurrency controller does AIMD on in-flight requests; many internal RPC libraries do this for retries.
-  • Cost: an extra observability surface (per-window latency histograms) and a control loop that can itself oscillate. Worth it past ~100k QPS; overkill below.
+- **Retry the whole batch.** Item 47 is still poison, so it throws again. The consumer never advances its offset. You have an *infinite loop*, consumer lag climbs without bound, and the partition is frozen behind one bad record. This is the classic poison-message stall — the kind that pages you because dashboards show "lag: 4.2M and rising" while the consumer looks healthy.
+- **Skip the batch on error.** You advance past all 500, losing 499 good messages to discard one bad one. For payments or orders that is data loss; for an audit log it can be a compliance incident.
+- **Split-and-retry (bisect).** On failure, halve the batch and retry each half. The failing half fails again — bisect *only* that half. Recurse until the batch is a single record, dead-letter that one, and commit the rest. You pay `O(log N)` extra requests to isolate one poison item out of N. For a 500-batch that is ~9 retries, not 500.
 
-<strong>The senior checklist</strong>
-Before shipping a batched pipeline:
-  • What is the poison-message recovery path? (split-and-retry + DLQ + re-drive)
-  • What is the overflow behavior? (block / drop / spill — pick one explicitly)
-  • What is the maximum post-decompression payload size? (not just wire size)
-  • What is the per-item idempotency story? (not per-batch)
-  • Is the window static or adaptive? (static is fine; just know which)
-  • What is the observability surface? (batch size histogram, queue depth gauge, DLQ rate)
+The cloud primitive for this is AWS Lambda's `BisectBatchOnFunctionError` for Kinesis and DynamoDB Streams event sources: on a function error Lambda splits the batch in two and retries each half independently, narrowing to the offending record. Pair it with `ReportBatchItemFailures`, where the function returns the sequence number of the first failure so Lambda only retries from that point forward instead of re-running the whole window.
+
+None of this is complete without the back stop: a **dead-letter queue (DLQ)** plus a **re-drive job**. Records that fail past `maximumRetryAttempts` land in the DLQ (an SQS queue or a Kafka DLQ topic) with the original payload and error context. An operator inspects them out of band, fixes the schema or the bug, and re-drives the DLQ back into the main stream. A pipeline without a DLQ does not have failure isolation — it has a place where messages silently die.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Failure mode</th>
+        <th class="border border-border px-3 py-2 text-left">Naive outcome</th>
+        <th class="border border-border px-3 py-2 text-left">Senior fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">One item throws in a batch of N</td>
+        <td class="border border-border px-3 py-2">Retry whole batch → infinite loop, lag explodes</td>
+        <td class="border border-border px-3 py-2">Split-and-retry to isolate, then DLQ the one poison item</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Producer faster than consumer</td>
+        <td class="border border-border px-3 py-2">Unbounded in-mem queue → OOM kill</td>
+        <td class="border border-border px-3 py-2">Bounded queue + an explicit overflow policy (block/drop/spill)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Compressed batch decompresses huge</td>
+        <td class="border border-border px-3 py-2">Wire-size check passes, broker OOMs on expand</td>
+        <td class="border border-border px-3 py-2">Enforce a post-decompression size cap, not just wire size</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Duplicate payload replayed inside one batch</td>
+        <td class="border border-border px-3 py-2">Per-batch dedup sees one key, processes all copies</td>
+        <td class="border border-border px-3 py-2">Per-item idempotency key (nonce), validated per record</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Static window wrong for current load</td>
+        <td class="border border-border px-3 py-2">Over-batch at low load (latency) or under-batch at high load</td>
+        <td class="border border-border px-3 py-2">Adaptive window: AIMD control loop on p99 vs SLO</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Backpressure and bounded queues
+
+At some point in every production system, producer rate exceeds consumer rate — a downstream slowdown, a GC pause, a deploy that doubles traffic. The queue between them is where that mismatch goes. The first decision is whether the queue is bounded at all.
+
+- **Unbounded in-memory queue.** Works beautifully until the producer outruns the consumer for long enough to fill the heap, then the JVM OOM-kills the process and you lose *everything* in flight. This is a classic anti-pattern — the queue that "never fills" until the one time it does, at 2 AM, taking the whole node with it.
+- **Bounded + block.** When the queue is full, the producer blocks. This is the heart of Reactive Streams: the consumer signals demand with `request(n)` and the producer may only emit that many — backpressure as a first-class protocol (Akka Streams, Project Reactor, RxJava all implement it). Latency degrades gracefully and throughput settles at the rate of the slowest stage. **This is the right default** when losing data costs more than added latency.
+- **Bounded + drop.** When full, discard the new item (or the oldest). Lossy by design, and correct when freshness beats completeness — StatsD over UDP is the canonical example: a dropped metric sample is invisible, but a producer that stalls on a full buffer breaks the very observability you needed.
+- **Bounded + spill-to-disk.** Page overflow to a local on-disk buffer (a write-ahead log), drained behind the in-memory queue. Durable across producer spikes at the cost of disk IOPS and added end-to-end latency. Vector, Fluentd, and Filebeat all offer this for log shipping.
+
+One nuance worth getting right: spill-to-disk is a *capacity* lever, not the overflow policy itself — even a disk buffer is finite, so it still needs a `when_full` rule. Vector's disk buffer defaults to `when_full: block`, propagating backpressure all the way to the source, and only switches to `drop_newest` when you explicitly choose to shed load. The point is that "spill" buys you a much larger, durable buffer before block-or-drop ever triggers.
+
+The choice between these is **a product decision, not a technical one**. The question is: *what is the cost of one lost item versus one second of added latency?* For payments, a lost item is unacceptable — block. For a metrics firehose, a one-second stall blinds your dashboards — drop. Answer it once per pipeline and encode the answer in the queue config; don't let it be an accident of which default the library shipped.
+
+<TradeoffMatrix
+  id="06-backpressure-production-tradeoff-1"
+  lessonSlug="06-backpressure-production"
+  lang="en"
+  prompt="A payment-events pipeline: the consumer slows during a downstream incident and the bounded queue is filling. Pick the overflow policy a senior defends."
+  options={[
+    { name: "Block (apply backpressure upstream)", summary: "Producer waits; latency rises.", correct: true, justification: "For payments a lost event is a financial and compliance failure, so completeness outranks latency. Blocking applies backpressure all the way to the source — orders queue up and slow down, but none are dropped, and throughput self-limits to the consumer's drain rate. The graceful-degradation behavior of Reactive Streams request(n) is exactly this." },
+    { name: "Drop newest when full", summary: "Discard incoming events to stay fast.", justification: "Dropping is right for telemetry where a missing sample is invisible, but here every dropped event is a lost payment. Optimising for low latency by silently shedding financial records trades a recoverable latency problem for unrecoverable data loss." },
+    { name: "Switch to an unbounded in-memory queue so nothing is ever rejected", summary: "Remove the bound entirely.", justification: "Unbounded only moves the failure: the queue grows until the heap is exhausted and the process is OOM-killed, losing everything in flight — far worse than a temporary slowdown. 'Never rejects' becomes 'rejects all of it at once, later.'" },
+    { name: "Spill to disk and never block or drop", summary: "Page everything to a WAL.", justification: "Spill buys a large durable buffer and is great here as a capacity lever, but disk is still finite — it postpones the decision, it doesn't remove it. You still owe a when_full policy for when the disk buffer fills, and for payments that policy should be block." },
+  ]}
+/>
+
+## Security: the batch boundary as an attacker primitive
+
+A batch boundary is leverage, and leverage is what attackers want. Three exploit classes recur.
+
+**Decompression bombs.** A small compressed payload that expands to gigabytes on the receiver. The concrete Kafka incident is CVE-2023-34455 (with the incomplete-fix follow-up CVE-2023-43642): the `snappy-java` decompressor read a 4-byte chunk-length field and allocated a byte array of that size *without an upper-bound check*. A crafted frame declaring `0x7FFFFFFF` made the broker try to allocate ~2 GB and throw `OutOfMemoryError` — a remote DoS affecting Kafka 0.8.0 through 3.5.0, fixed in snappy-java 1.1.10.1+. The general defense: validate the *post-decompression* size, not just the wire size. A 1 MB compressed batch can legitimately carry far more, so a wire-level limit is no protection at all.
+
+**Replay inside a batch.** If your idempotency key is per-batch instead of per-item, an attacker submits one batch containing the same payload 100 times. The dedup check at the batch boundary sees one unique key and happily processes all 100 copies. Idempotency must be *per-item*, with a per-item nonce checked against a dedup store as each record is applied.
+
+**Reordering under partial failure.** Batched writes to a KV store may not preserve submission order once split-and-retry kicks in: the retried half lands after the half that succeeded. If ordering carries meaning — event sourcing, CRDT merge, a state machine — attach a sequence number per item and have the consumer reject out-of-order records. Never assume batch order survives a retry.
+
+The unifying rule: **every batch property — total size, item count, idempotency key, ordering — must be validated post-decompression and per-item, never at the wire boundary or per-batch.** A compressed batch is an opaque envelope; what's inside is the attack surface.
+
+## Adaptive batching: closing the loop
+
+A static window — `linger.ms=10`, `batch.size=16384` — is wrong at every load except the one you tuned for. At low traffic it adds latency waiting for a batch that never fills; at high traffic it caps throughput below what the system could sustain. Adaptive systems treat the window as a control variable driven by a feedback signal.
+
+- **Signal.** Observed p99 latency against the SLO ceiling. When `p99 < SLO − margin`, grow the window for more throughput. When `p99 > SLO`, shrink it to protect latency.
+- **AIMD (additive increase, multiplicative decrease).** The exact control loop TCP congestion control uses: nudge the window up by a small step each healthy interval, halve it on an SLO breach. It probes gently for headroom and backs off hard under stress — the same instinct that keeps the internet stable applies to your batch window.
+- **Production examples.** Kafka's `batch.size` is static, but `linger.ms` can be driven by a sidecar reacting to latency. Envoy's adaptive concurrency filter runs a closely related control loop — a gradient controller (Netflix's algorithm) that measures minRTT under light load and shrinks the in-flight concurrency limit as sampled latency rises above it. Same idea, controlling concurrency instead of window size.
+- **Cost.** You add an observability surface (per-window latency histograms) and a control loop that can itself oscillate if tuned badly. Worth it past roughly 100k QPS, where the gap between the right window at peak and at trough is large; below that, a well-chosen static window is simpler and fine.
+
+<Inset kind="why" lang="en">
+Why reuse TCP's AIMD instead of a smarter controller? Because AIMD's multiplicative decrease guarantees fast convergence away from overload, while additive increase keeps you from slamming back into it — the property that makes it stable under shared, noisy load. A PID controller can be tighter but is far easier to mistune into oscillation. For a batch window where the cost of over-shooting is an SLO breach, "back off hard, probe gently" is the conservative default.
+</Inset>
+
+## The senior pre-ship checklist
+
+Before a batched pipeline ships, a senior can answer all six of these. If any answer is "we didn't decide," that's the gap that pages you.
+
+1. **Poison-message recovery path?** Split-and-retry to isolate, DLQ the bad item, re-drive job to replay fixes.
+2. **Overflow behavior?** Block, drop, or spill — chosen explicitly from the cost of a lost item vs added latency.
+3. **Maximum post-decompression payload size?** A real cap on the expanded size, not just the wire size.
+4. **Per-item idempotency story?** A per-item nonce checked against a dedup store, never a per-batch key.
+5. **Static or adaptive window?** Static is fine below ~100k QPS — just know which you chose and why.
+6. **Observability surface?** Batch-size histogram, queue-depth gauge, DLQ rate, consumer lag — the four signals that catch all of the above before they page you.
+
+<Quiz
+  id="06-backpressure-production-quiz-1"
+  lessonSlug="06-backpressure-production"
+  lang="en"
+  question="A batch of 500 Kafka records throws on record 47. How does split-and-retry isolate the poison item?"
+  choices={[
+    { label: "Halve the batch and retry each half, recursing only into the failing half, until one record is isolated and dead-lettered — O(log N) extra requests", correct: true },
+    { label: "Retry the whole 500-record batch until record 47 eventually succeeds", misconception: "Record 47 is poison — it throws every time. Retrying the whole batch is the infinite-loop stall: the offset never advances and consumer lag explodes." },
+    { label: "Skip the entire batch and move the offset past all 500 records", misconception: "That discards 499 good records to drop one bad one — data loss, which for orders or payments can be a compliance incident." },
+  ]}
+/>
+
+<Quiz
+  id="06-backpressure-production-quiz-2"
+  lessonSlug="06-backpressure-production"
+  lang="en"
+  question="A 1 MB compressed Kafka batch passes the wire-size limit but OOMs the broker. What is the correct defense, per CVE-2023-34455?"
+  choices={[
+    { label: "Enforce a limit on the post-decompression size, validated as the frame is expanded", correct: true },
+    { label: "Lower the on-the-wire max message size further", misconception: "The exploit is the expansion ratio: a tiny compressed frame can declare a 2 GB chunk. A wire-size limit says nothing about the decompressed size, so it offers no protection." },
+    { label: "Disable compression on the broker entirely", misconception: "That sacrifices the throughput and storage gains compression buys, and isn't necessary — a post-decompression bound (the snappy-java 1.1.10.1 fix) closes the hole while keeping compression." },
+  ]}
+/>
+
+<DragOrder
+  id="06-backpressure-production-drag-1"
+  lessonSlug="06-backpressure-production"
+  lang="en"
+  prompt="Order the split-and-retry isolation steps for a poison record in a batch:"
+  items={[
+    { id: "a", label: "Processing throws somewhere in the batch; the whole batch is marked failed" },
+    { id: "b", label: "Halve the batch and retry each half independently" },
+    { id: "c", label: "Recurse only into the half that still fails, ignoring the half that passed" },
+    { id: "d", label: "Bisect down to a single poison record" },
+    { id: "e", label: "Dead-letter that one record and commit the offsets of all the good ones" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
 </Explanation>
+
+<KeyTakeaway>Batching amplifies failures by N. Isolate poison items with split-and-retry plus a DLQ. Bound every queue; pick block, drop, or spill on purpose. Enforce limits post-decompression and per-item, never per-batch.</KeyTakeaway>
 
 <RetrievalDrawer
   client:load
@@ -84,24 +206,20 @@ Before shipping a batched pipeline:
   lang="en"
   questions={[
     {
-      q: "A consumer batches 500 Kafka messages per poll. Message 47 throws during deserialization. Walk through the split-and-retry isolation pattern.",
-      a: "On first failure, the consumer halves the batch into [1..250] and [251..500] and retries each. The [251..500] half fails again; halve to [251..375] and [376..500]. Continue bisecting only the failing half — O(log N) extra requests. Once down to a single item, dead-letter it (write to DLQ topic with the original payload + error context) and commit the offsets of the good items. AWS Lambda exposes this directly via BisectBatchOnFunctionError for Kinesis and DynamoDB Streams sources."
+      q: "A consumer batches 500 Kafka messages per poll. Message 47 throws during deserialization. Walk through the split-and-retry isolation pattern and what makes it cheap.",
+      a: "On the first failure the consumer halves the batch into [1..250] and [251..500] and retries each. The [251..500] half fails again, so it halves to [251..375] and [376..500] — and crucially recurses only into the failing half, never re-testing records already known good. Continue bisecting until you reach a single record: dead-letter it (write to a DLQ topic with the original payload and error context) and commit the offsets of all the good records so the consumer advances. The cost is O(log N) extra requests — about 9 retries for a 500-batch, not 500 — because each step throws away half the search space. AWS Lambda exposes this directly as BisectBatchOnFunctionError for Kinesis and DynamoDB Streams sources, and pairing it with ReportBatchItemFailures lets the function return the first failing sequence number so Lambda retries only from that point."
     },
     {
-      q: "A producer is faster than the consumer. The bounded queue is full. What changes between block, drop, and spill-to-disk?",
-      a: "Block: producer waits, latency rises, throughput is capped by the consumer's drain rate. Best default for systems where losing data costs more than added latency (orders, payments). Drop: producer discards the new item, freshness preserved, oldest items survive — right for metrics/telemetry where one dropped sample is invisible but a stalled producer breaks visibility. Spill-to-disk: queue pages overflow to local disk (ring buffer or rolling files), drained behind the memory queue — durable across producer spikes at the cost of disk IOPS and added end-to-end latency. Vector and Fluentd default to spill for log shipping because logs are durability-sensitive but bursty."
+      q: "A producer is faster than the consumer and the bounded queue is full. What changes between block, drop, and spill-to-disk, and how do you choose?",
+      a: "Block: the producer waits, latency rises, and throughput is capped at the consumer's drain rate. Best default when losing data costs more than added latency (orders, payments) — it's the Reactive Streams request(n) behavior. Drop: the producer discards the new (or oldest) item; lossy but right for metrics/telemetry, where one dropped sample is invisible but a stalled producer breaks visibility — StatsD over UDP is the canonical case. Spill-to-disk: overflow pages to a local write-ahead log drained behind the memory queue — durable across producer spikes at the cost of disk IOPS and end-to-end latency (Vector, Fluentd, Filebeat). Note spill is a capacity lever, not the overflow policy: even a disk buffer is finite and still needs a when_full rule (Vector defaults to block). The choice is a product decision: price one lost item against one second of latency, answer once per pipeline, and encode it in config."
     },
     {
-      q: "Why is per-batch idempotency unsafe, and how does CVE-2018-10872 generalize the lesson?",
-      a: "Per-batch idempotency keys a single nonce for the whole batch — an attacker submits one batch containing the same payload 100 times and the dedup at the batch boundary sees one unique key, processing all 100. The general lesson from CVE-2018-10872 (Kafka decompression bomb): every batch property — size, item count, idempotency key — must be validated post-decompression and per-item, not at the wire boundary. A 1 MB compressed batch can carry a 1 GB payload or 1 million duplicate items; neither is visible to a wire-level check."
+      q: "Why is per-batch idempotency unsafe, and how does CVE-2023-34455 generalize the lesson about batch boundaries?",
+      a: "A per-batch idempotency key assigns one nonce to the whole batch, so an attacker submits a single batch containing the same payload 100 times and the dedup check at the batch boundary sees one unique key and processes all 100 copies. Idempotency has to be per-item, with a per-item nonce checked as each record is applied. CVE-2023-34455 generalizes this: snappy-java read a declared chunk length and allocated that many bytes with no upper-bound check, so a tiny compressed frame declaring ~2 GB OOM-killed the Kafka broker (0.8.0–3.5.0, fixed in 1.1.10.1). The shared lesson is that a compressed batch is an opaque envelope — every property (size, item count, idempotency key, ordering) must be validated post-decompression and per-item, never trusted at the wire boundary or per-batch."
     }
   ]}
 />
 
-<KeyTakeaway>
-Batching amplifies failures by N. Isolate poison items with split-and-retry + DLQ. Bound every queue and pick an overflow policy (block, drop, or spill) deliberately. Enforce limits post-decompression and per-item, not per-batch. Adaptive windows beat static tuning past ~100k QPS.
-</KeyTakeaway>
-
 <Recap lang="en">
-Production batching fails in three ways the throughput-tuning lessons don't cover: one bad item kills a whole batch (fix: split-and-retry + DLQ), one slow consumer overflows the queue (fix: bounded queue with block/drop/spill chosen deliberately), and one malicious batch amplifies an attack by orders of magnitude (fix: post-decompression limits, per-item idempotency, sequence numbers). Static windows are fine below ~100k QPS; above it, run an AIMD control loop on observed p99 vs. SLO. The senior checklist — poison path, overflow policy, decompression cap, per-item nonces, observability — is what separates a batching tutorial from a batching pipeline.
+Production batching fails in ways the throughput-tuning lessons don't cover, and each one is the batch's efficiency turned against you. One bad item kills a whole batch — fix it with split-and-retry to isolate the poison record in O(log N) requests, then dead-letter it and re-drive (AWS Lambda's BisectBatchOnFunctionError is this primitive). One slow consumer overflows the queue — bound it and pick block, drop, or spill on purpose, because the choice is a product decision about the cost of a lost item versus latency, not a technical accident. One malicious batch amplifies an attack by orders of magnitude — defend with post-decompression size caps (CVE-2023-34455), per-item idempotency, and sequence numbers, because a compressed batch is an opaque envelope you must validate per-item. Static windows are fine below ~100k QPS; above it, run an AIMD control loop on observed p99 versus SLO, the same congestion logic TCP uses. The six-item pre-ship checklist — poison path, overflow policy, decompression cap, per-item nonce, window choice, observability — is what separates a batching tutorial from a batching pipeline.
 </Recap>
