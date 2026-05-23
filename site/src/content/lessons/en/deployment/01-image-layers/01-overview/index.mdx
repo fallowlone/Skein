@@ -6,12 +6,194 @@ unit: 01-image-layers
 order: 1
 level: junior
 lessonType: topic
-status: stub
-title: "Image layers"
-summary: "Coming soon — Deployment and infra"
+status: ready
+title: "Image layers and the build cache: order is everything"
+summary: "An image is a stack of read-only layers, each Dockerfile step cached by its instruction plus input hash. Order steps least- to most-changing or every source edit reinstalls the world — and a deleted secret still lives in history."
 prereqs: []
 deepensInto: []
 spiral: []
-sources: ["https://example.com/stub"]
-estMin: 5
+concepts: ["image-layers", "build-cache", "layer-ordering", "multi-stage-builds", "dockerignore", "layer-history-secrets"]
+estMin: 16
+sources:
+  - https://docs.docker.com/build/cache/invalidation/
+  - https://docs.docker.com/build/building/multi-stage/
+  - https://docs.docker.com/build/building/best-practices/
+  - https://xygeni.io/blog/dockerfile-secrets-why-layers-keep-your-sensitive-data-forever/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+A one-line CSS tweak triggers a four-minute CI build. Every push does the same: `npm install` reruns from scratch, pulling 1,200 packages over the network, even though `package.json` never changed. Someone wrote `COPY . .` before `RUN npm install`, so editing any file invalidates the install layer. The team had been paying ~3 minutes per push for months — a cache that was never hitting because the Dockerfile asked the wrong question of it first.
+</Hook>
+
+<Crux>An image is stacked read-only layers cached by instruction + input hash, so the first changed step rebuilds it and everything after.</Crux>
+
+<Explanation>
+
+## A layer is a diff, and the cache key is content
+
+A Docker image is not one blob. It is a stack of read-only layers presented through a union filesystem (overlay2 on Linux), so the running container sees one merged tree but the storage is a chain of diffs. Each `RUN`, `COPY`, and `ADD` in your Dockerfile produces one layer — the filesystem changes that step made, nothing more.
+
+The build cache keys each layer on two things: the **instruction string itself** and the **content it depends on**. For `COPY` and `ADD`, Docker computes a checksum of the files being copied; if a byte changes, the checksum changes, and the cache misses. For `RUN`, the cache key is the literal command text — Docker does *not* inspect what the command actually does, which is its own trap (more below). The rule that follows is unforgiving: **the moment one layer's key changes, that layer and every layer after it rebuild.** Cache is a prefix match. You keep it only up to the first miss.
+
+That single fact drives every optimisation in this lesson. Your job as the author of a Dockerfile is to arrange instructions so the steps that rarely change sit early (deep in the cache prefix) and the steps that change on every commit — your source code — sit last.
+
+## The cardinal rule: order least- to most-changing
+
+Here is the bug from the hook, and the fix.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Step</th>
+        <th class="border border-border px-3 py-2 text-left">Bad order (cache busts every edit)</th>
+        <th class="border border-border px-3 py-2 text-left">Good order (install stays cached)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">1</td>
+        <td class="border border-border px-3 py-2"><code>COPY . .</code></td>
+        <td class="border border-border px-3 py-2"><code>COPY package.json package-lock.json ./</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">2</td>
+        <td class="border border-border px-3 py-2"><code>RUN npm ci</code></td>
+        <td class="border border-border px-3 py-2"><code>RUN npm ci</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">3</td>
+        <td class="border border-border px-3 py-2">—</td>
+        <td class="border border-border px-3 py-2"><code>COPY . .</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Effect of editing one source file</td>
+        <td class="border border-border px-3 py-2">Step 1 checksum changes → install reruns (minutes)</td>
+        <td class="border border-border px-3 py-2">Only step 3 misses → install is a cache hit (seconds)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+In the good order, `COPY package.json package-lock.json ./` only changes its checksum when your dependency manifest changes. Edit a component, and steps 1 and 2 stay cached; only the final `COPY . .` and whatever follows rebuild. This is the single highest-leverage change you can make to a Dockerfile: teams routinely report CI build times dropping by 70% from layer caching alone, because the multi-minute dependency install becomes a sub-second cache hit on the vast majority of commits.
+
+The same principle generalises. Pin your base image and install OS packages early; they change monthly at most. Copy lockfiles and install dependencies next. Copy source and build last. The frequency gradient — rarely-changing at the bottom, every-commit at the top — is the whole game.
+
+<Inset kind="why" lang="en">
+`RUN` is cached on the command *text*, not its result. `RUN apt-get update` will happily reuse a months-old cached layer because the string never changed — so you install stale package indexes and then `apt-get install` against them. The fix is to join them in one instruction: `RUN apt-get update && apt-get install -y curl`. Now they share a cache key and invalidate together. This is also why `ARG` placement matters: a build arg changes downstream cache keys, so declare it as late as the build allows.
+</Inset>
+
+## Multi-stage: compile fat, ship slim
+
+Your build toolchain — compilers, dev dependencies, `node_modules` full of build-time packages, `apt` caches — has no business in the image you run in production. It bloats the image, widens the attack surface, and slows every pull and deploy. Multi-stage builds solve this: you write several `FROM` stages in one Dockerfile, do the heavy work in a fat builder stage, then `COPY --from=builder` only the finished artifacts into a slim runtime stage. Only the last stage becomes the published image; the builder is discarded.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:22 AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs22-debian12
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+CMD ["dist/server.js"]
+```
+
+The numbers are dramatic. A single-stage Node build commonly lands around 380MB+ (the full `node:22` base is ~1.1GB before your app); the multi-stage version on a slim or distroless base drops to roughly 60MB. For a Go binary the contrast is starker — a single-stage build near 180MB collapses to a ~3–12MB image on `scratch` or `distroless/static`, because the compiled binary needs no runtime at all. One widely-cited example shrank an 843MB image to 12.1MB, a 98.6% reduction.
+
+## Distroless vs alpine: the runtime-base tradeoff
+
+Once you have a slim runtime stage, the base you pick is a real decision. Alpine is tiny because it uses musl libc and BusyBox, and it ships a package manager — convenient when you need to add a tool. The catch: musl differs from glibc subtly enough to cause native-module breakage and the occasional DNS or performance surprise. Distroless ships only your app and its direct runtime dependencies — no shell, no package manager, no `apt` — which is excellent for attack surface but means you cannot `docker exec` a shell into it to debug, and you must get every runtime dependency in via `COPY`.
+
+<TradeoffMatrix
+  id="01-image-layers-tradeoff-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="A compiled service must ship as a small, hardened production image. Pick the final-stage base."
+  options={[
+    { name: "Distroless (gcr.io/distroless/*): app + runtime deps only, no shell, no package manager", summary: "Minimal attack surface.", correct: true, justification: "Right for a hardened production runtime: no shell and no package manager means a far smaller attack surface and image, and CVE scanners flag almost nothing because almost nothing is installed. The cost you accept is debuggability — there is no shell to docker exec into — so you lean on logs, ephemeral debug containers, and getting every runtime dependency in via COPY --from. For a compiled or self-contained app this is the standard senior choice." },
+    { name: "Alpine: musl libc + BusyBox, with apk available", summary: "Tiny but musl.", justification: "Very small and convenient because apk lets you add tools, which is great for utility images. But musl libc differs from glibc enough to cause native-addon breakage and occasional DNS/performance surprises, and shipping a package manager and shell widens the attack surface versus distroless. A reasonable pick when you genuinely need a shell or to install runtime packages, not the most-hardened option." },
+    { name: "The full builder base (node:22, golang) reused as the runtime", summary: "No second stage.", justification: "This is the anti-pattern multi-stage builds exist to fix. You ship compilers, dev dependencies, and apt caches into production — hundreds of MB of bloat and attack surface that never run a request. Use it only as the builder stage, then COPY artifacts into a slim final stage." },
+    { name: "ubuntu:22.04 with the app copied in and build tools removed afterward with apt-get remove", summary: "Clean up later.", justification: "Removing tools in a later layer does not shrink the image — the bytes still live in the earlier layer, the image stays large, and anything sensitive stays in history. Cleanup-after-the-fact is the same fallacy as deleting a secret in a later RUN. Use a fresh slim final stage instead." },
+  ]}
+/>
+
+## .dockerignore and the secret that never dies
+
+Two failures round out the picture. First, the **build context**: when you run `docker build .`, the entire directory is tarred and sent to the daemon. Without a `.dockerignore`, that includes `.git`, `node_modules`, build output, and `.env` files — slowing the upload and risking that `COPY . .` rakes secrets and junk into a layer. A `.dockerignore` listing `node_modules`, `.git`, `*.log`, and `.env` keeps the context lean and the copy clean.
+
+Second, the trap that bites teams hardest: **a secret added in one layer and removed in a later layer still lives in image history.** Layers are immutable diffs. If you `COPY id_rsa` (or echo a token into a file) and then `RUN rm id_rsa` two lines later, the removal is just a new diff on top — the original file is still recoverable from the earlier layer via `docker history` or by extracting the image. The delete is theatre. The correct tools are BuildKit secret mounts — `RUN --mount=type=secret,id=token ...` makes the secret available for that one instruction and writes it to *no* layer — or, failing that, a multi-stage build where the secret lives only in a discarded builder stage. Never `rm` a secret and assume it is gone.
+
+<Quiz
+  id="01-image-layers-quiz-1"
+  lessonSlug="01-overview"
+  lang="en"
+  question="You edit one source file and rebuild. npm ci reruns every time. What is the most likely cause?"
+  choices={[
+    { label: "COPY . . runs before RUN npm ci, so any file edit changes the COPY checksum and invalidates the install layer and everything after it", correct: true },
+    { label: "The base image is too large", misconception: "Base image size affects pull/push time and disk, not whether the install layer is a cache hit. The cache miss comes from instruction order, not base size." },
+    { label: "npm ci is non-deterministic and can't be cached", misconception: "npm ci is deterministic; the layer caches fine. The problem is that an earlier layer (COPY . .) is busting, which forces every downstream layer to rebuild." },
+    { label: "You need to pass --no-cache", misconception: "--no-cache disables caching entirely — the opposite of what you want. The fix is to copy the lockfile and install before copying source." },
+  ]}
+/>
+
+<Quiz
+  id="01-image-layers-quiz-2"
+  lessonSlug="01-overview"
+  lang="en"
+  question="A token was COPYed into a layer, then deleted with RUN rm in the next instruction. Is it safe?"
+  choices={[
+    { label: "No — the token still exists in the earlier layer's diff and is recoverable from image history; use a BuildKit secret mount or a discarded builder stage", correct: true },
+    { label: "Yes, rm in the next layer removes it from the image", misconception: "Layers are stacked immutable diffs. The rm adds a new diff that hides the file in the merged view, but the original bytes remain in the earlier layer and are recoverable via docker history." },
+    { label: "Yes, as long as you don't push the image", misconception: "Even unpushed, anyone with the local image can extract it. And the point of building is usually to ship it — the secret travels with it." },
+    { label: "Yes, if the rm is in the same RUN command", misconception: "Same-RUN cleanup helps with files written and removed inside one instruction, but a token COPYed in a separate instruction is already its own layer. Use --mount=type=secret, which writes to no layer at all." },
+  ]}
+/>
+
+<DragOrder
+  id="01-image-layers-drag-1"
+  lessonSlug="01-overview"
+  lang="en"
+  prompt="Order a Node Dockerfile's steps for maximum cache reuse (least- to most-frequently-changing):"
+  items={[
+    { id: "a", label: "FROM node:22 AS builder — pin the base image (changes rarely)" },
+    { id: "b", label: "RUN apt-get update && apt-get install -y <os-deps> — OS packages (monthly at most)" },
+    { id: "c", label: "COPY package.json package-lock.json ./ — dependency manifest (changes when deps change)" },
+    { id: "d", label: "RUN npm ci — install dependencies (cached until the manifest changes)" },
+    { id: "e", label: "COPY . . then RUN npm run build — source code (changes every commit)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Cache is a prefix: the first changed layer rebuilds it and all after. Copy lockfiles and install before source, multi-stage to ship slim, .dockerignore the junk, and never `rm` a secret — it stays in history.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-image-layers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why putting COPY . . before RUN npm ci wrecks build times, and the exact reorder that fixes it.", a: "The build cache keys each layer on its instruction plus the content it depends on, and it is a strict prefix match: the first layer whose key changes is rebuilt, and so is every layer after it. COPY . . takes a checksum of every file in the context, so editing any source file — even a one-line CSS tweak — changes that checksum and invalidates the COPY layer. Because RUN npm ci sits after it, the install layer is downstream of the miss and rebuilds too, pulling all your dependencies over the network on every push. The fix is to split the copy by change frequency: COPY package.json package-lock.json ./ first, then RUN npm ci, then COPY . . for the source. Now the install layer's inputs only change when the lockfile changes, so it stays a cache hit on the vast majority of commits and only the final source copy and build rerun. Teams commonly see CI build times fall by around 70% from this single reorder." },
+    { q: "Why does deleting a secret in a later layer not remove it, and what should you do instead?", a: "A Docker image is a stack of immutable, append-only layers, each one a filesystem diff. When you COPY a key into the image, that is a layer containing the file. A later RUN rm of that file is just another diff on top that marks it deleted in the merged view — it does not edit or erase the earlier layer, which still physically contains the bytes. Anyone can run docker history or unpack the image's layers and recover the original file, pushed or not. The correct approaches all keep the secret out of any persisted layer: use a BuildKit secret mount, RUN --mount=type=secret,id=token, which exposes the secret only for that one instruction and writes it to no layer; or use a multi-stage build where the secret is only ever present in a builder stage that is discarded and never published; or, as a last resort, squash. The principle is that a secret must never become a layer in the first place — you cannot delete it back out." },
+  ]}
+/>
+
+<Recap lang="en">
+An image is a stack of read-only layers over a union filesystem, and each Dockerfile instruction produces one layer keyed on the instruction text plus the content it touches. The cache is a prefix match, so the first instruction whose key changes rebuilds itself and everything below it — which makes instruction order the single biggest lever you have. Put rarely-changing steps first: pin the base, install OS packages, copy the lockfile and install dependencies, and only then copy source and build, so an everyday code edit keeps the expensive install as a cache hit. Use multi-stage builds to compile in a fat builder and COPY only artifacts into a slim distroless or alpine runtime, dropping images from hundreds of MB to tens. Keep `.git`, `node_modules`, and `.env` out of the build context with `.dockerignore`. And remember that a secret added then `rm`'d still lives in an earlier layer's diff — reach for BuildKit secret mounts or a discarded builder stage, because in immutable layers you can never delete it back out.
+</Recap>
