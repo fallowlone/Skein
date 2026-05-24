@@ -1,0 +1,177 @@
+---
+slug: 03-provider-verification-broker
+lang: en
+track: engineering-practice
+unit: 02-contract-testing
+order: 3
+level: middle
+lessonType: topic
+status: ready
+title: "Provider verification and the broker: replaying the consumer's expectations against the real service"
+summary: "The consumer published a pact; now the provider must replay every recorded interaction and prove each one holds. Provider states set up the data so an interaction is satisfiable. The broker stores pacts plus results and, via webhooks, decouples the two CI pipelines."
+prereqs: ["02-consumer-driven-contracts"]
+deepensInto: ["04-can-i-deploy-and-versioning"]
+spiral: ["feedback-loops", "source-of-truth"]
+concepts: ["provider-verification", "provider-states", "pact-broker", "webhooks", "verification-results-matrix", "can-i-deploy"]
+estMin: 17
+sources:
+  - https://docs.pact.io/getting_started/how_pact_works
+  - https://docs.pact.io/getting_started/provider_states
+  - https://docs.pact.io/pact_broker/webhooks
+  - https://docs.pact.io/pact_broker/can_i_deploy
+  - https://martinfowler.com/bliki/IntegrationContractTest.html
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+
+<Hook>
+Priya's `checkout-web` team published a pact: "when I `GET /prices/42`, I read `amount_cents` (a number) and `currency` (a string)." The contract now exists. But a contract no one checks is just a wish. Sam owns the `pricing` service, and last sprint he renamed `amount_cents` to `unit_amount` — a clean refactor, all of `pricing`'s own tests green, deployed Friday. On Monday `checkout-web` rendered `NaN` on every product page because the field it parses had silently vanished. The pact described exactly the breakage that shipped, and nothing replayed it against Sam's real service before he deployed. The recording was never played back. That playback — sending each recorded request at the *actual running provider* and checking the response still honours what the consumer reads — is **provider verification**, and the place that stores the pacts and the verification results so the two teams never have to coordinate by hand is the **broker**.
+</Hook>
+
+<Crux>Provider verification replays each recorded interaction against the real provider, proving its response honours every consumer expectation.</Crux>
+
+<Explanation>
+
+## Verification is replay, not re-reading
+
+The pact file is a list of concrete interactions: request, expected response, and the provider state each one assumes. Provider verification is mechanical: a Pact verifier takes that list and, for each interaction, **sends the recorded request to the real, running provider and compares the actual response against the expected one.** No mock is involved on the provider side — the request hits the genuine routing, controllers, serializers, and (with state set up) the genuine data layer. If `checkout-web`'s pact says `GET /prices/42` should return a body containing `amount_cents`, the verifier fires that exact request at the booted `pricing` service and inspects what comes back.
+
+The comparison is deliberately asymmetric, and this is the property that makes the gate stable. The verifier checks that the actual response **contains at least** the data the consumer described — the *minimal expected response*. Sam can add ten new fields to `/prices/42` and verification stays green, because the consumer never asserted their absence. But if he renames `amount_cents`, the field the consumer reads is gone, the actual response no longer contains the minimal expected shape, and **verification fails before he deploys.** The contract trips on exactly the change that would break a real consumer and stays silent on everything else, which is the same precision the consumer-driven recording bought you, now enforced from the provider's side.
+
+## Provider states are the subtle hard part
+
+An interaction like "`GET /prices/42` returns `200` with a price body" is only satisfiable if price 42 actually exists in the provider when the request is replayed. The consumer recorded this precondition as a **provider state** — a string in the `given` clause, e.g. `"a price with id 42 exists"`, the Pact equivalent of Cucumber's *Given* step: put the system in a known state before the interaction runs. Verification is the moment that string has to be turned into real data.
+
+So the provider must register **state handlers**: code that, for each named state, sets up the data the interaction needs. Before replaying each interaction, the verifier invokes the matching handler (often by POSTing `{ "consumer": "...", "state": "..." }` to a test-only state-change endpoint), the handler inserts price 42 into the provider's data store, then the request is sent. Two rules make this work and are easy to get wrong. First, **each interaction is verified in isolation** — no state carries over from the previous one, so every handler must establish its full precondition from scratch and ideally tear down after. Second, the handler sets up *data*, not the response: it makes the interaction satisfiable, but the real provider code still produces the response, which is the whole point. This is where verification quietly gets expensive — every distinct `given` string the consumers wrote becomes a state handler the provider team must implement and maintain, and a missing or wrong handler fails verification not because the contract is broken but because the precondition was never met.
+
+<Inset kind="why" lang="en">
+Why not just point verification at a shared staging database that already has price 42 in it? Because then the test is no longer deterministic or isolated: whether `GET /prices/42` returns `200` depends on whatever rows happen to exist that day, another team's cleanup job can delete price 42 between runs, and a `404`-expecting interaction can't coexist with a `200`-expecting one against the same fixed data. Provider states move the precondition *into the contract* and into provider-owned setup code, so each interaction carries its own world and is replayable in isolation on a freshly seeded provider. That is exactly what lets verification run in the provider's own CI, against its own ephemeral data, with no coordination with the consumer's environment.
+</Inset>
+
+## The broker is the system of record between two pipelines
+
+Verification needs two artifacts to meet: the consumer's pact and the provider's pass/fail result. The naive way to make them meet is to wire the consumer's CI to trigger the provider's build directly — but that re-couples the two pipelines you went to contract testing to decouple. The **Pact Broker** (open-source) / **PactFlow** (hosted) is the exchange that breaks the coupling. The consumer publishes its pact to the broker, tagged with its version and branch, and walks away. Independently, the provider's CI pulls the relevant pacts from the broker, runs verification, and publishes the results back. Neither pipeline calls the other; the broker is the shared, asynchronous system of record holding every pact and every verification result.
+
+The broker can also push. A **webhook** fires on broker events — most importantly `contract_requiring_verification_published` (which superseded `contract_content_changed` in broker 2.82.0) — to trigger the provider's verification build the moment a new or changed pact lands, passing templated parameters like `${pactbroker.pactUrl}` and `${pactbroker.providerVersionNumber}` so the provider build knows exactly what to verify. The result of all this is the **verification results matrix**: a grid of which consumer versions have been verified against which provider versions. That matrix is what the `can-i-deploy` tool queries before a release — "is the version of `pricing` I'm about to ship verified against the version of `checkout-web` already in production?" — so each *pacticipant* (Pact's word for an app in a contract) can deploy on its own schedule, gated by recorded results rather than by a human checking with the other team.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Aspect</th>
+        <th class="border border-border px-3 py-2 text-left">No broker: pipelines wired directly</th>
+        <th class="border border-border px-3 py-2 text-left">Broker as system of record</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Pact handoff</td>
+        <td class="border border-border px-3 py-2">Committed to provider repo / passed by hand</td>
+        <td class="border border-border px-3 py-2">Published to broker, tagged version + branch</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Who triggers verify</td>
+        <td class="border border-border px-3 py-2">Consumer CI calls provider build directly</td>
+        <td class="border border-border px-3 py-2">Broker webhook on contract-requiring-verification</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Pipeline coupling</td>
+        <td class="border border-border px-3 py-2">Tight — consumer build blocks on provider</td>
+        <td class="border border-border px-3 py-2">Async — neither pipeline calls the other</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Deploy decision</td>
+        <td class="border border-border px-3 py-2">Manual "is the other team's build green?"</td>
+        <td class="border border-border px-3 py-2">`can-i-deploy` queries the results matrix</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Independent deploy</td>
+        <td class="border border-border px-3 py-2">No — both must release together</td>
+        <td class="border border-border px-3 py-2">Yes — each pacticipant on its own schedule</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<DragOrder
+  id="03-provider-verification-broker-drag-1"
+  lessonSlug="03-provider-verification-broker"
+  lang="en"
+  prompt="Order the end-to-end flow from a new consumer pact to a gated provider deploy:"
+  items={[
+    { id: "a", label: "Consumer CI publishes the pact to the broker, tagged with its version and branch" },
+    { id: "b", label: "Broker fires a contract_requiring_verification_published webhook at the provider's CI" },
+    { id: "c", label: "Provider boots, and for each interaction runs the state handler to set up the data its `given` assumes" },
+    { id: "d", label: "The verifier replays each recorded request and checks the response contains the minimal expected shape" },
+    { id: "e", label: "Verification results are published back to the broker, filling in the matrix" },
+    { id: "f", label: "Before release, can-i-deploy queries the matrix to confirm this provider version is verified against prod's consumer" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="03-provider-verification-broker-quiz-1"
+  lessonSlug="03-provider-verification-broker"
+  lang="en"
+  question="During verification, the provider adds three new fields to GET /prices/42 that the consumer's pact never mentions. What happens, and why?"
+  choices={[
+    { label: "Verification passes — the verifier checks the actual response contains at least the minimal expected shape, so extra fields the consumer didn't assert are fine", correct: true },
+    { label: "Verification fails because the actual response no longer exactly matches the recorded one", misconception: "Provider verification is not an exact-match check. It asserts the actual response contains at least the minimal expected response the consumer described; unasserted extra fields are explicitly allowed, which is what lets the provider evolve fields no consumer reads." },
+    { label: "Verification passes only if the consumer republishes the pact with the new fields", misconception: "The consumer should not record fields it doesn't read. The whole point of the minimal-response check is that the provider can add fields freely without the consumer touching its pact; requiring a republish would re-couple the teams." },
+    { label: "Verification is skipped because the response shape changed", misconception: "A shape change never skips verification — it triggers the comparison. Here the comparison passes because nothing the consumer asserted was removed; verification only fails when a field the consumer reads is missing or the wrong type." },
+  ]}
+/>
+
+<Quiz
+  id="03-provider-verification-broker-quiz-2"
+  lessonSlug="03-provider-verification-broker"
+  lang="en"
+  question="An interaction's `given` is 'a price with id 42 exists', but the provider team never wrote a handler for that state. What's the result and the correct reading of it?"
+  choices={[
+    { label: "Verification fails because the precondition was never set up — price 42 isn't there, GET /prices/42 returns 404, and the failure is a missing state handler, not a broken contract", correct: true },
+    { label: "Verification passes because provider states are optional metadata the verifier ignores", misconception: "Provider states are not ignored — they're the precondition the interaction depends on. Without a handler the data isn't seeded, so the replayed request can't produce the expected response and verification fails." },
+    { label: "The verifier auto-creates price 42 from the example values in the pact", misconception: "The verifier does not write to the provider's data store from pact examples. The provider must register a state handler that sets up the data; the example values describe the expected response shape, not seed data." },
+    { label: "Verification fails and it proves the consumer's contract is wrong", misconception: "The contract is fine — the request and expected response are valid. The failure is on the provider side: a `given` string with no matching handler. The fix is to implement the handler, not to change the pact." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="03-provider-verification-broker-tradeoff-1"
+  lessonSlug="03-provider-verification-broker"
+  lang="en"
+  prompt="How should the provider get the data in place so each recorded interaction is satisfiable during verification?"
+  options={[
+    { name: "Register per-state handlers that seed the exact data each `given` names, run before each interaction in isolation, and tear down after", summary: "Provider states, isolated.", correct: true, justification: "Each interaction declares its precondition as a provider state, and the verifier runs the matching handler before replaying it. Setting up data per-state and in isolation means every interaction carries its own world: a 200-expecting and a 404-expecting interaction can both pass, runs are deterministic, and verification works against the provider's own ephemeral CI data with no dependence on a shared environment." },
+    { name: "Point verification at the shared staging database that usually has the data", summary: "Shared staging data.", justification: "Shared data destroys isolation and determinism: whether price 42 exists depends on what other teams left behind, a cleanup job can delete it mid-run, and you can't satisfy a 404-expecting interaction against the same fixed rows as a 200-expecting one. The precondition belongs in the contract and in provider-owned setup, not in whatever happens to be in staging." },
+    { name: "Let the verifier insert the pact's example values as seed data automatically", summary: "Auto-seed from examples.", justification: "The example values describe the expected response shape for the comparison, not rows to insert; the verifier doesn't write them to the provider's store. Relying on this means no data is actually seeded, the replayed request 404s, and verification fails for a precondition the provider never set up." },
+    { name: "Delete provider states from the pact so interactions don't need setup", summary: "Drop the states.", justification: "Removing the `given` doesn't remove the dependency — `GET /prices/42` still needs price 42 to return 200. Without the state the interaction is only satisfiable by luck of the ambient data, which is exactly the brittle, order-dependent integration-test hell that provider states were created to eliminate." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Provider verification replays each recorded interaction against the real running provider and checks the response contains at least the minimal expected shape, so it trips only when a field the consumer reads is broken. Provider states are the precondition: per-state handlers seed the data so each interaction is satisfiable in isolation. The broker stores pacts and verification results and, via webhooks, decouples the two CI pipelines, so `can-i-deploy` can query the matrix and let each side deploy independently.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-provider-verification-broker-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the full provider-verification mechanism, including the minimal-response comparison and the role of provider states.", a: "Provider verification replays the consumer's recorded contract against the real, running provider. The verifier walks the pact's list of interactions and, for each one, sends the exact recorded request at the booted provider — hitting genuine routing, controllers, serializers, and data layer, with no provider-side mock — then compares the actual response to the expected one. The comparison is asymmetric: it checks the actual response contains at least the minimal expected response the consumer described, so the provider can add fields no consumer reads and stay green, but renaming or removing a field the consumer parses makes the response no longer contain the minimal shape and verification fails. Provider states make each interaction satisfiable. An interaction like 'GET /prices/42 returns 200' only holds if price 42 exists, so the consumer recorded a `given` string ('a price with id 42 exists'), the Pact equivalent of Cucumber's Given. The provider registers state handlers — code that seeds the data for each named state, often invoked via a test-only state-change endpoint that receives the consumer name and state. Before replaying each interaction the verifier runs the matching handler, which inserts the data; then the real provider code produces the response. Two rules: each interaction is verified in isolation with no carried-over state, and the handler sets up data, not the response. A missing handler fails verification because the precondition was never met, not because the contract is broken." },
+    { q: "What is the broker for, and how do webhooks plus can-i-deploy let two teams deploy independently?", a: "The broker (open-source Pact Broker, or hosted PactFlow) is the shared, asynchronous system of record that holds every pact and every verification result, breaking the coupling between the consumer's and provider's CI pipelines. The consumer publishes its pact to the broker tagged with version and branch and walks away; the provider independently pulls the relevant pacts, runs verification, and publishes the results back. Neither pipeline calls the other — the alternative, wiring the consumer's CI to trigger the provider's build directly, re-couples exactly what contract testing exists to decouple and forces the two apps to release together. The broker can also push: a webhook fires on broker events, most importantly contract_requiring_verification_published (which superseded contract_content_changed in broker 2.82.0), triggering the provider's verification build the moment a changed pact lands and passing templated parameters like the pact URL and provider version so the build knows what to verify. All results accumulate into the verification results matrix, a grid of which consumer versions are verified against which provider versions. Before a release, the can-i-deploy tool queries that matrix — 'is the version I'm about to ship verified against the version of the other app already in production?' — so each pacticipant deploys on its own schedule, gated by recorded results instead of a human asking the other team if their build is green." },
+  ]}
+/>
+
+<Recap lang="en">
+The consumer published a pact, but a contract no one replays is just a wish — the rename that returned NaN shipped because nothing played the recording back against the real provider. Provider verification is that playback: the verifier sends each recorded request at the genuine running provider and checks the actual response contains at least the minimal expected shape, so the gate stays green when the provider adds fields no one reads and trips only when a field the consumer actually parses is renamed, removed, or retyped. The subtle hard part is provider states: each interaction declares its precondition as a `given` string, and the provider must register per-state handlers that seed the exact data — run before each interaction, in isolation, setting up data and not the response — because pointing verification at shared staging data destroys the determinism the contract is supposed to guarantee. Tying it together is the broker (Pact Broker or PactFlow), the asynchronous system of record holding every pact and every verification result so neither CI pipeline has to call the other; webhooks like contract_requiring_verification_published trigger the provider's verify build when a pact changes, results accumulate into the verification matrix, and can-i-deploy queries that matrix so each pacticipant can deploy independently — gated by recorded proof rather than by two teams coordinating by hand. Next: how contracts evolve safely as both sides change over time.
+</Recap>
+
