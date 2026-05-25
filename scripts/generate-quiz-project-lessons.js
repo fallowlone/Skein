@@ -18,6 +18,65 @@ const lessonTypes = [
   { slugPrefix: 'project-test', title: { en: 'Project Testing', ru: 'Тестирование проекта' }, estMin: 60 }
 ];
 
+/**
+ * Generate frontmatter for a lesson
+ * @param {Object} lessonInfo - Info from lessonTypes array
+ * @param {Object} unit - Unit object from units.json
+ * @param {string} lang - Language code ('en' or 'ru')
+ * @param {number} order - Order number for the lesson
+ * @returns {string} Frontmatter string
+ */
+function generateFrontmatter(lessonInfo, unit, lang, order) {
+  const title = lessonInfo.title[lang];
+  const summary = `${title} for unit "${unit.title[lang]}"`;
+
+  return `---\n` +
+    `slug: ${lessonInfo.slugPrefix}\n` +
+    `lang: ${lang}\n` +
+    `track: ${unit.track}\n` +
+    `unit: ${unit.slug}\n` +
+    `order: ${order}\n` +
+    `title: "${title}"\n` +
+    `summary: "${summary}"\n` +
+    `estMin: ${lessonInfo.estMin}\n` +
+    `status: ready\n` +
+    `prereqs: []\n` +
+    `concepts: []\n` +
+    `sources: []\n` +
+    `---\n`;
+}
+
+/**
+ * Generate basic lesson content structure
+ * @param {string} lang - Language code
+ * @param {string} lessonType - Type of lesson (quiz-choice, etc.)
+ * @param {Object} unit - Unit object
+ * @returns {string} Lesson content (MDX)
+ */
+function generateLessonContent(lang, lessonType, unit) {
+  // Import statements - we'll use a basic set, tracks may need specific imports
+  const imports = [
+    'import Hook from "~/components/lesson/Hook.astro";',
+    'import Goal from "~/components/lesson/Goal.astro";',
+    'import Step from "~/components/lesson/Step.astro";',
+    'import WorkedExample from "~/components/lesson/WorkedExample.astro";',
+    'import Check from "~/components/lesson/Check.astro";',
+    'import Recap from "~/components/lesson/Recap.astro";',
+    'import Inset from "~/components/lesson/Inset.astro";',
+    'import PracticeSet from "~/components/lesson/PracticeSet.astro";',
+    'import Quiz from "~/components/pedagogy/Quiz.astro";'
+  ].join('\n');
+
+  // Basic content structure
+  const hook = `<Hook>\nThis is a ${lessonType} for the ${unit.title[lang]} unit.\n</Hook>\n`;
+  const goal = `<Goal lang="${lang}>\nAfter this lesson you will be able to apply the concepts from the ${unit.title[lang]} unit.\n</Goal>\n`;
+  // We'll add a single step for now - in reality, this would be fleshed out
+  const step = `<Step n={1}>\nThis lesson contains practice questions and exercises to reinforce your learning.\n</Step>\n`;
+  const recap = `<Recap lang="${lang}>\nReview the key concepts from this lesson and prepare for the next unit.\n</Recap>\n`;
+
+  return `${imports}\n\n${hook}\n${goal}\n${step}\n${recap}\n`;
+}
+
 // Read tracks and units
 const tracksPath = path.join(__dirname, '../site/src/content/tracks.json');
 const unitsPath = path.join(__dirname, '../site/src/content/units.json');
