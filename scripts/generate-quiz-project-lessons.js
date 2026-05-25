@@ -8,6 +8,16 @@
 const fs = require('fs');
 const path = require('path');
 
+// Define the lesson types to generate
+const lessonTypes = [
+  { slugPrefix: 'quiz-choice', title: { en: 'Multiple Choice Quiz', ru: 'Тест с множественным выбором' }, estMin: 30 },
+  { slugPrefix: 'quiz-short', title: { en: 'Short Answer Quiz', ru: 'Тест с краткими ответами' }, estMin: 30 },
+  { slugPrefix: 'quiz-code', title: { en: 'Coding Quiz', ru: 'Кодировочный тест' }, estMin: 30 },
+  { slugPrefix: 'project-plan', title: { en: 'Project Planning', ru: 'Планирование проекта' }, estMin: 60 },
+  { slugPrefix: 'project-build', title: { en: 'Project Building', ru: 'Сборка проекта' }, estMin: 60 },
+  { slugPrefix: 'project-test', title: { en: 'Project Testing', ru: 'Тестирование проекта' }, estMin: 60 }
+];
+
 // Read tracks and units
 const tracksPath = path.join(__dirname, '../site/src/content/tracks.json');
 const unitsPath = path.join(__dirname, '../site/src/content/units.json');
