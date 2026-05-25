@@ -19,6 +19,37 @@ const lessonTypes = [
 ];
 
 /**
+ * Update units.json to include the new lesson slugs in the lessons array for each unit
+ * @param {Array} units - Units array from units.json
+ */
+function updateUnitsJson(units) {
+  units.forEach(unit => {
+    // We'll append our lesson slugs in order
+    // Note: We assume we are adding at the end, so we just append
+    lessonTypes.forEach(lessonType => {
+      // Skip quiz-code for non-coding tracks (same logic as before)
+      const isCodeQuiz = lessonType.slugPrefix === 'quiz-code';
+      const codeTracks = ['algorithms', 'base-cs', 'backend', 'frontend', 'browser', 'networking', 'apis', 'queues', 'caching', 'distributed', 'observability', 'performance', 'security', 'ai-llm', 'data-engineering', 'engineering-practice'];
+      const shouldGenerateCodeQuiz = codeTracks.includes(unit.track);
+
+      if (isCodeQuiz && !shouldGenerateCodeQuiz) {
+        return;
+      }
+
+      // Avoid duplicates - check if already exists
+      if (!unit.lessons.includes(lessonType.slugPrefix)) {
+        unit.lessons.push(lessonType.slugPrefix);
+      }
+    });
+  });
+
+  // Write updated units.json
+  const unitsPath = path.join(__dirname, '../site/src/content/units.json');
+  fs.writeFileSync(unitsPath, JSON.stringify(units, null, 2), 'utf8');
+  console.log('Updated units.json with new lesson slugs');
+}
+
+/**
  * Generate frontmatter for a lesson
  * @param {Object} lessonInfo - Info from lessonTypes array
  * @param {Object} unit - Unit object from units.json
@@ -132,3 +163,6 @@ units.forEach(unit => {
     order++; // Increment order for next lesson type in this unit
   });
 });
+
+// Update units.json to include new lessons
+updateUnitsJson(units);
