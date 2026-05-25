@@ -91,3 +91,44 @@ try {
 }
 
 console.log(`Loaded ${tracks.length} tracks and ${units.length} units`);
+
+// Main generation loop
+units.forEach(unit => {
+  // Determine next order number for this unit (we'll assume we append at the end)
+  // In a real implementation, we'd read existing lessons to get the max order
+  // For this script, we'll start at order 99 and increment (to be fixed later)
+  let order = 99;
+
+  lessonTypes.forEach(lessonType => {
+    // Skip quiz-code for tracks that don't have coding components
+    // For simplicity, we'll generate it for all tracks and let content be empty/not applicable
+    // A better approach would be to check the track slug against a list
+    const isCodeQuiz = lessonType.slugPrefix === 'quiz-code';
+    const codeTracks = ['algorithms', 'base-cs', 'backend', 'frontend', 'browser', 'networking', 'apis', 'queues', 'caching', 'distributed', 'observability', 'performance', 'security', 'ai-llm', 'data-engineering', 'engineering-practice'];
+    const shouldGenerateCodeQuiz = codeTracks.includes(unit.track);
+
+    if (isCodeQuiz && !shouldGenerateCodeQuiz) {
+      return; // Skip quiz-code for non-coding tracks
+    }
+
+    ['en', 'ru'].forEach(lang => {
+      const frontmatter = generateFrontmatter(lessonType, unit, lang, order);
+      const content = generateLessonContent(lang, lessonType.slugPrefix, unit);
+
+      const lessonDir = path.join(__dirname, `../site/src/content/lessons/${lang}/${unit.track}/${unit.slug}/${lessonType.slugPrefix}`);
+      const filePath = path.join(lessonDir, 'index.mdx');
+
+      // Ensure directory exists
+      if (!fs.existsSync(lessonDir)) {
+        fs.mkdirSync(lessonDir, { recursive: true });
+      }
+
+      // Write file
+      fs.writeFileSync(filePath, frontmatter + content, 'utf8');
+
+      console.log(`Generated: ${filePath}`);
+    });
+
+    order++; // Increment order for next lesson type in this unit
+  });
+});
