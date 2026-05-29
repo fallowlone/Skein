@@ -44,6 +44,7 @@ unit: <NN-slug>
   `lessonSlug`, component count. Only prose + `lang` differ. RU keeps technical
   terms (GC, allocation rate, write barrier, GOMEMLIMIT, …).
 - `lessonSlug` on every component = the unit slug (e.g. `04-gc`), NOT the block slug.
+- **Quote the `summary:`** value (`summary: "…"`) — summaries often contain a colon, which breaks unquoted YAML. After a batch, run a YAML pre-check before the full build: parse each block's frontmatter and quote any summary that fails.
 - MDX arrays use brace-wrapped expressions: `choices={[ {label, correct?, misconception?}, … ]}`. Never `choices=[...]`.
 - Ground every question in what the unit's content lessons actually teach +
   the unit `crux`. For thin units (1 lesson) lean on the lesson + crux + your
