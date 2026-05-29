@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import { fetchMe } from "~/scripts/account-sync";
+import { activateSyncIfSignedIn } from "~/scripts/user-state";
 
 type Me = { login: string; nickname: string; avatarUrl: string | null };
 
@@ -9,7 +10,14 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { void fetchMe().then((m) => setMe(m)); }, []);
+  useEffect(() => {
+    void fetchMe().then((m) => {
+      setMe(m);
+      // Present on every Topic/Lesson page: flush learning progress to the server
+      // as the user reads, not only when they open /account. No-op if not signed in.
+      if (m) void activateSyncIfSignedIn();
+    });
+  }, []);
 
   // Dismiss the dropdown on outside click or Escape (a11y + expected UX).
   useEffect(() => {
