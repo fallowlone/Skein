@@ -38,4 +38,20 @@ describe("mergeProgress", () => {
     const server = { pretest: null, manualTierFlips: 0, history: {}, retrieval: {} } as any;
     expect(mergeProgress(local, server).pretest?.takenAt).toBe(9);
   });
+
+  it("deep-merges history entries: unions tiersOpened, keeps firstAt min / lastAt max, merges faded", () => {
+    const local = { history: { p: { firstAt: 5, lastAt: 30, tiersOpened: ["junior"], faded: { e1: true } } }, retrieval: {} } as any;
+    const server = { history: { p: { firstAt: 2, lastAt: 20, tiersOpened: ["senior"], faded: { e2: true } } }, retrieval: {} } as any;
+    const h = mergeProgress(local, server).history.p;
+    expect(h.firstAt).toBe(2);
+    expect(h.lastAt).toBe(30);
+    expect(new Set(h.tiersOpened)).toEqual(new Set(["junior", "senior"])); // no opened-tier lost
+    expect(h.faded).toEqual({ e1: true, e2: true });                       // no faded example lost
+  });
+
+  it("derives tier from the merged pretest rank (synced senior isn't shown middle)", () => {
+    const local = { tier: "middle", pretest: null, history: {}, retrieval: {} } as any;
+    const server = { tier: "middle", pretest: { takenAt: 1, stage1: { score: 9, answers: [] }, stage2: { score: 9, answers: [] }, rating: 950, rank: "architect-3", confidence: "high" }, history: {}, retrieval: {} } as any;
+    expect(mergeProgress(local, server).tier).toBe("senior");
+  });
 });

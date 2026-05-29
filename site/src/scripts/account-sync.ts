@@ -1,5 +1,6 @@
 import type { UserState } from "./user-state";
 import type { PretestResult, Progression } from "./progression/types";
+import { rankToTier } from "./progression/rank-tier";
 
 type Stamped = { lastAt: number };
 function mergeStampedMap<T extends Stamped>(
@@ -14,6 +15,28 @@ function mergeStampedMap<T extends Stamped>(
 }
 
 /**
+ * History entries are NOT replaced whole (that would drop the other device's
+ * opened tiers / faded examples). Deep-merge per slug: union tiersOpened, merge
+ * faded, keep the earliest firstAt and latest lastAt.
+ */
+function mergeHistory(
+  a: UserState["history"] = {}, b: UserState["history"] = {},
+): UserState["history"] {
+  const out: UserState["history"] = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    const cur = out[k];
+    if (!cur) { out[k] = v; continue; }
+    out[k] = {
+      firstAt: Math.min(cur.firstAt, v.firstAt),
+      lastAt: Math.max(cur.lastAt, v.lastAt),
+      tiersOpened: Array.from(new Set([...(cur.tiersOpened ?? []), ...(v.tiersOpened ?? [])])),
+      faded: (cur.faded || v.faded) ? { ...(v.faded ?? {}), ...(cur.faded ?? {}) } : undefined,
+    };
+  }
+  return out;
+}
+
+/**
  * Merge two UserStates. Timestamped maps (history, retrieval) merge per-key by
  * max(lastAt). UI preferences (tier, lang, motion) prefer `local` — the device
  * the user is actively on. Earned/accumulated data is coalesced so a fresh
@@ -21,13 +44,17 @@ function mergeStampedMap<T extends Stamped>(
  * `pretest` keeps whichever side has a record, and `manualTierFlips` takes the max.
  */
 export function mergeProgress(local: UserState, server: UserState): UserState {
+  const pretest = pickBetterPretest(local.pretest, server.pretest);
   return {
     ...server,
-    ...local, // local UI prefs (tier, lang, motion) win
-    pretest: pickBetterPretest(local.pretest, server.pretest),
+    ...local, // local UI prefs (lang, motion) win
+    pretest,
+    // tier follows the merged placement result (source of truth) when present,
+    // so a fresh device that synced a senior result isn't shown middle-tier content.
+    tier: pretest ? rankToTier(pretest.rank) : local.tier,
     progression: mergeProgression(local.progression, server.progression),
     manualTierFlips: Math.max(local.manualTierFlips ?? 0, server.manualTierFlips ?? 0),
-    history: mergeStampedMap(server.history, local.history),
+    history: mergeHistory(server.history, local.history),
     retrieval: mergeStampedMap(server.retrieval, local.retrieval),
     dismissedRevisit: { ...server.dismissedRevisit, ...local.dismissedRevisit },
   };
