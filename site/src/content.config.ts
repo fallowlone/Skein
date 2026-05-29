@@ -7,7 +7,7 @@ const Status = z.enum(["stub", "draft", "ready"]);
 const Bi = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 
 const Track = z.enum(TRACKS as [string, ...string[]]);
-const SlugRe = /^(?:\d{2}-[a-z0-9-]+|quiz-[a-z]+|project-[a-z]+)$/;
+const SlugRe = /^(?:\d{2}-[a-z0-9-]+|quiz-[a-z]+|project(?:-[a-z]+)?)$/;
 
 const tracks = defineCollection({
   loader: file("src/content/tracks.json"),
