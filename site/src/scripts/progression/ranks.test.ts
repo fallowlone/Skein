@@ -15,7 +15,7 @@ describe("ranks", () => {
     expect(ratingToRank(749).contentTier).not.toBe("senior");
   });
   it("nextRank returns the rank above, null at the apex", () => {
-    expect(nextRank(ratingToRank(0)).id).toBe("initiate-2");
+    expect(nextRank(ratingToRank(0))!.id).toBe("initiate-2");
     expect(nextRank(ratingToRank(1000))).toBeNull();
   });
 });
