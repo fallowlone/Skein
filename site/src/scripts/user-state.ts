@@ -148,9 +148,12 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null;
  */
 export async function activateSyncIfSignedIn(): Promise<void> {
   if (syncActive || typeof window === "undefined") return;
-  const me = await fetchMe();
-  if (!me || !me.termsAccepted) return;
+  // Claim synchronously, before any await, so two island mounts (AccountMenu +
+  // AccountPanel) calling this in the same tick can't both pass the guard and
+  // register two debounce effects. Released again if the user isn't signed in.
   syncActive = true;
+  const me = await fetchMe();
+  if (!me || !me.termsAccepted) { syncActive = false; return; }
 
   const server = await fetchServerProgress();
   if (server) {
