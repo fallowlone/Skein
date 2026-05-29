@@ -1,42 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sse-parsing
+- delta-accumulation
+- partial-json-tool-args
+- client-abort
+- backpressure
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Streaming"
-title: Кодировочный тест
+- https://docs.anthropic.com/en/docs/build-with-claude/streaming
+- https://platform.openai.com/docs/api-reference/responses-streaming
+status: ready
+summary: "Читай реальные сниппеты парсинга SSE и streaming-клиента, предсказывай поведение и выбирай фикс с наибольшим рычагом — фрейминг событий, накопление delta, client abort и частичный JSON в аргументах tool."
+title: 'Streaming: чтение кода и потока'
 track: ai-llm
 unit: 04-streaming
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Streaming unit.
+SSE-парсер, аккумулятор и путь отмены — вот где реально живут баги streaming. Прочитай каждый сниппет, предскажи его поведение под реальным трафиком и выбери фикс, который senior сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Streaming unit.
+Отработай цикл, который ты гоняешь в каждом инциденте со streaming: прочитать код парсинга и клиента, предсказать, где он портит данные или зависает, и потянуться к фиксу фрейминга/накопления/отмены, а не винить модель.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — парсер SSE-кадров
+
+```js
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  const text = decoder.decode(value);      // один сетевой чанк
+  for (const line of text.split("\n")) {
+    if (line.startsWith("data: ")) {
+      const evt = JSON.parse(line.slice(6)); // парсим сразу
+      handle(evt);
+    }
+  }
+}
+```
+
+<Quiz
+  id="04-streaming-code-1"
+  lessonSlug="04-streaming"
+  lang="ru"
+  question="Этот парсер работает в dev, но под нагрузкой бросает ошибки JSON.parse. В чём баг и фикс?"
+  choices={[
+    { label: "Сетевые чанки не совпадают с границами SSE-событий — один read() может разрезать строку 'data:' на два чанка (или упаковать несколько событий в один). Нужно буферизовать декодированный текст, делить по разделителю событий '\\n\\n' и парсить только полные кадры; декодировать ещё и с {stream:true}.", correct: true },
+    { label: "JSON.parse слишком медленный; перейди на потоковый JSON-парсер.", misconception: "Дело не в скорости, а в корректности. Парсинг бросает, потому что полезная нагрузка 'data:' — фрагмент кадра, разрезанный по TCP-чанкам, а не потому что JSON.parse медленный." },
+    { label: "Надо использовать EventSource вместо fetch; ручной парсинг работать не может.", misconception: "fetch + ReadableStream — валидный и частый способ читать SSE (и обязательный для POST/auth-заголовков). Дефект — отсутствие буферизации через границы чанков, что обязан делать любой корректный парсер." },
+    { label: "Сервер шлёт битый JSON; попроси его починить.", misconception: "Кадры сервера валидны; это твой reader режет их посреди кадра на произвольных TCP-границах. Буферизуй, пока не соберёшь полное событие, и только потом парси." },
+  ]}
+/>
+
+## Сниппет 2 — аккумулятор delta
+
+```js
+let text = "";
+const toolArgs = {};                 // index -> строковый буфер
+function handle(evt) {
+  if (evt.type === "content_block_delta") {
+    if (evt.delta.type === "text_delta") {
+      text += evt.delta.text;
+      render(text);
+    } else if (evt.delta.type === "input_json_delta") {
+      const i = evt.index;
+      toolArgs[i] = JSON.parse(toolArgs[i] + evt.delta.partial_json); // (!)
+    }
+  }
+}
+```
+
+<Quiz
+  id="04-streaming-code-2"
+  lessonSlug="04-streaming"
+  lang="ru"
+  question="Путь для текста корректен. Что не так с путём аргументов tool?"
+  choices={[
+    { label: "Он делает JSON.parse на каждой input_json_delta. Каждый partial_json — фрагмент одного JSON-документа, поэтому парсинг бросает на первом неполном буфере. Накапливай как строку (toolArgs[i] += evt.delta.partial_json) и парси один раз на content_block_stop.", correct: true },
+    { label: "Он индексирует по evt.index — у аргументов tool нет index.", misconception: "Каждый content-блок несёт index, и несколько tool-вызовов в одном сообщении различаются именно по нему. Индексация верна; баг — парсинг на каждой delta." },
+    { label: "Нужно рендерить аргументы tool как текст, сразу.", misconception: "Аргументы tool — это структурированный вход функции, а не отображаемый текст. Даже как подсказку «вызываю tool…» ты показываешь сырую частичную строку — но никогда не действуешь по ней до закрытия блока." },
+    { label: "Всё в порядке; это канонический аккумулятор.", misconception: "Оборачивание конкатенации в JSON.parse означает, что каждый промежуточный фрагмент парсится и бросает. Каноническая форма копит строку и парсит только на content_block_stop." },
+  ]}
+/>
+
+## Сниппет 3 — отмена на клиенте
+
+```js
+function ask(prompt) {
+  return fetch("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  }).then(consumeStream);
+}
+// Пользователь жмёт "Stop". UI перестаёт рисовать токены.
+// Но сервер продолжает генерацию, а биллинг — считать.
+```
+
+<Quiz
+  id="04-streaming-code-3"
+  lessonSlug="04-streaming"
+  lang="ru"
+  question="Клик по Stop прячет токены, но модель продолжает генерировать, а ты — платить. Какой правильный фикс сквозь всю цепочку?"
+  choices={[
+    { label: "Подключи AbortController: передай controller.signal в fetch и вызови abort() на Stop. Сервер должен обнаружить закрытый запрос (req.on('close') / signal) и оборвать upstream-stream провайдера — иначе генерация и биллинг продолжаются на сервере даже после отключения клиента.", correct: true },
+    { label: "Просто перестань вызывать render() — stream закончится, когда функция вернётся.", misconception: "Отказ от render() прячет токены локально, но оставляет работающими fetch, серверный handler и upstream-генерацию модели. Ты продолжаешь платить за токены, которых никто не видит." },
+    { label: "Поставь меньший max_tokens, чтобы всегда заканчивалось быстро.", misconception: "Это ограничивает каждый ответ, а не только отменённые, и всё равно не умеет останавливать генерацию по намерению пользователя. Отмене нужен abort-сигнал, прокинутый до провайдера, а не лимит длины." },
+    { label: "Закрой WebSocket — fetch-stream нельзя отменить.", misconception: "Здесь используется fetch/SSE, а не WebSockets, и fetch-stream отменяемы через AbortController. Реальное требование — прокинуть abort до самого upstream-вызова провайдера." },
+  ]}
+/>
+
+## Сниппет 4 — backpressure на сервере
+
+```js
+// SSE-эндпоинт в стиле Express, проксирующий upstream-stream модели
+for await (const evt of upstreamStream) {
+  res.write(`data: ${JSON.stringify(evt)}\n\n`); // игнорируем результат
+}
+res.end();
+```
+
+<Quiz
+  id="04-streaming-code-4"
+  lessonSlug="04-streaming"
+  lang="ru"
+  question="Медленный клиент (мобайл, слабый сигнал) потребляет события медленнее, чем upstream производит. Что делает этот цикл и какой фикс?"
+  choices={[
+    { label: "res.write возвращает false, когда буфер сокета полон, но цикл игнорирует это и продолжает тянуть из upstream — память пухнет, пока неотправленные события копятся. Уважай backpressure: при false на write() приостанови upstream и возобнови на событии 'drain' (или пропусти через stream, который это делает).", correct: true },
+    { label: "Ничего — TCP прозрачно решает backpressure, так что цикл в порядке.", misconception: "Управление потоком TCP заполняет буфер ядра, но Node затем неограниченно копит неотправленные данные в userland-памяти. Игнорирование false от write() — ровно то, как медленный потребитель доводит сервер до OOM." },
+    { label: "Он отбрасывает события, когда клиент медленный, портя stream.", misconception: "write() никогда не отбрасывает данные молча; он буферизует их в памяти и сигналит о заполнении через false. Отказ — это неограниченный рост памяти, а не потеря событий." },
+    { label: "Добавь кэширование JSON.stringify, чтобы ускорить запись.", misconception: "Стоимость сериализации не узкое место для медленного клиента. Проблема — производить быстрее, чем клиент успевает читать; фикс — уважать backpressure write(), а не быстрее кодировать." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Любой баг streaming читается в парсере, аккумуляторе, пути отмены или цикле записи: SSE-кадры надо буферизовать и делить по разделителю-пустой-строке, потому что TCP-чанки не совпадают с событиями; фрагменты input_json_delta для tool копятся как строка и парсятся только на content_block_stop; клиентский Stop должен запускать AbortController, чей signal прокидывается до провайдера, иначе ты продолжаешь генерировать и платить; а сервер, проксирующий stream, обязан уважать false от write() (приостановить upstream, возобновить на drain), иначе медленный клиент раздувает память. Прочитай путь кода, предскажи отказ под реальным трафиком, почини фрейминг/отмену/backpressure — и перепроверь на медленном, нестабильном клиенте.
 </Recap>
-
