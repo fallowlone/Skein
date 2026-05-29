@@ -1,42 +1,151 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- fencing-token
+- lease-leadership
+- split-brain
+- lock-service
+- failover
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Leader election"
-title: Кодировочный тест
+- https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+- https://etcd.io/docs/latest/learning/api/
+- https://raft.github.io/raft.pdf
+status: ready
+summary: "Читай реальные сниппеты лока, lease и fencing-токена плюс лог split-brain, предскажи поведение и выбери фикс, который сеньор сделает первым."
+title: 'Выбор лидера: чтение кода и логов'
 track: distributed
 unit: 04-leader-election
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Leader election unit.
+Баги выбора лидера прячутся в зазоре между «я держу лок» и «моя запись приземлилась». Читай код и лог, затем выбери фикс, который закрывает зазор, — а не тот, что лишь сужает его.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Leader election unit.
+Отработай петлю, которую ты запускаешь в каждом инциденте координации: прочитай путь лока/lease, найди момент, где пауза или partition может вставить второго писателя, и потянись за фиксом на стороне ресурса раньше, чем за подкруткой таймаута.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — захват, затем запись
+
+```go
+func runJob(lock *LockService, store *ObjectStore) error {
+    if err := lock.Acquire("job-leader", 10*time.Second); err != nil {
+        return err // лидирует кто-то другой
+    }
+    defer lock.Release("job-leader")
+
+    // ... минуты работы, включая возможную долгую GC-паузу ...
+    return store.Put("result.csv", data) // запись в общее хранилище
+}
+```
+
+<Quiz
+  id="04-leader-election-code-1"
+  lessonSlug="04-leader-election"
+  lang="ru"
+  question="Лок корректен и эксклюзивен. Почему это всё равно может породить двух одновременных писателей в result.csv?"
+  choices={[
+    { label: "Между Acquire и Put процесс может встать на паузу (GC, заморозка VM) дольше 10с lease; лок-сервис истекает его и выдаёт лидерство другому воркеру, но ЭТОТ процесс просыпается и всё равно вызывает store.Put. Лок не дотягивается до ресурса, поэтому приземляются обе записи.", correct: true },
+    { label: "defer lock.Release выполняется раньше store.Put, освобождая лок слишком рано.", misconception: "defer выполняется при возврате из функции, после завершения Put — порядок верный. Проблема в паузе ПЕРЕД Put, пока лок держится, но lease истёк под ним." },
+    { label: "Acquire небезопасен для конкурентных вызовов.", misconception: "Acquire эксклюзивен по построению — его держит лишь один вызывающий. Баг не в конкуренции; он в приостановленном держателе, проснувшемся после истечения lease." },
+    { label: "10с TTL просто слишком мал, его надо поднять до 60с.", misconception: "Любой конечный TTL может быть превышен достаточно долгой паузой. Поднятие снижает частоту ложных истечений, но никогда не убирает возможность устаревшей записи." },
+  ]}
+/>
+
+## Сниппет 2 — добавляем fencing-токен
+
+```go
+func runJob(lock *LockService, store *ObjectStore) error {
+    token, err := lock.Acquire("job-leader", 10*time.Second) // возвращает монотонный токен
+    if err != nil {
+        return err
+    }
+    defer lock.Release("job-leader")
+
+    // ... работа, возможная пауза ...
+    return store.Put("result.csv", data, token) // токен передан в запись
+}
+```
+
+<Quiz
+  id="04-leader-election-code-2"
+  lessonSlug="04-leader-election"
+  lang="ru"
+  question="Токен теперь проброшен в store.Put. При каком условии это реально останавливает устаревшую запись — и что обязан делать store.Put?"
+  choices={[
+    { label: "store.Put обязан хранить наибольший принятый токен и отвергать любой Put с меньшим токеном. Тогда воркер, проснувшийся с токеном 33, отвергается, потому что новый лидер уже записал с токеном 34. Проброс токена необходим, но бесполезен, если ресурс его не навязывает.", correct: true },
+    { label: "Теперь работает автоматически — передача токена в Put и есть весь фикс.", misconception: "Передача токена не делает ничего, если store.Put не сравнивает его с наибольшим виденным и не отвергает меньшие. Хранилище, которое просто логирует токен, всё равно принимает устаревшую запись." },
+    { label: "Работает, только если токен — это отметка настенного времени, чтобы хранилище сравнивало времена.", misconception: "Токены сравниваются как монотонные целые, а не времена. Отметки времени возвращают проблему доверия часам, ради избегания которой fencing и существует." },
+    { label: "Работает, только если Acquire и Put разделяют транзакцию.", misconception: "Put бьёт во внешнее объектное хранилище, вне любой транзакции лок-сервиса. Навязывание должно быть проверкой токен-против-наибольшего на каждом ресурсе, а не общей транзакцией." },
+  ]}
+/>
+
+## Сниппет 3 — петля keep-alive для lease
+
+```go
+func keepLeadership(c *etcd.Client, leaseID etcd.LeaseID, onLost func()) {
+    ka, _ := c.KeepAlive(ctx, leaseID) // канал подтверждений продления
+    for {
+        select {
+        case resp, ok := <-ka:
+            if !ok {                 // канал закрыт = продление сорвалось
+                onLost()             // мы больше не лидер
+                return
+            }
+            _ = resp
+        }
+    }
+}
+```
+
+<Quiz
+  id="04-leader-election-code-3"
+  lessonSlug="04-leader-election"
+  lang="ru"
+  question="onLost() срабатывает, когда продления keep-alive срываются. Почему действие по onLost необходимо, но НЕ достаточно для безопасности?"
+  choices={[
+    { label: "onLost срабатывает, только когда процесс исполняется, чтобы заметить закрытый канал; во время паузы он вообще не может исполняться, поэтому приостановленный лидер не получает onLost, пока не проснётся — уже после истечения lease и выбора нового лидера. Безопасность всё равно требует fencing у ресурса.", correct: true },
+    { label: "Достаточно — onLost позволяет узлу прекратить запись в тот же миг, как он теряет лидерство.", misconception: "Приостановленный процесс не исполняет горутины, поэтому onLost не может сработать во время паузы. К моменту, когда он выполнится, устаревшая запись может уже быть на лету. Самоуведомление не может быть механизмом безопасности." },
+    { label: "Недостаточно, потому что KeepAlive должен использовать более короткий интервал.", misconception: "Подкрутка интервала меняет частоту продлений, а не факт, что остановленный процесс ничего не наблюдает. Зазор структурный, а не значение тюнинга." },
+    { label: "Недостаточно, потому что канал может ронять ложные подтверждения.", misconception: "Закрытый канал надёжно сигнализирует о срыве продления; ложные подтверждения не проблема. Проблема в том, что колбэк зависит от того, что подозреваемый узел остаётся живым, чтобы сработать." },
+  ]}
+/>
+
+## Сниппет 4 — лог split-brain
+
+```
+12:00:01  leaderA  acquired lease (term=7, token=33), writing batch
+12:00:04  leaderA  >>> stop-the-world GC pause begins
+12:00:11  coord    leaseA expired (no keep-alive 10s); electing
+12:00:11  coord    leaderB won (term=8, token=34)
+12:00:11  leaderB  acquired lease, store accepted write token=34
+12:00:18  leaderA  <<< GC pause ends (14s)
+12:00:18  leaderA  store.Put(result.csv, token=33) -> REJECTED (highest=34)
+```
+
+<Quiz
+  id="04-leader-election-code-4"
+  lessonSlug="04-leader-election"
+  lang="ru"
+  question="Читая этот лог, какое утверждение — верное прочтение сеньора?"
+  choices={[
+    { label: "Два узла оба верили, что лидируют, между 12:00:11 и 12:00:18 — хрестоматийный split-brain от паузы, а не от partition. Система осталась КОРРЕКТНОЙ только потому, что хранилище навязало fencing-токен и отвергло устаревшую запись leaderA с токеном 33.", correct: true },
+    { label: "Запись leaderA в 12:00:18 доказывает, что механизм lease отказал.", misconception: "Lease отработал как задумано: он истёк и запустил перевыбор. Lease не может остановить приостановленный процесс от пробуждения и записи — именно поэтому нужна проверка токена, которая это и поймала." },
+    { label: "Баг в том, что term прыгнул с 7 на 8 во время паузы.", misconception: "Инкремент term при каждом выборе — корректное поведение Raft, а не баг. Скачок term — это то, как новое лидерство делается однозначным." },
+    { label: "leaderB должен был дождаться, пока leaderA подтвердит, что ушёл.", misconception: "Ожидание подтверждения от приостановленного узла — это как навсегда потерять доступность: он может никогда не ответить. Выбор на кворуме намеренно не ждёт подозреваемого-мёртвым узла." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый баг выбора лидера читается одинаково: лок или lease гарантирует исключение лишь пока держатель исполняется, поэтому пауза между «захватом» и «записью» позволяет смещённому лидеру проснуться и записать устаревшие данные. Проброс монотонного fencing-токена в запись необходим, но именно РЕСУРС, отвергающий любой токен ниже своего наибольшего, реально навязывает безопасность. Колбэки keep-alive и более короткие TTL не помогут процессу, который не исполняется. Диагностируй по логу, найди зазор паузы-или-partition и чини его там, где приземляется запись, — а не там, где выдан лок.
 </Recap>
-

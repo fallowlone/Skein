@@ -1,42 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- rw-overlap-invariant
+- consistency-level-config
+- sloppy-quorum
+- tunable-consistency
+- read-write-quorum
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Quorum"
-title: Coding Quiz
+- https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html
+- https://docs.datastax.com/en/cassandra-oss/3.0/cassandra/dml/dmlAboutDataConsistency.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
+status: ready
+summary: Read real consistency-level configs and a quorum overlap check, predict whether each guarantees the latest write, and pick the highest-leverage fix.
+title: 'Quorums: config and code reading'
 track: distributed
 unit: 03-quorum
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Quorum unit.
+Quorum bugs live in the consistency-level lines of your data-access code, not in the database. Read each config and snippet, do the R + W vs N arithmetic, and choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Quorum unit.
+Practise the loop you run when a stale-read ticket lands: find the R and W in the code, check whether R + W > N actually holds for the keyspace's replication factor, and reach for the fix that restores overlap rather than one that hides it.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the read/write consistency split
+
+```python
+# keyspace created WITH replication = { 'class': 'SimpleStrategy', 'replication_factor': 3 }
+session.execute(
+    SimpleStatement(
+        "UPDATE accounts SET payout = %s WHERE id = %s",
+        consistency_level=ConsistencyLevel.QUORUM,   # W = 2 at RF=3
+    ),
+    (new_payout, account_id),
+)
+balance = session.execute(
+    SimpleStatement(
+        "SELECT payout FROM accounts WHERE id = %s",
+        consistency_level=ConsistencyLevel.ONE,        # R = 1
+    ),
+    (account_id,),
+).one()
+```
+
+<Quiz
+  id="03-quorum-code-1"
+  lessonSlug="03-quorum"
+  lang="en"
+  question="The write is QUORUM (W=2) and the read is ONE (R=1) at RF=3. Does this guarantee the read sees the latest payout, and what is the fix?"
+  choices={[
+    { label: "No. R + W = 1 + 2 = 3, which is not strictly greater than N=3, so the single read replica can be the one node that missed the QUORUM write. Raise the read to QUORUM (R=2) so 2 + 2 = 4 > 3 and overlap is guaranteed.", correct: true },
+    { label: "Yes — a QUORUM write is on a majority, so any read finds it.", misconception: "A QUORUM write is on 2 of 3, but R=1 can read the remaining 1 that lagged. You need R + W > N (forced intersection), not just a majority write. 1 + 2 = 3 does not satisfy > 3." },
+    { label: "No — fix it by writing at ALL (W=3) so even R=1 sees it.", misconception: "W=3 with R=1 sums to 4 > 3 and would work, but write-ALL fails every write on a single node down — terrible availability for a payments write. Raising the READ to QUORUM keeps single-node tolerance on both paths." },
+    { label: "Yes, because the read goes to the coordinator which has the write.", misconception: "The coordinator routes the read to replicas; it is not guaranteed to be a replica for this key or to hold the latest version. Overlap must be guaranteed by R + W > N." },
+  ]}
+/>
+
+## Snippet 2 — the overlap check helper
+
+```python
+def guarantees_latest_read(n: int, r: int, w: int) -> bool:
+    # returns True iff a read is guaranteed to see the latest committed write
+    return r + w > n
+
+# called for a new keyspace plan, RF = 4
+print(guarantees_latest_read(n=4, r=2, w=2))   # what prints, and is it safe?
+```
+
+<Quiz
+  id="03-quorum-code-2"
+  lessonSlug="03-quorum"
+  lang="en"
+  question="At N=4 with R=2, W=2, what does guarantees_latest_read print, and is that the right answer?"
+  choices={[
+    { label: "It prints False, and that is correct: 2 + 2 = 4 is not greater than 4, so the read and write sets can be disjoint (two nodes each, no shared node). At N=4 you need R + W >= 5, e.g. R=3 W=2 or R=2 W=3.", correct: true },
+    { label: "It prints True, because R and W are both a majority of 4.", misconception: "2 is not a majority of 4 — a strict majority of 4 is 3. And the helper uses strict >, so 2 + 2 = 4 returns False. Even-N clusters are a classic trap: a 'half' read and 'half' write need not intersect." },
+    { label: "It prints False, but the check is too strict; >= would be correct.", misconception: "Strict > is exactly right. At R + W = N the two sets can be perfectly disjoint (e.g. nodes {1,2} write, {3,4} read at N=4), so >= would wrongly report safety. The pigeonhole intersection needs R + W > N." },
+    { label: "It prints True and is safe because RF=4 tolerates more failures.", misconception: "A higher RF does not by itself give overlap; the R/W choice does. R=2,W=2 at N=4 sums to 4, fails the > N test, and permits stale reads regardless of how many replicas exist." },
+  ]}
+/>
+
+## Snippet 3 — the sloppy-quorum write path
+
+```python
+def write_quorum(coordinator, key, value, n=3, w=2):
+    home = coordinator.preference_list(key, n)        # the N designated replicas
+    live = [node for node in home if node.is_reachable()]
+    acks = [node.store(key, value) for node in live]
+    if len(acks) >= w:
+        return "OK (strict quorum)"
+    # not enough designated replicas reachable -> sloppy quorum
+    for sub in coordinator.next_healthy_ring_nodes():
+        acks.append(sub.store_hint(key, value, intended_owner=...))
+        if len(acks) >= w:
+            return "OK (sloppy quorum)"               # acked, but where?
+    return "FAIL"
+```
+
+<Quiz
+  id="03-quorum-code-3"
+  lessonSlug="03-quorum"
+  lang="en"
+  question="When this returns 'OK (sloppy quorum)' during a partition, what is the consistency consequence for a concurrent strict QUORUM read on the home replicas?"
+  choices={[
+    { label: "The read can return stale data. W=2 was satisfied partly by hint-holding substitute nodes outside the preference list, so a strict read of the home replicas may contact none of the nodes that actually hold the new value — R + W > N is suspended against the canonical replica set during the failure.", correct: true },
+    { label: "None — store_hint writes to the same nodes, so the read sees it.", misconception: "store_hint writes to SUBSTITUTE ring nodes (next_healthy_ring_nodes), not the designated replicas. A read of the home preference list can miss the hint entirely until hinted handoff completes." },
+    { label: "The read fails fast because the hint marks the key as in-flight.", misconception: "Hints do not block or fail reads of the home replicas; those replicas simply serve their (older) version. The read succeeds and returns stale data — the silent failure mode." },
+    { label: "It is safe because hinted handoff completes before any read.", misconception: "There is no ordering guarantee between handoff and a racing read. During the partition window the read can land before handoff, which is exactly the stale-read seam sloppy quorum opens." },
+  ]}
+/>
+
+## Snippet 4 — the DynamoDB read flag
+
+```python
+# DynamoDB, replication is managed; you pick read consistency per request
+resp = table.get_item(
+    Key={"id": account_id},
+    ConsistentRead=False,   # default: eventually consistent
+)
+```
+
+<Quiz
+  id="03-quorum-code-4"
+  lessonSlug="03-quorum"
+  lang="en"
+  question="A balance read uses ConsistentRead=False. What does flipping it to True buy you, and what does it cost — in quorum terms?"
+  choices={[
+    { label: "True performs a strongly-consistent read that reflects all writes acked before it — the managed equivalent of reading with enough overlap to see the latest write. It costs roughly 2x the read-capacity units and higher, less-predictable latency, because it must consult more replicas instead of any single one.", correct: true },
+    { label: "Nothing meaningful — ConsistentRead only affects billing, not data.", misconception: "It changes the data you can observe: False may return a value from a replica that hasn't yet received a recent write (stale), while True is guaranteed to reflect all prior acked writes. It also costs ~2x RCU." },
+    { label: "True makes writes durable; False writes can be lost.", misconception: "ConsistentRead is a READ flag and does not change write durability at all. It only governs whether a read is guaranteed to see the latest committed write." },
+    { label: "True is free and strictly better, so always use it.", misconception: "It costs about double the read capacity and adds latency, so you reserve it for reads that must not be stale (balances, idempotency checks) and leave loss-tolerant reads eventually-consistent — the tunable-consistency tradeoff." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every quorum bug is read the same way: find R and W in the consistency-level lines, find N from the keyspace replication factor, and check R + W > N with a STRICT inequality — R=1 reads behind QUORUM writes, and any even-N split like R=2,W=2 at N=4, are the classic traps that sum to N and silently permit stale reads. The fix that restores overlap (usually raising the READ level) beats fixes that just hide it. Sloppy quorum acks via substitute hint-holders outside the read set, so its 'OK' suspends overlap during a partition; and managed stores expose the same dial as ConsistentRead, where strong reads cost roughly 2x capacity for the guarantee.
 </Recap>
-

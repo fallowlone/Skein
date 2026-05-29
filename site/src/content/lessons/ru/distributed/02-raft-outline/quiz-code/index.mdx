@@ -1,43 +1,153 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- append-entries
+- log-matching
+- commit-index
+- request-vote
+- install-snapshot
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Raft-консенсус: выборы лидера, репликация лога
-  и production-эксплуатация"'
-title: Кодировочный тест
+- https://raft.github.io/raft.pdf
+- https://github.com/hashicorp/raft/blob/main/membership.md
+- https://www.pingcap.com/article/understanding-raft-consensus-in-distributed-systems-with-tidb/
+status: ready
+summary: "Читай обработчики Raft RPC, шаг state machine и реальный лог AppendEntries, затем выбирай поведение, баг или фикс с наибольшим рычагом, который senior-инженер делает первым."
+title: 'Raft: чтение кода и логов'
 track: distributed
 unit: 02-raft-outline
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Raft-консенсус: выборы лидера, репликация лога и production-эксплуатация unit.
+Баги Raft прячутся в четырёх местах: consistency check в AppendEntries, продвижение commit index, правило выдачи голоса и state machine, применяющая лог. Читай каждый сниппет так, как читал бы на ревью или в инциденте, и выбирай то, что senior-инженер пометит первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Raft-консенсус: выборы лидера, репликация лога и production-эксплуатация unit.
+Потренируйся читать протокол там, где он реально живёт — в обработчиках RPC и строках лога — и замечать off-by-one, отсутствующую проверку и сигнатуру расхождения, отделяющие корректный Raft от портящего данные.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — consistency check в AppendEntries
+
+```go
+// follower handling AppendEntries
+func (r *Raft) handleAppend(a AppendEntries) AppendReply {
+    if a.Term < r.currentTerm {
+        return AppendReply{Term: r.currentTerm, Success: false}
+    }
+    // BUG IS HERE: appends without the prevLog check
+    r.log = append(r.log[:a.PrevLogIndex+1], a.Entries...)
+    r.fsync()
+    return AppendReply{Term: r.currentTerm, Success: true}
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-1"
+  lessonSlug="02-raft-outline"
+  lang="ru"
+  question="В этом обработчике follower'а нет одной проверки, на которой держится безопасность Raft. Какой именно и что ломается без неё?"
+  choices={[
+    { label: "Он никогда не проверяет, что его собственный лог на PrevLogIndex имеет term PrevLogTerm перед вставкой. Без этой проверки Log Matching follower принимает записи поверх расходящегося префикса, и два лога могут делить индекс, но держать разные команды — нарушается State Machine Safety.", correct: true },
+    { label: "Не хватает блокировки, поэтому конкурентные AppendEntries портят слайс.", misconception: "Гигиена конкурентности важна, но дефект уровня протокола — отсутствие совпадения prevLog. Даже однопоточно этот обработчик вставит поверх расходящегося префикса и сломает Log Matching." },
+    { label: "Он должен отвергать любой term, равный currentTerm, а не только меньший.", misconception: "AppendEntries с равным term — это как раз нормальный случай от текущего лидера. Их отвержение остановило бы всю репликацию. Дефект — отсутствующая проверка prevLogIndex/prevLogTerm." },
+    { label: "Ничего — усечение через log[:PrevLogIndex+1] уже гарантирует консистентность.", misconception: "Этот слайс слепо доверяет индексу лидера, не подтверждая совпадение префикса. Если запись follower'а на PrevLogIndex имеет другой term, вставка портит историю. Проверка prevLog должна гейтить append." },
+  ]}
+/>
+
+## Сниппет 2 — продвижение commit index
+
+```go
+// leader, after collecting matchIndex[] from followers
+func (r *Raft) advanceCommit() {
+    for n := r.commitIndex + 1; n <= r.lastIndex(); n++ {
+        count := 1 // count self
+        for _, m := range r.matchIndex {
+            if m >= n {
+                count++
+            }
+        }
+        if count >= r.majority() {
+            r.commitIndex = n   // committed by majority
+        }
+    }
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-2"
+  lessonSlug="02-raft-outline"
+  lang="ru"
+  question="Majority реплицировал запись n, поэтому код её коммитит. Но статья Raft добавляет ещё одно условие перед тем, как лидер может продвинуть commitIndex до n. Какое и почему?"
+  choices={[
+    { label: "Запись на n должна принадлежать текущему term лидера — коммитить только если r.log[n].Term == r.currentTerm. Лидер не вправе коммитить запись прошлого term одним подсчётом реплик; это открывало сценарий figure-8, где закоммиченную запись позже переписывают. Прошлые записи коммитятся косвенно, когда коммитится запись текущего term над ними.", correct: true },
+    { label: "Он должен дождаться всех follower'ов, а не только majority, для репликации n.", misconception: "Ожидание всех узлов никогда не требуется и убило бы доступность. Недостающее условие — правило текущего term, а не более сильный quorum." },
+    { label: "Он должен сделать fsync commitIndex на диск перед продвижением.", misconception: "Персист commitIndex — деталь реализации; commitIndex пересчитывается из лога при рестарте. Пробел уровня протокола — правило коммита текущего term." },
+    { label: "Ничего не пропущено — репликации majority достаточно для коммита любой записи.", misconception: "Для записей прошлого term — нет. Прямой коммит реплицированной, но прошлого-term записи и есть классический баг figure-8; защита текущего term его предотвращает." },
+  ]}
+/>
+
+## Сниппет 3 — выдача голоса
+
+```go
+// handling RequestVote
+func (r *Raft) handleVote(v RequestVote) VoteReply {
+    if v.Term < r.currentTerm {
+        return VoteReply{Term: r.currentTerm, Granted: false}
+    }
+    if r.votedFor == nil || r.votedFor == v.CandidateID {
+        r.votedFor = v.CandidateID
+        return VoteReply{Term: v.Term, Granted: true}
+    }
+    return VoteReply{Term: v.Term, Granted: false}
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-3"
+  lessonSlug="02-raft-outline"
+  lang="ru"
+  question="Этот обработчик голоса соблюдает один-голос-на-term, но пропускает проверку. Что теперь может сделать кандидат и какое свойство безопасности отказывает?"
+  choices={[
+    { label: "Он никогда не сравнивает lastLogTerm/lastLogIndex кандидата со своими, поэтому выдаёт голос кандидату с устаревшим логом. Отстающий кандидат может победить, стать лидером без закоммиченных записей и переписать их — отказывает Leader Completeness.", correct: true },
+    { label: "Кандидат может проголосовать дважды в одном term.", misconception: "Проверка votedFor уже не даёт голосовать дважды в одном term. Недостающее — сравнение актуальности лога, защищающее закоммиченную историю, а не подсчёт голосов." },
+    { label: "Два кандидата могут оба победить в одном term — отказывает Election Safety.", misconception: "Election Safety держится: один голос на узел на term плюс majority дают максимум одного победителя за term. Здешний пробел даёт победить кандидату с устаревшим логом, ломая вместо этого Leader Completeness." },
+    { label: "Ничего — сравнение term уже гарантирует свежий лог.", misconception: "Сравнение term лишь упорядочивает сообщения; оно ничего не говорит о полноте лога кандидата. Именно явная проверка lastLogTerm/lastLogIndex защищает полноту." },
+  ]}
+/>
+
+## Сниппет 4 — реальный лог AppendEntries
+
+```
+15:42:08 INFO  raft: AppendEntries -> D failure (mismatch at idx=400100 term=12 vs follower idx=400100 term=11)
+15:42:09 INFO  raft: AppendEntries -> D retry prevIdx=400050 (decremented)
+15:42:09 INFO  raft: AppendEntries -> D failure (mismatch at idx=400050 term=12 vs follower idx=400050 term=10)
+15:42:10 INFO  raft: AppendEntries -> D retry prevIdx=399000 (decremented)
+15:42:10 INFO  raft: AppendEntries -> D failure (mismatch at idx=399000 term=12 vs follower idx=399000 term=8)
+15:42:11 WARN  raft: D has diverged extensively; consider InstallSnapshot
+```
+
+<Quiz
+  id="02-raft-outline-code-4"
+  lessonSlug="02-raft-outline"
+  lang="ru"
+  question="Лидер раз за разом декрементирует nextIndex для follower'а D по одному шагу. Читая этот лог, какой диагноз и правильная операционная реакция?"
+  choices={[
+    { label: "D пропустил несколько поколений лидерства (term 8 на idx 399000 против term 12 у лидера), поэтому расходится на сотни тысяч записей. Пошаговый откат занял бы минуты и огромный трафик — лидеру следует переключиться на InstallSnapshot: отправить текущий snapshot state machine, затем догнать D по свежему хвосту.", correct: true },
+    { label: "Consistency check сломан — он вообще не должен декрементировать.", misconception: "Декремент — это корректно работающий consistency check: он откатывается к последнему совпадающему индексу. Проблема — масштаб расхождения, требующий InstallSnapshot, а не фикс кода." },
+    { label: "D вредоносен и шлёт подделанные term'ы; убери его из кластера.", misconception: "Несовпадающие старые term'ы — нормальная сигнатура долго оффлайн-follower'а, а не атака. Фикс — вернуть его в синхрон через snapshot, а не предполагать Byzantine-поведение." },
+    { label: "Увеличить election timeout, чтобы D перестал триггерить выборы.", misconception: "D — отстающий follower на починке, а не причина выборов здесь. Правильное действие — InstallSnapshot, чтобы прекратить линейный откат." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Четыре обработчика несут безопасность Raft. AppendEntries обязан гейтить каждую вставку совпадением prevLogIndex/prevLogTerm, иначе логи тихо расходятся. Лидер вправе напрямую коммитить лишь запись своего текущего term — подсчёт реплик на записи прошлого term снова открывает перезапись figure-8. RequestVote обязан сравнивать lastLogTerm/lastLogIndex, иначе устаревший кандидат побеждает и ломает Leader Completeness. А длинная серия пошаговых декрементов nextIndex с падающими term'ами — сигнатура расхождения, означающая «переключайся на InstallSnapshot». Читай протокол там, где он живёт — в обработчиках и логах — и это ровно те строки, которые senior-инженер проверяет первыми.
 </Recap>
-

@@ -1,43 +1,153 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- append-entries
+- log-matching
+- commit-index
+- request-vote
+- install-snapshot
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Raft consensus: leader election, log replication,
-  and production operations"'
-title: Coding Quiz
+- https://raft.github.io/raft.pdf
+- https://github.com/hashicorp/raft/blob/main/membership.md
+- https://www.pingcap.com/article/understanding-raft-consensus-in-distributed-systems-with-tidb/
+status: ready
+summary: "Read Raft RPC handlers, a state-machine step, and a real AppendEntries log, then pick the behaviour, the bug, or the highest-leverage fix a senior engineer makes first."
+title: 'Raft: code and log reading'
 track: distributed
 unit: 02-raft-outline
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Raft consensus: leader election, log replication, and production operations unit.
+Raft bugs hide in four places: the AppendEntries consistency check, the commit-index advance, the vote-granting rule, and the state machine that applies the log. Read each snippet the way you would in a code review or an incident, then pick what a senior engineer flags first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Raft consensus: leader election, log replication, and production operations unit.
+Practise reading the protocol where it actually lives — in RPC handlers and log lines — and spot the off-by-one, the missing check, and the divergence signature that separate a correct Raft from a corrupting one.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the AppendEntries consistency check
+
+```go
+// follower handling AppendEntries
+func (r *Raft) handleAppend(a AppendEntries) AppendReply {
+    if a.Term < r.currentTerm {
+        return AppendReply{Term: r.currentTerm, Success: false}
+    }
+    // BUG IS HERE: appends without the prevLog check
+    r.log = append(r.log[:a.PrevLogIndex+1], a.Entries...)
+    r.fsync()
+    return AppendReply{Term: r.currentTerm, Success: true}
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-1"
+  lessonSlug="02-raft-outline"
+  lang="en"
+  question="This follower handler is missing one check that Raft safety depends on. Which one, and what breaks without it?"
+  choices={[
+    { label: "It never verifies that its own log at PrevLogIndex has term PrevLogTerm before splicing. Without that Log-Matching check a follower accepts entries on top of a divergent prefix, so two logs can share an index yet hold different commands — State Machine Safety is violated.", correct: true },
+    { label: "It is missing a lock, so concurrent AppendEntries corrupt the slice.", misconception: "Concurrency hygiene matters, but the protocol-level defect is the absent prevLog match. Even single-threaded, this handler will splice onto a divergent prefix and break Log Matching." },
+    { label: "It should reject any term equal to currentTerm, not just lower ones.", misconception: "Equal-term AppendEntries are exactly the normal case from the current leader. Rejecting them would stop all replication. The defect is the missing prevLogIndex/prevLogTerm check." },
+    { label: "Nothing — truncating with log[:PrevLogIndex+1] already guarantees consistency.", misconception: "That slice blindly trusts the leader's index without confirming the prefix matches. If the follower's entry at PrevLogIndex has a different term, the splice corrupts history. The prevLog check must gate the append." },
+  ]}
+/>
+
+## Snippet 2 — advancing the commit index
+
+```go
+// leader, after collecting matchIndex[] from followers
+func (r *Raft) advanceCommit() {
+    for n := r.commitIndex + 1; n <= r.lastIndex(); n++ {
+        count := 1 // count self
+        for _, m := range r.matchIndex {
+            if m >= n {
+                count++
+            }
+        }
+        if count >= r.majority() {
+            r.commitIndex = n   // committed by majority
+        }
+    }
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-2"
+  lessonSlug="02-raft-outline"
+  lang="en"
+  question="A majority has replicated entry n, so this code commits it. But the Raft paper adds one more condition before a leader may advance commitIndex to n. What is it, and why?"
+  choices={[
+    { label: "The entry at n must belong to the leader's current term — commit only if r.log[n].Term == r.currentTerm. A leader may not commit a prior-term entry by counting replicas alone; doing so allowed the figure-8 scenario where a committed entry is later overwritten. Prior entries commit indirectly once a current-term entry above them commits.", correct: true },
+    { label: "It must wait for all followers, not just a majority, to replicate n.", misconception: "Waiting for all nodes is never required and would destroy availability. The missing condition is the current-term rule, not a stronger quorum." },
+    { label: "It must fsync the commitIndex to disk before advancing.", misconception: "Persisting commitIndex is an implementation detail; commitIndex is recomputable from the log on restart. The protocol-level gap is the current-term commit rule." },
+    { label: "Nothing is missing — majority replication is sufficient to commit any entry.", misconception: "For prior-term entries it is not. Committing a replicated-but-prior-term entry directly is the classic figure-8 bug; the current-term guard is what prevents it." },
+  ]}
+/>
+
+## Snippet 3 — granting a vote
+
+```go
+// handling RequestVote
+func (r *Raft) handleVote(v RequestVote) VoteReply {
+    if v.Term < r.currentTerm {
+        return VoteReply{Term: r.currentTerm, Granted: false}
+    }
+    if r.votedFor == nil || r.votedFor == v.CandidateID {
+        r.votedFor = v.CandidateID
+        return VoteReply{Term: v.Term, Granted: true}
+    }
+    return VoteReply{Term: v.Term, Granted: false}
+}
+```
+
+<Quiz
+  id="02-raft-outline-code-3"
+  lessonSlug="02-raft-outline"
+  lang="en"
+  question="This vote handler enforces one-vote-per-term but skips a check. What can a candidate now do, and which safety property fails?"
+  choices={[
+    { label: "It never compares the candidate's lastLogTerm/lastLogIndex against its own, so it grants votes to a candidate with a stale log. A behind candidate can win, become leader missing committed entries, and overwrite them — Leader Completeness fails.", correct: true },
+    { label: "A candidate can vote twice in the same term.", misconception: "The votedFor check already prevents double voting within a term. The missing piece is the log up-to-date comparison, which protects committed history, not vote counting." },
+    { label: "Two candidates can both win the same term — Election Safety fails.", misconception: "Election Safety still holds: one vote per node per term plus majority means at most one winner per term. The gap here lets a stale-log candidate win, breaking Leader Completeness instead." },
+    { label: "Nothing — the term comparison already guarantees a fresh log.", misconception: "Term comparison only orders messages; it says nothing about how complete the candidate's log is. The explicit lastLogTerm/lastLogIndex check is what guards completeness." },
+  ]}
+/>
+
+## Snippet 4 — a real AppendEntries log
+
+```
+15:42:08 INFO  raft: AppendEntries -> D failure (mismatch at idx=400100 term=12 vs follower idx=400100 term=11)
+15:42:09 INFO  raft: AppendEntries -> D retry prevIdx=400050 (decremented)
+15:42:09 INFO  raft: AppendEntries -> D failure (mismatch at idx=400050 term=12 vs follower idx=400050 term=10)
+15:42:10 INFO  raft: AppendEntries -> D retry prevIdx=399000 (decremented)
+15:42:10 INFO  raft: AppendEntries -> D failure (mismatch at idx=399000 term=12 vs follower idx=399000 term=8)
+15:42:11 WARN  raft: D has diverged extensively; consider InstallSnapshot
+```
+
+<Quiz
+  id="02-raft-outline-code-4"
+  lessonSlug="02-raft-outline"
+  lang="en"
+  question="The leader keeps decrementing nextIndex for follower D one step at a time. Reading this log, what is the diagnosis and the right operational response?"
+  choices={[
+    { label: "D missed multiple leadership generations (term 8 at idx 399000 vs leader term 12), so it diverges over hundreds of thousands of entries. Single-step backtracking would take minutes and huge traffic — the leader should switch to InstallSnapshot: ship the current state-machine snapshot, then catch D up on the recent tail.", correct: true },
+    { label: "The consistency check is broken — it should not have to decrement at all.", misconception: "Decrementing is the consistency check working correctly: it walks back to the last matching index. The problem is the size of the divergence, which calls for InstallSnapshot, not a code fix." },
+    { label: "D is malicious and sending forged terms; remove it from the cluster.", misconception: "Mismatched older terms are the normal signature of a long-offline follower, not an attack. The fix is to snapshot it back into sync, not to assume Byzantine behaviour." },
+    { label: "Increase the election timeout so D stops triggering elections.", misconception: "D is a lagging follower being repaired, not the cause of elections here. The right action is InstallSnapshot to end the linear backtracking." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Four handlers carry Raft's safety. AppendEntries must gate every splice on a prevLogIndex/prevLogTerm match or logs diverge silently. A leader may only directly commit an entry from its own current term — counting replicas on a prior-term entry reopens the figure-8 overwrite. RequestVote must compare lastLogTerm/lastLogIndex, or a stale candidate wins and breaks Leader Completeness. And a long run of one-step nextIndex decrements with falling terms is the divergence signature that means switch to InstallSnapshot. Read the protocol where it lives — in the handlers and the logs — and these are the exact lines a senior engineer checks first.
 </Recap>
-

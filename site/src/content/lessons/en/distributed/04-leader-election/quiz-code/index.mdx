@@ -1,42 +1,151 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- fencing-token
+- lease-leadership
+- split-brain
+- lock-service
+- failover
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Leader election"
-title: Coding Quiz
+- https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
+- https://etcd.io/docs/latest/learning/api/
+- https://raft.github.io/raft.pdf
+status: ready
+summary: "Read real lock, lease, and fencing-token snippets plus a split-brain log, predict the behaviour, and pick the fix a senior engineer would make first."
+title: 'Leader election: code and log reading'
 track: distributed
 unit: 04-leader-election
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Leader election unit.
+Leader-election bugs hide in the gap between 'I hold the lock' and 'my write landed.' Read the code and the log, then choose the fix that closes the gap — not the one that merely narrows it.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Leader election unit.
+Practise the loop you run in every coordination incident: read the lock/lease path, find the moment a pause or partition can slip a second writer in, and reach for the resource-enforced fix before tuning a timeout.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — acquire, then write
+
+```go
+func runJob(lock *LockService, store *ObjectStore) error {
+    if err := lock.Acquire("job-leader", 10*time.Second); err != nil {
+        return err // someone else leads
+    }
+    defer lock.Release("job-leader")
+
+    // ... minutes of work, including a possible long GC pause ...
+    return store.Put("result.csv", data) // write to shared storage
+}
+```
+
+<Quiz
+  id="04-leader-election-code-1"
+  lessonSlug="04-leader-election"
+  lang="en"
+  question="The lock is correct and exclusive. Why can this still produce two concurrent writers to result.csv?"
+  choices={[
+    { label: "Between Acquire and Put the process can pause (GC, VM freeze) past the 10s lease; the lock service expires it and grants leadership to another worker, but THIS process resumes and still calls store.Put. The lock never reaches into the resource, so both writes land.", correct: true },
+    { label: "defer lock.Release runs before store.Put, releasing the lock too early.", misconception: "defer runs at function return, after Put completes — the ordering is fine. The problem is a pause BEFORE Put, while the lock is held but the lease has expired underneath it." },
+    { label: "Acquire is not safe for concurrent callers.", misconception: "Acquire is exclusive by construction — only one caller holds it. The bug is not contention; it is a paused holder waking after its lease expired." },
+    { label: "The 10s TTL is simply too short and should be raised to 60s.", misconception: "Any finite TTL can be exceeded by a long enough pause. Raising it lowers the false-expiry rate but never removes the possibility of a stale write." },
+  ]}
+/>
+
+## Snippet 2 — adding a fencing token
+
+```go
+func runJob(lock *LockService, store *ObjectStore) error {
+    token, err := lock.Acquire("job-leader", 10*time.Second) // returns monotonic token
+    if err != nil {
+        return err
+    }
+    defer lock.Release("job-leader")
+
+    // ... work, possible pause ...
+    return store.Put("result.csv", data, token) // token passed to the write
+}
+```
+
+<Quiz
+  id="04-leader-election-code-2"
+  lessonSlug="04-leader-election"
+  lang="en"
+  question="The token is now plumbed through to store.Put. Under what condition does this actually stop the stale write — and what must store.Put do?"
+  choices={[
+    { label: "store.Put must persist the highest token it has accepted and reject any Put whose token is lower. Then a paused worker waking with token 33 is rejected because the new leader already wrote at token 34. Plumbing the token through is necessary but useless unless the resource enforces it.", correct: true },
+    { label: "It works automatically now — passing the token to Put is the whole fix.", misconception: "Passing the token does nothing unless store.Put compares it against the highest seen and rejects lower ones. A store that just logs the token still accepts the stale write." },
+    { label: "It works only if the token is a wall-clock timestamp so the store can compare times.", misconception: "Tokens are compared as monotonic integers, not times. Timestamps reintroduce the clock-trust problem fencing exists to avoid." },
+    { label: "It works only if Acquire and Put share a transaction.", misconception: "Put hits an external object store, outside any lock-service transaction. Enforcement must be a per-resource token-vs-highest check, not a shared transaction." },
+  ]}
+/>
+
+## Snippet 3 — the lease keep-alive loop
+
+```go
+func keepLeadership(c *etcd.Client, leaseID etcd.LeaseID, onLost func()) {
+    ka, _ := c.KeepAlive(ctx, leaseID) // channel of renew acks
+    for {
+        select {
+        case resp, ok := <-ka:
+            if !ok {                 // channel closed = renew failed
+                onLost()             // we are no longer leader
+                return
+            }
+            _ = resp
+        }
+    }
+}
+```
+
+<Quiz
+  id="04-leader-election-code-3"
+  lessonSlug="04-leader-election"
+  lang="en"
+  question="onLost() fires when keep-alive renewals fail. Why is acting on onLost necessary but NOT sufficient for safety?"
+  choices={[
+    { label: "onLost only fires when the process is running to observe the closed channel; during a pause it cannot run at all, so a paused leader gets no onLost callback until it wakes — after its lease already expired and a new leader was elected. Safety still requires fencing at the resource.", correct: true },
+    { label: "It is sufficient — onLost lets the node stop writing the instant it loses leadership.", misconception: "A paused process executes no goroutines, so onLost cannot fire during the pause. By the time it runs, the stale write may already be in flight. Self-notification cannot be the safety mechanism." },
+    { label: "It is insufficient because KeepAlive should use a shorter interval.", misconception: "Interval tuning changes renewal frequency, not the fact that a stopped process observes nothing. The gap is structural, not a tuning value." },
+    { label: "It is insufficient because the channel can drop spurious acks.", misconception: "A closed channel reliably signals renew failure; spurious acks are not the issue. The issue is that the callback depends on the suspect node staying alive to fire." },
+  ]}
+/>
+
+## Snippet 4 — a split-brain log
+
+```
+12:00:01  leaderA  acquired lease (term=7, token=33), writing batch
+12:00:04  leaderA  >>> stop-the-world GC pause begins
+12:00:11  coord    leaseA expired (no keep-alive 10s); electing
+12:00:11  coord    leaderB won (term=8, token=34)
+12:00:11  leaderB  acquired lease, store accepted write token=34
+12:00:18  leaderA  <<< GC pause ends (14s)
+12:00:18  leaderA  store.Put(result.csv, token=33) -> REJECTED (highest=34)
+```
+
+<Quiz
+  id="04-leader-election-code-4"
+  lessonSlug="04-leader-election"
+  lang="en"
+  question="Reading this log, which statement is the correct senior reading?"
+  choices={[
+    { label: "Two nodes both believed they led between 12:00:11 and 12:00:18 — textbook split-brain from a pause, not a partition. The system stayed CORRECT only because the store enforced the fencing token and rejected leaderA's stale token=33 write.", correct: true },
+    { label: "leaderA's write at 12:00:18 proves the lease mechanism failed.", misconception: "The lease worked as designed: it expired and triggered re-election. Leases cannot stop a paused process from waking and writing — that is exactly why the token check, which DID catch it, is needed." },
+    { label: "The bug is that term jumped from 7 to 8 during the pause.", misconception: "Incrementing the term on each election is correct Raft behaviour, not a bug. The term bump is how the new leadership is made unambiguous." },
+    { label: "leaderB should have waited for leaderA to confirm it stepped down.", misconception: "Waiting on a paused node for confirmation is how you lose availability forever — it may never respond. Quorum-based election deliberately does not wait for the suspected-dead node." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every leader-election bug reads the same way: a lock or lease guarantees exclusion only while the holder is running, so a pause between 'acquire' and 'write' lets a deposed leader resume and write stale data. Plumbing a monotonic fencing token through to the write is necessary, but it is the RESOURCE rejecting any token below its highest-seen that actually enforces safety. Keep-alive callbacks and shorter TTLs cannot help a process that is not executing. Diagnose from the log, find the pause-or-partition gap, and fix it where the write lands — not where the lock is granted.
 </Recap>
-
