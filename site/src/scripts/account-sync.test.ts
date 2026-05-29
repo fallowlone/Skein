@@ -24,4 +24,18 @@ describe("mergeProgress", () => {
     expect(m.retrieval.q.lastAt).toBe(30);
     expect(m.tier).toBe("senior"); // local scalar wins
   });
+
+  it("never erases a server pretest with a fresh device's null local pretest", () => {
+    const local = { pretest: null, manualTierFlips: 0, history: {}, retrieval: {} } as any;
+    const server = { pretest: { takenAt: 5, score: 8, answers: [1, 2] }, manualTierFlips: 3, history: {}, retrieval: {} } as any;
+    const m = mergeProgress(local, server);
+    expect(m.pretest).toEqual({ takenAt: 5, score: 8, answers: [1, 2] }); // server pretest preserved
+    expect(m.manualTierFlips).toBe(3); // max wins
+  });
+
+  it("keeps a local pretest when the server has none", () => {
+    const local = { pretest: { takenAt: 9, score: 4, answers: [0] }, manualTierFlips: 2, history: {}, retrieval: {} } as any;
+    const server = { pretest: null, manualTierFlips: 0, history: {}, retrieval: {} } as any;
+    expect(mergeProgress(local, server).pretest?.takenAt).toBe(9);
+  });
 });
