@@ -1,42 +1,170 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- exponential-backoff-jitter
+- retry-budget
+- nested-retry-amplification
+- circuit-breaker
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Retry amplification"
-title: Кодировочный тест
+- https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+- https://sre.google/sre-book/addressing-cascading-failures/
+status: ready
+summary: "Читай реальный retry-код — backoff с jitter, retry budget, вложенный fan-out, half-open breaker — и выбирай фикс с наибольшим рычагом, который senior делает первым."
+title: 'Retry amplification: чтение кода'
 track: distributed
 unit: 07-retry-amplification
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Retry amplification unit.
+Баги ретраев прячутся в коде, который выглядит корректным в юнит-тесте и детонирует под реальным outage. Прочитай каждый сниппет, предскажи поведение, когда зависимость лежит, и выбери фикс, который senior делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Retry amplification unit.
+Отработай цикл, который ты прогоняешь на каждом retry-конфиге: прочитай backoff, budget и граф вызовов; предскажи fan-out при сбое; и тянись к фиксу с наибольшим рычагом, прежде чем добавлять ещё ретраи.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — backoff без jitter
+
+```go
+func callWithRetry(ctx context.Context, fn func() error) error {
+    base := 100 * time.Millisecond
+    var err error
+    for attempt := 0; attempt < 5; attempt++ {
+        if err = fn(); err == nil {
+            return nil
+        }
+        // exponential, but no jitter
+        sleep := base * time.Duration(1<<attempt) // 100, 200, 400, 800, 1600 ms
+        time.Sleep(sleep)
+    }
+    return err
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-1"
+  lessonSlug="07-retry-amplification"
+  lang="ru"
+  question="10 000 клиентов одновременно вызывают это против зависимости, которая только что блипнула. Что идёт не так и какой однострочный фикс?"
+  choices={[
+    { label: "Все 10k клиентов затаймаутились в один момент, поэтому спят одинаковые детерминированные 100/200/400 мс и ретраят синхронными волнами — thundering herd, заново пробивающий восстанавливающийся бэкенд каждый круг. Фикс: full jitter, sleep = random(0, base * 2^attempt).", correct: true },
+    { label: "Ничего — exponential backoff уже разносит нагрузку по времени.", misconception: "Exponential backoff разносит попытки по времени, но не расцепляет клиентов: толпа, стартовавшая вместе, топает вместе на каждом одинаковом интервале. Без jitter всплески просто переезжают на 100 мс, потом 200 мс, потом 400 мс." },
+    { label: "Баг в том, что `1<<attempt` переполняет duration.", misconception: "1<<4 равно 16; длительности (от 100 мс до 1600 мс) в норме. Реальный дефект — отсутствие случайности, из-за которого все клиенты синхронизированы." },
+    { label: "5 попыток слишком мало; подними до 10, чтобы пережить blip.", misconception: "Больше попыток умножают толпу, а не укрощают. Фикс — jitter для расцепления плюс budget для ограничения объёма, но никогда не больше синхронных попыток." },
+  ]}
+/>
+
+## Сниппет 2 — retry budget
+
+```go
+// token-bucket retry budget: retries may consume at most ~10% of request volume
+type RetryBudget struct {
+    mu     sync.Mutex
+    tokens float64
+}
+
+func (b *RetryBudget) OnRequest()      { b.mu.Lock(); b.tokens += 0.1; b.mu.Unlock() } // +0.1 per request
+func (b *RetryBudget) TryRetry() bool {
+    b.mu.Lock(); defer b.mu.Unlock()
+    if b.tokens >= 1 {
+        b.tokens -= 1 // each retry costs 1 token
+        return true
+    }
+    return false // budget exhausted: fail fast, do not retry
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-2"
+  lessonSlug="07-retry-amplification"
+  lang="ru"
+  question="Зависимость полностью лежит: каждый запрос сбоит. Какую установившуюся частоту ретраев допускает этот budget и что это даёт?"
+  choices={[
+    { label: "Около 1 ретрая на 10 запросов (~10% сверх нагрузки), потому что каждый запрос добавляет 0.1 токена, а каждый ретрай тратит 1. Даже в полном outage трафик ретраев ограничен ~10% над базой, превращая неограниченную геометрическую амплификацию в жёсткий потолок.", correct: true },
+    { label: "Неограниченные ретраи, потому что каждый сбойный запрос триггерит ретрай.", misconception: "Каждый запрос добавляет лишь 0.1 токена, а ретрай стоит 1, поэтому 9 из 10 попыток ретрая находят пустое ведро и быстро проваливаются. Budget — это ровно то, что останавливает неограниченный случай." },
+    { label: "Ноль ретраев, потому что токены никогда не достигают 1.", misconception: "Токены накапливаются по 0.1 на запрос, поэтому после ~10 запросов в ведре 1 и разрешён один ретрай. Частота устанавливается около 10%, а не нуля." },
+    { label: "Ровно 10 ретраев на запрос из-за множителя 0.1.", misconception: "0.1 — это токены, добавляемые на запрос; ретрай стоит полный токен. Соотношение — один ретрай на десять запросов, то есть ~10% сверх нагрузки, а не десять ретраев на каждый." },
+  ]}
+/>
+
+## Сниппет 3 — вложенные ретраи
+
+```go
+// data layer
+func (d *DataLayer) Read(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return d.pool.Read(ctx, k) }) // retries 3x
+}
+// service layer
+func (s *Service) Get(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return s.data.Read(ctx, k) }) // retries 3x, calling the above
+}
+// gateway
+func (g *Gateway) Handle(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return g.svc.Get(ctx, k) }) // retries 3x, calling the above
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-3"
+  lessonSlug="07-retry-amplification"
+  lang="ru"
+  question="На один запрос, сбоящий на пуле, сколько вызовов придёт к connection pool и какой правильный структурный фикс?"
+  choices={[
+    { label: "3 × 3 × 3 = 27 вызовов — ретрай каждого слоя заново вызывает всю цепочку ретраев под ним, поэтому множители перемножаются. Фикс: ретраить ровно на одном слое (обычно ближайшем к сбою), а внешним слоям пробрасывать ошибку, а не ретраить заново.", correct: true },
+    { label: "9 вызовов — ретраят только два слоя, ближайшие к пулу.", misconception: "Все три слоя ретраят 3 раза, и они вложены: каждая попытка шлюза гонит полный service-retry, каждый из которых гонит полный data-retry. Произведение — 3³ = 27, а не 9." },
+    { label: "3 вызова — внутренний ретрай уже покрывает сбой для всех.", misconception: "Внутренний ретрай покрывает лишь свои 3 попытки; внешние слои не знают, что он ретраил, и добавляют свои множители сверху. К пулу приходит 27 вызовов." },
+    { label: "27 нормально, пока каждый слой добавляет jitter.", misconception: "Jitter разносит 27 по времени, но не уменьшает их. Структурный фикс — перестать ретраить на нескольких слоях, а не переформировать тайминг 27 вызовов." },
+  ]}
+/>
+
+## Сниппет 4 — half-open breaker
+
+```go
+func (b *Breaker) Call(fn func() error) error {
+    switch b.state {
+    case Open:
+        if time.Since(b.openedAt) < b.cooldown {
+            return ErrOpen // fail fast, no network call
+        }
+        b.state = HalfOpen // cooldown elapsed: allow probes
+        fallthrough
+    case HalfOpen:
+        err := fn()
+        if err != nil {
+            b.state = Open; b.openedAt = time.Now() // probe failed: re-open
+            return err
+        }
+        b.state = Closed // probe succeeded: resume normal traffic
+        return nil
+    default: // Closed
+        return b.trackFailures(fn)
+    }
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-4"
+  lessonSlug="07-retry-amplification"
+  lang="ru"
+  question="В состоянии HalfOpen этот код пропускает всех конкурентных вызывающих сразу. Под нагруженным сервисом почему это опасно и какой фикс?"
+  choices={[
+    { label: "HalfOpen должен пускать лишь одну пробу (или крошечное ограниченное число). Как написано, все конкурентные вызывающие попадают в HalfOpen одновременно и заливают всё ещё хрупкий бэкенд полным трафиком в момент истечения cooldown, что может тут же снова сорвать breaker. Фикс: ограничить HalfOpen одной пробой in-flight.", correct: true },
+    { label: "Всё нормально — пропуск всего трафика и есть смысл half-open.", misconception: "Half-open существует, чтобы тестировать восстановление минимальной нагрузкой: одной пробой. Допуск полного конкурентного трафика рушит этот смысл и может снова перегрузить бэкенд, который только начал дышать." },
+    { label: "Баг — это fallthrough; убери его, чтобы Open никогда не достигал HalfOpen.", misconception: "Fallthrough намеренный — после cooldown Open переходит в HalfOpen и запускает пробу. Реальный дефект в том, что HalfOpen не ограничен одной пробой." },
+    { label: "Он не должен автоматически выходить из Open; требуй ручного сброса.", misconception: "Автоматическое half-open-восстановление корректно и желательно. Фикс — ограничить конкурентность в HalfOpen, а не отключать автоматическое восстановление." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый retry-инцидент читается в коде: backoff без jitter ресинхронизирует толпу (full jitter — однострочный фикс); token-bucket retry budget превращает неограниченную амплификацию в потолок ~10%; вложенные ретраи на N слоях множатся до retries^N (ретрай на одном слое, проброс на остальных); а half-open breaker должен пускать одну пробу, а не поток. Предскажи fan-out при сбое, чини структуру, потом перетестируй под той же синхронной нагрузкой.
 </Recap>
-

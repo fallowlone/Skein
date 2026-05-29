@@ -1,42 +1,170 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- exponential-backoff-jitter
+- retry-budget
+- nested-retry-amplification
+- circuit-breaker
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Retry amplification"
-title: Coding Quiz
+- https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+- https://sre.google/sre-book/addressing-cascading-failures/
+status: ready
+summary: "Read real retry code — backoff with jitter, a retry budget, nested-retry fan-out, a half-open breaker — and pick the highest-leverage fix a senior makes first."
+title: 'Retry amplification: code reading'
 track: distributed
 unit: 07-retry-amplification
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Retry amplification unit.
+Retry bugs hide in code that looks correct in a unit test and detonates under a real outage. Read each snippet, predict how it behaves when the dependency is down, and choose the fix a senior makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Retry amplification unit.
+Practise the loop you run on every retry config: read the backoff, the budget, and the call graph; predict the fan-out under failure; and reach for the highest-leverage fix before adding more retries.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the backoff that does not jitter
+
+```go
+func callWithRetry(ctx context.Context, fn func() error) error {
+    base := 100 * time.Millisecond
+    var err error
+    for attempt := 0; attempt < 5; attempt++ {
+        if err = fn(); err == nil {
+            return nil
+        }
+        // exponential, but no jitter
+        sleep := base * time.Duration(1<<attempt) // 100, 200, 400, 800, 1600 ms
+        time.Sleep(sleep)
+    }
+    return err
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-1"
+  lessonSlug="07-retry-amplification"
+  lang="en"
+  question="10,000 clients all call this against a dependency that just blipped. What goes wrong, and what is the one-line fix?"
+  choices={[
+    { label: "All 10k clients timed out at the same instant, so they all sleep the same deterministic 100/200/400 ms and retry in synchronized waves — a thundering herd that re-spikes the recovering backend every round. Fix: full jitter, sleep = random(0, base * 2^attempt).", correct: true },
+    { label: "Nothing — exponential backoff already spreads the load over time.", misconception: "Exponential backoff spreads attempts over time but does not de-correlate clients: a herd that started together steps together on every identical interval. Without jitter the spikes just move to 100 ms, then 200 ms, then 400 ms." },
+    { label: "The bug is `1<<attempt` overflowing the duration.", misconception: "1<<4 is 16; the durations (100 ms up to 1600 ms) are fine. The real defect is the absence of randomness, which leaves every client synchronized." },
+    { label: "5 attempts is too few; raise it to 10 to outlast the blip.", misconception: "More attempts multiply the herd, not tame it. The fix is jitter to de-synchronize, plus a budget to cap volume — never more synchronized attempts." },
+  ]}
+/>
+
+## Snippet 2 — the retry budget
+
+```go
+// token-bucket retry budget: retries may consume at most ~10% of request volume
+type RetryBudget struct {
+    mu     sync.Mutex
+    tokens float64
+}
+
+func (b *RetryBudget) OnRequest()      { b.mu.Lock(); b.tokens += 0.1; b.mu.Unlock() } // +0.1 per request
+func (b *RetryBudget) TryRetry() bool {
+    b.mu.Lock(); defer b.mu.Unlock()
+    if b.tokens >= 1 {
+        b.tokens -= 1 // each retry costs 1 token
+        return true
+    }
+    return false // budget exhausted: fail fast, do not retry
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-2"
+  lessonSlug="07-retry-amplification"
+  lang="en"
+  question="The dependency is fully down: every request fails. What is the steady-state retry rate this budget allows, and what does that achieve?"
+  choices={[
+    { label: "About 1 retry per 10 requests (~10% extra load), because each request adds 0.1 token and each retry spends 1. Even in a total outage retry traffic is capped at ~10% above baseline, converting unbounded geometric amplification into a hard ceiling.", correct: true },
+    { label: "Unlimited retries, because every failed request triggers a retry.", misconception: "Each request adds only 0.1 token and a retry costs 1, so 9 of every 10 retry attempts find an empty bucket and fail fast. The budget is exactly what stops the unbounded case." },
+    { label: "Zero retries, because tokens never reach 1.", misconception: "Tokens accumulate at 0.1 per request, so after ~10 requests the bucket holds 1 and permits one retry. The rate settles at roughly 10%, not zero." },
+    { label: "Exactly 10 retries per request, because of the 0.1 factor.", misconception: "The 0.1 is tokens added per request; a retry costs a full token. The ratio is one retry per ten requests, i.e. ~10% extra load, not ten retries each." },
+  ]}
+/>
+
+## Snippet 3 — nested retries
+
+```go
+// data layer
+func (d *DataLayer) Read(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return d.pool.Read(ctx, k) }) // retries 3x
+}
+// service layer
+func (s *Service) Get(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return s.data.Read(ctx, k) }) // retries 3x, calling the above
+}
+// gateway
+func (g *Gateway) Handle(ctx context.Context, k string) (V, error) {
+    return retry(3, func() (V, error) { return g.svc.Get(ctx, k) }) // retries 3x, calling the above
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-3"
+  lessonSlug="07-retry-amplification"
+  lang="en"
+  question="For one request that fails at the pool, how many calls hit the connection pool, and what is the correct structural fix?"
+  choices={[
+    { label: "3 × 3 × 3 = 27 calls — each layer's retry re-invokes the full retry chain beneath it, so the factors multiply. Fix: retry at exactly one layer (usually the one closest to the failure), and have outer layers propagate the error instead of re-retrying.", correct: true },
+    { label: "9 calls — only the two layers nearest the pool retry.", misconception: "All three layers retry 3 times, and they nest: each gateway attempt drives a full service-retry, each of which drives a full data-retry. The product is 3³ = 27, not 9." },
+    { label: "3 calls — the inner retry already covers the failure for everyone.", misconception: "The inner retry only covers its own 3 attempts; the outer layers do not know it retried and add their own factors on top. 27 calls reach the pool." },
+    { label: "27 is fine as long as each layer adds jitter.", misconception: "Jitter spreads the 27 over time but does not reduce them. The structural fix is to stop retrying at multiple layers, not to reshape the timing of 27 calls." },
+  ]}
+/>
+
+## Snippet 4 — the half-open breaker
+
+```go
+func (b *Breaker) Call(fn func() error) error {
+    switch b.state {
+    case Open:
+        if time.Since(b.openedAt) < b.cooldown {
+            return ErrOpen // fail fast, no network call
+        }
+        b.state = HalfOpen // cooldown elapsed: allow probes
+        fallthrough
+    case HalfOpen:
+        err := fn()
+        if err != nil {
+            b.state = Open; b.openedAt = time.Now() // probe failed: re-open
+            return err
+        }
+        b.state = Closed // probe succeeded: resume normal traffic
+        return nil
+    default: // Closed
+        return b.trackFailures(fn)
+    }
+}
+```
+
+<Quiz
+  id="07-retry-amplification-code-4"
+  lessonSlug="07-retry-amplification"
+  lang="en"
+  question="In the HalfOpen state this code lets every concurrent caller through at once. Under a busy service, why is that dangerous and what is the fix?"
+  choices={[
+    { label: "HalfOpen should admit only a single probe (or a tiny capped number). As written, every concurrent caller hits HalfOpen simultaneously and floods the still-fragile backend with full traffic the instant the cooldown elapses, which can immediately re-trip it. Fix: gate HalfOpen to one in-flight probe.", correct: true },
+    { label: "It is fine — letting all traffic through is the point of half-open.", misconception: "Half-open exists to test recovery with minimal load: one probe. Admitting full concurrent traffic defeats the purpose and can re-overload a backend that was just starting to breathe." },
+    { label: "The bug is the fallthrough; remove it so Open never reaches HalfOpen.", misconception: "The fallthrough is intentional — after cooldown, Open transitions to HalfOpen and runs a probe. The real defect is that HalfOpen is not limited to a single probe." },
+    { label: "It should never leave Open automatically; require a manual reset.", misconception: "Automatic half-open recovery is correct and desirable. The fix is to cap concurrency in HalfOpen, not to disable automatic recovery." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every retry incident is read in the code: backoff without jitter re-synchronizes the herd (full jitter is the one-line fix); a token-bucket retry budget converts unbounded amplification into a ~10% ceiling; nested retries at N layers multiply to retries^N (retry at one layer, propagate elsewhere); and a half-open breaker must admit a single probe, not a flood. Predict the fan-out under failure, fix the structure, then re-test under the same synchronized load.
 </Recap>
-
