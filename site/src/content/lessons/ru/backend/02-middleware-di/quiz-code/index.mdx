@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- middleware-ordering
+- middleware-contract
+- singleton-state
+- request-scope
+- circular-dependency
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Middleware и внедрение зависимостей"
-title: Кодировочный тест
+- https://expressjs.com/en/guide/using-middleware.html
+- https://docs.nestjs.com/fundamentals/injection-scopes
+- https://docs.nestjs.com/fundamentals/circular-dependency
+status: ready
+summary: "Чтение реальных сниппетов Express и NestJS — баг порядка middleware, singleton с состоянием запроса, издержки bubbling request-scope и цикл зависимостей — и выбор фикса с наибольшим рычагом."
+title: 'Middleware и DI: чтение кода и конфигурации'
 track: backend
 unit: 02-middleware-di
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Middleware и внедрение зависимостей unit.
+Баги middleware и DI диагностируются в коде связывания и порядке регистрации, а не в бизнес-логике. Прочитайте каждый сниппет, предскажите, что сломается под нагрузкой, и выберите фикс, к которому senior-инженер тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Middleware и внедрение зависимостей unit.
+Отработайте цикл, который запускает каждый инцидент middleware/DI: прочитать порядок pipeline или связывание, предсказать сбой (утёкший ответ, межпользовательская гонка данных, пересборка графа на каждый запрос, неразрешимый цикл) и выбрать структурный фикс вместо заплатки.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — порядок middleware
+
+```js
+const app = express();
+
+app.use(expensiveBodyParser());   // парсит + буферизует всё тело
+app.use(rateLimit({ max: 100 })); // отклоняет 101-й запрос
+app.use(authenticate);            // проверяет bearer-токен
+app.use('/api', apiRouter);
+```
+
+<Quiz
+  id="02-middleware-di-code-1"
+  lessonSlug="02-middleware-di"
+  lang="ru"
+  question="Поток неаутентифицированных запросов с большими телами разгоняет CPU до 100%. Что не так с этим порядком и каков фикс?"
+  choices={[
+    { label: "Дорогой парсер тела выполняется раньше rate limiting и аутентификации, поэтому каждый мусорный запрос — включая те, что будут отклонены — сначала оплачивает полную стоимость парсинга. Порядок: сначала дешёвые отказы — rate limit, затем authenticate, и только потом парсинг тела для выживших запросов.", correct: true },
+    { label: "Ничего не так; Express выполняет middleware параллельно, так что порядок не важен.", misconception: "Express выполняет middleware последовательно в порядке регистрации, каждый вызывает next(). Порядок — именно тот рычаг: работа перед точкой отказа оплачивается запросами, которые всё равно отклоняются." },
+    { label: "rateLimit всегда нужно регистрировать последним, после роутера.", misconception: "Регистрация последним пропустила бы каждый запрос к обработчику до ограничения. Дешёвые отказы должны быть рано — издержки этого порядка в парсинге тел для запросов, которые auth/limit всё равно отбросят." },
+    { label: "Баг в том, что authenticate не вызывает next().", misconception: "Ничто в сниппете не показывает, что authenticate ведёт себя неправильно. Видимый дефект — порядок pipeline: самый тяжёлый шаг идёт перед двумя дешёвыми точками отказа." },
+  ]}
+/>
+
+## Сниппет 2 — поле в singleton
+
+```ts
+@Injectable()                     // scope по умолчанию: singleton
+export class AuditService {
+  private currentUser?: User;     // ставится на запрос, читается позже
+
+  setUser(u: User) { this.currentUser = u; }
+
+  record(action: string) {
+    log(`${this.currentUser?.id} did ${action}`);
+  }
+}
+```
+
+<Quiz
+  id="02-middleware-di-code-2"
+  lessonSlug="02-middleware-di"
+  lang="ru"
+  question="Под конкурентной нагрузкой журнал аудита приписывает действия не тому пользователю. Почему и каков самый чистый фикс?"
+  choices={[
+    { label: "@Injectable() по умолчанию singleton — один экземпляр на весь процесс — поэтому currentUser общий для всех конкурентных запросов; один запрос перезаписывает его между setUser и record другого запроса. Фикс: держать без состояния и передавать пользователя в record(user, action).", correct: true },
+    { label: "log() не потокобезопасен.", misconception: "Порча происходит до логирования: общее поле currentUser перезаписывается конкурентным запросом. Фикс — перестать хранить состояние запроса на singleton, а не менять логгер." },
+    { label: "Пометить поле readonly, чтобы предотвратить перезапись.", misconception: "readonly вообще запретит setUser и не решит совместного доступа — экземпляр всё ещё один на процесс. Проблема — само поле; передавайте пользователя аргументом." },
+    { label: "Добавить transient scope к log(), чтобы каждый вызов был свежим.", misconception: "У методов нет scope; они есть только у провайдеров. Гонка — общее поле singleton. Либо передавайте значение аргументом, либо делайте провайдер request-scoped." },
+  ]}
+/>
+
+## Сниппет 3 — request-scoped логгер
+
+```ts
+@Injectable({ scope: Scope.REQUEST })   // один экземпляр на запрос
+export class ContextLogger { /* хранит request id */ }
+
+@Injectable()                            // задуман как singleton
+export class PaymentService {
+  constructor(private log: ContextLogger) {}   // внедряет request-scoped зависимость
+}
+// AppController внедряет PaymentService, OrderService внедряет PaymentService...
+```
+
+<Quiz
+  id="02-middleware-di-code-3"
+  lessonSlug="02-middleware-di"
+  lang="ru"
+  question="После этого изменения нагрузочный тест показывает повышенные аллокации и латентность во многих несвязанных сервисах. Почему?"
+  choices={[
+    { label: "Scope всплывает вверх по цепочке внедрения: singleton не может держать request-scoped зависимость, поэтому PaymentService принудительно становится request-scoped, как и всё, что его внедряет. Контейнер пересоздаёт весь этот подграф на каждом запросе. Внедряйте более узкий контекст (например, передавайте request id).", correct: true },
+    { label: "Request scope отключает кэш запросов, замедляя базу.", misconception: "Request scope не трогает кэширование запросов. Издержки структурные: он распространяется вверх по цепочке внедрения и заставляет пересоздавать каждого потребителя на запрос." },
+    { label: "ContextLogger течёт по памяти, потому что request-scoped объекты не собираются.", misconception: "Request-scoped экземпляры отбрасываются после запроса. Издержки здесь — пересоздание зависимого подграфа на каждый запрос, а не утечка." },
+    { label: "Ничего страшного — request scope влияет только на сам ContextLogger.", misconception: "Он не может остаться изолированным: любой singleton, внедряющий request-scoped провайдер, сам должен стать request-scoped, как и его потребители. Lifetime всплывает вверх по графу." },
+  ]}
+/>
+
+## Сниппет 4 — цикл зависимостей
+
+```ts
+@Injectable()
+export class AuthService {
+  constructor(private users: UserService) {}   // нужен UserService
+}
+
+@Injectable()
+export class UserService {
+  constructor(private auth: AuthService) {}     // нужен AuthService
+}
+```
+
+<Quiz
+  id="02-middleware-di-code-4"
+  lessonSlug="02-middleware-di"
+  lang="ru"
+  question="Контейнер бросает 'cannot resolve dependencies'. Какова первопричина и структурно правильный фикс?"
+  choices={[
+    { label: "Циклическая зависимость: резолвинг — это топологическая сортировка, существующая только для ациклического графа, поэтому нет порядка 'сначала листья'. Правильный фикс — разорвать цикл: вынести общую логику в третий сервис, от которого зависят оба, превратив круг в дерево.", correct: true },
+    { label: "Обернуть оба конструктора в forwardRef(() => Other) и идти дальше.", misconception: "forwardRef откладывает резолвинг одной стороны, чтобы разорвать дедлок в рантайме, но сохраняет циклический дизайн и может разрешаться недетерминированно в разных окружениях. Это запах, а не структурный фикс." },
+    { label: "Сделать оба сервиса request-scoped, чтобы избежать конфликта.", misconception: "Scope про lifetime, а не про порядок. У цикла нет валидного порядка конструирования при любом scope; смена lifetime не даёт графу топологического порядка." },
+    { label: "Слить оба в один большой сервис.", misconception: "Иногда два зацикленных класса должны быть одним, но дисциплинированный фикс — обычно вынести общую зависимость в третий класс, оставив ответственности раздельными и сделав граф ациклическим." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент middleware/DI читается в связывании, а не в логике. Порядок middleware — рычаг стоимости и безопасности: ставьте дешёвые отказы (rate limit, auth) перед дорогой работой вроде парсинга тела. Singleton должен быть без состояния относительно запроса; хранение полей на запрос гонит данные между конкурентными пользователями, поэтому передавайте значение аргументом. Request scope всплывает вверх по цепочке внедрения и пересобирает подграф на запрос, так что тянитесь к нему только при реальной необходимости. А у цикла зависимостей нет топологического порядка — структурный фикс в выносе общего третьего класса, а не в подавлении резолвера через forwardRef.
 </Recap>
-

@@ -1,42 +1,128 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- pool-sizing-formula
+- connection-leak
+- try-finally
+- acquisition-timeout
+- idle-in-transaction
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Connection and thread pooling"
-title: Coding Quiz
+- https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+- https://github.com/brettwooldridge/HikariCP/wiki/Configuration
+- https://www.postgresql.org/docs/current/runtime-config-client.html
+status: ready
+summary: "Read real pool config, handler code, and a Postgres log line, predict the failure, and pick the highest-leverage fix — sizing math, a leak, an idle-in-transaction hold, and a timeout config."
+title: 'Pooling: code and config reading'
 track: backend
 unit: 04-pooling
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Connection and thread pooling unit.
+Pool incidents are diagnosed in config files, handler code, and the database log — not in the abstract. Read each snippet, predict the failure it produces under load, and choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Connection and thread pooling unit.
+Practise the loop every pooling incident runs: read the config and the hot path, predict where connections starve, leak, or go stale, and reach for the structural fix before reaching for a bigger number.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — sizing the pool
+
+```yaml
+# 4 vCPU Postgres, one SSD. Service handles ~2000 req/s.
+# A panicked engineer set this after a "DB is the bottleneck" alert:
+spring.datasource.hikari.maximum-pool-size: 200
+spring.datasource.hikari.minimum-idle: 200
+```
+
+<Quiz
+  id="04-pooling-code-1"
+  lessonSlug="04-pooling"
+  lang="en"
+  question="On this 4-vCPU, one-SSD database, what should maximum-pool-size actually be, and why is 200 harmful?"
+  choices={[
+    { label: "About 9, from the HikariCP heuristic (cores x 2) + spindles = (4 x 2) + 1. 200 connections far exceed what 4 cores can execute, so the surplus is pure context-switch and lock/latch contention; throughput falls and latency climbs.", correct: true },
+    { label: "200 is fine — more connections always means more concurrency.", misconception: "A connection is not a unit of parallelism; a core is. Past roughly (cores x 2) + spindles, extra connections only contend, they do not execute." },
+    { label: "Set it to 100 to match the Postgres default max_connections.", misconception: "max_connections is a server-wide ceiling shared across all clients, not a per-app target. The throughput-maximising number is single digits here." },
+    { label: "Raise it to 400; the formula is too conservative for 2000 req/s.", misconception: "High request rate is served by the overflow waiting cheaply in the pool's queue, not by more backends. A larger pool thrashes the database — request rate does not change the core count." },
+  ]}
+/>
+
+## Snippet 2 — the handler
+
+```js
+async function getUser(id) {
+  const conn = await pool.acquire();
+  const rows = await conn.query("SELECT * FROM users WHERE id = $1", [id]);
+  conn.release();           // returns connection to the pool
+  return rows[0];
+}
+```
+
+<Quiz
+  id="04-pooling-code-2"
+  lessonSlug="04-pooling"
+  lang="en"
+  question="This handler runs fine in testing but the pool drains to empty over hours in production, fixed only by a restart. What is the defect and the fix?"
+  choices={[
+    { label: "If conn.query throws, execution jumps past conn.release() and that connection is leaked forever. Wrap the work in try/finally so release() runs on success and on throw alike.", correct: true },
+    { label: "pool.acquire() is not safe to call concurrently.", misconception: "Acquire is designed for concurrent callers; the bug is that the release is skipped on the error path, leaking one connection each time the query throws." },
+    { label: "SELECT * is the problem — it returns too many columns.", misconception: "Column count does not drain a pool. The leak is the un-guaranteed release on the throw path; that is what ratchets the pool to empty." },
+    { label: "Nothing is wrong; the pool just needs to be bigger.", misconception: "A bigger pool only delays the same exhaustion because the leak drains at its own rate. The structural fix is try/finally, not more connections." },
+  ]}
+/>
+
+## Snippet 3 — the Postgres log line
+
+```
+LOG:  duration: 612000.244 ms  state: idle in transaction
+DETAIL:  process 48213 has been idle in transaction for 00:10:12
+HINT:  Sessions idle in transaction hold their connection and any locks.
+```
+
+<Quiz
+  id="04-pooling-code-3"
+  lessonSlug="04-pooling"
+  lang="en"
+  question="Several backends show 'idle in transaction' for minutes and the pool keeps exhausting. What is happening, and the right defence?"
+  choices={[
+    { label: "A transaction was opened (BEGIN) but the code awaits unrelated work — an external HTTP call, slow business logic — before COMMIT/ROLLBACK, so the connection is hoarded idle inside an open transaction, also holding locks. Keep the transaction tight and set idle_in_transaction_session_timeout to reap stragglers.", correct: true },
+    { label: "The query itself is slow; add an index.", misconception: "The session is idle, not running a query — the connection sits inside an open transaction doing nothing on the database. An index does not help a connection that is being held across unrelated work." },
+    { label: "Postgres is out of memory and pausing transactions.", misconception: "Nothing here indicates memory pressure; 'idle in transaction' means the client opened a transaction and then stopped issuing statements, pinning the backend and its locks." },
+    { label: "Raise max_connections so idle-in-transaction sessions have room.", misconception: "More connections just give more sessions to strand idle-in-transaction, holding more locks. Bound the open transaction's duration instead." },
+  ]}
+/>
+
+## Snippet 4 — the timeout config
+
+```yaml
+spring.datasource.hikari.connection-timeout: 30000   # 30 s, the default
+spring.datasource.hikari.max-lifetime: 28800000      # 8 h
+# Backing MySQL has wait_timeout = 28800 (8 h, default)
+```
+
+<Quiz
+  id="04-pooling-code-4"
+  lessonSlug="04-pooling"
+  lang="en"
+  question="Two problems hide in this config that will bite under a slow dependency and after idle periods. Which fix addresses both correctly?"
+  choices={[
+    { label: "Cut connection-timeout to ~1–3x a normal query (e.g. 250 ms – 2 s) so a starved pool fails fast instead of pinning threads for 30 s; and set max-lifetime safely below the DB wait_timeout (e.g. ~28000000 ms / a few seconds under) so the pool retires connections before the server closes them.", correct: true },
+    { label: "Leave connection-timeout at 30 s but raise max-lifetime to match wait_timeout exactly.", misconception: "A 30 s acquisition timeout pins web-server threads through a slowdown until the tier starves. And max-lifetime equal to wait_timeout races the server — it must be strictly shorter so the pool always closes first." },
+    { label: "Lower connection-timeout to 50 ms and leave max-lifetime at 8 h.", misconception: "50 ms fails benign micro-bursts that would clear in tens of ms. And an 8 h max-lifetime equal to wait_timeout still lets the server kill connections first, handing out stale sockets." },
+    { label: "Only max-lifetime matters; the acquisition timeout has no effect on outages.", misconception: "The acquisition timeout is the single number that decides fail-fast vs thread-starvation under a slow dependency — it is the most outage-relevant knob here." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every pooling incident is read in config, code, and logs: a pool sized at 200 on 4 cores is contention, not concurrency — the (cores x 2) + spindles heuristic puts it near 9; a release() outside try/finally leaks on the error path and drains the pool over hours; 'idle in transaction' in the log means a connection hoarded inside an open transaction across unrelated work, holding locks; and a 30 s acquisition timeout plus a max-lifetime that does not undercut the DB's wait_timeout is a starvation-and-stale-socket trap. Diagnose from the evidence, fix structurally (right size, guaranteed return, tight transactions, bounded waits), then re-measure.
 </Recap>
-

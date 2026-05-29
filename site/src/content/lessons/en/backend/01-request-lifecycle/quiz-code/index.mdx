@@ -1,42 +1,136 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- middleware-ordering
+- backpressure
+- serialization-cost
+- deadline-propagation
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Request lifecycle"
-title: Coding Quiz
+- https://nodejs.org/api/stream.html#backpressuring-in-streams
+- https://expressjs.com/en/guide/using-middleware.html
+- https://grpc.io/docs/guides/deadlines/
+status: ready
+summary: "Read real handler, middleware, streaming, and deadline-propagation snippets, predict the lifecycle failure, and pick the highest-leverage fix a senior would make first."
+title: 'Request lifecycle: code reading'
 track: backend
 unit: 01-request-lifecycle
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Request lifecycle unit.
+Lifecycle bugs are diagnosed in the code on the hot path and in the order things are wired. Read each snippet, predict where it fails in production, and choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Request lifecycle unit.
+Practise the loop you run in every lifecycle incident: read the wiring or the hot path, predict the stop that breaks, and reach for the highest-leverage fix — order, backpressure, serialization, or a propagated deadline.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the middleware chain
+
+```js
+const app = express();
+
+app.use(express.json());                 // body parser, no size limit
+app.post("/admin/wipe", wipeHandler);     // <-- registered here
+app.use(rateLimit({ max: 100 }));         // rate limiter
+app.use(requireAuth);                     // auth: 401 if no valid token
+app.use(errorHandler);                    // catches downstream throws
+```
+
+<Quiz
+  id="01-request-lifecycle-code-1"
+  lessonSlug="01-request-lifecycle"
+  lang="en"
+  question="Which problems does this registration order create, and what is the fix?"
+  choices={[
+    { label: "POST /admin/wipe runs before rateLimit, requireAuth, and errorHandler — so it is unauthenticated, unthrottled, and its throws are uncaught. Also express.json() has no size limit, so it buffers any payload. Fix: register errorHandler outermost, then size limit + rateLimit + requireAuth, and put routes last.", correct: true },
+    { label: "Nothing is wrong; Express runs all app.use() middleware regardless of where the route sits.", misconception: "Express runs middleware in registration order, and a route that responds short-circuits the rest. Anything registered after the route never runs for that route — so auth, rate limit, and the error handler are all bypassed here." },
+    { label: "The only issue is that rateLimit should come after auth to rate-limit per user.", misconception: "Per-user limiting is a refinement, but the load-bearing bug is that the route is registered before all three protective layers, so none of them run for it at all. Ordering relative to the route is the defect." },
+    { label: "errorHandler must be first to catch errors, so just move it to the top.", misconception: "Express error handlers are matched by their 4-arg signature and must be registered LAST (outermost in the onion) to catch throws from everything downstream. Putting it first means nothing downstream has run yet, so it catches nothing." },
+  ]}
+/>
+
+## Snippet 2 — the streaming export
+
+```js
+function exportCSV(rows, res) {
+  res.setHeader("Transfer-Encoding", "chunked");
+  for (const row of rows) {
+    res.write(toCSVLine(row));   // return value ignored
+  }
+  res.end();
+}
+```
+
+<Quiz
+  id="01-request-lifecycle-code-2"
+  lessonSlug="01-request-lifecycle"
+  lang="en"
+  question="This passes every test but OOMs in production under one slow client. What is the bug and the correct rewrite?"
+  choices={[
+    { label: "It ignores backpressure: res.write() returns false once the buffer passes the high-water mark, but the loop keeps writing, so unread bytes pile up in the heap when the client reads slowly. Rewrite with pipeline(rowStream, res) (or pause until the 'drain' event), which couples production to the consumer's rate.", correct: true },
+    { label: "Transfer-Encoding: chunked is invalid for CSV; set Content-Length instead.", misconception: "Chunked is correct for a streamed body of unknown total size; setting Content-Length would force buffering the whole export first. The bug is ignoring the write() backpressure signal, not the framing." },
+    { label: "res.end() is called too early and truncates the output.", misconception: "res.end() runs after the loop completes, so it does not truncate. The defect is that the loop never honours write() returning false, so memory grows unbounded under a slow consumer." },
+    { label: "toCSVLine allocates strings, so the fix is to raise the heap limit.", misconception: "Raising the heap only delays the OOM; the growth is unbounded because production is decoupled from the client's read rate. Honouring backpressure keeps memory flat at ~the high-water mark regardless of allocation." },
+  ]}
+/>
+
+## Snippet 3 — the response builder
+
+```js
+app.get("/orders", async (req, res) => {
+  const orders = await db.query("SELECT * FROM orders"); // unbounded
+  res.status(200).json({ ok: true, data: orders });      // JSON.stringify
+});
+```
+
+<Quiz
+  id="01-request-lifecycle-code-3"
+  lessonSlug="01-request-lifecycle"
+  lang="en"
+  question="As the orders table grows, this endpoint degrades and occasionally stalls all other requests. Which two lifecycle stops are at fault, and what is the fix?"
+  choices={[
+    { label: "Handle (unbounded query pulls the whole table) and Serialize (res.json runs synchronous JSON.stringify over a huge array, blocking the event loop for every other request). Fix: paginate / LIMIT the query, and use a schema serializer on the hot path.", correct: true },
+    { label: "Only Serialize — the database query is cheap regardless of row count.", misconception: "An unbounded SELECT is itself a Handle-stage problem: it pulls more rows as the table grows, which is what then feeds the oversized serialization. Both stops compound; capping the query is the upstream fix." },
+    { label: "Accept — the endpoint overflows the accept queue as the table grows.", misconception: "Table size has no effect on the accept queue, which bounds pending connections. The degradation tracks result-set size, which points at the query (Handle) and serialization (Serialize), not connection acceptance." },
+    { label: "status(200) is wrong; using 204 would avoid serializing the body.", misconception: "204 means no body, which would break the endpoint's contract — clients need the orders. The fix is to bound and paginate the body, not to drop it; the status code is correct for a successful read." },
+  ]}
+/>
+
+## Snippet 4 — the deadline that is not propagated
+
+```js
+async function getProfile(userId) {
+  // each client sets its own fixed 1s timeout; nothing is passed down
+  const user = await usersClient.get(userId, { timeoutMs: 1000 });
+  const prefs = await prefsClient.get(userId, { timeoutMs: 1000 });
+  const feed = await feedClient.get(userId, { timeoutMs: 1000 });
+  return { user, prefs, feed };
+}
+```
+
+<Quiz
+  id="01-request-lifecycle-code-4"
+  lessonSlug="01-request-lifecycle"
+  lang="en"
+  question="The entry point promises a 1 s SLA, but this function can take ~3 s when downstreams are slow. Why, and what is the correct shape?"
+  choices={[
+    { label: "The three calls are sequential, and each can burn its own fixed 1 s, so worst case is ~3 s — well past the 1 s SLA — and each hop keeps working after the caller has given up. Fix: propagate a deadline (a wall-clock cutoff), and set each call's timeout to min(local, remaining budget); run independent calls concurrently where possible.", correct: true },
+    { label: "Nothing is wrong; three 1 s timeouts still cap the total at 1 s.", misconception: "Fixed per-hop timeouts do not compose. Sequential calls each consuming up to 1 s sum to ~3 s; isolated timeouts cannot enforce a request-wide budget — only a propagated deadline can." },
+    { label: "The only fix is to lower each timeout to 333 ms so they sum to 1 s.", misconception: "Static splitting wastes budget — a fast first call should leave more time for later ones. A propagated deadline with min(local, remaining) adapts to actual elapsed time instead of a fixed 1/N split." },
+    { label: "Run them concurrently and the SLA is automatically guaranteed.", misconception: "Concurrency caps the total at the slowest single call (~1 s), which helps — but without a propagated deadline a slow hop can still hang past the budget, and fan-out then exposes tail amplification. You need both concurrency and a deadline." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every lifecycle incident is read in the wiring or the hot path: middleware registered after a route never runs, so order is a security boundary; a write() loop that ignores the false return OOMs under slow clients, so use pipeline(); an unbounded query plus generic JSON.stringify blocks the loop, so paginate and use a schema serializer; and fixed per-hop timeouts do not compose, so propagate a deadline with min(local, remaining). Diagnose the stop, apply the highest-leverage fix, then verify under the same load.
 </Recap>
-

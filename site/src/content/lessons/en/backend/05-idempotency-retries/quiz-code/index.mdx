@@ -1,43 +1,154 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- on-conflict-dedup
+- backoff-jitter
+- state-machine-race
+- inbox-dedup
+- retry-condition
+- concurrency-race
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Idempotency and retries: turning at-least-once into
-  effectively-once"'
-title: Coding Quiz
+- https://brandur.org/idempotency-keys
+- https://www.codereliant.io/p/retries-backoff-jitter
+- https://event-driven.io/en/outbox_inbox_patterns_and_delivery_guarantees_explained/
+status: ready
+summary: "Read real idempotency, retry, and inbox snippets, predict their behaviour under concurrency or failure, and pick the highest-leverage fix."
+title: 'Idempotency and retries: code and query reading'
 track: backend
 unit: 05-idempotency-retries
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Idempotency and retries: turning at-least-once into effectively-once unit.
+Idempotency bugs hide in the gap between two statements, in a missing jitter call, and in a retry condition that fires on the wrong status. Read each snippet the way you would in review — predict the failure under concurrency or load, then pick the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Idempotency and retries: turning at-least-once into effectively-once unit.
+Practise the review loop for this unit: spot the race window, the herd-amplifying retry, the lost transition, and the dedup that silently does nothing — then name the one change that closes each.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the dedup handler
+
+```go
+func handleCharge(ctx context.Context, db *sql.DB, key string, body []byte) (*Resp, error) {
+    var existing Row
+    err := db.QueryRowContext(ctx,
+        `SELECT response_body, status FROM idempotency_keys WHERE key = $1`, key,
+    ).Scan(&existing.Body, &existing.Status)
+    if err == sql.ErrNoRows {
+        // no row yet -> treat as new
+        db.ExecContext(ctx,
+            `INSERT INTO idempotency_keys (key, fingerprint, status) VALUES ($1, $2, 'in_progress')`,
+            key, fingerprint(body))
+        return process(ctx, db, key, body) // runs the charge
+    }
+    return replay(existing), nil
+}
+```
+
+<Quiz
+  id="05-idempotency-retries-code-1"
+  lessonSlug="05-idempotency-retries"
+  lang="en"
+  question="Two requests with the same key hit this handler within a millisecond. What goes wrong, and what is the single highest-leverage fix?"
+  choices={[
+    { label: "Both QueryRow calls return ErrNoRows, both INSERT, both call process — a double charge. Fix: make creation atomic — INSERT ... ON CONFLICT (key) DO NOTHING RETURNING, and only process when a row is actually returned; otherwise re-read to 409 or replay.", correct: true },
+    { label: "The bug is the missing context timeout on QueryRowContext.", misconception: "A timeout is good hygiene but unrelated to the double charge. The defect is the non-atomic SELECT-then-INSERT race window between the two requests." },
+    { label: "Nothing serious — the INSERT will fail on the primary key for the second request and Go will skip process().", misconception: "The code ignores the INSERT's error and unconditionally calls process(). Even if the PK rejects the second INSERT, both goroutines already passed the ErrNoRows branch and both charge." },
+    { label: "The fingerprint() call is the hotspot; cache it to fix the race.", misconception: "fingerprint is microseconds and irrelevant to the race. The race is the gap between reading no row and inserting one — closed only by an atomic insert-or-noop." },
+  ]}
+/>
+
+## Snippet 2 — the retry loop
+
+```js
+async function callWithRetry(fn, maxAttempts = 6) {
+  let delay = 200;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxAttempts - 1) throw err;
+      await sleep(delay);          // fixed doubling, no randomness
+      delay = Math.min(30000, delay * 2);
+    }
+  }
+}
+```
+
+<Quiz
+  id="05-idempotency-retries-code-2"
+  lessonSlug="05-idempotency-retries"
+  lang="en"
+  question="This loop retries every thrown error with doubling delay. Identify the two distinct production hazards."
+  choices={[
+    { label: "No jitter, so N clients that fail together retry in the same tick — a thundering herd; and it retries unconditionally, so a 4xx (a permanent client error) is retried as hard as a transient 5xx. Fix: delay = random(0, min(cap, base × 2^attempt)) and retry only 5xx/timeouts/429.", correct: true },
+    { label: "The base delay of 200ms is too low and the cap of 30s is too high.", misconception: "Those values are within normal ranges (base 100–500ms, cap 30–60s). The hazards are the missing jitter and the unconditional retry of non-retryable errors, not the constants." },
+    { label: "maxAttempts of 6 is too high and will exhaust memory.", misconception: "Six attempts does not exhaust memory. The real scale problem is fleet-wide — without a retry budget many callers each doing 6 attempts amplify load — but the snippet's local bugs are no jitter and retrying 4xx." },
+    { label: "Using await sleep blocks the event loop and starves other requests.", misconception: "await sleep yields; it does not block the event loop. The defects are the synchronised (un-jittered) delay and retrying errors that will never succeed." },
+  ]}
+/>
+
+## Snippet 3 — the state transition
+
+```sql
+-- request arrives; row already exists for this key
+BEGIN;
+  SELECT status FROM idempotency_keys WHERE key = $1;       -- reads 'in_progress'
+  -- application sees in_progress, calls the payment provider anyway...
+  -- provider succeeds, then:
+  UPDATE idempotency_keys
+     SET status = 'completed', response_body = $2
+   WHERE key = $1;
+COMMIT;
+```
+
+<Quiz
+  id="05-idempotency-retries-code-3"
+  lessonSlug="05-idempotency-retries"
+  lang="en"
+  question="A retry races the original request: the original is still in_progress when this block runs. What is the defect in how this code uses the four-state machine?"
+  choices={[
+    { label: "It reads status=in_progress but proceeds to call the provider and overwrite the row — a second charge. An in_progress read must short-circuit to 409 Conflict and NOT run the business logic; only the request that atomically created the row may process.", correct: true },
+    { label: "The UPDATE should be an INSERT because the row is new.", misconception: "The row already exists (status=in_progress), so INSERT is wrong. The defect is processing at all on an in_progress read instead of returning 409." },
+    { label: "The transaction needs SERIALIZABLE isolation and then the code is correct.", misconception: "Isolation does not fix the logic error: the code deliberately calls the provider after seeing in_progress. The state machine itself requires 409 on in_progress, regardless of isolation." },
+    { label: "COMMIT should be ROLLBACK to undo the charge.", misconception: "The external charge already happened at the provider and cannot be rolled back by the DB. The fix is to never call the provider on an in_progress read." },
+  ]}
+/>
+
+## Snippet 4 — the inbox consumer
+
+```sql
+BEGIN;
+  INSERT INTO processed_events (event_id) VALUES ($1)
+    ON CONFLICT (event_id) DO NOTHING;
+  -- always applied, regardless of whether the insert above did anything:
+  UPDATE inventory SET reserved = reserved + $qty WHERE sku = $sku;
+COMMIT;
+```
+
+<Quiz
+  id="05-idempotency-retries-code-4"
+  lessonSlug="05-idempotency-retries"
+  lang="en"
+  question="The relay re-delivers an event after a crash, so this block runs twice for the same event_id. What actually happens, and what is the fix?"
+  choices={[
+    { label: "The dedup is decorative: the ON CONFLICT DO NOTHING swallows the duplicate event_id, but the UPDATE runs unconditionally — so inventory is reserved twice. Fix: gate the business write on the insert actually happening (check rows-affected / RETURNING) so a duplicate event is a no-op.", correct: true },
+    { label: "The second run throws a unique-constraint error and rolls back, so inventory stays correct.", misconception: "ON CONFLICT DO NOTHING suppresses the error — there is no throw. The block commits and the unconditional UPDATE double-reserves." },
+    { label: "Inventory is correct because the inbox table prevents the UPDATE from running.", misconception: "The inbox table only records the event_id; it does nothing to the UPDATE unless the code branches on whether the insert succeeded. Here it does not, so the UPDATE always runs." },
+    { label: "The bug is that inventory should be decremented, not incremented.", misconception: "The +/- direction is domain-specific and not the defect. The defect is the business write running on a duplicate delivery because it is not gated on the dedup insert." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Four review reflexes for this unit: a SELECT-then-INSERT idempotency check is a race — make creation atomic with ON CONFLICT DO NOTHING RETURNING and process only the winner; a retry loop without jitter and without a retry-condition is a herd that hammers permanent errors — use full jitter and retry only 5xx/timeouts; an in_progress read must short-circuit to 409, never call the provider again; and an inbox dedup that does not gate the business write on the dedup insert is decorative — the duplicate still applies the effect. Each fix is one or two lines, and each missing line is a duplicate side effect in production.
 </Recap>
-

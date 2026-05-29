@@ -1,42 +1,149 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sigterm-handler
+- drain-ordering
+- prestop-hook
+- keep-alive-drain
+- guardian-timeout
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Graceful shutdown and drain"
-title: Coding Quiz
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+- https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+- https://dev.to/axiom_agent/nodejs-graceful-shutdown-the-right-way-sigterm-connection-draining-and-kubernetes-fp8
+status: ready
+summary: "Read real shutdown handlers, a Kubernetes pod spec, and a drain sequence, predict the failure, and pick the highest-leverage fix a senior engineer would make first."
+title: 'Graceful shutdown: code and config reading'
 track: backend
 unit: 07-graceful-shutdown
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Graceful shutdown and drain unit.
+Shutdown bugs hide in the handler code and the pod spec, not in the prose. Read each snippet, predict exactly where it drops a request, and choose the fix a senior engineer would reach for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Graceful shutdown and drain unit.
+Practise the loop you run in every shutdown review: trace the signal, the ordering, and the deadline through real code and config, then find the one change that stops the request loss.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the SIGTERM handler
+
+```js
+const server = app.listen(8080);
+
+process.on("SIGTERM", () => {
+  server.close(() => {
+    db.end();
+    process.exit(0);
+  });
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-1"
+  lessonSlug="07-graceful-shutdown"
+  lang="en"
+  question="Under real traffic this handler intermittently hangs until SIGKILL even when no request is actively running. What is the defect and the fix?"
+  choices={[
+    { label: "server.close() stops accepting new connections but does not close idle keep-alive sockets, which it still counts as active, so its callback never fires. Force-close idle connections (server.closeIdleConnections() / send Connection: close) while letting active requests finish.", correct: true },
+    { label: "db.end() is called inside the close callback, which deadlocks the event loop.", misconception: "Closing the pool after the HTTP server drains is the correct order, not a deadlock. The hang is the un-closed idle keep-alive sockets keeping server.close() from ever firing its callback." },
+    { label: "process.exit(0) runs too early and kills in-flight requests.", misconception: "process.exit only runs inside the close callback, after the server has drained — that ordering is fine. The problem is the callback never fires because idle keep-alive sockets stay open." },
+    { label: "The handler should be registered on SIGKILL, not SIGTERM.", misconception: "SIGKILL can never be caught or handled — there is no SIGKILL handler. SIGTERM is correct; the bug is the keep-alive drain, not the signal choice." },
+  ]}
+/>
+
+## Snippet 2 — the drain order
+
+```js
+process.on("SIGTERM", async () => {
+  setReadiness(false);              // fail readiness probe
+  await db.end();                   // close database pool
+  await redis.quit();               // close cache
+  await closeHttpServer(server);    // drain + close HTTP last
+  process.exit(0);
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-2"
+  lessonSlug="07-graceful-shutdown"
+  lang="en"
+  question="This handler fails readiness correctly, but in-flight requests still error with pool-closed and cache-closed failures during the drain. What is wrong?"
+  choices={[
+    { label: "The teardown order is inverted. Datastores are closed before the HTTP server drains, so in-flight requests still mid-response find a dead pool. Reverse it: drain and close the HTTP server first, then redis, then db — reverse dependency order.", correct: true },
+    { label: "setReadiness(false) should come after the datastores are closed.", misconception: "Failing readiness first is correct — it starts the deregistration clock. The bug is the datastores closing before the HTTP layer that still depends on them during the drain." },
+    { label: "await is misused; these closes should run in parallel with Promise.all.", misconception: "Running them in parallel makes it worse — it guarantees the pool closes while requests are still draining. The fix is sequential reverse-dependency order, HTTP first." },
+    { label: "redis.quit() must always precede db.end() regardless of dependencies.", misconception: "There is no fixed redis-then-db rule; the order is reverse-dependency. Both datastores must close after the HTTP server has drained the requests that use them." },
+  ]}
+/>
+
+## Snippet 3 — the pod spec
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30
+  containers:
+  - name: api
+    lifecycle:
+      preStop:
+        exec:
+          command: ["sleep", "5"]
+    readinessProbe:
+      httpGet: { path: /ready, port: 8080 }
+    livenessProbe:
+      httpGet: { path: /ready, port: 8080 }
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-3"
+  lessonSlug="07-graceful-shutdown"
+  lang="en"
+  question="The preStop sleep and grace period look fine, but during shutdown pods are occasionally killed and restarted mid-drain. What in this spec causes it?"
+  choices={[
+    { label: "The liveness and readiness probes share the /ready endpoint. When the handler fails readiness during shutdown, liveness fails too, so the orchestrator thinks the container is broken and kills/restarts it, cutting the drain short. Give liveness a separate endpoint that stays healthy while draining.", correct: true },
+    { label: "terminationGracePeriodSeconds: 30 is too short for the 5-second preStop sleep.", misconception: "5s of preStop fits comfortably inside a 30s budget. The restart comes from the shared probe endpoint making liveness fail, not from the grace period being too short." },
+    { label: "The preStop sleep blocks SIGTERM from ever being delivered.", misconception: "preStop runs before SIGTERM and the orchestrator blocks on it; SIGTERM is still delivered afterward. The defect is the shared liveness/readiness endpoint." },
+    { label: "Readiness probes are not allowed during termination and must be removed.", misconception: "Failing readiness during termination is exactly how you stop new traffic — it is required. The bug is liveness sharing that endpoint and tripping a restart." },
+  ]}
+/>
+
+## Snippet 4 — the guardian timeout and requeue
+
+```js
+process.on("SIGTERM", async () => {
+  worker.stopPulling();             // stop taking new jobs
+  const t = setTimeout(() => {
+    log.error("drain timed out, forcing exit");
+    process.exit(1);
+  }, 25_000);                       // guardian < grace period
+  await worker.finishOrRequeue();   // ack done jobs, requeue the rest
+  clearTimeout(t);
+  process.exit(0);
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-4"
+  lessonSlug="07-graceful-shutdown"
+  lang="en"
+  question="The guardian timeout and requeue logic are structurally correct. What is the one remaining precondition that makes worker.finishOrRequeue() safe, and what breaks without it?"
+  choices={[
+    { label: "The consumer must be idempotent. Requeue (and visibility-timeout redelivery) is at-least-once, so a job killed after a partial side effect — e.g. a card charged before the ack — runs again from the start; idempotency makes the second run a safe no-op. Without it, requeue manufactures duplicates.", correct: true },
+    { label: "The guardian timeout must equal the grace period exactly so it never fires early.", misconception: "The guardian must be less than the grace period so it force-exits on your own terms before SIGKILL. Equalling it leaves no margin and risks a SIGKILL mid-flush. And it does not address requeue safety." },
+    { label: "stopPulling() must run after finishOrRequeue(), not before.", misconception: "You must stop pulling new jobs first — otherwise new work keeps arriving on a dying worker and never finishes. The ordering here is correct; the missing piece is idempotency." },
+    { label: "process.exit(1) should be exit(0) so the orchestrator does not retry the pod.", misconception: "A non-zero exit on a forced/timed-out drain is fine — it signals an abnormal shutdown for alerting. The real precondition is that requeued jobs are idempotent, regardless of exit code." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every shutdown bug is read in the handler and the spec: server.close() alone hangs on idle keep-alive sockets, so close them explicitly; teardown must run in reverse dependency order with datastores last, or in-flight queries hit a dead pool; liveness and readiness must not share an endpoint, or failing readiness to drain also trips a restart; and the guardian timeout buys a clean self-chosen exit while requeue stays correct only when the consumer is idempotent. Trace the signal, the order, and the deadline through the code, fix the one line that drops the request, and re-test under load to confirm.
 </Recap>
-

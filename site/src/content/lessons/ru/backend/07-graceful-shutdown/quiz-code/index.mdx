@@ -1,42 +1,149 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sigterm-handler
+- drain-ordering
+- prestop-hook
+- keep-alive-drain
+- guardian-timeout
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Graceful shutdown и дрейнирование"
-title: Кодировочный тест
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+- https://kubernetes.io/docs/concepts/containers/container-lifecycle-hooks/
+- https://dev.to/axiom_agent/nodejs-graceful-shutdown-the-right-way-sigterm-connection-draining-and-kubernetes-fp8
+status: ready
+summary: "Читай реальные обработчики shutdown, манифест пода Kubernetes и последовательность drain, предсказывай сбой и выбирай самое рычажное исправление, которое senior сделает первым."
+title: 'Graceful shutdown: чтение кода и конфигурации'
 track: backend
 unit: 07-graceful-shutdown
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Graceful shutdown и дрейнирование unit.
+Баги shutdown прячутся в коде обработчика и манифесте пода, а не в прозе. Прочитай каждый сниппет, предскажи, где именно он теряет запрос, и выбери исправление, к которому senior потянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Graceful shutdown и дрейнирование unit.
+Отработай цикл, который ты проходишь в каждом ревью shutdown: проследи сигнал, порядок и дедлайн через реальный код и конфиг, затем найди единственное изменение, останавливающее потерю запросов.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — обработчик SIGTERM
+
+```js
+const server = app.listen(8080);
+
+process.on("SIGTERM", () => {
+  server.close(() => {
+    db.end();
+    process.exit(0);
+  });
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-1"
+  lessonSlug="07-graceful-shutdown"
+  lang="ru"
+  question="Под реальной нагрузкой этот обработчик периодически зависает до SIGKILL, даже когда ни один запрос активно не выполняется. В чём дефект и исправление?"
+  choices={[
+    { label: "server.close() прекращает принимать новые соединения, но не закрывает простаивающие keep-alive сокеты, которые он всё ещё считает активными, поэтому его колбэк никогда не срабатывает. Принудительно закрой простаивающие соединения (server.closeIdleConnections() / шли Connection: close), позволяя активным запросам завершиться.", correct: true },
+    { label: "db.end() вызывается внутри колбэка close, что блокирует event loop в deadlock.", misconception: "Закрытие пула после drain HTTP-сервера — правильный порядок, а не deadlock. Зависание — это незакрытые простаивающие keep-alive сокеты, не дающие server.close() вызвать колбэк." },
+    { label: "process.exit(0) выполняется слишком рано и убивает in-flight запросы.", misconception: "process.exit выполняется только внутри колбэка close, после drain сервера — этот порядок в норме. Проблема в том, что колбэк не срабатывает из-за открытых keep-alive сокетов." },
+    { label: "Обработчик нужно регистрировать на SIGKILL, а не на SIGTERM.", misconception: "SIGKILL нельзя поймать или обработать — обработчика SIGKILL не существует. SIGTERM корректен; баг — в drain keep-alive, а не в выборе сигнала." },
+  ]}
+/>
+
+## Сниппет 2 — порядок drain
+
+```js
+process.on("SIGTERM", async () => {
+  setReadiness(false);              // провалить readiness probe
+  await db.end();                   // закрыть пул БД
+  await redis.quit();               // закрыть кэш
+  await closeHttpServer(server);    // drain + закрыть HTTP последним
+  process.exit(0);
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-2"
+  lessonSlug="07-graceful-shutdown"
+  lang="ru"
+  question="Этот обработчик корректно проваливает readiness, но in-flight запросы всё равно падают с ошибками pool-closed и cache-closed во время drain. Что не так?"
+  choices={[
+    { label: "Порядок teardown инвертирован. Datastores закрываются до того, как HTTP-сервер сдрейнировался, поэтому in-flight запросы посреди ответа находят мёртвый пул. Разверни: сначала drain и закрытие HTTP-сервера, затем redis, затем db — reverse dependency order.", correct: true },
+    { label: "setReadiness(false) должен идти после закрытия datastores.", misconception: "Проваливать readiness первым корректно — это запускает часы deregistration. Баг — в datastores, закрывающихся до HTTP-слоя, который от них ещё зависит во время drain." },
+    { label: "await используется неверно; эти closes должны идти параллельно через Promise.all.", misconception: "Параллельный запуск делает хуже — он гарантирует, что пул закроется, пока запросы ещё дрейнируются. Лекарство — последовательный reverse-dependency order, HTTP первым." },
+    { label: "redis.quit() всегда должен предшествовать db.end() независимо от зависимостей.", misconception: "Нет фиксированного правила redis-потом-db; порядок — reverse-dependency. Оба datastore должны закрываться после того, как HTTP-сервер сдрейнировал запросы, которые их используют." },
+  ]}
+/>
+
+## Сниппет 3 — манифест пода
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30
+  containers:
+  - name: api
+    lifecycle:
+      preStop:
+        exec:
+          command: ["sleep", "5"]
+    readinessProbe:
+      httpGet: { path: /ready, port: 8080 }
+    livenessProbe:
+      httpGet: { path: /ready, port: 8080 }
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-3"
+  lessonSlug="07-graceful-shutdown"
+  lang="ru"
+  question="preStop sleep и grace period выглядят нормально, но во время shutdown поды иногда убиваются и перезапускаются посреди drain. Что в этом манифесте это вызывает?"
+  choices={[
+    { label: "Liveness и readiness probe делят эндпоинт /ready. Когда обработчик проваливает readiness во время shutdown, liveness тоже падает, поэтому оркестратор считает контейнер сломанным и убивает/перезапускает его, обрезая drain. Дай liveness отдельный эндпоинт, остающийся здоровым во время drain.", correct: true },
+    { label: "terminationGracePeriodSeconds: 30 слишком мал для 5-секундного preStop sleep.", misconception: "5s preStop комфортно помещаются в бюджет 30s. Перезапуск идёт от общего эндпоинта probe, делающего liveness проваленной, а не от слишком короткого grace period." },
+    { label: "preStop sleep блокирует доставку SIGTERM вообще.", misconception: "preStop выполняется до SIGTERM, и оркестратор на нём блокируется; SIGTERM всё равно доставляется после. Дефект — общий эндпоинт liveness/readiness." },
+    { label: "Readiness probe запрещены во время termination и должны быть убраны.", misconception: "Проваливать readiness во время termination — это ровно то, как останавливают новый трафик; это обязательно. Баг — liveness, делящая этот эндпоинт и триггерящая перезапуск." },
+  ]}
+/>
+
+## Сниппет 4 — guardian timeout и requeue
+
+```js
+process.on("SIGTERM", async () => {
+  worker.stopPulling();             // прекратить брать новые задачи
+  const t = setTimeout(() => {
+    log.error("drain timed out, forcing exit");
+    process.exit(1);
+  }, 25_000);                       // guardian < grace period
+  await worker.finishOrRequeue();   // ack завершённых, requeue остальных
+  clearTimeout(t);
+  process.exit(0);
+});
+```
+
+<Quiz
+  id="07-graceful-shutdown-code-4"
+  lessonSlug="07-graceful-shutdown"
+  lang="ru"
+  question="Guardian timeout и логика requeue структурно корректны. Какое единственное оставшееся предусловие делает worker.finishOrRequeue() безопасным и что ломается без него?"
+  choices={[
+    { label: "Consumer должен быть идемпотентным. Requeue (и передоставка по visibility timeout) — at-least-once, поэтому задача, убитая после частичного side effect — например, карта списана до ack — выполняется снова с начала; идемпотентность делает второй прогон безопасным no-op. Без неё requeue производит дубликаты.", correct: true },
+    { label: "Guardian timeout должен быть точно равен grace period, чтобы никогда не срабатывать рано.", misconception: "Guardian должен быть меньше grace period, чтобы force-exit на своих условиях до SIGKILL. Равенство не оставляет запаса и рискует SIGKILL посреди flush. И это не решает безопасность requeue." },
+    { label: "stopPulling() должен выполняться после finishOrRequeue(), а не до.", misconception: "Сначала нужно прекратить брать новые задачи — иначе новая работа продолжает приходить на умирающий воркер и никогда не завершается. Порядок тут корректен; недостающая часть — идемпотентность." },
+    { label: "process.exit(1) должен быть exit(0), чтобы оркестратор не перезапускал под.", misconception: "Ненулевой выход при форсированном/таймаутном drain нормален — он сигнализирует аномальный shutdown для алертов. Реальное предусловие — идемпотентность requeue-задач, независимо от кода выхода." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый баг shutdown читается в обработчике и манифесте: один server.close() зависает на простаивающих keep-alive сокетах, поэтому закрывай их явно; teardown должен идти в reverse dependency order с datastores последними, иначе in-flight queries бьются в мёртвый пул; liveness и readiness не должны делить эндпоинт, иначе провал readiness для drain заодно триггерит перезапуск; а guardian timeout покупает чистый выход на своих условиях, пока requeue остаётся корректным только при идемпотентном consumer. Проследи сигнал, порядок и дедлайн через код, исправь единственную строку, теряющую запрос, и перепроверь под нагрузкой.
 </Recap>
-
