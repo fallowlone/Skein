@@ -1,42 +1,141 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- stream-id-encoding
+- monotonic-packet-numbers
+- gctrace-reading
+- udp-gso
+- path-validation
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "QUIC internals"
-title: Coding Quiz
+- https://datatracker.ietf.org/doc/html/rfc9000
+- https://datatracker.ietf.org/doc/html/rfc9002
+status: ready
+summary: "Read real QUIC stream-ID logic, a packet trace, a send loop, and a frame layout, then predict the behaviour and pick the highest-leverage fix."
+title: 'QUIC internals: code and trace reading'
 track: networking
 unit: 10-quic-internals
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the QUIC internals unit.
+QUIC problems are diagnosed in stream-ID logic, packet traces, and the send path. Read each snippet, predict the behaviour, and choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the QUIC internals unit.
+Practise reading QUIC at the wire and code level: decode a stream ID, recognise a healthy versus pathological handshake trace, spot the syscall bottleneck on a fast link, and reason about retransmit packet numbering.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — stream-ID classification
+
+```go
+// Classify a QUIC stream ID by initiator and directionality.
+func classify(id uint64) (initiator string, bidi bool) {
+    if id&0x1 == 0 {
+        initiator = "client"
+    } else {
+        initiator = "server"
+    }
+    bidi = id&0x2 == 0
+    return
+}
+
+// Caller passes the stream ID seen on the wire:
+i, b := classify(3)
+```
+
+<Quiz
+  id="10-quic-internals-code-1"
+  lessonSlug="10-quic-internals"
+  lang="en"
+  question="For stream ID 3, what does classify return, and which real HTTP/3 entity uses this stream class?"
+  choices={[
+    { label: "initiator = 'server', bidi = false — a server-initiated unidirectional stream. The low bit (1) means server; the next bit (1) means unidirectional. HTTP/3 uses these for the server's control stream and QPACK encoder/decoder streams.", correct: true },
+    { label: "initiator = 'client', bidi = true — a normal HTTP/3 request stream.", misconception: "Client-initiated bidirectional streams are 0, 4, 8, ... (low two bits 00). ID 3 has both low bits set, so it is server-initiated and unidirectional — not a request stream." },
+    { label: "initiator = 'server', bidi = true — a server push response.", misconception: "Bit 1 of ID 3 is set, so the stream is unidirectional, not bidirectional. Bidi server streams end in 01 (1, 5, 9, ...), not 11." },
+    { label: "It is invalid — odd stream IDs are reserved and never appear on the wire.", misconception: "Odd IDs are entirely valid: they are server-initiated. The two low bits encode initiator and directionality, so every value 0..N maps to a real stream class." },
+  ]}
+/>
+
+## Snippet 2 — the handshake trace
+
+```
+t=0.000 dcid=a1b2 type=Initial    pkt=0 frames=[Crypto[0..120], Padding]
+t=0.045 dcid=a1b2 type=Initial    pkt=1 frames=[Crypto[0..120], Padding]   # same CRYPTO bytes resent
+t=0.051 scid=c3d4 type=Initial    pkt=0 frames=[Crypto[0..200], Ack[0]]
+t=0.052 scid=c3d4 type=Handshake  pkt=0 frames=[Crypto[200..360]]
+t=0.101 type=1RTT  pkt=0 frames=[Stream(0, fin, 4096B)]
+```
+
+<Quiz
+  id="10-quic-internals-code-2"
+  lessonSlug="10-quic-internals"
+  lang="en"
+  question="The client resends the same ClientHello CRYPTO bytes at t=0.045 as a new packet (pkt=1), before the server's Ack arrives at t=0.051. What is happening, and is it a defect?"
+  choices={[
+    { label: "It is a PTO (Probe Timeout) probe, not a defect: the timer fired (~45 ms) before the server's first packet arrived, so the client re-sent the handshake data as a new packet number (pkt=1, not pkt=0). The server's Ack[0] then confirms the original. Monotonic packet numbers make the late Ack unambiguous — no Karn workaround needed. An occasional spurious probe on a ~50 ms RTT path is normal.", correct: true },
+    { label: "A bug: the client reused packet number 0 for the retransmit, which corrupts loss detection.", misconception: "The retransmit is pkt=1, a fresh packet number — QUIC never reuses a packet number on retransmit. That is precisely what removes the TCP Karn ambiguity; reusing 0 would be the bug, and it did not happen here." },
+    { label: "The connection is failing: two Initials with no server response means the path is dropping packets and will time out.", misconception: "The server does respond at t=0.051 with Initial+Ack. The retransmit was a single spurious PTO probe ~6 ms before the response landed — healthy on a 50 ms round-trip path, not a failure." },
+    { label: "The client is in the wrong packet-number space; Initial and Handshake must share one counter.", misconception: "Initial and Handshake each have their own packet-number space by design, so loss in one does not shrink the other's window. The trace shows correct per-space numbering." },
+  ]}
+/>
+
+## Snippet 3 — the send loop
+
+```go
+// Hot path: flush queued QUIC datagrams to the socket.
+for _, dgram := range batch {        // batch may hold 40+ datagrams
+    _, err := conn.WriteTo(dgram, peer)  // one sendmsg syscall per datagram
+    if err != nil {
+        return err
+    }
+}
+```
+
+<Quiz
+  id="10-quic-internals-code-3"
+  lessonSlug="10-quic-internals"
+  lang="en"
+  question="At 1 Gbps with 1500-byte datagrams this loop pegs a CPU core and goodput collapses, while the same code is fine on a 10 Mbps mobile link. What is the bottleneck and the highest-leverage fix?"
+  choices={[
+    { label: "One sendmsg syscall per datagram — ~83k syscalls/s per core at 1 Gbps. On the slow link the network saturates first so the cost is invisible; on the fast link the CPU saturates first. Fix: batch with UDP GSO — hand the kernel up to 64 KB with a segment-size hint in a single syscall (~3–4 syscalls per 64 KB), which Cloudflare reports cuts ~20% CPU.", correct: true },
+    { label: "WriteTo is allocating a new buffer per datagram; pool the buffers to cut GC pressure.", misconception: "The dominant cost here is the per-datagram syscall, not allocation. The fix that scales is UDP GSO batching, which collapses ~40 syscalls into a handful; buffer pooling is a minor second-order tweak." },
+    { label: "The peer address lookup runs every iteration; hoist it out of the loop.", misconception: "peer is already a loop-invariant local; re-passing it costs nothing. The real bottleneck is one syscall per datagram, addressed by GSO segmentation offload." },
+    { label: "Raise GOMAXPROCS so the loop spreads across more cores.", misconception: "Adding cores delays saturation but the per-byte syscall cost scales with traffic, so the spiral returns under load. GSO removes the syscalls themselves — the durable fix." },
+  ]}
+/>
+
+## Snippet 4 — the migration frame burst
+
+```
+# Server's view after a client packet arrives from a NEW source address:
+recv  src=203.0.113.50:55555 dcid=a1b2 bytes=1200
+send  PATH_CHALLENGE token=0x9f3c...        # 64-byte random
+# server still has stream data queued for the client
+send  Stream(0, off=8192, 1500B)            # queued application data
+```
+
+<Quiz
+  id="10-quic-internals-code-4"
+  lessonSlug="10-quic-internals"
+  lang="en"
+  question="The server received 1200 bytes from the new, unvalidated address and now wants to flush PATH_CHALLENGE plus 1500 bytes of queued stream data. What does the anti-amplification limit allow, and why does it matter?"
+  choices={[
+    { label: "Until PATH_RESPONSE validates the address, the server may send at most 3x the received bytes — here 3600 bytes total. The 64-byte PATH_CHALLENGE plus the 1500-byte Stream fit, but the server must cap further sends at the 3600-byte budget; otherwise a spoofed source address turns the server into a UDP reflection amplifier aimed at a victim.", correct: true },
+    { label: "The server can send freely because it already holds an established connection for that Connection ID.", misconception: "An established Connection ID arriving from a new, unvalidated address is exactly the migration/spoofing case the 3x limit guards. The server must throttle to 3x the received bytes until PATH_RESPONSE confirms the path." },
+    { label: "The limit blocks the PATH_CHALLENGE itself, so the server cannot validate the path at all — migration is impossible until the client re-handshakes.", misconception: "PATH_CHALLENGE is small and fits well within the 3x budget; that is how validation bootstraps. The limit caps the volume, it does not forbid the challenge." },
+    { label: "The 3x rule applies only to the client's Initial padding (1200 bytes), not to post-handshake migration.", misconception: "The 1200-byte Initial padding and the 3x send limit both exist to bound amplification; the 3x cap applies to any send toward an unvalidated address, including a mid-connection migration." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+QUIC is read at the wire: the two low bits of a stream ID decode initiator and directionality; a handshake trace shows spurious PTO probes as new packet numbers (never reused, so Karn's ambiguity is gone); a per-datagram send loop reveals the syscall bottleneck that UDP GSO collapses; and a migration burst is bounded by the 3x anti-amplification budget until PATH_RESPONSE validates the new address. Diagnose from the trace and the hot path, then apply the structural fix — GSO, not more cores; idempotency, not disabling features.
 </Recap>
-

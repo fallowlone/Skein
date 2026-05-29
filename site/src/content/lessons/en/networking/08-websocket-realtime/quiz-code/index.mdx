@@ -1,42 +1,128 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- frame-parsing
+- backpressure-queue
+- jittered-backoff
+- nginx-config
+estMin: 14
 lang: en
-order: 101
+level: senior
+sources:
+- https://datatracker.ietf.org/doc/html/rfc6455
+- https://nginx.org/en/docs/http/websocket.html
+- https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+order: 10
 prereqs: []
 slug: quiz-code
-sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "WebSocket and real-time"
-title: Coding Quiz
+status: ready
+summary: "Read real WebSocket frame bytes, a broadcast send loop, a reconnect routine, and an Nginx block — predict the behaviour and pick the fix a senior engineer makes first."
+title: 'WebSocket: code and config reading'
 track: networking
 unit: 08-websocket-realtime
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the WebSocket and real-time unit.
+Real-time bugs are diagnosed in frame dumps, send loops, reconnect routines, and proxy config — not in the spec. Read each artifact, predict what it does under load, and choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the WebSocket and real-time unit.
+Practise the loop you run in every WebSocket incident: read the wire bytes or the hot path, predict where it breaks, and apply the highest-leverage fix before adding servers or knobs.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — a frame on the wire
+
+```
+Frame bytes (hex): 89 04 70 69 6E 67
+```
+
+<Quiz
+  id="08-websocket-realtime-code-1"
+  lessonSlug="08-websocket-realtime"
+  lang="en"
+  question="The server received these bytes from a client. What kind of frame is it, and what must the server do?"
+  choices={[
+    { label: "Byte 1 0x89 = FIN=1, opcode 0x9 (ping); byte 2 0x04 = MASK=0, length 4; payload 'ping'. It is a ping control frame, so the server must reply with a pong (0xA) carrying the same 4-byte payload.", correct: true },
+    { label: "0x89 is a text frame, so the server should deliver 'ping' to the application as a message.", misconception: "Opcode 0x1 is text; 0x9 is ping. The low nibble of 0x89 is 0x9, a control frame the protocol layer answers with a pong — it never reaches the application as data." },
+    { label: "MASK=0 makes this an invalid client frame the server must reject.", misconception: "MASK=0 would be a violation for a client DATA frame, but the larger signal here is that it is a ping; the teaching point is the required pong reply. A strict server would also flag the missing mask." },
+    { label: "It is a close frame, so the server should tear down the TCP connection.", misconception: "Close is opcode 0x8; 0x9 is ping. The correct response is a pong, not a teardown — closing on a ping would drop healthy connections during keepalive." },
+  ]}
+/>
+
+## Snippet 2 — the broadcast loop
+
+```js
+function broadcast(clients, message) {
+  for (const ws of clients) {
+    ws.send(message);            // enqueue, returns immediately
+  }
+}
+// called every 10 ms with a 100 KB payload, 10k clients
+```
+
+<Quiz
+  id="08-websocket-realtime-code-2"
+  lessonSlug="08-websocket-realtime"
+  lang="en"
+  question="A few hundred clients are on slow links. With this loop, what happens under sustained load, and what is the highest-leverage fix?"
+  choices={[
+    { label: "ws.send() enqueues into a per-connection buffer and returns even when the socket cannot drain; slow clients' queues grow unbounded until the process OOMs. Fix: check ws.bufferedAmount against a high-water mark and evict (close 1013) or drop messages for clients over the cap.", correct: true },
+    { label: "Nothing — send() blocks until each client receives, so memory is bounded.", misconception: "send() in this style does not block; it buffers and returns. That is what lets one slow client's queue grow without bound — bounded memory requires an explicit high-water-mark check." },
+    { label: "The fast clients are the risk because the loop sends to them first.", misconception: "Fast clients drain in milliseconds and hold almost nothing. The unbounded growth is entirely on the slow clients whose queues never empty." },
+    { label: "Raise the kernel send buffer (SO_SNDBUF) to absorb the slow clients.", misconception: "A bigger kernel buffer delays the cliff by a few KB per socket; the application queue is where megabytes pile up. The fix is capping the application queue, not enlarging the kernel one." },
+  ]}
+/>
+
+## Snippet 3 — the reconnect routine
+
+```js
+let attempt = 0;
+function reconnect() {
+  const delay = Math.min(1000 * 2 ** attempt, 60000);
+  setTimeout(() => { attempt++; connect(); }, delay);
+}
+```
+
+<Quiz
+  id="08-websocket-realtime-code-3"
+  lessonSlug="08-websocket-realtime"
+  lang="en"
+  question="A deploy drops 5 million clients at once and they all run this routine. What goes wrong, and what is the one-line fix?"
+  choices={[
+    { label: "Every client computes the identical delay (1 s, then 2 s, then 4 s) because there is no per-client randomness, so the retries arrive in synchronized waves that keep overrunning the SYN backlog. Fix: multiply delay by a random jitter factor, e.g. delay *= 0.5 + Math.random().", correct: true },
+    { label: "The 60 s cap is too low and cuts off recovery.", misconception: "The cap protects the server by bounding retry frequency; lowering or raising it does not address the core defect, which is that all 5 M clients fire at the same instants." },
+    { label: "2 ** attempt overflows and the delay becomes negative.", misconception: "Math.min with 60000 bounds the value long before any overflow; the delays are correct numbers. The defect is that they are identical across clients — no jitter." },
+    { label: "setTimeout is the wrong primitive; use a tight retry loop.", misconception: "A tight loop would hammer the server far harder. setTimeout with backoff is correct; it just needs jitter added so clients desynchronize." },
+  ]}
+/>
+
+## Snippet 4 — the Nginx location block
+
+```nginx
+location /ws {
+  proxy_pass http://backend;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "Upgrade";
+}
+```
+
+<Quiz
+  id="08-websocket-realtime-code-4"
+  lessonSlug="08-websocket-realtime"
+  lang="en"
+  question="WebSocket upgrades succeed, but connections silently die after about a minute of inactivity in production. What is missing from this block?"
+  choices={[
+    { label: "proxy_read_timeout / proxy_send_timeout default to 60 s, so Nginx closes any connection with no data for a minute. Raise both to 3600s (and add proxy_http_version 1.1 and proxy_buffering off). A server-side ping every 25-30 s also resets the timer.", correct: true },
+    { label: "The Upgrade and Connection headers are wrong and must be removed.", misconception: "Those headers are exactly what makes the upgrade work — removing them breaks the handshake. The missing piece is the read/send timeout, which governs idle long-lived connections." },
+    { label: "proxy_pass must point at an https:// backend for WebSocket.", misconception: "The scheme of the backend is unrelated to the idle-timeout failure; ws works over an http:// upstream behind TLS termination. The 60 s death is the default proxy_read_timeout." },
+    { label: "Nothing is missing — the 60 s drops are the client's fault.", misconception: "The symptom (death after ~60 s of silence) is the textbook Nginx default proxy_read_timeout closing quiet connections; it is a proxy-config gap, not a client bug." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every WebSocket incident is read in artifacts: a frame's opcode nibble tells you ping (answer with pong) versus data; an unbounded send loop OOMs on slow clients unless a high-water mark caps the queue; a reconnect routine without jitter turns a deploy into a thundering herd; and an Nginx block without a raised proxy_read_timeout silently kills idle connections at 60 s. Diagnose from the artifact, apply the top-of-ladder fix, then confirm under the same load.
 </Recap>
-
