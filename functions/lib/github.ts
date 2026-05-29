@@ -1,0 +1,41 @@
+import type { GithubUser } from "./db";
+
+interface GithubUserPayload { id: number; login: string; avatar_url: string | null; }
+
+export function mapGithubUser(p: GithubUserPayload): GithubUser {
+  return { id: p.id, login: p.login, avatar_url: p.avatar_url ?? null };
+}
+
+export async function exchangeCodeForUser(
+  code: string,
+  creds: { clientId: string; clientSecret: string },
+): Promise<GithubUser> {
+  const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, code }),
+  });
+  const tokenJson = (await tokenRes.json()) as { access_token?: string };
+  if (!tokenJson.access_token) throw new Error("github_token_exchange_failed");
+
+  const userRes = await fetch("https://api.github.com/user", {
+    headers: {
+      Authorization: `Bearer ${tokenJson.access_token}`,
+      accept: "application/vnd.github+json",
+      "user-agent": "awesome-everything",
+    },
+  });
+  if (!userRes.ok) throw new Error("github_user_fetch_failed");
+  const payload = (await userRes.json()) as GithubUserPayload;
+  return mapGithubUser(payload);
+}
+
+/** Build the GitHub authorize URL. */
+export function authorizeUrl(clientId: string, redirectUri: string, state: string): string {
+  const u = new URL("https://github.com/login/oauth/authorize");
+  u.searchParams.set("client_id", clientId);
+  u.searchParams.set("redirect_uri", redirectUri);
+  u.searchParams.set("scope", "read:user");
+  u.searchParams.set("state", state);
+  return u.toString();
+}
