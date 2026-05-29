@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- debezium-config
+- replication-slot-sql
+- slot-lag-monitoring
+- replica-identity
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Change-Data Capture"
-title: Coding Quiz
+- https://www.morling.dev/blog/mastering-postgres-replication-slots/
+- https://debezium.io/documentation/reference/stable/connectors/postgresql.html
+status: ready
+summary: "Read a Debezium config, replication-slot SQL, and a slot-lag log line, predict the CDC behaviour, and pick the highest-leverage fix."
+title: 'Change data capture: config and query reading'
 track: queues
 unit: 06-cdc
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Change-Data Capture unit.
+CDC problems are diagnosed in the connector config and the database's own catalog views. Read the config, the SQL, and the monitoring line, then choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Change-Data Capture unit.
+Practise the loop you run in every CDC incident: read the connector setup and the slot's state in the catalog, predict where WAL retention or delivery breaks, and reach for the highest-leverage fix.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the Debezium connector config
+
+```json
+{
+  "name": "orders-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "slot.name": "orders_slot",
+    "publication.name": "orders_pub",
+    "table.include.list": "public.orders",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "0",
+    "tombstones.on.delete": "true"
+  }
+}
+```
+
+<Quiz
+  id="06-cdc-code-1"
+  lessonSlug="06-cdc"
+  lang="en"
+  question="This connector captures a low-traffic orders table. Which setting is the latent disk-filler, and why?"
+  choices={[
+    { label: "heartbeat.interval.ms = 0 disables heartbeats. On a low-traffic table with no commits, the slot never advances confirmed_flush_lsn, so WAL is retained indefinitely. Set a non-zero heartbeat so Debezium nudges the slot forward even when nothing changes.", correct: true },
+    { label: "snapshot.mode = initial will re-snapshot on every restart and overload the table.", misconception: "snapshot.mode=initial snapshots once on first start, then streams; it does not re-snapshot on every restart. It is the right default for bootstrapping." },
+    { label: "tombstones.on.delete = true leaks records into the topic and fills the disk.", misconception: "Tombstones are tiny null-value records that let compacted topics drop deleted keys — they help compaction, they do not fill the source disk. The disk risk here is on Postgres, from a slot that never advances." },
+    { label: "plugin.name = pgoutput is deprecated and retains extra WAL.", misconception: "pgoutput is the built-in logical-decoding plugin shipped since Postgres 10 and the recommended choice; it does not change WAL retention behaviour." },
+  ]}
+/>
+
+## Snippet 2 — inspecting the slot in the catalog
+
+```sql
+SELECT slot_name,
+       active,
+       pg_size_pretty(
+         pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)
+       ) AS retained_wal
+FROM pg_replication_slots
+WHERE slot_name = 'orders_slot';
+--  slot_name   | active | retained_wal
+-- -------------+--------+--------------
+--  orders_slot | t      | 47 GB
+```
+
+<Quiz
+  id="06-cdc-code-2"
+  lessonSlug="06-cdc"
+  lang="en"
+  question="The slot is active = t but retaining 47 GB of WAL. What does this tell you, and what is the first move?"
+  choices={[
+    { label: "An active slot can still retain huge WAL if it cannot advance restart_lsn — classically a long-running transaction blocking logical decoding. First check pg_stat_activity for the oldest transaction and end or fix it; dropping the slot would lose the connector's position.", correct: true },
+    { label: "active = t means it is healthy, so 47 GB is normal steady-state retention.", misconception: "active only means a consumer is connected; it says nothing about whether restart_lsn is advancing. 47 GB of retained WAL is a disk-full risk regardless of the active flag." },
+    { label: "Drop and recreate the slot immediately to clear the 47 GB.", misconception: "Dropping the slot discards the connector's confirmed position and forces a full re-snapshot. Diagnose why restart_lsn is stuck first — often a long transaction — before touching the slot." },
+    { label: "The query is wrong — you cannot measure retained WAL from the catalog.", misconception: "pg_wal_lsn_diff between current WAL and restart_lsn is exactly the standard way to measure a slot's retained WAL. This is the monitoring query you should be alerting on." },
+  ]}
+/>
+
+## Snippet 3 — the slot-lag alert log line
+
+```
+WARN  slot=orders_slot active=true retained_wal_bytes=50465865728
+      confirmed_flush_lsn=6F/A2000000 current_wal_lsn=7B/40000000
+      disk_used_pct=88 -> ALERT: slot lag exceeds 40GB threshold
+```
+
+<Quiz
+  id="06-cdc-code-3"
+  lessonSlug="06-cdc"
+  lang="en"
+  question="This alert fires at 88% disk. Reading the fields, what is the correct interpretation and response order?"
+  choices={[
+    { label: "The byte gap between confirmed_flush_lsn and current_wal_lsn is ~47 GB and disk is at 88% — the consumer has fallen far behind or stalled. Find why the slot is not advancing (lag vs open transaction), restore consumption, and rely on max_slot_wal_keep_size as the backstop if disk pressure wins the race.", correct: true },
+    { label: "disk_used_pct = 88 is the only number that matters; add disk and move on.", misconception: "Adding disk buys time but does not fix a stalled slot — it will refill. The LSN gap tells you the slot is not advancing; you must restore consumption or let the cap invalidate the slot." },
+    { label: "confirmed_flush_lsn lower than current_wal_lsn is an error state; restart Postgres.", misconception: "confirmed_flush_lsn trailing current_wal_lsn is normal — that gap is just unconsumed WAL. The alarm is the size of the gap, not its existence. Restarting Postgres does nothing for a stuck slot." },
+    { label: "active = true means the alert is a false positive.", misconception: "active just means a consumer is connected. A connected consumer can still lag badly or be blocked by an open transaction; the 47 GB gap is real and the alert is correct." },
+  ]}
+/>
+
+## Snippet 4 — preparing a table for full delete capture
+
+```sql
+-- delete events currently carry only the primary key in `before`
+ALTER TABLE public.orders REPLICA IDENTITY FULL;
+```
+
+<Quiz
+  id="06-cdc-code-4"
+  lessonSlug="06-cdc"
+  lang="en"
+  question="You run this so DELETE events carry the full pre-delete row. What is the side effect a senior engineer flags before merging?"
+  choices={[
+    { label: "REPLICA IDENTITY FULL makes every UPDATE — not just deletes — log the entire old row, increasing WAL volume on a high-update table, which feeds straight back into slot retention and disk pressure. Scope it to tables that truly need full before images.", correct: true },
+    { label: "It rewrites the whole table and takes a long exclusive lock.", misconception: "REPLICA IDENTITY FULL is a catalog change, not a table rewrite; it does not rebuild rows. The real cost is ongoing: more WAL per update going forward." },
+    { label: "It disables index usage on the table.", misconception: "REPLICA IDENTITY affects what the WAL logs for changes, not query planning or index usage. Reads are unaffected." },
+    { label: "It is required for inserts to be captured at all.", misconception: "Inserts always log the full new row regardless of REPLICA IDENTITY. The setting only governs the before image of updates and deletes." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every CDC incident is read in config and catalog state: a zero heartbeat starves a low-traffic slot until WAL fills; an active slot can still retain tens of GB if a long transaction freezes restart_lsn, so diagnose pg_stat_activity before dropping anything; the LSN gap in pg_replication_slots is the number you alert on, with max_slot_wal_keep_size as the backstop; and REPLICA IDENTITY FULL buys full delete images at the cost of fatter updates. Read the slot's state first, fix the cause of non-advancement, and treat the disk as the clock.
 </Recap>
-

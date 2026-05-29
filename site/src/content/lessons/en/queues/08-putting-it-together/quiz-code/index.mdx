@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-outbox
+- change-data-capture
+- idempotent-consumer
+- dead-letter-queue
+- partition-key-ordering
+- consumer-offset-commit
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Putting it together: event-driven service mesh"'
-title: Coding Quiz
+- https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+- https://microservices.io/patterns/data/transactional-outbox.html
+- https://docs.confluent.io/kafka/design/delivery-semantics.html
+status: ready
+summary: "Read real pipeline config and consumer code — outbox plus CDC, offset-commit order, dedup, and DLQ handling — predict the behaviour, and pick the fix a senior would make first."
+title: 'Queues capstone: code and config reading'
 track: queues
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Putting it together: event-driven service mesh unit.
+The pipeline's bugs do not live in prose — they live in a transaction boundary, a commit order, a missing unique constraint, and a connector config. Read each snippet across the order pipeline and choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Putting it together: event-driven service mesh unit.
+Practise reading the seams of an event-driven pipeline the way you read an incident: spot where atomicity, ordering, idempotency, or DLQ handling is silently broken, and name the highest-leverage correction.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the outbox write
+
+```sql
+-- order handler, one DB transaction
+BEGIN;
+  INSERT INTO orders (id, customer_id, status, total_cents)
+    VALUES ('ord_9f', 'cust_3a', 'placed', 4200);
+  INSERT INTO outbox (id, aggregate_id, type, payload, created_at)
+    VALUES ('evt_7c', 'ord_9f', 'order.placed', '{"order_id":"ord_9f"}', now());
+COMMIT;
+-- separately, a relay later:
+--   SELECT * FROM outbox WHERE sent = false ...
+--   publish to Kafka, then UPDATE outbox SET sent = true
+```
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="What guarantee does this structure give, and what must downstream consumers do as a result?"
+  choices={[
+    { label: "The order row and outbox row commit atomically (event exists iff the order does), but the relay's publish-then-mark-sent is two non-atomic steps, so delivery is at-least-once — a crash after publish, before the UPDATE, re-publishes evt_7c. Consumers must dedupe on the event id.", correct: true },
+    { label: "The whole flow is exactly-once because everything is wrapped in one transaction.", misconception: "Only the two INSERTs share a transaction. The relay's publish and the sent-flag UPDATE are separate, non-atomic steps against two systems, so a crash between them re-publishes — at-least-once, not exactly-once." },
+    { label: "Consumers can assume each event arrives once, so no dedup is needed.", misconception: "The relay re-publishes on a crash-before-mark, so the same event id can arrive twice. Without consumer dedup, order.placed gets processed twice." },
+    { label: "Marking the row sent before publishing would make it exactly-once.", misconception: "Mark-then-publish just converts a duplicate into a lost event: crash after the UPDATE and before publish, and the row looks sent but nothing was emitted. Publish-then-mark plus idempotent consumers is the safe choice." },
+  ]}
+/>
+
+## Snippet 2 — outbox plus CDC interaction
+
+```json
+// Debezium outbox-event-router connector
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "table.include.list": "public.outbox",
+  "transforms": "outbox",
+  "transforms.outbox.type":
+    "io.debezium.transforms.outbox.EventRouter",
+  "transforms.outbox.route.by.field": "aggregate_id",
+  "slot.name": "order_outbox_slot",
+  "heartbeat.interval.ms": "0"
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question={"This connector tails the outbox table and routes events to a Kafka topic keyed by aggregate_id. Two settings interact badly with a low-traffic deployment plus a stalled consumer. Which is the real production hazard?"}
+  choices={[
+    { label: "heartbeat.interval.ms = 0 disables heartbeats, so on a low-traffic DB the slot never advances its confirmed LSN between commits and WAL accumulates; combined with the slot having no max_slot_wal_keep_size cap, a stall can fill the disk and halt the primary. Enable heartbeats and cap the slot.", correct: true },
+    { label: "route.by.field = aggregate_id is wrong; routing by order id breaks ordering.", misconception: "Routing by aggregate_id (the order id) is exactly right — it keys each order's events to one partition for per-order ordering. That is the intended design, not the hazard." },
+    { label: "table.include.list should be all domain tables, not just the outbox.", misconception: "Capturing the purpose-built outbox table is the deliberate choice — you control its shape and avoid coupling consumers to raw table schemas. Capturing every domain table is the alternative, not a bug here." },
+    { label: "The PostgresConnector cannot route by field, so the transform is a no-op.", misconception: "The EventRouter SMT exists precisely to route outbox events by a field; route.by.field is a supported, common setting. The hazard is the slot/heartbeat interaction, not the routing." },
+  ]}
+/>
+
+## Snippet 3 — the consumer commit order
+
+```python
+for msg in consumer:                      # at-least-once Kafka consumer
+    event = parse(msg.value)
+    consumer.commit()                     # commit offset FIRST
+    charge_payment(event.order_id,        # then do the side effect
+                   event.amount_cents)
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="This payment consumer commits the offset before charging. What is the failure mode, and what is the correct ordering?"
+  choices={[
+    { label: "Commit-before-process is at-most-once: if the pod dies after commit but before charge_payment, the offset has moved and the charge is silently lost — the customer is never billed. Commit AFTER the handler succeeds, and make charge_payment idempotent so the replay is safe.", correct: true },
+    { label: "It is correct — committing first prevents duplicate charges.", misconception: "It prevents duplicates by losing messages: a crash after the commit drops the charge entirely. For payments a lost charge is worse than a duplicate; commit-after-process plus idempotency is the right combination." },
+    { label: "The bug is parsing before committing; parse after the commit.", misconception: "Parse order is irrelevant to the guarantee. The defect is committing the offset before the side effect runs, which turns a crash into a lost charge." },
+    { label: "There is no failure mode because Kafka redelivers on any crash.", misconception: "Kafka redelivers from the committed offset. Since the offset was already committed, the lost charge's event is never redelivered — it is gone." },
+  ]}
+/>
+
+## Snippet 4 — DLQ handling
+
+```python
+def handle(event):
+    try:
+        process(event)                       # idempotent side effect
+    except Exception:
+        send_to_dlq(event)                    # any failure -> DLQ
+        consumer.commit()
+```
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="This handler sends every failure straight to the DLQ on the first exception. What goes wrong, and what is the senior fix?"
+  choices={[
+    { label: "It DLQs transient failures (a gateway 500, a brief network blip) that would have succeeded on retry, so the DLQ fills with recoverable events and the real poison messages are buried. Add a retry budget with backoff for transient errors and only route to the DLQ on exhaustion.", correct: true },
+    { label: "Nothing — routing every failure to the DLQ immediately is the safest design.", misconception: "It floods the DLQ with transient failures that idempotent retry would have cleared, turning automatic recovery into manual toil and hiding genuinely unprocessable messages among the noise." },
+    { label: "The bug is committing the offset after DLQ-ing; never commit a failed message.", misconception: "Committing after the message is safely in the DLQ is correct — it stops the poison message from blocking the partition. The defect is DLQ-ing on the first failure with no retry budget." },
+    { label: "process should not be idempotent, since the DLQ handles all duplicates.", misconception: "Idempotent process is required regardless: at-least-once means replays happen on crash-before-commit, and the DLQ does not dedupe live retries. Keep idempotency; add a retry budget." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every seam of the pipeline is read in code and config: the outbox makes two INSERTs atomic but the relay's publish-then-mark is at-least-once, so consumers must dedupe; a CDC connector keyed by aggregate_id preserves per-order ordering, but heartbeat.interval.ms = 0 with no slot cap is a disk-fill outage waiting on a stall; committing the offset before the side effect is at-most-once and silently loses charges, so commit after processing and stay idempotent; and DLQ-ing on the first exception buries poison messages under recoverable transients, so retry with a budget and quarantine only on exhaustion. Read the transaction boundary, the commit order, the unique constraint, and the connector config — that is where the pipeline's correctness actually lives.
 </Recap>
-

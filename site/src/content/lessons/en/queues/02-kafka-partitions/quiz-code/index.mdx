@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- partition-key-hashing
+- per-key-ordering
+- consumer-group-assignment
+- consumer-rebalancing
+- hot-partition-skew
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Kafka partitions"
-title: Coding Quiz
+- https://www.confluent.io/blog/how-choose-number-topics-partitions-kafka-cluster/
+- https://cwiki.apache.org/confluence/display/KAFKA/KIP-345:+Introduce+static+membership+protocol+to+reduce+consumer+rebalances
+status: ready
+summary: "Read real producer code, consumer config, partition math, and a rebalance log, predict the behaviour, and pick the highest-leverage fix."
+title: 'Kafka partitions: code and config reading'
 track: queues
 unit: 02-kafka-partitions
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Kafka partitions unit.
+Partition bugs are diagnosed in producer code, consumer config, and rebalance logs — not in prose. Read each snippet, predict what Kafka does with it, and choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Kafka partitions unit.
+Practise the loop you run in every Kafka incident: read the producer key, the consumer config, the partition math, and the rebalance log, then reach for the fix that respects ordering and parallelism rather than papering over it.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the producer key
+
+```java
+// Order events: created, paid, shipped, cancelled all flow through here
+ProducerRecord<String, OrderEvent> record =
+    new ProducerRecord<>("order-events", event.getType(), event);
+//                                       ^^^^^^^^^^^^^^^^^
+//                                       key = event TYPE, not order id
+producer.send(record);
+```
+
+<Quiz
+  id="02-kafka-partitions-code-1"
+  lessonSlug="02-kafka-partitions"
+  lang="en"
+  question={"A consumer must process each order's events in order (created before cancelled). With this keying, what happens, and what is the fix?"}
+  choices={[
+    { label: "The key is the event type, so all 'created' events hash to one partition and all 'cancelled' to another. An order's events scatter across partitions and lose their relative order. Fix: key by event.getOrderId() so one order's events share a partition.", correct: true },
+    { label: "It works — Kafka keeps events ordered per order because they share a topic.", misconception: "Order is guaranteed only within a partition, never across a topic. Keying by type sends 'created' and 'cancelled' for the same order to different partitions, which have no order between them." },
+    { label: "The bug is the missing partition number; pass an explicit partition argument.", misconception: "Hard-coding a partition would force everything onto one partition (no parallelism) and still wouldn't tie an order's events together correctly. The fix is to key by the entity (orderId), letting the partitioner co-locate it." },
+    { label: "Enable acks=all and ordering is restored.", misconception: "acks=all is a durability setting about replica acknowledgement; it has nothing to do with which partition a record lands on. The ordering break is caused by the key choice." },
+  ]}
+/>
+
+## Snippet 2 — the partition math
+
+```python
+# Default murmur2-style partitioner: partition = hash(key) % N
+def partition_for(key, N):
+    return hash(key) % N
+
+# orderId "A-4711" before and after a partition increase
+partition_for("A-4711", 6)    # -> 2
+partition_for("A-4711", 12)   # -> 8     # same key, different partition!
+```
+
+<Quiz
+  id="02-kafka-partitions-code-2"
+  lessonSlug="02-kafka-partitions"
+  lang="en"
+  question={"A topic was raised from 6 to 12 partitions while live. Reading this math, what is the consequence for key A-4711, and why can't you undo it?"}
+  choices={[
+    { label: "A-4711's old records remain on partition 2 while all future records route to partition 8, so its history is split across two unordered partitions and per-key ordering breaks. You can't shrink back to 6 — Kafka can't correctly merge two independent ordered logs.", correct: true },
+    { label: "Kafka re-runs the partitioner over old records and moves A-4711 to partition 8, keeping it together.", misconception: "Existing records are never relocated on a partition increase. Only future writes use the new modulo, which is exactly what splits the key across partition 2 and partition 8." },
+    { label: "Nothing breaks because hash(key) is stable, so the partition stays the same.", misconception: "hash(key) is stable, but the partition is hash(key) % N, and N changed from 6 to 12. The modulo result changes for most keys — here from 2 to 8." },
+    { label: "It's reversible: set N back to 6 and A-4711 returns to partition 2.", misconception: "Partition count can only increase, never decrease. Kafka refuses to merge partitions because there is no correct way to interleave two independent offset timelines." },
+  ]}
+/>
+
+## Snippet 3 — the consumer config
+
+```properties
+# Consumer group: payments-processor, 4 instances behind a rolling deploy
+group.id=payments-processor
+session.timeout.ms=10000
+heartbeat.interval.ms=3000
+# group.instance.id is NOT set
+partition.assignment.strategy=org.apache.kafka.clients.consumer.RangeAssignor
+```
+
+<Quiz
+  id="02-kafka-partitions-code-3"
+  lessonSlug="02-kafka-partitions"
+  lang="en"
+  question={"Every rolling deploy causes a multi-second consumption stall across the whole group. Reading this config, what is the cause, and what is the lowest-risk change?"}
+  choices={[
+    { label: "RangeAssignor is an eager protocol and group.instance.id is unset, so each restart triggers a stop-the-world rebalance that revokes every consumer's partitions. Add a stable group.instance.id (static membership) and/or switch to CooperativeStickyAssignor so only moving partitions are revoked.", correct: true },
+    { label: "session.timeout.ms is too high, so the group waits 10s before noticing the restart.", misconception: "Lowering the session timeout makes the group declare members dead faster — causing MORE rebalances, not fewer. Static membership lets a quick restart rejoin as the same member without any rebalance." },
+    { label: "heartbeat.interval.ms is too low and floods the coordinator.", misconception: "A 3s heartbeat at a 10s session timeout is a normal ratio and is not the cause of the deploy stalls. The stall is the eager rebalance revoking all partitions on each restart." },
+    { label: "RangeAssignor is the only assignor available, so this is unavoidable.", misconception: "CooperativeStickyAssignor exists precisely to avoid stop-the-world revocation by moving only the partitions that must change. Combined with static membership, deploy-time rebalances mostly disappear." },
+  ]}
+/>
+
+## Snippet 4 — the rebalance log
+
+```
+[Consumer clientId=c3, groupId=payments] (Re-)joining group
+[Consumer clientId=c3, groupId=payments] Lost previously assigned partitions order-events-2, order-events-5
+[Consumer clientId=c3] Revoke previously assigned partitions order-events-2, order-events-5
+... 7 such cycles in 90 seconds ...
+[Consumer clientId=c3] Member c3 sending LeaveGroup request due to consumer poll timeout has expired
+```
+
+<Quiz
+  id="02-kafka-partitions-code-4"
+  lessonSlug="02-kafka-partitions"
+  lang="en"
+  question={"Reading this log — repeated join/revoke cycles ending in a poll-timeout LeaveGroup — what is the failure mode, and what is the first fix?"}
+  choices={[
+    { label: "A rebalance storm driven by poll-timeout: the consumer takes too long between poll() calls (slow processing), so the coordinator evicts it, which triggers a rebalance, after which it falls behind again. First fix: shrink per-poll work (lower max.poll.records) or raise max.poll.interval.ms so processing finishes within the window.", correct: true },
+    { label: "The broker is down; the consumer can't reach its partitions.", misconception: "The consumer is reaching the group and being assigned partitions each cycle — the log shows successful joins. The problem is it can't poll again in time, not connectivity." },
+    { label: "Two consumers own order-events-2, so they keep fighting for it.", misconception: "A partition is owned by exactly one consumer at a time; there is no co-ownership to fight over. The revokes are the rebalance protocol reacting to c3's repeated poll-timeout eviction." },
+    { label: "The partition count is too low and must be increased.", misconception: "Partition count is unrelated to a poll-timeout eviction loop. The consumer is being kicked for slow processing between polls, so the fix is in poll cadence / batch size, not the topic." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every partition incident is read in code, config, and logs: the producer key decides what stays ordered (key by the entity, not the event type); hash(key) % N means a partition increase reroutes live keys and can never be undone; an eager assignor plus a missing group.instance.id makes every deploy a stop-the-world rebalance; and a join/revoke loop ending in poll-timeout is a rebalance storm from slow processing, not a broker or partition problem. Read the key and the config first, fix the structural cause, then confirm against lag and rebalance metrics.
 </Recap>
-

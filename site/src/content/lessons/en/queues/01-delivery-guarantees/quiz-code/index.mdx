@@ -1,43 +1,133 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-dedup
+- idempotency-key
+- visibility-timeout
+- dual-write
+- dedup-hit-rate
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Delivery guarantees: at-most-once, at-least-once,
-  and the truth about exactly-once"'
-title: Coding Quiz
+- https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+- https://stripe.com/docs/api/idempotent_requests
+- https://docs.confluent.io/kafka/design/delivery-semantics.html
+status: ready
+summary: "Read real consumer code, SQL, and a metrics line, predict the delivery-guarantee behaviour, and pick the highest-leverage fix a senior engineer makes first."
+title: 'Delivery guarantees: code and log reading'
 track: queues
 unit: 01-delivery-guarantees
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Delivery guarantees: at-most-once, at-least-once, and the truth about exactly-once unit.
+Delivery-guarantee bugs are found in the consumer code, the SQL, and the metrics line — rarely in the broker. Read each snippet, predict where the duplicate or the loss comes from, then choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Delivery guarantees: at-most-once, at-least-once, and the truth about exactly-once unit.
+Practise the loop you run in every duplicate-charge incident: read the handler, find the crash window or the race, and reach for the structural fix rather than nudging a timeout.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the SELECT-then-act consumer
+
+```python
+def handle(msg):
+    if db.execute("SELECT 1 FROM processed WHERE msg_id=%s", msg.id):
+        return ack(msg)              # already done, skip
+    stripe.charge(msg.amount)        # side effect
+    db.execute("INSERT INTO processed (msg_id) VALUES (%s)", msg.id)
+    ack(msg)
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-1"
+  lessonSlug="01-delivery-guarantees"
+  lang="en"
+  question="Two consumers receive the same message during a rebalance. What happens, and what is the highest-leverage fix?"
+  choices={[
+    { label: "Both run the SELECT, both see 'not found', both call stripe.charge — double charge. The SELECT and INSERT are not atomic. Fix: INSERT-first inside one transaction with a UNIQUE constraint on msg_id; on a UNIQUE violation roll back and ack, so the charge never runs twice.", correct: true },
+    { label: "The second consumer's INSERT fails on a UNIQUE constraint, so only one charge happens.", misconception: "There is no UNIQUE constraint shown, and even with one the charge happens BEFORE the INSERT — both cards are charged before either INSERT runs. The fix is to INSERT first inside the same transaction as the side effect." },
+    { label: "Nothing — SQS guarantees a message is delivered to only one consumer.", misconception: "At-least-once explicitly allows concurrent redelivery after a visibility timeout or during a rebalance. Assuming single delivery is the root error." },
+    { label: "Raise the visibility timeout and the race disappears.", misconception: "A longer timeout shrinks the window but the SELECT/act race is a correctness bug independent of timing; a rebalance re-opens it regardless of timeout. Make the dedup atomic." },
+  ]}
+/>
+
+## Snippet 2 — the transactional dedup
+
+```sql
+BEGIN;
+  INSERT INTO processed (msg_id) VALUES ('msg-7a3f');  -- UNIQUE(msg_id)
+  UPDATE orders SET status = 'paid' WHERE id = 'O-123';
+COMMIT;
+-- on UNIQUE violation: ROLLBACK, log "duplicate", ack the broker
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-2"
+  lessonSlug="01-delivery-guarantees"
+  lang="en"
+  question="The consumer COMMITs this transaction, then crashes before acking the broker. On redelivery, what happens?"
+  choices={[
+    { label: "The next consumer re-runs the transaction, the INSERT hits the UNIQUE violation, the whole transaction rolls back so the UPDATE never re-runs, and it acks the broker. The side effect happened exactly once; the duplicate is silently discarded. Correct behaviour.", correct: true },
+    { label: "The order is paid twice because the UPDATE runs again on redelivery.", misconception: "The UNIQUE violation on the INSERT aborts the transaction before the UPDATE can re-apply. INSERT-first is exactly what prevents the second side effect." },
+    { label: "The message is lost because the broker thinks it was acked.", misconception: "The crash happened BEFORE the ack, so the broker still has the message and redelivers it — no loss. This is the safe ordering: commit work, then ack." },
+    { label: "It deadlocks because two transactions touch msg-7a3f.", misconception: "There is only one consumer at a time here (the original crashed). Even concurrently, the UNIQUE constraint serialises them via a violation, not a deadlock." },
+  ]}
+/>
+
+## Snippet 3 — the external-API consumer
+
+```python
+def handle(msg):
+    resp = stripe.charge(msg.amount,
+                         idempotency_key=msg.id)   # external dedup
+    db.execute("UPDATE intents SET charge_id=%s WHERE msg_id=%s",
+               resp.id, msg.id)
+    ack(msg)
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-3"
+  lessonSlug="01-delivery-guarantees"
+  lang="en"
+  question="The Stripe call succeeds, then the process dies before the UPDATE and the ack. The broker redelivers minutes later. What is the actual behaviour?"
+  choices={[
+    { label: "Stripe sees the same Idempotency-Key and returns the cached response without charging again, then the UPDATE completes — no double charge. It works because the key is derived from the stable msg.id and queues redeliver well inside Stripe's 24h key TTL.", correct: true },
+    { label: "Stripe charges the card a second time because the first UPDATE never committed.", misconception: "The Idempotency-Key is keyed on msg.id, not on the DB row. Stripe deduplicates on its side regardless of whether your UPDATE ran; it returns the cached charge." },
+    { label: "The message is permanently stuck because no local processed-row was written.", misconception: "On redelivery the same key returns the cached charge, the UPDATE finally lands, and the ack clears the message. The intent row plus the stable key make the retry safe." },
+    { label: "Stripe rejects the duplicate key with an error the consumer must handle.", misconception: "Stripe returns HTTP 200 with the cached response for a repeated key within the TTL; it is not an error path." },
+  ]}
+/>
+
+## Snippet 4 — the dedup metric
+
+```
+metric: dedup_check_hit_rate
+  steady state: 0.05%
+  14:02-14:12 : 8.0%   (no deploy in this window)
+  14:13+      : 0.06%
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-4"
+  lessonSlug="01-delivery-guarantees"
+  lang="en"
+  question="Reading this metric, what most likely happened — and is it a correctness emergency?"
+  choices={[
+    { label: "A consumer crashed and its in-flight messages were redelivered to other consumers, so the dedup INSERTs blocked far more often for ~10 minutes. If the consumer is properly idempotent it is NOT a correctness emergency — duplicates were caught silently. It is a signal to investigate consumer stability, not a double-charge incident.", correct: true },
+    { label: "The dedup table is failing, so duplicates are leaking through.", misconception: "A hit-rate SPIKE means the UNIQUE constraint is firing MORE — duplicates are being caught, not leaking. A failing table would show errors or a drop in successful inserts, not a hit-rate rise." },
+    { label: "The Kafka idempotent producer retried a batch, inflating the consumer hit rate.", misconception: "Idempotent-producer retries are deduplicated at the broker before the consumer ever sees them, so they cannot move consumer-side dedup_hit_rate. The cause is redelivery to the consumer." },
+    { label: "It proves exactly-once delivery broke and must be escalated immediately.", misconception: "Exactly-once delivery was never in effect — the system is at-least-once by design. A transient redelivery spike that the idempotent consumer absorbs is expected behaviour, not a broken guarantee." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every delivery-guarantee incident is read in code, SQL, and metrics: SELECT-then-act races under concurrent delivery; INSERT-first in one transaction makes redelivery harmless; an Idempotency-Key derived from a stable message ID extends dedup across an external API; and a dedup_hit_rate spike means the broker is redelivering, not that dedup failed. Diagnose the crash window or the race, apply the structural fix (atomic dedup, stable idempotency key), then confirm the duplicate path is closed — before touching a single timeout.
 </Recap>
-

@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- debezium-config
+- replication-slot-sql
+- slot-lag-monitoring
+- replica-identity
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Change-Data Capture"
-title: Кодировочный тест
+- https://www.morling.dev/blog/mastering-postgres-replication-slots/
+- https://debezium.io/documentation/reference/stable/connectors/postgresql.html
+status: ready
+summary: "Прочитай конфиг Debezium, SQL по replication slot и строку лога slot-lag, предскажи поведение CDC и выбери фикс с наибольшим рычагом."
+title: 'Change data capture: чтение конфига и запросов'
 track: queues
 unit: 06-cdc
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Change-Data Capture unit.
+Проблемы CDC диагностируются в конфиге коннектора и в собственных catalog-вью базы. Прочитай конфиг, SQL и строку мониторинга, затем выбери фикс, который senior-инженер сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Change-Data Capture unit.
+Отработай цикл, который ты гоняешь в каждом CDC-инциденте: прочитай настройку коннектора и состояние slot в каталоге, предскажи, где ломается удержание WAL или доставка, и возьмись за фикс с наибольшим рычагом.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — конфиг коннектора Debezium
+
+```json
+{
+  "name": "orders-cdc",
+  "config": {
+    "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+    "plugin.name": "pgoutput",
+    "slot.name": "orders_slot",
+    "publication.name": "orders_pub",
+    "table.include.list": "public.orders",
+    "snapshot.mode": "initial",
+    "heartbeat.interval.ms": "0",
+    "tombstones.on.delete": "true"
+  }
+}
+```
+
+<Quiz
+  id="06-cdc-code-1"
+  lessonSlug="06-cdc"
+  lang="ru"
+  question="Этот коннектор захватывает малонагруженную таблицу orders. Какая настройка — скрытый наполнитель диска и почему?"
+  choices={[
+    { label: "heartbeat.interval.ms = 0 отключает heartbeats. На малонагруженной таблице без коммитов slot никогда не продвигает confirmed_flush_lsn, поэтому WAL удерживается бесконечно. Поставь ненулевой heartbeat, чтобы Debezium подталкивал slot даже когда ничего не меняется.", correct: true },
+    { label: "snapshot.mode = initial будет пере-снапшотить на каждом рестарте и перегрузит таблицу.", misconception: "snapshot.mode=initial снапшотит один раз на первом старте, потом стримит; он не пере-снапшотит на каждом рестарте. Это правильный дефолт для бутстрапа." },
+    { label: "tombstones.on.delete = true сыпет записи в топик и заполняет диск.", misconception: "Tombstones — крошечные null-записи, позволяющие compacted-топикам дропнуть удалённые ключи — они помогают compaction, а не заполняют диск источника. Риск диска здесь на Postgres, от slot, который не продвигается." },
+    { label: "plugin.name = pgoutput устарел и удерживает лишний WAL.", misconception: "pgoutput — встроенный плагин logical decoding, поставляемый с Postgres 10, и рекомендуемый выбор; он не меняет поведение удержания WAL." },
+  ]}
+/>
+
+## Сниппет 2 — инспекция slot в каталоге
+
+```sql
+SELECT slot_name,
+       active,
+       pg_size_pretty(
+         pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn)
+       ) AS retained_wal
+FROM pg_replication_slots
+WHERE slot_name = 'orders_slot';
+--  slot_name   | active | retained_wal
+-- -------------+--------+--------------
+--  orders_slot | t      | 47 GB
+```
+
+<Quiz
+  id="06-cdc-code-2"
+  lessonSlug="06-cdc"
+  lang="ru"
+  question="Slot active = t, но удерживает 47 ГБ WAL. О чём это говорит и какой первый ход?"
+  choices={[
+    { label: "Активный slot всё равно может удерживать огромный WAL, если не может продвинуть restart_lsn — классически долгая транзакция блокирует logical decoding. Сначала проверь pg_stat_activity на старейшую транзакцию и заверши или почини её; drop slot потерял бы позицию коннектора.", correct: true },
+    { label: "active = t значит он здоров, так что 47 ГБ — нормальное стабильное удержание.", misconception: "active лишь означает, что consumer подключён; это ничего не говорит о том, продвигается ли restart_lsn. 47 ГБ удерживаемого WAL — риск переполнения диска независимо от флага active." },
+    { label: "Дропнуть и пересоздать slot немедленно, чтобы очистить 47 ГБ.", misconception: "Drop slot отбрасывает подтверждённую позицию коннектора и вынуждает полный re-snapshot. Сначала диагностируй, почему restart_lsn застрял — часто долгая транзакция — прежде чем трогать slot." },
+    { label: "Запрос неверный — нельзя измерить удерживаемый WAL из каталога.", misconception: "pg_wal_lsn_diff между текущим WAL и restart_lsn — ровно стандартный способ измерить удерживаемый slot WAL. Это и есть запрос мониторинга, на который надо алертить." },
+  ]}
+/>
+
+## Сниппет 3 — строка лога алерта slot-lag
+
+```
+WARN  slot=orders_slot active=true retained_wal_bytes=50465865728
+      confirmed_flush_lsn=6F/A2000000 current_wal_lsn=7B/40000000
+      disk_used_pct=88 -> ALERT: slot lag exceeds 40GB threshold
+```
+
+<Quiz
+  id="06-cdc-code-3"
+  lessonSlug="06-cdc"
+  lang="ru"
+  question="Алерт срабатывает на 88% диска. Читая поля, какая верная интерпретация и порядок действий?"
+  choices={[
+    { label: "Байтовый разрыв между confirmed_flush_lsn и current_wal_lsn ~47 ГБ, диск на 88% — consumer сильно отстал или застрял. Найди, почему slot не продвигается (lag vs открытая транзакция), восстанови потребление и положись на max_slot_wal_keep_size как страховку, если давление на диск выиграет гонку.", correct: true },
+    { label: "disk_used_pct = 88 — единственное важное число; добавь диск и иди дальше.", misconception: "Добавление диска выигрывает время, но не чинит застрявший slot — он снова заполнится. Разрыв LSN говорит, что slot не продвигается; нужно восстановить потребление или дать cap инвалидировать slot." },
+    { label: "confirmed_flush_lsn ниже current_wal_lsn — это ошибочное состояние; перезапусти Postgres.", misconception: "confirmed_flush_lsn, отстающий от current_wal_lsn — норма: этот разрыв — просто непотреблённый WAL. Тревожит размер разрыва, а не его наличие. Перезапуск Postgres не делает ничего для застрявшего slot." },
+    { label: "active = true значит алерт — ложное срабатывание.", misconception: "active лишь означает, что consumer подключён. Подключённый consumer всё равно может сильно отставать или быть заблокирован открытой транзакцией; разрыв в 47 ГБ реален и алерт верен." },
+  ]}
+/>
+
+## Сниппет 4 — подготовка таблицы к захвату полных delete
+
+```sql
+-- события delete сейчас несут только primary key в `before`
+ALTER TABLE public.orders REPLICA IDENTITY FULL;
+```
+
+<Quiz
+  id="06-cdc-code-4"
+  lessonSlug="06-cdc"
+  lang="ru"
+  question="Ты запускаешь это, чтобы события DELETE несли полную строку до удаления. Какой побочный эффект senior-инженер отметит перед мержем?"
+  choices={[
+    { label: "REPLICA IDENTITY FULL заставляет каждый UPDATE — не только delete — логировать всю старую строку, повышая объём WAL на таблице с частыми update, что замыкается прямо в удержание slot и давление на диск. Ограничь его таблицами, которым полные before-образы реально нужны.", correct: true },
+    { label: "Он переписывает всю таблицу и берёт долгий эксклюзивный lock.", misconception: "REPLICA IDENTITY FULL — изменение каталога, а не перезапись таблицы; он не перестраивает строки. Реальная цена постоянная: больше WAL на каждый update в дальнейшем." },
+    { label: "Он отключает использование индексов на таблице.", misconception: "REPLICA IDENTITY влияет на то, что WAL логирует для изменений, а не на планирование запросов или использование индексов. Чтения не затронуты." },
+    { label: "Он необходим, чтобы insert вообще захватывались.", misconception: "Insert всегда логируют полную новую строку независимо от REPLICA IDENTITY. Настройка управляет лишь before-образом update и delete." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый CDC-инцидент читается в конфиге и состоянии каталога: нулевой heartbeat голодит slot малонагруженной таблицы, пока WAL не заполнит диск; активный slot всё равно может удерживать десятки ГБ, если долгая транзакция заморозила restart_lsn, поэтому диагностируй pg_stat_activity, прежде чем что-то дропать; разрыв LSN в pg_replication_slots — то число, на которое ты алертишь, с max_slot_wal_keep_size как страховкой; а REPLICA IDENTITY FULL покупает полные образы delete ценой более жирных update. Сначала читай состояние slot, чини причину непродвижения и считай диск часами.
 </Recap>
-

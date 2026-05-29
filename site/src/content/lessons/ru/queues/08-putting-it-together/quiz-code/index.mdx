@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-outbox
+- change-data-capture
+- idempotent-consumer
+- dead-letter-queue
+- partition-key-ordering
+- consumer-offset-commit
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Всё вместе: event-driven service mesh"'
-title: Кодировочный тест
+- https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+- https://microservices.io/patterns/data/transactional-outbox.html
+- https://docs.confluent.io/kafka/design/delivery-semantics.html
+status: ready
+summary: "Читай реальную конфигурацию pipeline и код консьюмера — outbox плюс CDC, порядок коммита оффсета, dedup и обработку DLQ — предскажи поведение и выбери фикс, который senior сделает первым."
+title: 'Капстоун очередей: чтение кода и конфигурации'
 track: queues
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Всё вместе: event-driven service mesh unit.
+Баги pipeline живут не в прозе — они живут в границе транзакции, в порядке коммита, в отсутствующем уникальном ограничении и в конфиге коннектора. Читай каждый сниппет по pipeline заказов и выбирай фикс, к которому senior-инженер тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Всё вместе: event-driven service mesh unit.
+Потренируй чтение швов event-driven pipeline так, как читаешь инцидент: замечай, где атомарность, порядок, идемпотентность или обработка DLQ тихо сломаны, и называй коррекцию с наибольшим рычагом.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — запись в outbox
+
+```sql
+-- хендлер заказа, одна транзакция БД
+BEGIN;
+  INSERT INTO orders (id, customer_id, status, total_cents)
+    VALUES ('ord_9f', 'cust_3a', 'placed', 4200);
+  INSERT INTO outbox (id, aggregate_id, type, payload, created_at)
+    VALUES ('evt_7c', 'ord_9f', 'order.placed', '{"order_id":"ord_9f"}', now());
+COMMIT;
+-- отдельно, позже, relay:
+--   SELECT * FROM outbox WHERE sent = false ...
+--   публикация в Kafka, затем UPDATE outbox SET sent = true
+```
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Какую гарантию даёт эта структура и что в результате должны делать консьюмеры ниже по потоку?"
+  choices={[
+    { label: "Строка заказа и outbox коммитятся атомарно (событие существует тогда и только тогда, когда существует заказ), но publish-затем-mark-sent у relay — два неатомарных шага, так что доставка at-least-once: краш после публикации, до UPDATE, переотправит evt_7c. Консьюмеры должны делать dedup по event id.", correct: true },
+    { label: "Весь поток exactly-once, потому что всё обёрнуто в одну транзакцию.", misconception: "Транзакцию делят только два INSERT. Публикация relay и UPDATE флага sent — отдельные неатомарные шаги против двух систем, так что краш между ними переотправляет — at-least-once, а не exactly-once." },
+    { label: "Консьюмеры могут считать, что каждое событие приходит один раз, так что dedup не нужен.", misconception: "Relay переотправляет при краше до mark, так что один event id может прийти дважды. Без dedup на консьюмере order.placed обработается дважды." },
+    { label: "Пометка строки sent до публикации сделала бы это exactly-once.", misconception: "Mark-затем-publish просто превращает дубль в потерянное событие: краш после UPDATE и до публикации — строка выглядит отправленной, но ничего не эмитнуто. Publish-затем-mark плюс идемпотентные консьюмеры — безопасный выбор." },
+  ]}
+/>
+
+## Сниппет 2 — взаимодействие outbox и CDC
+
+```json
+// Debezium outbox-event-router connector
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "table.include.list": "public.outbox",
+  "transforms": "outbox",
+  "transforms.outbox.type":
+    "io.debezium.transforms.outbox.EventRouter",
+  "transforms.outbox.route.by.field": "aggregate_id",
+  "slot.name": "order_outbox_slot",
+  "heartbeat.interval.ms": "0"
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question={"Этот коннектор читает таблицу outbox и маршрутизирует события в Kafka-топик, ключуя по aggregate_id. Две настройки плохо взаимодействуют с низкотрафиковым развёртыванием плюс залипшим консьюмером. Что — настоящая production-опасность?"}
+  choices={[
+    { label: "heartbeat.interval.ms = 0 отключает heartbeats, так что на низкотрафиковой БД slot не продвигает подтверждённый LSN между коммитами и WAL копится; вместе с отсутствием max_slot_wal_keep_size у slot залипание может заполнить диск и остановить primary. Включи heartbeats и поставь cap на slot.", correct: true },
+    { label: "route.by.field = aggregate_id неверно; маршрутизация по id заказа ломает порядок.", misconception: "Маршрутизация по aggregate_id (id заказа) как раз верна — она ключует события каждого заказа в одну партицию для порядка по заказу. Это и есть задуманный дизайн, а не опасность." },
+    { label: "table.include.list должен быть всеми доменными таблицами, а не только outbox.", misconception: "Захват специально сделанной таблицы outbox — осознанный выбор: ты контролируешь её форму и избегаешь связывания консьюмеров с сырыми схемами таблиц. Захват всех доменных таблиц — альтернатива, а не баг здесь." },
+    { label: "PostgresConnector не умеет маршрутизировать по полю, так что transform — no-op.", misconception: "SMT EventRouter существует именно чтобы маршрутизировать outbox-события по полю; route.by.field — поддерживаемая, частая настройка. Опасность — во взаимодействии slot/heartbeat, а не в маршрутизации." },
+  ]}
+/>
+
+## Сниппет 3 — порядок коммита у консьюмера
+
+```python
+for msg in consumer:                      # at-least-once Kafka-консьюмер
+    event = parse(msg.value)
+    consumer.commit()                     # коммит оффсета СНАЧАЛА
+    charge_payment(event.order_id,        # затем side effect
+                   event.amount_cents)
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Этот консьюмер оплаты коммитит оффсет до списания. В чём сбой и какой порядок правильный?"
+  choices={[
+    { label: "Commit-before-process — это at-most-once: если под умирает после коммита, но до charge_payment, оффсет сдвинут и списание тихо теряется — клиента так и не списали. Коммить ПОСЛЕ успеха хендлера и сделай charge_payment идемпотентным, чтобы replay был безопасен.", correct: true },
+    { label: "Это правильно — коммит сначала предотвращает двойные списания.", misconception: "Он предотвращает дубли ценой потери сообщений: краш после коммита роняет списание целиком. Для платежей потерянное списание хуже дубля; commit-after-process плюс идемпотентность — правильная комбинация." },
+    { label: "Баг в том, что parse идёт до коммита; парси после коммита.", misconception: "Порядок parse не влияет на гарантию. Дефект — в коммите оффсета до того, как выполнится side effect, что превращает краш в потерянное списание." },
+    { label: "Сбоя нет, потому что Kafka переотправляет при любом краше.", misconception: "Kafka переотправляет с закоммиченного оффсета. Поскольку оффсет уже закоммичен, событие потерянного списания никогда не переотправляется — оно пропало." },
+  ]}
+/>
+
+## Сниппет 4 — обработка DLQ
+
+```python
+def handle(event):
+    try:
+        process(event)                       # идемпотентный side effect
+    except Exception:
+        send_to_dlq(event)                    # любой сбой -> DLQ
+        consumer.commit()
+```
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Этот хендлер отправляет каждый сбой сразу в DLQ при первом исключении. Что идёт не так и какой senior-фикс?"
+  choices={[
+    { label: "Он DLQ-ит транзиентные сбои (500 от шлюза, кратковременный сетевой сбой), которые прошли бы при повторе, так что DLQ забивается восстановимыми событиями, а настоящие poison-сообщения тонут. Добавь retry-бюджет с backoff для транзиентных ошибок и маршрутизируй в DLQ только при исчерпании.", correct: true },
+    { label: "Ничего — маршрутизация каждого сбоя сразу в DLQ это самый безопасный дизайн.", misconception: "Он затапливает DLQ транзиентными сбоями, которые идемпотентный ретрай очистил бы, превращая автоматическое восстановление в ручной труд и пряча по-настоящему необрабатываемые сообщения в шуме." },
+    { label: "Баг в коммите оффсета после DLQ; никогда не коммить сбойное сообщение.", misconception: "Коммит после того, как сообщение безопасно в DLQ, — правильно: он не даёт poison-сообщению блокировать партицию. Дефект — в DLQ при первом сбое без retry-бюджета." },
+    { label: "process не должен быть идемпотентным, раз DLQ обрабатывает все дубли.", misconception: "Идемпотентный process нужен в любом случае: at-least-once означает, что replay происходит при краше до коммита, а DLQ не делает dedup живых ретраев. Оставь идемпотентность; добавь retry-бюджет." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый шов pipeline читается в коде и конфиге: outbox делает два INSERT атомарными, но publish-затем-mark у relay — at-least-once, так что консьюмеры должны делать dedup; CDC-коннектор, ключующий по aggregate_id, хранит порядок по заказу, но heartbeat.interval.ms = 0 без cap на slot — это простой из-за заполнения диска, ждущий залипания; коммит оффсета до side effect — at-most-once и тихо теряет списания, так что коммить после обработки и оставайся идемпотентным; а DLQ при первом исключении хоронит poison-сообщения под восстановимыми транзиентами, так что ретрай с бюджетом и карантин только при исчерпании. Читай границу транзакции, порядок коммита, уникальное ограничение и конфиг коннектора — именно там и живёт корректность pipeline.
 </Recap>
-
