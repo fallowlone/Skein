@@ -1,42 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sse-parsing
+- delta-accumulation
+- partial-json-tool-args
+- client-abort
+- backpressure
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Streaming"
-title: Coding Quiz
+- https://docs.anthropic.com/en/docs/build-with-claude/streaming
+- https://platform.openai.com/docs/api-reference/responses-streaming
+status: ready
+summary: "Read real SSE-parsing and streaming-client snippets, predict the behaviour, and pick the highest-leverage fix — event framing, delta accumulation, client abort, and partial-JSON tool args."
+title: 'Streaming: code and stream reading'
 track: ai-llm
 unit: 04-streaming
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Streaming unit.
+The SSE parser, the accumulator, and the abort path are where streaming bugs actually live. Read each snippet, predict what it does under real traffic, then choose the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Streaming unit.
+Practise the loop you run on every streaming incident: read the parsing and client code, predict where it corrupts or hangs, and reach for the framing/accumulation/cancellation fix rather than blaming the model.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the SSE frame parser
+
+```js
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+while (true) {
+  const { value, done } = await reader.read();
+  if (done) break;
+  const text = decoder.decode(value);      // one network chunk
+  for (const line of text.split("\n")) {
+    if (line.startsWith("data: ")) {
+      const evt = JSON.parse(line.slice(6)); // parse immediately
+      handle(evt);
+    }
+  }
+}
+```
+
+<Quiz
+  id="04-streaming-code-1"
+  lessonSlug="04-streaming"
+  lang="en"
+  question="This parser works in dev but throws JSON.parse errors under load. What is the bug, and the fix?"
+  choices={[
+    { label: "Network chunks do not align with SSE event boundaries — a single read() can split one 'data:' line across two chunks (or pack several events into one). You must buffer the decoded text, split on the '\\n\\n' event delimiter, and only parse complete frames; decode with {stream:true} too.", correct: true },
+    { label: "JSON.parse is too slow; switch to a streaming JSON parser.", misconception: "Speed is not the issue — correctness is. The parse throws because the 'data:' payload is a fragment of a frame split across TCP chunks, not because JSON.parse is slow." },
+    { label: "You must use EventSource instead of fetch; manual parsing can't work.", misconception: "fetch + ReadableStream is a valid and common way to consume SSE (and required for POST/auth headers). The defect is not buffering across chunk boundaries, which any correct parser must do." },
+    { label: "The server is sending malformed JSON; ask them to fix it.", misconception: "The server frames are valid; your reader is slicing them mid-frame at arbitrary TCP boundaries. Buffer until you have a full event before parsing." },
+  ]}
+/>
+
+## Snippet 2 — the delta accumulator
+
+```js
+let text = "";
+const toolArgs = {};                 // index -> string buffer
+function handle(evt) {
+  if (evt.type === "content_block_delta") {
+    if (evt.delta.type === "text_delta") {
+      text += evt.delta.text;
+      render(text);
+    } else if (evt.delta.type === "input_json_delta") {
+      const i = evt.index;
+      toolArgs[i] = JSON.parse(toolArgs[i] + evt.delta.partial_json); // (!)
+    }
+  }
+}
+```
+
+<Quiz
+  id="04-streaming-code-2"
+  lessonSlug="04-streaming"
+  lang="en"
+  question="The text path is correct. What is wrong with the tool-argument path?"
+  choices={[
+    { label: "It JSON.parses on every input_json_delta. Each partial_json is a fragment of one JSON document, so the parse throws on the first incomplete buffer. Accumulate as a string (toolArgs[i] += evt.delta.partial_json) and parse once at content_block_stop.", correct: true },
+    { label: "It indexes by evt.index — tool args have no index.", misconception: "Each content block carries an index, and multiple tool calls in one message are distinguished exactly by that index. Indexing is correct; parsing per-delta is the bug." },
+    { label: "It should render the tool args like text, immediately.", misconception: "Tool args are structured input for a function, not display text. Even as a 'calling tool…' hint you show the raw partial string — you never act on it until the block closes." },
+    { label: "Nothing is wrong; this is the canonical accumulator.", misconception: "Wrapping the concatenation in JSON.parse means every intermediate fragment is parsed and throws. The canonical form accumulates a string and parses only at content_block_stop." },
+  ]}
+/>
+
+## Snippet 3 — client cancellation
+
+```js
+function ask(prompt) {
+  return fetch("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  }).then(consumeStream);
+}
+// User clicks "Stop". The UI stops rendering tokens.
+// But the server keeps generating, and billing keeps counting.
+```
+
+<Quiz
+  id="04-streaming-code-3"
+  lessonSlug="04-streaming"
+  lang="en"
+  question="Clicking Stop hides tokens but the model keeps generating and you keep paying. What is the correct fix end-to-end?"
+  choices={[
+    { label: "Wire an AbortController: pass controller.signal to fetch and call abort() on Stop. The server must detect the closed request (req.on('close') / signal) and abort the upstream provider stream — otherwise generation and billing continue server-side even after the client disconnects.", correct: true },
+    { label: "Just stop calling render() — the stream ends when the function returns.", misconception: "Not rendering hides tokens locally but leaves the fetch, the server handler, and the upstream model generation all running. You keep paying for tokens no one sees." },
+    { label: "Set a shorter max_tokens so it always finishes quickly.", misconception: "That caps every response, not just cancelled ones, and still cannot stop a generation early on user intent. Cancellation needs an abort signal propagated to the provider, not a length cap." },
+    { label: "Close the WebSocket — fetch streams can't be cancelled.", misconception: "This uses fetch/SSE, not WebSockets, and fetch streams are cancellable via AbortController. The real requirement is propagating the abort all the way to the upstream provider call." },
+  ]}
+/>
+
+## Snippet 4 — server backpressure
+
+```js
+// Express-style SSE endpoint proxying an upstream model stream
+for await (const evt of upstreamStream) {
+  res.write(`data: ${JSON.stringify(evt)}\n\n`); // ignore return value
+}
+res.end();
+```
+
+<Quiz
+  id="04-streaming-code-4"
+  lessonSlug="04-streaming"
+  lang="en"
+  question="A slow client (mobile, weak signal) consumes events slower than the upstream produces them. What does this loop do, and what is the fix?"
+  choices={[
+    { label: "res.write returns false when the socket buffer is full, but the loop ignores it and keeps pulling from upstream — memory balloons as un-sent events queue. Respect backpressure: when write() returns false, pause the upstream and resume on the 'drain' event (or pipe through a stream that does this).", correct: true },
+    { label: "Nothing — TCP handles backpressure transparently, so the loop is fine.", misconception: "TCP flow-control fills the kernel buffer, but Node then queues unwritten data in userland memory unbounded. Ignoring write()'s false return is exactly how a slow consumer OOMs the server." },
+    { label: "It drops events when the client is slow, corrupting the stream.", misconception: "write() never silently drops data; it buffers it in memory and signals fullness via the false return. The failure mode is unbounded memory growth, not lost events." },
+    { label: "Add JSON.stringify caching to speed up the writes.", misconception: "Serialization cost is not the bottleneck for a slow client. The problem is producing faster than the client drains; the fix is honoring write() backpressure, not faster encoding." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every streaming bug is read in the parser, the accumulator, the abort path, or the write loop: SSE frames must be buffered and split on the blank-line delimiter because TCP chunks don't align with events; tool-arg input_json_delta fragments accumulate as a string and parse only at content_block_stop; client Stop must drive an AbortController whose signal propagates to the upstream provider or you keep generating and paying; and a server proxying a stream must honor write()'s false return (pause upstream, resume on drain) or a slow client balloons memory. Read the code path, predict the failure under real traffic, fix the framing/cancellation/backpressure — then re-test against a slow, flaky client.
 </Recap>
-
