@@ -12,11 +12,19 @@ function mergeStampedMap<T extends Stamped>(
   return out;
 }
 
-/** Merge two UserStates: timestamped maps by max(lastAt); scalar prefs prefer `local`. */
+/**
+ * Merge two UserStates. Timestamped maps (history, retrieval) merge per-key by
+ * max(lastAt). UI preferences (tier, lang, motion) prefer `local` — the device
+ * the user is actively on. Earned/accumulated data is coalesced so a fresh
+ * device's empty local state can never erase server data and push the loss back:
+ * `pretest` keeps whichever side has a record, and `manualTierFlips` takes the max.
+ */
 export function mergeProgress(local: UserState, server: UserState): UserState {
   return {
     ...server,
-    ...local, // local scalar prefs (tier, lang, motion, manualTierFlips, pretest) win
+    ...local, // local UI prefs (tier, lang, motion) win
+    pretest: local.pretest ?? server.pretest,
+    manualTierFlips: Math.max(local.manualTierFlips ?? 0, server.manualTierFlips ?? 0),
     history: mergeStampedMap(server.history, local.history),
     retrieval: mergeStampedMap(server.retrieval, local.retrieval),
     dismissedRevisit: { ...server.dismissedRevisit, ...local.dismissedRevisit },
