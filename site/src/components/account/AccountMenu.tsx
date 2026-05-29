@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import { fetchMe } from "~/scripts/account-sync";
 
@@ -7,8 +7,24 @@ type Me = { login: string; nickname: string; avatarUrl: string | null };
 export default function AccountMenu({ lang }: { lang: Locale }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined=loading
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { void fetchMe().then((m) => setMe(m)); }, []);
+
+  // Dismiss the dropdown on outside click or Escape (a11y + expected UX).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onPointer = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+    };
+  }, [open]);
 
   if (me === undefined) return null; // no layout shift while loading
 
@@ -26,7 +42,7 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
   }
 
   return (
-    <div class="relative shrink-0">
+    <div class="relative shrink-0" ref={rootRef}>
       <button class="btn ghost flex items-center gap-1.5" style="padding:4px 8px;" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
         {me.avatarUrl
           ? <img src={me.avatarUrl} alt="" width={20} height={20} class="rounded-full" />
