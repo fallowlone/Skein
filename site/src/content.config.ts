@@ -7,7 +7,7 @@ const Status = z.enum(["stub", "draft", "ready"]);
 const Bi = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 
 const Track = z.enum(TRACKS as [string, ...string[]]);
-const SlugRe = /^(?:\d{2}-[a-z0-9-]+|quiz-[a-z]+|project(?:-[a-z]+)?)$/;
+const SlugRe = /^(?:\d{2}-[a-z0-9-]+|quiz-[a-z]+|project(?:-[a-z]+)?|drill)$/;
 
 const tracks = defineCollection({
   loader: file("src/content/tracks.json"),
@@ -140,6 +140,43 @@ const practice = defineCollection({
 
 export type PracticeTaskData = z.infer<typeof PracticeTask>;
 
+// ── Drill ───────────────────────────────────────────────────────────────────
+const Difficulty3 = z.enum(["easy", "medium", "hard"]);
+const NeetPattern = z.enum([
+  "arrays-hashing", "two-pointers", "sliding-window", "stack",
+  "binary-search", "linked-list", "trees", "tries", "heap-priority-queue",
+  "backtracking", "graphs", "advanced-graphs", "1d-dp", "2d-dp",
+  "greedy", "intervals", "math-geometry", "bit-manipulation",
+]);
+
+const DrillProblem = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  leetcodeId: z.number().int().positive(),
+  slug: z.string().regex(/^[a-z0-9-]+$/),
+  title: z.string().min(1),
+  difficulty: Difficulty3,
+  pattern: NeetPattern,
+  neetcode150: z.boolean().default(true),
+  targetMinutes: z.number().int().positive(),
+  appliesToLesson: z.string().regex(SlugRe).optional(),
+  hints: z.array(Bi).min(2).max(4),
+  followUp: Bi.optional(),
+  companies: z.array(z.string()).default([]),
+}).strict();
+
+const drill = defineCollection({
+  loader: glob({ pattern: "**/*.json", base: "./src/content/drill" }),
+  schema: z.object({
+    track: Track,
+    unit: z.string().regex(SlugRe),
+    patterns: z.array(NeetPattern).min(1),
+    intro: Bi,
+    problems: z.array(DrillProblem).min(3).max(12),
+  }),
+});
+
+export type DrillData = z.infer<typeof drill.schema>;
+
 // ── Projects ────────────────────────────────────────────────────────────────
 const ProjectSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
@@ -161,4 +198,4 @@ const projects = defineCollection({
 
 export type ProjectData = z.infer<typeof ProjectSchema>;
 
-export const collections = { tracks, units, lessons, practice, projects };
+export const collections = { tracks, units, lessons, practice, projects, drill };
