@@ -1,43 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- allocation-hotspot
+- sync-pool
+- gctrace
+- escape-analysis
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Сборка мусора: бюджет пауз, давление аллокаций
-  и невидимый хвост"'
-title: Кодировочный тест
+- https://go.dev/doc/gc-guide
+- https://shipilev.net/jvm/anatomy-quarks/
+status: ready
+summary: Читай реальные Go-сниппеты и строку gctrace, предсказывай поведение GC и выбирай фикс с наибольшим рычагом.
+title: 'GC: чтение кода и трейсов'
 track: performance
 unit: 04-gc
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Сборка мусора: бюджет пауз, давление аллокаций и невидимый хвост unit.
+Профиль аллокаций и лог GC — это место, где GC-проблемы действительно диагностируются. Прочитай код и трейс, затем выбери фикс, который senior-инженер сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Сборка мусора: бюджет пауз, давление аллокаций и невидимый хвост unit.
+Отработай цикл, который ты запускаешь в каждом GC-инциденте: прочитай горячий путь, предскажи, откуда мусор, и потянись за фиксом с наибольшим рычагом раньше, чем тронешь хоть одну ручку тюнинга.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — растущий срез
+
+```go
+func collect(rows []Row) []byte {
+    var out []byte                  // nil-срез, нулевая ёмкость
+    for _, r := range rows {
+        line := fmt.Sprintf("%d,%s\n", r.ID, r.Name)
+        out = append(out, line...)  // многократно растёт + копирует
+    }
+    return out
+}
+```
+
+<Quiz
+  id="04-gc-code-1"
+  lessonSlug="04-gc"
+  lang="ru"
+  question="На 100k строк откуда берётся бо́льшая часть мусора и какой единственный фикс с наибольшим рычагом?"
+  choices={[
+    { label: "Две горячие точки: fmt.Sprintf аллоцирует свежую строку на каждую строку, а срез `out` с нулевой ёмкостью переаллоцируется по мере роста. Преаллоцируй make([]byte, 0, n*avgLen) и собирай через strconv/append вместо Sprintf.", correct: true },
+    { label: "Мусор — это входные `rows`; копируй их меньше.", misconception: "`rows` передаются снаружи, а не аллоцируются здесь. Мусор создаётся внутри цикла — строки Sprintf и многократно растущий backing-массив `out`." },
+    { label: "Ничего значимого — append переиспользует тот же массив.", misconception: "append переиспользует ёмкость, лишь пока она есть; срез с нулевой ёмкостью переаллоцируется (обычно удваиваясь) много раз на 100k строк, каждый раз всё копируя." },
+    { label: "Поднять GOGC, чтобы цикл аллоцировал меньше.", misconception: "GOGC меняет, когда запускается GC, а не сколько аллоцирует цикл. Фикс — аллоцировать меньше: преаллоцировать буфер и убрать Sprintf." },
+  ]}
+/>
+
+## Сниппет 2 — пул
+
+```go
+var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func render(w io.Writer, v *View) error {
+    b := bufPool.Get().(*bytes.Buffer)
+    defer bufPool.Put(b)
+    // ... много пишем в b ...
+    _, err := w.Write(b.Bytes())
+    return err
+}
+```
+
+<Quiz
+  id="04-gc-code-2"
+  lessonSlug="04-gc"
+  lang="ru"
+  question="В этом коде с пулом буферов есть баг корректности, который нагрузочный тест рано или поздно вскроет. Какой?"
+  choices={[
+    { label: "Буфер возвращается в пул без b.Reset(). Следующий Get() выдаёт буфер, всё ещё хранящий байты предыдущего рендера, поэтому при переиспользовании вывод портится устаревшими данными.", correct: true },
+    { label: "sync.Pool небезопасен для конкурентного использования.", misconception: "sync.Pool явно безопасен для конкурентных Get/Put между горутинами. Баг — в гигиене: буфер не сброшен (Reset) перед переиспользованием." },
+    { label: "defer bufPool.Put срабатывает слишком рано.", misconception: "defer выполняется при возврате из функции, после завершения w.Write — порядок в норме. Дефект — отсутствующий Reset." },
+    { label: "new(bytes.Buffer) утекает памятью.", misconception: "Функция New вызывается, только когда пул пуст, и GC может дренировать sync.Pool между циклами. Утечки нет — проблема в устаревшем состоянии при переиспользовании." },
+  ]}
+/>
+
+## Сниппет 3 — строка gctrace
+
+```
+gc 488 @62.1s 39%: 0.41+352+1.1 ms clock, ... 1900->2980->1490 MB, 1990 MB goal, 8 P
+```
+
+<Quiz
+  id="04-gc-code-3"
+  lessonSlug="04-gc"
+  lang="ru"
+  question="Читая эту единственную строку gctrace, какое утверждение верно?"
+  choices={[
+    { label: "39% CPU с момента старта ушло в GC, а фаза конкурентной маркировки заняла 352 мс — оба далеко выше здорового сервиса (~5% GC CPU, от долей до единиц мс маркировки). Это сигнатура death-spiral.", correct: true },
+    { label: "Две stop-the-world фазы (0.41 мс и 1.1 мс) — это проблема.", misconception: "STW-фазы крошечные и здоровые. Патология — 352 мс конкурентной маркировки и 39% GC CPU — коллектор не успевает за аллокациями." },
+    { label: "С кучей всё в порядке, потому что она заканчивается на 1490 MB, ниже цели 1990 MB.", misconception: "Завершение ниже цели — нормально после sweep; тревога в том, что время маркировки и GC CPU взрываются, то есть pacer проигрывает гонку." },
+    { label: "39% означает, что 39% запросов попали в паузу GC.", misconception: "Поле X% — это доля CPU-времени в GC с момента старта программы, а не частота пауз на запрос." },
+  ]}
+/>
+
+## Сниппет 4 — escape-анализ
+
+```go
+func newPoint(x, y int) *Point {   // возвращает указатель...
+    p := Point{x, y}
+    return &p                      // ...поэтому p убегает в кучу
+}
+
+func sumLocal(x, y int) int {
+    p := Point{x, y}               // никогда не убегает
+    return p.X + p.Y               // остаётся на стеке
+}
+```
+
+<Quiz
+  id="04-gc-code-4"
+  lessonSlug="04-gc"
+  lang="ru"
+  question="Какой вызов аллоцирует в куче (добавляя работу GC) и каково общее правило?"
+  choices={[
+    { label: "newPoint аллоцирует в куче, потому что его результат (&p) убегает из функции; sumLocal остаётся на стеке. Правило: значение убегает, когда ссылка на него переживает фрейм — возврат его адреса, сохранение в heap-объект или передача тому, кто его удерживает.", correct: true },
+    { label: "Оба аллоцируют, потому что оба создают Point.", misconception: "Значения на стеке не стоят работы GC. Point в sumLocal никогда не убегает, поэтому escape-анализ держит его на стеке." },
+    { label: "sumLocal аллоцирует, потому что делает арифметику.", misconception: "Арифметика над стековыми значениями ничего не аллоцирует. Аллокацию в куче форсирует escape (ссылка переживает фрейм), а не вычисление." },
+    { label: "Ни один не аллоцирует — Go всегда использует стек.", misconception: "Go использует стек, только когда escape-анализ доказывает, что значение не убегает. Возврат &p форсирует Point из newPoint в кучу." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый GC-инцидент читается в коде и трейсах: срезы с нулевой ёмкостью и Sprintf на каждой итерации — классические горячие точки аллокаций; объекты из пула нужно сбрасывать (Reset) перед переиспользованием; строка gctrace с одного взгляда показывает долю GC CPU и время маркировки; а escape-анализ решает стек-vs-куча по тому, переживает ли ссылка свой фрейм. Диагностируй по профилю, чини аллокацию, потом перепрофилируй для подтверждения.
 </Recap>
-
