@@ -38,4 +38,6 @@ export interface AchievementCtx {
   drillUnitsWithSolve: number;
   noHintSolve: boolean;
   hourOfDay: number;
+  seniorAnswers: number;   // count of weight-3 (expert) answers across both test stages
+  pillarsVisited: number;  // distinct pillars touched in lesson history
 }
