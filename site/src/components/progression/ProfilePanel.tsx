@@ -20,7 +20,9 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   const drillsSolved = solvedEntries.length;
   const xp = xpFromState(s, drillsSolved);
 
-  const drillUnitsWithSolve = new Set(solvedEntries.map(([id]) => (id.includes("-") ? id.split("-")[0] : id))).size;
+  // Each solved entry records its drill unit (DrillBoard passes it through), so
+  // distinct solved units are exact — drives the completionist achievement.
+  const drillUnitsWithSolve = new Set(solvedEntries.map(([, e]: any) => e.unit).filter(Boolean)).size;
   const noHintSolve = solvedEntries.some(([, e]: any) => e.noHint);
   const ctx = { drillsSolved, drillUnitsWithSolve, noHintSolve, hourOfDay: new Date().getHours() };
   const unlocked = new Set(evaluateAchievements(s, ctx));
