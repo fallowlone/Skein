@@ -1,42 +1,149 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- column-pruning
+- sequential-scan
+- normalization
+- compression
+- cdc-etl
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Oltp vs olap"
-title: Coding Quiz
+- https://clickhouse.com/resources/engineering/why-columnar-databases-are-fast
+- https://aws.amazon.com/blogs/database/improve-postgresql-performance-diagnose-and-mitigate-lock-manager-contention/
+- https://clickhouse.com/resources/engineering/unifying-oltp-and-olap
+status: ready
+summary: "Read real query plans, DDL, and pipeline config across the OLTP vs OLAP unit, predict scan cost on row vs column storage, and pick the highest-leverage fix."
+title: 'OLTP vs OLAP: query and plan reading'
 track: data-engineering
 unit: 01-oltp-vs-olap
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Oltp vs olap unit.
+The query plan and the DDL are where the workload split shows itself. Read each snippet, predict how it behaves on row vs column storage, and choose the fix a senior makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Oltp vs olap unit.
+Practise the loop you run in every data-architecture review: read the query, predict the bytes scanned, and reach for the layout or pipeline change — not a band-aid index — before the analytical workload poisons the transactional one.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the EXPLAIN on the row store
+
+```
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT country, SUM(total)
+FROM orders                       -- 40M rows, 50 columns, row-store Postgres
+WHERE created_at >= now() - interval '90 days'
+GROUP BY country;
+
+Seq Scan on orders  (cost=0.00..2.1M rows=38_000_000)
+  Buffers: shared read=4_900_000   -- ~38 GB pulled through the cache
+Planning Time: 0.2 ms
+Execution Time: 31_482 ms
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-1"
+  lessonSlug="01-oltp-vs-olap"
+  lang="en"
+  question="The planner chose a Seq Scan and read ~38 GB even though the query only needs country and total. What does this tell you, and what is the right fix?"
+  choices={[
+    { label: "On a row store every column of every matched row is dragged through the cache to reach country and total, and a 90-day all-countries aggregate isn't selective, so the planner correctly skips any index. The fix is a columnar store that prunes to two columns — not another index on this table.", correct: true },
+    { label: "Add an index on (created_at, country, total) so the Seq Scan becomes an Index Scan.", misconception: "A 90-day window over all countries still matches most rows, so the planner stays on a Seq Scan; a covering index would also store most of the table and add write cost. Indexes fix selectivity, not scan volume." },
+    { label: "The 38 GB is fine — BUFFERS just counts planning memory, not data read.", misconception: "Buffers: shared read counts 8KB pages actually read from the heap. ~4.9M pages is ~38 GB of real I/O dragged through shared_buffers — exactly the cache-evicting scan to avoid on a prod box." },
+    { label: "Raise work_mem so the GROUP BY hashes in memory and the scan disappears.", misconception: "work_mem helps the aggregation step, not the scan: the engine still reads every byte of every matched row to reach two columns. The scan volume is set by the row layout, not the hash memory." },
+  ]}
+/>
+
+## Snippet 2 — the schema split
+
+```sql
+-- OLTP: heavily normalized for cheap, consistent single-row writes
+CREATE TABLE orders (
+  id            bigint PRIMARY KEY,
+  user_id       bigint REFERENCES users(id),
+  country_id    smallint REFERENCES countries(id),
+  total_cents   bigint,
+  created_at    timestamptz
+);
+
+-- OLAP target: denormalized wide fact, country folded in as a low-cardinality column
+CREATE TABLE orders_fact (
+  order_id    UInt64,
+  user_id     UInt64,
+  country     LowCardinality(String),   -- dictionary-encoded
+  total_cents Int64,
+  created_at  DateTime
+) ENGINE = MergeTree ORDER BY (created_at, country);
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-2"
+  lessonSlug="01-oltp-vs-olap"
+  lang="en"
+  question="Why is the OLTP table normalized with a country_id FK while the OLAP fact denormalizes country into a LowCardinality(String) column?"
+  choices={[
+    { label: "Normalization keeps OLTP writes small and consistent — update a country name in one row, no anomalies. The OLAP fact denormalizes to avoid joins on every scan and stores country as a dictionary-encoded low-cardinality column that compresses 30×+ and prunes cleanly. Opposite layouts for opposite workloads.", correct: true },
+    { label: "Denormalization in the fact table is just a mistake — it should also use a country_id FK for integrity.", misconception: "On the analytical side, joining a dimension on every multi-million-row scan is the cost you denormalize away; integrity is enforced upstream in OLTP. A repeated low-cardinality string dictionary-encodes to near-free, so the FK buys nothing here." },
+    { label: "The OLTP table should also be denormalized to make its reads as fast as the warehouse.", misconception: "Denormalizing OLTP multiplies write cost and re-introduces update anomalies — the opposite of what a write-heavy transactional table needs. Each layout matches its workload; you do not make OLTP look like OLAP." },
+    { label: "LowCardinality is just cosmetic; storing country as a plain String would behave identically.", misconception: "LowCardinality dictionary-encodes the column so repeated values become small ints — that is a large compression and scan win on a column repeated millions of times, not cosmetic." },
+  ]}
+/>
+
+## Snippet 3 — the pipeline config
+
+```yaml
+# Debezium connector: stream Postgres WAL changes into Kafka, land in the warehouse
+connector.class: io.debezium.connector.postgresql.PostgresConnector
+plugin.name: pgoutput
+table.include.list: public.orders,public.users,public.countries
+snapshot.mode: initial          # backfill once, then stream changes
+# downstream sink batches into orders_fact every 30s
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-3"
+  lessonSlug="01-oltp-vs-olap"
+  lang="en"
+  question="This CDC pipeline streams the WAL into a warehouse with a 30s sink batch. What does it buy, and what is the tradeoff you must accept?"
+  choices={[
+    { label: "It gives the warehouse its own storage, caches, and failure domain so analytics never touches the OLTP buffer cache. The tradeoff is operational complexity plus seconds-to-minutes of data latency — the orders_fact lags the primary by the snapshot+stream+batch window — which a dashboard tolerates.", correct: true },
+    { label: "It makes the warehouse perfectly real-time with zero lag, identical to querying the primary.", misconception: "WAL capture, transport, and a 30s sink batch each add latency; the warehouse trails the primary by a small window. The point is isolation with bounded lag, not zero lag." },
+    { label: "It removes the need for a columnar store because CDC itself makes scans fast.", misconception: "CDC only moves data; it does nothing to scan speed. The speed comes from the columnar target (orders_fact / MergeTree) that prunes and compresses. CDC is the feed, the layout is the win." },
+    { label: "It eliminates the prod outage risk by running analytics on the replica instead of the primary.", misconception: "The whole point is that analytics runs on a separate columnar store, not on any Postgres replica. Running it on a replica is the failure mode CDC exists to avoid." },
+  ]}
+/>
+
+## Snippet 4 — the write-amplification trap
+
+```sql
+-- An engineer 'fixes' slow dashboards by writing orders straight into ClickHouse,
+-- one INSERT per order, from the checkout hot path:
+INSERT INTO orders_fact (order_id, user_id, country, total_cents, created_at)
+VALUES (918273, 4412, 'DE', 4999, now());   -- called ~5000×/s, one row each
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-4"
+  lessonSlug="01-oltp-vs-olap"
+  lang="en"
+  question="Why does pushing single-row INSERTs from the checkout hot path straight into the column store backfire?"
+  choices={[
+    { label: "A single-row write into a column store touches every column file and creates a tiny part the engine must later merge — the inverse of what columnar is good at. Checkout now pays column-store write cost on its critical path. Keep writes in the row store and batch them into the column store via CDC/ETL.", correct: true },
+    { label: "It is fine — column stores handle single-row writes as cheaply as a row store does.", misconception: "Column stores are slow at single-row writes: each touches every column file and spawns small parts to merge. Putting that on the checkout hot path is exactly the wrong layout for a write." },
+    { label: "The problem is only that ClickHouse lacks a primary key to dedupe the inserts.", misconception: "Dedup is a separate concern. The core issue is write shape: single-row inserts are pathological for a column store regardless of keys; batching is the fix." },
+    { label: "It works as long as you add an index on order_id to speed the inserts.", misconception: "Indexes do not make single-row column-store writes cheap — the write still touches every column file. The fix is to batch writes (or keep them in OLTP and CDC them over), not to index." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Read the artifacts and the layout tells you the cost: a Seq Scan reading tens of GB on a row store means a full-table aggregate that no index can fix — the fix is a column store that prunes. Normalized OLTP and denormalized low-cardinality OLAP facts are opposite-by-design, not a bug. CDC buys isolation at the price of bounded lag, and CDC alone does not make scans fast — the columnar target does. And single-row writes into a column store are pathological: keep writes in the row store, batch them into the column store. Diagnose from the plan and the layout, fix the layout, then verify the bytes scanned dropped.
 </Recap>
-

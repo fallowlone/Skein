@@ -1,42 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- projection-rebuild
+- idempotent-projection
+- snapshot-load
+- event-upcasting
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Event sourcing"
-title: Coding Quiz
+- https://martinfowler.com/eaaDev/EventSourcing.html
+- https://docs.eventsourcingdb.io/best-practices/read-model-consistency-and-lag/
+status: ready
+summary: "Read real event-sourcing snippets — a projection rebuild, a snapshot-aware load, and an upcaster — predict the behaviour, and pick the senior fix."
+title: 'Event sourcing: code reading'
 track: data-engineering
 unit: 05-event-sourcing
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Event sourcing unit.
+The pattern lives or dies in the fold loop, the projection handler, the snapshot load, and the upcaster. Read each snippet, predict what it does under real conditions, then choose the fix a senior makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Event sourcing unit.
+Practise reading the four pieces of code every event-sourced system has: rebuilding a read model by replay, keeping a projection idempotent, loading via a snapshot plus tail, and upcasting an old event shape without rewriting history.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — rebuilding a projection
+
+```ts
+// "drop and replay" rebuild of the balances read model
+async function rebuildBalances(store: EventStore, db: ReadDb) {
+  await db.exec("TRUNCATE balances");
+  for await (const e of store.readAll({ from: 0 })) {  // every event, in order
+    if (e.type === "MoneyDeposited") {
+      await db.exec(
+        "UPDATE balances SET cents = cents + $1 WHERE acct = $2",
+        e.data.cents, e.data.acct,
+      );
+    }
+    // MoneyWithdrawn handler omitted
+  }
+}
+```
+
+<Quiz
+  id="05-event-sourcing-code-1"
+  lessonSlug="05-event-sourcing"
+  lang="en"
+  question="The balances table starts empty after TRUNCATE. For an account whose first event is MoneyDeposited, the UPDATE touches zero rows and the balance never appears. What is the correct fix?"
+  choices={[
+    { label: "The projection assumes a row already exists. Either UPSERT (INSERT ... ON CONFLICT DO UPDATE), or handle the account-creation event (AccountOpened) to seed the row before deposits apply. A rebuild must reconstruct rows from the log, not assume them.", correct: true },
+    { label: "TRUNCATE was the mistake; rebuild incrementally on top of the existing table instead.", misconception: "A full rebuild SHOULD start from empty — that is what makes projections disposable and re-derivable. The bug is that the handler never inserts the row, not that the table was cleared." },
+    { label: "readAll iterates in the wrong order; reverse it so deposits land last.", misconception: "Event order must be oldest-first for a correct fold; reversing it corrupts state. The missing row comes from an UPDATE with no prior INSERT, not from ordering." },
+    { label: "Add a unique index on acct so the UPDATE creates the row.", misconception: "A unique index constrains duplicates; it does not make an UPDATE insert a missing row. You need an UPSERT or a creation-event handler." },
+  ]}
+/>
+
+## Snippet 2 — the projection handler under retries
+
+```ts
+async function onEvent(e: Event, db: ReadDb) {
+  // at-least-once delivery: this can be called twice for the same event
+  await db.exec(
+    "UPDATE counters SET total = total + 1 WHERE name = $1",
+    e.aggregateId,
+  );
+}
+```
+
+<Quiz
+  id="05-event-sourcing-code-2"
+  lessonSlug="05-event-sourcing"
+  lang="en"
+  question="Delivery is at-least-once, so this handler can run twice for the same event. What is the bug and the standard fix?"
+  choices={[
+    { label: "It is not idempotent — a redelivered event double-counts. Track the last processed event version per stream in the read store, apply the update and advance the checkpoint in one transaction, and ignore any event whose version is less than or equal to the last seen.", correct: true },
+    { label: "There is no bug; databases deduplicate identical UPDATE statements automatically.", misconception: "Databases do not dedupe by statement text — running the same increment twice adds two. At-least-once delivery means you must enforce idempotency yourself." },
+    { label: "Switch to exactly-once delivery and the handler is fine as-is.", misconception: "True exactly-once across a network and a database is generally unattainable; systems give at-least-once and you make the consumer idempotent. Relying on exactly-once is the trap." },
+    { label: "Wrap the UPDATE in a retry loop so a failed apply is retried.", misconception: "Retrying makes duplicate application MORE likely, not less. The fix is a version checkpoint that makes reapplication a no-op, not more retries." },
+  ]}
+/>
+
+## Snippet 3 — loading an aggregate with a snapshot
+
+```ts
+async function loadAccount(id: string, store: EventStore): Promise<Account> {
+  const snap = await store.latestSnapshot(id);          // may be null
+  let state = snap ? snap.state : Account.empty(id);
+  const from = snap ? snap.version : 0;
+  for await (const e of store.read(id, { from })) {      // BUG is here
+    state = apply(state, e);
+  }
+  return state;
+}
+```
+
+<Quiz
+  id="05-event-sourcing-code-3"
+  lessonSlug="05-event-sourcing"
+  lang="en"
+  question="The snapshot captured state up to and including version N (snap.version === N). The read uses from = N. What goes wrong?"
+  choices={[
+    { label: "Off-by-one: read(from = N) re-applies the event at version N, which the snapshot already folded in, double-applying it. The tail must start strictly after the snapshot — from = snap.version + 1 (an exclusive lower bound).", correct: true },
+    { label: "Nothing — re-applying one event is harmless because apply is idempotent.", misconception: "apply is a fold step, not idempotent — applying MoneyDeposited twice adds the amount twice. The snapshot already includes version N, so you must skip it." },
+    { label: "The snapshot should be ignored entirely; always replay from 0 for correctness.", misconception: "That defeats the whole point of snapshots, which exist to bound replay cost. The fix is the correct exclusive bound, not discarding the snapshot." },
+    { label: "store.read returns events in reverse, so the last event is applied first.", misconception: "read returns events oldest-first from the given version; ordering is fine. The defect is the inclusive lower bound that re-applies version N." },
+  ]}
+/>
+
+## Snippet 4 — upcasting an evolved event
+
+```ts
+// v1: { type: "OrderPlaced", total: 1299 }            // cents, currency implied USD
+// v2: { type: "OrderPlaced", amount: { cents, currency } }
+function upcastOrderPlaced(raw: any): OrderPlacedV2 {
+  if (raw.version === 2) return raw;                    // already current
+  // raw is v1
+  return {
+    type: "OrderPlaced",
+    version: 2,
+    amount: { cents: raw.total, currency: "USD" },
+  };
+}
+```
+
+<Quiz
+  id="05-event-sourcing-code-4"
+  lessonSlug="05-event-sourcing"
+  lang="en"
+  question="What is the role of this function, and which property is essential for it to be safe to carry indefinitely?"
+  choices={[
+    { label: "It is an upcaster: at deserialization time it lifts a stored v1 event to the current v2 shape so domain code only ever sees v2 — without rewriting the persisted v1 event. It must be a pure, deterministic mapping of historical payloads, tested against real v1 data, because a bug here silently corrupts every replay of old events.", correct: true },
+    { label: "It is a migration that rewrites stored v1 events to v2 in the log.", misconception: "It returns a transformed in-memory object and never writes back to the store; the persisted v1 event is untouched. Rewriting the log would violate append-only." },
+    { label: "It is a projection handler that updates a read model.", misconception: "It produces a normalized event, not a read-model row. Upcasting happens on the read path of the event store, before the event reaches projections or aggregates." },
+    { label: "It is optional sugar; you could just add `currency ?? 'USD'` everywhere instead.", misconception: "Scattering defaults across every consumer leaks schema history indefinitely. Centralizing it in one tested upcaster is exactly the point — domain code stays on the current shape." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every event-sourced system is read in these four pieces of code. A rebuild starts from empty and must reconstruct rows from the log, so handlers UPSERT or honour creation events rather than assuming rows exist. Projections face at-least-once delivery, so they advance a per-stream version checkpoint in the same transaction as the write and ignore already-seen versions. Snapshot loads use an exclusive lower bound (version + 1) so the snapshotted event is not re-folded. And upcasters are pure, tested transformations that lift old shapes to current at read time, never rewriting the persisted log. Read the code, predict the fold, then fix the allocation of truth — never the log itself.
 </Recap>
-

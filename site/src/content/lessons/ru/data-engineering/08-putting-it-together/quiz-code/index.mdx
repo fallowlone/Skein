@@ -1,42 +1,133 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- oltp-olap-split
+- elt-transform
+- parquet-pruning
+- vector-search
+- dual-write-outbox
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Putting it together"
-title: Кодировочный тест
+- https://www.confluent.io/blog/dual-write-problem/
+- https://docs.getdbt.com/docs/build/incremental-models
+- https://www.e6data.com/blog/apache-iceberg-snapshots-time-travel
+status: ready
+summary: Читай реальный SQL, dbt-модель, предикат Parquet и сниппет векторного retrieval по всему треку, предскажи поведение и выбери фикс с наибольшим рычагом.
+title: 'Дата-платформа: чтение кода и запросов'
 track: data-engineering
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Putting it together unit.
+Баги дата-платформы живут в запросах, трансформациях и интеграционном коде — не в слайдах. Прочитай каждый сниппет сквозь трек, предскажи его влияние на корректность или стоимость, потом выбери фикс, который senior сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Putting it together unit.
+Отработай цикл, который гоняешь на реальной платформе: прочитай запрос или трансформацию, реши, подходит ли она хранилищу, против которого исполняется, и потянись за фиксом с наибольшим рычагом — верная раскладка, верный контракт доставки — прежде чем добавлять железо.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — аналитический запрос на OLTP
+
+```sql
+-- ежечасно против живой Postgres-таблицы orders
+SELECT country, date_trunc('day', created_at) AS d, sum(amount)
+FROM orders
+WHERE created_at >= now() - interval '90 days'
+GROUP BY 1, 2;
+```
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Этот 90-дневный агрегат гоняется ежечасно на живой OLTP-БД. Что не так с размещением и каков фикс?"
+  choices={[
+    { label: "Это OLAP-скан на OLTP-сторе: 90-дневный полный агрегат читает каждую строку и колонку orders в строковом формате и конкурирует с записями оформления за buffer cache и IO. Перенеси его в колоночный склад, питаемый через CDC, где скан дёшев и изолирован.", correct: true },
+    { label: "Просто добавить индекс на created_at, и на Postgres станет быстро.", misconception: "Индекс помогает выбрать диапазон дат, но запрос всё равно агрегирует миллионы строк в строковой раскладке и всё равно грузит транзакционный стор. Паттерн доступа — OLAP; хранилище должно быть колоночным, а не просто лучше проиндексированным." },
+    { label: "Запрос нормальный; агрегация дёшева в любой БД.", misconception: "90-дневный group-by по живой OLTP-таблице — тяжёлый скан, конкурирующий с транзакционным путём; ровно поэтому существует разделение нагрузок. Дешёвая агрегация требует колоночной раскладки, читающей только затронутые колонки." },
+    { label: "Добавить read-реплику и гонять там; проблема решена.", misconception: "Реплика изолирует нагрузку, но сохраняет строковую раскладку, так что скан всё равно медленный — он читает каждую колонку каждой строки. Изоляция — половина ответа; вторая половина — колоночный стор под сканы." },
+  ]}
+/>
+
+## Сниппет 2 — инкрементальная dbt-модель
+
+```sql
+{{ config(materialized='incremental', unique_key='order_id') }}
+SELECT order_id, customer_id, amount, status, updated_at
+FROM {{ source('raw', 'orders') }}
+{% if is_incremental() %}
+WHERE updated_at > (SELECT max(updated_at) FROM {{ this }})
+{% endif %}
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Заказ жёстко удалён в источнике. Что покажет эта gold-модель после следующего инкрементального прогона и каков фикс?"
+  choices={[
+    { label: "Удалённый заказ остаётся: инкрементальная модель видит только строки, у которых продвинулся updated_at, а жёсткое удаление не испускает такой строки. Лови удаления через CDC-tombstones (флаг soft-delete или поток deletes) и мержи их, либо периодически делай full-refresh для реконсиляции.", correct: true },
+    { label: "Удалённый заказ исчезнет сам, потому что в источнике его больше нет.", misconception: "Инкрементальные модели аппендят/мержат только изменённые строки из фильтра источника; они никогда не пересканируют весь источник, поэтому не могут заметить отсутствие. Удаление невидимо для фильтра по high-water-mark, если не придёт как явное событие изменения." },
+    { label: "unique_key на order_id удалит устаревшую строку за тебя.", misconception: "unique_key управляет тем, как совпавшая входящая строка мержится (upsert) — и не делает ничего, когда строка вообще не приходит. Жёсткое удаление не порождает входящей строки, так что совпадать и удалять нечего." },
+    { label: "Переключиться на полный скан таблицы каждый прогон, чтобы удаления исчезали — это единственный вариант.", misconception: "Full-refresh действительно реконсилит удаления, но выбрасывать инкрементальность на каждом прогоне убивает экономию. Senior-фикс — пробрасывать удаления как CDC-tombstones и мержить их, оставляя инкрементальный путь для частого случая." },
+  ]}
+/>
+
+## Сниппет 3 — предикат Parquet
+
+```python
+# Iceberg-таблица, партиционированная по event_date, country — обычная колонка
+df = spark.read.table("events")
+result = (df
+    .filter("upper(country) = 'US'")          # функция оборачивает колонку
+    .filter("event_date = '2026-05-01'")
+    .groupBy("country").count())
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Фильтр по event_date прунит хорошо, но фильтр по country сканирует гораздо больше ожидаемого. Почему и каков фикс?"
+  choices={[
+    { label: "upper(country) оборачивает колонку в функцию, так что движок не может использовать min/max-статистику футера по row group для пропуска файлов — predicate pushdown/pruning сломан. Сравнивай сырую колонку (country = 'US') или храни её пред-нормализованной, чтобы предикат остался prunable.", correct: true },
+    { label: "Parquet не умеет прунить ни по одной колонке, кроме партиционной.", misconception: "Parquet прунит и непартиционные колонки, используя min/max-статистику футера по row group. Проблема здесь в том, что оборачивание колонки в upper() прячет её от этой статистики, а не в том, что pruning ограничен партициями." },
+    { label: "Фильтры идут не в том порядке; поменяй их местами.", misconception: "Порядок фильтров не меняет pruning — оптимизатор пушит оба предиката вниз. Поломку даёт обёртка-функция на country, делающая её предикат не-sargable против статистики футера." },
+    { label: "Добавить больше партиций на country, чтобы сканировалось меньше.", misconception: "Избыточное партиционирование по колонке высокой кардинальности создаёт проблему мелких файлов и не поможет, пока upper() оборачивает предикат. Сначала сделай предикат prunable; только потом думай о партиционировании country, если кардинальность вменяемая." },
+  ]}
+/>
+
+## Сниппет 4 — векторный retrieval
+
+```python
+def recommend(query: str, k: int = 10):
+    qvec = embed(query)
+    hits = vector_index.search(qvec, ef_search=20, top_k=k)
+    return [h.product for h in hits]   # эмбеддинги пересобираются ночью
+```
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Тут спрятаны две проблемы: результаты иногда рекомендуют товар, удалённый часы назад, и recall ощущается низким. Каковы senior-фиксы?"
+  choices={[
+    { label: "Устаревание: фильтруй hits против живых OLTP-id (или множества tombstone) на время запроса, чтобы ночью-устаревший эмбеддинг не вытащил удалённый товар. Recall: ef_search=20 при top_k=10 — тесный ANN-список поиска; подними ef_search, чтобы расширить пул кандидатов, меняя немного задержки на recall.", correct: true },
+    { label: "Пересобирать весь векторный индекс каждую минуту, чтобы ничто не устаревало.", misconception: "Переэмбеддинг всего каталога каждую минуту дико дорог и всё равно оставляет окно. Дешёвый и корректный фикс — фильтр живости против OLTP на время запроса: пусть система записи отвечает «существует ли это ещё?»." },
+    { label: "Низкий recall неисправим — ANN приближённый по определению, прими это.", misconception: "ANN меняет recall на скорость через параметры вроде ef_search; слишком маленький список поиска возвращает не те десять, а не неизбежный предел. Расширение ef_search (или HNSW M/ef_construction) восстанавливает recall ценой задержки, которую ты выбираешь." },
+    { label: "Увеличить top_k до 100, чтобы починить и устаревание, и recall.", misconception: "Возврат большего числа строк не убирает удалённые товары (всё ещё нет проверки живости) и не улучшает качество кандидатов, если ef_search остаётся 20 — ты просто получаешь больше того же приближённого набора. Чини recall через ef_search, а устаревание — через живой фильтр." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Любой баг платформы читается в запросе, трансформации или интеграционном сниппете: OLAP-агрегат, застрявший на OLTP-сторе; инкрементальная модель, не видящая удалений; предикат Parquet, обёрнутый в функцию и убивший pruning; и векторный поиск, одновременно устаревший и голодный на recall. Фикс почти никогда не в железе — это верное хранилище под паттерн доступа, удаления, проброшенные как CDC-tombstones, sargable-предикаты, дающие футеру прунить, и живой OLTP-фильтр плюс настроенный ef_search для retrieval. Прочитай код, размести нагрузку, потом проверь.
 </Recap>
-

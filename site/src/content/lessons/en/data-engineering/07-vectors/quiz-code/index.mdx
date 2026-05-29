@@ -1,42 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- hnsw-params
+- pgvector-query
+- distance-operators
+- ivf-probes
+- recall-measurement
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Vectors"
-title: Coding Quiz
+- https://github.com/pgvector/pgvector
+- https://www.crunchydata.com/blog/hnsw-indexes-with-postgres-and-pgvector
+status: ready
+summary: "Read real pgvector DDL and queries — predict the recall/latency behaviour and pick the highest-leverage fix for HNSW params, distance operators, and filtered search."
+title: 'Vector search: code and query reading'
 track: data-engineering
 unit: 07-vectors
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Vectors unit.
+Vector-search bugs live in the DDL and the query, not in an exception. Read the SQL, predict the recall and latency it produces, then choose the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Vectors unit.
+Practise the loop you run on every recall incident: read the index definition and the query, predict where recall leaks or latency spikes, and reach for the highest-leverage fix.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the HNSW index and the default knob
+
+```sql
+CREATE INDEX ON docs USING hnsw (embedding vector_cosine_ops)
+  WITH (m = 16, ef_construction = 64);
+
+-- query path, run per request
+SELECT id, body FROM docs
+ORDER BY embedding <=> $1
+LIMIT 10;
+```
+
+<Quiz
+  id="07-vectors-code-1"
+  lessonSlug="07-vectors"
+  lang="en"
+  question="The index builds fine and queries are fast, but recall@10 measures only ~80%. What is the highest-leverage fix?"
+  choices={[
+    { label: "Raise hnsw.ef_search at query time (SET hnsw.ef_search = 200) — it defaults to 40, which is the runtime recall dial. A larger candidate pool lifts recall toward 0.95+ at the cost of a few ms, with no rebuild.", correct: true },
+    { label: "Drop and rebuild the index with m = 64.", misconception: "A higher m raises recall and memory but requires a full rebuild and still leaves ef_search at 40. The cheap, immediate lever is the runtime ef_search, not a costly rebuild." },
+    { label: "Switch the operator from <=> to <-> for accuracy.", misconception: "<=> is cosine distance and <-> is L2; the index was built with vector_cosine_ops, so changing the operator at query time mismatches the opclass. The recall gap is from ef_search, not the operator." },
+    { label: "Add more rows so the graph is denser.", misconception: "Adding data does not raise recall on existing queries — it enlarges the search space. Recall@10 is governed by ef_search and graph quality, not corpus size." },
+  ]}
+/>
+
+## Snippet 2 — the distance operator vs the opclass
+
+```sql
+-- embeddings stored from a model trained on cosine similarity
+CREATE INDEX ON items USING hnsw (embedding vector_l2_ops);
+
+SELECT id FROM items
+ORDER BY embedding <=> $1   -- cosine operator
+LIMIT 10;
+```
+
+<Quiz
+  id="07-vectors-code-2"
+  lessonSlug="07-vectors"
+  lang="en"
+  question="The query is slow and recall is poor. What is wrong here?"
+  choices={[
+    { label: "The operator and the index opclass disagree: the index is built for L2 (vector_l2_ops) but the query orders by the cosine operator (<=>), so the planner cannot use the index and falls back to a full scan. Build the index with vector_cosine_ops to match the cosine query — and match how the model was trained.", correct: true },
+    { label: "The <=> operator is simply slower than <->.", misconception: "The operators have comparable cost; the slowness is the index being unusable for this operator, forcing a sequential scan over every row." },
+    { label: "pgvector does not support cosine distance.", misconception: "pgvector supports cosine (<=>), L2 (<->), and inner product (<#>). The defect is the mismatch between the query operator and the index opclass, not missing support." },
+    { label: "The LIMIT 10 is too small for the index to engage.", misconception: "LIMIT does not gate index usage. The index is skipped because its opclass does not match the query's distance operator." },
+  ]}
+/>
+
+## Snippet 3 — IVFFlat probes
+
+```sql
+CREATE INDEX ON docs USING ivfflat (embedding vector_cosine_ops)
+  WITH (lists = 1000);
+
+-- query
+SELECT id FROM docs ORDER BY embedding <=> $1 LIMIT 10;
+-- ivfflat.probes left at its default
+```
+
+<Quiz
+  id="07-vectors-code-3"
+  lessonSlug="07-vectors"
+  lang="en"
+  question="With lists = 1000 and probes left at the default, recall is far below expectation. Why, and what is the first move?"
+  choices={[
+    { label: "ivfflat.probes defaults to 1, so the query scans only a single cluster out of 1000 — most true neighbors live in other buckets and are never seen. Raise probes (e.g. SET ivfflat.probes = 50) to scan more clusters, trading latency for recall.", correct: true },
+    { label: "lists = 1000 is too high and must be lowered.", misconception: "A larger lists value gives finer clusters and can help recall once probes is raised; with probes = 1 the symptom is scanning one bucket, not too many buckets." },
+    { label: "IVFFlat cannot do cosine distance.", misconception: "IVFFlat supports cosine via vector_cosine_ops, used here. The recall loss is from probes = 1 scanning a single cluster." },
+    { label: "The index needs REINDEX after every query.", misconception: "Reindexing is for centroid drift over time, not per query. The immediate fix is raising probes so more clusters are scanned." },
+  ]}
+/>
+
+## Snippet 4 — measuring recall against ground truth
+
+```sql
+-- exact ground truth (no index hint, brute force)
+SELECT id FROM docs ORDER BY embedding <=> $1 LIMIT 10;  -- with index disabled
+
+-- ANN result
+SET hnsw.ef_search = 100;
+SELECT id FROM docs ORDER BY embedding <=> $1 LIMIT 10;   -- with HNSW
+-- recall@10 = |exact_ids ∩ ann_ids| / 10
+```
+
+<Quiz
+  id="07-vectors-code-4"
+  lessonSlug="07-vectors"
+  lang="en"
+  question="A teammate computes recall by checking the ANN result's average distance against a fixed threshold instead of the overlap with an exact top-10. Why is that wrong?"
+  choices={[
+    { label: "Recall@k is defined as the overlap between the ANN top-k and the exact top-k ID sets, not a distance threshold. A wrong neighbor can have a small distance, so a threshold passes results that are not in the true top-10 — you must compare ID sets against an exact baseline.", correct: true },
+    { label: "Distance thresholds are fine; they measure the same thing as recall.", misconception: "A distance threshold measures how close the returned items are, not whether they are the right items. Two different vectors can both sit under a threshold while one is a true neighbor and one is not." },
+    { label: "You should measure latency instead of recall.", misconception: "Latency and recall are different axes. The whole point is that low recall is latency-invisible, so you must measure recall directly via ID overlap." },
+    { label: "Recall can only be measured in the embedding model, not in SQL.", misconception: "Recall is measured by comparing the ANN ID set to an exact ORDER BY scan in the same database; no model call is needed for the ground-truth comparison." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every recall incident is read in the DDL and the query: ef_search defaults to 40 and is the runtime recall dial; the query's distance operator must match the index opclass or the planner falls back to a full scan; IVFFlat's probes defaults to 1 and scans a single cluster until you raise it; and recall@k is the ID-set overlap against an exact baseline, never a distance threshold. Read the SQL, find the leak, turn the cheapest dial first, then re-measure recall to confirm.
 </Recap>
-

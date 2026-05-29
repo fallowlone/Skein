@@ -1,42 +1,149 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- column-pruning
+- sequential-scan
+- normalization
+- compression
+- cdc-etl
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Oltp vs olap"
-title: Кодировочный тест
+- https://clickhouse.com/resources/engineering/why-columnar-databases-are-fast
+- https://aws.amazon.com/blogs/database/improve-postgresql-performance-diagnose-and-mitigate-lock-manager-contention/
+- https://clickhouse.com/resources/engineering/unifying-oltp-and-olap
+status: ready
+summary: "Читайте реальные планы запросов, DDL и конфиг пайплайна по юниту OLTP vs OLAP, прогнозируйте стоимость скана на row vs column store и выбирайте фикс с наибольшим рычагом."
+title: 'OLTP vs OLAP: чтение запросов и планов'
 track: data-engineering
 unit: 01-oltp-vs-olap
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Oltp vs olap unit.
+План запроса и DDL — там, где разделение нагрузок проявляет себя. Прочитайте каждый сниппет, спрогнозируйте поведение на row vs column store и выберите фикс, который senior делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Oltp vs olap unit.
+Отработайте цикл, который вы запускаете на каждом ревью архитектуры данных: прочитать запрос, спрогнозировать просканированные байты и потянуться к смене layout или пайплайна — а не к костыльному индексу — прежде чем аналитическая нагрузка отравит транзакционную.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — EXPLAIN на row store
+
+```
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT country, SUM(total)
+FROM orders                       -- 40M строк, 50 колонок, row-store Postgres
+WHERE created_at >= now() - interval '90 days'
+GROUP BY country;
+
+Seq Scan on orders  (cost=0.00..2.1M rows=38_000_000)
+  Buffers: shared read=4_900_000   -- ~38 GB протянуто через кэш
+Planning Time: 0.2 ms
+Execution Time: 31_482 ms
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-1"
+  lessonSlug="01-oltp-vs-olap"
+  lang="ru"
+  question="Планировщик выбрал Seq Scan и прочитал ~38 GB, хотя запросу нужны только country и total. О чём это говорит и какой фикс правильный?"
+  choices={[
+    { label: "На row store каждая колонка каждой подошедшей строки протягивается через кэш ради country и total, а 90-дневный агрегат по всем странам неселективен, так что планировщик справедливо игнорирует любой индекс. Фикс — column store, делающий pruning до двух колонок, а не ещё один индекс на этой таблице.", correct: true },
+    { label: "Добавить индекс на (created_at, country, total), чтобы Seq Scan стал Index Scan.", misconception: "90-дневное окно по всем странам всё равно подходит почти всем строкам, поэтому планировщик остаётся на Seq Scan; покрывающий индекс к тому же сохранит почти всю таблицу и добавит стоимость записи. Индексы чинят selectivity, а не объём скана." },
+    { label: "38 GB — это нормально, BUFFERS просто считает память планирования, а не прочитанные данные.", misconception: "Buffers: shared read считает страницы по 8KB, реально прочитанные из heap. ~4.9M страниц — это ~38 GB реального I/O, протянутого через shared_buffers — ровно тот вытесняющий кэш скан, которого надо избегать на прод-машине." },
+    { label: "Поднять work_mem, чтобы GROUP BY хешировался в памяти и скан исчез.", misconception: "work_mem помогает шагу агрегации, а не скану: движок всё равно читает каждый байт каждой подошедшей строки ради двух колонок. Объём скана задаёт layout строки, а не память под хеш." },
+  ]}
+/>
+
+## Сниппет 2 — разделение схемы
+
+```sql
+-- OLTP: сильно нормализовано ради дешёвых консистентных одиночных записей
+CREATE TABLE orders (
+  id            bigint PRIMARY KEY,
+  user_id       bigint REFERENCES users(id),
+  country_id    smallint REFERENCES countries(id),
+  total_cents   bigint,
+  created_at    timestamptz
+);
+
+-- OLAP target: денормализованный широкий факт, country свёрнут в низкокардинальную колонку
+CREATE TABLE orders_fact (
+  order_id    UInt64,
+  user_id     UInt64,
+  country     LowCardinality(String),   -- dictionary-encoded
+  total_cents Int64,
+  created_at  DateTime
+) ENGINE = MergeTree ORDER BY (created_at, country);
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-2"
+  lessonSlug="01-oltp-vs-olap"
+  lang="ru"
+  question="Почему OLTP-таблица нормализована с FK country_id, а OLAP-факт денормализует country в колонку LowCardinality(String)?"
+  choices={[
+    { label: "Normalization держит записи OLTP мелкими и консистентными — обновил название страны в одной строке, без аномалий. OLAP-факт денормализует, чтобы не делать join на каждом скане, и хранит country как dictionary-encoded низкокардинальную колонку, сжимающуюся 30×+ и чисто пруньящуюся. Противоположные layout-ы для противоположных нагрузок.", correct: true },
+    { label: "Денормализация в факте — просто ошибка, там тоже должен быть FK country_id ради целостности.", misconception: "На аналитической стороне join измерения на каждом скане в миллионы строк — та цена, которую денормализацией убирают; целостность обеспечивается выше, в OLTP. Повторяющаяся низкокардинальная строка dictionary-encoded почти бесплатна, так что FK тут ничего не даёт." },
+    { label: "OLTP-таблицу тоже надо денормализовать, чтобы её чтения были как у склада.", misconception: "Денормализация OLTP умножает стоимость записи и возвращает аномалии обновления — противоположное тому, что нужно запись-тяжёлой транзакционной таблице. Каждый layout соответствует своей нагрузке; OLTP не делают похожим на OLAP." },
+    { label: "LowCardinality чисто косметика; хранение country как обычной String вело бы себя так же.", misconception: "LowCardinality dictionary-encoded кодирует колонку, так что повторяющиеся значения становятся маленькими int — это большой выигрыш в сжатии и скане на колонке, повторяющейся миллионы раз, а не косметика." },
+  ]}
+/>
+
+## Сниппет 3 — конфиг пайплайна
+
+```yaml
+# Коннектор Debezium: стримит изменения WAL Postgres в Kafka, приземляет в склад
+connector.class: io.debezium.connector.postgresql.PostgresConnector
+plugin.name: pgoutput
+table.include.list: public.orders,public.users,public.countries
+snapshot.mode: initial          # один бэкфилл, затем стрим изменений
+# downstream sink батчит в orders_fact каждые 30s
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-3"
+  lessonSlug="01-oltp-vs-olap"
+  lang="ru"
+  question="Этот CDC-пайплайн стримит WAL в склад с 30s батчем sink. Что он даёт и какой компромисс надо принять?"
+  choices={[
+    { label: "Он даёт складу собственные хранилище, кэши и failure domain, так что аналитика никогда не трогает buffer cache OLTP. Компромисс — операционная сложность плюс задержка данных от секунд до минут: orders_fact отстаёт от primary на окно snapshot+стрим+батч, что дашборд терпит.", correct: true },
+    { label: "Он делает склад идеально real-time с нулевым лагом, как запрос к primary.", misconception: "Захват WAL, транспорт и 30s батч sink каждый добавляют задержку; склад отстаёт от primary на небольшое окно. Смысл — изоляция с ограниченным лагом, а не нулевой лаг." },
+    { label: "Он снимает нужду в column store, потому что сам CDC делает сканы быстрыми.", misconception: "CDC только перемещает данные; на скорость скана он не влияет. Скорость — от колоночного target (orders_fact / MergeTree), делающего pruning и сжатие. CDC — это feed, layout — это выигрыш." },
+    { label: "Он устраняет риск прод-аварии, гоняя аналитику на реплике вместо primary.", misconception: "Весь смысл в том, что аналитика идёт на отдельный column store, а не на какую-либо реплику Postgres. Гонять её на реплике — это режим отказа, ради ухода от которого и существует CDC." },
+  ]}
+/>
+
+## Сниппет 4 — ловушка write-amplification
+
+```sql
+-- Инженер «чинит» медленные дашборды, записывая orders прямо в ClickHouse,
+-- по одному INSERT на заказ, из горячего пути checkout:
+INSERT INTO orders_fact (order_id, user_id, country, total_cents, created_at)
+VALUES (918273, 4412, 'DE', 4999, now());   -- вызывается ~5000×/s, по строке за раз
+```
+
+<Quiz
+  id="01-oltp-vs-olap-code-4"
+  lessonSlug="01-oltp-vs-olap"
+  lang="ru"
+  question="Почему проталкивание одиночных INSERT из горячего пути checkout прямо в column store даёт обратный эффект?"
+  choices={[
+    { label: "Одиночная запись в column store трогает каждый файл колонки и создаёт крошечный part, который движок потом должен мёрджить — это инверсия того, в чём колонка хороша. Checkout теперь платит стоимость записи column store на критическом пути. Держите записи в row store и батчите их в column store через CDC/ETL.", correct: true },
+    { label: "Это нормально — column store обрабатывает одиночные записи так же дёшево, как row store.", misconception: "Column store медленный на одиночных записях: каждая трогает каждый файл колонки и порождает мелкие part-ы для мёрджа. Ставить это на горячий путь checkout — ровно неверный layout для записи." },
+    { label: "Проблема лишь в том, что ClickHouse не имеет primary key для дедупа вставок.", misconception: "Дедуп — отдельная забота. Ядро проблемы — форма записи: одиночные вставки патологичны для column store независимо от ключей; фикс — батчинг." },
+    { label: "Работает, если добавить индекс на order_id, чтобы ускорить вставки.", misconception: "Индексы не делают одиночные записи в column store дешёвыми — запись всё равно трогает каждый файл колонки. Фикс — батчить записи (или держать их в OLTP и переливать через CDC), а не индексировать." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Читаешь артефакты — и layout говорит тебе стоимость: Seq Scan, читающий десятки GB на row store, означает агрегат по всей таблице, который не починит ни один индекс — фикс — column store, делающий pruning. Нормализованный OLTP и денормализованный низкокардинальный OLAP-факт противоположны по дизайну, а не баг. CDC покупает изоляцию ценой ограниченного лага, и сам по себе CDC не делает сканы быстрыми — это делает колоночный target. А одиночные записи в column store патологичны: держи записи в row store, батчи их в column store. Диагностируй по плану и layout, чини layout, затем проверь, что просканированные байты упали.
 </Recap>
-
