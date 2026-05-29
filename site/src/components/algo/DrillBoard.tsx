@@ -9,7 +9,7 @@ type Problem = {
   followUp?: { en: string; ru: string };
   companies: string[];
 };
-type Props = { lang: Locale; problems: Problem[] };
+type Props = { lang: Locale; problems: Problem[]; unit?: string };
 
 const DIFF_LABEL: Record<string, Record<Locale, string>> = {
   easy: { en: "Easy", ru: "Лёгкая" },
@@ -86,7 +86,7 @@ function ProblemCard({
   );
 }
 
-export default function DrillBoard({ lang, problems }: Props) {
+export default function DrillBoard({ lang, problems, unit }: Props) {
   const groups: { pattern: string; items: Problem[] }[] = [];
   for (const p of problems) {
     let g = groups.find((x) => x.pattern === p.pattern);
@@ -107,8 +107,8 @@ export default function DrillBoard({ lang, problems }: Props) {
   function cycle(id: string) {
     setEntries((prev) => {
       const ns = nextStatus(prev[id]?.status ?? "unattempted");
-      saveEntry(id, ns, now);
-      return { ...prev, [id]: { status: ns, at: now } };
+      saveEntry(id, ns, now, undefined, unit);
+      return { ...prev, [id]: { status: ns, at: now, unit } };
     });
   }
 
