@@ -1,4 +1,5 @@
 import type { UserState } from "./user-state";
+import type { PretestResult, Progression } from "./progression/types";
 
 type Stamped = { lastAt: number };
 function mergeStampedMap<T extends Stamped>(
@@ -23,7 +24,8 @@ export function mergeProgress(local: UserState, server: UserState): UserState {
   return {
     ...server,
     ...local, // local UI prefs (tier, lang, motion) win
-    pretest: local.pretest ?? server.pretest,
+    pretest: pickBetterPretest(local.pretest, server.pretest),
+    progression: mergeProgression(local.progression, server.progression),
     manualTierFlips: Math.max(local.manualTierFlips ?? 0, server.manualTierFlips ?? 0),
     history: mergeStampedMap(server.history, local.history),
     retrieval: mergeStampedMap(server.retrieval, local.retrieval),
@@ -62,4 +64,26 @@ export async function pushProgress(state: UserState): Promise<boolean> {
     });
     return r.ok;
   } catch { return false; }
+}
+
+function pickBetterPretest(a?: PretestResult | null, b?: PretestResult | null): PretestResult | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  return a.rating >= b.rating ? a : b;
+}
+
+function mergeProgression(a?: Progression, b?: Progression): Progression {
+  const base: Progression = a ?? { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] };
+  if (!b) return base;
+  return {
+    xp: Math.max(a?.xp ?? 0, b.xp ?? 0),
+    level: Math.max(a?.level ?? 1, b.level ?? 1),
+    achievements: { ...b.achievements, ...(a?.achievements ?? {}) },
+    streak: {
+      lastActiveDay: (a?.streak.lastActiveDay ?? "") >= (b.streak.lastActiveDay ?? "") ? (a?.streak.lastActiveDay ?? "") : b.streak.lastActiveDay,
+      count: (a?.streak.lastActiveDay ?? "") >= (b.streak.lastActiveDay ?? "") ? (a?.streak.count ?? 0) : b.streak.count,
+      best: Math.max(a?.streak.best ?? 0, b.streak.best ?? 0),
+    },
+    titles: Array.from(new Set([...(a?.titles ?? []), ...b.titles])),
+  };
 }
