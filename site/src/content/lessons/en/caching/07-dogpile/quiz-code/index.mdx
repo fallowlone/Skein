@@ -1,43 +1,195 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- single-flight
+- distributed-lock
+- lock-ttl
+- lease-renewal
+- fencing-token
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Dogpile effect: concurrent cache misses that crush
-  the origin"'
-title: Coding Quiz
+- https://pkg.go.dev/golang.org/x/sync/singleflight
+- https://redis.io/docs/latest/develop/use/patterns/distributed-locks/
+- https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+status: ready
+summary: "Read real single-flight, distributed-lock, and lease-renewal snippets, predict the dogpile behaviour, and pick the highest-leverage fix a senior would make first."
+title: 'Dogpile: code and lock reading'
 track: caching
 unit: 07-dogpile
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Dogpile effect: concurrent cache misses that crush the origin unit.
+The dogpile lives in the recompute path: the miss handler, the lock acquire, the TTL, the release. Read each snippet, find where the collision reopens or the lock deadlocks, and choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Dogpile effect: concurrent cache misses that crush the origin unit.
+Practise reading coalescing and locking code the way you read it in an incident — trace the concurrent path, spot the missing timeout, the lost lease, or the unfenced write, and fix the mechanism, not the symptom.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the local single-flight
+
+```go
+var group singleflight.Group
+
+func getFeed(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    // coalesce concurrent misses for this key onto one recompute
+    v, err, _ := group.Do(key, func() (any, error) {
+        out, err := recomputeFeed(ctx) // 200ms DB aggregation
+        if err != nil {
+            return nil, err
+        }
+        cache.Set(key, out, 5*time.Minute)
+        return out, nil
+    })
+    if err != nil {
+        return nil, err
+    }
+    return v.([]byte), nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-1"
+  lessonSlug="07-dogpile"
+  lang="en"
+  question="This runs on 20 instances behind a load balancer. How many DB recomputes fire per expiry instant, and what is the highest-leverage change to reach one?"
+  choices={[
+    { label: "Up to 20 — singleflight.Group coalesces only within one process, so each of the 20 instances runs its own recompute. To collapse to one fleet-wide, gate recomputeFeed behind a distributed lock (e.g. Redis SET NX PX) so only the instance that wins the lock recomputes; the rest wait or serve stale.", correct: true },
+    { label: "Exactly one — singleflight is global across the cluster.", misconception: "singleflight.Group is an in-process map keyed by string; it has no cross-instance visibility. Twenty processes mean up to twenty independent recomputes." },
+    { label: "Up to 5000 — coalescing does nothing under real load.", misconception: "Within each process the Do call genuinely deduplicates concurrent misses to one call, so it caps at the instance count, not the request count. The remaining fan-out is the 20 processes." },
+    { label: "Zero — the cache.Get short-circuits every request.", misconception: "At the expiry instant cache.Get misses for everyone until the value is rewritten; that miss window is exactly when the recomputes fire." },
+  ]}
+/>
+
+## Snippet 2 — the distributed lock with no TTL
+
+```go
+func getFeedLocked(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    lockKey := "lock:" + key
+    // acquire: SET lock:key <token> NX   (NO expiry argument)
+    ok, _ := rdb.SetNX(ctx, lockKey, token, 0).Result()
+    if !ok {
+        time.Sleep(50 * time.Millisecond) // someone else recomputes
+        return getFeedLocked(ctx, key)     // retry the read
+    }
+    defer rdb.Del(ctx, lockKey)            // release on return
+    out, err := recomputeFeed(ctx)
+    if err != nil {
+        return nil, err
+    }
+    cache.Set(key, out, 5*time.Minute)
+    return out, nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-2"
+  lessonSlug="07-dogpile"
+  lang="en"
+  question="The SetNX uses expiry 0 (no TTL); release is via defer Del. What is the production failure, and the fix?"
+  choices={[
+    { label: "If the lock holder crashes (panic past the defer, OOM-kill, pod eviction) before Del runs, the lock key persists forever with no expiry. Every other reader then retries indefinitely against a lock that is never released — a total outage with an idle DB. Fix: give the lock a TTL (SET NX PX) longer than the worst-case recompute so a dead holder is auto-released.", correct: true },
+    { label: "No failure — the defer Del always releases the lock.", misconception: "defer does not run if the process is killed (SIGKILL, OOM) or the node dies mid-recompute. Without a TTL the lock then survives forever, deadlocking all readers." },
+    { label: "The 50ms sleep busy-loops the CPU.", misconception: "A 50ms sleep is a back-off, not a busy loop, and is a secondary tuning detail. The real defect is the un-expiring lock that can deadlock the whole endpoint." },
+    { label: "cache.Set should use a shorter TTL to reduce the herd.", misconception: "Cache TTL controls staleness, not the lock's lifetime. The bug is the missing lock TTL; the cache TTL is irrelevant to the deadlock." },
+  ]}
+/>
+
+## Snippet 3 — the fixed TTL that is too short for the tail
+
+```go
+const lockTTL = 5 * time.Second // recompute p50 ~2s, p99 ~25s
+
+func recomputeUnderLock(ctx context.Context, key, token string) error {
+    ok, _ := rdb.SetNX(ctx, "lock:"+key, token, lockTTL).Result()
+    if !ok {
+        return errLockHeld // caller serves stale and retries later
+    }
+    out, err := recomputeFeed(ctx) // can take up to 25s on a cold shard
+    if err != nil {
+        return err
+    }
+    // lock may already have expired here on a slow recompute
+    cache.Set(key, out, 5*time.Minute)
+    rdb.Del(ctx, "lock:"+key) // unconditional delete
+    return nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-3"
+  lessonSlug="07-dogpile"
+  lang="en"
+  question="With a 5s lock TTL and a 25s p99 recompute, name both bugs and the principled fix."
+  choices={[
+    { label: "Bug 1: on a 25s recompute the 5s lock expires at ~5s, a second worker acquires it and recomputes too — the dogpile reopens. Bug 2: the unconditional Del at the end can delete a lock token that now belongs to that second worker, releasing someone else's lock. Fix: renew the lease (extend the TTL on a heartbeat while alive) instead of guessing a fixed TTL, and make Del conditional on the token (check-and-delete) so you only release your own lock.", correct: true },
+    { label: "Only Bug 2 matters; the expiry is harmless because cache.Set still writes.", misconception: "The expiry is the primary bug: it lets a second recompute start, reopening the herd you were preventing. The unconditional Del is a second, compounding bug." },
+    { label: "Raise lockTTL to 60s and ship it.", misconception: "A larger fixed TTL trades one failure for another: if that holder crashes, every reader now waits up to 60s for the stale lock to clear. Renewing the lease tracks the real work instead of guessing." },
+    { label: "Switch cache.Set to a shorter TTL so the lock matters less.", misconception: "Cache TTL is unrelated to the lock-expiry race. The fix is in the lock lifecycle: renew the lease and release conditionally on the token." },
+  ]}
+/>
+
+## Snippet 4 — the lease-renewing holder
+
+```go
+func recomputeWithLease(ctx context.Context, key, token string) error {
+    if ok, _ := rdb.SetNX(ctx, "lock:"+key, token, 10*time.Second).Result(); !ok {
+        return errLockHeld
+    }
+    // heartbeat: re-extend the lease every 3s while we work
+    stop := make(chan struct{})
+    go func() {
+        t := time.NewTicker(3 * time.Second)
+        defer t.Stop()
+        for {
+            select {
+            case <-stop:
+                return
+            case <-t.C:
+                // PEXPIRE lock:key 10000 if token still ours
+                renewIfOwner(ctx, "lock:"+key, token, 10*time.Second)
+            }
+        }
+    }()
+    out, err := recomputeFeed(ctx)
+    close(stop)
+    if err != nil {
+        return err
+    }
+    cache.Set(key, out, 5*time.Minute)
+    releaseIfOwner(ctx, "lock:"+key, token) // CAS delete
+    return nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-4"
+  lessonSlug="07-dogpile"
+  lang="en"
+  question="The lease renews every 3s with a 10s TTL and releases via CAS-on-token. A long stop-the-world GC pause (≥10s) hits this worker mid-recompute. What can still go wrong, and what guards against it?"
+  choices={[
+    { label: "During a ≥10s pause the heartbeat goroutine is frozen too, so the lease lapses and a second worker can acquire the lock and recompute. When the paused worker resumes it may still believe it holds the lock and call cache.Set, overwriting the newer value. Guard: fence the write — attach a monotonic fencing token to the lease and have the cache/store reject a write carrying a stale token (or do a versioned check-and-set on the value).", correct: true },
+    { label: "Nothing — renewIfOwner guarantees the lease never lapses.", misconception: "renewIfOwner only fires when the goroutine runs; an STW pause freezes the whole process including the heartbeat, so the lease can lapse despite the renew loop." },
+    { label: "The CAS delete already makes it safe; no fencing needed.", misconception: "CAS-on-token stops you deleting someone else's lock, but it does not stop a resumed-after-pause worker from writing a stale value while it wrongly thinks it still holds the lock. That needs a fencing token on the write itself." },
+    { label: "Shorten the TTL to 1s so a dead holder releases faster.", misconception: "A 1s TTL makes lapses more likely under any pause and demands more frequent heartbeats; it worsens the race rather than fixing it. The durable fix is fencing the write, not a tighter timer." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every dogpile fix is read in the lock path. Local single-flight caps recomputes at the instance count, not one — a distributed lock is what coordinates the fleet. A lock with no TTL deadlocks every reader if the holder dies, so always SET NX PX. A fixed TTL shorter than the worst-case recompute reopens the herd and risks deleting someone else's lock, so renew the lease on a heartbeat and release conditionally on your token. And even a renewed lease can lapse under a long STW pause or partition, so fence the write with a monotonic token (or a versioned CAS) to stop a resumed holder from overwriting fresh data. Fix the lock lifecycle, then re-test under a slow-recompute and a pause-injection scenario.
 </Recap>
-

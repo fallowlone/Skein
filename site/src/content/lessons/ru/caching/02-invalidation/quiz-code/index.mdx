@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- cache-key-design
+- delete-on-write
+- delayed-double-delete
+- set-after-delete-race
+- ttl-jitter
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Инвалидация кэша: самая сложная задача в CS"'
-title: Кодировочный тест
+- https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf
+- https://danielw.cn/cache-consistency-with-database
+- https://redis.io/blog/how-to-tame-the-thundering-herd-problem/
+status: ready
+summary: "Читай реальные cache-aside-сниппеты — баг в дизайне ключа, purge, гоняющийся с читателем, и стампида на фиксированном TTL — и выбирай фикс наивысшего рычага, который сеньор делает первым."
+title: 'Инвалидация кэша: чтение кода и сниппетов'
 track: caching
 unit: 02-invalidation
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Инвалидация кэша: самая сложная задача в CS unit.
+Баги инвалидации прячутся в строке cache key и в порядке двух строк на пути записи. Прочитай каждый сниппет, найди открытый им разрыв несвежести и выбери фикс, который сеньор сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Инвалидация кэша: самая сложная задача в CS unit.
+Отработай цикл, который ты запускаешь в каждом инциденте консистентности кэша: прочитать дизайн ключа и путь записи, предсказать, где протекает устаревшее, и потянуться за фиксом наивысшего рычага — а не за самым большим молотком.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — cache key
+
+```js
+// GET /products?category=shoes&sort=price&page=2&utm_source=newsletter
+function cacheKey(req) {
+  return "products:" + req.url;           // весь URL, со строкой запроса целиком
+}
+
+async function handler(req, res) {
+  const k = cacheKey(req);
+  let body = await redis.get(k);
+  if (!body) {
+    body = await db.queryProducts(req.query);
+    await redis.set(k, body, "EX", 300);
+  }
+  res.send(body);
+}
+```
+
+<Quiz
+  id="02-invalidation-code-1"
+  lessonSlug="02-invalidation"
+  lang="ru"
+  question="Каталог товаров меняется редко, но hit rate почти ноль, а origin занят. Что не так с этим ключом и какой фикс?"
+  choices={[
+    { label: "Ключ включает весь URL, поэтому нерелевантные параметры (utm_source, порядок параметров) дробят один логический результат на бесчисленные различные ключи. Строй ключ только из параметров, влияющих на ответ — category, sort, page — нормализованных и отсортированных.", correct: true },
+    { label: "TTL 300 с слишком короткий для каталога, который редко меняется.", misconception: "Более длинный TTL помог бы чуть-чуть, но настоящий дефект — фрагментация ключа: идентичные результаты кэшируются под тысячами различных ключей, поэтому почти каждый запрос промахивается независимо от TTL." },
+    { label: "Использование строкового префикса 'products:' конфликтует с другими ключами.", misconception: "Префикс-пространство имён — хорошая практика и не проблема. Фрагментация идёт от вмешивания трекингового/порядкового шума в ключ, а не от префикса." },
+    { label: "redis.get следует пайплайнить ради пропускной способности.", misconception: "Пайплайнинг — микрооптимизация пропускной способности. Он ничего не делает с hit rate, убитым кодированием нерелевантных параметров запроса в cache key." },
+  ]}
+/>
+
+## Сниппет 2 — purge на записи
+
+```js
+async function updateUser(id, patch) {
+  const row = await db.users.update(id, patch);   // БД теперь свежая
+  await redis.del("user:" + id);                   // сбрасываем запись кэша
+  return row;
+}
+
+// в другом месте, путь чтения (cache-aside):
+async function getUser(id) {
+  const k = "user:" + id;
+  let u = await redis.get(k);
+  if (!u) {
+    u = await db.users.find(id);                   // может прочитать строку до обновления
+    await redis.set(k, u, "EX", 3600);             // ...и записать её обратно
+  }
+  return u;
+}
+```
+
+<Quiz
+  id="02-invalidation-code-2"
+  lessonSlug="02-invalidation"
+  lang="ru"
+  question="Это проходит все локальные тесты, но в продакшене откатывает правки пользователя до часа. Дефект и самый дешёвый production-патч?"
+  choices={[
+    { label: "Гонка set-after-delete: getUser, прочитавший старую строку до запуска updateUser, может сделать SET обратно после DEL, поэтому кэш держит устаревшее значение до TTL 3600 с. Самый дешёвый патч: delayed double-delete — DEL сейчас, затем второй DEL через несколько сотен мс, чтобы стереть устаревший SET гоняющегося читателя.", correct: true },
+    { label: "DEL должен идти до обновления БД, а не после.", misconception: "Перестановка не помогает: читатель всё равно может промахнуться после DEL и до коммита, прочитать старую строку и перезаполнить. Окно — между чтением читателя и его SET, и перенос DEL его не закрывает." },
+    { label: "TTL в 1 час и есть баг; снизь его до нескольких секунд.", misconception: "Более короткий TTL лишь сжимает, как долго устаревшее значение выживает — он не мешает гоняющемуся читателю его записать. Фикс целит в гонку (double-delete или лизы), а не в страховку." },
+    { label: "redis.del может упасть, так что оберни его в retry — и готово.", misconception: "Retry на DEL адресует отдельный сбой dual-write, а не эту гонку. Даже успешный DEL отменяется поздним SET читателя, поэтому один retry оставляет баг на месте." },
+  ]}
+/>
+
+## Сниппет 3 — TTL
+
+```js
+const TTL = 600; // 10 минут, одинаково для каждой записи
+
+async function cacheConfig(tenantId) {
+  const k = "config:" + tenantId;
+  let cfg = await redis.get(k);
+  if (!cfg) {
+    cfg = await db.loadConfig(tenantId);    // дорого: ~400 мс, джоин 5 таблиц
+    await redis.set(k, cfg, "EX", TTL);
+  }
+  return cfg;
+}
+```
+
+<Quiz
+  id="02-invalidation-code-3"
+  lessonSlug="02-invalidation"
+  lang="ru"
+  question="После выкатки на весь флот, прогревшей конфиги многих тенантов разом, p99 латентности резко скачет каждые 10 минут. Что происходит и первый фикс?"
+  choices={[
+    { label: "Фиксированный TTL 600 с, прогретый в одном окне, заставляет целые когорты ключей истекать вместе; каждое истечение запускает перестройку из origin на ~400 мс, и многие срабатывают разом. Добавь TTL jitter (например 540–660 с, ±10%), чтобы истечения рассеялись; добавь single-flight на ключ, чтобы параллельные промахи по одному ключу делили одну перестройку.", correct: true },
+    { label: "Джоин БД медленный; фикс — денормализовать таблицы конфига.", misconception: "Стоимость джоина реальна, но вторична — периодический скачок p99 гонит синхронизированное истечение, стампидящее origin. Jitter и single-flight убирают скачок без изменения схемы." },
+    { label: "Redis вытесняет ключи под давлением памяти на 10-минутном цикле.", misconception: "Вытеснение не периодично так; 10-минутная периодичность точно совпадает с фиксированным TTL. Это синхронизированное истечение, чинимое jitter, а не сменой политики вытеснения." },
+    { label: "Подними TTL до 3600 с, чтобы скакало в шесть раз реже.", misconception: "Более длинный фиксированный TTL лишь растягивает интервал между идентичными синхронными стампидами — скачок так же резок, когда срабатывает. Рассеивание истечений через jitter — вот что убирает скачок." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Три классических бага инвалидации, все прочитанные прямо из кода: cache key, вмешивающий нерелевантные параметры, разносит hit rate, поэтому строй ключи только из влияющих на ответ параметров, нормализованных; delete-on-write гоняется с перезаполняющим SET параллельного читателя, дешевле всего патчится delayed double-delete (лизы или write-through для сильного фикса); а фиксированный TTL, прогретый в одном окне, стампидит origin на каждом истечении, гасится jitter плюс single-flight. Сначала прочитай ключ и путь записи, назови разрыв, затем выбери наименьший фикс, который его закрывает.
 </Recap>
-

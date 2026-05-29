@@ -1,43 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- distributed-lock
+- single-flight
+- request-coalescing
+- probabilistic-early-expiration
+- fencing-token
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Cache stampede: when one TTL expires and thousands
-  of requests hit the DB"'
-title: Coding Quiz
+- https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+- https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+- https://blog.cloudflare.com/coalescing-requests/
+status: ready
+summary: "Read real cache-aside snippets — lock-on-miss, request coalescing, XFetch — predict the behaviour, and pick the highest-leverage fix."
+title: 'Cache stampede: code reading'
 track: caching
 unit: 03-stampede
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Cache stampede: when one TTL expires and thousands of requests hit the DB unit.
+Stampede bugs hide in the cache-aside code itself: a lock with the wrong EX, a coalescer that registers the in-flight promise one line too late, an XFetch rule that fires too early. Read each snippet the way you would in review, then choose the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Cache stampede: when one TTL expires and thousands of requests hit the DB unit.
+Practise reading the actual mitigation code — lock-on-miss, request coalescing, and probabilistic early expiration — and spotting the defect that a load test will eventually expose.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — lock-on-miss
+
+```go
+func get(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    // miss: try to become the rebuilder
+    locked := redis.SetNX(ctx, "lock:"+key, uuid, 30*time.Second).Val()
+    if !locked {
+        // someone else is rebuilding
+        return rebuild(ctx, key) // <-- rebuild anyway
+    }
+    v, err := rebuild(ctx, key)
+    if err == nil {
+        cache.Set(key, v, 60*time.Second)
+        redis.Del(ctx, "lock:"+key)
+    }
+    return v, nil
+}
+```
+
+<Quiz
+  id="03-stampede-code-1"
+  lessonSlug="03-stampede"
+  lang="en"
+  question="The SetNX lock is acquired correctly, yet a load test still produces N concurrent DB rebuilds. Where is the bug?"
+  choices={[
+    { label: "The lock-loser branch calls rebuild(ctx, key) directly instead of waiting and re-checking the cache. Every request that fails NX still hits the DB, so the lock prevents nothing. It should sleep briefly, re-GET the cache, and return a stale fallback if still missing.", correct: true },
+    { label: "The lock EX of 30 s is too long and blocks the fleet.", misconception: "A long EX risks stale-lock delay on crash, but it does not cause N concurrent rebuilds. The defect is that lock-losers rebuild anyway instead of waiting." },
+    { label: "redis.SetNX is not atomic, so multiple callers win the lock.", misconception: "SET ... NX is atomic in Redis — exactly one caller wins. The failure is in what the losers do, not in the acquire." },
+    { label: "cache.Set should run before redis.Del to avoid a gap.", misconception: "Set-then-Del is the correct order. Reordering does not change that every lock-loser still calls rebuild and floods the DB." },
+  ]}
+/>
+
+## Snippet 2 — request coalescing
+
+```js
+const inflight = new Map(); // key -> Promise
+
+async function getCoalesced(key) {
+  const cached = await cache.get(key);
+  if (cached !== null) return cached;
+
+  const fresh = await rebuild(key);   // (A) await the rebuild...
+  inflight.set(key, fresh);           // (B) ...then record it
+  const value = await fresh;
+  cache.set(key, value, 60);
+  inflight.delete(key);
+  return value;
+}
+```
+
+<Quiz
+  id="03-stampede-code-2"
+  lessonSlug="03-stampede"
+  lang="en"
+  question="This is meant to coalesce concurrent misses for the same key into one rebuild, but it never coalesces. What is wrong?"
+  choices={[
+    { label: "The code awaits rebuild(key) at (A) before registering anything in `inflight`, and never even checks `inflight` on entry. Concurrent callers all reach the await, each starts its own rebuild, and the map is written too late to help. Fix: check `inflight` first; if absent, store the un-awaited promise synchronously, then await it.", correct: true },
+    { label: "Map is not safe for concurrent access in JavaScript.", misconception: "JS is single-threaded for this code; Map access between awaits is fine. The bug is that the promise is registered after the await and the map is never consulted on entry." },
+    { label: "cache.set uses a TTL of 60 with no jitter.", misconception: "Missing jitter is a separate multi-key concern. This snippet fails to coalesce a single key because it awaits before registering and never checks the map." },
+    { label: "inflight.delete(key) runs too early.", misconception: "The delete runs after the value is cached, which is correct. The real defect is the await-before-register ordering that defeats coalescing entirely." },
+  ]}
+/>
+
+## Snippet 3 — probabilistic early expiration (XFetch)
+
+```python
+def should_refresh(delta, beta, ttl_remaining):
+    # delta = typical rebuild seconds, ttl_remaining = seconds to expiry
+    return (-beta * delta * math.log(random.random())) >= ttl_remaining
+```
+
+<Quiz
+  id="03-stampede-code-3"
+  lessonSlug="03-stampede"
+  lang="en"
+  question="An operator wants fewer wasted early rebuilds on warm keys, so they raise beta from 1.0 to 4.0. What is the effect on a hot key vs a colder key?"
+  choices={[
+    { label: "Higher beta widens the early-refresh window, so the threshold fires sooner and further from expiry — MORE early refreshes, not fewer. To get fewer early rebuilds you LOWER beta, which narrows the window toward the TTL boundary at the cost of higher stampede risk on cold keys.", correct: true },
+    { label: "Higher beta narrows the window, so warm keys refresh later and cold keys are safer.", misconception: "It is the inverse: a larger beta multiplies the left side, making it exceed ttl_remaining earlier, so the window opens sooner and fires more often." },
+    { label: "beta has no effect; only delta moves the window.", misconception: "Both scale the left side linearly, so beta directly controls how early the window opens. Changing it changes the firing time." },
+    { label: "Raising beta disables XFetch and reverts to plain TTL.", misconception: "Plain-TTL behaviour is the LOW-beta extreme, where the window collapses to the boundary. High beta refreshes earlier and more often." },
+  ]}
+/>
+
+## Snippet 4 — lock with a fencing-token write
+
+```python
+def rebuild_and_write(key, my_token):
+    value = rebuild(key)               # may take longer than the lock EX
+    if redis.get("lock:" + key) != my_token:
+        return                          # we lost the lock — abort the write
+    redis.set("cache:" + key, value, ex=60)
+```
+
+<Quiz
+  id="03-stampede-code-4"
+  lessonSlug="03-stampede"
+  lang="en"
+  question="The fencing check 'GET lock then SET cache' guards against a slow rebuild that outlived its lock. What residual race remains, and what closes it?"
+  choices={[
+    { label: "The GET-then-SET is not atomic: the lock can expire and a new holder can grab it between the GET returning my_token and the SET landing, so a stale write still slips through. Closing it needs an atomic compare-and-set (Lua/WATCH) or a monotonic per-key version that rejects writes with an older version.", correct: true },
+    { label: "None — the token check makes the write fully safe.", misconception: "The check is two separate round-trips. The lock can expire in the gap, so the write must be made atomic or carry a monotonic version to be race-free." },
+    { label: "redis.get returns bytes, so the comparison always fails.", misconception: "Type handling is a trivial detail; assume it is correct. The real residual race is the non-atomic check-then-write window." },
+    { label: "The EX of 60 on the cache is the problem.", misconception: "The cache TTL is unrelated to the lock race. The residual defect is the non-atomic gap between reading the token and writing the value." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every stampede defence lives in code that is easy to get subtly wrong: a lock only helps if the losers wait and re-check rather than rebuild anyway; a coalescer only helps if the in-flight promise is registered synchronously before any await and consulted on entry; XFetch's beta moves the early-refresh window the opposite way from most people's intuition (higher beta means earlier, more frequent refreshes); and a fencing-token check is only safe when the read-then-write is atomic or backed by a monotonic version. Read the mitigation, trace two concurrent callers through it, and the bug usually shows itself before any load test does.
 </Recap>
-

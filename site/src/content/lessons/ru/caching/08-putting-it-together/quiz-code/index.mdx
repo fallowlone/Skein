@@ -1,43 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- cache-control-header
+- etag-304
+- stampede-lock
+- swr-timing
+- surrogate-key-purge
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Проектирование системы кэширования: объединение
-  всех уровней"'
-title: Кодировочный тест
+- https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control
+- https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/ETag
+- https://web.dev/articles/stale-while-revalidate
+status: ready
+summary: "Читай реальные заголовки, хэндлеры и single-flight lock поперёк стека кэширования, предсказывай поведение и выбирай исправление с наибольшим рычагом."
+title: 'Кэширование, капстоун: чтение кода и заголовков'
 track: caching
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Проектирование системы кэширования: объединение всех уровней unit.
+Баги кэширования читаются в заголовках, хэндлерах и логах, а не в прозе. Прочитай каждый сниппет, предскажи, как поведут себя уровни под реальной нагрузкой, затем выбери исправление, которое сениор сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Проектирование системы кэширования: объединение всех уровней unit.
+Отработай цикл, который ты запускаешь на каждом инциденте кэширования: прочитай директиву или код на горячем пути, предскажи, где каждый уровень кэширует или утекает, и возьмись за изменение, чинящее композицию — а не более громкий TTL.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — заголовок Cache-Control
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=600
+```
+
+Это публичное API прайс-листа, которое команда хочет кэшировать на edge CDN, часто обновлять и всё равно отдавать, если origin ляжет.
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Что этот заголовок реально делает против того, что хочет команда, и какое исправление с наибольшим рычагом?"
+  choices={[
+    { label: "public, max-age=600 кэширует И в браузере, И на edge на 10 минут без разделения shared/private и без fallback на сбой. Перейди на public, s-maxage=60, max-age=0, stale-while-revalidate=600, stale-if-error=86400, чтобы edge владел кэшем, обновлялся каждые 60с мягко и отдавал устаревшее при сбое.", correct: true },
+    { label: "Уже корректно — max-age это директива, которую соблюдают разделяемые кэши.", misconception: "Разделяемые кэши предпочитают s-maxage, когда он есть; max-age без s-maxage применяется к обоим. Важнее, что нет SWR или stale-if-error, поэтому требования команды о мягком обновлении и выживании сбоя не выполнены." },
+    { label: "Добавь no-cache, чтобы данные всегда были свежими.", misconception: "no-cache форсирует ревалидацию на каждом запросе, убирая разгрузку edge, которую команда явно хочет, и добавляя round-trip на попадание. Это противоречит цели кэшировать на edge." },
+    { label: "Понизь max-age до 60 — это удовлетворяет все три цели.", misconception: "Меньший max-age обновляет чаще, но всё равно не даёт разделения edge/браузер, мягкого истечения и fallback на сбой. Он тюнит одно число и оставляет два требования невыполненными." },
+  ]}
+/>
+
+## Сниппет 2 — хэндлер условного GET
+
+```js
+app.get("/articles/:id", async (req, res) => {
+  const article = await db.getArticle(req.params.id);
+  const etag = `"${article.version}"`;
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+  // всегда шлёт полное тело
+  res.json(article);
+});
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Хэндлер ставит ETag, но оптимизация условного запроса никогда не срабатывает. Чего не хватает и в чём выигрыш после исправления?"
+  choices={[
+    { label: "Он никогда не читает If-None-Match и не возвращает 304 — поэтому каждая ревалидация всё равно шлёт полное тело. Сравни req.headers['if-none-match'] с etag и при совпадении отправь res.status(304).end(). Выигрыш — трафик: совпавшая ревалидация становится 304 только из заголовков вместо полной статьи.", correct: true },
+    { label: "ETag в weak-формате, поэтому браузеры его игнорируют.", misconception: "Закавыченная строка версии — валидный strong ETag. Дефект на стороне сервера: хэндлер никогда не смотрит If-None-Match, поэтому не может выдать 304 независимо от формата ETag." },
+    { label: "must-revalidate и есть баг; убери его, и 304 заработают.", misconception: "must-revalidate говорит кэшу ревалидировать, когда устарело — именно он триггерит условный запрос. Недостающая часть — серверная проверка If-None-Match, превращающая этот запрос в 304." },
+    { label: "Ничего не сломано — фреймворк авто-обрабатывает 304 для любого ETag.", misconception: "Установка заголовка ETag не генерирует 304 автоматически, если conditional-GET middleware фреймворка не отработает до res.json. Здесь тело шлётся безусловно, поэтому 304 не производится никогда." },
+  ]}
+/>
+
+## Сниппет 3 — stampede lock
+
+```js
+async function getHot(key) {
+  let val = await cache.get(key);
+  if (val !== null) return val;
+
+  // холодно: каждый параллельный вызывающий доходит сюда и пересчитывает
+  val = await expensiveQuery(key);   // бьёт в БД
+  await cache.set(key, val, { ttl: 60 });
+  return val;
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Горячий ключ истёк, и 5000 запросов приходят в одну секунду. Что происходит и в чём single-flight исправление?"
+  choices={[
+    { label: "Все 5000 промахиваются одновременно и каждый запускает expensiveQuery — dogpile, способный обрушить БД. Исправление — per-key lock: первый вызывающий берёт его и пересчитывает, пока остальные ждут тот же in-flight промис (single-flight), поэтому БД видит один запрос, а не 5000.", correct: true },
+    { label: "Только первый запрос пересчитывает; cache.set блокирует остальных.", misconception: "cache.set у первого вызывающего не блокирует со второго по 5000-й — они уже прошли проверку на null и параллельно выполняют свой expensiveQuery. Ничто не сериализует их без явного lock." },
+    { label: "TTL 60с предотвращает завал, потому что запись свежая.", misconception: "Запись только что истекла — это и есть триггер. TTL управляет тем, сколько живёт пересчитанное значение, а не тем, сколько параллельных промахов наваливается в момент истечения." },
+    { label: "Поднятие TTL до 600 устраняет dogpile.", misconception: "Более длинный TTL делает истечения реже, но dogpile так же тяжёл всякий раз, когда оно случается. Single-flight (или вероятностное раннее истечение, или SWR) — то, что ограничивает параллельный пересчёт." },
+  ]}
+/>
+
+## Сниппет 4 — тайминги SWR
+
+```http
+Cache-Control: public, s-maxage=60, stale-while-revalidate=300
+```
+
+Ответ закэширован в 12:00:00. Запросы приходят в 12:00:30, 12:01:30 и 12:07:00. Записи или purge не было.
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Что разделяемый кэш отдаёт в каждый из трёх моментов?"
+  choices={[
+    { label: "12:00:30 — свежее попадание (в пределах 60с). 12:01:30 — устаревшее, но отданное мгновенно, пока фоновая ревалидация обновляет запись (внутри окна SWR 300с). 12:07:00 — после 60+300=360с окно SWR закрылось; этот запрос блокируется на синхронной ревалидации (или stale-if-error, если origin лёг).", correct: true },
+    { label: "Все три — свежие попадания, потому что s-maxage=60 сбрасывается на каждом запросе.", misconception: "s-maxage отсчитывает возраст с момента сохранения ответа, а не с последнего доступа. Только запрос 12:00:30 в пределах окна свежести 60с." },
+    { label: "12:01:30 блокируется во время ревалидации, потому что запись уже устарела.", misconception: "Смысл stale-while-revalidate именно в том, что устаревшая запись отдаётся немедленно, а обновление идёт в фоне — читатель 12:01:30 не блокируется." },
+    { label: "12:07:00 возвращает 504, потому что запись кэша вытеснена.", misconception: "После окна SWR кэш не вытесняет-и-ошибается; он делает синхронную (блокирующую) ревалидацию против origin и откатывается на устаревшее только если stale-if-error задан и origin падает." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Читай сверху вниз: заголовок Cache-Control должен разделять edge и браузер (s-maxage против max-age) и нести SWR плюс stale-if-error, чтобы обновляться мягко и пережить сбой; ETag инертен, пока сервер не читает If-None-Match и не отвечает 304; холодный горячий ключ требует single-flight, чтобы 5000 промахов стали одним запросом к БД; а два окна SWR решают, получит ли читатель свежее попадание, мгновенно-устаревшее-с-фоновым-обновлением или блокирующую ревалидацию. Диагностируй по заголовку и логу, чини композицию, затем перепроверь под той же нагрузкой.
 </Recap>
-

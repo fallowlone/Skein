@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- cache-key-design
+- delete-on-write
+- delayed-double-delete
+- set-after-delete-race
+- ttl-jitter
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Cache invalidation: the hardest problem in CS"'
-title: Coding Quiz
+- https://www.usenix.org/system/files/conference/nsdi13/nsdi13-final170_update.pdf
+- https://danielw.cn/cache-consistency-with-database
+- https://redis.io/blog/how-to-tame-the-thundering-herd-problem/
+status: ready
+summary: "Read real cache-aside snippets — a key-design bug, a purge that races a reader, and a fixed-TTL stampede — and pick the highest-leverage fix a senior makes first."
+title: 'Cache invalidation: code and snippet reading'
 track: caching
 unit: 02-invalidation
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Cache invalidation: the hardest problem in CS unit.
+Invalidation bugs hide in the cache-key string and the order of two lines on the write path. Read each snippet, find the staleness gap it opens, and choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Cache invalidation: the hardest problem in CS unit.
+Practise the loop you run in every cache-consistency incident: read the key design and the write path, predict where stale data leaks in, and reach for the highest-leverage fix — not the biggest hammer.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the cache key
+
+```js
+// GET /products?category=shoes&sort=price&page=2&utm_source=newsletter
+function cacheKey(req) {
+  return "products:" + req.url;           // whole URL, query string and all
+}
+
+async function handler(req, res) {
+  const k = cacheKey(req);
+  let body = await redis.get(k);
+  if (!body) {
+    body = await db.queryProducts(req.query);
+    await redis.set(k, body, "EX", 300);
+  }
+  res.send(body);
+}
+```
+
+<Quiz
+  id="02-invalidation-code-1"
+  lessonSlug="02-invalidation"
+  lang="en"
+  question="The product catalogue rarely changes, yet hit rate is near zero and the origin is busy. What is wrong with this key, and what is the fix?"
+  choices={[
+    { label: "The key includes the full URL, so irrelevant params (utm_source, param order) fragment one logical result into countless distinct keys. Build the key from only the params that affect the response — category, sort, page — normalised and sorted.", correct: true },
+    { label: "The TTL of 300s is too short for a catalogue that rarely changes.", misconception: "A longer TTL would help a tiny bit, but the real defect is key fragmentation: identical results are cached under thousands of distinct keys, so almost every request misses regardless of TTL." },
+    { label: "Using a string prefix 'products:' collides with other keys.", misconception: "A namespaced prefix is good practice and is not the problem. The fragmentation comes from folding tracking/ordering noise into the key, not from the prefix." },
+    { label: "redis.get should be pipelined for throughput.", misconception: "Pipelining is a throughput micro-optimisation. It does nothing for a hit rate destroyed by encoding irrelevant query params into the cache key." },
+  ]}
+/>
+
+## Snippet 2 — the purge on write
+
+```js
+async function updateUser(id, patch) {
+  const row = await db.users.update(id, patch);   // DB is now fresh
+  await redis.del("user:" + id);                   // drop the cache entry
+  return row;
+}
+
+// elsewhere, the read path (cache-aside):
+async function getUser(id) {
+  const k = "user:" + id;
+  let u = await redis.get(k);
+  if (!u) {
+    u = await db.users.find(id);                   // may read a pre-update row
+    await redis.set(k, u, "EX", 3600);             // ...and write it back
+  }
+  return u;
+}
+```
+
+<Quiz
+  id="02-invalidation-code-2"
+  lessonSlug="02-invalidation"
+  lang="en"
+  question="This passes every local test but reverts user edits in production for up to an hour. What is the defect and the cheapest production patch?"
+  choices={[
+    { label: "Set-after-delete race: a getUser that read the old row before updateUser ran can SET it back after the DEL, so the cache holds the stale value until the 3600s TTL. Cheapest patch: delayed double-delete — DEL now, then schedule a second DEL a few hundred ms later to wipe any racing reader's stale SET.", correct: true },
+    { label: "The DEL should come before the DB update, not after.", misconception: "Reordering does not help: a reader can still miss after the DEL and before the commit, read the old row, and repopulate. The window is between the reader's read and its SET, which moving the DEL does not close." },
+    { label: "The 1-hour TTL is the bug; lower it to a few seconds.", misconception: "A shorter TTL only shrinks how long the stale value survives — it does not stop the racing reader from writing it. The fix targets the race (double-delete or leases), not the backstop." },
+    { label: "redis.del can fail, so wrap it in a retry and you are done.", misconception: "Retrying the DEL addresses the separate dual-write failure, not this race. Even a DEL that succeeds is undone by a reader's later SET, so a retry alone leaves the bug in place." },
+  ]}
+/>
+
+## Snippet 3 — the TTL
+
+```js
+const TTL = 600; // 10 minutes, same for every entry
+
+async function cacheConfig(tenantId) {
+  const k = "config:" + tenantId;
+  let cfg = await redis.get(k);
+  if (!cfg) {
+    cfg = await db.loadConfig(tenantId);    // expensive: ~400ms, joins 5 tables
+    await redis.set(k, cfg, "EX", TTL);
+  }
+  return cfg;
+}
+```
+
+<Quiz
+  id="02-invalidation-code-3"
+  lessonSlug="02-invalidation"
+  lang="en"
+  question="After a fleet-wide deploy that warms many tenants' configs at once, latency p99 spikes hard every 10 minutes. What is happening and the first fix?"
+  choices={[
+    { label: "A fixed 600s TTL warmed in one window makes whole cohorts of keys expire together; each expiry triggers a ~400ms origin rebuild, and many fire at once. Add TTL jitter (e.g. 540–660s, ±10%) so expiries scatter; add single-flight per key so concurrent misses on one key share one rebuild.", correct: true },
+    { label: "The DB join is slow; the fix is to denormalise the config tables.", misconception: "The join cost is real but secondary — the periodic p99 spike is driven by synchronized expiry stampeding the origin. Jitter and single-flight remove the spike without a schema change." },
+    { label: "Redis is evicting keys under memory pressure on a 10-minute cycle.", misconception: "Eviction is not periodic like this; the 10-minute periodicity matches the fixed TTL exactly. This is synchronized expiry, fixed with jitter, not an eviction-policy change." },
+    { label: "Raise the TTL to 3600s so it spikes six times less often.", misconception: "A longer fixed TTL only stretches the interval between identical synchronized stampedes — the spike is just as sharp when it fires. Scattering expiries with jitter is what removes the spike." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Three classic invalidation bugs, all read straight from the code: a cache key that folds in irrelevant params shatters hit rate, so build keys from only the response-affecting params, normalised; delete-on-write races a concurrent reader's repopulating SET, patched cheapest with delayed double-delete (leases or write-through for the strong fix); and a fixed TTL warmed in one window stampedes the origin on every expiry, defused with jitter plus single-flight. Read the key and the write path first, name the gap, then pick the smallest fix that closes it.
 </Recap>
-
