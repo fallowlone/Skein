@@ -15,9 +15,17 @@ export function needsRevisit(e: DrillEntry, now: number): boolean {
 const KEY = "awesome.drill.v1";
 type Store = Record<string, DrillEntry>;
 
+export type DrillStore = Store;
+
 export function loadStore(): Store {
   if (typeof window === "undefined") return {};
-  try { return JSON.parse(localStorage.getItem(KEY) ?? "{}"); } catch { return {}; }
+  try {
+    const v = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    // guard against valid-JSON-wrong-shape (legacy/corrupted/hand-edited values)
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Store) : {};
+  } catch {
+    return {};
+  }
 }
 export function saveEntry(id: string, status: DrillStatus, now: number): void {
   if (typeof window === "undefined") return;
