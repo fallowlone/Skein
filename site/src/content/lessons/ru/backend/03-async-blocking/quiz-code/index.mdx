@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- synchronous-io
+- cpu-bound
+- worker-threads
+- thread-pool-starvation
+- bounded-concurrency
+- event-loop-lag
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Асинхронный vs блокирующий I/O"
-title: Кодировочный тест
+- https://nodejs.org/learn/asynchronous-work/dont-block-the-event-loop
+- https://nodejs.org/api/worker_threads.html
+- https://nodejs.org/api/perf_hooks.html
+status: ready
+summary: "Читай реальные Node-обработчики и сигнал perf, предсказывай, как каждый взаимодействует с event loop, и выбирай фикс, к которому первым тянется сеньор."
+title: 'Async vs blocking: чтение кода и трейсов'
 track: backend
 unit: 03-async-blocking
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Асинхронный vs блокирующий I/O unit.
+Блокировку диагностируют в обработчиках и в гистограмме lag, а не абстрактно. Читай каждый сниппет, предсказывай, что он делает с единственным потоком loop, и выбирай изменение, которое сеньор сделал бы прежде, чем тянуться к любому knob.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Асинхронный vs блокирующий I/O unit.
+Отработай цикл, который ты запускаешь в каждом инциденте заморозки: замечай синхронный участок или неограниченный fan-out на горячем пути, называй, почему он стопорит loop, и тянись к фиксу с наибольшим рычагом — async API, worker thread или лимит конкурентности.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — синхронный логин
+
+```js
+import bcrypt from "bcrypt";
+import fs from "fs";
+
+app.post("/login", (req, res) => {
+  const policy = fs.readFileSync("./password-policy.json", "utf8"); // sync read
+  const hash = bcrypt.hashSync(req.body.password, 12);              // ~250 ms CPU
+  // ...verify and respond...
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-1"
+  lessonSlug="03-async-blocking"
+  lang="ru"
+  question="Под нагрузкой логинов этот обработчик роняет пропускную способность каждого route, не только /login. Что происходит и фикс с наибольшим рычагом?"
+  choices={[
+    { label: "bcrypt.hashSync прогоняет ~200–400 мс чистого CPU на потоке loop за вызов, а readFileSync делает там же синхронный I/O — поэтому каждый логин замораживает весь loop на этот участок. Фикс: async bcrypt (он гонит хеширование на пуле libuv) и fs.promises для чтения.", correct: true },
+    { label: "Cost factor 12 у bcrypt просто слишком высок; снизь до 4.", misconception: "Cost factor 12 — разумный выбор безопасности; баг в том, что он выполняется синхронно на loop, а не в факторе. Async bcrypt выносит ту же работу на пул libuv и держит loop свободным." },
+    { label: "Ничего не так — хеширование обязано блокировать по своей природе.", misconception: "Хеширование — это CPU-работа, но async bcrypt гонит её на потоке пула libuv, так что loop продолжает обслуживать другие запросы. Блокировать loop — это выбор, а не необходимость." },
+    { label: "В обработчике нет await, поэтому он возвращается до завершения хеширования.", misconception: "Синхронные вызовы завершаются инлайн; корректность в порядке. Дефект в том, что они монополизируют единственный поток loop, head-of-line-блокируя каждый другой запрос." },
+  ]}
+/>
+
+## Сниппет 2 — ресайз на пуле libuv
+
+```js
+// "Фикс" команды после профилирования медленного эндпоинта картинок:
+process.env.UV_THREADPOOL_SIZE = "32";
+
+app.post("/resize", (req, res) => {
+  const out = resizeImageSync(req.body.buffer, 1024, 768); // pure-JS pixel loop
+  res.send(out);
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-2"
+  lessonSlug="03-async-blocking"
+  lang="ru"
+  question="Команда подняла UV_THREADPOOL_SIZE до 32, ожидая распараллелить ресайз. Ничего не изменилось. Почему и какой фикс верный?"
+  choices={[
+    { label: "Пул libuv выполняет нативные fs/dns/crypto/zlib, а не твой JavaScript, поэтому resizeImageSync всё равно выполняется на потоке loop при любом размере пула. Перенеси ресайз в worker thread (отдельный V8-изолят) ради настоящего многоядерного параллелизма.", correct: true },
+    { label: "UV_THREADPOOL_SIZE надо задавать до старта процесса, поэтому присваивание проигнорировалось.", misconception: "Даже если бы оно вступило в силу, пул не выполняет JavaScript, так что не смог бы запустить JS-цикл по пикселям. Фикс — worker thread, а не пул." },
+    { label: "32 превышает число ядер, поэтому лишние потоки конфликтуют и взаимоуничтожаются.", misconception: "Переразмер пула действительно вызывает contention, но сломано не поэтому — пул вообще не выполняет JS. Ресайзу нужен worker thread." },
+    { label: "resizeImageSync I/O-bound, поэтому ему место на пуле libuv, когда тот достаточно велик.", misconception: "Цикл по пикселям CPU-bound, а не I/O; именно поэтому он блокирует loop и поэтому ответ — worker thread (или разбиение на чанки)." },
+  ]}
+/>
+
+## Сниппет 3 — голодание worker-пула
+
+```js
+// Worker-пул под 4 ядра машины:
+const pool = new WorkerPool({ size: 4 });
+
+app.get("/report/:id", async (req, res) => {
+  // Каждый отчёт = одна CPU-тяжёлая задача агрегации на пуле.
+  const result = await pool.run("aggregate", req.params.id); // may take ~2 s
+  res.json(result);
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-3"
+  lessonSlug="03-async-blocking"
+  lang="ru"
+  question="Под всплеском запросов отчётов каждый эндпоинт — включая дешёвые, тоже использующие пул — видит рост задержки до секунд, затем таймауты. Какой это режим отказа?"
+  choices={[
+    { label: "Голодание пула потоков: всего 4 worker'а и задачи ~2 с, поэтому всплеск запросов отчётов занимает всех worker'ов, и каждый последующий pool.run встаёт в очередь за ними. Фикс — ограничить очередь и сбрасывать/таймаутить излишек, и держать быстрые задачи вне того же насыщенного пула.", correct: true },
+    { label: "У worker-пула утечка памяти, растущая с каждым отчётом.", misconception: "Здесь ничего не течёт; симптом — очередь, а не рост. Фиксированный пул из 4 просто не может выполнять больше 4 тяжёлых задач сразу, остальные ждут." },
+    { label: "await на pool.run блокирует event loop, пока worker считает.", misconception: "await уступает loop; loop остаётся свободным. Узкое место — ограниченный набор worker'ов, а не поток loop." },
+    { label: "Поднятие числа worker'ов до 64 на 4-ядерной машине чисто это разрулит.", misconception: "Больше worker'ов, чем ядер, не добавляет CPU; 64 worker'а на 4 ядрах лишь нарезают время и добавляют накладные расходы. Нужна ограниченная очередь с таймаутами/сбросом, в идеале больше ядер или инстансов." },
+  ]}
+/>
+
+## Сниппет 4 — измеряем заморозку
+
+```js
+import { monitorEventLoopDelay } from "node:perf_hooks";
+
+const h = monitorEventLoopDelay();
+h.enable();
+setInterval(() => {
+  console.log("loop delay p99 (ms):", h.percentile(99) / 1e6);
+}, 1000);
+// Пример вывода во время плохого запроса отчёта:
+// loop delay p99 (ms): 812
+```
+
+<Quiz
+  id="03-async-blocking-code-4"
+  lessonSlug="03-async-blocking"
+  lang="ru"
+  question="CPU спокойно сидит на ~55%, пока это печатает p99 loop delay 812 мс. Какое прочтение верно?"
+  choices={[
+    { label: "Loop не мог вернуться в poll ~812 мс на 99-м перцентиле — длинный синхронный участок его замораживает — даже хотя CPU выглядит нормально. Loop delay, а не CPU, и есть сигнал, совпадающий с таймаутами, которые чувствуют пользователи.", correct: true },
+    { label: "55% CPU доказывает, что сервис здоров; цифра 812 мс — шум измерения.", misconception: "Умеренный CPU — это и есть ловушка: один толстый синхронный участок может стопорить loop, пока CPU остаётся средним. 812 мс p99 lag — реальная, видимая пользователю заморозка." },
+    { label: "812 мс значит, что каждый запрос обрабатывался 812 мс.", misconception: "Loop delay — это насколько поздно сработал запланированный колбэк (разрыв до того, как loop до него добрался), а не задержка на запрос. Он измеряет, как долго loop был монополизирован." },
+    { label: "Фикс — добавить ядра CPU, пока утилизация не упадёт.", misconception: "Больше ядер не разблокирует единственный поток loop; один Node loop — одно ядро JS. Фикс — найти и вынести синхронный участок, затем перемерить lag." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Любую заморозку читают в обработчиках и в гистограмме lag: синхронный I/O и sync crypto на пути запроса стопорят loop и должны переехать на async API (которые используют пул libuv); CPU-bound JS не лечится большим пулом libuv и живёт в worker thread; фиксированный worker-пул голодает под всплеском тяжёлых задач, поэтому ограничивай очередь таймаутами и держи быстрые задачи вне него; а event-loop delay — а не CPU — это метрика, совпадающая с таймаутами, которые чувствуют пользователи. Диагностируй по сигналу, чини блокирующий участок, затем перемерь.
 </Recap>
-

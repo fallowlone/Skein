@@ -1,42 +1,128 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- pool-sizing-formula
+- connection-leak
+- try-finally
+- acquisition-timeout
+- idle-in-transaction
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Пулинг соединений и потоков"
-title: Кодировочный тест
+- https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing
+- https://github.com/brettwooldridge/HikariCP/wiki/Configuration
+- https://www.postgresql.org/docs/current/runtime-config-client.html
+status: ready
+summary: "Читай реальный конфиг pool, код хендлера и строку лога Postgres, предсказывай отказ и выбирай фикс с наибольшим рычагом — формула размера, leak, idle-in-transaction и конфиг таймаутов."
+title: 'Пулинг: чтение кода и конфига'
 track: backend
 unit: 04-pooling
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Пулинг соединений и потоков unit.
+Инциденты с pool диагностируются в конфиг-файлах, коде хендлеров и логе базы — не в абстракции. Прочитай каждый сниппет, предскажи отказ, который он даёт под нагрузкой, и выбери фикс, который senior-инженер сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Пулинг соединений и потоков unit.
+Отработай цикл каждого инцидента с пулингом: прочитай конфиг и горячий путь, предскажи, где соединения голодают, текут или протухают, и тянись за структурным фиксом раньше, чем за большим числом.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — размер pool
+
+```yaml
+# Postgres на 4 vCPU, один SSD. Сервис держит ~2000 req/s.
+# Запаниковавший инженер выставил это после алерта "DB is the bottleneck":
+spring.datasource.hikari.maximum-pool-size: 200
+spring.datasource.hikari.minimum-idle: 200
+```
+
+<Quiz
+  id="04-pooling-code-1"
+  lessonSlug="04-pooling"
+  lang="ru"
+  question="На этой 4-vCPU, одно-SSD базе, каким на самом деле должен быть maximum-pool-size и почему 200 вредны?"
+  choices={[
+    { label: "Около 9, по эвристике HikariCP (cores x 2) + spindles = (4 x 2) + 1. 200 соединений далеко превышают то, что могут выполнить 4 ядра, поэтому излишек — чистая context-switch и lock/latch contention; пропускная способность падает, задержка растёт.", correct: true },
+    { label: "200 — нормально, больше соединений всегда означает больше конкурентности.", misconception: "Соединение — не единица параллелизма; ядро — да. За пределами примерно (cores x 2) + spindles лишние соединения лишь конкурируют, а не выполняются." },
+    { label: "Поставь 100, чтобы совпасть с дефолтным max_connections Postgres.", misconception: "max_connections — серверный потолок, общий для всех клиентов, а не цель на приложение. Максимизирующее пропускную способность число здесь однозначное." },
+    { label: "Подними до 400; формула слишком консервативна для 2000 req/s.", misconception: "Высокий rate запросов обслуживается дешёвым ожиданием избытка в очереди pool, а не большим числом backend'ов. Больший pool молотит базу — rate запросов не меняет число ядер." },
+  ]}
+/>
+
+## Сниппет 2 — хендлер
+
+```js
+async function getUser(id) {
+  const conn = await pool.acquire();
+  const rows = await conn.query("SELECT * FROM users WHERE id = $1", [id]);
+  conn.release();           // возвращает соединение в pool
+  return rows[0];
+}
+```
+
+<Quiz
+  id="04-pooling-code-2"
+  lessonSlug="04-pooling"
+  lang="ru"
+  question="Этот хендлер работает в тестах, но pool осушается до пустого за часы в проде, чинится только рестартом. В чём дефект и фикс?"
+  choices={[
+    { label: "Если conn.query кидает, выполнение перепрыгивает через conn.release() и это соединение утекает навсегда. Оберни работу в try/finally, чтобы release() выполнялся и при успехе, и при throw.", correct: true },
+    { label: "pool.acquire() небезопасно вызывать конкурентно.", misconception: "Acquire рассчитан на конкурентных вызывающих; баг в том, что release пропускается на error-пути, утекая одно соединение каждый раз, когда запрос кидает." },
+    { label: "Проблема в SELECT * — он возвращает слишком много колонок.", misconception: "Число колонок не осушает pool. Leak — это негарантированный release на throw-пути; именно он ратчетит pool до пустого." },
+    { label: "Ничего не так; pool просто надо побольше.", misconception: "Больший pool лишь оттянет ту же exhaustion, потому что leak осушает со своей скоростью. Структурный фикс — try/finally, а не больше соединений." },
+  ]}
+/>
+
+## Сниппет 3 — строка лога Postgres
+
+```
+LOG:  duration: 612000.244 ms  state: idle in transaction
+DETAIL:  process 48213 has been idle in transaction for 00:10:12
+HINT:  Sessions idle in transaction hold their connection and any locks.
+```
+
+<Quiz
+  id="04-pooling-code-3"
+  lessonSlug="04-pooling"
+  lang="ru"
+  question="Несколько backend'ов показывают 'idle in transaction' минутами, и pool продолжает истощаться. Что происходит и какая защита верна?"
+  choices={[
+    { label: "Транзакция была открыта (BEGIN), но код await'ит несвязанную работу — внешний HTTP-вызов, медленную бизнес-логику — до COMMIT/ROLLBACK, поэтому соединение придерживается простаивающим внутри открытой транзакции, ещё и держа локи. Держи транзакцию узкой и выставь idle_in_transaction_session_timeout, чтобы выкашивать застрявших.", correct: true },
+    { label: "Сам запрос медленный; добавь индекс.", misconception: "Сессия простаивает, а не выполняет запрос — соединение сидит внутри открытой транзакции, ничего не делая на базе. Индекс не помогает соединению, которое придерживается через несвязанную работу." },
+    { label: "Postgres исчерпал память и ставит транзакции на паузу.", misconception: "Здесь ничто не указывает на давление по памяти; 'idle in transaction' значит, что клиент открыл транзакцию и перестал слать стейтменты, пиннящ backend и его локи." },
+    { label: "Подними max_connections, чтобы idle-in-transaction сессиям хватало места.", misconception: "Больше соединений лишь дают больше сессий, чтобы застрять idle-in-transaction, держа больше локов. Ограничь длительность открытой транзакции вместо этого." },
+  ]}
+/>
+
+## Сниппет 4 — конфиг таймаутов
+
+```yaml
+spring.datasource.hikari.connection-timeout: 30000   # 30 с, дефолт
+spring.datasource.hikari.max-lifetime: 28800000      # 8 ч
+# Бэкенд MySQL имеет wait_timeout = 28800 (8 ч, дефолт)
+```
+
+<Quiz
+  id="04-pooling-code-4"
+  lessonSlug="04-pooling"
+  lang="ru"
+  question="В этом конфиге прячутся две проблемы, которые укусят при медленной зависимости и после простоев. Какой фикс корректно адресует обе?"
+  choices={[
+    { label: "Сократи connection-timeout до ~1–3x обычного запроса (например, 250 мс – 2 с), чтобы истощённый pool падал быстро вместо пиннинга потоков на 30 с; и поставь max-lifetime безопасно ниже DB wait_timeout (например, ~28000000 мс / на несколько секунд ниже), чтобы pool ретайрил соединения раньше, чем сервер их закроет.", correct: true },
+    { label: "Оставь connection-timeout 30 с, но подними max-lifetime ровно под wait_timeout.", misconception: "Acquisition timeout в 30 с пиннит потоки веб-сервера сквозь замедление, пока слой не заморится. А max-lifetime, равный wait_timeout, гоняется с сервером — он должен быть строго короче, чтобы pool всегда закрывал первым." },
+    { label: "Понизь connection-timeout до 50 мс и оставь max-lifetime на 8 ч.", misconception: "50 мс валит безобидные микровсплески, которые рассосались бы за десятки мс. А max-lifetime в 8 ч, равный wait_timeout, всё ещё даёт серверу убить соединения первым, раздавая stale-сокеты." },
+    { label: "Важен только max-lifetime; acquisition timeout не влияет на отказы.", misconception: "Acquisition timeout — единственное число, решающее fail-fast vs thread-starvation при медленной зависимости — это самая критичная для отказа ручка здесь." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент с пулингом читается в конфиге, коде и логах: pool, заданный в 200 на 4 ядрах, — это contention, а не конкурентность (эвристика (cores x 2) + spindles ставит его около 9); release() вне try/finally течёт на error-пути и осушает pool за часы; 'idle in transaction' в логе значит соединение, придержанное внутри открытой транзакции через несвязанную работу, держащее локи; а 30-секундный acquisition timeout плюс max-lifetime, не подрезающий DB wait_timeout, — ловушка starvation-и-stale-сокетов. Диагностируй по уликам, чини структурно (правильный размер, гарантированный return, узкие транзакции, ограниченные ожидания), затем перемеряй.
 </Recap>
-

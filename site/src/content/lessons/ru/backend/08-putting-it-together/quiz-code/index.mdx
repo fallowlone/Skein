@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- blocking-the-loop
+- pool-exhaustion
+- idempotency-dedup
+- circuit-breaker
+- timeout-budget
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Собираем воедино: бэкенд для продакшена"'
-title: Кодировочный тест
+- https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+- https://sre.google/sre-book/addressing-cascading-failures/
+- https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/
+status: ready
+summary: "Чтение реальных backend-сниппетов — заблокированный event loop, безграничный acquire из pool, неатомарная проверка идемпотентности и breaker без таймаута — и выбор фикса, который senior сделал бы первым."
+title: 'Собираем воедино: чтение кода и инцидентов'
 track: backend
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Собираем воедино: бэкенд для продакшена unit.
+Составные сбои диагностируют в коде и логах, а не в абстракции. Прочитай каждый сниппет, предскажи его поведение под нагрузкой и выбери фикс с наибольшим рычагом — тот, что закрывает взаимодействие, а не только локальный симптом.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Собираем воедино: бэкенд для продакшена unit.
+Отработай цикл, который ты крутишь в каждом инциденте: прочитать горячий путь, заметить, чьё плохое поведение питает следующий механизм, и потянуться к фиксу, останавливающему каскад у истока.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — обработчик, блокирующий loop
+
+```js
+// Node.js, один event loop, тысячи конкурентных запросов
+app.post("/report", (req, res) => {
+  const body = req.body;                       // уже распарсено
+  const hash = crypto.pbkdf2Sync(              // СИНХРОННО, ~80мс
+    body.token, body.salt, 200000, 64, "sha512"
+  );
+  const pdf = renderPdfSync(body.rows);        // СИНХРОННО, ~120мс CPU
+  res.send({ ok: true, digest: hash.toString("hex"), pdf });
+});
+```
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Под конкурентной нагрузкой этот обработчик роняет p99 для каждого эндпоинта, не только /report. Почему и каков фикс с наибольшим рычагом?"
+  choices={[
+    { label: "pbkdf2Sync и renderPdfSync работают на единственном event loop, поэтому каждый запрос блокирует loop на ~200мс — стопоря все остальные конкурентные запросы. Унеси работу с loop: crypto.pbkdf2 (async), worker thread / worker pool для PDF или offload в очередь.", correct: true },
+    { label: "Pool мал; подними размер пула соединений.", misconception: "В этом пути нет ни I/O, ни pool — это чистый CPU на event loop. Бо́льший pool ничего не меняет; фикс — перестать блокировать loop синхронной CPU-работой." },
+    { label: "Добавь больше retry, чтобы медленные запросы в итоге проходили.", misconception: "Retry на блокирующем loop обработчике добавляет ещё CPU-работы на уже застопоренный loop — чистое усиление. Фикс — унести синхронную работу с loop, а не повторять её." },
+    { label: "Всё в порядке; 200мс на запрос приемлемы.", misconception: "Цена не в 200мс одного запроса — в том, что синхронная работа одного запроса замораживает loop и добавляет задержку тысячам несвязанных запросов, делящих его." },
+  ]}
+/>
+
+## Сниппет 2 — acquire из pool без границы
+
+```go
+// Go: фиксированный pool из 50 соединений, без acquisition timeout
+func (h *Handler) Charge(ctx context.Context, req ChargeReq) error {
+    conn := h.pool.Acquire()          // блокируется бесконечно, если pool пуст
+    defer h.pool.Release(conn)
+    // у вызова провайдера тоже нет своего таймаута
+    resp, err := h.provider.Call(conn, req)
+    if err != nil {
+        return err
+    }
+    return h.repo.Save(conn, resp)
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Провайдер замедлился до 4 с на вызов. Что этот код делает со всем сервисом и каков первый фикс?"
+  choices={[
+    { label: "Каждый вызов держит соединение все 4 с, поэтому все 50 опустошаются; новые вызывающие блокируются на Acquire() навсегда, потому что acquisition timeout нет — весь сервис стопорится. Первый фикс: ограничить acquire (ctx с дедлайном из суб-бюджета), чтобы исчерпанный pool падал быстро, а не висел.", correct: true },
+    { label: "Ничего — pool ограничен 50, значит уже защищён.", misconception: "Ограниченность лимитирует конкурентную работу, но без acquire timeout 51-й вызывающий ждёт бесконечно. Bounded плюс безграничное ожидание — так медленный downstream стопорит всех; нужен ещё fail-fast на acquire." },
+    { label: "Увеличь pool до 500, чтобы он никогда не пустел.", misconception: "Бо́льший pool лишь оттягивает исчерпание и сажает больше соединений на медленного провайдера, расширяя blast radius. Фикс — fail-fast acquire и таймаут вызова, а не больше соединений." },
+    { label: "Добавь retry вокруг Charge, чтобы упавшие charge проходили.", misconception: "Таймаута, чтобы вызов упал, нет, поэтому retry не срабатывают — а если бы и сработали, схватили бы больше соединений и усилили исчерпание. Сначала ограничь acquire и вызов." },
+  ]}
+/>
+
+## Сниппет 3 — неатомарная проверка идемпотентности
+
+```sql
+-- Приложение делает: check-then-insert, два отдельных оператора
+SELECT result FROM charges WHERE idempotency_key = $1;     -- шаг A: не найдено
+-- ... обработчик идёт списывать с карты ...
+INSERT INTO charges (idempotency_key, result) VALUES ($1, $2);  -- шаг B
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Клиент повторяет тот же POST, и два запроса идут конкурентно. С этой check-then-insert идемпотентностью что произойдёт и как это починить?"
+  choices={[
+    { label: "Оба выполняют шаг A раньше, чем любой выполнит шаг B, оба видят «не найдено» и оба списывают с карты — двойное списание через гонку. Фикс: сделать dedup атомарным — UNIQUE-ограничение на idempotency_key с INSERT ... ON CONFLICT, чтобы второй insert проиграл и вернул первый результат.", correct: true },
+    { label: "SELECT гарантирует, что списание произойдёт только раз.", misconception: "Отдельные SELECT, затем INSERT не атомарны; два конкурентных запроса оба проходят SELECT раньше, чем любой сделает INSERT, поэтому оба списывают. Идемпотентность надо обеспечивать атомарно на слое хранилища, а не предварительным чтением." },
+    { label: "Добавление retry на INSERT решает дубликат.", misconception: "Повтор INSERT не устраняет гонку, уже пропустившую два списания. Нужно ограничение уникальности, чтобы дублирующая запись отклонялась атомарно, а не retry." },
+    { label: "Обернуть оба оператора в транзакцию — и безопасно.", misconception: "Простая транзакция на уровне изоляции по умолчанию всё равно позволяет обоим прочитать «не найдено» и обоим вставить. Нужен UNIQUE (или SELECT ... FOR UPDATE / serializable), а не просто граница транзакции." },
+  ]}
+/>
+
+## Сниппет 4 — breaker, который не срабатывает
+
+```js
+const breaker = new CircuitBreaker(callProvider, {
+  errorThresholdPercentage: 50,   // открыть при 50% ошибок
+  resetTimeout: 30000,            // half-open через 30с
+  // опция `timeout` не задана — вызовы могут висеть бесконечно
+});
+
+async function charge(req) {
+  return breaker.fire(req);       // await callProvider без дедлайна
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="ru"
+  question="Провайдер перестал отвечать — вызовы висят минутами, а не падают с ошибкой. Почему этот breaker не защищает сервис и каков фикс?"
+  choices={[
+    { label: "Без таймаута на вызов вызовы висят, а не падают, поэтому breaker видит мало завершённых ошибок и никогда не переходит порог — остаётся закрытым, пока все вызовы копятся. Фикс: задать таймаут вызова, чтобы зависший вызов считался сбоем, на котором breaker может сработать.", correct: true },
+    { label: "Снизь errorThresholdPercentage до 10, чтобы срабатывал раньше.", misconception: "Низкий порог не помогает, когда завершённых ошибок почти нет — вызовы висят, а не падают. Breaker нужен таймаут, чтобы зависания стали учитываемыми сбоями." },
+    { label: "Сократи resetTimeout, чтобы восстанавливался быстрее.", misconception: "resetTimeout управляет тем, как быстро открытый breaker пробует восстановление; он неважен, пока breaker не открывается. Недостающее — таймаут вызова, превращающий зависания в сбои, достойные срабатывания." },
+    { label: "Breaker работает правильно; зависшие вызовы — не сбои.", misconception: "Вызов, висящий минутами, — худший вид сбоя: он держит ресурсы и не разрешается. Breaker без таймаута слеп именно к тем медленным сбоям, которые ему важнее всего сбрасывать." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый сниппет — это один механизм, чей изъян становится катастрофой следующего: синхронный CPU на event loop стопорит всю конкурентность; безграничный acquire из pool превращает медленный downstream в полный стопор; неатомарная проверка идемпотентности списывает дважды под гонкой retry; и breaker без таймаута вызова слеп к зависшим вызовам. Фикс всегда тот, что останавливает взаимодействие у истока — унести работу с loop, fail-fast на acquire, атомарный dedup и таймаут для breaker — а не ручка, откладывающая или усиливающая проблему.
 </Recap>
-

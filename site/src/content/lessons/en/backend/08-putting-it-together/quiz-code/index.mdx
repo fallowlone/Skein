@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- blocking-the-loop
+- pool-exhaustion
+- idempotency-dedup
+- circuit-breaker
+- timeout-budget
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Putting it together: production backend"'
-title: Coding Quiz
+- https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+- https://sre.google/sre-book/addressing-cascading-failures/
+- https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/
+status: ready
+summary: "Read real backend snippets — a blocked event loop, an unbounded pool acquire, a non-atomic idempotency check, and a breaker with no timeout — and pick the fix a senior would make first."
+title: 'Putting it together: code and incident reading'
 track: backend
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Putting it together: production backend unit.
+Composed failures are diagnosed in code and logs, not in the abstract. Read each snippet, predict how it behaves under load, and choose the highest-leverage fix — the one that closes the interaction, not just the local symptom.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Putting it together: production backend unit.
+Practise the loop you run in every incident: read the hot path, spot which mechanism's bad behaviour will feed the next, and reach for the fix that stops the cascade at its source.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the handler that blocks the loop
+
+```js
+// Node.js, single event loop, thousands of concurrent requests
+app.post("/report", (req, res) => {
+  const body = req.body;                       // already parsed
+  const hash = crypto.pbkdf2Sync(              // SYNCHRONOUS, ~80ms
+    body.token, body.salt, 200000, 64, "sha512"
+  );
+  const pdf = renderPdfSync(body.rows);        // SYNCHRONOUS, ~120ms CPU
+  res.send({ ok: true, digest: hash.toString("hex"), pdf });
+});
+```
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="Under concurrent load this handler tanks p99 for every endpoint, not just /report. Why, and what is the highest-leverage fix?"
+  choices={[
+    { label: "pbkdf2Sync and renderPdfSync run on the single event loop, so each request blocks the loop for ~200ms — stalling every other concurrent request. Move the work off the loop: crypto.pbkdf2 (async), a worker thread / worker pool for the PDF, or offload to a queue.", correct: true },
+    { label: "The pool is too small; raise the connection pool size.", misconception: "There is no I/O or pool in this path — it is pure CPU on the event loop. A bigger pool changes nothing; the fix is to stop blocking the loop with synchronous CPU work." },
+    { label: "Add more retries so slow requests eventually succeed.", misconception: "Retries on a loop-blocking handler add more CPU work to an already-stalled loop — pure amplification. The fix is to get the synchronous work off the loop, not to repeat it." },
+    { label: "Nothing is wrong; 200ms per request is acceptable.", misconception: "The cost is not the 200ms of one request — it is that one request's synchronous work freezes the loop and adds latency to thousands of unrelated requests sharing it." },
+  ]}
+/>
+
+## Snippet 2 — the pool acquire with no bound
+
+```go
+// Go: a fixed pool of 50 connections, no acquisition timeout
+func (h *Handler) Charge(ctx context.Context, req ChargeReq) error {
+    conn := h.pool.Acquire()          // blocks indefinitely if pool is empty
+    defer h.pool.Release(conn)
+    // provider call has no timeout of its own either
+    resp, err := h.provider.Call(conn, req)
+    if err != nil {
+        return err
+    }
+    return h.repo.Save(conn, resp)
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="The provider slows to 4s per call. What does this code do to the whole service, and what is the first fix?"
+  choices={[
+    { label: "Each call holds a connection for the full 4s, so all 50 drain; new callers block forever on Acquire() because there is no acquisition timeout — the whole service stalls. First fix: bound the acquire (ctx with a sub-budget deadline) so a saturated pool fails fast instead of hanging.", correct: true },
+    { label: "Nothing — the pool is bounded at 50, so it is already protected.", misconception: "Boundedness limits concurrent work but, with no acquire timeout, the 51st caller waits indefinitely. Bounded plus unbounded-wait is how a slow downstream stalls everyone — you must also fail fast on acquire." },
+    { label: "Increase the pool to 500 so it never empties.", misconception: "A bigger pool only delays exhaustion and lets more connections pile onto the slow provider, widening the blast radius. The fix is fail-fast acquisition and a call timeout, not more connections." },
+    { label: "Add a retry around Charge so failed charges succeed.", misconception: "There is no timeout to make a call fail, so retries never trigger — and if they did, they would grab more connections and amplify the exhaustion. Bound the acquire and the call first." },
+  ]}
+/>
+
+## Snippet 3 — the non-atomic idempotency check
+
+```sql
+-- Application does: check-then-insert, two separate statements
+SELECT result FROM charges WHERE idempotency_key = $1;     -- step A: not found
+-- ... handler proceeds to charge the card ...
+INSERT INTO charges (idempotency_key, result) VALUES ($1, $2);  -- step B
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="A client retries the same POST and two requests run concurrently. With this check-then-insert idempotency, what happens and how do you fix it?"
+  choices={[
+    { label: "Both run step A before either runs step B, both see 'not found', and both charge the card — a double-charge through a race. Fix: make dedup atomic — a UNIQUE constraint on idempotency_key with INSERT ... ON CONFLICT, so the second insert loses and returns the first result.", correct: true },
+    { label: "The SELECT guarantees only one charge happens.", misconception: "A separate SELECT then INSERT is not atomic; two concurrent requests both pass the SELECT before either INSERTs, so both charge. Idempotency must be enforced atomically at the storage layer, not by a prior read." },
+    { label: "Adding a retry on the INSERT solves the duplicate.", misconception: "Retrying the INSERT does not address the race that already let two charges through. You need a uniqueness constraint so the duplicate write is rejected atomically, not a retry." },
+    { label: "Wrap both statements in a transaction and it is safe.", misconception: "A plain transaction at the default isolation level still allows both to read 'not found' and both to insert. You need a UNIQUE constraint (or SELECT ... FOR UPDATE / serializable isolation), not just a transaction boundary." },
+  ]}
+/>
+
+## Snippet 4 — the breaker that never trips
+
+```js
+const breaker = new CircuitBreaker(callProvider, {
+  errorThresholdPercentage: 50,   // open at 50% errors
+  resetTimeout: 30000,            // half-open after 30s
+  // no `timeout` option set — calls can hang indefinitely
+});
+
+async function charge(req) {
+  return breaker.fire(req);       // awaits callProvider with no deadline
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="The provider stops returning — calls hang for minutes rather than erroring. Why does this breaker fail to protect the service, and what is the fix?"
+  choices={[
+    { label: "With no per-call timeout the calls hang instead of failing, so the breaker sees few completed errors and never crosses its error threshold — it stays closed while every call piles up. Fix: set a call timeout so a hung call counts as a failure the breaker can trip on.", correct: true },
+    { label: "Lower errorThresholdPercentage to 10 so it trips sooner.", misconception: "A lower threshold does not help when there are almost no completed errors to count — the calls are hanging, not erroring. The breaker needs a timeout so hangs become countable failures." },
+    { label: "Shorten resetTimeout so it recovers faster.", misconception: "resetTimeout governs how fast an open breaker probes recovery; it is irrelevant while the breaker never opens. The missing piece is a call timeout that turns hangs into trip-worthy failures." },
+    { label: "The breaker is working correctly; hung calls are not failures.", misconception: "A call hanging for minutes is the worst kind of failure — it holds resources and never resolves. A breaker without a timeout is blind to exactly the slow failures it most needs to shed." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every snippet is one mechanism whose flaw becomes the next mechanism's catastrophe: synchronous CPU on the event loop stalls all concurrency; an unbounded pool acquire turns a slow downstream into a total stall; a non-atomic idempotency check double-charges under a retry race; and a breaker with no call timeout stays blind to hung calls. The fix is always the one that stops the interaction at its source — move work off the loop, fail fast on acquire, enforce dedup atomically, and give the breaker a timeout — not a knob that defers or amplifies the problem.
 </Recap>
-

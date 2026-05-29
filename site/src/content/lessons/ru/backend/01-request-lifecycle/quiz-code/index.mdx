@@ -1,42 +1,136 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- middleware-ordering
+- backpressure
+- serialization-cost
+- deadline-propagation
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Жизненный цикл запроса"
-title: Кодировочный тест
+- https://nodejs.org/api/stream.html#backpressuring-in-streams
+- https://expressjs.com/en/guide/using-middleware.html
+- https://grpc.io/docs/guides/deadlines/
+status: ready
+summary: "Читай реальные сниппеты обработчика, middleware, стриминга и проброса deadline, предскажи сбой жизненного цикла и выбери самый рычажный фикс, который senior сделает первым."
+title: 'Жизненный цикл запроса: чтение кода'
 track: backend
 unit: 01-request-lifecycle
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Жизненный цикл запроса unit.
+Баги жизненного цикла диагностируются в коде на горячем пути и в порядке проводки. Прочитай каждый сниппет, предскажи, где он ломается в production, и выбери фикс, к которому senior тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Жизненный цикл запроса unit.
+Отработай цикл, который запускаешь в каждом инциденте жизненного цикла: читай проводку или горячий путь, предскажи ломающуюся остановку и тянись к самому рычажному фиксу — порядок, backpressure, сериализация или пробрасываемый deadline.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — цепочка middleware
+
+```js
+const app = express();
+
+app.use(express.json());                 // парсер тела, без лимита размера
+app.post("/admin/wipe", wipeHandler);     // <-- зарегистрирован здесь
+app.use(rateLimit({ max: 100 }));         // rate limiter
+app.use(requireAuth);                     // auth: 401 без валидного токена
+app.use(errorHandler);                    // ловит throw'ы ниже по цепочке
+```
+
+<Quiz
+  id="01-request-lifecycle-code-1"
+  lessonSlug="01-request-lifecycle"
+  lang="ru"
+  question="Какие проблемы создаёт этот порядок регистрации и каков фикс?"
+  choices={[
+    { label: "POST /admin/wipe выполняется до rateLimit, requireAuth и errorHandler — поэтому он неаутентифицирован, без троттлинга, а его throw'ы не пойманы. Плюс express.json() без лимита размера буферизует любой payload. Фикс: errorHandler снаружи, затем лимит размера + rateLimit + requireAuth, а маршруты — последними.", correct: true },
+    { label: "Всё в порядке; Express запускает все app.use() middleware независимо от позиции маршрута.", misconception: "Express запускает middleware в порядке регистрации, и ответивший маршрут закорачивает остальное. Зарегистрированное после маршрута для него не запускается — поэтому auth, rate limit и error handler здесь обойдены." },
+    { label: "Единственная проблема — rateLimit должен идти после auth, чтобы лимитировать на пользователя.", misconception: "Лимитирование на пользователя — улучшение, но несущий баг в том, что маршрут зарегистрирован до всех трёх защитных слоёв, поэтому ни один из них для него не запускается вовсе. Дефект — порядок относительно маршрута." },
+    { label: "errorHandler должен быть первым, чтобы ловить ошибки, так что просто переместите его наверх.", misconception: "Error handler в Express матчится по 4-аргументной сигнатуре и должен регистрироваться ПОСЛЕДНИМ (снаружи луковицы), чтобы ловить throw'ы всего, что ниже. Поставив его первым, ничего ниже ещё не выполнялось — ловить нечего." },
+  ]}
+/>
+
+## Сниппет 2 — стриминговый экспорт
+
+```js
+function exportCSV(rows, res) {
+  res.setHeader("Transfer-Encoding", "chunked");
+  for (const row of rows) {
+    res.write(toCSVLine(row));   // возвращаемое значение игнорируется
+  }
+  res.end();
+}
+```
+
+<Quiz
+  id="01-request-lifecycle-code-2"
+  lessonSlug="01-request-lifecycle"
+  lang="ru"
+  question="Это проходит все тесты, но даёт OOM в production на одном медленном клиенте. В чём баг и каков корректный переписанный вариант?"
+  choices={[
+    { label: "Игнорируется backpressure: res.write() возвращает false, как только буфер пересёк high-water mark, но цикл продолжает писать, и непрочитанные байты копятся в куче, когда клиент читает медленно. Перепиши через pipeline(rowStream, res) (или паузу до события 'drain'), что связывает производство со скоростью потребителя.", correct: true },
+    { label: "Transfer-Encoding: chunked невалиден для CSV; ставь Content-Length.", misconception: "Chunked корректен для стримингового тела неизвестного общего размера; Content-Length заставил бы сначала забуферизовать весь экспорт. Баг — игнорирование сигнала backpressure от write(), а не фрейминг." },
+    { label: "res.end() вызывается слишком рано и обрезает вывод.", misconception: "res.end() выполняется после завершения цикла, поэтому не обрезает. Дефект в том, что цикл никогда не учитывает false от write(), поэтому память растёт неограниченно под медленным потребителем." },
+    { label: "toCSVLine аллоцирует строки, поэтому фикс — поднять лимит кучи.", misconception: "Поднятие кучи лишь оттягивает OOM; рост неограничен, потому что производство оторвано от скорости чтения клиента. Учёт backpressure держит память плоской на уровне ~high-water mark независимо от аллокаций." },
+  ]}
+/>
+
+## Сниппет 3 — построитель ответа
+
+```js
+app.get("/orders", async (req, res) => {
+  const orders = await db.query("SELECT * FROM orders"); // без лимита
+  res.status(200).json({ ok: true, data: orders });      // JSON.stringify
+});
+```
+
+<Quiz
+  id="01-request-lifecycle-code-3"
+  lessonSlug="01-request-lifecycle"
+  lang="ru"
+  question="По мере роста таблицы orders этот эндпоинт деградирует и иногда стопорит все остальные запросы. Какие две остановки жизненного цикла виноваты и каков фикс?"
+  choices={[
+    { label: "Handle (запрос без лимита тянет всю таблицу) и Serialize (res.json запускает синхронный JSON.stringify по огромному массиву, блокируя event loop для всех остальных запросов). Фикс: пагинация / LIMIT в запросе и schema-сериализатор на горячем пути.", correct: true },
+    { label: "Только Serialize — запрос к БД дёшев независимо от числа строк.", misconception: "SELECT без лимита сам по себе проблема стадии Handle: он тянет больше строк по мере роста таблицы, что затем питает раздутую сериализацию. Обе остановки компаундятся; ограничение запроса — фикс выше по течению." },
+    { label: "Accept — эндпоинт переполняет accept-очередь по мере роста таблицы.", misconception: "Размер таблицы не влияет на accept-очередь, которая ограничивает ожидающие соединения. Деградация отслеживает размер результата, что указывает на запрос (Handle) и сериализацию (Serialize), а не на приём соединений." },
+    { label: "status(200) неверен; 204 избежал бы сериализации тела.", misconception: "204 означает отсутствие тела, что сломало бы контракт эндпоинта — клиентам нужны заказы. Фикс — ограничить и пагинировать тело, а не выбрасывать его; статус-код для успешного чтения корректен." },
+  ]}
+/>
+
+## Сниппет 4 — deadline, который не пробрасывается
+
+```js
+async function getProfile(userId) {
+  // каждый клиент ставит свой фиксированный таймаут 1с; ничего не пробрасывается
+  const user = await usersClient.get(userId, { timeoutMs: 1000 });
+  const prefs = await prefsClient.get(userId, { timeoutMs: 1000 });
+  const feed = await feedClient.get(userId, { timeoutMs: 1000 });
+  return { user, prefs, feed };
+}
+```
+
+<Quiz
+  id="01-request-lifecycle-code-4"
+  lessonSlug="01-request-lifecycle"
+  lang="ru"
+  question="Точка входа обещает SLA 1 с, но эта функция может занять ~3 с, когда downstream'ы медленные. Почему и какая форма корректна?"
+  choices={[
+    { label: "Три вызова последовательны, и каждый может сжечь свою фиксированную 1 с, поэтому худший случай ~3 с — далеко за SLA 1 с — и каждый hop продолжает работать после того, как вызывающий сдался. Фикс: пробрасывать deadline (cutoff по wall-clock) и ставить таймаут каждого вызова в min(local, remaining budget); независимые вызовы запускать конкурентно, где возможно.", correct: true },
+    { label: "Всё в порядке; три таймаута по 1 с всё равно ограничивают итог 1 секундой.", misconception: "Фиксированные per-hop таймауты не композируются. Последовательные вызовы, каждый до 1 с, дают ~3 с; изолированные таймауты не могут навязать бюджет на весь запрос — только пробрасываемый deadline может." },
+    { label: "Единственный фикс — снизить каждый таймаут до 333 мс, чтобы в сумме была 1 с.", misconception: "Статическое деление тратит бюджет впустую — быстрый первый вызов должен оставлять больше времени поздним. Пробрасываемый deadline с min(local, remaining) адаптируется к фактически прошедшему времени, а не к фиксированному делению 1/N." },
+    { label: "Запусти их конкурентно — и SLA автоматически гарантирован.", misconception: "Конкурентность ограничивает итог самым медленным одиночным вызовом (~1 с), что помогает, но без пробрасываемого deadline медленный hop всё ещё может зависнуть за бюджет, а fan-out тогда вскроет амплификацию хвоста. Нужны и конкурентность, и deadline." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент жизненного цикла читается в проводке или на горячем пути: middleware, зарегистрированный после маршрута, не запускается, поэтому порядок — граница безопасности; цикл write(), игнорирующий false, даёт OOM под медленными клиентами, поэтому используй pipeline(); запрос без лимита плюс generic JSON.stringify блокирует loop, поэтому пагинируй и используй schema-сериализатор; а фиксированные per-hop таймауты не композируются, поэтому пробрасывай deadline с min(local, remaining). Диагностируй остановку, примени самый рычажный фикс, затем проверь под той же нагрузкой.
 </Recap>
-

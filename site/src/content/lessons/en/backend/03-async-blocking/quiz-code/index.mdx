@@ -1,42 +1,145 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- synchronous-io
+- cpu-bound
+- worker-threads
+- thread-pool-starvation
+- bounded-concurrency
+- event-loop-lag
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Async vs blocking I/O"
-title: Coding Quiz
+- https://nodejs.org/learn/asynchronous-work/dont-block-the-event-loop
+- https://nodejs.org/api/worker_threads.html
+- https://nodejs.org/api/perf_hooks.html
+status: ready
+summary: "Read real Node handlers and a perf signal, predict how each interacts with the event loop, and pick the fix a senior engineer reaches for first."
+title: 'Async vs blocking: code and trace reading'
 track: backend
 unit: 03-async-blocking
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Async vs blocking I/O unit.
+Blocking is diagnosed in handlers and in the lag histogram, not in the abstract. Read each snippet, predict what it does to the single loop thread, and choose the change a senior engineer would make before reaching for any knob.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Async vs blocking I/O unit.
+Practise the loop you run in every freeze incident: spot the synchronous span or the unbounded fan-out on the hot path, name why it stalls the loop, and reach for the highest-leverage fix — async API, worker thread, or concurrency cap.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the synchronous login
+
+```js
+import bcrypt from "bcrypt";
+import fs from "fs";
+
+app.post("/login", (req, res) => {
+  const policy = fs.readFileSync("./password-policy.json", "utf8"); // sync read
+  const hash = bcrypt.hashSync(req.body.password, 12);              // ~250 ms CPU
+  // ...verify and respond...
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-1"
+  lessonSlug="03-async-blocking"
+  lang="en"
+  question="Under login load this handler tanks throughput for every route, not just /login. What is happening, and the highest-leverage fix?"
+  choices={[
+    { label: "bcrypt.hashSync runs ~200–400 ms of pure CPU on the loop thread per call, and readFileSync does sync I/O there too — so each login freezes the whole loop for that span. Fix: use async bcrypt (it runs hashing on the libuv pool) and fs.promises for the read.", correct: true },
+    { label: "bcrypt's cost factor of 12 is simply too high; lower it to 4.", misconception: "Cost factor 12 is a reasonable security choice; the bug is running it synchronously on the loop, not the factor. Async bcrypt offloads the same work to the libuv pool and keeps the loop free." },
+    { label: "Nothing is wrong — hashing must block by nature.", misconception: "Hashing is CPU work, but async bcrypt runs it on a libuv pool thread so the loop keeps serving other requests. Blocking the loop is a choice, not a necessity." },
+    { label: "The handler is missing await, so it returns before hashing finishes.", misconception: "The sync calls do complete inline; correctness is fine. The defect is that they monopolise the single loop thread, head-of-line-blocking every other request." },
+  ]}
+/>
+
+## Snippet 2 — the resize on the libuv pool
+
+```js
+// Team's "fix" after profiling a slow image endpoint:
+process.env.UV_THREADPOOL_SIZE = "32";
+
+app.post("/resize", (req, res) => {
+  const out = resizeImageSync(req.body.buffer, 1024, 768); // pure-JS pixel loop
+  res.send(out);
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-2"
+  lessonSlug="03-async-blocking"
+  lang="en"
+  question="The team raised UV_THREADPOOL_SIZE to 32 expecting the resize to parallelise. It changed nothing. Why, and what is the correct fix?"
+  choices={[
+    { label: "The libuv pool runs native fs/dns/crypto/zlib, never your JavaScript, so resizeImageSync still runs on the loop thread regardless of pool size. Move the resize into a worker thread (a separate V8 isolate) for true multicore parallelism.", correct: true },
+    { label: "UV_THREADPOOL_SIZE must be set before the process starts, so the assignment was ignored.", misconception: "Even if it took effect, the pool does not execute JavaScript, so it could never run the JS pixel loop. The fix is a worker thread, not the pool." },
+    { label: "32 exceeds the core count, so the extra threads contend and cancel out.", misconception: "Over-provisioning the pool does cause contention, but that is not why this is broken — the pool never runs JS at all. The resize needs a worker thread." },
+    { label: "resizeImageSync is I/O-bound, so it belongs on the libuv pool once it is big enough.", misconception: "A pixel loop is CPU-bound, not I/O; that is exactly why it blocks the loop and why a worker thread (or chunking) is the answer." },
+  ]}
+/>
+
+## Snippet 3 — the worker-pool starvation
+
+```js
+// Worker pool sized to the machine's 4 cores:
+const pool = new WorkerPool({ size: 4 });
+
+app.get("/report/:id", async (req, res) => {
+  // Each report = one CPU-heavy aggregation task on the pool.
+  const result = await pool.run("aggregate", req.params.id); // may take ~2 s
+  res.json(result);
+});
+```
+
+<Quiz
+  id="03-async-blocking-code-3"
+  lessonSlug="03-async-blocking"
+  lang="en"
+  question="Under a burst of report requests, every endpoint — including cheap ones that also use the pool — sees latency climb into seconds, then time out. What is the failure mode?"
+  choices={[
+    { label: "Thread-pool starvation: with only 4 workers and ~2 s tasks, a burst of report requests occupies all workers, so every later pool.run queues behind them. The fix is to bound the queue and shed/timeout excess, and to keep fast tasks off the same saturated pool.", correct: true },
+    { label: "The worker pool has a memory leak that grows with each report.", misconception: "Nothing here leaks; the symptom is queueing, not growth. A fixed pool of 4 simply cannot run more than 4 heavy tasks at once, so the rest wait." },
+    { label: "await on pool.run blocks the event loop while a worker computes.", misconception: "await yields the loop; the loop stays free. The bottleneck is the bounded set of workers, not the loop thread." },
+    { label: "Raising the worker count to 64 on a 4-core box would clear it cleanly.", misconception: "More workers than cores does not add CPU; 64 workers on 4 cores just time-slice and add overhead. You need bounded queueing with timeouts/shedding, and ideally more cores or instances." },
+  ]}
+/>
+
+## Snippet 4 — measuring the freeze
+
+```js
+import { monitorEventLoopDelay } from "node:perf_hooks";
+
+const h = monitorEventLoopDelay();
+h.enable();
+setInterval(() => {
+  console.log("loop delay p99 (ms):", h.percentile(99) / 1e6);
+}, 1000);
+// Sample output during a bad reporting request:
+// loop delay p99 (ms): 812
+```
+
+<Quiz
+  id="03-async-blocking-code-4"
+  lessonSlug="03-async-blocking"
+  lang="en"
+  question="CPU sits at a calm ~55% while this prints a p99 loop delay of 812 ms. Which reading is correct?"
+  choices={[
+    { label: "The loop was unable to return to poll for ~812 ms at the 99th percentile — a long synchronous span is freezing it — even though CPU looks fine. Loop delay, not CPU, is the signal that matches the timeouts users feel.", correct: true },
+    { label: "55% CPU proves the service is healthy; the 812 ms figure is measurement noise.", misconception: "CPU being moderate is exactly the trap: one fat synchronous span can stall the loop while CPU stays middling. 812 ms of p99 lag is a real, user-visible freeze." },
+    { label: "812 ms means each request took 812 ms to handle.", misconception: "Loop delay is how late a scheduled callback fired — the gap before the loop reached it — not per-request latency. It quantifies how long the loop was monopolised." },
+    { label: "The fix is to add CPU cores until utilization drops.", misconception: "More cores do not unblock a single loop thread; one Node loop is one core's worth of JS. The fix is finding and offloading the synchronous span, then re-measuring lag." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every freeze is read in handlers and in the lag histogram: synchronous I/O and sync crypto on the request path stall the loop and must move to async APIs (which use the libuv pool); CPU-bound JS cannot be helped by a bigger libuv pool and belongs in a worker thread; a fixed worker pool starves under a burst of heavy tasks, so bound the queue with timeouts and keep fast work off it; and event-loop delay — not CPU — is the metric that matches the timeouts users feel. Diagnose from the signal, fix the blocking span, then re-measure.
 </Recap>
-

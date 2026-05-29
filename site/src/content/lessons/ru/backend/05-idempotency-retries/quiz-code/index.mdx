@@ -1,43 +1,154 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- on-conflict-dedup
+- backoff-jitter
+- state-machine-race
+- inbox-dedup
+- retry-condition
+- concurrency-race
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Идемпотентность и retry: превращаем at-least-once
-  в effectively-once"'
-title: Кодировочный тест
+- https://brandur.org/idempotency-keys
+- https://www.codereliant.io/p/retries-backoff-jitter
+- https://event-driven.io/en/outbox_inbox_patterns_and_delivery_guarantees_explained/
+status: ready
+summary: "Читай реальные сниппеты idempotency, retry и inbox, предсказывай их поведение под конкурентностью или сбоем и выбирай самый рычажный фикс."
+title: 'Идемпотентность и retry: чтение кода и запросов'
 track: backend
 unit: 05-idempotency-retries
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Идемпотентность и retry: превращаем at-least-once в effectively-once unit.
+Баги идемпотентности прячутся в зазоре между двумя statement, в отсутствующем вызове jitter и в retry-условии, которое срабатывает на неверном статусе. Читай каждый сниппет как на ревью — предскажи сбой под конкурентностью или нагрузкой, затем выбери фикс, который senior делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Идемпотентность и retry: превращаем at-least-once в effectively-once unit.
+Потренируй цикл ревью для этого юнита: замечай окно гонки, retry, усиливающий herd, потерянный переход и dedup, который молча ничего не делает — затем назови одно изменение, закрывающее каждый.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — хендлер dedup
+
+```go
+func handleCharge(ctx context.Context, db *sql.DB, key string, body []byte) (*Resp, error) {
+    var existing Row
+    err := db.QueryRowContext(ctx,
+        `SELECT response_body, status FROM idempotency_keys WHERE key = $1`, key,
+    ).Scan(&existing.Body, &existing.Status)
+    if err == sql.ErrNoRows {
+        // строки ещё нет -> трактуем как new
+        db.ExecContext(ctx,
+            `INSERT INTO idempotency_keys (key, fingerprint, status) VALUES ($1, $2, 'in_progress')`,
+            key, fingerprint(body))
+        return process(ctx, db, key, body) // выполняет списание
+    }
+    return replay(existing), nil
+}
+```
+
+<Quiz
+  id="05-idempotency-retries-code-1"
+  lessonSlug="05-idempotency-retries"
+  lang="ru"
+  question="Два запроса с одним ключом приходят в этот хендлер в пределах миллисекунды. Что идёт не так и какой единственный самый рычажный фикс?"
+  choices={[
+    { label: "Оба QueryRow возвращают ErrNoRows, оба INSERT, оба вызывают process — двойное списание. Фикс: сделать создание атомарным — INSERT ... ON CONFLICT (key) DO NOTHING RETURNING, и вызывать process только когда строка реально возвращена; иначе перечитать на 409 или replay.", correct: true },
+    { label: "Баг — отсутствующий context timeout на QueryRowContext.", misconception: "Таймаут — хорошая гигиена, но не связан с двойным списанием. Дефект — неатомарное окно гонки SELECT-потом-INSERT между двумя запросами." },
+    { label: "Ничего серьёзного — INSERT упадёт по первичному ключу для второго запроса, и Go пропустит process().", misconception: "Код игнорирует ошибку INSERT и безусловно вызывает process(). Даже если PK отклонит второй INSERT, обе горутины уже прошли ветку ErrNoRows и обе списывают." },
+    { label: "Вызов fingerprint() — горячая точка; кэшируй его, чтобы починить гонку.", misconception: "fingerprint — это микросекунды, к гонке отношения не имеет. Гонка — это зазор между чтением «строки нет» и её вставкой, закрываемый только атомарной insert-or-noop." },
+  ]}
+/>
+
+## Сниппет 2 — цикл retry
+
+```js
+async function callWithRetry(fn, maxAttempts = 6) {
+  let delay = 200;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt === maxAttempts - 1) throw err;
+      await sleep(delay);          // фиксированное удвоение, без случайности
+      delay = Math.min(30000, delay * 2);
+    }
+  }
+}
+```
+
+<Quiz
+  id="05-idempotency-retries-code-2"
+  lessonSlug="05-idempotency-retries"
+  lang="ru"
+  question="Этот цикл делает retry на каждую брошенную ошибку с удвоением задержки. Назови две разные production-опасности."
+  choices={[
+    { label: "Нет jitter, поэтому N клиентов, упавших вместе, делают retry в одном тике — thundering herd; и retry безусловный, поэтому 4xx (постоянная ошибка клиента) ретраится так же упорно, как транзиентный 5xx. Фикс: delay = random(0, min(cap, base × 2^attempt)) и retry только на 5xx/таймауты/429.", correct: true },
+    { label: "Базовая задержка 200мс слишком мала, а cap 30с слишком велик.", misconception: "Эти значения в нормальных диапазонах (base 100–500мс, cap 30–60с). Опасности — отсутствующий jitter и безусловный retry неретраибельных ошибок, а не константы." },
+    { label: "maxAttempts 6 слишком велико и исчерпает память.", misconception: "Шесть попыток память не исчерпают. Реальная проблема масштаба — на уровне флота — без retry budget много клиентов по 6 попыток усиливают нагрузку — но локальные баги сниппета это отсутствие jitter и retry на 4xx." },
+    { label: "Использование await sleep блокирует event loop и морит другие запросы.", misconception: "await sleep уступает; он не блокирует event loop. Дефекты — синхронизированная (без jitter) задержка и retry ошибок, которые никогда не успешны." },
+  ]}
+/>
+
+## Сниппет 3 — переход состояния
+
+```sql
+-- запрос пришёл; строка для этого ключа уже есть
+BEGIN;
+  SELECT status FROM idempotency_keys WHERE key = $1;       -- читает 'in_progress'
+  -- приложение видит in_progress, но всё равно вызывает платёжный провайдер...
+  -- провайдер успешен, затем:
+  UPDATE idempotency_keys
+     SET status = 'completed', response_body = $2
+   WHERE key = $1;
+COMMIT;
+```
+
+<Quiz
+  id="05-idempotency-retries-code-3"
+  lessonSlug="05-idempotency-retries"
+  lang="ru"
+  question="Retry гонится с исходным запросом: исходный ещё in_progress, когда выполняется этот блок. В чём дефект использования машины из четырёх состояний?"
+  choices={[
+    { label: "Он читает status=in_progress, но идёт вызывать провайдера и перезаписывать строку — второе списание. Чтение in_progress должно коротко замкнуть на 409 Conflict и НЕ выполнять бизнес-логику; обрабатывать может только запрос, атомарно создавший строку.", correct: true },
+    { label: "UPDATE должен быть INSERT, потому что строка новая.", misconception: "Строка уже есть (status=in_progress), поэтому INSERT неверен. Дефект — вообще обрабатывать на чтении in_progress вместо возврата 409." },
+    { label: "Транзакции нужен уровень изоляции SERIALIZABLE, и тогда код верен.", misconception: "Изоляция не чинит логическую ошибку: код намеренно вызывает провайдера после in_progress. Сама машина состояний требует 409 на in_progress, независимо от изоляции." },
+    { label: "COMMIT должен быть ROLLBACK, чтобы отменить списание.", misconception: "Внешнее списание уже случилось у провайдера и не откатывается базой. Фикс — никогда не вызывать провайдера на чтении in_progress." },
+  ]}
+/>
+
+## Сниппет 4 — inbox-консьюмер
+
+```sql
+BEGIN;
+  INSERT INTO processed_events (event_id) VALUES ($1)
+    ON CONFLICT (event_id) DO NOTHING;
+  -- применяется всегда, независимо от того, сделала ли вставка выше что-либо:
+  UPDATE inventory SET reserved = reserved + $qty WHERE sku = $sku;
+COMMIT;
+```
+
+<Quiz
+  id="05-idempotency-retries-code-4"
+  lessonSlug="05-idempotency-retries"
+  lang="ru"
+  question="Relay переотправляет событие после сбоя, поэтому этот блок выполняется дважды для одного event_id. Что реально происходит и какой фикс?"
+  choices={[
+    { label: "Dedup декоративный: ON CONFLICT DO NOTHING глотает дубликат event_id, но UPDATE выполняется безусловно — поэтому инвентарь резервируется дважды. Фикс: завязать бизнес-запись на то, что вставка реально произошла (проверить rows-affected / RETURNING), чтобы дубликат был no-op.", correct: true },
+    { label: "Второй прогон бросает ошибку unique-constraint и откатывается, поэтому инвентарь остаётся корректным.", misconception: "ON CONFLICT DO NOTHING подавляет ошибку — броска нет. Блок коммитится, и безусловный UPDATE дважды резервирует." },
+    { label: "Инвентарь корректен, потому что таблица inbox не даёт UPDATE выполниться.", misconception: "Таблица inbox только записывает event_id; она ничего не делает с UPDATE, если код не ветвится по тому, удалась ли вставка. Здесь не ветвится, поэтому UPDATE выполняется всегда." },
+    { label: "Баг в том, что инвентарь надо уменьшать, а не увеличивать.", misconception: "Направление +/- зависит от домена и не является дефектом. Дефект — бизнес-запись выполняется на дубликате доставки, потому что не завязана на dedup-вставку." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Четыре рефлекса ревью для этого юнита: проверка idempotency через SELECT-потом-INSERT — это гонка, сделай создание атомарным через ON CONFLICT DO NOTHING RETURNING и обрабатывай только победителя; цикл retry без jitter и без retry-условия — это herd, который долбит постоянные ошибки — используй full jitter и retry только на 5xx/таймауты; чтение in_progress должно коротко замкнуть на 409, никогда не вызывая провайдера снова; а dedup в inbox, который не завязывает бизнес-запись на dedup-вставку, декоративен — дубликат всё равно применяет эффект. Каждый фикс — одна-две строки, и каждая отсутствующая строка — это дублированный side effect в production.
 </Recap>
-
