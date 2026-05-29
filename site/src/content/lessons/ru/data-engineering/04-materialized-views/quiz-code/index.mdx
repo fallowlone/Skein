@@ -1,42 +1,139 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- refresh-concurrently
+- incremental-view-maintenance
+- staleness-window
+- refresh-strategy
+- materialized-view
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Materialized views"
-title: Кодировочный тест
+- https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html
+- https://github.com/sraoss/pg_ivm
+status: ready
+summary: "Читайте реальный SQL — настройку REFRESH CONCURRENTLY, создание immv через pg_ivm и проверку окна staleness — и выбирайте поведение или фикс с наибольшим рычагом, который сделает senior."
+title: 'Materialized views: чтение SQL и refresh'
 track: data-engineering
 unit: 04-materialized-views
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Materialized views unit.
+Сам оператор refresh и SQL вокруг него — там, где рождаются проблемы materialized view. Читайте каждый сниппет, предсказывайте, что сделает база, затем выбирайте фикс, к которому senior тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Materialized views unit.
+Отработайте цикл, который вы запускаете при ревью MV: читайте DDL и путь refresh, предсказывайте поведение блокировок и staleness, и тянитесь к структурному фиксу раньше, чем к ручке тюнинга.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — предусловие CONCURRENTLY
+
+```sql
+CREATE MATERIALIZED VIEW daily_revenue AS
+SELECT date_trunc('day', created_at) AS day,
+       region,
+       sum(amount) AS revenue
+FROM orders
+GROUP BY 1, 2;
+
+-- ночная задача:
+REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue;
+```
+
+<Quiz
+  id="04-materialized-views-code-1"
+  lessonSlug="04-materialized-views"
+  lang="ru"
+  question="Ночная задача сразу падает с ошибкой 'cannot refresh materialized view concurrently' / ошибкой уникального индекса. Чего не хватает и каким именно оно должно быть?"
+  choices={[
+    { label: "UNIQUE-индекса на выходных колонках view — здесь CREATE UNIQUE INDEX ON daily_revenue (day, region). CONCURRENTLY нужен он, чтобы вычислять дельту старых и новых строк; индекс должен быть на обычных колонках, без выражений и без WHERE.", correct: true },
+    { label: "PRIMARY KEY на базовой таблице orders.", misconception: "Требуется уникальный индекс на самом materialized view, а не на базовой таблице. CONCURRENTLY использует уникальный индекс view, чтобы идентифицировать и обновлять изменённые строки при swap." },
+    { label: "Ничего — нужно один раз выполнить обычный REFRESH, прежде чем запускать CONCURRENTLY.", misconception: "Даже после первого обычного refresh CONCURRENTLY всё равно падает без уникального индекса на view. Жёсткое предусловие — уникальный индекс, а не предыдущий refresh." },
+    { label: "Частичного уникального индекса с WHERE revenue > 0, чтобы пропускать пустые группы.", misconception: "Требуемый для CONCURRENTLY уникальный индекс должен покрывать все строки, без WHERE и без выражений — частичный или индекс по выражению его не удовлетворяет." },
+  ]}
+/>
+
+## Сниппет 2 — incremental maintenance через pg_ivm
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_ivm;
+
+-- превращаем агрегат в инкрементально поддерживаемое представление
+SELECT create_immv('daily_revenue_ivm',
+  $$ SELECT date_trunc('day', created_at) AS day,
+            region,
+            sum(amount) AS revenue
+     FROM orders
+     GROUP BY 1, 2 $$);
+```
+
+<Quiz
+  id="04-materialized-views-code-2"
+  lessonSlug="04-materialized-views"
+  lang="ru"
+  question="После create_immv коллега замечает, что каждый INSERT в orders стал ощутимо медленнее. Это баг и что происходит?"
+  choices={[
+    { label: "Не баг — это цена incremental maintenance. create_immv ставит AFTER-триггеры на orders, поэтому каждый INSERT/UPDATE/DELETE теперь вычисляет и применяет дельту к daily_revenue_ivm внутри той же транзакции. Вы обменяли стоимость refresh на стоимость на каждой записи.", correct: true },
+    { label: "Баг — pg_ivm должен поддерживать view асинхронно, а не в транзакции записи.", misconception: "pg_ivm поддерживает view синхронно внутри пишущей транзакции by design; именно это даёт почти нулевой staleness. Замедление на каждой записи присуще механизму, а не ошибке конфигурации." },
+    { label: "Замедление от того, что GROUP BY перевыполняется на каждом чтении, а не на записи.", misconception: "Immv хранит результат как таблицу; чтения не перевыполняют GROUP BY. Добавленная стоимость — на пути записи, из триггеров поддержки." },
+    { label: "Это происходит только из-за отсутствия обычного индекса на orders.", misconception: "Добавление индексов на базовые таблицы может помочь поддержке, но структурное замедление — синхронная поддержка дельты на каждой записи. При высокой частоте записи эти издержки доминируют в любом случае." },
+  ]}
+/>
+
+## Сниппет 3 — обнаружение staleness
+
+```sql
+-- ops хочет алерт, если MV давно не обновлялся.
+-- они запрашивают данные самого view на свежий день:
+SELECT max(day) AS newest_day FROM daily_revenue;
+-- алерт срабатывает, только если newest_day < current_date;
+```
+
+<Quiz
+  id="04-materialized-views-code-3"
+  lessonSlug="04-materialized-views"
+  lang="ru"
+  question="Почему алерт на max(day) внутри view — ненадёжная проверка staleness, и что отслеживать вместо этого?"
+  choices={[
+    { label: "max(day) отражает данные, которые содержит view, а не когда он последний раз обновлялся. Упавший refresh оставляет вчерашние строки на месте, поэтому в тихий день newest_day законно может равняться старой дате даже при свежести — а застрявший refresh выглядит нормальным. Отслеживайте успех/таймстамп самой refresh-задачи (колонку last_refreshed или метрику задачи), а не содержимое данных.", correct: true },
+    { label: "max(day) верен; алерту просто нужно запускаться чаще.", misconception: "Дело не в частоте. Сама метрика смешивает «есть свежие данные» и «недавно обновлялись» — они расходятся именно тогда, когда refresh молча падает, а это и есть случай, который важнее всего поймать." },
+    { label: "Нужно алертить на число строк, которое всегда меняется на refresh.", misconception: "Число строк может не измениться при успешном refresh (те же группы, обновлённые суммы) и остаться замороженным при сбое refresh — то же смешение. Надёжный сигнал — успех и таймстамп самой refresh-задачи." },
+    { label: "Запросу нужен CONCURRENTLY, чтобы читать согласованный снапшот.", misconception: "CONCURRENTLY управляет refresh, а не чтениями; этот SELECT уже видит согласованный снапшот. Изъян — использование содержимого view как прокси свежести refresh." },
+  ]}
+/>
+
+## Сниппет 4 — refresh, который не завершается
+
+```sql
+-- открыта долгая аналитическая сессия:
+BEGIN;
+SELECT ... FROM orders JOIN ... ;   -- работает 20+ минут, всё ещё открыта
+
+-- тем временем срабатывает планировщик:
+REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue;  -- как будто висит
+```
+
+<Quiz
+  id="04-materialized-views-code-4"
+  lessonSlug="04-materialized-views"
+  lang="ru"
+  question="Refresh CONCURRENTLY стоит и ничего не делает, пока открыта аналитическая сессия. Каков механизм и каков надёжный фикс?"
+  choices={[
+    { label: "CONCURRENTLY ждёт, пока завершатся открытые транзакции, которые могли бы видеть старый view, прежде чем стартовать. 20-минутная открытая сессия его блокирует, а если такие сессии непрерывны, отставание refresh никогда не догоняет. Надёжный фикс: ограничить долгие сессии (statement / idle-in-transaction таймауты) или изолировать тяжёлую аналитику, чтобы refresh продвигался.", correct: true },
+    { label: "Refresh попал в deadlock с SELECT, и его убьёт детектор взаимоблокировок.", misconception: "Это не deadlock — refresh ждёт завершения транзакций, нормальное предусловие для согласованного swap. Детектор взаимоблокировок не сработает; refresh просто ждёт." },
+    { label: "Перейдите на обычный REFRESH (без CONCURRENTLY) — он не ждёт другие транзакции.", misconception: "Обычный refresh берёт блокировку ACCESS EXCLUSIVE и полностью заблокировал бы читателей, что хуже для постоянно читаемого дашборда. Фикс — ограничить долгие транзакции, а не возвращать блокировку чтения." },
+    { label: "Добавьте больше уникальных индексов, чтобы у refresh было больше путей для diff.", misconception: "Одного уникального индекса уже достаточно; лишние индексы не меняют ожидание завершения транзакций. Стоп — про долгие открытые транзакции, а не про число индексов." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Путь refresh — там, где живут проблемы MV: CONCURRENTLY требует уникальный индекс на обычных колонках view, иначе падает; create_immv из pg_ivm переносит стоимость на каждую запись через триггеры, поэтому замедление записи — это дизайн, а не баг; staleness нужно измерять по успеху и таймстампу самой refresh-задачи, а не по содержимому данных view; а refresh CONCURRENTLY застревает за долгими открытыми транзакциями, поэтому ограничьте их, иначе он не догонит. Читайте DDL и refresh, предсказывайте поведение блокировок и staleness, затем чините структуру раньше, чем тянуться к ручке.
 </Recap>
-

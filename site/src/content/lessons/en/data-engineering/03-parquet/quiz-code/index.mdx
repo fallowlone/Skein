@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- predicate-pushdown
+- column-pruning
+- row-group-sizing
+- dictionary-encoding
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Parquet"
-title: Coding Quiz
+- https://parquet.apache.org/docs/concepts/
+- https://arrow.apache.org/blog/2022/12/26/querying-parquet-with-millisecond-latency/
+status: ready
+summary: "Read real PyArrow/DuckDB read paths and a writer config, predict the I/O and GC of bytes scanned, and pick the highest-leverage fix for pushdown, sizing, and projection."
+title: 'Parquet: code and config reading'
 track: data-engineering
 unit: 03-parquet
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Parquet unit.
+Parquet problems are diagnosed in the read path and the writer config, not in the docs. Read each snippet, predict how many bytes the engine actually touches, and choose the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Parquet unit.
+Practise the loop you run on every slow lake query: see where the filter and the projection are applied, decide whether the writer laid the data out to be skippable, and reach for the layout fix before the hardware one.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — pushdown lost in the engine
+
+```python
+import pyarrow.parquet as pq
+
+# events/ is a year of daily Parquet files, sorted by `day`
+table = pq.read_table("s3://lake/events/")      # reads everything
+df = table.to_pandas()
+df = df[df["day"] == "2024-02-01"]               # filter after the read
+result = df[["user_id", "country"]]              # project after the read
+```
+
+<Quiz
+  id="03-parquet-code-1"
+  lessonSlug="03-parquet"
+  lang="en"
+  question="This reads ~1.9 GB and is slow even though the data is sorted by day. Why, and what is the single highest-leverage fix?"
+  choices={[
+    { label: "The filter and projection happen in pandas after the whole table is materialised, so neither row-group skipping nor column pruning ever fires. Push them into the read: read_table(..., columns=['user_id','country'], filters=[('day','=','2024-02-01')]) so the engine reads the footer, skips non-matching row groups, and loads only two column chunks.", correct: true },
+    { label: "S3 is the bottleneck; switch to a faster storage class to speed up the read.", misconception: "The storage class doesn't matter when you're reading 1.9 GB you didn't need. The defect is reading everything then filtering in memory; pushing the filter and column list into read_table is what cuts the bytes." },
+    { label: "to_pandas() is slow; use to_numpy() and the read shrinks.", misconception: "The conversion is downstream of the problem — the engine already read all columns and all row groups. Changing the in-memory representation doesn't reduce what was read off S3." },
+    { label: "The files need re-sorting by day; sorting is what enables column pruning.", misconception: "The data is already sorted by day, and sorting governs row-group skipping, not column pruning. The actual bug is that no predicate or column projection was pushed into the reader at all." },
+  ]}
+/>
+
+## Snippet 2 — the writer config
+
+```python
+import pyarrow.parquet as pq
+
+# one batch write of ~50 GB, queried almost always by `country`
+pq.write_table(
+    table,
+    "s3://lake/events_2024.parquet",
+    row_group_size=2048,        # rows per row group
+    compression="snappy",
+    write_statistics=True,
+)
+```
+
+<Quiz
+  id="03-parquet-code-2"
+  lessonSlug="03-parquet"
+  lang="en"
+  question="For a 50 GB batch write this layout will make filtered queries slow despite write_statistics=True. What is wrong, and what is the fix?"
+  choices={[
+    { label: "row_group_size=2048 rows is tiny, so a 50 GB file holds millions of tiny row groups: huge footer/metadata overhead and the engine reads far more footers than data. Size row groups by bytes toward ~128 MB-1 GB (thousands-to-millions of rows depending on width) and sort/partition by country so its min/max ranges are skippable.", correct: true },
+    { label: "snappy is too weak; switch to gzip so the statistics compress better and queries speed up.", misconception: "Statistics aren't the size problem and gzip is slower to read. The defect is row-group granularity — 2048 rows per group means metadata overhead dominates. Codec choice is orthogonal to row-group sizing." },
+    { label: "write_statistics=True bloats the file; turning stats off makes it faster.", misconception: "Statistics are exactly what enables row-group skipping — turning them off removes pushdown entirely and makes filtered queries scan everything. The problem is the tiny row-group size, not the presence of stats." },
+    { label: "Writing a single 50 GB file is fine; row-group size has no effect on read performance.", misconception: "Row-group size is a primary read-performance knob: too small and metadata/footer reads dominate; too large and you lose skipping granularity and need huge write memory. 2048 rows is far too small." },
+  ]}
+/>
+
+## Snippet 3 — column projection vs SELECT *
+
+```sql
+-- DuckDB over a wide 120-column Parquet table on S3
+SELECT *
+FROM read_parquet('s3://lake/wide_events/*.parquet')
+WHERE country = 'DE';
+```
+
+<Quiz
+  id="03-parquet-code-3"
+  lessonSlug="03-parquet"
+  lang="en"
+  question="An analyst only needs user_id and amount but runs SELECT * on a 120-column table. What is the cost, and the fix?"
+  choices={[
+    { label: "SELECT * defeats column pruning: the engine reads all 120 column chunks from every surviving row group, even though only two are needed. List the columns (SELECT user_id, amount) so only those two chunks are read — projection is half of why Parquet is fast.", correct: true },
+    { label: "SELECT * is fine on Parquet because columnar storage means unused columns cost nothing to read.", misconception: "Columns cost nothing only when you don't select them. SELECT * selects all of them, so every column chunk in every matching row group is read — exactly the case column pruning was meant to avoid." },
+    { label: "The WHERE country = 'DE' already limits I/O, so the column list is irrelevant.", misconception: "The predicate limits which row groups are read (row dimension); the projection limits which columns are read (column dimension). They're independent — SELECT * still reads all 120 columns of every surviving row group." },
+    { label: "Adding a LIMIT clause would prune the columns automatically.", misconception: "LIMIT caps row output after scanning; it doesn't reduce the set of columns read per row group. Only naming the columns enables column pruning." },
+  ]}
+/>
+
+## Snippet 4 — dictionary fallback
+
+```python
+# a column of high-cardinality session UUIDs, ~10M near-unique values
+pq.write_table(
+    table,                       # contains a `session_id` UUID column
+    "s3://lake/sessions.parquet",
+    use_dictionary=True,         # on by default
+    compression="zstd",
+)
+```
+
+<Quiz
+  id="03-parquet-code-4"
+  lessonSlug="03-parquet"
+  lang="en"
+  question="The session_id column ends up barely smaller than plain bytes and write CPU is high. What happened?"
+  choices={[
+    { label: "Dictionary encoding only pays when values repeat. With ~10M near-unique UUIDs the per-column dictionary grows past its page-size budget, Parquet falls back to plain encoding for that column, and you paid to build a dictionary that bought nothing. Disable use_dictionary for that column (or store UUIDs as fixed-width binary).", correct: true },
+    { label: "zstd can't compress UUIDs, so the file stays large no matter what.", misconception: "zstd still compresses the bytes somewhat; the wasted work is the dictionary build that overflowed and was discarded. The encoding-layer fallback, not the codec, is the story here." },
+    { label: "use_dictionary=True corrupted the column by truncating long UUIDs.", misconception: "No truncation or corruption occurs — Parquet cleanly falls back to plain encoding when the dictionary overflows. The symptom is wasted CPU and no size win, not bad data." },
+    { label: "The fix is a larger row_group_size so the dictionary has more room.", misconception: "A bigger row group gives the dictionary more values to absorb, making the cardinality problem worse, not better. The fix is to not dictionary-encode a near-unique column at all." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every slow Parquet query is read in the access path and the writer config: push the predicate and the column list into the reader or neither row-group skipping nor column pruning fires; size row groups by bytes toward ~128 MB-1 GB and cluster by the filter column so its ranges are skippable; SELECT * silently reads every column chunk, so always project; and dictionary encoding on a high-cardinality column overflows and falls back to plain, costing CPU for no size win. Diagnose from where the filter and projection land, fix the layout, then re-measure the bytes scanned.
 </Recap>
-

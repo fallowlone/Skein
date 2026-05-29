@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- predicate-pushdown
+- column-pruning
+- row-group-sizing
+- dictionary-encoding
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Parquet"
-title: Кодировочный тест
+- https://parquet.apache.org/docs/concepts/
+- https://arrow.apache.org/blog/2022/12/26/querying-parquet-with-millisecond-latency/
+status: ready
+summary: "Читай реальные пути чтения PyArrow/DuckDB и конфиг писателя, предсказывай I/O и объём прочитанных байтов, выбирай решение с наибольшим рычагом для pushdown, размера и проекции."
+title: 'Parquet: чтение кода и конфигов'
 track: data-engineering
 unit: 03-parquet
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Parquet unit.
+Проблемы Parquet диагностируются в пути чтения и в конфиге писателя, а не в документации. Читай каждый сниппет, предскажи, сколько байтов движок реально трогает, и выбери решение, которое сеньор делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Parquet unit.
+Отработай цикл, который ты запускаешь на каждом медленном запросе к озеру: увидь, где применяются фильтр и проекция, реши, разложил ли писатель данные так, чтобы их можно было пропускать, и тянись к решению по раскладке раньше, чем к железу.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — pushdown потерян внутри движка
+
+```python
+import pyarrow.parquet as pq
+
+# events/ — год дневных Parquet-файлов, отсортированных по `day`
+table = pq.read_table("s3://lake/events/")      # читает всё
+df = table.to_pandas()
+df = df[df["day"] == "2024-02-01"]               # фильтр после чтения
+result = df[["user_id", "country"]]              # проекция после чтения
+```
+
+<Quiz
+  id="03-parquet-code-1"
+  lessonSlug="03-parquet"
+  lang="ru"
+  question="Это читает ~1.9 ГБ и медленно, хотя данные отсортированы по day. Почему и какое решение даёт наибольший рычаг?"
+  choices={[
+    { label: "Фильтр и проекция происходят в pandas после материализации всей таблицы, так что ни row-group skipping, ни column pruning не срабатывают. Протолкни их в чтение: read_table(..., columns=['user_id','country'], filters=[('day','=','2024-02-01')]) — движок прочтёт футер, пропустит несовпадающие row groups и загрузит только два column chunk.", correct: true },
+    { label: "Узкое место — S3; перейди на более быстрый класс хранения, чтобы ускорить чтение.", misconception: "Класс хранения не важен, когда ты читаешь 1.9 ГБ, которые не нужны. Дефект в том, что читается всё, а потом фильтруется в памяти; проталкивание фильтра и списка колонок в read_table — вот что режет байты." },
+    { label: "to_pandas() медленный; используй to_numpy(), и чтение уменьшится.", misconception: "Конвертация ниже по течению от проблемы — движок уже прочитал все колонки и все row groups. Смена представления в памяти не уменьшает то, что было прочитано с S3." },
+    { label: "Файлы надо пересортировать по day; сортировка — это то, что включает column pruning.", misconception: "Данные уже отсортированы по day, и сортировка управляет row-group skipping, а не column pruning. Реальный баг в том, что ни предикат, ни проекция колонок вообще не протолкнуты в читатель." },
+  ]}
+/>
+
+## Сниппет 2 — конфиг писателя
+
+```python
+import pyarrow.parquet as pq
+
+# одна батч-запись ~50 ГБ, запросы почти всегда по `country`
+pq.write_table(
+    table,
+    "s3://lake/events_2024.parquet",
+    row_group_size=2048,        # строк на row group
+    compression="snappy",
+    write_statistics=True,
+)
+```
+
+<Quiz
+  id="03-parquet-code-2"
+  lessonSlug="03-parquet"
+  lang="ru"
+  question="Для батч-записи 50 ГБ эта раскладка сделает фильтрованные запросы медленными, несмотря на write_statistics=True. Что не так и каково решение?"
+  choices={[
+    { label: "row_group_size=2048 строк — это крошечно, так что файл на 50 ГБ держит миллионы крошечных row groups: огромный оверхед футера/метаданных, и движок читает куда больше футеров, чем данных. Задавай размер row group в байтах, целясь в ~128 МБ-1 ГБ (тысячи-миллионы строк в зависимости от ширины), и сортируй/партиционируй по country, чтобы его min/max можно было пропускать.", correct: true },
+    { label: "snappy слишком слаб; перейди на gzip, чтобы статистики лучше сжимались и запросы ускорились.", misconception: "Статистики — не проблема размера, а gzip медленнее на чтении. Дефект — гранулярность row group: 2048 строк на группу означает, что оверхед метаданных доминирует. Выбор кодека ортогонален размеру row group." },
+    { label: "write_statistics=True раздувает файл; выключение статистик ускоряет его.", misconception: "Статистики — это ровно то, что включает row-group skipping; выключив их, ты убираешь pushdown целиком, и фильтрованные запросы сканируют всё. Проблема — крошечный размер row group, а не наличие статистик." },
+    { label: "Запись одного файла на 50 ГБ — это нормально; размер row group не влияет на чтение.", misconception: "Размер row group — главная ручка производительности чтения: слишком мал — доминирует чтение метаданных/футеров; слишком велик — теряется гранулярность пропуска и нужна огромная память на запись. 2048 строк — слишком мало." },
+  ]}
+/>
+
+## Сниппет 3 — проекция колонок против SELECT *
+
+```sql
+-- DuckDB над широкой Parquet-таблицей на 120 колонок в S3
+SELECT *
+FROM read_parquet('s3://lake/wide_events/*.parquet')
+WHERE country = 'DE';
+```
+
+<Quiz
+  id="03-parquet-code-3"
+  lessonSlug="03-parquet"
+  lang="ru"
+  question="Аналитику нужны только user_id и amount, но он запускает SELECT * на таблице из 120 колонок. Какова цена и каково решение?"
+  choices={[
+    { label: "SELECT * убивает column pruning: движок читает все 120 column chunk из каждой уцелевшей row group, хотя нужны лишь два. Перечисли колонки (SELECT user_id, amount), чтобы читались только эти два chunk — проекция это половина того, почему Parquet быстр.", correct: true },
+    { label: "SELECT * нормален на Parquet, потому что колоночное хранение означает, что неиспользуемые колонки ничего не стоят на чтении.", misconception: "Колонки ничего не стоят, только когда ты их не выбираешь. SELECT * выбирает их все, так что читается каждый column chunk в каждой совпавшей row group — ровно тот случай, который column pruning должен был избежать." },
+    { label: "WHERE country = 'DE' уже ограничивает I/O, так что список колонок не важен.", misconception: "Предикат ограничивает, какие row groups читаются (измерение строк); проекция ограничивает, какие колонки читаются (измерение колонок). Они независимы — SELECT * всё равно читает все 120 колонок каждой уцелевшей row group." },
+    { label: "Добавление LIMIT автоматически отсечёт колонки.", misconception: "LIMIT ограничивает вывод строк после скана; он не уменьшает набор колонок, читаемых на row group. Только перечисление колонок включает column pruning." },
+  ]}
+/>
+
+## Сниппет 4 — откат словаря
+
+```python
+# колонка session_id высокой кардинальности, ~10М почти уникальных UUID
+pq.write_table(
+    table,                       # содержит колонку `session_id` из UUID
+    "s3://lake/sessions.parquet",
+    use_dictionary=True,         # включено по умолчанию
+    compression="zstd",
+)
+```
+
+<Quiz
+  id="03-parquet-code-4"
+  lessonSlug="03-parquet"
+  lang="ru"
+  question="Колонка session_id выходит едва меньше plain-байтов, а CPU записи высокий. Что произошло?"
+  choices={[
+    { label: "Dictionary encoding окупается только когда значения повторяются. С ~10М почти уникальных UUID словарь на колонку вырастает за свой page-size бюджет, Parquet откатывается на plain encoding для этой колонки, и ты заплатил за словарь, который ничего не дал. Выключи use_dictionary для этой колонки (или храни UUID как fixed-width binary).", correct: true },
+    { label: "zstd не умеет сжимать UUID, так что файл остаётся большим что бы ты ни делал.", misconception: "zstd всё же сжимает байты в какой-то мере; потраченная работа — это построение словаря, который переполнился и был выброшен. История здесь — откат на уровне encoding, а не кодек." },
+    { label: "use_dictionary=True повредил колонку, обрезав длинные UUID.", misconception: "Никакого обрезания или повреждения не происходит — Parquet чисто откатывается на plain encoding при переполнении словаря. Симптом это потраченный CPU и отсутствие выигрыша по размеру, а не плохие данные." },
+    { label: "Решение — больший row_group_size, чтобы словарю было больше места.", misconception: "Большая row group даёт словарю больше значений для поглощения, делая проблему кардинальности хуже, а не лучше. Решение — вообще не dictionary-кодировать почти уникальную колонку." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый медленный запрос к Parquet читается в пути доступа и конфиге писателя: протолкни предикат и список колонок в читатель, иначе ни row-group skipping, ни column pruning не сработают; задавай размер row group в байтах, целясь в ~128 МБ-1 ГБ, и кластеризуй по колонке фильтра, чтобы её диапазоны были пропускаемы; SELECT * тихо читает каждый column chunk, так что всегда проецируй; а dictionary encoding на колонке высокой кардинальности переполняется и откатывается на plain, стоя CPU без выигрыша по размеру. Диагностируй по тому, где приземляются фильтр и проекция, чини раскладку, затем заново измеряй прочитанные байты.
 </Recap>
-

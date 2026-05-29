@@ -1,42 +1,139 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- refresh-concurrently
+- incremental-view-maintenance
+- staleness-window
+- refresh-strategy
+- materialized-view
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Materialized views"
-title: Coding Quiz
+- https://www.postgresql.org/docs/current/sql-refreshmaterializedview.html
+- https://github.com/sraoss/pg_ivm
+status: ready
+summary: "Read real SQL — REFRESH CONCURRENTLY setup, pg_ivm immv creation, and a staleness-window check — and pick the behaviour or the highest-leverage fix a senior would make first."
+title: 'Materialized views: SQL and refresh reading'
 track: data-engineering
 unit: 04-materialized-views
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Materialized views unit.
+The refresh statement and the SQL around it are where materialized-view problems are actually born. Read each snippet, predict what the database will do, then choose the fix a senior reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Materialized views unit.
+Practise the loop you run when reviewing an MV: read the DDL and the refresh path, predict the lock and staleness behaviour, and reach for the structural fix before the tuning knob.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the CONCURRENTLY prerequisite
+
+```sql
+CREATE MATERIALIZED VIEW daily_revenue AS
+SELECT date_trunc('day', created_at) AS day,
+       region,
+       sum(amount) AS revenue
+FROM orders
+GROUP BY 1, 2;
+
+-- nightly job:
+REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue;
+```
+
+<Quiz
+  id="04-materialized-views-code-1"
+  lessonSlug="04-materialized-views"
+  lang="en"
+  question="The nightly job fails immediately with 'cannot refresh materialized view concurrently' / a unique-index error. What is missing, and what exactly must it be?"
+  choices={[
+    { label: "A UNIQUE index on the view's output columns — here CREATE UNIQUE INDEX ON daily_revenue (day, region). CONCURRENTLY needs it to diff old vs new rows; the index must be on plain columns, with no expressions and no WHERE clause.", correct: true },
+    { label: "A PRIMARY KEY on the orders base table.", misconception: "The requirement is a unique index on the materialized view itself, not the base table. CONCURRENTLY uses the view's unique index to identify and update changed rows during the swap." },
+    { label: "Nothing — you must run a plain REFRESH once before you can run it CONCURRENTLY.", misconception: "Even after a first plain refresh, CONCURRENTLY still errors without a unique index on the view. The unique index, not a prior refresh, is the hard prerequisite." },
+    { label: "A partial unique index with WHERE revenue > 0 to skip empty groups.", misconception: "CONCURRENTLY's required unique index must cover all rows with no WHERE clause and no expressions — a partial or expression index does not satisfy it." },
+  ]}
+/>
+
+## Snippet 2 — incremental maintenance with pg_ivm
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_ivm;
+
+-- turn the aggregate into an incrementally-maintained view
+SELECT create_immv('daily_revenue_ivm',
+  $$ SELECT date_trunc('day', created_at) AS day,
+            region,
+            sum(amount) AS revenue
+     FROM orders
+     GROUP BY 1, 2 $$);
+```
+
+<Quiz
+  id="04-materialized-views-code-2"
+  lessonSlug="04-materialized-views"
+  lang="en"
+  question="After create_immv, a teammate notices that every INSERT into orders got measurably slower. Is this a bug, and what is happening?"
+  choices={[
+    { label: "Not a bug — it is the cost of incremental maintenance. create_immv installs AFTER triggers on orders, so each INSERT/UPDATE/DELETE now computes and applies the delta to daily_revenue_ivm inside the same transaction. You traded refresh cost for per-write cost.", correct: true },
+    { label: "A bug — pg_ivm should maintain the view asynchronously, not in the write transaction.", misconception: "pg_ivm maintains the view synchronously inside the writing transaction by design; that is what gives near-zero staleness. The per-write slowdown is inherent, not a misconfiguration." },
+    { label: "The slowdown is from the GROUP BY re-running on every read, not the write.", misconception: "An immv stores the result like a table; reads do not re-run the GROUP BY. The added cost is on the write path, from the maintenance triggers." },
+    { label: "It only happens because a plain index is missing on orders.", misconception: "Adding base-table indexes can help maintenance, but the structural slowdown is the synchronous delta-maintenance per write. Under a high write rate, that overhead dominates regardless." },
+  ]}
+/>
+
+## Snippet 3 — detecting staleness
+
+```sql
+-- ops wants an alert if the MV has not refreshed recently.
+-- they query the view's own data for the newest day:
+SELECT max(day) AS newest_day FROM daily_revenue;
+-- alert fires only if newest_day < current_date;
+```
+
+<Quiz
+  id="04-materialized-views-code-3"
+  lessonSlug="04-materialized-views"
+  lang="en"
+  question="Why is alerting on max(day) inside the view an unreliable staleness check, and what should you track instead?"
+  choices={[
+    { label: "max(day) reflects the data the view contains, not when it was last refreshed. A refresh that fails leaves yesterday's rows in place, so on a quiet day newest_day can legitimately equal an old date even when fresh — and a stalled refresh can look fine. Track the refresh job's own success/timestamp (a last_refreshed column or job metric), not the data's content.", correct: true },
+    { label: "max(day) is correct; the alert just needs to run more often.", misconception: "Frequency is not the issue. The metric itself conflates 'newest data present' with 'recently refreshed' — those diverge exactly when a refresh silently fails, which is the case you most need to catch." },
+    { label: "You should alert on row count instead, which always changes on refresh.", misconception: "Row count can be unchanged across a successful refresh (same groups, updated sums) and can stay frozen when refresh fails — same conflation. The reliable signal is the refresh job's own success and timestamp." },
+    { label: "The query needs CONCURRENTLY to read a consistent snapshot.", misconception: "CONCURRENTLY governs refresh, not reads; this SELECT already sees a consistent snapshot. The flaw is using view content as a proxy for refresh recency." },
+  ]}
+/>
+
+## Snippet 4 — the refresh that never finishes
+
+```sql
+-- a long-running analytics session is open:
+BEGIN;
+SELECT ... FROM orders JOIN ... ;   -- runs for 20+ minutes, still open
+
+-- meanwhile, the scheduler fires:
+REFRESH MATERIALIZED VIEW CONCURRENTLY daily_revenue;  -- appears to hang
+```
+
+<Quiz
+  id="04-materialized-views-code-4"
+  lessonSlug="04-materialized-views"
+  lang="en"
+  question="The CONCURRENTLY refresh sits and does nothing while the analytics session is open. What is the mechanism, and what is the durable fix?"
+  choices={[
+    { label: "CONCURRENTLY waits for in-flight transactions that could see the old view to drain before it starts. The 20-minute open session blocks it, and if such sessions are continuous the refresh backlog never catches up. Durable fix: bound long sessions (statement/idle-in-transaction timeouts) or isolate heavy analytics so refresh can make progress.", correct: true },
+    { label: "The refresh deadlocked with the SELECT and will be killed by the deadlock detector.", misconception: "It is not a deadlock — the refresh is waiting on transaction drain, a normal precondition for the consistent swap. The deadlock detector will not fire; the refresh just waits." },
+    { label: "Switch to a plain REFRESH (no CONCURRENTLY) — it does not wait on other transactions.", misconception: "Plain refresh takes an ACCESS EXCLUSIVE lock and would block the readers entirely, which is worse for a constantly-read dashboard. The fix is bounding the long transactions, not reintroducing read-blocking." },
+    { label: "Add more unique indexes so the refresh has more diff paths to choose from.", misconception: "One unique index already satisfies the requirement; extra indexes do not change the transaction-drain wait. The stall is about long open transactions, not index count." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+The refresh path is where MV problems live: CONCURRENTLY needs a unique index on plain view columns or it errors; pg_ivm's create_immv moves cost onto every write via triggers, so a per-write slowdown is the design, not a bug; staleness must be measured from the refresh job's own success and timestamp, never from the view's data content; and a CONCURRENTLY refresh stalls behind long open transactions, so bound them or it never catches up. Read the DDL and the refresh, predict the lock and staleness behaviour, then fix the structure before reaching for a knob.
 </Recap>
-

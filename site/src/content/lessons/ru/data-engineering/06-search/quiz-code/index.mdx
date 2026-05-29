@@ -1,42 +1,136 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- inverted-index
+- analysis-pipeline
+- bm25-ranking
+- tsvector-gin
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Search"
-title: Кодировочный тест
+- https://www.postgresql.org/docs/current/textsearch-indexes.html
+- https://www.elastic.co/docs/manage-data/data-store/text-analysis/index-search-analysis
+- https://www.elastic.co/blog/practical-bm25-part-3-considerations-for-picking-b-and-k1-in-elasticsearch
+status: ready
+summary: "Читай реальный код сборки индекса, конвейер анализатора, набросок скоринга BM25 и запрос Postgres tsvector, затем предскажи поведение и выбери самый рычажный фикс."
+title: 'Полнотекстовый поиск: чтение кода и запросов'
 track: data-engineering
 unit: 06-search
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Search unit.
+Баги поиска живут в разрыве между тем, какими ты считаешь токены, и тем, что движок на самом деле сохранил. Читай каждый сниппет, предскажи токены или score и выбери фикс, к которому senior потянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Search unit.
+Отработай цикл, который ты прогоняешь в каждом инциденте поиска: проведи текст через анализатор, представь posting lists, которые он произведёт, прикинь, как BM25 упорядочит кандидатов, и прочитай запрос Postgres tsvector достаточно хорошо, чтобы понять, может ли он вообще использовать индекс.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — сборка inverted index
+
+```python
+index = {}                      # term -> sorted list of doc ids
+def add(doc_id, text):
+    for tok in analyze(text):   # tokenize + lowercase + stem
+        index.setdefault(tok, [])
+        index[tok].append(doc_id)   # append, no dedup, no sort
+
+def search(q):
+    lists = [index.get(t, []) for t in analyze(q)]
+    return set.intersection(*map(set, lists))   # AND of terms
+```
+
+<Quiz
+  id="06-search-code-1"
+  lessonSlug="06-search"
+  lang="ru"
+  question="Документ, повторяющий терм (например 'run run run'), добавлен один раз. Что не так с получившимся posting list и каков самый рычажный фикс?"
+  choices={[
+    { label: "Тот же doc id добавляется по разу на каждое вхождение, поэтому posting list держит дубли id и теряет чистый сигнал term frequency. Фикс: хранить каждый doc id один раз со счётчиком term-frequency (id -> tf), что и дедупит список, и даёт BM25 нужный tf для скоринга.", correct: true },
+    { label: "Всё в порядке — set.intersection в search всё равно дедупит.", misconception: "Каст в set на чтении прячет дубли для матчинга, но хранимый список всё ещё раздут, а информация о term frequency искажена — а именно она нужна настоящему ранкеру. Чини структуру, а не только путь чтения." },
+    { label: "Баг в том, что analyze() lowercase — нужно сохранять регистр для точного матча.", misconception: "Lowercase корректен и намеренен; именно он позволяет 'Run' и 'run' совпадать. Дефект — это append дублей id без счётчика term-frequency." },
+    { label: "search() должна OR-ить термы, а не AND-ить.", misconception: "AND vs OR — продуктовое решение о строгости матча, а не баг. Реальный дефект — конструкция posting list, хранящая дубли и теряющая счётчик tf." },
+  ]}
+/>
+
+## Сниппет 2 — анализатор при индексировании vs при запросе
+
+```python
+# index time
+def index_analyzer(text):
+    return [stem(t) for t in lower(tokenize(text)) if t not in STOPWORDS]
+
+# query time (a different service, written later)
+def query_analyzer(text):
+    return [t for t in lower(tokenize(text))]   # no stopword drop, no stem
+```
+
+<Quiz
+  id="06-search-code-2"
+  lessonSlug="06-search"
+  lang="ru"
+  question="Документы проиндексированы через index_analyzer; запросы идут через query_analyzer. Пользователь ищет 'running shoes'. Что произойдёт и каков фикс?"
+  choices={[
+    { label: "При индексировании сохранены stemmed-токены вроде 'run'/'shoe'; запрос производит 'running'/'shoes', которых нет в индексе, поэтому поиск молча возвращает ничего. Фикс: использовать ровно тот же анализатор (stem + stopword filter) на обоих путях — паритет анализаторов это железное правило.", correct: true },
+    { label: "Работает нормально, потому что tokenize + lowercase идут на обеих сторонах.", misconception: "Общих tokenize/lowercase недостаточно — индекс делал stemming и убирал stopwords, а запрос не делал ни того, ни другого, поэтому уцелевшие токены различаются и никогда не совпадают. Обе стадии должны быть идентичны, а не просто пересекаться." },
+    { label: "Вернётся слишком много результатов, потому что запрос сохраняет stopwords.", misconception: "Сохранение stopwords здесь не приводит к over-match; реальный исход — under-match (ноль результатов), потому что контентные токены были stemmed при индексировании и не были при запросе, поэтому они не сходятся." },
+    { label: "Фикс — поднять параметр BM25 b, чтобы компенсировать.", misconception: "b нормализует длину документа для скоринга совпавших документов; он не может спасти mismatch токенизации, который вообще не даёт совпадения. Фикс — паритет анализаторов, а не ручка скоринга." },
+  ]}
+/>
+
+## Сниппет 3 — набросок term frequency для BM25
+
+```python
+def bm25_tf(tf, doc_len, avg_len, k1=1.2, b=0.75):
+    # saturating term frequency with length normalization
+    denom = tf + k1 * (1 - b + b * doc_len / avg_len)
+    return tf * (k1 + 1) / denom
+```
+
+<Quiz
+  id="06-search-code-3"
+  lessonSlug="06-search"
+  lang="ru"
+  question="Спам-документ повторяет терм 200 раз; чистый документ имеет его 3 раза при той же длине. Читая эту формулу, какое утверждение верно?"
+  choices={[
+    { label: "Терм tf насыщается: с ростом tf отношение стремится к потолку k1+1, поэтому документ с 200 вхождениями скорит лишь немногим выше, чем с 3 — ровно поведение убывающей отдачи, которое BM25 добавляет над сырым TF-IDF. Терм b затем штрафует более длинные документы через doc_len/avg_len.", correct: true },
+    { label: "Документ с 200 вхождениями скорит примерно в 66x выше, потому что tf в числителе.", misconception: "tf и в числителе, и в знаменателе, поэтому отношение насыщается к k1+1, а не растёт линейно. Это нелинейное насыщение — весь смысл BM25." },
+    { label: "Установка b=0 заставила бы более длинные документы скорить выше.", misconception: "b=0 полностью убирает нормализацию длины, поэтому длина документа перестаёт влиять на score — он ни бустит, ни штрафует длинные документы. b=1 применяет полную нормализацию длины." },
+    { label: "k1 управляет нормализацией длины документа.", misconception: "k1 управляет тем, как быстро насыщается term frequency; b управляет нормализацией длины. Две ручки различны, и их смешение — классическая ошибка тюнинга." },
+  ]}
+/>
+
+## Сниппет 4 — полнотекстовый запрос Postgres
+
+```sql
+-- column: body text;  index: CREATE INDEX ON docs USING gin(to_tsvector('english', body));
+SELECT id, ts_rank(to_tsvector('english', body), q) AS rank
+FROM docs, plainto_tsquery('english', 'running shoes') q
+WHERE to_tsvector('english', body) @@ q
+ORDER BY rank DESC LIMIT 10;
+```
+
+<Quiz
+  id="06-search-code-4"
+  lessonSlug="06-search"
+  lang="ru"
+  question="Запрос корректен, но делает sequential scan по большой таблице, хотя GIN-индекс существует. Почему и каков фикс?"
+  choices={[
+    { label: "Индекс на выражении to_tsvector('english', body), но WHERE пересчитывает to_tsvector на каждой строке вместо матча по хранимой колонке, а планировщик использует GIN-индекс, только если индексированное выражение совпадает точно. Фикс: хранить generated tsvector-колонку и индексировать/запрашивать её, чтобы матч был дешёвым index lookup, а не пересчётом на строку.", correct: true },
+    { label: "GIN-индексы вообще нельзя использовать с @@; работает только GiST.", misconception: "GIN полностью поддерживает оператор матча @@ и быстрее на read-heavy тексте. Проблема в том, что индекс здесь не сматчен/не использован, а не в несовместимости оператора." },
+    { label: "ts_rank в SELECT форсирует sequential scan.", misconception: "ts_rank выполняется только на совпавших строках при упорядочивании; он не диктует путь доступа. Скан идёт от того, что выражение WHERE не совпадает с хранимым индексированным tsvector." },
+    { label: "plainto_tsquery — неправильная функция и ломает индекс.", misconception: "plainto_tsquery — валидный способ построить tsquery и не отключает индекс. Пересчёт to_tsvector на строку в WHERE — вот что мешает планировщику эффективно использовать GIN-индекс." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый баг поиска читается обратно к токенам и путям доступа: posting list должен дедупить doc id и нести счётчик term-frequency, а не append вслепую; анализаторы при индексировании и при запросе должны быть побайтово одинаковы, иначе совпадения молча исчезают; tf в BM25 насыщается к k1+1, а b нормализует длину, поэтому спам не может доминировать; а запрос Postgres FTS использует свой GIN-индекс, только когда выражение запроса совпадает с индексированным — храни generated tsvector-колонку, а не пересчитывай на строку. Проследи токены, представь posting lists, затем чини структуру до того, как трогать ручку скоринга.
 </Recap>
-

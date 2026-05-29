@@ -1,42 +1,136 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- inverted-index
+- analysis-pipeline
+- bm25-ranking
+- tsvector-gin
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Search"
-title: Coding Quiz
+- https://www.postgresql.org/docs/current/textsearch-indexes.html
+- https://www.elastic.co/docs/manage-data/data-store/text-analysis/index-search-analysis
+- https://www.elastic.co/blog/practical-bm25-part-3-considerations-for-picking-b-and-k1-in-elasticsearch
+status: ready
+summary: "Read real index-build code, an analyzer pipeline, a BM25 scoring sketch, and a Postgres tsvector query, then predict the behaviour and pick the highest-leverage fix."
+title: 'Full-text search: code and query reading'
 track: data-engineering
 unit: 06-search
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Search unit.
+Search bugs live in the gap between what you think the tokens are and what the engine actually stored. Read each snippet, predict the tokens or the score, and choose the fix a senior would reach for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Search unit.
+Practise the loop you run in every search incident: trace text through the analyzer, picture the posting lists it produces, reason about how BM25 will order the candidates, and read a Postgres tsvector query well enough to know whether it can even use the index.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — building the inverted index
+
+```python
+index = {}                      # term -> sorted list of doc ids
+def add(doc_id, text):
+    for tok in analyze(text):   # tokenize + lowercase + stem
+        index.setdefault(tok, [])
+        index[tok].append(doc_id)   # append, no dedup, no sort
+
+def search(q):
+    lists = [index.get(t, []) for t in analyze(q)]
+    return set.intersection(*map(set, lists))   # AND of terms
+```
+
+<Quiz
+  id="06-search-code-1"
+  lessonSlug="06-search"
+  lang="en"
+  question="A document that repeats a term (e.g. 'run run run') is added once. What is wrong with the resulting posting list, and what is the highest-leverage fix?"
+  choices={[
+    { label: "The same doc id is appended once per occurrence, so the posting list holds duplicate ids and loses the clean term-frequency signal. Fix: store each doc id once with a term-frequency count (id -> tf), which both dedups the list and gives BM25 the tf it needs to score.", correct: true },
+    { label: "Nothing is wrong — set.intersection in search dedups it anyway.", misconception: "The search-time set cast hides the duplicates for matching, but the stored list is still bloated and the term-frequency information is mangled, which is exactly what a real ranker needs. Fix the structure, not just the read path." },
+    { label: "The bug is that analyze() lowercases — it should preserve case for exact match.", misconception: "Lowercasing is correct and deliberate; it is what lets 'Run' and 'run' match. The defect is the duplicate-id append with no term-frequency count." },
+    { label: "search() should OR the terms, not AND them.", misconception: "AND vs OR is a product decision about match strictness, not a bug. The actual defect is the posting-list construction storing duplicates and dropping the tf count." },
+  ]}
+/>
+
+## Snippet 2 — the analyzer at index time vs query time
+
+```python
+# index time
+def index_analyzer(text):
+    return [stem(t) for t in lower(tokenize(text)) if t not in STOPWORDS]
+
+# query time (a different service, written later)
+def query_analyzer(text):
+    return [t for t in lower(tokenize(text))]   # no stopword drop, no stem
+```
+
+<Quiz
+  id="06-search-code-2"
+  lessonSlug="06-search"
+  lang="en"
+  question="Documents indexed with index_analyzer; queries run through query_analyzer. A user searches 'running shoes'. What happens, and what is the fix?"
+  choices={[
+    { label: "Index time stored stemmed tokens like 'run'/'shoe'; the query produces 'running'/'shoes', which are not in the index, so the search silently returns nothing. Fix: use the exact same analyzer (stem + stopword filter) on both paths — analyzer parity is the iron rule.", correct: true },
+    { label: "It works fine because tokenize + lowercase run on both sides.", misconception: "Shared tokenize/lowercase is not enough — the index stemmed and dropped stopwords while the query did neither, so the surviving tokens differ and never match. Both stages must be identical, not just overlapping." },
+    { label: "It returns too many results because the query keeps stopwords.", misconception: "Keeping stopwords here does not over-match; the real outcome is under-match (zero results), because the content tokens were stemmed at index time and not at query time, so they never line up." },
+    { label: "The fix is to raise the BM25 b parameter to compensate.", misconception: "b normalizes document length for scoring matched docs; it cannot rescue a tokenization mismatch that produces no match at all. The fix is analyzer parity, not a scoring knob." },
+  ]}
+/>
+
+## Snippet 3 — a BM25 term-frequency sketch
+
+```python
+def bm25_tf(tf, doc_len, avg_len, k1=1.2, b=0.75):
+    # saturating term frequency with length normalization
+    denom = tf + k1 * (1 - b + b * doc_len / avg_len)
+    return tf * (k1 + 1) / denom
+```
+
+<Quiz
+  id="06-search-code-3"
+  lessonSlug="06-search"
+  lang="en"
+  question="A spam doc repeats a term 200 times; a clean doc has it 3 times at the same length. Reading this formula, which statement is correct?"
+  choices={[
+    { label: "The tf term saturates: as tf grows the ratio approaches the ceiling k1+1, so the 200-occurrence doc scores only marginally above the 3-occurrence one — exactly the diminishing-returns behaviour BM25 adds over raw TF-IDF. The b term then penalizes longer docs via doc_len/avg_len.", correct: true },
+    { label: "The 200-occurrence doc scores about 66x higher because tf is in the numerator.", misconception: "tf is in the numerator and the denominator, so the ratio saturates toward k1+1 rather than growing linearly. That non-linear saturation is the entire point of BM25." },
+    { label: "Setting b=0 would make longer documents score higher.", misconception: "b=0 removes length normalization entirely, so document length stops affecting the score — it neither boosts nor penalizes long docs. b=1 applies full length normalization." },
+    { label: "k1 controls document-length normalization.", misconception: "k1 controls how fast term frequency saturates; b controls length normalization. The two knobs are distinct, and conflating them is a classic tuning error." },
+  ]}
+/>
+
+## Snippet 4 — a Postgres full-text query
+
+```sql
+-- column: body text;  index: CREATE INDEX ON docs USING gin(to_tsvector('english', body));
+SELECT id, ts_rank(to_tsvector('english', body), q) AS rank
+FROM docs, plainto_tsquery('english', 'running shoes') q
+WHERE to_tsvector('english', body) @@ q
+ORDER BY rank DESC LIMIT 10;
+```
+
+<Quiz
+  id="06-search-code-4"
+  lessonSlug="06-search"
+  lang="en"
+  question="This query is correct but does a sequential scan on a large table despite the GIN index existing. Why, and what is the fix?"
+  choices={[
+    { label: "The index is on the expression to_tsvector('english', body), but the WHERE clause recomputes to_tsvector on every row instead of matching a stored column, and the planner will only use the GIN index if the indexed expression matches exactly. Fix: store a generated tsvector column and index/query that, so the match is a cheap index lookup, not a per-row recompute.", correct: true },
+    { label: "GIN indexes cannot be used with @@ at all; only GiST works.", misconception: "GIN fully supports the @@ match operator and is the faster choice for read-heavy text. The issue is the index not being matched/used here, not an operator incompatibility." },
+    { label: "ts_rank in the SELECT forces a sequential scan.", misconception: "ts_rank runs only on the matched rows during ordering; it does not dictate the access path. The scan comes from the WHERE expression not lining up with a stored, indexed tsvector." },
+    { label: "plainto_tsquery is the wrong function and breaks the index.", misconception: "plainto_tsquery is a valid way to build the query tsquery and does not disable the index. The recompute-per-row to_tsvector in WHERE is what keeps the planner from using the GIN index efficiently." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every search bug reads back to tokens and access paths: a posting list must dedup doc ids and carry a term-frequency count, not append blindly; index-time and query-time analyzers must be byte-for-byte the same or matches silently vanish; BM25's tf saturates toward k1+1 while b normalizes length, so spam cannot dominate; and a Postgres FTS query only uses its GIN index when the query expression matches the indexed expression — store a generated tsvector column rather than recomputing per row. Trace the tokens, picture the posting lists, then fix the structure before you touch a scoring knob.
 </Recap>
-
