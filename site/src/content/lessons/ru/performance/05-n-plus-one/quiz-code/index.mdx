@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- lazy-load-loop
+- dataloader-batch-fn
+- query-log-reading
+- serial-vs-parallel-fanout
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "N+1: одна логическая операция, много round-trip''''''''ов"'
-title: Кодировочный тест
+- https://github.com/graphql/dataloader
+- https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+- https://redis.io/docs/latest/commands/mget/
+status: ready
+summary: Читай реальные ORM-циклы, batch-функцию DataLoader, query log и fan-out-хендлер — предскажи число round-trip и выбери фикс с наибольшим рычагом.
+title: 'N+1: чтение кода и логов'
 track: performance
 unit: 05-n-plus-one
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the N+1: одна логическая операция, много round-trip'ов unit.
+N+1 диагностируется чтением кода и логов, а не догадками. Прочитай сниппет или трейс, посчитай round-trip'ы, которые он выпустит, затем выбери фикс, к которому сениор тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the N+1: одна логическая операция, много round-trip'ов unit.
+Отработать цикл, который ты гоняешь в каждом инциденте N+1: прочитать hot path, посчитать round-trip'ы и взять структурный фикс под форму данных — до того, как трогать индексы или железо.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — невинный цикл
+
+```javascript
+const orders = await Order.findAll({ where: { userId } }); // 50 строк
+for (const order of orders) {
+  const customer = await order.getCustomer(); // один запрос на order
+  render(order, customer.name);
+}
+```
+
+<Quiz
+  id="05-n-plus-one-code-1"
+  lessonSlug="05-n-plus-one"
+  lang="ru"
+  question="На 50 заказах сколько запросов это выпустит, и какой единственный фикс с наибольшим рычагом?"
+  choices={[
+    { label: "51 запрос — один на orders, затем по одному на order через lazy getCustomer(). Фикси структурно: eager-load через include/preload, чтобы ORM забрал всех customer'ов одним IN-запросом, снизив до 2 round-trip'ов.", correct: true },
+    { label: "1 запрос — ORM батчит getCustomer() автоматически.", misconception: "Lazy getCustomer() внутри цикла выпускает запрос на каждой итерации; ORM не батчит, если не объявить relationship заранее через include/preload." },
+    { label: "51 запрос, и фикс — добавить индекс на customers.id.", misconception: "Индекс ускоряет каждый lookup, но ты всё равно платишь 50 round-trip'ов latency. Фикс — меньше trip'ов через один IN-запрос, а не быстрее отдельные." },
+    { label: "2 запроса — отложить рендеры на конец.", misconception: "Отсрочка рендера ничего не меняет в моменте выпуска запросов. 50 customer-запросов триггерятся lazy-доступом внутри цикла независимо от тайминга рендера." },
+  ]}
+/>
+
+## Сниппет 2 — batch-функция DataLoader
+
+```javascript
+const userLoader = new DataLoader(async (ids) => {
+  const users = await db.user.findMany({ where: { id: { in: ids } } });
+  return users; // возвращено в порядке БД
+});
+// резолвер: return userLoader.load(post.authorId)
+```
+
+<Quiz
+  id="05-n-plus-one-code-2"
+  lessonSlug="05-n-plus-one"
+  lang="ru"
+  question="Этот DataLoader батчит корректно, но имеет баг корректности, который вскроет load test. В чём он?"
+  choices={[
+    { label: "Batch-функция обязана вернуть результаты в том же порядке, что и входные ids (и одну запись на id). Возврат users в порядке БД — с пропусками для отсутствующих id — мисмапит каждый Promise на неверную строку или undefined. Фикс: return ids.map(id => byId.get(id) ?? null).", correct: true },
+    { label: "findMany с IN небезопасен для конкурентных load'ов.", misconception: "IN-запрос в порядке, и DataLoader сериализует батч. Дефект — контракт порядка результатов: выходы должны позиционно совпадать с входными ids." },
+    { label: "DataLoader надо создавать один раз на уровне модуля, не на request.", misconception: "Наоборот — loader'ы на уровне модуля утекают кэш между request'ами. Баг в ЭТОМ сниппете — неупорядоченный возврат, а не scope создания." },
+    { label: "Нужен await на userLoader.load.", misconception: "load() возвращает Promise, который фреймворк резолверов await'ит; возврат его из резолвера корректен. Баг — неверно упорядоченный результат батча." },
+  ]}
+/>
+
+## Сниппет 3 — query log
+
+```
+Started GET "/dashboard"
+User Load (0.4ms)     SELECT * FROM users WHERE id = 42
+Project Load (0.6ms)  SELECT * FROM projects WHERE user_id = 42 LIMIT 50
+Task Load (0.3ms)     SELECT * FROM tasks WHERE project_id = 1
+Task Load (0.3ms)     SELECT * FROM tasks WHERE project_id = 2
+... (ещё 48 строк Task Load)
+Comment Load (0.2ms)  SELECT * FROM comments WHERE task_id = 1
+... (ещё 243 строки Comment Load)
+Completed 200 OK in 980ms (Views: 250ms | ActiveRecord: 689ms)
+```
+
+<Quiz
+  id="05-n-plus-one-code-3"
+  lessonSlug="05-n-plus-one"
+  lang="ru"
+  question="Читая этот лог, что происходит и какой точный фикс?"
+  choices={[
+    { label: "Два вложенных уровня N+1: 50 Task Load (по одному на project) и ~245 Comment Load (по одному на task). Фикс — вложенный eager loading — projects.includes(tasks: :comments) — схлопывает ~300 запросов в 4 (user, projects, tasks IN, comments IN). Время ActiveRecord падает с 689 мс до ~15 мс.", correct: true },
+    { label: "База медленная — каждый Comment Load берёт 0.2 мс.", misconception: "0.2 мс на запрос — быстро. 689 мс — это сумма ~300 round-trip'ов, а не медленные отдельные запросы. Фикс — меньше запросов через вложенный eager loading." },
+    { label: "Views — bottleneck на 250 мс; оптимизируй шаблоны.", misconception: "Views — 250 мс, но ActiveRecord — 689 мс на 300+ запросах, доминирующая цена. Рычаг — убить вложенный N+1, а не тюнинг шаблонов." },
+    { label: "Только один уровень N+1 — добавь includes(:tasks).", misconception: "Уровней два: tasks на project И comments на task. includes(:tasks) сам по себе оставляет ~245 comment-запросов; нужен includes(tasks: :comments)." },
+  ]}
+/>
+
+## Сниппет 4 — fan-out-хендлер
+
+```javascript
+const user   = await userService.get(id);    // 30 мс
+const posts  = await postsService.get(id);    // 30 мс
+const notifs = await notifService.get(id);    // 30 мс
+const billing = await billingService.get(id); // 30 мс
+return assemble(user, posts, notifs, billing);
+```
+
+<Quiz
+  id="05-n-plus-one-code-4"
+  lessonSlug="05-n-plus-one"
+  lang="ru"
+  question="Эти четыре вызова сервисов независимы (ни один не потребляет результат другого). Какой wall-clock сейчас и какой фикс?"
+  choices={[
+    { label: "~120 мс — четыре последовательных round-trip'а по 30 мс. Так как они независимы, диспетчери их конкурентно через Promise.all (errgroup / asyncio.gather); wall-clock становится max(latencies) ≈ 30 мс плюс малый overhead координации.", correct: true },
+    { label: "Уже ~30 мс — await запускает их параллельно.", misconception: "Последовательный await блокирует каждый вызов до резолва предыдущего. Они идут последовательно на ~120 мс; надо диспетчерить их вместе через Promise.all, чтобы перекрыть." },
+    { label: "~120 мс, и фикс — собрать их в один запрос.", misconception: "Это четыре разных сервиса без общего backend для батчинга. Фикс для независимых удалённых вызовов — параллельный dispatch, а не батчинг запросов." },
+    { label: "~120 мс — перевести каждый вызов на более быстрый протокол.", misconception: "Скорость протокола даёт инкрементальный выигрыш; вызовы остаются последовательными. Параллелизация схлопывает sum(latencies) в max(latencies) — структурный фикс." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый N+1 читается в коде или логах: lazy relation внутри цикла — это 1+N запросов, фиксится eager loading'ом; batch-функция DataLoader обязана вернуть результаты, позиционно выровненные по входным ids; query log с повторяющимися похожими SELECT'ами вскрывает вложенные уровни N+1, фиксящиеся вложенным preload; а независимые последовательные вызовы сервисов схлопываются с sum в max через параллельный dispatch. Сначала посчитай round-trip'ы, подбери фикс под форму данных, затем перечитай лог, чтобы подтвердить падение счётчика.
 </Recap>
-

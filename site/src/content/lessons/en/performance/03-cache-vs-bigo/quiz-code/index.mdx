@@ -1,42 +1,136 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- row-major-access
+- aos-vs-soa
+- false-sharing-padding
+- pointer-chasing-mlp
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Cache vs big-O: when the textbook lies"'
-title: Coding Quiz
+- https://en.wikipedia.org/wiki/CPU_cache
+- https://en.algorithmica.org/hpc/pipelining/branching/
+status: ready
+summary: Read real snippets — a strided loop, an AoS struct, a padded counter, and a pointer chain — predict the cache and pipeline behaviour, then pick the highest-leverage fix.
+title: 'Cache vs big-O: code and layout reading'
 track: performance
 unit: 03-cache-vs-bigo
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Cache vs big-O: when the textbook lies unit.
+Cache problems are diagnosed in the code and the profile, not in the big-O. Read each snippet, predict where the wall-clock time actually goes, and pick the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Cache vs big-O: when the textbook lies unit.
+Practise the loop you run in every performance incident: read the hot path, find the layout or access-pattern defect the profiler will confirm, and choose the highest-leverage fix before touching SIMD intrinsics or compiler flags.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the strided sum
+
+```c
+double sum = 0;
+// matrix is row-major: matrix[i][j] at offset (i*N + j)*8 bytes
+for (int j = 0; j < N; j++)        // outer: column index
+    for (int i = 0; i < N; i++)    // inner: row index
+        sum += matrix[i][j];
+```
+
+<Quiz
+  id="03-cache-vs-bigo-code-1"
+  lessonSlug="03-cache-vs-bigo"
+  lang="en"
+  question="On a 10 000×10 000 double matrix, why is this loop ~9x slower than swapping the two loops, and what is the fix?"
+  choices={[
+    { label: "The inner loop varies i, so consecutive accesses jump N×8 = 80 000 bytes — a fresh, un-prefetched cache line every step, paying full RAM latency. Swap the loops so the inner index is j (8-byte steps): 7 of 8 reads then hit L1.", correct: true },
+    { label: "The addition `sum +=` is the bottleneck; use SIMD.", misconception: "The floating-point add is nearly free; the CPU stalls waiting on memory. SIMD cannot load a strided column efficiently anyway — fix the access order first." },
+    { label: "Nothing is wrong — both loop orders touch the same elements.", misconception: "They touch the same elements but in a different memory order. Column-order on row-major storage misses cache on essentially every access; the wall-clock gap is ~9x." },
+    { label: "Increase the matrix allocation alignment.", misconception: "Alignment does not change an 80 000-byte stride. The defect is iterating across the storage layout; reorder the loops or tile the matrix." },
+  ]}
+/>
+
+## Snippet 2 — the struct layout
+
+```c
+struct Particle { float x, y, z, vx, vy, vz; char name[40]; };  // 64 bytes
+Particle parts[1_000_000];
+
+float total_x = 0;
+for (int i = 0; i < 1_000_000; i++)
+    total_x += parts[i].x;          // only x is read
+```
+
+<Quiz
+  id="03-cache-vs-bigo-code-2"
+  lessonSlug="03-cache-vs-bigo"
+  lang="en"
+  question="The loop reads only `x`, yet the profile shows a high L3 miss rate. What is the layout defect and the fix?"
+  choices={[
+    { label: "AoS: each 64-byte Particle fills a whole cache line, so loading one `x` drags in 60 bytes of unused fields — the line holds one useful float, not 16. Split to SoA (a flat `float xs[N]`); now 16 x-values fit per line and SIMD can load 8 at once.", correct: true },
+    { label: "The array is too big for L3, so nothing can help.", misconception: "Size is not the root cause — wasted bandwidth is. SoA shrinks the bytes touched ~16x for this loop, so far more of it stays cache-resident and the prefetcher streams it." },
+    { label: "Add `__builtin_prefetch` on parts[i+8].", misconception: "Prefetch helps a little, but you would still pull 64 bytes per element to use 4. The structural fix is SoA, which removes the wasted 60 bytes per line." },
+    { label: "Mark the struct `packed` to remove padding.", misconception: "It is already 64 bytes with no slack; packing changes nothing. The waste is the cold fields (`y…name`) co-located with the hot field, which only struct-splitting/SoA fixes." },
+  ]}
+/>
+
+## Snippet 3 — the padded counter
+
+```go
+type paddedCounter struct {
+    value uint64
+    _     [56]byte   // pad to a full 64-byte cache line
+}
+var counters [16]paddedCounter
+
+func worker(idx int) {                     // one goroutine per idx
+    atomic.AddUint64(&counters[idx].value, 1)
+}
+```
+
+<Quiz
+  id="03-cache-vs-bigo-code-3"
+  lessonSlug="03-cache-vs-bigo"
+  lang="en"
+  question="What does the `[56]byte` padding buy, and what failure does it prevent?"
+  choices={[
+    { label: "It forces each counter onto its own 64-byte cache line, so a goroutine's atomic write no longer invalidates a neighbour's line. Without it the counters share lines and MESI ping-pongs them between cores — false sharing that makes the lock-free path slower than a mutex.", correct: true },
+    { label: "It makes the atomic add itself faster.", misconception: "The atomic instruction is unchanged. Padding removes inter-core coherency traffic (line invalidations), not per-instruction cost." },
+    { label: "It prevents a data race on the counter value.", misconception: "atomic.AddUint64 already makes the increment race-free. Padding addresses a performance bug (false sharing), not correctness." },
+    { label: "It reduces total memory, packing counters tightly.", misconception: "It does the opposite — it inflates each counter from 8 to 64 bytes. The trade is memory for the elimination of cache-line contention." },
+  ]}
+/>
+
+## Snippet 4 — the pointer chain
+
+```c
+// idx[] holds the next index to visit; following it is data-dependent
+int i = start;
+for (int step = 0; step < N; step++) {
+    process(data[i]);
+    i = idx[i];          // next address depends on this load's result
+}
+```
+
+<Quiz
+  id="03-cache-vs-bigo-code-4"
+  lessonSlug="03-cache-vs-bigo"
+  lang="en"
+  question="Even when `data` and `idx` fit in L2, this runs far slower than a sequential scan of the same arrays. Why, and what is the structural fix?"
+  choices={[
+    { label: "Each `i = idx[i]` is a dependent load: the CPU cannot issue the next access until this one returns, so the misses serialize and memory-level parallelism (8–16 in flight) is wasted. The prefetcher cannot guess a data-dependent address either. Fix: precompute the visit order into a contiguous index array so loads are independent and prefetchable.", correct: true },
+    { label: "The arrays are too small to benefit from caching.", misconception: "They fit in L2 — capacity is fine. The cost is the dependency chain serializing the misses; that is an access-pattern problem, not a capacity one." },
+    { label: "process() is the bottleneck, not the memory access.", misconception: "The stalls are on the dependent `idx[i]` loads. Even a trivial process() leaves the loop memory-latency-bound because each step waits on the previous load." },
+    { label: "Switching to recursion would let the compiler parallelise it.", misconception: "Recursion does not break the data dependency. You must materialise the order into independent, sequential accesses so MLP and the prefetcher can engage." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every snippet here is a constant-factor defect big-O cannot see: a column-order loop on row-major storage misses on every step (reorder or tile); an AoS struct drags cold fields into the line for a one-field loop (split to SoA); unpadded per-thread counters ping-pong cache lines (pad to 64 bytes); and a dependent pointer chain serializes misses and defeats both MLP and the prefetcher (precompute a contiguous order). Read the access pattern, name the cause, fix the layout — then re-profile to confirm.
 </Recap>
-

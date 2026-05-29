@@ -1,43 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- microbenchmark-pitfalls
+- dead-code-elimination
+- pprof-diff
+- hardware-counters
+- amdahl-arithmetic
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Сначала профиль: измерь куда реально уходит
-  время"'
-title: Кодировочный тест
+- https://www.brendangregg.com/methodology.html
+- https://pkg.go.dev/runtime/pprof
+- https://man7.org/linux/man-pages/man2/perf_event_open.2.html
+status: ready
+summary: Прочитай микробенчмарк, профайлер-дифф, вывод hardware counters perf и расчёт Amdahl, затем предскажи поведение и выбери фикс с наибольшим рычагом.
+title: 'Сначала профиль: чтение кода и трейсов'
 track: performance
 unit: 01-profile-first
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Сначала профиль: измерь куда реально уходит время unit.
+Бенчмарки, профайлер-диффы и вывод counters — это где profile-first живёт или умирает. Прочитай каждый артефакт и выбери ход, который сеньор делает первым — до того, как тронуть ручку тюнинга или поверить headline-числу.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Сначала профиль: измерь куда реально уходит время unit.
+Потренируй цикл, который ты запускаешь в каждом расследовании производительности: прочитай бенчмарк или трейс, заметь ложь или сигнал и потянись к интерпретации с наибольшим рычагом прежде, чем что-либо менять.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — бенчмарк, который слишком быстр
+
+```go
+func BenchmarkHash(b *testing.B) {
+    data := []byte("fixed-input-string")
+    for i := 0; i < b.N; i++ {
+        _ = fnv32(data)   // результат отброшен
+    }
+}
+// reported: 0.31 ns/op — быстрее одной загрузки из памяти
+```
+
+<Quiz
+  id="01-profile-first-code-1"
+  lessonSlug="01-profile-first"
+  lang="ru"
+  question="0.31 ns/op — ниже стоимости одной загрузки из L1. Что произошло и в чём фикс?"
+  choices={[
+    { label: "Dead-code elimination: результат отброшен, поэтому оптимизатор удалил вызов (и, вероятно, тело цикла). Число — фикция. Фикс: потреби результат через sink — присвой package-level переменной или используй sink, и параметризуй вход, чтобы он не был compile-time константой.", correct: true },
+    { label: "fnv32 действительно так быстр на современных CPU.", misconception: "0.31 ns/op ниже одной загрузки из L1 (~1 нс); ни один реальный хеш byte-слайса так не работает. Компилятор удалил работу, потому что результат не используется — бенчмарк не измеряет ничего." },
+    { label: "b.N слишком мал, поэтому таймер неточен.", misconception: "testing.B наращивает b.N, пока прогон не станет достаточно длинным; точность не проблема. Проблема — dead-code elimination, удалившая тело целиком, плюс константный вход, который оптимизатор сворачивает." },
+    { label: "Переключись на sampling-профайлер, чтобы получить настоящее число.", misconception: "Профайлер не чинит бенчмарк, измеряющий удалённый код. Дефект в бенчмарке: потреби результат и используй неконстантный вход, чтобы работа реально выполнялась." },
+  ]}
+/>
+
+## Сниппет 2 — профайлер-дифф против production-метрики
+
+```
+# Production (5-мин окно, после деплоя)
+checkout_p99_ms        580   (prev 820)   # на 29% быстрее
+cpu_pct                 62   (prev 58)    # CPU ВЫРОС
+
+# go tool pprof -diff_base baseline.cpu prod.cpu
+Showing nodes accounting for -3.20s, 1.15% of -278.5s total
+      flat  flat%        cum   cum%
+    -1.80s  0.64%     -1.80s  0.64%  net/http.(*conn).serve
+    -1.40s  0.50%     -1.40s  0.50%  encoding/json.Marshal
+```
+
+<Quiz
+  id="01-profile-first-code-2"
+  lessonSlug="01-profile-first"
+  lang="ru"
+  question="p99 упал на 29%, но дифф CPU-профиля показывает лишь ~1% чистого изменения CPU, а CPU% вырос. Как это примирить и что снимать дальше?"
+  choices={[
+    { label: "Выигрыш по wall-clock пришёл из off-CPU времени, а не из CPU. Деплой сократил ожидание (быстрее БД/лок/сеть), поэтому сервис тратит больше wall-clock на вычисления — отсюда чуть выше CPU%. CPU-профиль к этому слеп; сними off-CPU / block профиль и диффай его, чтобы подтвердить уменьшающийся wait-фрейм.", correct: true },
+    { label: "Метрики ошибочны — выигрыш p99 в 29% обязан показаться большим падением CPU.", misconception: "Wall-clock задержка — это не только CPU. Для I/O- или lock-bound сервиса экономия — это off-CPU время ожидания, которое никогда не появляется в CPU-профиле. Метрики и крошечный CPU-дифф идеально согласованы." },
+    { label: "CPU вырос, значит деплой — регрессия, откатывай.", misconception: "Более высокий CPU после фикса часто хороший сигнал: сервис делает реальную работу вместо ожидания. p99 улучшился на 29% — суди по SLO, а не по числу CPU в изоляции." },
+    { label: "Подними частоту CPU-сэмплинга, чтобы найти пропавшее время.", misconception: "Пропавшее время никогда не было на CPU, поэтому никакая частота сэмплинга не вытащит его в CPU-профиле. Нужен off-CPU профиль, чтобы увидеть фреймы DB-wait или mutex-wait." },
+  ]}
+/>
+
+## Сниппет 3 — вывод hardware counters
+
+```
+$ perf stat -e cycles,instructions,cache-misses ./svc bench-json
+   142,310,884,001  cycles
+    61,994,210,773  instructions     #  0.44  insn per cycle
+     1,902,544,118  cache-misses
+# flame graph: parseJSON — 35% CPU, единственный широкий лист
+```
+
+<Quiz
+  id="01-profile-first-code-3"
+  lessonSlug="01-profile-first"
+  lang="ru"
+  question="parseJSON — 35% CPU. IPC 0.44 с огромным числом cache-misses. Какой фикс скорее поможет и какой — нет?"
+  choices={[
+    { label: "Memory-stalled: IPC ниже 1.0 плюс высокие cache-misses означают, что CPU ждёт RAM, а не вычисляет. Чини data layout — меньшие структуры, struct-of-arrays, arena-аллокация, cache-friendly обход. Более быстрый алгоритм парсера или SIMD НЕ помогут, пока боттлнек — доступ к памяти.", correct: true },
+    { label: "Поставь более быстрый JSON-парсер — 35% CPU это явный алгоритмический хотспот.", misconception: "IPC 0.44 говорит, что функция memory-stalled, а не compute-bound. Другой парсер, гоняющийся за теми же разбросанными указателями, увидит те же stalls. Рычаг — data layout, а не алгоритм." },
+    { label: "Добавь SIMD-векторизацию в цикл парсинга.", misconception: "Векторизация помогает compute-bound коду (высокий IPC). При IPC 0.44 CPU простаивает в ожидании памяти; SIMD нечего ускорять, пока cache-misses не упадут." },
+    { label: "Снизь branch mispredictions через branchless-код.", misconception: "Вывод отмечает cache-misses, а не branch-misses. Низкий IPC плюс высокие cache-miss прямо указывают на memory stalls; проверь счётчик branch-miss отдельно прежде, чем предполагать его." },
+  ]}
+/>
+
+## Сниппет 4 — решение по Amdahl
+
+```
+# Запрос всего: 200 мс. Профиль показывает:
+#   funcA  100 мс (50%)   -- опция 1: рерайт для 2x  -> сэкономлено 50 мс
+#   funcB   40 мс (20%)   -- опция 2: рерайт B и C на 4x каждую
+#   funcC   20 мс (10%)   --            -> сэкономлено 45 мс суммарно
+```
+
+<Quiz
+  id="01-profile-first-code-4"
+  lessonSlug="01-profile-first"
+  lang="ru"
+  question="Можно сделать опцию 1 ИЛИ опцию 2, не обе. Какая даёт больше общего speedup и каково общее правило?"
+  choices={[
+    { label: "Опция 1. 2x на 50%-функции экономит 50 мс (200→150, 1.33x); 4x на совокупных 30% экономит 45 мс (200→155, 1.29x). Правило: взвешивай долю-от-общего прежде величины-локального-speedup — скромный выигрыш на большой доле бьёт большой выигрыш на малой доле.", correct: true },
+    { label: "Опция 2 — speedup 4x больше, чем 2x, значит он побеждает.", misconception: "Величина локального speedup не решающий фактор; решает доля. 4x ложится лишь на 30% времени, экономя 45 мс, а 2x на 50% экономит 50 мс. Решает Amdahl, а не множитель." },
+    { label: "Ничья — обе трогают быстрые функции.", misconception: "Они близки, но не равны: 50 мс против 45 мс, 1.33x против 1.29x. Суть именно в том, что надо посчитать Amdahl, а не прикидывать множители на глаз." },
+    { label: "Ни одна — сначала надо отмикробенчить каждую функцию.", misconception: "Профиль уже дал тебе доли (p) и предложенные локальные speedup (s); это всё, что нужно Amdahl. Микробенчмарк лишь перемерил бы s в изоляции и не улучшил бы это решение." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый артефакт здесь прячет ловушку или сигнал. Бенчмарк, чей результат отброшен, измеряет удалённый код, а не работу. Выигрыш p99 в 29% при плоском CPU-диффе означает, что экономия была off-CPU — сними wait-профиль, чтобы увидеть её. IPC ниже 1.0 с тяжёлыми cache-misses означает memory-stalled: чини data layout, а не алгоритм. А когда две оптимизации конкурируют, арифметика Amdahl по долям — не размер локального множителя — выбирает победителя. Прочитай число, найди ложь, затем действуй по доле.
 </Recap>
-
