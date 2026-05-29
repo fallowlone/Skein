@@ -1,42 +1,139 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-outbox
+- dual-write-problem
+- polling-relay
+- skip-locked
+- idempotent-consumer
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "The transactional outbox pattern"
-title: Coding Quiz
+- https://microservices.io/patterns/data/transactional-outbox.html
+- https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+status: ready
+summary: "Read real SQL and handler snippets — an outbox schema, a relay claim query, and a dual-write bug — predict the behaviour, and pick the highest-leverage fix."
+title: 'Outbox pattern: code and schema reading'
 track: queues
 unit: 05-outbox
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the The transactional outbox pattern unit.
+The schema, the relay query, and the handler are where outbox correctness is won or lost. Read each snippet, predict how it behaves under a crash or under load, then choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the The transactional outbox pattern unit.
+Practise the loop you run in every outbox review: read the SQL and the handler, find the gap a crash exposes, and reach for the fix that closes it without inventing a distributed transaction.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the handler
+
+```js
+async function placeOrder(db, broker, order) {
+  await db.query("INSERT INTO orders (id, status) VALUES ($1, 'placed')", [order.id]);
+  await broker.publish("OrderPlaced", order);   // separate system, separate call
+}
+```
+
+<Quiz
+  id="05-outbox-code-1"
+  lessonSlug="05-outbox"
+  lang="en"
+  question="This handler is the dual write the unit exists to kill. Where is the gap, and what is the minimal fix?"
+  choices={[
+    { label: "Crash after the INSERT commits but before publish returns and the order is durable while OrderPlaced is lost. Fix: in the same transaction that inserts the order, INSERT an outbox row, and let a separate relay publish it — so the intent to publish is durable, not in-flight.", correct: true },
+    { label: "Wrap both calls in a try/catch and roll back the order if publish throws.", misconception: "An OOM kill or power loss between the two calls throws nothing to catch, and you can't roll back a committed order from a dead process. try/catch can't compensate a crash in the gap — that's why the outbox moves the publish out of the handler entirely." },
+    { label: "Swap the order: publish first, then INSERT the order.", misconception: "That converts a lost event into a phantom event — crash after publish and before commit, and consumers act on an order that rolled back. Reordering two non-atomic calls never closes the gap." },
+    { label: "Add broker.publish retries so the message eventually lands.", misconception: "Retries live in the handler's memory and die with the pod, and there's no durable record that a publish was owed. The outbox makes that record durable in the DB so a relay can retry after restart." },
+  ]}
+/>
+
+## Snippet 2 — the outbox schema
+
+```sql
+CREATE TABLE outbox (
+  id          uuid PRIMARY KEY,
+  aggregate   text        NOT NULL,
+  event_type  text        NOT NULL,
+  payload     jsonb       NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  sent_at     timestamptz                          -- NULL until the relay marks it sent
+);
+CREATE INDEX outbox_unsent ON outbox (created_at) WHERE sent_at IS NULL;
+```
+
+<Quiz
+  id="05-outbox-code-2"
+  lessonSlug="05-outbox"
+  lang="en"
+  question="Why is the partial index `WHERE sent_at IS NULL` the right shape for the relay's workload?"
+  choices={[
+    { label: "The relay only ever queries unsent rows, and unsent is a tiny, shrinking subset once the relay keeps up. A partial index stays small and cheap to maintain, so the poll query stays fast even as the table accumulates millions of already-sent rows.", correct: true },
+    { label: "A partial index makes the INSERT into orders faster.", misconception: "This index is on the outbox table and doesn't touch the orders table at all. It targets the relay's read of unsent rows, not the business write." },
+    { label: "It guarantees exactly-once delivery by indexing the sent flag.", misconception: "An index changes query speed, not delivery semantics. Delivery is still at-least-once because publish and mark-sent are two non-atomic steps; the index just keeps the poll cheap." },
+    { label: "A full index on created_at would be strictly better here.", misconception: "A full index also covers the millions of sent rows the relay never queries, so it grows large and costs more to maintain on every write. The partial index covers only the rows the relay reads." },
+  ]}
+/>
+
+## Snippet 3 — the relay claim query
+
+```sql
+BEGIN;
+SELECT id, event_type, payload
+  FROM outbox
+ WHERE sent_at IS NULL
+ ORDER BY created_at
+ LIMIT 100
+ FOR UPDATE SKIP LOCKED;
+-- publish each row to the broker, then:
+UPDATE outbox SET sent_at = now() WHERE id = ANY($claimed_ids);
+COMMIT;
+```
+
+<Quiz
+  id="05-outbox-code-3"
+  lessonSlug="05-outbox"
+  lang="en"
+  question="Three relay replicas run this exact query concurrently. What does FOR UPDATE SKIP LOCKED buy you, and what guarantee still does NOT hold?"
+  choices={[
+    { label: "Each replica locks a disjoint batch and skips rows another worker already holds, so replicas scale out without double-publishing the same rows. It does NOT give exactly-once: a crash after publish and before the UPDATE commits replays those rows, so consumers must still dedupe.", correct: true },
+    { label: "SKIP LOCKED makes delivery exactly-once across the replicas.", misconception: "SKIP LOCKED only prevents two replicas from grabbing the same rows in one pass. The publish-then-UPDATE gap still exists per replica, so a crash there replays the batch — delivery stays at-least-once." },
+    { label: "Without SKIP LOCKED the second replica would simply wait, so it's only a latency optimisation.", misconception: "Without SKIP LOCKED the second replica blocks on the locked rows, serialising the relays and killing the throughput you scaled out to get. SKIP LOCKED is what makes parallel relays actually parallel." },
+    { label: "The ORDER BY created_at guarantees consumers see events in order.", misconception: "Across three replicas publishing concurrently, global order is lost despite the ORDER BY. Per-aggregate order needs keying by aggregate id so one aggregate's events go to one partition." },
+  ]}
+/>
+
+## Snippet 4 — the consumer
+
+```js
+async function onOrderPlaced(db, event) {
+  // event.id is the stable outbox row id, carried through the broker
+  await db.query("INSERT INTO orders_processed (event_id) VALUES ($1)", [event.id]);
+  await chargeCard(event.order);
+}
+```
+
+<Quiz
+  id="05-outbox-code-4"
+  lessonSlug="05-outbox"
+  lang="en"
+  question="Delivery is at-least-once, so this consumer can receive the same event twice. What is wrong, and how do you make it idempotent?"
+  choices={[
+    { label: "The inbox INSERT has no uniqueness, so a duplicate event inserts a second row and chargeCard runs twice. Make event_id a PRIMARY KEY or UNIQUE, insert with ON CONFLICT DO NOTHING, and skip the charge when the row already existed — so a replay is a no-op.", correct: true },
+    { label: "Nothing — the inbox table already dedupes by recording every event_id.", misconception: "Recording the id isn't dedupe unless the column is unique and you act on the conflict. As written, a duplicate just inserts another row and the card is charged again." },
+    { label: "Move chargeCard before the inbox INSERT so it always runs first.", misconception: "Charging first makes the double-charge more likely, not less. The fix is a unique constraint plus conflict handling so the side effect runs exactly once per event id." },
+    { label: "Switch the broker to exactly-once delivery so the consumer needs no dedupe.", misconception: "The outbox relay is at-least-once by construction (publish-then-mark gap); no broker setting changes that end-to-end. Idempotency on a stable event id is the consumer's responsibility." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every outbox review reads the same way in code: the bare handler shows the dual-write gap a crash exposes; the schema's partial index keeps the relay's unsent-row poll cheap as the table grows; the claim query's FOR UPDATE SKIP LOCKED lets replicas scale out without double-publishing, yet the publish-then-mark gap keeps delivery at-least-once; and the consumer closes the loop with a unique event id plus ON CONFLICT DO NOTHING so a replay charges the card exactly once. Find the gap, make the intent durable, claim rows disjointly, dedupe downstream.
 </Recap>
-

@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- partition-key-hashing
+- per-key-ordering
+- consumer-group-assignment
+- consumer-rebalancing
+- hot-partition-skew
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Kafka partitions"
-title: Кодировочный тест
+- https://www.confluent.io/blog/how-choose-number-topics-partitions-kafka-cluster/
+- https://cwiki.apache.org/confluence/display/KAFKA/KIP-345:+Introduce+static+membership+protocol+to+reduce+consumer+rebalances
+status: ready
+summary: "Читайте реальный код producer, конфиг consumer, арифметику partition и лог rebalance, предсказывайте поведение и выбирайте исправление с наибольшим рычагом."
+title: 'Partition в Kafka: чтение кода и конфигов'
 track: queues
 unit: 02-kafka-partitions
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Kafka partitions unit.
+Баги partition диагностируются в коде producer, конфиге consumer и логах rebalance — не в прозе. Прочитайте каждый сниппет, предскажите, что с ним сделает Kafka, и выберите исправление, которое senior-инженер сделал бы первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Kafka partitions unit.
+Отработайте цикл, который вы запускаете в каждом инциденте Kafka: прочитать key producer, конфиг consumer, арифметику partition и лог rebalance, затем взяться за исправление, уважающее порядок и параллелизм, а не замазывающее их.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — key producer
+
+```java
+// События заказа: created, paid, shipped, cancelled все идут сюда
+ProducerRecord<String, OrderEvent> record =
+    new ProducerRecord<>("order-events", event.getType(), event);
+//                                       ^^^^^^^^^^^^^^^^^
+//                                       key = ТИП события, не id заказа
+producer.send(record);
+```
+
+<Quiz
+  id="02-kafka-partitions-code-1"
+  lessonSlug="02-kafka-partitions"
+  lang="ru"
+  question={"Consumer должен обрабатывать события каждого заказа по порядку (created до cancelled). При таком keyed что произойдёт и как исправить?"}
+  choices={[
+    { label: "Key — это тип события, поэтому все события 'created' хешируются в один partition, а все 'cancelled' — в другой. События заказа рассеиваются по partition и теряют относительный порядок. Исправление: keyed по event.getOrderId(), чтобы события одного заказа делили partition.", correct: true },
+    { label: "Работает — Kafka держит события заказа упорядоченными, потому что они в одном топике.", misconception: "Порядок гарантирован только внутри partition, никогда на уровне топика. Keyed по типу отправляет 'created' и 'cancelled' одного заказа на разные partition, между которыми нет порядка." },
+    { label: "Баг — отсутствующий номер partition; передайте явный аргумент partition.", misconception: "Жёсткое задание partition свалило бы всё на один partition (нет параллелизма) и всё равно не связало бы события заказа корректно. Исправление — keyed по сущности (orderId), позволяя partitioner co-locate её." },
+    { label: "Включить acks=all, и порядок восстановится.", misconception: "acks=all — это настройка durability про подтверждение репликами; она никак не влияет на то, в какой partition попадёт запись. Разрыв порядка вызван выбором key." },
+  ]}
+/>
+
+## Сниппет 2 — арифметика partition
+
+```python
+# Дефолтный partitioner в стиле murmur2: partition = hash(key) % N
+def partition_for(key, N):
+    return hash(key) % N
+
+# orderId "A-4711" до и после увеличения partition
+partition_for("A-4711", 6)    # -> 2
+partition_for("A-4711", 12)   # -> 8     # тот же key, другой partition!
+```
+
+<Quiz
+  id="02-kafka-partitions-code-2"
+  lessonSlug="02-kafka-partitions"
+  lang="ru"
+  question={"Топик подняли с 6 до 12 partition на живом. Читая эту арифметику, каково последствие для key A-4711 и почему это нельзя отменить?"}
+  choices={[
+    { label: "Старые записи A-4711 остаются на partition 2, а все будущие маршрутизируются в partition 8, поэтому его история расколота между двумя неупорядоченными partition и порядок по key ломается. Сжать обратно до 6 нельзя — Kafka не может корректно слить два независимых упорядоченных лога.", correct: true },
+    { label: "Kafka перезапускает partitioner по старым записям и перемещает A-4711 в partition 8, держа его вместе.", misconception: "Существующие записи никогда не перемещаются при увеличении partition. Только будущие записи используют новый modulo, что и раскалывает key между partition 2 и partition 8." },
+    { label: "Ничего не ломается, потому что hash(key) стабилен, значит partition остаётся тем же.", misconception: "hash(key) стабилен, но partition — это hash(key) % N, а N изменился с 6 на 12. Результат modulo меняется для большинства key — здесь с 2 на 8." },
+    { label: "Это обратимо: верните N на 6, и A-4711 вернётся в partition 2.", misconception: "Количество partition может только расти, никогда уменьшаться. Kafka отказывается сливать partition, потому что нет корректного способа переплести две независимые временные шкалы offset." },
+  ]}
+/>
+
+## Сниппет 3 — конфиг consumer
+
+```properties
+# Consumer group: payments-processor, 4 инстанса за rolling-деплоем
+group.id=payments-processor
+session.timeout.ms=10000
+heartbeat.interval.ms=3000
+# group.instance.id НЕ задан
+partition.assignment.strategy=org.apache.kafka.clients.consumer.RangeAssignor
+```
+
+<Quiz
+  id="02-kafka-partitions-code-3"
+  lessonSlug="02-kafka-partitions"
+  lang="ru"
+  question={"Каждый rolling-деплой вызывает многосекундную остановку потребления по всей группе. Читая этот конфиг, в чём причина и какое изменение с наименьшим риском?"}
+  choices={[
+    { label: "RangeAssignor — это eager-протокол, а group.instance.id не задан, поэтому каждый перезапуск вызывает stop-the-world rebalance, отзывающий partition у каждого consumer. Добавьте стабильный group.instance.id (static membership) и/или переключитесь на CooperativeStickyAssignor, чтобы отзывались только переезжающие partition.", correct: true },
+    { label: "session.timeout.ms слишком велик, поэтому группа ждёт 10с, прежде чем заметить перезапуск.", misconception: "Снижение session timeout заставит группу объявлять участников мёртвыми быстрее — вызывая БОЛЬШЕ rebalance, а не меньше. Static membership позволяет быстрому перезапуску переподключиться как тот же участник без rebalance." },
+    { label: "heartbeat.interval.ms слишком мал и заваливает координатора.", misconception: "Heartbeat в 3с при session timeout в 10с — нормальное соотношение и не причина остановок при деплое. Остановка — это eager rebalance, отзывающий все partition при каждом перезапуске." },
+    { label: "RangeAssignor — единственный доступный assignor, так что это неизбежно.", misconception: "CooperativeStickyAssignor существует именно чтобы избежать stop-the-world отзыва, перемещая только те partition, что должны измениться. В сочетании со static membership rebalance при деплое в основном исчезают." },
+  ]}
+/>
+
+## Сниппет 4 — лог rebalance
+
+```
+[Consumer clientId=c3, groupId=payments] (Re-)joining group
+[Consumer clientId=c3, groupId=payments] Lost previously assigned partitions order-events-2, order-events-5
+[Consumer clientId=c3] Revoke previously assigned partitions order-events-2, order-events-5
+... 7 таких циклов за 90 секунд ...
+[Consumer clientId=c3] Member c3 sending LeaveGroup request due to consumer poll timeout has expired
+```
+
+<Quiz
+  id="02-kafka-partitions-code-4"
+  lessonSlug="02-kafka-partitions"
+  lang="ru"
+  question={"Читая этот лог — повторяющиеся циклы join/revoke, завершающиеся LeaveGroup по poll-timeout, — каков режим сбоя и каково первое исправление?"}
+  choices={[
+    { label: "Rebalance-шторм из-за poll-timeout: consumer слишком долго между вызовами poll() (медленная обработка), поэтому координатор выселяет его, что вызывает rebalance, после чего он снова отстаёт. Первое исправление: уменьшить работу на poll (снизить max.poll.records) или поднять max.poll.interval.ms, чтобы обработка укладывалась в окно.", correct: true },
+    { label: "Broker лежит; consumer не может достучаться до своих partition.", misconception: "Consumer достукивается до группы и каждый цикл получает назначение partition — лог показывает успешные join. Проблема в том, что он не может снова сделать poll вовремя, а не в связности." },
+    { label: "Два consumer владеют order-events-2, поэтому они дерутся за него.", misconception: "Partition принадлежит ровно одному consumer в каждый момент; нет совместного владения, за которое можно драться. Revoke — это протокол rebalance, реагирующий на повторяющееся выселение c3 по poll-timeout." },
+    { label: "Количество partition слишком мало и должно быть увеличено.", misconception: "Количество partition не связано с циклом выселения по poll-timeout. Consumer выкидывают за медленную обработку между poll, поэтому исправление — в каденции poll / размере батча, а не в топике." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент с partition читается в коде, конфиге и логах: key producer решает, что остаётся упорядоченным (keyed по сущности, а не по типу события); hash(key) % N означает, что увеличение partition перенаправляет живые key и его нельзя отменить; eager-assignor плюс отсутствующий group.instance.id делает каждый деплой stop-the-world rebalance; а цикл join/revoke, завершающийся poll-timeout, — это rebalance-шторм из-за медленной обработки, а не проблема broker или partition. Сначала читайте key и конфиг, исправляйте структурную причину, затем сверяйтесь с метриками lag и rebalance.
 </Recap>
-

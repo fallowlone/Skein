@@ -1,43 +1,133 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-dedup
+- idempotency-key
+- visibility-timeout
+- dual-write
+- dedup-hit-rate
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Гарантии доставки: at-most-once, at-least-once
-  и правда об exactly-once"'
-title: Кодировочный тест
+- https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+- https://stripe.com/docs/api/idempotent_requests
+- https://docs.confluent.io/kafka/design/delivery-semantics.html
+status: ready
+summary: "Читай реальный код консьюмера, SQL и строку метрики, предсказывай поведение гарантий доставки и выбирай фикс с наибольшим рычагом, который senior делает первым."
+title: 'Гарантии доставки: чтение кода и логов'
 track: queues
 unit: 01-delivery-guarantees
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Гарантии доставки: at-most-once, at-least-once и правда об exactly-once unit.
+Баги гарантий доставки находят в коде консьюмера, в SQL и в строке метрики — редко в брокере. Прочитай каждый сниппет, предскажи, откуда дубликат или потеря, затем выбери фикс, к которому senior тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Гарантии доставки: at-most-once, at-least-once и правда об exactly-once unit.
+Отработай цикл, который запускаешь в каждом инциденте двойного списания: прочитай хендлер, найди окно краша или гонку и тянись к структурному фиксу, а не к подкрутке таймаута.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — консьюмер SELECT-then-act
+
+```python
+def handle(msg):
+    if db.execute("SELECT 1 FROM processed WHERE msg_id=%s", msg.id):
+        return ack(msg)              # already done, skip
+    stripe.charge(msg.amount)        # side effect
+    db.execute("INSERT INTO processed (msg_id) VALUES (%s)", msg.id)
+    ack(msg)
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-1"
+  lessonSlug="01-delivery-guarantees"
+  lang="ru"
+  question="Два консьюмера получают одно сообщение при ребалансе. Что происходит и какой фикс с наибольшим рычагом?"
+  choices={[
+    { label: "Оба выполняют SELECT, оба видят 'не найдено', оба вызывают stripe.charge — двойное списание. SELECT и INSERT не атомарны. Фикс: INSERT-first внутри одной транзакции с UNIQUE по msg_id; при нарушении UNIQUE откат и ack, поэтому списание не выполнится дважды.", correct: true },
+    { label: "INSERT второго консьюмера упадёт на UNIQUE-ограничении, поэтому списание одно.", misconception: "UNIQUE-ограничения тут нет, и даже с ним списание происходит ДО INSERT — обе карты списаны раньше, чем выполнится любой INSERT. Фикс — INSERT первым внутри той же транзакции, что и side effect." },
+    { label: "Ничего — SQS гарантирует доставку сообщения только одному консьюмеру.", misconception: "At-least-once явно допускает одновременную передоставку после visibility timeout или при ребалансе. Предположение об единственной доставке — корневая ошибка." },
+    { label: "Поднять visibility timeout, и гонка исчезнет.", misconception: "Больший таймаут сужает окно, но гонка SELECT/act — баг корректности независимо от тайминга; ребаланс снова её открывает вне зависимости от таймаута. Сделай дедуп атомарным." },
+  ]}
+/>
+
+## Сниппет 2 — транзакционный дедуп
+
+```sql
+BEGIN;
+  INSERT INTO processed (msg_id) VALUES ('msg-7a3f');  -- UNIQUE(msg_id)
+  UPDATE orders SET status = 'paid' WHERE id = 'O-123';
+COMMIT;
+-- on UNIQUE violation: ROLLBACK, log "duplicate", ack the broker
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-2"
+  lessonSlug="01-delivery-guarantees"
+  lang="ru"
+  question="Консьюмер делает COMMIT этой транзакции, затем падает до ack брокеру. Что происходит при передоставке?"
+  choices={[
+    { label: "Следующий консьюмер заново выполняет транзакцию, INSERT упирается в нарушение UNIQUE, вся транзакция откатывается, поэтому UPDATE не выполняется снова, и он делает ack брокеру. Side effect случился ровно один раз; дубликат тихо отброшен. Корректное поведение.", correct: true },
+    { label: "Заказ оплачивается дважды, потому что UPDATE снова выполняется при передоставке.", misconception: "Нарушение UNIQUE на INSERT прерывает транзакцию до того, как UPDATE сможет повториться. INSERT-first это ровно то, что предотвращает второй side effect." },
+    { label: "Сообщение теряется, потому что брокер думает, что был ack.", misconception: "Краш случился ДО ack, поэтому у брокера всё ещё есть сообщение и он передоставляет — потери нет. Это безопасный порядок: закоммить работу, затем ack." },
+    { label: "Возникает дедлок, потому что две транзакции трогают msg-7a3f.", misconception: "Здесь в один момент один консьюмер (исходный упал). Даже одновременно UNIQUE-ограничение сериализует их через нарушение, а не дедлок." },
+  ]}
+/>
+
+## Сниппет 3 — консьюмер с внешним API
+
+```python
+def handle(msg):
+    resp = stripe.charge(msg.amount,
+                         idempotency_key=msg.id)   # external dedup
+    db.execute("UPDATE intents SET charge_id=%s WHERE msg_id=%s",
+               resp.id, msg.id)
+    ack(msg)
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-3"
+  lessonSlug="01-delivery-guarantees"
+  lang="ru"
+  question="Вызов Stripe удался, затем процесс умирает до UPDATE и ack. Брокер передоставляет через минуты. Каково реальное поведение?"
+  choices={[
+    { label: "Stripe видит тот же Idempotency-Key и возвращает закэшированный ответ без повторного списания, затем UPDATE завершается — двойного списания нет. Работает, потому что ключ выведен из стабильного msg.id, а очереди передоставляют хорошо внутри 24-часового TTL ключа Stripe.", correct: true },
+    { label: "Stripe списывает карту второй раз, потому что первый UPDATE не закоммитился.", misconception: "Idempotency-Key привязан к msg.id, а не к строке БД. Stripe дедуплицирует на своей стороне независимо от того, выполнился ли твой UPDATE; он возвращает закэшированное списание." },
+    { label: "Сообщение навсегда застревает, потому что локальная processed-строка не была записана.", misconception: "При передоставке тот же ключ возвращает закэшированное списание, UPDATE наконец приземляется, и ack очищает сообщение. Intent-строка плюс стабильный ключ делают ретрай безопасным." },
+    { label: "Stripe отклоняет дублирующий ключ ошибкой, которую консьюмер должен обработать.", misconception: "Stripe возвращает HTTP 200 с закэшированным ответом на повторный ключ внутри TTL; это не путь ошибки." },
+  ]}
+/>
+
+## Сниппет 4 — метрика дедупа
+
+```
+metric: dedup_check_hit_rate
+  steady state: 0.05%
+  14:02-14:12 : 8.0%   (no deploy in this window)
+  14:13+      : 0.06%
+```
+
+<Quiz
+  id="01-delivery-guarantees-code-4"
+  lessonSlug="01-delivery-guarantees"
+  lang="ru"
+  question="Читая эту метрику, что вероятнее всего случилось — и это ли аварийная ситуация корректности?"
+  choices={[
+    { label: "Консьюмер упал, и его in-flight сообщения передоставились другим консьюмерам, поэтому dedup INSERT-ы блокировались гораздо чаще ~10 минут. Если консьюмер правильно идемпотентен — это НЕ аварийная ситуация корректности: дубликаты пойманы тихо. Это сигнал расследовать стабильность консьюмера, а не инцидент двойного списания.", correct: true },
+    { label: "Таблица дедупа сбоит, поэтому дубликаты протекают.", misconception: "СКАЧОК hit-rate означает, что UNIQUE-ограничение срабатывает ЧАЩЕ — дубликаты ловятся, а не протекают. Сбойная таблица показала бы ошибки или падение успешных вставок, а не рост hit-rate." },
+    { label: "Idempotent producer Kafka переретраил батч, раздув hit-rate консьюмера.", misconception: "Ретраи idempotent producer дедуплицируются на брокере раньше, чем консьюмер их видит, поэтому они не могут двигать dedup_hit_rate консьюмера. Причина — передоставка консьюмеру." },
+    { label: "Это доказывает, что exactly-once delivery сломалась, и нужна немедленная эскалация.", misconception: "Exactly-once delivery никогда не действовала — система at-least-once по дизайну. Транзиентный скачок передоставки, поглощаемый идемпотентным консьюмером, это ожидаемое поведение, а не сломанная гарантия." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент гарантий доставки читается в коде, SQL и метриках: SELECT-then-act гонится при одновременной доставке; INSERT-first в одной транзакции делает передоставку безвредной; Idempotency-Key, выведенный из стабильного ID сообщения, расширяет дедуп через внешний API; а скачок dedup_hit_rate означает, что брокер передоставляет, а не что дедуп сломался. Диагностируй окно краша или гонку, примени структурный фикс (атомарный дедуп, стабильный idempotency-ключ), затем подтверди, что путь дубликата закрыт — прежде чем трогать хоть один таймаут.
 </Recap>
-

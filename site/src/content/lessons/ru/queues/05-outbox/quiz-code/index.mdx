@@ -1,42 +1,139 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- transactional-outbox
+- dual-write-problem
+- polling-relay
+- skip-locked
+- idempotent-consumer
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Паттерн transactional outbox"
-title: Кодировочный тест
+- https://microservices.io/patterns/data/transactional-outbox.html
+- https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html
+status: ready
+summary: "Читай реальный SQL и сниппеты хендлеров — схему outbox, claim-запрос relay и баг dual-write — предсказывай поведение и выбирай фикс с наибольшим рычагом."
+title: 'Outbox: чтение кода и схемы'
 track: queues
 unit: 05-outbox
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Паттерн transactional outbox unit.
+Схема, запрос relay и хендлер — это место, где корректность outbox выигрывается или теряется. Прочитай каждый сниппет, предскажи, как он ведёт себя под крахом или нагрузкой, затем выбери фикс, который senior сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Паттерн transactional outbox unit.
+Отработай цикл, который ты запускаешь в каждом ревью outbox: прочитай SQL и хендлер, найди разрыв, который вскрывает крах, и потянись за фиксом, закрывающим его без изобретения распределённой транзакции.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — хендлер
+
+```js
+async function placeOrder(db, broker, order) {
+  await db.query("INSERT INTO orders (id, status) VALUES ($1, 'placed')", [order.id]);
+  await broker.publish("OrderPlaced", order);   // отдельная система, отдельный вызов
+}
+```
+
+<Quiz
+  id="05-outbox-code-1"
+  lessonSlug="05-outbox"
+  lang="ru"
+  question="Этот хендлер — тот самый dual-write, ради убийства которого существует юнит. Где разрыв и какой минимальный фикс?"
+  choices={[
+    { label: "Крах после коммита INSERT, но до возврата publish, и заказ долговечен, а OrderPlaced потеряно. Фикс: в той же transaction, что вставляет заказ, делай INSERT outbox-строки, и пусть отдельный relay её публикует — так намерение публиковать долговечно, а не in-flight.", correct: true },
+    { label: "Обернуть оба вызова в try/catch и откатить заказ, если publish бросит.", misconception: "OOM-kill или потеря питания между двумя вызовами не бросает ничего, что можно поймать, и нельзя откатить закоммиченный заказ из мёртвого процесса. try/catch не компенсирует крах в разрыве — поэтому outbox выносит публикацию из хендлера целиком." },
+    { label: "Поменять порядок: сначала publish, затем INSERT заказа.", misconception: "Это превращает потерянное событие в фантомное — крах после publish и до коммита, и консьюмеры реагируют на заказ, который откатился. Перестановка двух неатомарных вызовов никогда не закрывает разрыв." },
+    { label: "Добавить ретраи broker.publish, чтобы сообщение в итоге приземлилось.", misconception: "Ретраи живут в памяти хендлера и умирают вместе с pod, и нет долговечной записи, что публикация была должна. Outbox делает эту запись долговечной в БД, чтобы relay мог ретраить после рестарта." },
+  ]}
+/>
+
+## Сниппет 2 — схема outbox
+
+```sql
+CREATE TABLE outbox (
+  id          uuid PRIMARY KEY,
+  aggregate   text        NOT NULL,
+  event_type  text        NOT NULL,
+  payload     jsonb       NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  sent_at     timestamptz                          -- NULL, пока relay не пометит sent
+);
+CREATE INDEX outbox_unsent ON outbox (created_at) WHERE sent_at IS NULL;
+```
+
+<Quiz
+  id="05-outbox-code-2"
+  lessonSlug="05-outbox"
+  lang="ru"
+  question={"Почему частичный индекс `WHERE sent_at IS NULL` — правильная форма для нагрузки relay?"}
+  choices={[
+    { label: "Relay всегда запрашивает только неотправленные строки, а неотправленных — крошечное, сжимающееся подмножество, пока relay успевает. Частичный индекс остаётся маленьким и дешёвым в обслуживании, поэтому poll-запрос быстр, даже когда таблица накопила миллионы уже отправленных строк.", correct: true },
+    { label: "Частичный индекс ускоряет INSERT в orders.", misconception: "Этот индекс на таблице outbox и вообще не трогает таблицу orders. Он нацелен на чтение relay неотправленных строк, а не на бизнес-запись." },
+    { label: "Он гарантирует exactly-once доставку, индексируя флаг sent.", misconception: "Индекс меняет скорость запроса, а не семантику доставки. Доставка всё ещё at-least-once, потому что publish и mark-sent — два неатомарных шага; индекс лишь держит poll дешёвым." },
+    { label: "Полный индекс на created_at был бы строго лучше здесь.", misconception: "Полный индекс покрывает и миллионы sent-строк, которые relay никогда не запрашивает, поэтому растёт большим и дороже в обслуживании на каждой записи. Частичный индекс покрывает только строки, которые relay читает." },
+  ]}
+/>
+
+## Сниппет 3 — claim-запрос relay
+
+```sql
+BEGIN;
+SELECT id, event_type, payload
+  FROM outbox
+ WHERE sent_at IS NULL
+ ORDER BY created_at
+ LIMIT 100
+ FOR UPDATE SKIP LOCKED;
+-- публикуем каждую строку в брокер, затем:
+UPDATE outbox SET sent_at = now() WHERE id = ANY($claimed_ids);
+COMMIT;
+```
+
+<Quiz
+  id="05-outbox-code-3"
+  lessonSlug="05-outbox"
+  lang="ru"
+  question="Три реплики relay гоняют этот запрос конкурентно. Что даёт FOR UPDATE SKIP LOCKED и какая гарантия всё ещё НЕ держится?"
+  choices={[
+    { label: "Каждая реплика блокирует непересекающийся батч и пропускает строки, уже удерживаемые другим воркером, поэтому реплики масштабируются без двойной публикации тех же строк. Это НЕ даёт exactly-once: крах после publish и до коммита UPDATE переигрывает эти строки, так что консьюмеры всё равно должны дедупить.", correct: true },
+    { label: "SKIP LOCKED делает доставку exactly-once по репликам.", misconception: "SKIP LOCKED лишь не даёт двум репликам захватить одни строки за один проход. Разрыв publish-then-UPDATE всё ещё есть на каждой реплике, поэтому крах там переигрывает батч — доставка остаётся at-least-once." },
+    { label: "Без SKIP LOCKED вторая реплика просто ждёт, так что это лишь оптимизация задержки.", misconception: "Без SKIP LOCKED вторая реплика блокируется на залоченных строках, сериализуя relay и убивая пропускную способность, ради которой ты масштабировался. SKIP LOCKED делает параллельные relay действительно параллельными." },
+    { label: "ORDER BY created_at гарантирует, что консьюмеры видят события по порядку.", misconception: "Поперёк трёх реплик, публикующих конкурентно, глобальный порядок теряется несмотря на ORDER BY. Порядок по aggregate требует keying по aggregate id, чтобы события одного aggregate шли в одну партицию." },
+  ]}
+/>
+
+## Сниппет 4 — консьюмер
+
+```js
+async function onOrderPlaced(db, event) {
+  // event.id — стабильный id outbox-строки, пронесённый через брокер
+  await db.query("INSERT INTO orders_processed (event_id) VALUES ($1)", [event.id]);
+  await chargeCard(event.order);
+}
+```
+
+<Quiz
+  id="05-outbox-code-4"
+  lessonSlug="05-outbox"
+  lang="ru"
+  question="Доставка at-least-once, поэтому этот консьюмер может получить то же событие дважды. Что не так и как сделать его idempotent?"
+  choices={[
+    { label: "У inbox-INSERT нет уникальности, поэтому дубликат события вставляет вторую строку и chargeCard выполняется дважды. Сделай event_id PRIMARY KEY или UNIQUE, вставляй с ON CONFLICT DO NOTHING и пропускай списание, если строка уже была — тогда повтор это no-op.", correct: true },
+    { label: "Ничего — inbox-таблица уже дедупит, записывая каждый event_id.", misconception: "Запись id — это не дедуп, пока колонка не уникальна и ты не реагируешь на конфликт. Как написано, дубликат просто вставляет ещё строку, и карта списывается снова." },
+    { label: "Перенести chargeCard перед inbox-INSERT, чтобы он всегда шёл первым.", misconception: "Списание первым делает двойное списание более вероятным, а не менее. Фикс — уникальное ограничение плюс обработка конфликта, чтобы побочный эффект выполнялся ровно раз на event id." },
+    { label: "Переключить брокер на exactly-once доставку, чтобы консьюмеру не нужен дедуп.", misconception: "Relay outbox at-least-once по построению (разрыв publish-then-mark); никакая настройка брокера это сквозно не меняет. Идемпотентность по стабильному event id — ответственность консьюмера." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждое ревью outbox читается одинаково в коде: голый хендлер показывает разрыв dual-write, который вскрывает крах; частичный индекс схемы держит poll неотправленных строк дешёвым по мере роста таблицы; FOR UPDATE SKIP LOCKED в claim-запросе даёт репликам масштабироваться без двойной публикации, но разрыв publish-then-mark держит доставку at-least-once; а консьюмер замыкает петлю уникальным event id плюс ON CONFLICT DO NOTHING, чтобы повтор списал карту ровно раз. Найди разрыв, сделай намерение долговечным, захватывай строки непересекающимися батчами, дедупь downstream.
 </Recap>
-
