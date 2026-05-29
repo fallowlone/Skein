@@ -14,6 +14,7 @@ import { checkConnectionIntegrity } from "./rules/connection-integrity";
 import { checkCjkLeak } from "./rules/cjk-leak";
 import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeSandboxBudget } from "./rules/practice";
 import { checkBlockStubs } from "./rules/block-stubs";
+import { checkDrill } from "./rules/drill";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -60,6 +61,9 @@ export function lintCurriculum(): AstroIntegration {
         const pc = await checkPracticeCount(siteSrc);
         errors.push(...pc.errors);
         warnings.push(...pc.warnings);
+        const drillRes = await checkDrill(siteSrc);
+        errors.push(...drillRes.errors);
+        warnings.push(...drillRes.warnings);
 
         await writeFile(
           join(root, "lint-report.json"),
