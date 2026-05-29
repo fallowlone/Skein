@@ -1,5 +1,5 @@
 export type DrillStatus = "unattempted" | "attempted" | "solved";
-export interface DrillEntry { status: DrillStatus; at: number; }
+export interface DrillEntry { status: DrillStatus; at: number; noHint?: boolean; }
 
 const ORDER: DrillStatus[] = ["unattempted", "attempted", "solved"];
 export function nextStatus(s: DrillStatus): DrillStatus {
@@ -27,9 +27,9 @@ export function loadStore(): Store {
     return {};
   }
 }
-export function saveEntry(id: string, status: DrillStatus, now: number): void {
+export function saveEntry(id: string, status: DrillStatus, now: number, noHint?: boolean): void {
   if (typeof window === "undefined") return;
   const store = loadStore();
-  store[id] = { status, at: now };
+  store[id] = { status, at: now, noHint: noHint ?? store[id]?.noHint };
   try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ }
 }
