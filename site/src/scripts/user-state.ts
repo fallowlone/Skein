@@ -1,5 +1,9 @@
 import { signal, effect } from "@preact/signals";
 import type { Tier, Lang } from "../types";
+import type { PretestResult, Progression } from "./progression/types";
+import { ratingToRank } from "./progression/ranks";
+import { rankToTier } from "./progression/rank-tier";
+import { computeRating, confidenceOf } from "./progression/rating";
 import { mergeProgress, fetchMe, fetchServerProgress, pushProgress } from "./account-sync";
 
 const KEY = "awesome.user-state.v1";
@@ -8,7 +12,8 @@ export type UserState = {
   tier: Tier;
   lang: Lang;
   motion: "on" | "off" | "auto";
-  pretest: { takenAt: number; score: number; answers: number[] } | null;
+  pretest: PretestResult | null;
+  progression: Progression;
   history: Record<string, {
     firstAt: number;
     lastAt: number;
@@ -25,6 +30,7 @@ const defaults: UserState = {
   lang: "en",
   motion: "auto",
   pretest: null,
+  progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] },
   history: {},
   retrieval: {},
   dismissedRevisit: {},
@@ -36,7 +42,13 @@ function load(): UserState {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults;
-    return { ...defaults, ...JSON.parse(raw) };
+    const merged = { ...defaults, ...JSON.parse(raw) } as UserState;
+    if (!merged.progression) merged.progression = defaultProgression();
+    if (merged.pretest && !(merged.pretest as any).stage1) {
+      const ans = (merged.pretest as any).answers ?? [];
+      merged.pretest = migratePretest(merged.pretest as any, Math.max(1, ans.length * 3));
+    }
+    return merged;
   } catch {
     return defaults;
   }
@@ -101,11 +113,34 @@ export function setMotion(m: UserState["motion"]) {
   userState.value = { ...userState.value, motion: m };
 }
 
-export function setPretest(score: number, answers: number[]) {
-  userState.value = {
-    ...userState.value,
-    pretest: { takenAt: Date.now(), score, answers },
+export function defaultProgression(): Progression {
+  return { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] };
+}
+
+/** Upgrade a legacy { takenAt, score, answers } pretest to a PretestResult. Idempotent. */
+export function migratePretest(p: any, oldMax: number): PretestResult | null {
+  if (!p) return null;
+  if (p.stage1) return p as PretestResult;
+  const s1 = oldMax > 0 ? p.score / oldMax : 0;
+  const rating = computeRating(s1);
+  return {
+    takenAt: p.takenAt ?? Date.now(),
+    stage1: { score: p.score ?? 0, answers: p.answers ?? [] },
+    rating,
+    rank: ratingToRank(rating).id,
+    confidence: confidenceOf([(p.answers ?? []).map(() => 0)]),
   };
+}
+
+export function setPretestResult(result: PretestResult) {
+  const prev = userState.value.pretest;
+  const best = prev && prev.rating >= result.rating ? prev : result; // ranked re-climb keeps best
+  userState.value = { ...userState.value, pretest: best, tier: rankToTier(best.rank) };
+}
+
+export function setPretest(score: number, answers: number[]) {
+  const r = migratePretest({ takenAt: Date.now(), score, answers }, Math.max(1, answers.length * 3));
+  if (r) setPretestResult(r);
 }
 
 export function recordRetrieval(slug: string) {
