@@ -1,42 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- cache-control-header
+- etag-304
+- stampede-lock
+- swr-timing
+- surrogate-key-purge
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Caching system design: combining all layers"'
-title: Coding Quiz
+- https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control
+- https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/ETag
+- https://web.dev/articles/stale-while-revalidate
+status: ready
+summary: "Read real headers, handlers, and a single-flight lock across the caching stack, predict the behaviour, and pick the highest-leverage fix."
+title: 'Caching capstone: code and header reading'
 track: caching
 unit: 08-putting-it-together
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Caching system design: combining all layers unit.
+Caching bugs are read in headers, handlers, and logs, not in prose. Read each snippet, predict how the layers will behave under real traffic, then choose the fix a senior would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Caching system design: combining all layers unit.
+Practise the loop you run on every caching incident: read the directive or the code on the hot path, predict where each layer caches or leaks, and reach for the change that fixes the composition — not a louder TTL.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the Cache-Control header
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Cache-Control: public, max-age=600
+```
+
+This is a public price-list API that the team wants cached at the CDN edge, refreshed often, and still served if origin goes down.
+
+<Quiz
+  id="08-putting-it-together-code-1"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="What does this header actually do versus what the team wants, and what is the highest-leverage fix?"
+  choices={[
+    { label: "public, max-age=600 caches in BOTH the browser and the edge for 10 minutes with no shared-vs-private split and no outage fallback. Switch to public, s-maxage=60, max-age=0, stale-while-revalidate=600, stale-if-error=86400 so the edge owns the cache, refreshes every 60s gracefully, and serves stale through an outage.", correct: true },
+    { label: "It is already correct — max-age is the directive shared caches obey.", misconception: "Shared caches prefer s-maxage when present; max-age without s-maxage applies to both. More importantly there is no SWR or stale-if-error, so the team's graceful-refresh and outage-survival requirements are unmet." },
+    { label: "Add no-cache so the data is always fresh.", misconception: "no-cache forces revalidation on every request, removing the edge offload the team explicitly wants and adding a round-trip per hit. It contradicts the goal of caching at the edge." },
+    { label: "Lower max-age to 60 — that satisfies all three goals.", misconception: "A shorter max-age refreshes more often but still gives no edge/browser split, no graceful expiry, and no outage fallback. It tunes one number and leaves two requirements unmet." },
+  ]}
+/>
+
+## Snippet 2 — the conditional GET handler
+
+```js
+app.get("/articles/:id", async (req, res) => {
+  const article = await db.getArticle(req.params.id);
+  const etag = `"${article.version}"`;
+  res.setHeader("ETag", etag);
+  res.setHeader("Cache-Control", "private, max-age=0, must-revalidate");
+  // always sends the full body
+  res.json(article);
+});
+```
+
+<Quiz
+  id="08-putting-it-together-code-2"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="The handler sets an ETag but the conditional-request optimisation never fires. What is missing, and what is the win when fixed?"
+  choices={[
+    { label: "It never reads If-None-Match and never returns 304 — so every revalidation ships the full body anyway. Compare req.headers['if-none-match'] to the etag and, on match, send res.status(304).end(). The win is bandwidth: a matching revalidation becomes a header-only 304 instead of the full article.", correct: true },
+    { label: "The ETag is weak-formatted, so browsers ignore it.", misconception: "A quoted version string is a valid strong ETag. The defect is server-side: the handler never inspects If-None-Match, so it cannot emit a 304 regardless of ETag format." },
+    { label: "must-revalidate is the bug; removing it enables 304s.", misconception: "must-revalidate tells the cache to revalidate once stale — it is what triggers the conditional request. The missing piece is the server-side If-None-Match check that turns that request into a 304." },
+    { label: "Nothing is wrong — the framework auto-handles 304s for any ETag.", misconception: "Setting an ETag header does not auto-generate 304s unless the framework's conditional-GET middleware runs before res.json. Here the body is sent unconditionally, so no 304 is ever produced." },
+  ]}
+/>
+
+## Snippet 3 — the stampede lock
+
+```js
+async function getHot(key) {
+  let val = await cache.get(key);
+  if (val !== null) return val;
+
+  // cold: every concurrent caller reaches here and recomputes
+  val = await expensiveQuery(key);   // hits the DB
+  await cache.set(key, val, { ttl: 60 });
+  return val;
+}
+```
+
+<Quiz
+  id="08-putting-it-together-code-3"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="A hot key expires and 5,000 requests arrive in the same second. What happens, and what is the single-flight fix?"
+  choices={[
+    { label: "All 5,000 miss simultaneously and each runs expensiveQuery — a dogpile that can crater the DB. Fix with a per-key lock: the first caller acquires it and recomputes while the rest await the same in-flight promise (single-flight), so the DB sees one query, not 5,000.", correct: true },
+    { label: "Only the first request recomputes; the cache.set blocks the rest.", misconception: "cache.set on caller one does not block callers two through 5,000 — they already passed the null check and are running their own expensiveQuery concurrently. Nothing serialises them without an explicit lock." },
+    { label: "The 60s TTL prevents the pile-up because the entry is fresh.", misconception: "The entry just expired — that is the trigger. The TTL governs how long the recomputed value lasts, not how many concurrent misses pile on at the moment of expiry." },
+    { label: "Raising the TTL to 600 eliminates the dogpile.", misconception: "A longer TTL makes expiries rarer but the dogpile is just as severe whenever one does occur. Single-flight (or probabilistic early expiry, or SWR) is what bounds the concurrent recompute." },
+  ]}
+/>
+
+## Snippet 4 — SWR timing
+
+```http
+Cache-Control: public, s-maxage=60, stale-while-revalidate=300
+```
+
+A response is cached at 12:00:00. Requests arrive at 12:00:30, 12:01:30, and 12:07:00. No write or purge occurs.
+
+<Quiz
+  id="08-putting-it-together-code-4"
+  lessonSlug="08-putting-it-together"
+  lang="en"
+  question="What does the shared cache serve at each of the three times?"
+  choices={[
+    { label: "12:00:30 — fresh hit (within 60s). 12:01:30 — stale-but-served instantly while a background revalidation refreshes the entry (inside the 300s SWR window). 12:07:00 — past 60+300=360s, so the SWR window has closed; this request blocks on a synchronous revalidation (or stale-if-error if origin is down).", correct: true },
+    { label: "All three are fresh hits because s-maxage=60 resets on every request.", misconception: "s-maxage counts age from when the response was stored, not from the last access. Only the 12:00:30 request is within the 60s fresh window." },
+    { label: "12:01:30 blocks while revalidating, because the entry is already stale.", misconception: "The point of stale-while-revalidate is exactly that the stale entry is served immediately and the refresh happens in the background — the 12:01:30 reader does not block." },
+    { label: "12:07:00 returns a 504 because the cache entry has been evicted.", misconception: "Past the SWR window the cache does not evict-and-error; it performs a synchronous (blocking) revalidation against origin, and only falls back to stale if stale-if-error is set and origin fails." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Read top to bottom: a Cache-Control header has to split edge from browser (s-maxage vs max-age) and carry SWR plus stale-if-error to refresh gracefully and survive an outage; an ETag is inert until the server reads If-None-Match and answers 304; a cold hot-key needs single-flight so 5,000 misses become one DB query; and SWR's two windows decide whether a reader gets a fresh hit, an instant-stale-with-background-refresh, or a blocking revalidation. Diagnose from the header and the log, fix the composition, then re-check under the same load.
 </Recap>
-

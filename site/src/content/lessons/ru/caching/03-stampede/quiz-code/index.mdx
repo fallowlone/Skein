@@ -1,43 +1,150 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- distributed-lock
+- single-flight
+- request-coalescing
+- probabilistic-early-expiration
+- fencing-token
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Cache stampede: когда одно TTL истечение превращается
-  в тысячи SQL-запросов"'
-title: Кодировочный тест
+- https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+- https://redis.antirez.com/fundamental/cache-stampede-prevention.html
+- https://blog.cloudflare.com/coalescing-requests/
+status: ready
+summary: "Читаем реальные cache-aside сниппеты — lock-on-miss, request coalescing, XFetch — предсказываем поведение и выбираем фикс с наибольшим рычагом."
+title: 'Cache stampede: чтение кода'
 track: caching
 unit: 03-stampede
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Cache stampede: когда одно TTL истечение превращается в тысячи SQL-запросов unit.
+Баги stampede прячутся в самом cache-aside коде: lock с неправильным EX, коалесцер, регистрирующий in-flight промис на строку позже нужного, правило XFetch, срабатывающее слишком рано. Читайте каждый сниппет так, как читали бы на ревью, и выбирайте фикс, который сеньор делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Cache stampede: когда одно TTL истечение превращается в тысячи SQL-запросов unit.
+Потренируйтесь читать сам код митигаций — lock-on-miss, request coalescing и probabilistic early expiration — и находить дефект, который рано или поздно вскроет нагрузочный тест.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — lock-on-miss
+
+```go
+func get(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    // miss: try to become the rebuilder
+    locked := redis.SetNX(ctx, "lock:"+key, uuid, 30*time.Second).Val()
+    if !locked {
+        // someone else is rebuilding
+        return rebuild(ctx, key) // <-- rebuild anyway
+    }
+    v, err := rebuild(ctx, key)
+    if err == nil {
+        cache.Set(key, v, 60*time.Second)
+        redis.Del(ctx, "lock:"+key)
+    }
+    return v, nil
+}
+```
+
+<Quiz
+  id="03-stampede-code-1"
+  lessonSlug="03-stampede"
+  lang="ru"
+  question="Lock через SetNX берётся корректно, но нагрузочный тест всё равно даёт N одновременных rebuild'ов в БД. Где баг?"
+  choices={[
+    { label: "Ветка проигравшего lock вызывает rebuild(ctx, key) напрямую вместо ожидания и повторной проверки кеша. Каждый запрос, проваливший NX, всё равно идёт в БД, так что lock ничего не предотвращает. Нужно немного поспать, перечитать кеш и вернуть stale fallback, если всё ещё промах.", correct: true },
+    { label: "EX lock'а в 30 с слишком велик и блокирует флот.", misconception: "Большой EX рискует задержкой из-за зависшего lock при краше, но не вызывает N одновременных rebuild'ов. Дефект в том, что проигравшие lock всё равно делают rebuild вместо ожидания." },
+    { label: "redis.SetNX не атомарен, поэтому несколько вызывающих выигрывают lock.", misconception: "SET ... NX в Redis атомарен — выигрывает ровно один. Отказ в том, что делают проигравшие, а не в захвате." },
+    { label: "cache.Set нужно вызывать до redis.Del, чтобы не было разрыва.", misconception: "Set-затем-Del — правильный порядок. Перестановка не меняет того, что каждый проигравший lock всё равно зовёт rebuild и заливает БД." },
+  ]}
+/>
+
+## Сниппет 2 — request coalescing
+
+```js
+const inflight = new Map(); // key -> Promise
+
+async function getCoalesced(key) {
+  const cached = await cache.get(key);
+  if (cached !== null) return cached;
+
+  const fresh = await rebuild(key);   // (A) await the rebuild...
+  inflight.set(key, fresh);           // (B) ...then record it
+  const value = await fresh;
+  cache.set(key, value, 60);
+  inflight.delete(key);
+  return value;
+}
+```
+
+<Quiz
+  id="03-stampede-code-2"
+  lessonSlug="03-stampede"
+  lang="ru"
+  question="Этот код должен коалесцировать одновременные промахи по одному ключу в один rebuild, но не коалесцирует никогда. Что не так?"
+  choices={[
+    { label: "Код делает await rebuild(key) в точке (A) до того, как что-либо записать в `inflight`, и вообще не проверяет `inflight` на входе. Конкурентные вызовы все доходят до await, каждый стартует свой rebuild, а карта пишется слишком поздно. Фикс: сначала проверить `inflight`; если пусто — синхронно сохранить НЕдождавшийся промис и затем его дождаться.", correct: true },
+    { label: "Map небезопасен для конкурентного доступа в JavaScript.", misconception: "JS однопоточен для этого кода; доступ к Map между await безопасен. Баг в том, что промис регистрируется после await, а карта не читается на входе." },
+    { label: "cache.set использует TTL 60 без джиттера.", misconception: "Отсутствие джиттера — отдельная многоключевая проблема. Этот сниппет не коалесцирует один ключ из-за await-до-регистрации и отсутствия проверки карты." },
+    { label: "inflight.delete(key) срабатывает слишком рано.", misconception: "Delete выполняется после кеширования значения, что верно. Реальный дефект — порядок await-до-регистрации, полностью убивающий коалесцинг." },
+  ]}
+/>
+
+## Сниппет 3 — probabilistic early expiration (XFetch)
+
+```python
+def should_refresh(delta, beta, ttl_remaining):
+    # delta = typical rebuild seconds, ttl_remaining = seconds to expiry
+    return (-beta * delta * math.log(random.random())) >= ttl_remaining
+```
+
+<Quiz
+  id="03-stampede-code-3"
+  lessonSlug="03-stampede"
+  lang="ru"
+  question="Оператор хочет меньше лишних ранних rebuild'ов на тёплых ключах и поднимает beta с 1.0 до 4.0. Каков эффект на горячем ключе против более холодного?"
+  choices={[
+    { label: "Больший beta расширяет окно раннего обновления, так что порог срабатывает раньше и дальше от истечения — БОЛЬШЕ ранних обновлений, а не меньше. Чтобы получить меньше ранних rebuild'ов, beta НУЖНО снижать, что сужает окно к границе TTL ценой роста риска stampede на холодных ключах.", correct: true },
+    { label: "Больший beta сужает окно, так что тёплые ключи обновляются позже, а холодные безопаснее.", misconception: "Всё наоборот: больший beta умножает левую часть, заставляя её превысить ttl_remaining раньше, так что окно открывается раньше и срабатывает чаще." },
+    { label: "beta не влияет; окно двигает только delta.", misconception: "Оба линейно масштабируют левую часть, так что beta напрямую управляет тем, насколько рано открывается окно. Меняя его, меняем момент срабатывания." },
+    { label: "Поднятие beta отключает XFetch и возвращает обычный TTL.", misconception: "Поведение обычного TTL — это НИЗКИЙ-beta предел, где окно схлопывается к границе. Большой beta обновляет раньше и чаще." },
+  ]}
+/>
+
+## Сниппет 4 — запись с fencing-token
+
+```python
+def rebuild_and_write(key, my_token):
+    value = rebuild(key)               # may take longer than the lock EX
+    if redis.get("lock:" + key) != my_token:
+        return                          # we lost the lock — abort the write
+    redis.set("cache:" + key, value, ex=60)
+```
+
+<Quiz
+  id="03-stampede-code-4"
+  lessonSlug="03-stampede"
+  lang="ru"
+  question="Проверка fencing 'GET lock, затем SET cache' защищает от медленного rebuild, пережившего свой lock. Какая гонка остаётся и что её закрывает?"
+  choices={[
+    { label: "GET-затем-SET не атомарен: lock может истечь и новый держатель захватить его между возвратом my_token из GET и приземлением SET, так что устаревшая запись всё равно проскользнёт. Закрывает это атомарный compare-and-set (Lua/WATCH) или монотонная версия на ключ, отвергающая записи со старой версией.", correct: true },
+    { label: "Никакая — проверка токена делает запись полностью безопасной.", misconception: "Проверка — это два отдельных round-trip. Lock может истечь в зазоре, поэтому запись должна быть атомарной или нести монотонную версию, чтобы быть свободной от гонок." },
+    { label: "redis.get возвращает байты, поэтому сравнение всегда ложно.", misconception: "Обработка типов — тривиальная деталь; считаем её корректной. Реальная остаточная гонка — неатомарное окно между чтением токена и записью." },
+    { label: "EX в 60 на кеше — это и есть проблема.", misconception: "TTL кеша не связан с гонкой lock. Остаточный дефект — неатомарный зазор между чтением токена и записью значения." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждая защита от stampede живёт в коде, который легко тонко испортить: lock помогает, только если проигравшие ждут и перечитывают, а не делают rebuild всё равно; коалесцер помогает, только если in-flight промис регистрируется синхронно до любого await и читается на входе; beta в XFetch двигает окно раннего обновления в сторону, противоположную интуиции большинства (больший beta — раньше и чаще); а проверка fencing-token безопасна, только когда чтение-затем-запись атомарны или подкреплены монотонной версией. Прочитайте митигацию, проведите через неё два конкурентных вызова — и баг обычно проявит себя ещё до любого нагрузочного теста.
 </Recap>
-

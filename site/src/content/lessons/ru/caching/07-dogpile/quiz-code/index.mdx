@@ -1,43 +1,195 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- single-flight
+- distributed-lock
+- lock-ttl
+- lease-renewal
+- fencing-token
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Dogpile-эффект: одновременные промахи кэша,
-  которые убивают origin"'
-title: Кодировочный тест
+- https://pkg.go.dev/golang.org/x/sync/singleflight
+- https://redis.io/docs/latest/develop/use/patterns/distributed-locks/
+- https://cseweb.ucsd.edu/~avattani/papers/cache_stampede.pdf
+status: ready
+summary: "Читай реальные сниппеты single-flight, distributed lock и продления lease, предскажи поведение dogpile и выбери фикс с наибольшим рычагом, который senior сделал бы первым."
+title: 'Dogpile: чтение кода и блокировок'
 track: caching
 unit: 07-dogpile
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Dogpile-эффект: одновременные промахи кэша, которые убивают origin unit.
+Dogpile живёт в пути пересчёта: обработчик промаха, захват блокировки, TTL, освобождение. Прочитай каждый сниппет, найди, где коллизия открывается снова или блокировка дедлочит, и выбери фикс, который senior сделал бы первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Dogpile-эффект: одновременные промахи кэша, которые убивают origin unit.
+Потренируй чтение кода коалесинга и блокировок так, как читаешь его в инциденте — проследи конкурентный путь, заметь пропущенный таймаут, потерянный lease или незафенсенную запись, и чини механизм, а не симптом.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — локальный single-flight
+
+```go
+var group singleflight.Group
+
+func getFeed(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    // коалесим одновременные промахи по ключу на один пересчёт
+    v, err, _ := group.Do(key, func() (any, error) {
+        out, err := recomputeFeed(ctx) // 200ms-агрегация в БД
+        if err != nil {
+            return nil, err
+        }
+        cache.Set(key, out, 5*time.Minute)
+        return out, nil
+    })
+    if err != nil {
+        return nil, err
+    }
+    return v.([]byte), nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-1"
+  lessonSlug="07-dogpile"
+  lang="ru"
+  question="Это работает на 20 инстансах за балансировщиком. Сколько пересчётов в БД произойдёт на момент истечения и какое изменение с наибольшим рычагом приведёт к одному?"
+  choices={[
+    { label: "До 20 — singleflight.Group коалесит только внутри одного процесса, поэтому каждый из 20 инстансов делает свой пересчёт. Чтобы схлопнуть до одного на весь флот, обвесь recomputeFeed distributed-блокировкой (например Redis SET NX PX), чтобы пересчитывал только инстанс, выигравший блокировку; остальные ждут или отдают stale.", correct: true },
+    { label: "Ровно один — singleflight глобален на весь кластер.", misconception: "singleflight.Group — это map в процессе по строковому ключу; у него нет видимости между инстансами. Двадцать процессов — до двадцати независимых пересчётов." },
+    { label: "До 5000 — коалесинг ничего не делает под реальной нагрузкой.", misconception: "Внутри каждого процесса вызов Do честно дедуплицирует одновременные промахи в один вызов, так что кап — число инстансов, а не число запросов. Оставшийся разлёт — это 20 процессов." },
+    { label: "Ноль — cache.Get закорачивает каждый запрос.", misconception: "В момент истечения cache.Get промахивается у всех, пока значение не переписано; это окно промаха — ровно когда происходят пересчёты." },
+  ]}
+/>
+
+## Сниппет 2 — distributed-блокировка без TTL
+
+```go
+func getFeedLocked(ctx context.Context, key string) ([]byte, error) {
+    if v, ok := cache.Get(key); ok {
+        return v, nil
+    }
+    lockKey := "lock:" + key
+    // захват: SET lock:key <token> NX   (БЕЗ аргумента истечения)
+    ok, _ := rdb.SetNX(ctx, lockKey, token, 0).Result()
+    if !ok {
+        time.Sleep(50 * time.Millisecond) // кто-то другой пересчитывает
+        return getFeedLocked(ctx, key)     // повтор чтения
+    }
+    defer rdb.Del(ctx, lockKey)            // освобождение при выходе
+    out, err := recomputeFeed(ctx)
+    if err != nil {
+        return nil, err
+    }
+    cache.Set(key, out, 5*time.Minute)
+    return out, nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-2"
+  lessonSlug="07-dogpile"
+  lang="ru"
+  question="SetNX использует истечение 0 (без TTL); освобождение через defer Del. Какой production-сбой и какой фикс?"
+  choices={[
+    { label: "Если держатель блокировки падает (паника мимо defer, OOM-kill, вытеснение пода) до Del, ключ блокировки остаётся навсегда без истечения. Тогда любой другой читатель бесконечно ретраит против блокировки, которая не освобождается — полный outage при простаивающей БД. Фикс: дать блокировке TTL (SET NX PX) длиннее худшего пересчёта, чтобы мёртвый держатель освобождался автоматически.", correct: true },
+    { label: "Сбоя нет — defer Del всегда освобождает блокировку.", misconception: "defer не выполняется, если процесс убит (SIGKILL, OOM) или нода умерла во время пересчёта. Без TTL блокировка тогда живёт вечно, дедлоча всех читателей." },
+    { label: "Sleep на 50ms крутит CPU вхолостую.", misconception: "Sleep на 50ms — это back-off, а не busy loop, и вторичная деталь тюнинга. Реальный дефект — неистекающая блокировка, способная задедлочить весь эндпоинт." },
+    { label: "cache.Set должен использовать более короткий TTL, чтобы уменьшить стадо.", misconception: "TTL кэша управляет устареванием, а не временем жизни блокировки. Баг — пропущенный TTL блокировки; TTL кэша к дедлоку отношения не имеет." },
+  ]}
+/>
+
+## Сниппет 3 — фиксированный TTL, слишком короткий для хвоста
+
+```go
+const lockTTL = 5 * time.Second // пересчёт p50 ~2s, p99 ~25s
+
+func recomputeUnderLock(ctx context.Context, key, token string) error {
+    ok, _ := rdb.SetNX(ctx, "lock:"+key, token, lockTTL).Result()
+    if !ok {
+        return errLockHeld // вызывающий отдаёт stale и ретраит позже
+    }
+    out, err := recomputeFeed(ctx) // до 25s на холодном шарде
+    if err != nil {
+        return err
+    }
+    // блокировка тут уже могла истечь на медленном пересчёте
+    cache.Set(key, out, 5*time.Minute)
+    rdb.Del(ctx, "lock:"+key) // безусловное удаление
+    return nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-3"
+  lessonSlug="07-dogpile"
+  lang="ru"
+  question="С TTL блокировки 5s и пересчётом p99 25s назови оба бага и принципиальный фикс."
+  choices={[
+    { label: "Баг 1: на 25s-пересчёте 5s-блокировка истекает около 5s, второй воркер забирает её и тоже пересчитывает — dogpile открывается снова. Баг 2: безусловный Del в конце может удалить токен блокировки, который теперь принадлежит этому второму воркеру, освобождая чужую блокировку. Фикс: продлевай lease (расширяй TTL по heartbeat, пока жив) вместо угадывания фиксированного TTL, и делай Del условным по токену (check-and-delete), чтобы освобождать только свою блокировку.", correct: true },
+    { label: "Важен только Баг 2; истечение безвредно, ведь cache.Set всё равно пишет.", misconception: "Истечение — первичный баг: оно даёт второму пересчёту стартовать, открывая стадо, которое ты предотвращал. Безусловный Del — второй, усугубляющий баг." },
+    { label: "Подними lockTTL до 60s и катись.", misconception: "Больший фиксированный TTL меняет один сбой на другой: если держатель падает, каждый читатель теперь ждёт до 60s, пока истечёт залипшая блокировка. Продление lease отслеживает реальную работу вместо угадывания." },
+    { label: "Переключи cache.Set на более короткий TTL, чтобы блокировка значила меньше.", misconception: "TTL кэша не связан с гонкой истечения блокировки. Фикс в жизненном цикле блокировки: продлевай lease и освобождай условно по токену." },
+  ]}
+/>
+
+## Сниппет 4 — держатель, продлевающий lease
+
+```go
+func recomputeWithLease(ctx context.Context, key, token string) error {
+    if ok, _ := rdb.SetNX(ctx, "lock:"+key, token, 10*time.Second).Result(); !ok {
+        return errLockHeld
+    }
+    // heartbeat: продлеваем lease каждые 3s, пока работаем
+    stop := make(chan struct{})
+    go func() {
+        t := time.NewTicker(3 * time.Second)
+        defer t.Stop()
+        for {
+            select {
+            case <-stop:
+                return
+            case <-t.C:
+                // PEXPIRE lock:key 10000, если токен ещё наш
+                renewIfOwner(ctx, "lock:"+key, token, 10*time.Second)
+            }
+        }
+    }()
+    out, err := recomputeFeed(ctx)
+    close(stop)
+    if err != nil {
+        return err
+    }
+    cache.Set(key, out, 5*time.Minute)
+    releaseIfOwner(ctx, "lock:"+key, token) // CAS-удаление
+    return nil
+}
+```
+
+<Quiz
+  id="07-dogpile-code-4"
+  lessonSlug="07-dogpile"
+  lang="ru"
+  question="Lease продлевается каждые 3s при TTL 10s и освобождается через CAS-по-токену. Длинная stop-the-world GC-пауза (≥10s) бьёт по этому воркеру в середине пересчёта. Что всё ещё может пойти не так и что от этого защищает?"
+  choices={[
+    { label: "Во время паузы ≥10s горутина heartbeat тоже заморожена, так что lease лапсится, и второй воркер может захватить блокировку и пересчитать. Когда приостановленный воркер возобновляется, он может всё ещё думать, что держит блокировку, и вызвать cache.Set, перезаписав более новое значение. Защита: фенсить запись — прикрепить монотонный fencing-токен к lease и заставить кэш/стор отвергать запись с устаревшим токеном (или делать версионный check-and-set значения).", correct: true },
+    { label: "Ничего — renewIfOwner гарантирует, что lease никогда не лапсится.", misconception: "renewIfOwner срабатывает только когда горутина выполняется; STW-пауза замораживает весь процесс, включая heartbeat, так что lease может лапситься несмотря на цикл продления." },
+    { label: "CAS-удаление уже делает это безопасным; фенсинг не нужен.", misconception: "CAS-по-токену не даёт удалить чужую блокировку, но не мешает воркеру, возобновившемуся после паузы, записать устаревшее значение, пока он ошибочно считает, что держит блокировку. Для этого нужен fencing-токен на самой записи." },
+    { label: "Укороти TTL до 1s, чтобы мёртвый держатель освобождался быстрее.", misconception: "TTL в 1s делает лапсы более вероятными при любой паузе и требует более частых heartbeat'ов; это усугубляет гонку, а не чинит её. Устойчивый фикс — фенсить запись, а не сжимать таймер." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый фикс dogpile читается в пути блокировки. Локальный single-flight капит пересчёты числом инстансов, а не одним — distributed lock координирует флот. Блокировка без TTL дедлочит всех читателей, если держатель умер, поэтому всегда SET NX PX. Фиксированный TTL короче худшего пересчёта открывает стадо снова и рискует удалить чужую блокировку, поэтому продлевай lease по heartbeat и освобождай условно по токену. И даже продлеваемый lease может лапситься при длинной STW-паузе или partition, поэтому фенси запись монотонным токеном (или версионным CAS), чтобы возобновившийся держатель не перезаписал свежие данные. Чини жизненный цикл блокировки, потом перепроверь под сценарием медленного пересчёта и инъекции паузы.
 </Recap>
-
