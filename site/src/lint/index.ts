@@ -13,6 +13,7 @@ import { checkLessonRules, checkMathPrereqs } from "./rules/lessons";
 import { checkConnectionIntegrity } from "./rules/connection-integrity";
 import { checkCjkLeak } from "./rules/cjk-leak";
 import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeSandboxBudget } from "./rules/practice";
+import { checkBlockStubs } from "./rules/block-stubs";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -55,6 +56,7 @@ export function lintCurriculum(): AstroIntegration {
         errors.push(...(await checkReducedMotion(root)));
         errors.push(...(await checkPracticeParity(siteSrc)));
         errors.push(...(await checkPracticeLessonKey(siteSrc)));
+        errors.push(...(await checkBlockStubs(siteSrc)));
         const pc = await checkPracticeCount(siteSrc);
         errors.push(...pc.errors);
         warnings.push(...pc.warnings);
