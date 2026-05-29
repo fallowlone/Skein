@@ -31,4 +31,12 @@ describe("github", () => {
     ));
     await expect(exchangeCodeForUser("x", { clientId: "c", clientSecret: "s" })).rejects.toThrow();
   });
+
+  it("throws a typed error (not a SyntaxError) on a non-OK non-JSON token response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(
+      new Response("<html>502 Bad Gateway</html>", { status: 502, headers: { "content-type": "text/html" } }),
+    ));
+    await expect(exchangeCodeForUser("x", { clientId: "c", clientSecret: "s" }))
+      .rejects.toThrow("github_token_exchange_failed");
+  });
 });
