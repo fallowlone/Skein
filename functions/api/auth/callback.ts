@@ -37,8 +37,8 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   headers.append("Set-Cookie", serializeCookie(cookieName(env), signedSid, {
     httpOnly: true, secure: url.protocol === "https:", maxAge: 60 * 60 * 24 * 30, sameSite: "Lax",
   }));
-  // clear the state cookie
-  headers.append("Set-Cookie", serializeCookie("oauth_state", "", { httpOnly: true, maxAge: 0 }));
+  // clear the state cookie (Secure mirrors the set path so a prefixed clear cookie isn't rejected)
+  headers.append("Set-Cookie", serializeCookie("oauth_state", "", { httpOnly: true, secure: url.protocol === "https:", maxAge: 0 }));
   headers.set("Location", `/${lang === "ru" ? "ru" : "en"}/account`);
   return new Response(null, { status: 302, headers });
 };

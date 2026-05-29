@@ -1197,7 +1197,10 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
     if (sid) await destroySession(env.SESSIONS, sid);
   }
   const headers = new Headers();
-  headers.append("Set-Cookie", serializeCookie(cookieName(env), "", { httpOnly: true, maxAge: 0 }));
+  // Clear cookie must carry the same Secure attribute as the set cookie, or a
+  // __Host--prefixed cookie (prod COOKIE_NAME) is rejected and never deleted.
+  const secure = new URL(request.url).protocol === "https:";
+  headers.append("Set-Cookie", serializeCookie(cookieName(env), "", { httpOnly: true, secure, maxAge: 0 }));
   return json({ ok: true }, 200, headers);
 };
 ```
@@ -1349,7 +1352,11 @@ export const onRequestDelete: PagesFunction<Env, any, RequestData> = async (ctx)
   await deleteUser(ctx.env.DB, userId);               // removes user + progress (cascade)
   await destroyAllSessions(ctx.env.SESSIONS, userId); // kills every session
   const headers = new Headers();
-  headers.append("Set-Cookie", serializeCookie(cookieName(ctx.env), "", { httpOnly: true, maxAge: 0 }));
+  // Clear cookie must carry Secure to match the set path — a __Host--prefixed
+  // cookie (prod COOKIE_NAME) is rejected by browsers without it, so otherwise
+  // the cookie would never be deleted client-side.
+  const secure = new URL(ctx.request.url).protocol === "https:";
+  headers.append("Set-Cookie", serializeCookie(cookieName(ctx.env), "", { httpOnly: true, secure, maxAge: 0 }));
   return json({ ok: true }, 200, headers);
 };
 ```
