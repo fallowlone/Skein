@@ -1,5 +1,6 @@
 import { signal, effect } from "@preact/signals";
 import type { Tier, Lang } from "../types";
+import { mergeProgress, fetchMe, fetchServerProgress, pushProgress } from "./account-sync";
 
 const KEY = "awesome.user-state.v1";
 
@@ -136,3 +137,35 @@ export function resetAll() {
   userState.value = defaults;
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
+
+let syncActive = false;
+let pushTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Call once on a page with the account UI. If a session exists and terms are
+ * accepted, pull server progress, merge into local, push back, and start
+ * debounced push-on-change. Safe to call when logged out (no-ops).
+ */
+export async function activateSyncIfSignedIn(): Promise<void> {
+  if (syncActive || typeof window === "undefined") return;
+  const me = await fetchMe();
+  if (!me || !me.termsAccepted) return;
+  syncActive = true;
+
+  const server = await fetchServerProgress();
+  if (server) {
+    userState.value = mergeProgress(userState.value, server);
+    save(userState.value);
+  }
+  await pushProgress(userState.value);
+
+  // debounced push on subsequent local changes
+  effect(() => {
+    const snapshot = userState.value;
+    if (!syncActive) return;
+    if (pushTimer) clearTimeout(pushTimer);
+    pushTimer = setTimeout(() => { void pushProgress(snapshot); }, 3000);
+  });
+}
+
+export function isSyncActive(): boolean { return syncActive; }
