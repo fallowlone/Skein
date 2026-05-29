@@ -1,42 +1,148 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- offset-cost
+- keyset-cursor
+- stable-ordering
+- opaque-cursor
+- limit-n-plus-one
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Pagination"
-title: Coding Quiz
+- https://blog.sequinstream.com/keyset-cursors-not-offsets-for-postgres-pagination/
+- https://relay.dev/graphql/connections.htm
+status: ready
+summary: Read real SQL, an EXPLAIN line, and a cursor handler, then predict the pagination behaviour and pick the highest-leverage fix.
+title: 'Pagination: SQL and code reading'
 track: apis
 unit: 03-pagination
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Pagination unit.
+Pagination bugs live in the query plan and the cursor handler, not in the spec. Read each snippet, predict what happens at depth and under concurrent writes, then choose the fix a senior engineer makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Pagination unit.
+Practise the loop you run on every slow or flaky list endpoint: read the SQL and the plan, predict where the cost or the drift comes from, and reach for the change that fixes the root cause.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the deep-offset plan
+
+```sql
+EXPLAIN ANALYZE
+SELECT id, title, created_at
+FROM articles
+ORDER BY created_at DESC, id DESC
+LIMIT 20 OFFSET 200000;
+
+-- Limit  (rows=20) (actual rows=20 loops=1)
+--   ->  Index Scan ... on articles  (actual rows=200020 loops=1)
+```
+
+<Quiz
+  id="03-pagination-code-1"
+  lessonSlug="03-pagination"
+  lang="en"
+  question="The plan uses the index yet still takes seconds. What does 'actual rows=200020' on the Index Scan tell you, and what is the fix?"
+  choices={[
+    { label: "The index orders the rows, but the scan still reads 200020 rows so the Limit can discard the first 200000 and keep 20. Cost is the offset, not the page. Replace OFFSET with a keyset seek: WHERE (created_at, id) &lt; (?, ?) ORDER BY created_at DESC, id DESC LIMIT 20.", correct: true },
+    { label: "The index is unused; add an index on (created_at, id) and it will be fast.", misconception: "The plan already shows an Index Scan. An index makes ordering cheap but cannot make the engine skip the 200000 rows the offset still forces it to read and discard. Keyset removes the skip." },
+    { label: "200020 is just the table estimate; the query really reads 20 rows.", misconception: "actual rows is the measured count for this run, not an estimate. The scan genuinely produced 200020 rows so the Limit could throw away all but the last 20." },
+    { label: "Raise work_mem so the sort fits in memory and it will be fast.", misconception: "There is no expensive sort here — the index supplies order. The cost is reading and discarding offset rows, which work_mem does not change. Keyset is the fix." },
+  ]}
+/>
+
+## Snippet 2 — the cursor handler
+
+```js
+// GET /articles?after=<cursor>&limit=20
+async function listArticles({ after, limit = 20 }) {
+  const { createdAt, id } = decodeCursor(after);   // Base64 JSON -> {createdAt, id}
+  const rows = await db.query(`
+    SELECT id, title, created_at
+    FROM articles
+    WHERE (created_at, id) < ($1, $2)
+    ORDER BY created_at DESC, id DESC
+    LIMIT $3
+  `, [createdAt, id, limit]);
+
+  const last = rows[rows.length - 1];
+  return {
+    items: rows,
+    nextCursor: encodeCursor({ createdAt: last.created_at, id: last.id }),
+    hasNextPage: true,
+  };
+}
+```
+
+<Quiz
+  id="03-pagination-code-2"
+  lessonSlug="03-pagination"
+  lang="en"
+  question="The seek and ordering are correct, but hasNextPage is wrong. What is the bug and the standard fix?"
+  choices={[
+    { label: "hasNextPage is hardcoded true, so the last page reports more pages and an empty page becomes nextCursor of undefined. Fetch LIMIT limit + 1, set hasNextPage from whether the extra row exists, then drop it before building nextCursor.", correct: true },
+    { label: "The cursor must include the title to be valid.", misconception: "The cursor only needs the sort key (created_at, id) to seek. title is payload, not part of the keyset, and adding it changes nothing about hasNextPage." },
+    { label: "The query should use OFFSET instead of the tuple comparison.", misconception: "The tuple comparison is exactly right for keyset; switching to OFFSET reintroduces the deep-page scan and drift. The defect is the hardcoded hasNextPage, not the seek." },
+    { label: "ORDER BY direction must match the WHERE operator, and here it does not.", misconception: "DESC ordering with the '&lt;' comparison is consistent for forward paging. The actual bug is that hasNextPage is always true instead of derived from an n+1 probe." },
+  ]}
+/>
+
+## Snippet 3 — the ORDER BY mismatch
+
+```sql
+CREATE INDEX idx_articles_feed ON articles (created_at DESC, id DESC);
+
+-- handler issues:
+SELECT id, title, created_at
+FROM articles
+WHERE (created_at, id) < ('2026-05-01 09:00:00', 918273)
+ORDER BY created_at ASC, id ASC          -- note: ASC
+LIMIT 20;
+```
+
+<Quiz
+  id="03-pagination-code-3"
+  lessonSlug="03-pagination"
+  lang="en"
+  question="The composite index exists and the tuple comparison looks right, but the feed shows the wrong rows and latency is not flat. What is wrong?"
+  choices={[
+    { label: "The ORDER BY is ASC while the WHERE uses '&lt;' (built for DESC paging) and the index is DESC. With ASC the seek excludes the rows you want and the planner can't serve the order from the DESC index, so it sorts. Make ORDER BY and the comparison match the index direction.", correct: true },
+    { label: "The hardcoded timestamp means the cursor is stale; nothing else is wrong.", misconception: "The literal just stands in for a decoded cursor. The real defect is that ORDER BY ASC contradicts the '&lt;' comparison and the DESC index, breaking both correctness and the flat-latency seek." },
+    { label: "Tuple comparison is invalid SQL in Postgres; compare columns separately.", misconception: "Postgres supports row-value comparison (a, b) &lt; (x, y) directly and it is the idiomatic keyset form. The bug is the mismatched ORDER BY direction." },
+    { label: "The index should be on (id, created_at) to match the primary key.", misconception: "The index column order must match the ORDER BY (created_at then id), not the primary key. Reordering to (id, created_at) would itself break the seek." },
+  ]}
+/>
+
+## Snippet 4 — the count footer
+
+```js
+const [{ total }] = await db.query(`SELECT COUNT(*) AS total FROM articles`);
+const items = await listArticles({ after, limit: 20 });
+return { items, total };   // renders "Showing 1–20 of {total}"
+```
+
+<Quiz
+  id="03-pagination-code-4"
+  lessonSlug="03-pagination"
+  lang="en"
+  question="The keyset page is ~10 ms but the request p99 is seconds. The COUNT(*) is the culprit. What is the highest-leverage change?"
+  choices={[
+    { label: "Stop running an exact COUNT(*) per request — under MVCC it walks the whole visible set and dominates the response. Drop the exact total (infinite scroll never needs it), or read pg_class.reltuples for an 'about N' estimate, or rely on the n+1 hasNextPage probe.", correct: true },
+    { label: "Cache the COUNT(*) result for five minutes in Redis.", misconception: "Caching can soften it, but the senior move is to question whether an exact total is needed at all. An estimate or a hasNextPage probe removes the scan entirely with no cache to stale." },
+    { label: "Add an index so COUNT(*) reads from the index instead of the heap.", misconception: "Under MVCC the engine still walks rows to determine visibility for your transaction; an index does not yield an exact count for free. Estimate or drop the total instead." },
+    { label: "Run COUNT(*) in the same query as the page via a window function.", misconception: "A window count over the full set is the same full scan, just folded into the page query — it does not remove the cost. Drop or estimate the total." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Pagination is diagnosed in the plan and the handler: 'actual rows' far above the page size is the offset scan-and-discard signature, and keyset replaces the skip with a tuple seek; a cursor handler must fetch n+1 to derive hasNextPage rather than hardcode it; the ORDER BY direction, the comparison operator, and the composite index must all agree or you lose both correctness and flat latency; and an exact COUNT(*) per request is an MVCC full scan that dwarfs a fast page — estimate it or drop it. Read the plan, fix the root cause, then re-check the plan.
 </Recap>
-

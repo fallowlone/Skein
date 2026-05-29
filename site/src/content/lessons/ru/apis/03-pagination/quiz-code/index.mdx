@@ -1,42 +1,148 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- offset-cost
+- keyset-cursor
+- stable-ordering
+- opaque-cursor
+- limit-n-plus-one
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Pagination"
-title: Кодировочный тест
+- https://blog.sequinstream.com/keyset-cursors-not-offsets-for-postgres-pagination/
+- https://relay.dev/graphql/connections.htm
+status: ready
+summary: Читайте реальный SQL, строку EXPLAIN и cursor-обработчик, предсказывайте поведение pagination и выбирайте исправление с наибольшим рычагом.
+title: 'Pagination: чтение SQL и кода'
 track: apis
 unit: 03-pagination
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Pagination unit.
+Баги пагинации живут в плане запроса и cursor-обработчике, а не в спецификации. Читайте каждый сниппет, предсказывайте, что произойдёт на глубине и при конкурентных записях, и выбирайте исправление, которое senior-инженер делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Pagination unit.
+Отработайте цикл, который вы запускаете на каждом медленном или нестабильном list-эндпоинте: читаете SQL и план, предсказываете, откуда берётся стоимость или дрейф, и тянетесь к изменению, исправляющему корневую причину.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — план глубокого offset
+
+```sql
+EXPLAIN ANALYZE
+SELECT id, title, created_at
+FROM articles
+ORDER BY created_at DESC, id DESC
+LIMIT 20 OFFSET 200000;
+
+-- Limit  (rows=20) (actual rows=20 loops=1)
+--   ->  Index Scan ... on articles  (actual rows=200020 loops=1)
+```
+
+<Quiz
+  id="03-pagination-code-1"
+  lessonSlug="03-pagination"
+  lang="ru"
+  question="План использует индекс, но всё равно занимает секунды. Что говорит 'actual rows=200020' на Index Scan и каково исправление?"
+  choices={[
+    { label: "Индекс упорядочивает строки, но скан всё равно читает 200020 строк, чтобы Limit отбросил первые 200000 и оставил 20. Стоимость это offset, а не страница. Замените OFFSET на keyset-seek: WHERE (created_at, id) &lt; (?, ?) ORDER BY created_at DESC, id DESC LIMIT 20.", correct: true },
+    { label: "Индекс не используется; добавьте индекс по (created_at, id) и станет быстро.", misconception: "План уже показывает Index Scan. Индекс делает упорядочивание дешёвым, но не убирает чтение и отбрасывание 200000 строк, которые offset всё равно вынуждает прочитать. Keyset убирает сам пропуск." },
+    { label: "200020 это оценка по таблице; реально запрос читает 20 строк.", misconception: "actual rows это измеренное число для этого прогона, а не оценка. Скан действительно выдал 200020 строк, чтобы Limit выбросил все, кроме последних 20." },
+    { label: "Поднимите work_mem, чтобы сортировка влезла в память, и станет быстро.", misconception: "Здесь нет дорогой сортировки — порядок даёт индекс. Стоимость это чтение и отбрасывание offset-строк, на что work_mem не влияет. Исправление это keyset." },
+  ]}
+/>
+
+## Сниппет 2 — cursor-обработчик
+
+```js
+// GET /articles?after=<cursor>&limit=20
+async function listArticles({ after, limit = 20 }) {
+  const { createdAt, id } = decodeCursor(after);   // Base64 JSON -> {createdAt, id}
+  const rows = await db.query(`
+    SELECT id, title, created_at
+    FROM articles
+    WHERE (created_at, id) < ($1, $2)
+    ORDER BY created_at DESC, id DESC
+    LIMIT $3
+  `, [createdAt, id, limit]);
+
+  const last = rows[rows.length - 1];
+  return {
+    items: rows,
+    nextCursor: encodeCursor({ createdAt: last.created_at, id: last.id }),
+    hasNextPage: true,
+  };
+}
+```
+
+<Quiz
+  id="03-pagination-code-2"
+  lessonSlug="03-pagination"
+  lang="ru"
+  question="Seek и ordering корректны, но hasNextPage неверен. В чём баг и каково стандартное исправление?"
+  choices={[
+    { label: "hasNextPage жёстко задан true, поэтому последняя страница сообщает о новых страницах, а пустая страница даёт nextCursor из undefined. Берите LIMIT limit + 1, выставляйте hasNextPage по наличию лишней строки, затем отбрасывайте её перед сборкой nextCursor.", correct: true },
+    { label: "Cursor должен включать title, чтобы быть валидным.", misconception: "Cursor нужен только ключ сортировки (created_at, id) для seek. title это полезная нагрузка, не часть keyset, и его добавление ничего не меняет в hasNextPage." },
+    { label: "Запрос должен использовать OFFSET вместо сравнения кортежа.", misconception: "Сравнение кортежа ровно верно для keyset; переход на OFFSET возвращает скан глубоких страниц и дрейф. Дефект это жёсткий hasNextPage, а не seek." },
+    { label: "Направление ORDER BY должно совпадать с оператором WHERE, а здесь оно не совпадает.", misconception: "Порядок DESC со сравнением '&lt;' согласован для движения вперёд. Реальный баг в том, что hasNextPage всегда true вместо вывода из n+1 зонда." },
+  ]}
+/>
+
+## Сниппет 3 — рассогласование ORDER BY
+
+```sql
+CREATE INDEX idx_articles_feed ON articles (created_at DESC, id DESC);
+
+-- обработчик выполняет:
+SELECT id, title, created_at
+FROM articles
+WHERE (created_at, id) < ('2026-05-01 09:00:00', 918273)
+ORDER BY created_at ASC, id ASC          -- внимание: ASC
+LIMIT 20;
+```
+
+<Quiz
+  id="03-pagination-code-3"
+  lessonSlug="03-pagination"
+  lang="ru"
+  question="Составной индекс есть, сравнение кортежа выглядит верным, но лента показывает не те строки и задержка не плоская. Что не так?"
+  choices={[
+    { label: "ORDER BY стоит ASC, тогда как WHERE использует '&lt;' (для движения по DESC), а индекс DESC. С ASC seek исключает нужные строки, и планировщик не может отдать порядок из DESC-индекса, поэтому сортирует. Сделайте ORDER BY и сравнение согласованными с направлением индекса.", correct: true },
+    { label: "Жёстко вписанная метка времени означает устаревший cursor; больше ничего не так.", misconception: "Литерал лишь заменяет декодированный cursor. Настоящий дефект в том, что ORDER BY ASC противоречит сравнению '&lt;' и DESC-индексу, ломая и корректность, и плоский seek." },
+    { label: "Сравнение кортежа это невалидный SQL в Postgres; сравнивайте колонки отдельно.", misconception: "Postgres поддерживает сравнение строковых значений (a, b) &lt; (x, y) напрямую, и это идиоматичная keyset-форма. Баг в рассогласованном направлении ORDER BY." },
+    { label: "Индекс должен быть по (id, created_at), чтобы совпасть с первичным ключом.", misconception: "Порядок колонок индекса должен совпадать с ORDER BY (сначала created_at, потом id), а не с первичным ключом. Перестановка на (id, created_at) сама бы сломала seek." },
+  ]}
+/>
+
+## Сниппет 4 — подвал с подсчётом
+
+```js
+const [{ total }] = await db.query(`SELECT COUNT(*) AS total FROM articles`);
+const items = await listArticles({ after, limit: 20 });
+return { items, total };   // рендерит "Показано 1–20 из {total}"
+```
+
+<Quiz
+  id="03-pagination-code-4"
+  lessonSlug="03-pagination"
+  lang="ru"
+  question="Keyset-страница ~10 мс, но p99 запроса в секундах. Виновник это COUNT(*). Какое изменение с наибольшим рычагом?"
+  choices={[
+    { label: "Перестаньте выполнять точный COUNT(*) на каждый запрос — под MVCC он обходит весь видимый набор и доминирует в ответе. Уберите точный итог (бесконечный скролл его не требует), читайте pg_class.reltuples для оценки 'около N' или полагайтесь на n+1 зонд hasNextPage.", correct: true },
+    { label: "Кэшируйте результат COUNT(*) на пять минут в Redis.", misconception: "Кэш может смягчить, но senior-ход это спросить, нужен ли точный итог вообще. Оценка или зонд hasNextPage убирают скан целиком без кэша, который устаревает." },
+    { label: "Добавьте индекс, чтобы COUNT(*) читал из индекса, а не из кучи.", misconception: "Под MVCC движок всё равно обходит строки ради видимости для вашей транзакции; индекс не даёт точный счёт даром. Оценивайте или убирайте итог." },
+    { label: "Выполняйте COUNT(*) в том же запросе, что и страница, через оконную функцию.", misconception: "Оконный подсчёт по всему набору это тот же полный скан, лишь вложенный в запрос страницы — стоимость он не убирает. Уберите или оцените итог." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Пагинация диагностируется в плане и обработчике: 'actual rows' сильно выше размера страницы это сигнатура offset scan-and-discard, и keyset заменяет пропуск seek по кортежу; cursor-обработчик обязан брать n+1, чтобы вывести hasNextPage, а не жёстко его задавать; направление ORDER BY, оператор сравнения и составной индекс должны совпадать, иначе теряются и корректность, и плоская задержка; а точный COUNT(*) на каждый запрос это полный скан под MVCC, затмевающий быструю страницу — оценивайте его или убирайте. Читайте план, чините корневую причину, затем перепроверяйте план.
 </Recap>
-
