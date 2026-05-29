@@ -15,6 +15,10 @@ export const onRequestPost: PagesFunction<Env> = async (ctx) => {
     if (sid) await destroySession(env.SESSIONS, sid);
   }
   const headers = new Headers();
-  headers.append("Set-Cookie", serializeCookie(cookieName(env), "", { httpOnly: true, maxAge: 0 }));
+  // The clear cookie must carry the same Secure attribute as the set cookie.
+  // A __Host--prefixed cookie (prod COOKIE_NAME) is rejected by browsers unless
+  // Secure is present, so without this the cookie would never be deleted client-side.
+  const secure = new URL(request.url).protocol === "https:";
+  headers.append("Set-Cookie", serializeCookie(cookieName(env), "", { httpOnly: true, secure, maxAge: 0 }));
   return json({ ok: true }, 200, headers);
 };
