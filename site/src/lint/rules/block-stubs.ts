@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { EXERCISE_COMPONENTS } from "./exercise-components";
 
 /**
  * Quiz/project assessment blocks (slug `quiz-*` or `project`) may exist as
@@ -12,8 +13,12 @@ import { join } from "node:path";
  * Source-level rule (runs over src/, not dist/) because the dist HTML path
  * parser used by lessons.ts does not match unit-nested lesson pages.
  */
-const BOILERPLATE = "This is a ";
-const COMPONENT_RE = /<(Quiz|RFCQuiz|ProjectBrief)\b/;
+// The generator stub Hook reads: "This is a quiz-choice for the … unit."
+const BOILERPLATE_RE = /This is a (?:quiz|project)[a-z-]* for the /;
+// A real assessment block must use ProjectBrief or any registered exercise widget.
+const COMPONENT_RE = new RegExp(
+  `<(ProjectBrief|${[...EXERCISE_COMPONENTS].join("|")})\\b`
+);
 
 function isBlockDir(name: string): boolean {
   return name.startsWith("quiz-") || name === "project";
@@ -59,8 +64,8 @@ export async function checkBlockStubs(siteSrc: string): Promise<string[]> {
       continue;
     }
     if (statusOf(src) !== "ready") continue;
-    if (src.includes(BOILERPLATE)) {
-      errs.push(`${file}: quiz/project block is status:ready but still contains stub boilerplate ("${BOILERPLATE.trim()}…")`);
+    if (BOILERPLATE_RE.test(src)) {
+      errs.push(`${file}: quiz/project block is status:ready but still contains stub boilerplate ("This is a … for the … unit")`);
     }
     if (!COMPONENT_RE.test(src)) {
       errs.push(`${file}: quiz/project block is status:ready but has no Quiz/RFCQuiz/ProjectBrief component`);
