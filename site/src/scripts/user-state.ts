@@ -5,6 +5,7 @@ import { ratingToRank } from "./progression/ranks";
 import { rankToTier } from "./progression/rank-tier";
 import { computeRating, confidenceOf } from "./progression/rating";
 import { mergeProgress, fetchMe, fetchServerProgress, pushProgress } from "./account-sync";
+import { updateStreak, todayISO } from "./progression/streak";
 
 const KEY = "awesome.user-state.v1";
 
@@ -156,6 +157,13 @@ export function recordRetrieval(slug: string) {
       },
     },
   };
+}
+
+export function recordActiveDay() {
+  const p = userState.value.progression;
+  const streak = updateStreak(p.streak, todayISO());
+  if (streak === p.streak) return;
+  userState.value = { ...userState.value, progression: { ...p, streak } };
 }
 
 export function dismissRevisit(slug: string) {
