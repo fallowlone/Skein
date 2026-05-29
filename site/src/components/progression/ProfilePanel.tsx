@@ -1,17 +1,45 @@
+import { useEffect } from "preact/hooks";
 import { userState } from "~/scripts/user-state";
 import { loadStore } from "~/components/algo/drill-state";
 import { xpFromState } from "~/scripts/progression/xp";
 import RankBadge from "./RankBadge";
 import XpBar from "./XpBar";
+import AchievementGrid from "./AchievementGrid";
+import StreakChip from "./StreakChip";
 import Pretest from "~/components/pedagogy/Pretest";
 import { nextRank, rankById } from "~/scripts/progression/ranks";
+import { evaluateAchievements } from "~/scripts/progression/achievements";
+import { titlesFromState, TITLES } from "~/scripts/progression/titles";
 import { type Locale } from "~/i18n";
 
 export default function ProfilePanel({ lang }: { lang: Locale }) {
   const s = userState.value;
   const pretest = s.pretest;
-  const drillsSolved = Object.values(loadStore()).filter((e: any) => e.status === "solved").length;
+  const store = loadStore();
+  const solvedEntries = Object.entries(store).filter(([, e]: any) => e.status === "solved");
+  const drillsSolved = solvedEntries.length;
   const xp = xpFromState(s, drillsSolved);
+
+  const drillUnitsWithSolve = new Set(solvedEntries.map(([id]) => (id.includes("-") ? id.split("-")[0] : id))).size;
+  const noHintSolve = solvedEntries.some(([, e]: any) => e.noHint);
+  const ctx = { drillsSolved, drillUnitsWithSolve, noHintSolve, hourOfDay: new Date().getHours() };
+  const unlocked = new Set(evaluateAchievements(s, ctx));
+  const titles = titlesFromState(s);
+
+  useEffect(() => {
+    if (!pretest) return;
+    const now = Date.now();
+    const have = s.progression.achievements;
+    let changed = false;
+    const next = { ...have };
+    unlocked.forEach((id) => {
+      if (!(id in next)) {
+        next[id] = now;
+        changed = true;
+      }
+    });
+    if (changed) userState.value = { ...userState.value, progression: { ...s.progression, achievements: next } };
+  }, []);
 
   if (!pretest) {
     return (
@@ -35,6 +63,9 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
       </div>
       <XpBar xp={xp} lang={lang} />
       {nxt && <div class="text-[12px] text-muted font-mono">+{nxt.min - pretest.rating} {lang === "ru" ? "до" : "to"} {nxt.label[lang]}</div>}
+      <StreakChip count={s.progression.streak.count} best={s.progression.streak.best} lang={lang} />
+      {titles.length > 0 && <div class="flex flex-wrap gap-1.5">{TITLES.filter((tt) => titles.includes(tt.id)).map((tt) => <span key={tt.id} class="text-[11px] font-mono border border-rule rounded px-1.5 py-0.5">{tt.label[lang]}</span>)}</div>}
+      <AchievementGrid unlocked={unlocked} lang={lang} />
       <p class="text-[12px] text-muted">{lang === "ru"
         ? "Самооценка-placement, не сертификат. Контент открыт весь."
         : "A self-assessment placement, not a certificate. All content stays open."}</p>
