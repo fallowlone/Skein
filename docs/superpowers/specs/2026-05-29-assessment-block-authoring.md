@@ -46,6 +46,7 @@ unit: <NN-slug>
 - `lessonSlug` on every component = the unit slug (e.g. `04-gc`), NOT the block slug.
 - **Quote the `summary:`** value (`summary: "…"`) — summaries often contain a colon, which breaks unquoted YAML. After a batch, run a YAML pre-check before the full build: parse each block's frontmatter and quote any summary that fails.
 - MDX arrays use brace-wrapped expressions: `choices={[ {label, correct?, misconception?}, … ]}`. Never `choices=[...]`.
+- **No bare `<` in MDX prose** (Hook/Goal/Recap/paragraph text). `n <= 20`, `child < parent`, `<5ms` all make MDX try to open a tag → parse error. Use `≤`/`≥` or `&lt;`/`&gt;`. (Inside fenced code blocks and inside `choices={[…]}` JS-string labels, `<`/`<=` are fine.)
 - **No embedded double-quotes in a bare string attribute.** `question="… \"x\" …"` breaks the MDX parser (backslash-escapes aren't honoured in quoted attributes). If the value needs a `"`, wrap it as an expression — `question={"… \"x\" …"}` — or rephrase with single quotes. (Quotes inside `choices={[…]}` labels are fine — they're JS strings in an expression.)
 - Ground every question in what the unit's content lessons actually teach +
   the unit `crux`. For thin units (1 lesson) lean on the lesson + crux + your
