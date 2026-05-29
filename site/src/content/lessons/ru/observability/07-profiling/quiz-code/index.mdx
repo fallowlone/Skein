@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- flame-graph-reading
+- gctrace-reading
+- allocation-profile
+- profiler-config
+- pprof-setup
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Profiling: куда реально ушли CPU и байты"'
-title: Кодировочный тест
+- https://pkg.go.dev/runtime/pprof
+- https://www.brendangregg.com/flamegraphs.html
+- https://github.com/grafana/pyroscope
+status: ready
+summary: "Читай реальный вывод pprof, схлопнутый flame graph, allocation profile и конфиг профайлера — предскажи поведение и выбери диагноз с наибольшим рычагом."
+title: 'Profiling: чтение профилей и конфигов'
 track: observability
 unit: 07-profiling
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Profiling: куда реально ушли CPU и байты unit.
+Профили и конфиги — это место, где проблемы профайлинга реально диагностируются. Прочитай вывод и настройку, затем выбери прочтение, на котором остановится senior-инженер, прежде чем трогать что-либо ещё.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Profiling: куда реально ушли CPU и байты unit.
+Отработай петлю, которую запускаешь в каждом инциденте профайлинга: читаешь профиль или конфиг, выводишь, что делает рантайм, и приходишь к верному диагнозу, а не к правдоподобному-но-неверному.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — схлопнутый список стеков flame graph
+
+Многие инструменты (`stackcollapse` Брендана Грегга, импорт в speedscope) представляют flame graph как строки `stack;frames count`. Вот верхние строки 30-секундного CPU-профиля HTTP-сервиса:
+
+```
+main;http.Serve;handler;serializeResponse;json.Marshal       2180
+main;http.Serve;handler;serializeResponse;reflect.Value.Field  640
+main;http.Serve;handler;queryDB;pq.(*conn).Query              210
+main;http.Serve;handler;validateInput                          95
+```
+
+<Quiz
+  id="07-profiling-code-1"
+  lessonSlug="07-profiling"
+  lang="ru"
+  question="Всего сэмплов ~3125. Что говорит этот CPU-профиль и где фикс?"
+  choices={[
+    { label: "Около 70% on-CPU времени под serializeResponse — json.Marshal плюс вызовы reflect.Value.Field, которые он порождает. JSON-кодирование через reflection — это hotspot; пред-кодируй или кешируй ответ, либо используй codegen/zero-reflection маршаллер.", correct: true },
+    { label: "queryDB — узкое место, потому что вызовы к БД всегда медленная часть.", misconception: "queryDB здесь лишь ~210 сэмплов (~7%). К тому же CPU-профиль показывает время БД только пока поток on-CPU; само ожидание запроса off-CPU и невидимо. CPU-hotspot — это сериализация." },
+    { label: "validateInput на 95 сэмплах — проблема, потому что стоит выше всех алфавитно.", misconception: "Позиция и алфавитный порядок ничего не говорят о стоимости; говорит ширина (число сэмплов). 95 из ~3125 — это ~3%, ничтожно рядом с ~70% под serializeResponse." },
+    { label: "Ничего не сломано — ни один лист не превышает 2180 из миллионов вызовов.", misconception: "Счётчики сэмплов — это доля CPU-времени, а не число вызовов. 2180 из ~3125 сэмплов в одном поддереве — доминирующий hotspot, который стоит чинить." },
+  ]}
+/>
+
+## Сниппет 2 — CPU против wall-clock для одного медленного спана
+
+```
+trace span: GET /report  wall = 612 ms
+  cpu profile (this span, by trace-id):  on-CPU = 38 ms
+  off-cpu profile (this span):           waiting = 561 ms
+    -> sql.(*DB).QueryContext            540 ms
+    -> sync.(*Mutex).Lock                 18 ms
+```
+
+<Quiz
+  id="07-profiling-code-2"
+  lessonSlug="07-profiling"
+  lang="ru"
+  question="Читая эти два профиля вместе, какой верный диагноз и следующий шаг?"
+  choices={[
+    { label: "CPU/wall ~6%, значит узкое место off-CPU. Off-CPU-профиль приписывает 540 мс запросу к БД — фикс в запросе/индексе/пуле соединений, а не в on-CPU коде. Один CPU-профиль отправил бы тебя оптимизировать не те 38 мс.", correct: true },
+    { label: "Сначала оптимизируй 38 мс on-CPU работы; это единственное, что ты контролируешь.", misconception: "Срезать 38 мс вычислений, когда 561 мс уходит на ожидание, — погрешность округления. Отношение CPU/wall ниже ~30% — сигнал оставить CPU-код в покое и гнаться за off-CPU ожиданием." },
+    { label: "Блокировка мьютекса в 18 мс — корневая причина медленного спана.", misconception: "18 мс — это ~3% wall-времени. Доминирующее ожидание — запрос к БД на 540 мс; мьютекс вторичен." },
+    { label: "Числа несогласованы — on-CPU плюс off-CPU должны давать CPU-время, а не wall-время.", misconception: "Они согласованы: on-CPU (38) + off-CPU (561) ≈ wall (612). Именно так два типа профилей разбивают wall-clock время запроса." },
+  ]}
+/>
+
+## Сниппет 3 — diff allocation (heap) профиля
+
+```
+go tool pprof -base baseline.heap current.heap   (45 min apart, same load)
+  flat  flat%   cum   cum%
+  410MB 61.2%  410MB 61.2%  (*logEntry).format  -> strings.Join in hot log path
+   95MB 14.1%   95MB 14.1%  json.Marshal
+   42MB  6.3%   42MB  6.3%  bytes.growSlice
+```
+
+<Quiz
+  id="07-profiling-code-3"
+  lessonSlug="07-profiling"
+  lang="ru"
+  question="Это base-diff heap-профиля под стабильной нагрузкой. На что это вероятнее всего указывает и какой фикс с наибольшим рычагом?"
+  choices={[
+    { label: "Живая память выросла на ~410MB в (*logEntry).format за 45 минут — утечка или неограниченное удержание в лог-пути (strings.Join строит всё большие буферы, или записи удерживаются). Чини лог-путь первым: он перевешивает остальные два вместе.", correct: true },
+    { label: "json.Marshal на 95MB — это утечка; лог-путь нормален.", misconception: "Base-diff изолирует рост. 410MB роста в лог-пути — это ~3x следующей записи и очевидный главный подозреваемый; json.Marshal вторичен." },
+    { label: "Heap-профиль не может показывать утечки, только CPU-hotspot.", misconception: "Base-diff двух heap-профилей под стабильной нагрузкой — стандартная техника обнаружения утечек: функции, чья живая аллокация выросла, и есть место накопления памяти." },
+    { label: "Подними GOGC, чтобы heap перестал расти.", misconception: "GOGC меняет, когда запускается GC, а не удерживает ли лог-путь память. Если это настоящая утечка удержания, никакой тюнинг GC не освободит ещё достижимые объекты — чини аллокацию/удержание." },
+  ]}
+/>
+
+## Сниппет 4 — конфиг агента continuous profiler
+
+```yaml
+profiler:
+  cpu:
+    enabled: true
+    sample_rate_hz: 1000        # default for this service is 100
+  symbolize: synchronous        # resolve symbols on the sampling thread
+  max_stack_depth: 256
+  upload_interval: 1s
+```
+
+<Quiz
+  id="07-profiling-code-4"
+  lessonSlug="07-profiling"
+  lang="ru"
+  question="Команда сообщает, что этот агент добавляет ~12% CPU вместо ожидаемых 2-5%. Читая конфиг, какие две правки вернут его в бюджет?"
+  choices={[
+    { label: "Сбрось sample_rate_hz к дефолту 100 (в 10 раз меньше обходов стека) и убери symbolize с потока сэмплинга (асинхронно/в фоне). Высокий rate плюс синхронная символизация на app-потоке — классические множители overhead.", correct: true },
+    { label: "Полностью отключи CPU-профайлинг — он по природе слишком дорог.", misconception: "CPU-профайлинг на дефолте 100 Hz с асинхронной символизацией идёт на 2-5%. Overhead здесь — это конфиг: 10x sample rate и синхронная символизация в потоке, а не сама фича." },
+    { label: "Снизь max_stack_depth до 8, чтобы срезать стоимость обхода.", misconception: "Обрезка до 8 фреймов испортит глубокие стеки и потеряет контекст hot-пути. Доминирующие здесь стоимости — 10x rate и синхронная символизация, а не лимит в 256 фреймов." },
+    { label: "Увеличь upload_interval до 60s; аплоады и есть overhead.", misconception: "Сжатые аплоады дёшевы и редки. CPU-стоимость в сэмплинге и синхронной символизации на потоке приложения, а не в каденции сетевых аплоадов." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент профайлинга читается в профилях и конфигах: доминирующее поддерево CPU flame graph (здесь — JSON через reflection) — это on-CPU hotspot; отношение CPU/wall решает, гнаться ли за on-CPU кодом или off-CPU ожиданием; base-diff heap-профиля под стабильной нагрузкой локализует утечку до функции, чья живая память выросла; а агент сверх бюджета — почти всегда завышенный sample rate плюс синхронная символизация в потоке. Диагностируй по профилю, чини доминирующую причину, затем перепрофилируй для подтверждения.
 </Recap>
-

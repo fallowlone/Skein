@@ -1,43 +1,146 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- traceparent
+- context-bind
+- inject-extract
+- tail-sampling-config
+- orphan-span
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Trace propagation: the headers that stitch services
-  together"'
-title: Coding Quiz
+- https://www.w3.org/TR/trace-context/
+- https://opentelemetry.io/docs/concepts/context-propagation/
+- https://opentelemetry.io/blog/2022/tail-sampling/
+status: ready
+summary: "Read a traceparent header, a broken async-propagation snippet, a producer/consumer inject pair, and a tail-sampling config — then pick the behaviour and the highest-leverage fix."
+title: 'Trace propagation: code and header reading'
 track: observability
 unit: 06-trace-propagation
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Trace propagation: the headers that stitch services together unit.
+Propagation bugs live in headers, code, and config — not in prose. Read each artefact the way you would in an incident, then choose the fix a senior engineer would reach for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Trace propagation: the headers that stitch services together unit.
+Practise the diagnostic loop of every propagation incident: parse the header on the wire, spot where context is silently dropped, and read the collector config that decides which traces survive.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the header on the wire
+
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00
+```
+
+<Quiz
+  id="06-trace-propagation-code-1"
+  lessonSlug="06-trace-propagation"
+  lang="en"
+  question="This header is well-formed. What does the trailing 00 tell the receiving service to do by default?"
+  choices={[
+    { label: "The sampled flag is 0, so this trace was NOT sampled upstream. The service still creates spans (same trace-id, parent = 00f067aa0ba902b7) but does not export them — consistent sampling means the whole trace is dropped, not a fragment.", correct: true },
+    { label: "The version is 00, so the service should treat the header as the oldest format and downgrade its parser.", misconception: "The leading 00 is the version; the trailing 00 is trace-flags. Version 00 is simply the current format — no downgrade. The question is about the sampled flag." },
+    { label: "00 means an all-zero parent-id, so the service must start a fresh trace.", misconception: "The parent-id here is 00f067aa0ba902b7, not zero. The trailing 00 is the trace-flags byte: sampled bit clear." },
+    { label: "00 means the span count is zero, so this is the root; sample it at 100%.", misconception: "traceparent encodes no span count, and a clear sampled flag means the upstream already decided to drop. Overriding it to 100% would produce a partial trace." },
+  ]}
+/>
+
+## Snippet 2 — the deferred work
+
+```js
+const { context, trace } = require('@opentelemetry/api');
+
+app.post('/checkout', async (req, res) => {
+  // request span is active here
+  setTimeout(() => {
+    writeAuditLog(req.body);   // emits a span
+  }, 200);
+  res.status(202).end();
+});
+```
+
+<Quiz
+  id="06-trace-propagation-code-2"
+  lessonSlug="06-trace-propagation"
+  lang="en"
+  question="The audit-log span shows up as its own root trace, disconnected from /checkout. What is the cause and the minimal fix?"
+  choices={[
+    { label: "setTimeout schedules the callback on a fresh async stack where the request's AsyncLocalStorage context is gone, so OTel starts a new root span. Capture ctx = context.active() and wrap the callback: setTimeout(context.bind(ctx, () => writeAuditLog(req.body)), 200).", correct: true },
+    { label: "writeAuditLog must be made synchronous so it runs inside the handler's stack.", misconception: "The boundary is setTimeout, not the function's sync/async nature. Even a sync writeAuditLog inside the timer runs on a new stack with no context. The fix is context.bind, not removing async." },
+    { label: "The producer needs propagator.inject() into the audit log's headers.", misconception: "inject/extract is for cross-process carriers. The audit work runs in the same process; the lost context is restored with context.bind, not header injection." },
+    { label: "Move res.status(202).end() before the setTimeout so the span isn't cut off.", misconception: "Response ordering does not affect the deferred callback's context. The span is orphaned because the timer callback lost the active context, regardless of when the response is sent." },
+  ]}
+/>
+
+## Snippet 3 — producer and consumer
+
+```js
+// producer
+const headers = {};
+propagator.inject(context.active(), headers);
+await producer.send({ topic: 'orders', messages: [{ value: body, headers }] });
+
+// consumer
+await consumer.run({
+  eachMessage: async ({ message }) => {
+    // headers are available as message.headers
+    await handleOrder(message.value);   // emits spans
+  },
+});
+```
+
+<Quiz
+  id="06-trace-propagation-code-3"
+  lessonSlug="06-trace-propagation"
+  lang="en"
+  question="The producer injects correctly, yet consumer spans are still orphans. Where is the bug?"
+  choices={[
+    { label: "The consumer never calls propagator.extract(message.headers) to rebuild the context, nor runs handleOrder inside context.with(extractedCtx, ...). The traceparent is on the wire but never read back, so the consumer starts a fresh trace.", correct: true },
+    { label: "The producer should not pass headers in the message; Kafka strips them.", misconception: "Kafka record headers (since 0.11) are the standard carrier and are not stripped. The producer side is correct; the consumer simply never extracts." },
+    { label: "The consumer needs context.bind around handleOrder.", misconception: "context.bind revives in-process context, but the consumer process started with none — the context lives in the message headers. It must be extracted, not bound." },
+    { label: "inject and extract must use different propagators to round-trip.", misconception: "Both sides use the same composite propagator. The round-trip fails because extract is missing on the consumer, not because of a propagator mismatch." },
+  ]}
+/>
+
+## Snippet 4 — the collector config
+
+```yaml
+processors:
+  tail_sampling:
+    decision_wait: 30s
+    policies:
+      - name: errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+      - name: probabilistic
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 1
+```
+
+<Quiz
+  id="06-trace-propagation-code-4"
+  lessonSlug="06-trace-propagation"
+  lang="en"
+  question="This tail-sampling config OOMed the collector during a traffic spike. What is the single most important missing line?"
+  choices={[
+    { label: "num_traces — a hard cap on active in-flight traces. Without it the sampler buffers every trace in RAM until decision_wait closes and grows unbounded under a spike; with it, the oldest incomplete traces are evicted instead of OOMing.", correct: true },
+    { label: "A latency policy to keep slow traces — that is what overloaded the RAM.", misconception: "A latency policy is desirable but it filters at decision time; it does not bound buffered memory. The missing safeguard against OOM is the num_traces cap." },
+    { label: "decision_wait is too short at 30s and should be raised to 5m.", misconception: "Raising decision_wait holds traces longer and increases RAM — it makes the OOM worse. 30s is a sane window; the missing piece is num_traces." },
+    { label: "The load-balancing exporter belongs in the processors block.", misconception: "The load-balancing exporter is an exporter on the upstream tier, not a processor here, and it addresses span routing across replicas — not the single-instance OOM, which num_traces bounds." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every propagation incident is read in artefacts: the trace-flags byte tells you whether a well-formed header was sampled (and a clear flag means drop the whole trace, not export a fragment); an unwrapped setTimeout orphans in-process work until you context.bind it; a Kafka round-trip needs inject on the producer and the matching extract on the consumer; and a tail-sampling config without num_traces buffers unbounded until it OOMs. Parse the header, find the dropped context, read the config — then fix at the boundary, not at the dashboard.
 </Recap>
-
