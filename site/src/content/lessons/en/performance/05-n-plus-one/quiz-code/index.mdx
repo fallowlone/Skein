@@ -1,42 +1,135 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- lazy-load-loop
+- dataloader-batch-fn
+- query-log-reading
+- serial-vs-parallel-fanout
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "N+1: one logical operation, many round-trips"'
-title: Coding Quiz
+- https://github.com/graphql/dataloader
+- https://www.prisma.io/docs/orm/prisma-client/queries/relation-queries
+- https://redis.io/docs/latest/commands/mget/
+status: ready
+summary: Read real ORM loops, a DataLoader batch function, a query log, and a fan-out handler — predict the round-trip count and pick the highest-leverage fix.
+title: 'N+1: code and log reading'
 track: performance
 unit: 05-n-plus-one
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the N+1: one logical operation, many round-trips unit.
+N+1 is diagnosed by reading code and logs, not by guessing. Read the snippet or the trace, count the round-trips it will fire, then choose the fix a senior engineer reaches for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the N+1: one logical operation, many round-trips unit.
+Practise the loop you run in every N+1 incident: read the hot path, count the round-trips, and reach for the structural fix that matches the data shape — before touching indexes or hardware.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the innocent loop
+
+```javascript
+const orders = await Order.findAll({ where: { userId } }); // 50 rows
+for (const order of orders) {
+  const customer = await order.getCustomer(); // one query per order
+  render(order, customer.name);
+}
+```
+
+<Quiz
+  id="05-n-plus-one-code-1"
+  lessonSlug="05-n-plus-one"
+  lang="en"
+  question="With 50 orders, how many queries does this fire, and what is the single highest-leverage fix?"
+  choices={[
+    { label: "51 queries — one for the orders, then one per order via lazy getCustomer(). Fix structurally: eager-load with include/preload so the ORM fetches all customers in one IN query, dropping it to 2 round-trips.", correct: true },
+    { label: "1 query — the ORM batches getCustomer() automatically.", misconception: "Lazy getCustomer() inside the loop fires a query each iteration; the ORM does not batch it unless you declare the relationship up front with include/preload." },
+    { label: "51 queries, and the fix is to add an index on customers.id.", misconception: "An index speeds each lookup but you still pay 50 round-trips of latency. The fix is fewer trips — eager-load into one IN query — not faster individual ones." },
+    { label: "2 queries — defer the renders to the end.", misconception: "Deferring rendering changes nothing about when the queries fire. The 50 customer queries are triggered by lazy access inside the loop regardless of render timing." },
+  ]}
+/>
+
+## Snippet 2 — the DataLoader batch function
+
+```javascript
+const userLoader = new DataLoader(async (ids) => {
+  const users = await db.user.findMany({ where: { id: { in: ids } } });
+  return users; // returned in DB order
+});
+// resolver: return userLoader.load(post.authorId)
+```
+
+<Quiz
+  id="05-n-plus-one-code-2"
+  lessonSlug="05-n-plus-one"
+  lang="en"
+  question="This DataLoader batches correctly but has a correctness bug a load test will expose. What is it?"
+  choices={[
+    { label: "The batch function must return results in the same order as the input ids (and one entry per id). Returning users in DB order — with gaps for missing ids — mismaps each Promise to the wrong row or undefined. Fix: return ids.map(id => byId.get(id) ?? null).", correct: true },
+    { label: "findMany with IN is not safe for concurrent loads.", misconception: "The IN query is fine and DataLoader serialises the batch. The defect is the result ordering contract: outputs must align positionally with input ids." },
+    { label: "DataLoader should be created once at module scope, not per request.", misconception: "The opposite — module-scope loaders leak cached data across requests. The bug in THIS snippet is the unordered return, not the instantiation scope." },
+    { label: "It needs await on userLoader.load.", misconception: "load() returns a Promise that the resolver framework awaits; the resolver returning it is correct. The bug is the misordered batch result." },
+  ]}
+/>
+
+## Snippet 3 — the query log
+
+```
+Started GET "/dashboard"
+User Load (0.4ms)     SELECT * FROM users WHERE id = 42
+Project Load (0.6ms)  SELECT * FROM projects WHERE user_id = 42 LIMIT 50
+Task Load (0.3ms)     SELECT * FROM tasks WHERE project_id = 1
+Task Load (0.3ms)     SELECT * FROM tasks WHERE project_id = 2
+... (48 more Task Load lines)
+Comment Load (0.2ms)  SELECT * FROM comments WHERE task_id = 1
+... (243 more Comment Load lines)
+Completed 200 OK in 980ms (Views: 250ms | ActiveRecord: 689ms)
+```
+
+<Quiz
+  id="05-n-plus-one-code-3"
+  lessonSlug="05-n-plus-one"
+  lang="en"
+  question="Reading this log, what is happening and what is the precise fix?"
+  choices={[
+    { label: "Two nested N+1 levels: 50 Task Loads (one per project) and ~245 Comment Loads (one per task). Fix with nested eager loading — projects.includes(tasks: :comments) — collapsing ~300 queries to 4 (user, projects, tasks IN, comments IN). ActiveRecord time falls from 689 ms to ~15 ms.", correct: true },
+    { label: "The database is slow — each Comment Load takes 0.2 ms.", misconception: "0.2 ms per query is fast. The 689 ms is the sum of ~300 round-trips, not slow individual queries. The fix is fewer queries via nested eager loading." },
+    { label: "Views are the bottleneck at 250 ms; optimise the templates.", misconception: "Views are 250 ms but ActiveRecord is 689 ms across 300+ queries — the dominant cost. Killing the nested N+1 is the leverage, not template tuning." },
+    { label: "Only one N+1 level — add includes(:tasks).", misconception: "There are two levels: tasks per project AND comments per task. includes(:tasks) alone leaves the ~245 comment queries; you need includes(tasks: :comments)." },
+  ]}
+/>
+
+## Snippet 4 — the fan-out handler
+
+```javascript
+const user   = await userService.get(id);    // 30 ms
+const posts  = await postsService.get(id);    // 30 ms
+const notifs = await notifService.get(id);    // 30 ms
+const billing = await billingService.get(id); // 30 ms
+return assemble(user, posts, notifs, billing);
+```
+
+<Quiz
+  id="05-n-plus-one-code-4"
+  lessonSlug="05-n-plus-one"
+  lang="en"
+  question="These four service calls are independent (none consumes another's result). What is the wall-clock now, and the fix?"
+  choices={[
+    { label: "~120 ms — four serial 30 ms round-trips. Since they are independent, dispatch them concurrently with Promise.all (errgroup / asyncio.gather); wall-clock becomes max(latencies) ≈ 30 ms plus small coordination overhead.", correct: true },
+    { label: "~30 ms already — await runs them in parallel.", misconception: "Sequential await blocks each call until the previous resolves. They run serially at ~120 ms; you must dispatch them together with Promise.all to overlap." },
+    { label: "~120 ms, and the fix is to batch them into one query.", misconception: "These are four different services with no shared backend to batch against. The fix for independent remote calls is parallel dispatch, not query batching." },
+    { label: "~120 ms — switch each call to a faster protocol.", misconception: "Protocol speed gives an incremental win; the calls remain serial. Parallelising collapses sum(latencies) into max(latencies), the structural fix." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every N+1 is read in code or logs: a lazy relation inside a loop is 1+N queries fixed by eager loading; a DataLoader batch function must return results positionally aligned to its input ids; a query log with repeated similar SELECTs reveals nested N+1 levels fixed by nested preload; and independent serial service calls collapse from sum to max via parallel dispatch. Count the round-trips first, match the fix to the data shape, then re-read the log to confirm the count dropped.
 </Recap>
-

@@ -1,42 +1,140 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- allocation-hotspot
+- false-sharing
+- perf-counters
+- ipc
+- native-bridge
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Горячие пути: диагностика, формы и исправления"'
-title: Кодировочный тест
+- https://www.brendangregg.com/usemethod.html
+- https://easyperf.net/blog/2019/02/09/Top-Down-performance-analysis-methodology
+- https://github.com/google/pprof/blob/main/doc/README.md
+status: ready
+summary: Читай реальные Go-сниппеты, блок perf stat и горячий путь N-API; предскажи форму hotspot'а по уликам перед тобой и выбери фикс с наибольшим рычагом.
+title: 'Горячие пути: чтение кода и счётчиков'
 track: performance
 unit: 02-hot-paths
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Горячие пути: диагностика, формы и исправления unit.
+Форма hotspot'а живёт в коде и счётчиках, а не в ширине фрейма на flame graph. Читай каждый сниппет, классифицируй его в одну из форм юнита и выбирай фикс, который senior-инженер сделал бы первым — прежде чем трогать ручку тюнинга или библиотеку.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Горячие пути: диагностика, формы и исправления unit.
+Отработай цикл, который ты запускаешь в каждом инциденте: прочитай горячий путь, реши, какая это форма, по уликам перед тобой (код, perf stat, профиль), и тянись к подходящему семейству фиксов вместо угадывания.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — построение по строкам
+
+```go
+func renderCSV(rows []Row) string {
+    out := ""                                 // пустая строка
+    for _, r := range rows {
+        out += fmt.Sprintf("%d,%s\n", r.ID, r.Name)  // Sprintf + конкатенация на каждую строку
+    }
+    return out
+}
+```
+
+<Quiz
+  id="02-hot-paths-code-1"
+  lessonSlug="02-hot-paths"
+  lang="ru"
+  question="renderCSV показывает 30% self-time на 200k строк, и рядом широки GC-фреймы (mallocgc). Какая это форма и каков единственный фикс с наибольшим рычагом?"
+  choices={[
+    { label: "Allocation-bound. Каждый += копирует всю растущую строку в новый буфер (квадратичная аллокация), а fmt.Sprintf аллоцирует новую строку на каждую строку данных. Фикс: строй в преаллоцированный strings.Builder / bytes.Buffer и замени Sprintf на strconv+append.", correct: true },
+    { label: "CPU-bound — цикл делает реальную работу, так что фикс — лучший алгоритм.", misconception: "Работа — это аллокация и копирование, что подтверждают широкие GC-фреймы. 'Лучший алгоритм' над той же конкатенацией строк всё равно реаллоцирует на каждой итерации." },
+    { label: "Подними GOGC, чтобы цикл меньше аллоцировал.", misconception: "GOGC меняет, когда запускается GC, а не сколько аллоцирует цикл. Фикс — аллоцировать меньше: преаллоцируй буфер и прекрати конкатенировать неизменяемые строки." },
+    { label: "Cache-bound — растущая строка вымывает кеш.", misconception: "Сигнатура здесь — широкие GC-фреймы, а не низкий IPC с высоким miss rate. Это давление аллокаций, диагностируемое по alloc-профилю, а не проблема раскладки памяти." },
+  ]}
+/>
+
+## Сниппет 2 — общая линия счётчиков
+
+```go
+type Stats struct {
+    hits   uint64
+    misses uint64   // соседнее поле — та же 64-байтная кеш-линия, что и hits
+}
+var s Stats
+
+// горутина A, горячий цикл:   atomic.AddUint64(&s.hits, 1)
+// горутина B, горячий цикл:   atomic.AddUint64(&s.misses, 1)
+```
+
+<Quiz
+  id="02-hot-paths-code-2"
+  lessonSlug="02-hot-paths"
+  lang="ru"
+  question="Под нагрузкой оба atomic add показываются широко в CPU-профиле с IPC ~0.4 и cache-miss rate 70%+, и хуже с ростом числа ядер. Что происходит и каков фикс?"
+  choices={[
+    { label: "False sharing: hits и misses лежат на одной 64-байтной линии, поэтому atomic-запись каждого ядра инвалидирует кешированную копию другого через MESI — записи сериализуются, как будто стоит лок. Фикс: разнеси два счётчика на разные кеш-линии паддингом (или пер-CPU шардированные счётчики, суммируемые при чтении).", correct: true },
+    { label: "Настоящий lock contention на атомиках — переходи на sync.Mutex.", misconception: "Здесь нет лока, и mutex был бы медленнее. Сигнатура обвала IPC + высокий miss rate + ухудшение с ядрами — это баунсинг кеш-линий, а не блокировка планировщика." },
+    { label: "Структура слишком велика для кеша — уменьши поля.", misconception: "Два uint64 — это 16 байт; размер не проблема. Проблема — два независимо пишущихся поля делят одну единицу когерентности (64-байтную линию)." },
+    { label: "Allocation-bound — пуль структуру Stats.", misconception: "Stats — единственный глобал; в горячем цикле ничего не аллоцируется. Стоимость — трафик когерентности на записи, а не GC." },
+  ]}
+/>
+
+## Сниппет 3 — блок perf stat
+
+```
+# perf stat -e cycles,instructions,cache-misses,LLC-load-misses ./svc --bench score
+   8,400,000,000  cycles
+   3,360,000,000  instructions     #  0.40 insns per cycle (IPC)
+     900,000,000  cache-misses     # 10.7% от всех обращений к памяти
+     700,000,000  LLC-load-misses  # 78% cache miss'ов также мимо L3 → DRAM
+# горячий лист с flame graph: score_embeddings()  — 42% self-time
+```
+
+<Quiz
+  id="02-hot-paths-code-3"
+  lessonSlug="02-hot-paths"
+  lang="ru"
+  question="Читая этот блок perf stat для score_embeddings, какое утверждение верно?"
+  choices={[
+    { label: "IPC 0.40 с 78% miss'ов, доходящих до DRAM, — это сигнатура TMA Back-End → Memory → DRAM-Bound: CPU стопорит в ожидании RAM, а не исполняет алгоритм. Семейство фиксов — раскладка данных (AoS→SoA, чтобы оцениваемые поля были непрерывными), а не переписывание алгоритма.", correct: true },
+    { label: "IPC 0.40 означает, что алгоритм неэффективен — переписывай математику скоринга.", misconception: "Низкий IPC означает, что CPU стопорит, а не занят. Переписывание математики, трогающей ту же разбросанную память, сохраняет те же DRAM-стопоры; узкое место — паттерн доступа, не арифметика." },
+    { label: "42% self-time означают, что это CPU-bound по определению.", misconception: "Self-time — это доля сэмплов; он не говорит, ретайрили ли эти циклы инструкции или стопорили. Счётчики показывают стопор — memory-bound — несмотря на широкий CPU-фрейм." },
+    { label: "Cache-miss rate 10.7% здоров, так что всё в порядке.", misconception: "10.7% всех обращений мимо, с 78% из них доходящими до DRAM, плюс IPC 0.40 — это противоположность здоровому: определяющий паттерн memory-bound стопора." },
+  ]}
+/>
+
+## Сниппет 4 — нативный мост
+
+```js
+// Node-сервис, вызывается ~10 000 раз/секунду
+function hashAll(items) {
+  return items.map(item => nativeHmac(item))  // одно пересечение N-API на элемент
+}
+// nativeHmac (Rust): ~40 нс реальной работы
+// накладные N-API stub: ~160 нс на пересечение
+// CPU-профиль: 40% в napi_call_function, 8% в Rust HMAC
+```
+
+<Quiz
+  id="02-hot-paths-code-4"
+  lessonSlug="02-hot-paths"
+  lang="ru"
+  question="Нативный HMAC быстр (40 нс), но N-API stub (160 нс) доминирует в CPU-профиле. Каков диагноз и правильный фикс?"
+  choices={[
+    { label: "Накладные нативного моста: фиксированная цена пересечения затмевает дешёвый нативный вызов, поэтому stub шире функции, которую он зовёт. Фикс: батчинг — передай весь слайс одним пересечением и цикль внутри Rust, амортизируя 160 нс на N элементов (например /64 ≈ 2.5 нс на каждый).", correct: true },
+    { label: "Перепиши HMAC на JavaScript, чтобы убрать мост целиком.", misconception: "Rust-рутина существует ради скорости/безопасности; переписывание на JS убирает эту ценность и обычно медленнее. Диагноз — накладные пересечения, чинятся батчингом, а не удалением нативного кода." },
+    { label: "Используй worker threads, чтобы распараллелить вызовы N-API.", misconception: "Конкуррентность поднимает совокупную пропускную способность, но каждый вызов всё равно платит полные 160 нс пересечения. Пер-элементные накладные не меняются; только батчинг сокращает пересечения на единицу работы." },
+    { label: "Это CPU-bound в крипте — оптимизируй HMAC.", misconception: "Крипта — лишь 8% CPU; stub — 40%. Оптимизация функции, которая уже дешева относительно моста, — неверная цель." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждая форма читается по уликам перед тобой, а не только по ширине фрейма: широкие GC-фреймы + Sprintf/конкатенация на итерацию — это allocation-bound (строй в преаллоцированный буфер); IPC ~0.4 с высоким miss rate плюс ухудшение с ядрами на соседних atomic-полях — это false sharing (разнеси на разные кеш-линии); IPC 0.4 с DRAM-доминирующими miss'ами — это memory-bound (раскладка данных, AoS→SoA); а stub моста шире своего дешёвого нативного callee — это накладные FFI (батчь на пересечение). Сначала классифицируй, чини подходящую причину, затем перепрофилируй для подтверждения.
 </Recap>
-

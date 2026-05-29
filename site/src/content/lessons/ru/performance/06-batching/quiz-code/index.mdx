@@ -1,43 +1,132 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- kafka-producer-config
+- bufio-window
+- split-and-retry
+- gctrace-batch-metrics
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Кодировочный тест for unit "Batching: амортизируй фиксированную цену каждой
-  операции"'
-title: Кодировочный тест
+- https://kafka.apache.org/documentation/#producerconfigs_batch.size
+- https://docs.aws.amazon.com/lambda/latest/dg/services-kinesis-batchfailurereporting.html
+status: ready
+summary: Читай реальные конфиги продьюсера, окно buffered-writer в Go, цикл split-and-retry и строку метрик батчера; предскажи поведение и выбери фикс с максимальным рычагом.
+title: 'Batching: чтение кода и конфига'
 track: performance
 unit: 06-batching
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Batching: амортизируй фиксированную цену каждой операции unit.
+Баги батчинга прячутся в дефолтах конфига, в отсутствующем таймере и в слишком ретивом ретрае. Читай код и метрики, затем выбери фикс, который senior делает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Batching: амортизируй фиксированную цену каждой операции unit.
+Отрепетируй цикл, который ты гоняешь на каждом пути батчинга: прочитай конфиг или горячий цикл, предскажи, какой триггер срабатывает и что ломается, и тянись к фиксу с максимальным рычагом раньше всего прочего.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — конфиг продьюсера Kafka
+
+```properties
+linger.ms=0
+batch.size=16384
+compression.type=zstd
+acks=all
+```
+
+<Quiz
+  id="06-batching-code-1"
+  lessonSlug="06-batching"
+  lang="ru"
+  question="Продьюсер на этом конфиге выдаёт сильно ниже ёмкости кластера, пока брокеры скучают. compression.type уже zstd. Какова доминирующая проблема и первый фикс?"
+  choices={[
+    { label: "linger.ms=0 отправляет крошечные батчи под ровной нагрузкой, так что cap batch.size никогда не достигается, а zstd почти нечего сжимать. Подними linger.ms до 5–100 мс и batch.size до 64–512 КБ, чтобы батчи реально наполнялись — тогда и компрессия заработает.", correct: true },
+    { label: "acks=all — bottleneck; опусти до acks=1, чтобы не ждать репликацию.", misconception: "acks=all добавляет latency репликации на запрос, но при linger.ms=0 реальный cap — крошечные батчи: ты шлёшь куда больше запросов, чем нужно. Сначала чини батчинг; ослабляй acks, только если durability позволяет и всё ещё медленно." },
+    { label: "zstd слишком CPU-тяжёлый; переключись на lz4, чтобы поднять throughput.", misconception: "Выбор кодека — твик второго порядка. При linger.ms=0 кодек едва работает на почти пустых батчах — проблема в пустых батчах, а не в том, какой кодек их сжимает." },
+    { label: "batch.size=16384 слишком велик и блокирует отправки; уменьши его.", misconception: "16 КБ — дефолт и редко бывает слишком велик, а меньший cap делает батчи ещё мельче, ухудшая throughput. Продьюсер всё равно не наполняет 16 КБ, потому что linger.ms=0 сбрасывает раньше." },
+  ]}
+/>
+
+## Сниппет 2 — buffered writer в Go
+
+```go
+func newBatcher(w io.Writer) *bufio.Writer {
+    return bufio.NewWriterSize(w, 64*1024) // буфер 64 КБ
+}
+
+// горячий путь: многие горутины зовут это
+func emit(bw *bufio.Writer, rec []byte) error {
+    _, err := bw.Write(rec)        // буферизует; сбрасывает только при заполнении
+    return err
+}
+```
+
+<Quiz
+  id="06-batching-code-2"
+  lessonSlug="06-batching"
+  lang="ru"
+  question="Этот батчер отлично работает под нагрузкой, но его tail latency взрывается, когда ночью трафик падает. Чего не хватает и почему симптом появляется только при низкой нагрузке?"
+  choices={[
+    { label: "Есть только триггер size (буфер 64 КБ) и нет таймера max-wait. При низкой нагрузке буфер никогда не наполняется, и запись может лежать несброшенной неограниченно — head-of-line stall. Добавь time.Ticker, вызывающий bw.Flush() по max-wait, дав окно size-or-time.", correct: true },
+    { label: "bufio.Writer не безопасен для конкурентных горутин; добавь мьютекс.", misconception: "Это реальная проблема корректности (bufio.Writer не goroutine-safe), но не то, что взрывает tail latency при низкой нагрузке. Причина описанного stall — отсутствующий таймер max-wait." },
+    { label: "Буфер 64 КБ слишком мал; увеличь его, чтобы сбросы были реже.", misconception: "Больший буфер делает low-load stall хуже — его дольше наполнять. Фикс — таймер, сбрасывающий частичный буфер, а не больший size-cap." },
+    { label: "Write должно быть WriteString, чтобы избежать аллокации.", misconception: "Микрооптимизация, не связанная с обрывом latency. Структурный дефект — отсутствие сброса по max-wait, что и кусается, когда триггер size не может сработать." },
+  ]}
+/>
+
+## Сниппет 3 — цикл ретрая консьюмера
+
+```go
+func process(batch []Record) error {
+    for _, r := range batch {
+        if err := handle(r); err != nil {
+            return err            // прервать весь батч, будет повторён
+        }
+    }
+    return commitOffsets(batch)
+}
+```
+
+<Quiz
+  id="06-batching-code-3"
+  lessonSlug="06-batching"
+  lang="ru"
+  question="Одна запись в батче необратимо повреждена (handle всегда на ней ошибается). Фреймворк ретраит process(batch) на любую возвращённую ошибку. Что произойдёт и какова правильная структура?"
+  choices={[
+    { label: "Poison-message stall: плохая запись ошибается на каждом ретрае, commitOffsets никогда не выполняется, offset не продвигается, и лаг консьюмера растёт без границы за одной записью. Замени abort-whole-batch на split-and-retry — бисекцией изолируй poison-элемент за O(log N), отправь в dead-letter, закоммить остальные.", correct: true },
+    { label: "Хорошие записи до сбоя закоммичены, так что ретраится только хвост.", misconception: "commitOffsets выполняется только после успешного завершения цикла; ранний return не коммитит ничего. Каждый ретрай переобрабатывает весь батч и снова бьёт poison-запись." },
+    { label: "После достаточного числа ретраев фреймворк сдаётся и автоматически скипает весь батч.", misconception: "Скип всего батча (если бы он вообще был) выбросил бы каждую хорошую запись ради сброса одной плохой — потеря данных. Правильный механизм — per-item-изоляция через split-and-retry плюс DLQ, а не сплошной скип." },
+    { label: "Всё норм — handle надо просто сделать идемпотентным, чтобы ретраи были безопасны.", misconception: "Idempotency делает повторы безопасными, но запись всё равно ошибается вечно, так что offset всё равно не продвигается. Idempotency не ломает poison-message stall; это делает failure isolation." },
+  ]}
+/>
+
+## Сниппет 4 — строка метрик батчера
+
+```
+batch.flush reason=timer size=120/4096 recs wait_ms=20.0 depth=12% drops=0
+```
+
+<Quiz
+  id="06-batching-code-4"
+  lessonSlug="06-batching"
+  lang="ru"
+  question="Читая одну эту строку метрик батчера, какое утверждение верно?"
+  choices={[
+    { label: "Сброс сработал по таймеру (reason=timer), батч далеко ниже своего record-cap (120/4096) ровно на max-wait 20 мс — значит это лёгкая, time-dominant нагрузка: окно плохо амортизирует, но depth и drops здоровы, так что backpressure нет.", correct: true },
+    { label: "drops=0 и depth=12% доказывают, что батчер сконфигурирован неверно и теряет данные.", misconception: "Наоборот: drops=0 значит данные не теряются, а 12% depth значит буфер почти пуст — оба сигнала здоровы. Единственная лёгкая забота — недозаполненный батч по таймеру." },
+    { label: "size=120/4096 значит, что батч переполнил свой cap 4096 и был усечён.", misconception: "120/4096 — использовано записей из cap: батч держит 120 из возможных 4096, т.е. заполнен на 3%, противоположность переполнению." },
+    { label: "wait_ms=20.0 — проблема, и его надо урезать, чтобы снизить CPU.", misconception: "20 мс — настроенный max-wait, и это latency-налог, а не цена CPU. Урезать ли его — зависит от SLO и от того, наполняются ли батчи; здесь они недозаполнены, так что урезание wait лишь сделает батчи ещё мельче." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Batching читается в конфиге и коде: linger.ms=0 морит батчи голодом и кастрирует компрессию при любом кодеке; size-only-буфер нуждается в таймере max-wait, иначе встаёт при низкой нагрузке; abort-whole-batch-ретрай на необратимой ошибке — poison-message stall, который решают split-and-retry плюс DLQ; а строка метрик батчера сразу говорит reason сброса, долю заполнения, wait, depth и drops — depth и drops ведут, throughput отстаёт. Диагностируй по сигналу, чини причину с максимальным рычагом, затем переизмеряй.
 </Recap>
-

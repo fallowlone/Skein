@@ -1,42 +1,140 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- allocation-hotspot
+- false-sharing
+- perf-counters
+- ipc
+- native-bridge
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Hot paths: diagnosis, shapes, and fixes"'
-title: Coding Quiz
+- https://www.brendangregg.com/usemethod.html
+- https://easyperf.net/blog/2019/02/09/Top-Down-performance-analysis-methodology
+- https://github.com/google/pprof/blob/main/doc/README.md
+status: ready
+summary: Read real Go snippets, a perf stat block, and an N-API hot path; predict the hotspot shape from the evidence and pick the highest-leverage fix.
+title: 'Hot paths: code and counter reading'
 track: performance
 unit: 02-hot-paths
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Hot paths: diagnosis, shapes, and fixes unit.
+The shape of a hotspot lives in the code and the counters, not in the flame graph's width. Read each snippet, classify it into one of the unit's shapes, and pick the fix a senior engineer would make first — before touching a tuning knob or a library.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Hot paths: diagnosis, shapes, and fixes unit.
+Practise the loop you run in every incident: read the hot path, decide which of the shapes it is from the evidence in front of you (code, perf stat, profile), and reach for the matching fix family instead of guessing.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the per-row build
+
+```go
+func renderCSV(rows []Row) string {
+    out := ""                                 // empty string
+    for _, r := range rows {
+        out += fmt.Sprintf("%d,%s\n", r.ID, r.Name)  // Sprintf + concat each row
+    }
+    return out
+}
+```
+
+<Quiz
+  id="02-hot-paths-code-1"
+  lessonSlug="02-hot-paths"
+  lang="en"
+  question="renderCSV shows 30% self-time on 200k rows and GC frames (mallocgc) are wide nearby. What is the shape, and what is the single highest-leverage fix?"
+  choices={[
+    { label: "Allocation-bound. Each += copies the whole growing string into a new buffer (quadratic allocation), and fmt.Sprintf allocates a fresh string per row. Fix: build into a pre-sized strings.Builder / bytes.Buffer and drop Sprintf for strconv+append.", correct: true },
+    { label: "CPU-bound — the loop does real work, so a better algorithm is the fix.", misconception: "The work is allocation and copying, confirmed by the wide GC frames. A 'better algorithm' over the same string concatenation still reallocates on every iteration." },
+    { label: "Raise GOGC so the loop allocates less.", misconception: "GOGC changes when GC runs, not how much the loop allocates. The fix is to allocate less — pre-size the buffer and stop concatenating immutable strings." },
+    { label: "Cache-bound — the growing string thrashes the cache.", misconception: "The signature here is wide GC frames, not low IPC with high miss rate. This is allocation pressure, diagnosed from the alloc profile, not a memory-layout problem." },
+  ]}
+/>
+
+## Snippet 2 — the shared counter line
+
+```go
+type Stats struct {
+    hits   uint64
+    misses uint64   // adjacent field — same 64-byte cache line as hits
+}
+var s Stats
+
+// goroutine A, hot loop:   atomic.AddUint64(&s.hits, 1)
+// goroutine B, hot loop:   atomic.AddUint64(&s.misses, 1)
+```
+
+<Quiz
+  id="02-hot-paths-code-2"
+  lessonSlug="02-hot-paths"
+  lang="en"
+  question="Under load, both atomic adds show wide in the CPU profile with IPC ~0.4 and a 70%+ cache-miss rate, getting worse with more cores. What is happening and what is the fix?"
+  choices={[
+    { label: "False sharing: hits and misses sit on the same 64-byte line, so each core's atomic write invalidates the other's cached copy via MESI — the writes serialise as if locked. Fix: separate the two counters onto distinct cache lines with padding (or per-CPU sharded counters summed on read).", correct: true },
+    { label: "True lock contention on the atomics — switch to a sync.Mutex.", misconception: "There is no lock here and a mutex would be slower. The IPC collapse + high miss rate + worsening-with-cores signature is cache-line bouncing, not scheduler blocking." },
+    { label: "The struct is too big for cache — shrink the fields.", misconception: "Two uint64 is 16 bytes; size is not the issue. The issue is two independently-written fields sharing one coherency unit (the 64-byte line)." },
+    { label: "Allocation-bound — pool the Stats struct.", misconception: "Stats is a single global; nothing is being allocated in the hot loop. The cost is coherency traffic on writes, not GC." },
+  ]}
+/>
+
+## Snippet 3 — the perf stat block
+
+```
+# perf stat -e cycles,instructions,cache-misses,LLC-load-misses ./svc --bench score
+   8,400,000,000  cycles
+   3,360,000,000  instructions     #  0.40 insns per cycle (IPC)
+     900,000,000  cache-misses     # 10.7% of all memory refs
+     700,000,000  LLC-load-misses  # 78% of cache misses also miss L3 → DRAM
+# hot leaf from flame graph: score_embeddings()  — 42% self-time
+```
+
+<Quiz
+  id="02-hot-paths-code-3"
+  lessonSlug="02-hot-paths"
+  lang="en"
+  question="Reading this perf stat block for score_embeddings, which statement is correct?"
+  choices={[
+    { label: "IPC 0.40 with 78% of misses reaching DRAM is the TMA Back-End → Memory → DRAM-Bound signature: the CPU is stalled waiting on RAM, not executing the algorithm. Fix family is data layout (AoS→SoA so the scored fields are contiguous), not an algorithmic rewrite.", correct: true },
+    { label: "IPC 0.40 means the algorithm is inefficient — rewrite the scoring math.", misconception: "Low IPC means the CPU is stalled, not busy. Rewriting math that touches the same scattered memory keeps the same DRAM stalls; the bottleneck is access pattern, not arithmetic." },
+    { label: "42% self-time means it is CPU-bound by definition.", misconception: "Self-time is share of samples; it does not say whether those cycles retired instructions or stalled. The counters show stalling — memory-bound — despite the wide CPU frame." },
+    { label: "The 10.7% cache-miss rate is healthy, so this is fine.", misconception: "10.7% of all refs missing, with 78% of those reaching DRAM, plus IPC 0.40, is the opposite of healthy — it is the defining memory-bound stall pattern." },
+  ]}
+/>
+
+## Snippet 4 — the native bridge
+
+```js
+// Node service, called ~10,000 times/second
+function hashAll(items) {
+  return items.map(item => nativeHmac(item))  // one N-API crossing per item
+}
+// nativeHmac (Rust): ~40 ns of actual work
+// N-API stub overhead: ~160 ns per crossing
+// CPU profile: 40% in napi_call_function, 8% in the Rust HMAC
+```
+
+<Quiz
+  id="02-hot-paths-code-4"
+  lessonSlug="02-hot-paths"
+  lang="en"
+  question="The native HMAC is fast (40 ns) but the N-API stub (160 ns) dominates the CPU profile. What is the diagnosis and the right fix?"
+  choices={[
+    { label: "Native-bridge overhead: the fixed per-crossing cost dwarfs the cheap native call, so the stub is wider than the function it calls. Fix: batch — pass the whole slice in one crossing and loop inside Rust, amortising 160 ns over N items (e.g. /64 ≈ 2.5 ns each).", correct: true },
+    { label: "Rewrite the HMAC in JavaScript to remove the bridge entirely.", misconception: "The Rust routine exists for speed/safety; rewriting it in JS removes that value and is usually slower. The diagnosis is crossing overhead, fixed by batching, not by deleting the native code." },
+    { label: "Use worker threads to parallelise the N-API calls.", misconception: "Concurrency raises aggregate throughput but each call still pays the full 160 ns crossing. Per-item overhead is unchanged; only batching reduces crossings per unit of work." },
+    { label: "It is CPU-bound in the crypto — optimise the HMAC.", misconception: "The crypto is only 8% of CPU; the stub is 40%. Optimising a function that is already cheap relative to the bridge is the wrong target." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every shape is read from the evidence in front of you, not the flame-graph width alone: wide GC frames + per-iteration Sprintf/concat is allocation-bound (build into a pre-sized buffer); IPC ~0.4 with high miss rate plus worsening-with-cores on adjacent atomic fields is false sharing (pad to separate cache lines); IPC 0.4 with DRAM-dominated misses is memory-bound (data layout, AoS→SoA); and a bridge stub wider than its cheap native callee is FFI overhead (batch per crossing). Classify first, fix the matching cause, then re-profile to confirm.
 </Recap>
-

@@ -1,42 +1,132 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- kafka-producer-config
+- bufio-window
+- split-and-retry
+- gctrace-batch-metrics
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Batching: amortize fixed cost per operation"'
-title: Coding Quiz
+- https://kafka.apache.org/documentation/#producerconfigs_batch.size
+- https://docs.aws.amazon.com/lambda/latest/dg/services-kinesis-batchfailurereporting.html
+status: ready
+summary: Read real producer configs, a Go buffered-writer window, a split-and-retry loop, and a batcher metrics line; predict the behaviour and pick the highest-leverage fix.
+title: 'Batching: code and config reading'
 track: performance
 unit: 06-batching
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Batching: amortize fixed cost per operation unit.
+Batching bugs hide in config defaults, a missing timer, and an over-eager retry. Read the code and the metrics, then choose the fix a senior makes first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Batching: amortize fixed cost per operation unit.
+Practise the loop you run on every batching path: read the config or hot loop, predict which trigger fires and what breaks, and reach for the highest-leverage fix before touching anything else.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the Kafka producer config
+
+```properties
+linger.ms=0
+batch.size=16384
+compression.type=zstd
+acks=all
+```
+
+<Quiz
+  id="06-batching-code-1"
+  lessonSlug="06-batching"
+  lang="en"
+  question="A producer on this config pushes well below the cluster's capacity while brokers idle. compression.type is already zstd. What is the dominant problem and the first fix?"
+  choices={[
+    { label: "linger.ms=0 ships tiny batches under steady load, so the batch.size cap is never approached and zstd has almost no repetition to compress. Raise linger.ms to 5–100 ms and batch.size to 64–512 KB so batches actually fill — then compression bites too.", correct: true },
+    { label: "acks=all is the bottleneck; drop to acks=1 to stop waiting on replication.", misconception: "acks=all adds replication latency per request, but with linger.ms=0 the real cap is tiny batches — you're sending far more requests than needed. Fix the batching first; relax acks only if durability allows and it's still slow." },
+    { label: "zstd is too CPU-heavy; switch to lz4 to raise throughput.", misconception: "Codec choice is a second-order tweak. With linger.ms=0 the codec barely runs on near-empty batches — the problem is empty batches, not which codec compresses them." },
+    { label: "batch.size=16384 is too large and is blocking sends; lower it.", misconception: "16 KB is the default and is rarely too large — and a smaller cap makes batches even tinier, worsening throughput. The producer isn't filling 16 KB anyway because linger.ms=0 flushes first." },
+  ]}
+/>
+
+## Snippet 2 — the Go buffered writer
+
+```go
+func newBatcher(w io.Writer) *bufio.Writer {
+    return bufio.NewWriterSize(w, 64*1024) // 64 KB buffer
+}
+
+// hot path: many goroutines call this
+func emit(bw *bufio.Writer, rec []byte) error {
+    _, err := bw.Write(rec)        // buffers; flushes only when full
+    return err
+}
+```
+
+<Quiz
+  id="06-batching-code-2"
+  lessonSlug="06-batching"
+  lang="en"
+  question="This batcher works great under load but its tail latency explodes when traffic drops overnight. What is missing, and why does the symptom appear only at low load?"
+  choices={[
+    { label: "There is only a size trigger (the 64 KB buffer) and no max-wait timer. Under low load the buffer never fills, so a record can sit unflushed indefinitely — a head-of-line stall. Add a time.Ticker that calls bw.Flush() on a max-wait, giving the size-or-time window.", correct: true },
+    { label: "bufio.Writer is not safe for concurrent goroutines; add a mutex.", misconception: "That's a real concern for correctness (bufio.Writer isn't goroutine-safe), but it's not what makes tail latency explode at low load. The missing max-wait timer is the cause of the stall described." },
+    { label: "The 64 KB buffer is too small; enlarge it so flushes are less frequent.", misconception: "A larger buffer makes the low-load stall worse — it takes even longer to fill. The fix is a timer that flushes a partial buffer, not a bigger size cap." },
+    { label: "Write should be WriteString to avoid an allocation.", misconception: "A micro-optimization unrelated to the latency cliff. The structural defect is the absence of a max-wait flush, which is exactly what bites when the size trigger can't fire." },
+  ]}
+/>
+
+## Snippet 3 — the consumer retry loop
+
+```go
+func process(batch []Record) error {
+    for _, r := range batch {
+        if err := handle(r); err != nil {
+            return err            // abort whole batch, will be retried
+        }
+    }
+    return commitOffsets(batch)
+}
+```
+
+<Quiz
+  id="06-batching-code-3"
+  lessonSlug="06-batching"
+  lang="en"
+  question="One record in the batch is permanently malformed (handle always errors on it). The framework retries process(batch) on any returned error. What happens, and what is the right structure?"
+  choices={[
+    { label: "A poison-message stall: the bad record errors every retry, so commitOffsets never runs, the offset never advances, and consumer lag climbs without bound behind one record. Replace abort-whole-batch with split-and-retry — bisect to isolate the poison item in O(log N), dead-letter it, commit the rest.", correct: true },
+    { label: "The good records before the failure are committed, so only the tail is retried.", misconception: "commitOffsets runs only after the loop completes successfully; an early return commits nothing. Every retry reprocesses the whole batch and re-hits the poison record." },
+    { label: "After enough retries the framework gives up and skips the whole batch automatically.", misconception: "Skipping the whole batch (if it even did) would discard every good record to drop one bad one — data loss. The correct mechanism is per-item isolation via split-and-retry plus a DLQ, not blanket skip." },
+    { label: "It's fine — handle should just be made idempotent so retries are safe.", misconception: "Idempotency makes retries safe to repeat, but the record still errors forever, so the offset still never advances. Idempotency doesn't break a poison-message stall; failure isolation does." },
+  ]}
+/>
+
+## Snippet 4 — the batcher metrics line
+
+```
+batch.flush reason=timer size=120/4096 recs wait_ms=20.0 depth=12% drops=0
+```
+
+<Quiz
+  id="06-batching-code-4"
+  lessonSlug="06-batching"
+  lang="en"
+  question="Reading this single batcher metrics line, which statement is correct?"
+  choices={[
+    { label: "The flush fired on the timer (reason=timer) with the batch far below its record cap (120/4096) at exactly the 20 ms max-wait — so this is light, time-dominant load: the window isn't amortizing well, but depth and drops are healthy, so there's no backpressure.", correct: true },
+    { label: "drops=0 and depth=12% prove the batcher is misconfigured and losing data.", misconception: "Backwards: drops=0 means no data lost, and 12% depth means the buffer is mostly empty — both are the healthy signals. The only mild concern is the timer-bound, under-full batch." },
+    { label: "size=120/4096 means the batch overflowed its 4096 cap and was truncated.", misconception: "120/4096 is records-used over the cap — the batch holds 120 of a possible 4096, i.e. it's 3% full, the opposite of overflow." },
+    { label: "wait_ms=20.0 is the problem and should be cut to reduce CPU.", misconception: "20 ms is the configured max-wait, and it's the latency tax, not a CPU cost. Whether to shrink it depends on the SLO and whether batches are filling — here they're under-full, so shrinking the wait just makes batches even smaller." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Batching is read in config and code: linger.ms=0 starves batches and neuters compression no matter the codec; a size-only buffer needs a max-wait timer or it stalls at low load; abort-whole-batch retry on a permanent error is a poison-message stall that split-and-retry plus a DLQ resolves; and a batcher metrics line tells you the flush reason, fill ratio, wait, depth, and drops at a glance — depth and drops lead, throughput lags. Diagnose from the signal, fix the highest-leverage cause, then re-measure.
 </Recap>
-
