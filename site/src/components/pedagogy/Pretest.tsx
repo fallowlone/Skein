@@ -1,5 +1,5 @@
-import { useState } from "preact/hooks";
-import { userState, setPretestResult } from "~/scripts/user-state";
+import { useState, useEffect } from "preact/hooks";
+import { userState, setPretestResult, recordActiveDay } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions, type PretestQuestion } from "~/scripts/pretest-questions";
 import { scoreStage, maxScore, qualifiesForStage2, computeRating, confidenceOf } from "~/scripts/progression/rating";
 import { ratingToRank } from "~/scripts/progression/ranks";
@@ -22,8 +22,12 @@ export default function Pretest({ lang }: Props) {
 
   const bank: PretestQuestion[] = stage === 1 ? pretestQuestions : advancedQuestions;
 
+  useEffect(() => { recordActiveDay(); }, []);
+
   function finalize(s1: number, ans1: number[], s2?: number, ans2?: number[]) {
     const rating = computeRating(s1, s2);
+    const prev = userState.value.pretest;
+    const improved = !!prev && rating > prev.rating;
     const weights1 = ans1.map((c, i) => pretestQuestions[i]?.choices[c]?.weight ?? 0);
     const weights2 = (ans2 ?? []).map((c, i) => advancedQuestions[i]?.choices[c]?.weight ?? 0);
     setPretestResult({
@@ -34,6 +38,10 @@ export default function Pretest({ lang }: Props) {
       rank: ratingToRank(rating).id,
       confidence: confidenceOf([weights1, weights2]),
     });
+    if (improved) {
+      const p = userState.value.progression;
+      userState.value = { ...userState.value, progression: { ...p, achievements: { ...p.achievements, comeback: Date.now() } } };
+    }
     setPhase("done");
   }
 
