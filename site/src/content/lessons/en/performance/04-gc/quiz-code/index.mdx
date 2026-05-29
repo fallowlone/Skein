@@ -1,43 +1,137 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- allocation-hotspot
+- sync-pool
+- gctrace
+- escape-analysis
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: 'Coding Quiz for unit "Garbage collection: pause budgets, allocation pressure,
-  and the tail you don''''''''t see"'
-title: Coding Quiz
+- https://go.dev/doc/gc-guide
+- https://shipilev.net/jvm/anatomy-quarks/
+status: ready
+summary: Read real Go snippets and a gctrace line, predict the GC behaviour, and pick the highest-leverage fix.
+title: 'GC: code and trace reading'
 track: performance
 unit: 04-gc
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Garbage collection: pause budgets, allocation pressure, and the tail you don't see unit.
+The allocation profile and the GC log are where GC problems are actually diagnosed. Read the code and the trace, then choose the fix a senior engineer would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Garbage collection: pause budgets, allocation pressure, and the tail you don't see unit.
+Practise the loop you run in every GC incident: read the hot path, predict where the garbage comes from, and reach for the highest-leverage fix before touching a single tuning knob.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the growing slice
+
+```go
+func collect(rows []Row) []byte {
+    var out []byte                  // nil slice, zero capacity
+    for _, r := range rows {
+        line := fmt.Sprintf("%d,%s\n", r.ID, r.Name)
+        out = append(out, line...)  // repeatedly grows + copies
+    }
+    return out
+}
+```
+
+<Quiz
+  id="04-gc-code-1"
+  lessonSlug="04-gc"
+  lang="en"
+  question="With 100k rows, where does most of the garbage come from, and what is the single highest-leverage fix?"
+  choices={[
+    { label: "Two hotspots: fmt.Sprintf allocates a fresh string per row, and the zero-capacity `out` reallocates as it grows. Pre-size with make([]byte, 0, n*avgLen) and build with strconv/append instead of Sprintf.", correct: true },
+    { label: "The garbage is the input `rows`; copy it less.", misconception: "`rows` is passed in, not allocated here. The garbage is created inside the loop — Sprintf strings and the repeatedly-grown `out` backing array." },
+    { label: "Nothing significant — append reuses the same array.", misconception: "append reuses capacity only while it lasts; a zero-cap slice reallocates (typically doubling) many times over 100k rows, copying everything each time." },
+    { label: "Raise GOGC so the loop allocates less.", misconception: "GOGC changes when GC runs, not how much the loop allocates. The fix is to allocate less: pre-size the buffer and drop Sprintf." },
+  ]}
+/>
+
+## Snippet 2 — the pool
+
+```go
+var bufPool = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func render(w io.Writer, v *View) error {
+    b := bufPool.Get().(*bytes.Buffer)
+    defer bufPool.Put(b)
+    // ... write a lot into b ...
+    _, err := w.Write(b.Bytes())
+    return err
+}
+```
+
+<Quiz
+  id="04-gc-code-2"
+  lessonSlug="04-gc"
+  lang="en"
+  question="This pooled-buffer code has a correctness bug that a load test will eventually expose. What is it?"
+  choices={[
+    { label: "The buffer is returned to the pool without b.Reset(). The next Get() yields a buffer still holding the previous render's bytes, so output gets corrupted with stale data under reuse.", correct: true },
+    { label: "sync.Pool is not safe for concurrent use.", misconception: "sync.Pool is explicitly safe for concurrent Get/Put across goroutines. The bug is hygiene — the buffer is not Reset before reuse." },
+    { label: "defer bufPool.Put runs too early.", misconception: "defer runs at function return, after w.Write completes — the ordering is fine. The missing Reset is the defect." },
+    { label: "new(bytes.Buffer) leaks memory.", misconception: "The New func only runs when the pool is empty, and the GC can drain sync.Pool between cycles. No leak — the issue is stale state on reuse." },
+  ]}
+/>
+
+## Snippet 3 — the gctrace line
+
+```
+gc 488 @62.1s 39%: 0.41+352+1.1 ms clock, ... 1900->2980->1490 MB, 1990 MB goal, 8 P
+```
+
+<Quiz
+  id="04-gc-code-3"
+  lessonSlug="04-gc"
+  lang="en"
+  question="Reading this single gctrace line, which statement is correct?"
+  choices={[
+    { label: "39% of CPU since start has gone to GC and the concurrent-mark phase took 352 ms — both far above a healthy service (~5% GC CPU, sub-ms to low-ms mark). This is a death-spiral signature.", correct: true },
+    { label: "The two stop-the-world phases (0.41 ms and 1.1 ms) are the problem.", misconception: "The STW phases are tiny and healthy. The pathology is the 352 ms concurrent-mark and the 39% GC CPU — the collector can't keep up with allocation." },
+    { label: "The heap is fine because it ends at 1490 MB, below the 1990 MB goal.", misconception: "Ending below goal is normal post-sweep; the alarm is that mark time and GC CPU are exploding, meaning the pacer is losing the race." },
+    { label: "39% means 39% of requests hit a GC pause.", misconception: "The X% field is the fraction of CPU time spent in GC since program start, not a per-request pause rate." },
+  ]}
+/>
+
+## Snippet 4 — escape analysis
+
+```go
+func newPoint(x, y int) *Point {   // returns a pointer...
+    p := Point{x, y}
+    return &p                      // ...so p escapes to the heap
+}
+
+func sumLocal(x, y int) int {
+    p := Point{x, y}               // never escapes
+    return p.X + p.Y               // stays on the stack
+}
+```
+
+<Quiz
+  id="04-gc-code-4"
+  lessonSlug="04-gc"
+  lang="en"
+  question="Which call allocates on the heap (adding GC work), and what is the general rule?"
+  choices={[
+    { label: "newPoint heap-allocates because its result (&p) escapes the function; sumLocal stays on the stack. Rule: a value escapes when a reference to it outlives the frame — returning its address, storing it in a heap object, or passing it to something that retains it.", correct: true },
+    { label: "Both allocate because both create a Point.", misconception: "Stack-allocated values cost no GC work. sumLocal's Point never escapes, so escape analysis keeps it on the stack." },
+    { label: "sumLocal allocates because it does arithmetic.", misconception: "Arithmetic on stack values allocates nothing. It is escape (a reference outliving the frame), not computation, that forces heap allocation." },
+    { label: "Neither allocates — Go always uses the stack.", misconception: "Go uses the stack only when escape analysis proves the value does not escape. Returning &p forces newPoint's Point onto the heap." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every GC incident is read in code and traces: zero-capacity slices and per-iteration Sprintf are classic allocation hotspots; pooled objects must be Reset before reuse; a gctrace line tells you GC CPU share and mark time at a glance; and escape analysis decides stack vs heap based on whether a reference outlives its frame. Diagnose from the profile, fix the allocation, then re-profile to confirm.
 </Recap>
-
