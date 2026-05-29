@@ -327,12 +327,10 @@ one file via `<DrillSet unitKey="algorithms/02-arrays-strings" />`.
 4. (Optional follow-up) route drill status through `user-state.ts` so it syncs to
    the account like learning progress.
 
-## Open question for review
+## Resolved decisions
 
-One decision worth confirming before the plan:
-
-- **Coverage depth** — curate an *essential subset* (~4–7 per unit, ≈60 total; my
-  recommendation — depth, less overwhelm, easier to maintain) **or** mirror the
-  full NeetCode-150 (all 150, comprehensive but heavier to author/maintain and
-  more link-rot surface)? The schema supports either; it only changes how many
-  problems go in each JSON.
+- **Coverage depth (decided 2026-05-29):** curate an **essential subset — ~4–7
+  problems per unit, ≈60 total** across the track. Depth over volume: less
+  overwhelm, tractable to author good bilingual hint ladders, smaller link-rot
+  surface. The schema (`problems` min 3, max 12) already supports this; expanding
+  toward the full NeetCode-150 later is a pure data addition, no schema change.
