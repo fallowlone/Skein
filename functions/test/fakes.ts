@@ -53,7 +53,9 @@ class FakeStmt {
       const p = this.db.progress.get(this.args[0] as number);
       return (p ? { data: p.data } : null) as T | null;
     }
-    return null;
+    // Fail loud: an unrecognized statement means the fake is out of sync with db.ts.
+    // Returning null here would mask real bugs as passing tests.
+    throw new Error(`FakeD1.first: unmatched SQL: ${this.sql}`);
   }
 
   async run(): Promise<{ success: true; meta: { last_row_id: number } }> {
@@ -70,31 +72,38 @@ class FakeStmt {
       const [login, avatar_url, github_id] = this.args as any[];
       const u = this.db.users.find(x => x.github_id === github_id);
       if (u) { u.login = login; u.avatar_url = avatar_url; }
+      return { success: true, meta: { last_row_id: 0 } };
     }
     if (this.sql.startsWith("UPDATE users SET nickname")) {
       const [nickname, id] = this.args as any[];
       const u = this.db.users.find(x => x.id === id);
       if (u) u.nickname = nickname;
+      return { success: true, meta: { last_row_id: 0 } };
     }
     if (this.sql.startsWith("UPDATE users SET terms_version")) {
       const [terms_version, terms_accepted_at, id] = this.args as any[];
       const u = this.db.users.find(x => x.id === id);
       if (u) { u.terms_version = terms_version; u.terms_accepted_at = terms_accepted_at; }
+      return { success: true, meta: { last_row_id: 0 } };
     }
     if (this.sql.startsWith("INSERT INTO progress")) {
       const [user_id, data, updated_at] = this.args as any[];
       this.db.progress.set(user_id, { data, updated_at });
+      return { success: true, meta: { last_row_id: 0 } };
     }
     if (this.sql.startsWith("DELETE FROM progress WHERE user_id")) {
       this.db.progress.delete(this.args[0] as number);
+      return { success: true, meta: { last_row_id: 0 } };
     }
     if (this.sql.startsWith("DELETE FROM users WHERE id")) {
       const id = this.args[0] as number;
       this.db.users = this.db.users.filter(u => u.id !== id);
       this.db.progress.delete(id);
+      return { success: true, meta: { last_row_id: 0 } };
     }
-    if (this.sql.startsWith("PRAGMA")) { /* no-op */ }
-    return { success: true, meta: { last_row_id: 0 } };
+    if (this.sql.startsWith("PRAGMA")) return { success: true, meta: { last_row_id: 0 } };
+    // Fail loud on any statement db.ts issues that the fake doesn't model.
+    throw new Error(`FakeD1.run: unmatched SQL: ${this.sql}`);
   }
   private seqNext(): number { return (this as any).db["seq"]++; }
 }
