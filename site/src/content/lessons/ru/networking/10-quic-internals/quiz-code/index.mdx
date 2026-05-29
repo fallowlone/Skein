@@ -1,42 +1,141 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- stream-id-encoding
+- monotonic-packet-numbers
+- gctrace-reading
+- udp-gso
+- path-validation
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Внутреннее устройство QUIC"
-title: Кодировочный тест
+- https://datatracker.ietf.org/doc/html/rfc9000
+- https://datatracker.ietf.org/doc/html/rfc9002
+status: ready
+summary: "Прочитай реальную логику stream-ID QUIC, трассу пакетов, цикл отправки и раскладку фрейма, затем предскажи поведение и выбери фикс с наибольшим рычагом."
+title: 'QUIC внутри: чтение кода и трасс'
 track: networking
 unit: 10-quic-internals
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Внутреннее устройство QUIC unit.
+Проблемы QUIC диагностируются в логике stream-ID, трассах пакетов и пути отправки. Прочитай каждый сниппет, предскажи поведение и выбери фикс, к которому senior-инженер тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Внутреннее устройство QUIC unit.
+Потренируй чтение QUIC на уровне провода и кода: декодируй stream ID, отличи здоровое рукопожатие от патологического в трассе, найди узкое место по syscall'ам на быстром линке и рассуди о нумерации пакетов при ретрансмите.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — классификация stream-ID
+
+```go
+// Классифицировать QUIC stream ID по инициатору и направленности.
+func classify(id uint64) (initiator string, bidi bool) {
+    if id&0x1 == 0 {
+        initiator = "client"
+    } else {
+        initiator = "server"
+    }
+    bidi = id&0x2 == 0
+    return
+}
+
+// Вызывающий передаёт stream ID, увиденный на проводе:
+i, b := classify(3)
+```
+
+<Quiz
+  id="10-quic-internals-code-1"
+  lessonSlug="10-quic-internals"
+  lang="ru"
+  question="Для stream ID 3 что вернёт classify и какая реальная сущность HTTP/3 использует этот класс stream'а?"
+  choices={[
+    { label: "initiator = 'server', bidi = false — server-initiated unidirectional stream. Младший бит (1) означает server; следующий бит (1) — unidirectional. HTTP/3 использует такие для control-stream'а сервера и stream'ов QPACK encoder/decoder.", correct: true },
+    { label: "initiator = 'client', bidi = true — обычный request-stream HTTP/3.", misconception: "Client-initiated bidirectional stream'ы — это 0, 4, 8, ... (младшие два бита 00). У ID 3 оба младших бита установлены, значит он server-initiated и unidirectional — не request-stream." },
+    { label: "initiator = 'server', bidi = true — серверный push-ответ.", misconception: "Бит 1 у ID 3 установлен, поэтому stream unidirectional, а не bidirectional. Bidi-серверные stream'ы оканчиваются на 01 (1, 5, 9, ...), а не на 11." },
+    { label: "Он невалиден — нечётные stream ID зарезервированы и на проводе не встречаются.", misconception: "Нечётные ID полностью валидны: они server-initiated. Два младших бита кодируют инициатора и направленность, поэтому каждое значение 0..N маппится на реальный класс stream'а." },
+  ]}
+/>
+
+## Сниппет 2 — трасса рукопожатия
+
+```
+t=0.000 dcid=a1b2 type=Initial    pkt=0 frames=[Crypto[0..120], Padding]
+t=0.045 dcid=a1b2 type=Initial    pkt=1 frames=[Crypto[0..120], Padding]   # те же байты CRYPTO переотправлены
+t=0.051 scid=c3d4 type=Initial    pkt=0 frames=[Crypto[0..200], Ack[0]]
+t=0.052 scid=c3d4 type=Handshake  pkt=0 frames=[Crypto[200..360]]
+t=0.101 type=1RTT  pkt=0 frames=[Stream(0, fin, 4096B)]
+```
+
+<Quiz
+  id="10-quic-internals-code-2"
+  lessonSlug="10-quic-internals"
+  lang="ru"
+  question="Клиент переотправляет те же байты CRYPTO ClientHello на t=0.045 как новый пакет (pkt=1), до прихода Ack сервера на t=0.051. Что происходит и дефект ли это?"
+  choices={[
+    { label: "Это PTO (Probe Timeout)-проба, не дефект: таймер сработал (~45 мс) до прихода первого пакета сервера, поэтому клиент переотправил данные рукопожатия новым packet number (pkt=1, не pkt=0). Затем Ack[0] сервера подтверждает оригинал. Монотонные packet number делают поздний Ack однозначным — workaround Karn не нужен. Случайная ложная проба на пути с RTT ~50 мс — норма.", correct: true },
+    { label: "Баг: клиент переиспользовал packet number 0 для ретрансмита, что ломает loss detection.", misconception: "Ретрансмит — это pkt=1, свежий packet number — QUIC никогда не переиспользует packet number при ретрансмите. Именно это убирает Karn-неоднозначность TCP; переиспользование 0 было бы багом, но его тут нет." },
+    { label: "Соединение падает: два Initial без ответа сервера значат, что путь теряет пакеты и таймаутится.", misconception: "Сервер отвечает на t=0.051 пакетом Initial+Ack. Ретрансмит был единичной ложной PTO-пробой за ~6 мс до прихода ответа — здорово для пути в 50 мс round-trip, а не отказ." },
+    { label: "Клиент в неверном packet-number space; Initial и Handshake должны делить один счётчик.", misconception: "Initial и Handshake by design имеют свой packet-number space, поэтому потеря в одном не ужимает окно другого. Трасса показывает корректную пер-space-нумерацию." },
+  ]}
+/>
+
+## Сниппет 3 — цикл отправки
+
+```go
+// Горячий путь: сбросить очередь QUIC-датаграмм в сокет.
+for _, dgram := range batch {        // batch может держать 40+ датаграмм
+    _, err := conn.WriteTo(dgram, peer)  // один syscall sendmsg на датаграмму
+    if err != nil {
+        return err
+    }
+}
+```
+
+<Quiz
+  id="10-quic-internals-code-3"
+  lessonSlug="10-quic-internals"
+  lang="ru"
+  question="При 1 Gbps с датаграммами по 1500 байт этот цикл упирает ядро CPU и goodput рушится, а тот же код нормально работает на мобильном линке 10 Mbps. В чём узкое место и фикс с наибольшим рычагом?"
+  choices={[
+    { label: "Один syscall sendmsg на датаграмму — ~83k syscall/с на ядро при 1 Gbps. На медленном линке сеть насыщается первой, поэтому цена невидима; на быстром первым насыщается CPU. Фикс: батчинг через UDP GSO — отдать ядру до 64 KB с хинтом размера сегмента за один syscall (~3–4 syscall на 64 KB), что по данным Cloudflare срезает ~20% CPU.", correct: true },
+    { label: "WriteTo аллоцирует новый буфер на датаграмму; пуль буферы, чтобы срезать GC-давление.", misconception: "Доминирующая цена тут — пер-датаграммный syscall, а не аллокация. Масштабируемый фикс — батчинг UDP GSO, схлопывающий ~40 syscall'ов в горстку; пулинг буферов — второстепенная подстройка." },
+    { label: "Поиск адреса peer выполняется на каждой итерации; вынеси его из цикла.", misconception: "peer уже loop-invariant-локальная; повторная передача ничего не стоит. Настоящее узкое место — один syscall на датаграмму, который решается GSO segmentation offload." },
+    { label: "Подними GOMAXPROCS, чтобы цикл размазался по большему числу ядер.", misconception: "Добавление ядер откладывает насыщение, но пер-байтовая цена syscall'ов масштабируется с трафиком, поэтому спираль возвращается под нагрузкой. GSO убирает сами syscall'ы — устойчивый фикс." },
+  ]}
+/>
+
+## Сниппет 4 — burst фреймов при миграции
+
+```
+# Взгляд сервера после прихода пакета клиента с НОВОГО source-адреса:
+recv  src=203.0.113.50:55555 dcid=a1b2 bytes=1200
+send  PATH_CHALLENGE token=0x9f3c...        # 64-байтный random
+# у сервера всё ещё стоят в очереди данные stream'а для клиента
+send  Stream(0, off=8192, 1500B)            # данные приложения в очереди
+```
+
+<Quiz
+  id="10-quic-internals-code-4"
+  lessonSlug="10-quic-internals"
+  lang="ru"
+  question="Сервер получил 1200 байт с нового, невалидированного адреса и хочет сбросить PATH_CHALLENGE плюс 1500 байт стоящих в очереди данных stream'а. Что разрешает anti-amplification-лимит и почему это важно?"
+  choices={[
+    { label: "Пока PATH_RESPONSE не валидирует адрес, сервер может отправить не больше 3x полученных байт — здесь всего 3600 байт. 64-байтный PATH_CHALLENGE плюс 1500-байтный Stream влезают, но сервер обязан ограничить дальнейшие отправки бюджетом 3600 байт; иначе подделанный source-адрес превращает сервер в UDP-reflection-усилитель, нацеленный на жертву.", correct: true },
+    { label: "Сервер может слать свободно, ведь у него уже установлено соединение для этого Connection ID.", misconception: "Установленный Connection ID, приходящий с нового, невалидированного адреса, — это ровно случай миграции/спуфинга, который и охраняет лимит 3x. Сервер обязан дросселировать до 3x полученных байт, пока PATH_RESPONSE не подтвердит путь." },
+    { label: "Лимит блокирует сам PATH_CHALLENGE, поэтому сервер вообще не может валидировать путь — миграция невозможна без повторного рукопожатия клиента.", misconception: "PATH_CHALLENGE мал и легко влезает в бюджет 3x; так и бутстрапится валидация. Лимит ограничивает объём, а не запрещает сам challenge." },
+    { label: "Правило 3x применяется только к padding Initial клиента (1200 байт), а не к пост-handshake-миграции.", misconception: "И padding Initial в 1200 байт, и лимит отправки 3x существуют, чтобы ограничить amplification; лимит 3x применяется к любой отправке на невалидированный адрес, включая миграцию посреди соединения." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+QUIC читается на проводе: два младших бита stream ID декодируют инициатора и направленность; трасса рукопожатия показывает ложные PTO-пробы как новые packet number (никогда не переиспользуются, поэтому Karn-неоднозначности нет); пер-датаграммный цикл отправки вскрывает узкое место по syscall'ам, которое схлопывает UDP GSO; а burst миграции ограничен бюджетом 3x anti-amplification, пока PATH_RESPONSE не валидирует новый адрес. Диагностируй по трассе и горячему пути, затем применяй структурный фикс — GSO, а не больше ядер; идемпотентность, а не отключение фич.
 </Recap>
-

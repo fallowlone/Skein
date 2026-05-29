@@ -1,42 +1,128 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- frame-parsing
+- backpressure-queue
+- jittered-backoff
+- nginx-config
+estMin: 14
 lang: ru
-order: 101
+level: senior
+sources:
+- https://datatracker.ietf.org/doc/html/rfc6455
+- https://nginx.org/en/docs/http/websocket.html
+- https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+order: 10
 prereqs: []
 slug: quiz-code
-sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "WebSocket и реальное время"
-title: Кодировочный тест
+status: ready
+summary: "Читай реальные байты WebSocket-frame, broadcast-цикл отправки, процедуру переподключения и блок Nginx — предскажи поведение и выбери исправление, которое senior-инженер делает первым."
+title: 'WebSocket: чтение кода и конфигов'
 track: networking
 unit: 08-websocket-realtime
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the WebSocket и реальное время unit.
+Real-time-баги диагностируются в дампах frame, циклах отправки, процедурах переподключения и конфиге proxy — не в спецификации. Прочитай каждый артефакт, предскажи поведение под нагрузкой и выбери исправление, к которому senior-инженер тянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the WebSocket и реальное время unit.
+Отрепетируй цикл, который ты гоняешь в каждом WebSocket-инциденте: прочитай байты на проводе или горячий путь, предскажи, где он ломается, и примени самое результативное исправление до добавления серверов или ручек.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — frame на проводе
+
+```
+Frame bytes (hex): 89 04 70 69 6E 67
+```
+
+<Quiz
+  id="08-websocket-realtime-code-1"
+  lessonSlug="08-websocket-realtime"
+  lang="ru"
+  question="Сервер получил эти байты от клиента. Что это за frame и что сервер обязан сделать?"
+  choices={[
+    { label: "Байт 1 0x89 = FIN=1, opcode 0x9 (ping); байт 2 0x04 = MASK=0, длина 4; payload 'ping'. Это control-frame ping, поэтому сервер обязан ответить pong (0xA) с тем же 4-байтовым payload.", correct: true },
+    { label: "0x89 — это text-frame, поэтому сервер должен доставить 'ping' приложению как сообщение.", misconception: "Opcode 0x1 — это text; 0x9 — ping. Младший nibble 0x89 равен 0x9, control-frame, на который слой протокола отвечает pong — он никогда не доходит до приложения как данные." },
+    { label: "MASK=0 делает это невалидным client-frame, который сервер обязан отклонить.", misconception: "MASK=0 был бы нарушением для client DATA-frame, но главный сигнал здесь — что это ping; учебный момент в обязательном ответе pong. Строгий сервер также отметил бы отсутствие mask." },
+    { label: "Это close-frame, поэтому сервер должен разорвать TCP-соединение.", misconception: "Close — это opcode 0x8; 0x9 — ping. Правильный ответ — pong, а не разрыв: закрытие на ping уронило бы здоровые соединения во время keepalive." },
+  ]}
+/>
+
+## Сниппет 2 — broadcast-цикл
+
+```js
+function broadcast(clients, message) {
+  for (const ws of clients) {
+    ws.send(message);            // enqueue, returns immediately
+  }
+}
+// called every 10 ms with a 100 KB payload, 10k clients
+```
+
+<Quiz
+  id="08-websocket-realtime-code-2"
+  lessonSlug="08-websocket-realtime"
+  lang="ru"
+  question="Несколько сотен клиентов на медленных каналах. С этим циклом что происходит под устойчивой нагрузкой и каково самое результативное исправление?"
+  choices={[
+    { label: "ws.send() кладёт в per-connection буфер и возвращается, даже когда сокет не успевает опустошаться; очереди медленных клиентов растут без границ, пока процесс не уйдёт в OOM. Исправление: проверять ws.bufferedAmount против high-water mark и выселять (close 1013) или сбрасывать сообщения для клиентов сверх порога.", correct: true },
+    { label: "Ничего — send() блокируется, пока каждый клиент не получит, так что память ограничена.", misconception: "send() в этом стиле не блокируется; он буферизует и возвращается. Именно это позволяет очереди одного медленного клиента расти без границ — ограниченная память требует явной проверки high-water mark." },
+    { label: "Риск — быстрые клиенты, потому что цикл шлёт им первым.", misconception: "Быстрые клиенты опустошаются за миллисекунды и держат почти ничего. Безграничный рост целиком на медленных клиентах, чьи очереди никогда не пустеют." },
+    { label: "Подними kernel send buffer (SO_SNDBUF), чтобы поглотить медленных клиентов.", misconception: "Больший kernel-буфер отодвигает обрыв на пару KB на сокет; мегабайты копятся в application queue. Исправление — ограничить application queue, а не увеличивать kernel-буфер." },
+  ]}
+/>
+
+## Сниппет 3 — процедура переподключения
+
+```js
+let attempt = 0;
+function reconnect() {
+  const delay = Math.min(1000 * 2 ** attempt, 60000);
+  setTimeout(() => { attempt++; connect(); }, delay);
+}
+```
+
+<Quiz
+  id="08-websocket-realtime-code-3"
+  lessonSlug="08-websocket-realtime"
+  lang="ru"
+  question="Деплой роняет 5 миллионов клиентов разом, и все запускают эту процедуру. Что идёт не так и каково однострочное исправление?"
+  choices={[
+    { label: "Каждый клиент вычисляет одинаковую задержку (1 с, потом 2 с, потом 4 с), потому что нет per-client случайности, так что retry приходят синхронными волнами, которые продолжают переполнять SYN backlog. Исправление: умножить delay на случайный jitter-фактор, напр. delay *= 0.5 + Math.random().", correct: true },
+    { label: "Потолок 60 с слишком низкий и обрезает восстановление.", misconception: "Потолок защищает сервер, ограничивая частоту retry; его понижение или повышение не лечит ключевой дефект — что все 5 М клиентов срабатывают в одни и те же моменты." },
+    { label: "2 ** attempt переполняется, и delay становится отрицательным.", misconception: "Math.min с 60000 ограничивает значение задолго до любого переполнения; задержки — корректные числа. Дефект в том, что они одинаковы у всех клиентов — нет jitter." },
+    { label: "setTimeout — неправильный примитив; используй плотный retry-цикл.", misconception: "Плотный цикл долбил бы сервер куда сильнее. setTimeout с backoff верен; ему просто нужен jitter, чтобы клиенты десинхронизировались." },
+  ]}
+/>
+
+## Сниппет 4 — блок location в Nginx
+
+```nginx
+location /ws {
+  proxy_pass http://backend;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection "Upgrade";
+}
+```
+
+<Quiz
+  id="08-websocket-realtime-code-4"
+  lessonSlug="08-websocket-realtime"
+  lang="ru"
+  question="Upgrade WebSocket проходит успешно, но соединения тихо умирают примерно через минуту бездействия в production. Чего не хватает в этом блоке?"
+  choices={[
+    { label: "proxy_read_timeout / proxy_send_timeout по умолчанию равны 60 с, поэтому Nginx закрывает любое соединение без данных в течение минуты. Подними оба до 3600s (и добавь proxy_http_version 1.1 и proxy_buffering off). Server-side ping каждые 25-30 с тоже сбрасывает таймер.", correct: true },
+    { label: "Заголовки Upgrade и Connection неверны и должны быть удалены.", misconception: "Именно эти заголовки и заставляют upgrade работать — их удаление ломает handshake. Недостающая часть — read/send timeout, который управляет idle long-lived соединениями." },
+    { label: "proxy_pass должен указывать на https:// backend для WebSocket.", misconception: "Схема backend не связана со сбоем по idle-timeout; ws работает через http:// upstream за TLS-терминацией. Смерть на 60 с — это дефолтный proxy_read_timeout." },
+    { label: "Ничего не пропущено — обрывы на 60 с это вина клиента.", misconception: "Симптом (смерть через ~60 с тишины) — это хрестоматийный дефолтный proxy_read_timeout Nginx, закрывающий тихие соединения; это пробел в конфиге proxy, а не баг клиента." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый WebSocket-инцидент читается в артефактах: nibble opcode у frame говорит ping (отвечай pong) против data; безграничный цикл отправки уходит в OOM на медленных клиентах, если high-water mark не ограничит очередь; процедура переподключения без jitter превращает деплой в thundering herd; а блок Nginx без поднятого proxy_read_timeout тихо убивает idle-соединения на 60 с. Диагностируй по артефакту, примени исправление с верха лестницы, потом подтверди под той же нагрузкой.
 </Recap>
-

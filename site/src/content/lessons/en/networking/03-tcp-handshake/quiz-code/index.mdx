@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sequence-number-math
+- tcpdump-syn-flood
+- ss-state-diagnosis
+- ss-tin-congestion
+- connection-pooling
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "The TCP handshake"
-title: Coding Quiz
+- https://datatracker.ietf.org/doc/html/rfc9293
+- https://man7.org/linux/man-pages/man7/tcp.7.html
+- https://kernel.org/doc/html/latest/networking/tcp.html
+status: ready
+summary: "Read real tcpdump traces, ss output, and a connection-handling snippet, then predict the TCP behaviour and pick the highest-leverage fix."
+title: 'TCP handshake: trace and code reading'
 track: networking
 unit: 03-tcp-handshake
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the The TCP handshake unit.
+Packet captures and socket dumps are where TCP problems are actually diagnosed. Read each trace, work out what the connection is doing, then choose the fix a senior engineer would reach for first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the The TCP handshake unit.
+Practise the loop you run in every TCP incident: read the trace or the ss line, reconstruct the sequence-number and state machinery, and name the one change that resolves it before touching a sysctl.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Trace 1 — the handshake on the wire
+
+```
+14:02:11.001 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [S],  seq 1000000, win 64240, length 0
+14:02:11.001 IP 10.0.0.9.6379  > 10.0.0.5.51514: Flags [S.], seq 4200000, ack 1000001, win 65160, length 0
+14:02:11.002 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [.],  seq 1000001, ack 4200001, win 64240, length 0
+14:02:11.002 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [P.], seq 1000001, ack 4200001, win 64240, length 14
+```
+
+<Quiz
+  id="03-tcp-handshake-code-1"
+  lessonSlug="03-tcp-handshake"
+  lang="en"
+  question="The fourth packet carries 14 bytes of data starting at seq 1000001. Why does it start there and not at 1000000, and what does ack 4200001 confirm?"
+  choices={[
+    { label: "The SYN flag consumed one sequence number, so the first data byte is ISN+1 = 1000001. ack 4200001 confirms the client saw the server's SYN (server ISN 4200000) and expects the server's next byte at 4200001.", correct: true },
+    { label: "The first data byte is at 1000001 because TCP reserves byte 0 as a header marker.", misconception: "There is no reserved data byte. The offset is because the SYN itself consumes exactly one sequence number, so application data begins at ISN+1." },
+    { label: "ack 4200001 means 4,200,001 bytes have already been received from the server.", misconception: "The ACK field is the next expected sequence number, not a byte count. It is server-ISN+1 because the server's SYN consumed one number; no data has flowed yet." },
+    { label: "The 14-byte segment is a retransmission of the ACK.", misconception: "The third packet is the bare ACK; the fourth has the PSH flag and a 14-byte payload — it is the first application write, not a retransmit." },
+  ]}
+/>
+
+## Trace 2 — SYN flood under cookies
+
+```
+$ sudo tcpdump -i eth0 'tcp[tcpflags] & tcp-syn != 0' -tnn
+IP 203.0.113.7.40001 > 198.51.100.10.443: Flags [S],  seq 100, win 29200, length 0
+IP 198.51.100.10.443 > 203.0.113.7.40001: Flags [S.], seq 3851629874, ack 101, win 28960, length 0
+IP 203.0.113.9.55000 > 198.51.100.10.443: Flags [S],  seq 200, win 29200, length 0
+IP 198.51.100.10.443 > 203.0.113.9.55000: Flags [S.], seq 4025814937, ack 201, win 28960, length 0
+(thousands more SYNs from random sources; almost none send the final ACK)
+$ nstat -az | grep -i syncookies
+TcpExtSyncookiesSent            41827
+TcpExtSyncookiesRecv              312
+```
+
+<Quiz
+  id="03-tcp-handshake-code-2"
+  lessonSlug="03-tcp-handshake"
+  lang="en"
+  question="SyncookiesSent is 41,827 but SyncookiesRecv is only 312. The server is not running out of memory. What is happening and why is the server safe?"
+  choices={[
+    { label: "The half-open queue overflowed, so the kernel encoded each connection's state in the SYN-ACK ISN instead of allocating a request_sock. Floods that never ACK cost only the HMAC CPU; the 312 returning ACKs are the genuine clients whose cookies validated.", correct: true },
+    { label: "The server is leaking 41,827 half-open sockets and will OOM shortly.", misconception: "That is exactly what cookies prevent — no request_sock is allocated per SYN. The high Sent with low Recv is the signature of an absorbed flood, not a leak." },
+    { label: "SyncookiesRecv being low means cookie validation is broken.", misconception: "Low Recv is expected: a spoofed-source flood never completes the handshake, so few cookies come back. The 312 are legitimate clients; validation is working." },
+    { label: "The server should disable syncookies to stop sending so many SYN-ACKs.", misconception: "Disabling cookies would let the half-open queue overflow and refuse legitimate clients. Cookies are the defence; the cost is CPU for the HMAC, not memory." },
+  ]}
+/>
+
+## Trace 3 — ss during an incident
+
+```
+$ ss -tan state established | wc -l
+12384
+$ ss -tan state close-wait | wc -l
+9821
+$ ss -s
+TCP:   23552 (estab 12384, closed 8920, orphaned 2, timewait 1247)
+$ ps -p 1234 -o pid,stat,rss,cmd
+  PID STAT   RSS CMD
+ 1234 Ssl 8392000 /usr/bin/app-server   # RSS climbing every minute
+```
+
+<Quiz
+  id="03-tcp-handshake-code-3"
+  lessonSlug="03-tcp-handshake"
+  lang="en"
+  question="9.8k sockets sit in CLOSE-WAIT and RSS keeps climbing. What is the bug, and where do you look in the code?"
+  choices={[
+    { label: "CLOSE-WAIT means the peer sent FIN but the app never called close() — a socket and fd leak. Audit the connection-close path: missing defer conn.Close() in Go, missing try-with-resources in Java, or a forgotten close() on the error path in C.", correct: true },
+    { label: "The 1247 TIME-WAIT sockets are the leak; lower MSL to drain them.", misconception: "1247 TIME-WAIT is normal and self-draining; the leak is the 9.8k CLOSE-WAIT, which only the application calling close() can clear. MSL is irrelevant here." },
+    { label: "The kernel is too slow at reclaiming sockets; upgrade the kernel.", misconception: "The kernel cannot reclaim a CLOSE-WAIT socket until the application calls close(). This is an application bug, not a kernel-performance issue." },
+    { label: "Too few ephemeral ports; widen ip_local_port_range.", misconception: "Port range governs outbound connect() and TIME-WAIT exhaustion, not inbound CLOSE-WAIT accumulation. The fix is closing accepted sockets, not more ports." },
+  ]}
+/>
+
+## Trace 4 — ss -tin on a slow transfer
+
+```
+$ ss -tin state established dst 203.0.113.20
+ESTAB 0 0 10.0.0.5:44120 203.0.113.20:443
+   cubic wscale:7,7 rtt:148.2/9.1 mss:1448 cwnd:11 ssthresh:8
+   bytes_sent:9M bytes_acked:9M retrans:0/214 reordering:12 rate:780Kbps
+```
+
+<Quiz
+  id="03-tcp-handshake-code-4"
+  lessonSlug="03-tcp-handshake"
+  lang="en"
+  question="148 ms RTT, cwnd stuck at 11 MSS with ssthresh 8, 214 cumulative retransmits, and CUBIC — yet throughput is only 780 Kbps on a fast link. What is the diagnosis and the most promising change?"
+  choices={[
+    { label: "CUBIC repeatedly hit loss (ssthresh dropped to 8, 214 retransmits), so cwnd cannot grow on this long-RTT lossy path — classic loss-as-congestion collapse. On a path with random loss, switch the socket to BBR, which models bandwidth and min-RTT instead of reacting to loss.", correct: true },
+    { label: "The window scale of 7 is too small; raise it to lift throughput.", misconception: "wscale:7 already allows a multi-megabyte window; the limiter is that CUBIC keeps cutting cwnd to ~11 on loss. The change is the congestion-control algorithm, not the scale factor." },
+    { label: "mss:1448 is too low; enable jumbo frames.", misconception: "1448 is the normal Ethernet MSS and is not the bottleneck. The retransmit-driven cwnd collapse under CUBIC is what caps throughput; jumbo frames will not survive the path anyway." },
+    { label: "The connection is in TIME-WAIT, so it cannot send fast.", misconception: "ss reports it as ESTAB and actively sending. The throughput limit is CUBIC's loss response on a 148 ms path, addressed by moving to BBR." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Every TCP incident is read in traces. The sequence-number math falls out of one rule: the SYN (and FIN) each consume one number, so the first data byte is ISN+1. A high SyncookiesSent with low Recv is an absorbed flood, not a leak. CLOSE-WAIT pileup with climbing RSS is always a missing application close(). And cwnd pinned low with retransmits under CUBIC on a long-RTT lossy path is the signature that says: move this socket to BBR. Diagnose from the wire and the socket table, then make the one change the evidence points to.
 </Recap>
-

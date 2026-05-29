@@ -1,42 +1,138 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- sequence-number-math
+- tcpdump-syn-flood
+- ss-state-diagnosis
+- ss-tin-congestion
+- connection-pooling
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "TCP-рукопожатие"
-title: Кодировочный тест
+- https://datatracker.ietf.org/doc/html/rfc9293
+- https://man7.org/linux/man-pages/man7/tcp.7.html
+- https://kernel.org/doc/html/latest/networking/tcp.html
+status: ready
+summary: "Читай реальные трассы tcpdump, вывод ss и сниппет обработки соединений, предсказывай поведение TCP и выбирай фикс с наибольшим рычагом."
+title: 'TCP handshake: чтение трасс и кода'
 track: networking
 unit: 03-tcp-handshake
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the TCP-рукопожатие unit.
+Захваты пакетов и дампы сокетов — это место, где реально диагностируются проблемы TCP. Читай каждую трассу, разбирай, что делает соединение, затем выбирай фикс, к которому senior-инженер потянется первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the TCP-рукопожатие unit.
+Отработай цикл, который ты запускаешь в каждом инциденте TCP: прочитай трассу или строку ss, восстанови механику sequence number и состояний, и назови ту единственную правку, что решает проблему до касания sysctl.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Трасса 1 — handshake на проводе
+
+```
+14:02:11.001 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [S],  seq 1000000, win 64240, length 0
+14:02:11.001 IP 10.0.0.9.6379  > 10.0.0.5.51514: Flags [S.], seq 4200000, ack 1000001, win 65160, length 0
+14:02:11.002 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [.],  seq 1000001, ack 4200001, win 64240, length 0
+14:02:11.002 IP 10.0.0.5.51514 > 10.0.0.9.6379: Flags [P.], seq 1000001, ack 4200001, win 64240, length 14
+```
+
+<Quiz
+  id="03-tcp-handshake-code-1"
+  lessonSlug="03-tcp-handshake"
+  lang="ru"
+  question="Четвёртый пакет несёт 14 байт данных, начиная с seq 1000001. Почему он начинается там, а не с 1000000, и что подтверждает ack 4200001?"
+  choices={[
+    { label: "Флаг SYN потребил один sequence number, поэтому первый байт данных — ISN+1 = 1000001. ack 4200001 подтверждает, что клиент увидел SYN сервера (ISN сервера 4200000) и ждёт следующий байт сервера на 4200001.", correct: true },
+    { label: "Первый байт данных на 1000001, потому что TCP резервирует байт 0 как маркер заголовка.", misconception: "Резервного байта данных нет. Сдвиг — потому что сам SYN потребляет ровно один sequence number, поэтому данные приложения начинаются с ISN+1." },
+    { label: "ack 4200001 означает, что от сервера уже получено 4 200 001 байт.", misconception: "Поле ACK — это следующий ожидаемый sequence number, а не счётчик байт. Это server-ISN+1, потому что SYN сервера потребил один номер; данные ещё не текли." },
+    { label: "14-байтный сегмент — это ретрансмит ACK.", misconception: "Третий пакет — голый ACK; у четвёртого флаг PSH и payload 14 байт — это первая запись приложения, а не ретрансмит." },
+  ]}
+/>
+
+## Трасса 2 — SYN-флуд под cookie
+
+```
+$ sudo tcpdump -i eth0 'tcp[tcpflags] & tcp-syn != 0' -tnn
+IP 203.0.113.7.40001 > 198.51.100.10.443: Flags [S],  seq 100, win 29200, length 0
+IP 198.51.100.10.443 > 203.0.113.7.40001: Flags [S.], seq 3851629874, ack 101, win 28960, length 0
+IP 203.0.113.9.55000 > 198.51.100.10.443: Flags [S],  seq 200, win 29200, length 0
+IP 198.51.100.10.443 > 203.0.113.9.55000: Flags [S.], seq 4025814937, ack 201, win 28960, length 0
+(ещё тысячи SYN от случайных источников; почти ни один не шлёт финальный ACK)
+$ nstat -az | grep -i syncookies
+TcpExtSyncookiesSent            41827
+TcpExtSyncookiesRecv              312
+```
+
+<Quiz
+  id="03-tcp-handshake-code-2"
+  lessonSlug="03-tcp-handshake"
+  lang="ru"
+  question="SyncookiesSent равно 41 827, но SyncookiesRecv всего 312. Сервер не уходит в нехватку памяти. Что происходит и почему сервер в безопасности?"
+  choices={[
+    { label: "Half-open очередь переполнилась, поэтому ядро закодировало состояние каждого соединения в ISN SYN-ACK вместо аллокации request_sock. Флуд, который никогда не шлёт ACK, стоит лишь CPU на HMAC; 312 вернувшихся ACK — это настоящие клиенты, чьи cookie прошли проверку.", correct: true },
+    { label: "Сервер утекает 41 827 half-open сокетов и скоро упадёт по OOM.", misconception: "Это именно то, что предотвращают cookie — request_sock на SYN не аллоцируется. Высокий Sent при низком Recv — сигнатура поглощённого флуда, а не утечки." },
+    { label: "Низкий SyncookiesRecv означает, что валидация cookie сломана.", misconception: "Низкий Recv ожидаем: флуд со спуфнутых источников никогда не завершает handshake, поэтому возвращается мало cookie. 312 — легитимные клиенты; валидация работает." },
+    { label: "Сервер должен отключить syncookies, чтобы не слать столько SYN-ACK.", misconception: "Отключение cookie дало бы half-open очереди переполниться и отказывать легитимным клиентам. Cookie — это защита; цена — CPU на HMAC, а не память." },
+  ]}
+/>
+
+## Трасса 3 — ss во время инцидента
+
+```
+$ ss -tan state established | wc -l
+12384
+$ ss -tan state close-wait | wc -l
+9821
+$ ss -s
+TCP:   23552 (estab 12384, closed 8920, orphaned 2, timewait 1247)
+$ ps -p 1234 -o pid,stat,rss,cmd
+  PID STAT   RSS CMD
+ 1234 Ssl 8392000 /usr/bin/app-server   # RSS растёт каждую минуту
+```
+
+<Quiz
+  id="03-tcp-handshake-code-3"
+  lessonSlug="03-tcp-handshake"
+  lang="ru"
+  question="9.8k сокетов сидят в CLOSE-WAIT, а RSS продолжает расти. В чём баг и куда смотреть в коде?"
+  choices={[
+    { label: "CLOSE-WAIT означает, что пир прислал FIN, но приложение так и не вызвало close() — утечка сокетов и fd. Проверь путь закрытия соединения: отсутствует defer conn.Close() в Go, отсутствует try-with-resources в Java или забыт close() на error-пути в C.", correct: true },
+    { label: "Утечка — это 1247 сокетов TIME-WAIT; понизь MSL, чтобы их слить.", misconception: "1247 TIME-WAIT нормальны и самосливаются; утечка — это 9.8k CLOSE-WAIT, которые расчистит только close() в приложении. MSL тут ни при чём." },
+    { label: "Ядро слишком медленно освобождает сокеты; обнови ядро.", misconception: "Ядро не может освободить сокет в CLOSE-WAIT, пока приложение не вызовет close(). Это баг приложения, а не проблема производительности ядра." },
+    { label: "Слишком мало эфемерных портов; расширь ip_local_port_range.", misconception: "Диапазон портов управляет исходящим connect() и исчерпанием TIME-WAIT, а не накоплением входящих CLOSE-WAIT. Фикс — закрывать принятые сокеты, а не больше портов." },
+  ]}
+/>
+
+## Трасса 4 — ss -tin на медленной передаче
+
+```
+$ ss -tin state established dst 203.0.113.20
+ESTAB 0 0 10.0.0.5:44120 203.0.113.20:443
+   cubic wscale:7,7 rtt:148.2/9.1 mss:1448 cwnd:11 ssthresh:8
+   bytes_sent:9M bytes_acked:9M retrans:0/214 reordering:12 rate:780Kbps
+```
+
+<Quiz
+  id="03-tcp-handshake-code-4"
+  lessonSlug="03-tcp-handshake"
+  lang="ru"
+  question="RTT 148 мс, cwnd застрял на 11 MSS при ssthresh 8, 214 кумулятивных ретрансмитов и CUBIC — и всё же пропускная способность лишь 780 Кбит/с на быстром канале. Какой диагноз и самая перспективная правка?"
+  choices={[
+    { label: "CUBIC многократно ловил потери (ssthresh упал до 8, 214 ретрансмитов), поэтому cwnd не растёт на этом long-RTT lossy пути — классический обвал loss-as-congestion. На пути со случайными потерями переключи сокет на BBR, который моделирует bandwidth и min-RTT вместо реакции на потерю.", correct: true },
+    { label: "Window scale 7 слишком мал; подними его для роста пропускной способности.", misconception: "wscale:7 уже допускает многомегабайтное окно; ограничитель — что CUBIC режет cwnd до ~11 на потере. Правка — алгоритм congestion control, а не scale-фактор." },
+    { label: "mss:1448 слишком мал; включи jumbo-фреймы.", misconception: "1448 — нормальный Ethernet MSS и не узкое место. Обвал cwnd от ретрансмитов под CUBIC и есть потолок пропускной способности; jumbo-фреймы всё равно не выживут на пути." },
+    { label: "Соединение в TIME-WAIT, поэтому не может слать быстро.", misconception: "ss сообщает его как ESTAB и активно шлющим. Ограничитель — реакция CUBIC на потерю на пути 148 мс, решается переходом на BBR." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Каждый инцидент TCP читается в трассах. Арифметика sequence number вытекает из одного правила: SYN (и FIN) потребляют по одному номеру, поэтому первый байт данных — ISN+1. Высокий SyncookiesSent при низком Recv — это поглощённый флуд, а не утечка. Завал CLOSE-WAIT с растущим RSS — всегда отсутствующий close() в приложении. А cwnd, прижатый низко с ретрансмитами под CUBIC на long-RTT lossy пути, — сигнатура, говорящая: переведи этот сокет на BBR. Диагностируй с провода и таблицы сокетов, затем делай ту единственную правку, на которую указывают данные.
 </Recap>
-
