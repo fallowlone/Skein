@@ -172,3 +172,16 @@ export async function activateSyncIfSignedIn(): Promise<void> {
 }
 
 export function isSyncActive(): boolean { return syncActive; }
+
+/**
+ * Remove only this app's local progress (e.g. after account deletion). Stops
+ * the debounce loop and clears the single known key — never `localStorage.clear()`,
+ * which would also wipe unrelated prefs like theme/motion.
+ */
+export function clearLocalProgress(): void {
+  syncActive = false;
+  if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+  if (typeof window !== "undefined") {
+    try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  }
+}

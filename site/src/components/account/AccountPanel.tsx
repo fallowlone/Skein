@@ -1,7 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import { fetchMe } from "~/scripts/account-sync";
-import { activateSyncIfSignedIn } from "~/scripts/user-state";
+import { activateSyncIfSignedIn, clearLocalProgress } from "~/scripts/user-state";
 
 type Me = {
   login: string; nickname: string; avatarUrl: string | null;
@@ -47,7 +47,7 @@ export default function AccountPanel({ lang }: { lang: Locale }) {
   async function del() {
     if (confirm !== me!.nickname) return;
     const r = await fetch("/api/account", { method: "DELETE", credentials: "same-origin" });
-    if (r.ok) { try { localStorage.clear(); } catch {} location.href = `/${lang}/`; }
+    if (r.ok) { clearLocalProgress(); location.href = `/${lang}/`; }
   }
 
   return (
