@@ -59,6 +59,7 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
       </button>
       {open && (
         <div class="absolute right-0 mt-1 min-w-[160px] bg-paper border border-rule rounded-md shadow-lg py-1 z-50" role="menu">
+          <a class="block px-3 py-2 text-[13px] hover:bg-rule/30" href={`/${lang}/profile`} role="menuitem">{lang === "ru" ? "Профиль" : "Profile"}</a>
           <a class="block px-3 py-2 text-[13px] hover:bg-rule/30" href={`/${lang}/account`} role="menuitem">{t("account.menu", lang)}</a>
           <button class="block w-full text-left px-3 py-2 text-[13px] hover:bg-rule/30" onClick={signOut} role="menuitem">{t("account.signOut", lang)}</button>
         </div>
