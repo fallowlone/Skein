@@ -15,7 +15,11 @@ export async function exchangeCodeForUser(
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({ client_id: creds.clientId, client_secret: creds.clientSecret, code }),
   });
-  const tokenJson = (await tokenRes.json()) as { access_token?: string };
+  // Symmetric with the user fetch: guard the status before parsing so a non-JSON
+  // 5xx/429 body throws our typed error, not a raw SyntaxError. Never include the
+  // response body in the error — it may carry the access token.
+  if (!tokenRes.ok) throw new Error("github_token_exchange_failed");
+  const tokenJson = (await tokenRes.json().catch(() => ({}))) as { access_token?: string };
   if (!tokenJson.access_token) throw new Error("github_token_exchange_failed");
 
   const userRes = await fetch("https://api.github.com/user", {
