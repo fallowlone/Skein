@@ -1,42 +1,142 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- token-bucket
+- atomic-lua
+- sliding-window-counter
+- sliding-window-log
+- distributed-rate-limiting
+estMin: 14
 lang: en
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Coding Quiz for unit "Rate limiting"
-title: Coding Quiz
+- https://redis.io/docs/latest/develop/use-cases/rate-limiter/
+- https://blog.arcjet.com/rate-limiting-algorithms-token-bucket-vs-sliding-window-vs-fixed-window/
+- https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers
+status: ready
+summary: "Read real limiter snippets — a token-bucket refill, a Redis INCR race, a sliding-window counter, a sorted-set log — and pick the behaviour or the highest-leverage fix."
+title: 'Rate limiting: code and snippet reading'
 track: apis
 unit: 07-rate-limiting
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Rate limiting unit.
+A limiter is correct or it is theatre, and the difference lives in a few lines of refill math and Redis commands. Read each snippet, predict its behaviour under concurrency, and pick the fix a senior would make first.
 </Hook>
 
 <Goal lang="en">
-After this lesson you will be able to apply the concepts from the Rate limiting unit.
+Practise the loop you run when reviewing a limiter: trace the refill, spot the race, check the boundary math, and reach for the atomic, shared-counter fix.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Snippet 1 — the token-bucket refill
+
+```python
+# Per-request, in the app process. tokens/ts are read from Redis with GET, written back with SET.
+def allow(key, rate, capacity, cost=1):
+    tokens, ts = read(key)              # last stored tokens + timestamp
+    now = time.time()
+    tokens = min(capacity, tokens + (now - ts) * rate)   # refill
+    if tokens >= cost:
+        tokens -= cost
+        write(key, tokens, now)         # GET ... then SET (two round trips)
+        return True
+    write(key, tokens, now)
+    return False
+```
+
+<Quiz
+  id="07-rate-limiting-code-1"
+  lessonSlug="07-rate-limiting"
+  lang="en"
+  question="The refill math is correct in isolation. What breaks when two requests for the same key arrive concurrently across two app nodes?"
+  choices={[
+    { label: "Read-modify-write is not atomic across the GET and SET. Both nodes read the same tokens, both decide allow, both write back — they double-spend the same token and the bucket over-admits. The whole check must run atomically inside Redis (a Lua script), not as app-side GET then SET.", correct: true },
+    { label: "The refill overflows capacity when the client is idle for a long time.", misconception: "min(capacity, ...) caps the refill, so a long idle period just tops the bucket up to capacity. The real defect is the non-atomic read-modify-write racing across nodes." },
+    { label: "time.time() differs between nodes, so refill is wrong.", misconception: "Small clock skew slightly perturbs refill but is not the core bug. The core bug is that two concurrent GET-then-SET cycles interleave and double-spend, regardless of clock." },
+    { label: "Nothing breaks — Redis serializes GET and SET.", misconception: "Redis serializes each individual command, but GET and SET here are two separate round trips with app logic in between. Another request can read the stale value before this one writes — that gap is the race." },
+  ]}
+/>
+
+## Snippet 2 — the Redis fixed-window counter
+
+```python
+def allow(key, limit, window_s):
+    n = redis.incr(key)        # atomic increment
+    if n == 1:
+        redis.expire(key, window_s)   # set TTL only on first hit
+    return n <= limit
+```
+
+<Quiz
+  id="07-rate-limiting-code-2"
+  lessonSlug="07-rate-limiting"
+  lang="en"
+  question="INCR is atomic, so what is the latent failure in this fixed-window limiter?"
+  choices={[
+    { label: "INCR and EXPIRE are two separate commands. If the process crashes (or the EXPIRE errors) between them, the key lives forever with no TTL — every later request increments it, n stays above limit, and that key is locked out permanently. Collapse both into one atomic Lua script (or SET key 1 EX window NX then INCR).", correct: true },
+    { label: "INCR is not atomic under concurrency, so the count drifts.", misconception: "INCR is fully atomic — that part is fine. The bug is the gap between INCR and the separate EXPIRE, which can leave the key without a TTL forever." },
+    { label: "n <= limit is an off-by-one; it should be n < limit.", misconception: "n <= limit correctly admits exactly limit requests (the first INCR returns 1). The off-by-one is not the defect; the missing-TTL race is." },
+    { label: "It still leaks the 2x boundary burst, so it is unusable.", misconception: "It does leak the 2x boundary burst, but that is inherent to fixed window, not a bug in this code. The code-level defect is the INCR/EXPIRE atomicity gap that can strand a TTL-less key." },
+  ]}
+/>
+
+## Snippet 3 — the sliding-window counter
+
+```python
+# limit = 100 / 60s. Two fixed-window counters: this minute and the previous one.
+def estimate(prev_count, curr_count, elapsed_in_window_s, window_s=60):
+    overlap = (window_s - elapsed_in_window_s) / window_s   # fraction of prev window still in view
+    return curr_count + prev_count * overlap
+# Example: 18s into the current minute, prev=80, curr=12
+```
+
+<Quiz
+  id="07-rate-limiting-code-3"
+  lessonSlug="07-rate-limiting"
+  lang="en"
+  question="For the example values (18s in, prev=80, curr=12, limit=100), what does estimate return and is the request admitted?"
+  choices={[
+    { label: "overlap = (60-18)/60 = 0.70, so estimate = 12 + 80*0.70 = 68. That is under 100, so the request is admitted. The previous window's weight decays smoothly as the current window advances, removing the hard reset edge.", correct: true },
+    { label: "estimate = 12 + 80 = 92; the previous count is added in full.", misconception: "Adding prev in full ignores the overlap weighting that is the whole point. The previous window contributes only the fraction still inside the rolling view: 80*0.70 = 56, not 80." },
+    { label: "estimate = 12; only the current window counts.", misconception: "Dropping prev entirely is just a fixed window again and reintroduces the boundary burst. The counter's accuracy comes from weighting the previous window by its remaining overlap." },
+    { label: "overlap = 18/60 = 0.30, so estimate = 12 + 80*0.30 = 36.", misconception: "The overlap is the fraction of the previous window still in the trailing view, which is (60-18)/60 = 0.70, not 18/60. As the current minute advances, the previous window should weigh less, not more." },
+  ]}
+/>
+
+## Snippet 4 — the sliding-window log in Redis
+
+```python
+def allow(key, limit, window_s):
+    now = time.time()
+    pipe = redis.pipeline()
+    pipe.zremrangebyscore(key, 0, now - window_s)   # drop entries older than the window
+    pipe.zadd(key, {str(uuid4()): now})             # record this request
+    pipe.zcard(key)                                  # count what remains
+    pipe.expire(key, window_s)
+    _, _, count, _ = pipe.execute()
+    return count <= limit
+```
+
+<Quiz
+  id="07-rate-limiting-code-4"
+  lessonSlug="07-rate-limiting"
+  lang="en"
+  question="This log-based limiter is exact and atomic (MULTI/EXEC pipeline). What is the real cost you sign up for, and the subtle behaviour of this ordering?"
+  choices={[
+    { label: "Memory: it stores one sorted-set member per request, so a client at 10k req/min holds ~10k entries. Also note it ZADDs before ZCARD, so the current request is counted — a rejected request is still recorded and trimmed later, which is fine but means the comparison includes itself.", correct: true },
+    { label: "It is not exact because ZREMRANGEBYSCORE can miss entries at the boundary.", misconception: "ZREMRANGEBYSCORE deterministically drops everything older than now - window, so the count is exact over the rolling window. The cost is memory per request, not accuracy." },
+    { label: "Using UUIDs as members is the bug; it should use the timestamp as the member.", misconception: "Members must be unique or two requests at the same timestamp would collide into one entry. A UUID (or timestamp plus a counter) is correct precisely to avoid that collision." },
+    { label: "The pipeline is not atomic, so concurrent requests corrupt the set.", misconception: "A Redis MULTI/EXEC pipeline runs the commands atomically with no interleaving, so the set is consistent. The price is the per-request memory of the log, which is why the counter is preferred at scale." },
+  ]}
+/>
 
 <Recap lang="en">
-Review the key concepts from this lesson and prepare for the next unit.
+Limiter bugs live in a few lines: app-side read-modify-write double-spends across nodes, so the check must run atomically inside Redis; INCR-then-EXPIRE can strand a TTL-less key forever; the sliding-window counter weights the previous window by its remaining overlap, not in full; and the sliding-window log is exact and atomic but pays one sorted-set entry per request. Trace the concurrency, check the boundary math, and push the whole decision into one atomic, shared step.
 </Recap>
-

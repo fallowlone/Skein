@@ -1,42 +1,142 @@
 ---
-concepts: []
-estMin: 30
+concepts:
+- token-bucket
+- atomic-lua
+- sliding-window-counter
+- sliding-window-log
+- distributed-rate-limiting
+estMin: 14
 lang: ru
-order: 101
+level: senior
+order: 9
 prereqs: []
 slug: quiz-code
 sources:
-- https://example.com
-status: stub
-summary: Кодировочный тест for unit "Rate limiting"
-title: Кодировочный тест
+- https://redis.io/docs/latest/develop/use-cases/rate-limiter/
+- https://blog.arcjet.com/rate-limiting-algorithms-token-bucket-vs-sliding-window-vs-fixed-window/
+- https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-ratelimit-headers
+status: ready
+summary: "Читай реальные сниппеты лимитера — пополнение token bucket, гонка Redis INCR, sliding-window counter, sorted-set log — и выбирай поведение или самый высокорычажный фикс."
+title: 'Rate limiting: чтение кода и сниппетов'
 track: apis
 unit: 07-rate-limiting
 ---
 
-
 import Hook from "~/components/lesson/Hook.astro";
 import Goal from "~/components/lesson/Goal.astro";
-import Step from "~/components/lesson/Step.astro";
-import WorkedExample from "~/components/lesson/WorkedExample.astro";
-import Check from "~/components/lesson/Check.astro";
 import Recap from "~/components/lesson/Recap.astro";
-import Inset from "~/components/lesson/Inset.astro";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 
 <Hook>
-This is a quiz-code for the Rate limiting unit.
+Лимитер либо корректен, либо это театр, и разница живёт в нескольких строках математики пополнения и команд Redis. Читай каждый сниппет, предсказывай его поведение под конкурентностью и выбирай фикс, который senior сделает первым.
 </Hook>
 
 <Goal lang="ru">
-After this lesson you will be able to apply the concepts from the Rate limiting unit.
+Отработай цикл, который ты гоняешь при ревью лимитера: проследи пополнение, заметь гонку, проверь граничную математику и потянись к атомарному фиксу с общим счётчиком.
 </Goal>
 
-<Step n={1}>
-This lesson contains practice questions and exercises to reinforce your learning.
-</Step>
+## Сниппет 1 — пополнение token bucket
+
+```python
+# Per-request, in the app process. tokens/ts are read from Redis with GET, written back with SET.
+def allow(key, rate, capacity, cost=1):
+    tokens, ts = read(key)              # last stored tokens + timestamp
+    now = time.time()
+    tokens = min(capacity, tokens + (now - ts) * rate)   # refill
+    if tokens >= cost:
+        tokens -= cost
+        write(key, tokens, now)         # GET ... then SET (two round trips)
+        return True
+    write(key, tokens, now)
+    return False
+```
+
+<Quiz
+  id="07-rate-limiting-code-1"
+  lessonSlug="07-rate-limiting"
+  lang="ru"
+  question="Математика пополнения изолированно верна. Что ломается, когда два запроса по одному ключу приходят конкурентно на двух app-нодах?"
+  choices={[
+    { label: "Read-modify-write не атомарен между GET и SET. Обе ноды читают одни и те же tokens, обе решают allow, обе пишут обратно — они дважды тратят один токен, и ведро перепускает. Вся проверка должна выполняться атомарно внутри Redis (Lua-скрипт), а не как GET, затем SET на стороне приложения.", correct: true },
+    { label: "Пополнение переполняет capacity, когда клиент долго простаивает.", misconception: "min(capacity, ...) ограничивает пополнение, поэтому долгий простой просто доливает ведро до capacity. Реальный дефект — неатомарный read-modify-write, гоняющий между нодами." },
+    { label: "time.time() различается между нодами, поэтому пополнение неверно.", misconception: "Малый перекос часов слегка возмущает пополнение, но это не корневой баг. Корневой баг — что два конкурентных цикла GET-затем-SET переплетаются и дважды тратят токен, независимо от часов." },
+    { label: "Ничего не ломается — Redis сериализует GET и SET.", misconception: "Redis сериализует каждую отдельную команду, но GET и SET здесь — два отдельных round trip с логикой приложения между ними. Другой запрос может прочитать устаревшее значение до того, как этот запишет — этот зазор и есть гонка." },
+  ]}
+/>
+
+## Сниппет 2 — Redis fixed-window счётчик
+
+```python
+def allow(key, limit, window_s):
+    n = redis.incr(key)        # atomic increment
+    if n == 1:
+        redis.expire(key, window_s)   # set TTL only on first hit
+    return n <= limit
+```
+
+<Quiz
+  id="07-rate-limiting-code-2"
+  lessonSlug="07-rate-limiting"
+  lang="ru"
+  question="INCR атомарен, так в чём латентный сбой этого fixed-window лимитера?"
+  choices={[
+    { label: "INCR и EXPIRE — две отдельные команды. Если процесс упадёт (или EXPIRE ошибётся) между ними, ключ живёт вечно без TTL — каждый последующий запрос его инкрементит, n остаётся выше limit, и этот ключ заблокирован навсегда. Слей обе в один атомарный Lua-скрипт (или SET key 1 EX window NX, затем INCR).", correct: true },
+    { label: "INCR неатомарен под конкурентностью, поэтому счёт дрейфует.", misconception: "INCR полностью атомарен — эта часть в порядке. Баг — зазор между INCR и отдельным EXPIRE, который может оставить ключ без TTL навсегда." },
+    { label: "n <= limit — это off-by-one; должно быть n < limit.", misconception: "n <= limit корректно пропускает ровно limit запросов (первый INCR возвращает 1). Off-by-one не дефект; дефект — гонка с отсутствующим TTL." },
+    { label: "Он всё равно протекает 2x граничным всплеском, поэтому непригоден.", misconception: "Он протекает 2x граничным всплеском, но это присуще fixed window, а не баг в этом коде. Дефект уровня кода — зазор атомарности INCR/EXPIRE, способный застрять ключ без TTL." },
+  ]}
+/>
+
+## Сниппет 3 — sliding-window counter
+
+```python
+# limit = 100 / 60s. Two fixed-window counters: this minute and the previous one.
+def estimate(prev_count, curr_count, elapsed_in_window_s, window_s=60):
+    overlap = (window_s - elapsed_in_window_s) / window_s   # fraction of prev window still in view
+    return curr_count + prev_count * overlap
+# Example: 18s into the current minute, prev=80, curr=12
+```
+
+<Quiz
+  id="07-rate-limiting-code-3"
+  lessonSlug="07-rate-limiting"
+  lang="ru"
+  question="Для значений примера (18s внутри, prev=80, curr=12, limit=100) что вернёт estimate и пропущен ли запрос?"
+  choices={[
+    { label: "overlap = (60-18)/60 = 0.70, поэтому estimate = 12 + 80*0.70 = 68. Это под 100, поэтому запрос пропущен. Вес предыдущего окна плавно затухает по мере продвижения текущего, убирая жёсткую границу сброса.", correct: true },
+    { label: "estimate = 12 + 80 = 92; предыдущий счёт добавлен полностью.", misconception: "Добавление prev целиком игнорирует взвешивание по overlap, в котором весь смысл. Предыдущее окно вносит лишь долю, ещё внутри скользящего вида: 80*0.70 = 56, а не 80." },
+    { label: "estimate = 12; считается только текущее окно.", misconception: "Сброс prev целиком — это снова fixed window и снова вводит граничный всплеск. Точность counter'а — от взвешивания предыдущего окна остаточным overlap." },
+    { label: "overlap = 18/60 = 0.30, поэтому estimate = 12 + 80*0.30 = 36.", misconception: "Overlap — доля предыдущего окна, ещё в хвостовом виде, то есть (60-18)/60 = 0.70, а не 18/60. По мере продвижения текущей минуты предыдущее окно должно весить меньше, а не больше." },
+  ]}
+/>
+
+## Сниппет 4 — sliding-window log в Redis
+
+```python
+def allow(key, limit, window_s):
+    now = time.time()
+    pipe = redis.pipeline()
+    pipe.zremrangebyscore(key, 0, now - window_s)   # drop entries older than the window
+    pipe.zadd(key, {str(uuid4()): now})             # record this request
+    pipe.zcard(key)                                  # count what remains
+    pipe.expire(key, window_s)
+    _, _, count, _ = pipe.execute()
+    return count <= limit
+```
+
+<Quiz
+  id="07-rate-limiting-code-4"
+  lessonSlug="07-rate-limiting"
+  lang="ru"
+  question="Этот log-лимитер точен и атомарен (пайплайн MULTI/EXEC). Какая реальная цена, на которую ты подписываешься, и тонкое поведение этого порядка?"
+  choices={[
+    { label: "Память: он хранит один член sorted set на запрос, поэтому клиент на 10k req/min держит ~10k записей. Заметь также, что он делает ZADD до ZCARD, поэтому текущий запрос посчитан — отклонённый запрос всё равно записан и обрезан позже, что нормально, но значит сравнение включает себя.", correct: true },
+    { label: "Он не точен, потому что ZREMRANGEBYSCORE может пропустить записи на границе.", misconception: "ZREMRANGEBYSCORE детерминированно сбрасывает всё старше now - window, поэтому счёт точен на скользящем окне. Цена — память на запрос, а не точность." },
+    { label: "Использование UUID как членов — баг; должен быть timestamp как член.", misconception: "Члены должны быть уникальны, иначе два запроса с одним timestamp слились бы в одну запись. UUID (или timestamp плюс счётчик) корректен именно чтобы избежать этого столкновения." },
+    { label: "Пайплайн неатомарен, поэтому конкурентные запросы портят set.", misconception: "Пайплайн Redis MULTI/EXEC выполняет команды атомарно без interleaving, поэтому set консистентен. Цена — память на запрос в log, поэтому counter предпочтительнее на масштабе." },
+  ]}
+/>
 
 <Recap lang="ru">
-Review the key concepts from this lesson and prepare for the next unit.
+Баги лимитера живут в нескольких строках: read-modify-write на стороне приложения дважды тратит токен между нодами, поэтому проверка должна выполняться атомарно внутри Redis; INCR-затем-EXPIRE может застрять ключ без TTL навсегда; sliding-window counter взвешивает предыдущее окно остаточным overlap, а не полностью; а sliding-window log точен и атомарен, но платит одной записью sorted set на запрос. Проследи конкурентность, проверь граничную математику и затолкай всё решение в один атомарный общий шаг.
 </Recap>
-
