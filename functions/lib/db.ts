@@ -1,7 +1,16 @@
 /// <reference types="@cloudflare/workers-types" />
-import type { UserRow } from "./types";
+import type { UserRow, Env } from "./types";
 
 export interface GithubUser { id: number; login: string; avatar_url: string | null; }
+
+/**
+ * Single source of truth for the terms gate: a user has current terms when they
+ * have accepted AND the accepted version matches the active TERMS_VERSION.
+ * Bumping TERMS_VERSION re-gates every user until they re-accept.
+ */
+export function termsCurrent(u: UserRow, env: Env): boolean {
+  return u.terms_accepted_at != null && u.terms_version === env.TERMS_VERSION;
+}
 
 export async function getUserById(db: D1Database, id: number): Promise<UserRow | null> {
   return await db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
