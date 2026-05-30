@@ -77,6 +77,13 @@ export type ReadingUnit = {
   targetWords?: string[];
 };
 
+export type GradingResult = {
+  corrections: { before: string; after: string; why: string }[];
+  betterVersion: string;
+  scoreBand: "A2" | "B1" | "B2" | "C1";
+  noticingHints: string[];
+};
+
 /** CEFR band, mapped from frequency rank. */
 export type Band = "A2" | "B1" | "B2";
 
