@@ -14,4 +14,10 @@ describe("reading corpus coverage", () => {
   it("B1 engineering has ~10 texts", () => {
     expect(unitsByBandStream("B1", "engineering").length).toBeGreaterThanOrEqual(10);
   });
+  it("B2 general has ~10 texts", () => {
+    expect(unitsByBandStream("B2", "general").length).toBeGreaterThanOrEqual(10);
+  });
+  it("B2 engineering has ~10 texts", () => {
+    expect(unitsByBandStream("B2", "engineering").length).toBeGreaterThanOrEqual(10);
+  });
 });
