@@ -19,6 +19,8 @@ const DAY = 86_400_000;
 
 export type WordStatus = "new" | "learning" | "known";
 
+export type GradingModel = "claude-haiku-4-5" | "claude-sonnet-4-6";
+
 export type WordRecord = {
   card: CardState;
   seen: number;
@@ -31,14 +33,17 @@ export type EnglishState = {
   revealed: Record<string, number>;
   placement?: PlacementResult;
   known: Record<string, true>;
-  settings: { newWordsPerDay: number };
+  settings: { newWordsPerDay: number; gradingModel: GradingModel };
   daily?: { date: string; newIntroduced: number };
   readUnits: Record<string, true>;
+  outputAttempts: Record<string, { at: number; scoreBand?: string }>;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
 const defaults: EnglishState = {
-  words: {}, revealed: {}, known: {}, settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY }, readUnits: {},
+  words: {}, revealed: {}, known: {},
+  settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
+  readUnits: {}, outputAttempts: {},
 };
 
 function load(): EnglishState {
@@ -59,9 +64,13 @@ function load(): EnglishState {
       revealed: parsed.revealed ?? {},
       placement: parsed.placement,
       known: parsed.known ?? {},
-      settings: { newWordsPerDay: parsed.settings?.newWordsPerDay ?? DEFAULT_NEW_PER_DAY },
+      settings: {
+        newWordsPerDay: parsed.settings?.newWordsPerDay ?? DEFAULT_NEW_PER_DAY,
+        gradingModel: parsed.settings?.gradingModel ?? "claude-haiku-4-5",
+      },
       daily: parsed.daily,
       readUnits: parsed.readUnits ?? {},
+      outputAttempts: parsed.outputAttempts ?? {},
     };
   } catch {
     return defaults;
@@ -141,8 +150,8 @@ export function recordReveal(unitId: string, passageCount: number) {
 export function resetEnglish() {
   englishState.value = {
     words: {}, revealed: {}, known: {},
-    settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY },
-    readUnits: {},
+    settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
+    readUnits: {}, outputAttempts: {},
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -223,4 +232,26 @@ export function markUnitRead(id: string, targetWords: string[], now: number) {
     ...englishState.value,
     readUnits: { ...englishState.value.readUnits, [id]: true },
   };
+}
+
+export function getGradingModel(): GradingModel {
+  return englishState.value.settings.gradingModel;
+}
+
+export function setGradingModel(model: GradingModel) {
+  englishState.value = {
+    ...englishState.value,
+    settings: { ...englishState.value.settings, gradingModel: model },
+  };
+}
+
+export function recordOutputAttempt(id: string, scoreBand: string | undefined, now: number) {
+  englishState.value = {
+    ...englishState.value,
+    outputAttempts: { ...englishState.value.outputAttempts, [id]: { at: now, scoreBand } },
+  };
+}
+
+export function outputAttemptOf(id: string): { at: number; scoreBand?: string } | undefined {
+  return englishState.value.outputAttempts[id];
 }
