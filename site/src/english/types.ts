@@ -72,3 +72,21 @@ export type ReadingUnit = {
   /** Comprehension checks for the reading. */
   questions: Question[];
 };
+
+/** CEFR band, mapped from frequency rank. */
+export type Band = "A2" | "B1" | "B2";
+
+/** A frequency-ranked, enriched vocabulary entry (one word family). */
+export type VocabEntry = {
+  id: string;            // stable SRS key, e.g. "ngsl:0042" | "nawl:0107"
+  lemma: string;         // surface form (from source CSV, never invented)
+  rank: number;          // global frequency rank within its source list
+  band: Band;            // CEFR band by rank cutoff
+  pos: "noun" | "verb" | "adj" | "adv" | "phrase" | "abbr" | "other";
+  ru: string;            // Russian meaning (A2-friendly)
+  gloss: string;         // plain-English definition
+  ipa?: string;          // pronunciation
+  examples: string[];    // 1–2 natural sentences
+  collocations?: string[];
+  domain?: "general" | "engineering";
+};
