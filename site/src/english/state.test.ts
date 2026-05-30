@@ -80,6 +80,7 @@ describe("english state — P1 extensions", () => {
   });
 });
 
+import { getGradingModel, setGradingModel, recordOutputAttempt, outputAttemptOf } from "./state";
 import { markUnitRead, isUnitRead, englishState as estate } from "./state";
 
 const T2 = 1_700_000_000_000;
@@ -104,5 +105,29 @@ describe("english state — P2 reading", () => {
     gradeWord("ngsl:0042", "good", T2); // reps -> 1
     markUnitRead("u1", ["ngsl:0042"], T2);
     expect(estate.value.words["ngsl:0042"].card.reps).toBe(1); // unchanged
+  });
+});
+
+const T3 = 1_700_000_000_000;
+
+describe("english state — P3 output", () => {
+  beforeEach(() => resetEnglish());
+
+  it("defaults grading model to haiku and lets it change", () => {
+    expect(getGradingModel()).toBe("claude-haiku-4-5");
+    setGradingModel("claude-sonnet-4-6");
+    expect(getGradingModel()).toBe("claude-sonnet-4-6");
+  });
+
+  it("records and reads an output attempt", () => {
+    expect(outputAttemptOf("t1")).toBeUndefined();
+    recordOutputAttempt("t1", "B1", T3);
+    expect(outputAttemptOf("t1")?.scoreBand).toBe("B1");
+  });
+
+  it("resetEnglish clears output attempts", () => {
+    recordOutputAttempt("t1", "B1", T3);
+    resetEnglish();
+    expect(outputAttemptOf("t1")).toBeUndefined();
   });
 });
