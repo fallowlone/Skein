@@ -1,4 +1,4 @@
-import { useMemo, useState } from "preact/hooks";
+import { useMemo, useState, useEffect } from "preact/hooks";
 import type { ReadingUnit, VocabWord } from "~/english/types";
 import {
   englishState,
@@ -15,7 +15,7 @@ import type { Locale } from "~/i18n";
 /** Monotonic clock for scheduling; injected so logic stays testable elsewhere. */
 const now = () => Date.now();
 
-type Props = { unit: ReadingUnit; lang: Locale };
+type Props = { unit: ReadingUnit; lang: Locale; onComplete?: () => void };
 
 const L = {
   en: {
@@ -74,7 +74,7 @@ const L = {
   },
 };
 
-export default function EnReader({ unit, lang }: Props) {
+export default function EnReader({ unit, lang, onComplete }: Props) {
   const l = L[lang];
   const [tab, setTab] = useState<"read" | "review" | "check">("read");
 
@@ -130,7 +130,7 @@ export default function EnReader({ unit, lang }: Props) {
       ) : tab === "review" ? (
         <ReviewTab words={allWords} lang={lang} l={l} />
       ) : (
-        <CheckTab unit={unit} lang={lang} l={l} />
+        <CheckTab unit={unit} lang={lang} l={l} onComplete={onComplete} />
       )}
     </section>
   );
@@ -408,10 +408,12 @@ function CheckTab({
   unit,
   lang,
   l,
+  onComplete,
 }: {
   unit: ReadingUnit;
   lang: Locale;
   l: (typeof L)["en"];
+  onComplete?: () => void;
 }) {
   const [picked, setPicked] = useState<Record<string, number>>({});
   const [nonce, setNonce] = useState(0);
@@ -419,6 +421,10 @@ function CheckTab({
   const answered = unit.questions.filter((q) => picked[q.id] !== undefined);
   const score = unit.questions.filter((q) => picked[q.id] === q.answer).length;
   const allDone = answered.length === unit.questions.length;
+
+  useEffect(() => {
+    if (allDone) onComplete?.();
+  }, [allDone]);
 
   function reset() {
     setPicked({});
