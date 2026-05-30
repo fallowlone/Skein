@@ -3,7 +3,7 @@ import { useMemo, useState } from "preact/hooks";
 import { outputTasks } from "~/english/data/output/tasks";
 import type { OutputTask, GradingResult, Band } from "~/english/types";
 import { englishState, getPlacement, getGradingModel, recordOutputAttempt } from "~/english/state";
-import { hasKey, keyStatus } from "~/english/byok";
+import { keyStatus } from "~/english/byok";
 import { gradeOutput } from "~/english/byok/anthropic";
 import { type Locale } from "~/i18n";
 import KeyEntry from "./KeyEntry";
