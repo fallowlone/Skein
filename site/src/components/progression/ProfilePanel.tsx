@@ -2,6 +2,7 @@ import { useEffect } from "preact/hooks";
 import { userState } from "~/scripts/user-state";
 import { loadStore } from "~/components/algo/drill-state";
 import { xpFromState } from "~/scripts/progression/xp";
+import { englishKnownTotal } from "~/english/state";
 import RankBadge from "./RankBadge";
 import XpBar from "./XpBar";
 import AchievementGrid from "./AchievementGrid";
@@ -26,7 +27,7 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   const store = loadStore();
   const solvedEntries = Object.entries(store).filter(([, e]: any) => e.status === "solved");
   const drillsSolved = solvedEntries.length;
-  const xp = xpFromState(s, drillsSolved);
+  const xp = xpFromState(s, drillsSolved, englishKnownTotal());
 
   // Each solved entry records its drill unit (DrillBoard passes it through), so
   // distinct solved units are exact — drives the completionist achievement.
