@@ -8,7 +8,7 @@
 
 The three `foundations` tracks (`math`, `algorithms`, `base-cs`) open "from zero" — they assume no background. The 16 fullstack pillars deliberately target `middle+/senior` (see `curriculum.md`), so every pillar's first lesson is already `level: junior` on a real topic (e.g. Deployment opens at `01-image-layers`). A reader without background has no gentle entry into a pillar — there is no visible "zero level" on-ramp the way foundations has one.
 
-Confirmed by inspection: `level` only ever takes `junior | middle | senior`; there is no `zero` value, label, or unit anywhere in data, i18n, or UI. Every deployment unit already has exactly one `junior` lesson, so the gap is **not** missing junior coverage — it is the absence of a from-scratch framing entry at the top of the track.
+Confirmed by inspection: the `level` enum in `src/content.config.ts` **does** include `"zero"` (alongside `junior | middle | senior`), and `AltitudeGauge`, `Lesson.astro`, and `connections-index` already handle it — but **no lesson is authored at `level: zero` yet**. Every deployment unit has exactly one `junior` lesson, so the gap is not missing junior coverage — it is the absence of the from-scratch `level: zero` entry the data model already anticipates.
 
 ## Goal
 
@@ -20,9 +20,9 @@ Non-goals: building a full beginner sub-curriculum per pillar (that would duplic
 
 A **dedicated new unit** `00-start-here` for the pilot track, containing one lesson.
 
-- Unit slug: `00-start-here`, `order: 0`, title `{ en: "Start from zero", ru: "С нуля" }`.
+- Unit slug: `00-start-here`, `order: 0`, title `{ en: "Start from zero", ru: "С нуля" }`. (Requires relaxing the `units` schema `order` from `.positive()` to `.nonnegative()` so a unit can sort before order 1.)
 - Renders as the first card in the track nav: a visible "0 · Start from zero" entry — the "zero level" the user expected.
-- One lesson, `lessonType: topic`, `level: junior`, authored EN + RU.
+- One lesson, `lessonType: topic`, **`level: zero`**, authored EN + RU.
 
 Rationale over the alternative (a `00-start` lesson nested inside `01-image-layers`): a standalone Unit 0 gives the strongest, most discoverable "zero level" signal and mirrors how foundations reads. The nested-lesson option remains the documented fallback if a unit-level lint rule blocks a quiz/project-less unit (see Risks).
 
@@ -36,7 +36,7 @@ Fullstack lessons use the **topic** skeleton. The build linter (`src/lint/rules/
 4. `key-takeaway`
 5. `recap`
 
-Plus: ≥1 visual widget (`data-lesson-visual`), ≥2 exercise widgets, **exactly 1** `RetrievalDrawer`, ≤5 hydration islands, and a practice set (`data-practice-set`) with ≥4 problems supplied via the `practice` collection.
+Plus: ≥1 visual widget (`data-lesson-visual`), ≥2 exercise widgets (e.g. `Quiz` + `DragOrder`), **exactly 1** `RetrievalDrawer`, and ≤5 hydration islands. Topic lessons do **not** require a `PracticeSet` (the existing `01-image-layers` topic lesson has none); inline exercise widgets satisfy the bar.
 
 Content (Deployment pilot):
 
