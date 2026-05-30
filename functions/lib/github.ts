@@ -18,9 +18,16 @@ export async function exchangeCodeForUser(
   // Symmetric with the user fetch: guard the status before parsing so a non-JSON
   // 5xx/429 body throws our typed error, not a raw SyntaxError. Never include the
   // response body in the error — it may carry the access token.
-  if (!tokenRes.ok) throw new Error("github_token_exchange_failed");
-  const tokenJson = (await tokenRes.json().catch(() => ({}))) as { access_token?: string };
-  if (!tokenJson.access_token) throw new Error("github_token_exchange_failed");
+  if (!tokenRes.ok) throw new Error(`github_token_exchange_failed: http_${tokenRes.status}`);
+  const tokenJson = (await tokenRes.json().catch(() => ({}))) as {
+    access_token?: string; error?: string;
+  };
+  // On the failure path GitHub returns HTTP 200 with {error,error_description} and
+  // NO token, so surfacing `error` here cannot leak a token — it pinpoints the
+  // cause (incorrect_client_credentials | bad_verification_code | redirect_uri_mismatch).
+  if (!tokenJson.access_token) {
+    throw new Error(`github_token_exchange_failed: ${tokenJson.error ?? "no_access_token"}`);
+  }
 
   const userRes = await fetch("https://api.github.com/user", {
     headers: {
