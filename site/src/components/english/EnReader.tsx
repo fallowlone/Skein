@@ -10,10 +10,10 @@ import {
   recordReveal,
 } from "~/english/state";
 import type { Grade } from "~/english/scheduler/types";
+import type { Locale } from "~/i18n";
 
 /** Monotonic clock for scheduling; injected so logic stays testable elsewhere. */
 const now = () => Date.now();
-import type { Locale } from "~/i18n";
 
 type Props = { unit: ReadingUnit; lang: Locale };
 
