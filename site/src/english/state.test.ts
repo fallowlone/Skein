@@ -79,3 +79,30 @@ describe("english state — P1 extensions", () => {
     expect(queueNewWords(["a", "b", "c", "d", "e"], T1)).toEqual(["b", "c"]); // 1 used
   });
 });
+
+import { markUnitRead, isUnitRead, englishState as estate } from "./state";
+
+const T2 = 1_700_000_000_000;
+
+describe("english state — P2 reading", () => {
+  beforeEach(() => resetEnglish());
+
+  it("marks a unit read", () => {
+    expect(isUnitRead("u1")).toBe(false);
+    markUnitRead("u1", [], T2);
+    expect(isUnitRead("u1")).toBe(true);
+  });
+
+  it("seeds targetWords into the deck on read (bumpSeen)", () => {
+    markUnitRead("u1", ["ngsl:0042", "ngsl:0043"], T2);
+    expect(estate.value.words["ngsl:0042"]).toBeDefined();
+    expect(estate.value.words["ngsl:0043"]).toBeDefined();
+    expect(estate.value.words["ngsl:0042"].card.reps).toBe(0);
+  });
+
+  it("does not clobber a word already in progress", () => {
+    gradeWord("ngsl:0042", "good", T2); // reps -> 1
+    markUnitRead("u1", ["ngsl:0042"], T2);
+    expect(estate.value.words["ngsl:0042"].card.reps).toBe(1); // unchanged
+  });
+});
