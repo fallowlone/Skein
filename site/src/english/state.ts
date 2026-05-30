@@ -33,11 +33,12 @@ export type EnglishState = {
   known: Record<string, true>;
   settings: { newWordsPerDay: number };
   daily?: { date: string; newIntroduced: number };
+  readUnits: Record<string, true>;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
 const defaults: EnglishState = {
-  words: {}, revealed: {}, known: {}, settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY },
+  words: {}, revealed: {}, known: {}, settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY }, readUnits: {},
 };
 
 function load(): EnglishState {
@@ -60,6 +61,7 @@ function load(): EnglishState {
       known: parsed.known ?? {},
       settings: { newWordsPerDay: parsed.settings?.newWordsPerDay ?? DEFAULT_NEW_PER_DAY },
       daily: parsed.daily,
+      readUnits: parsed.readUnits ?? {},
     };
   } catch {
     return defaults;
@@ -140,6 +142,7 @@ export function resetEnglish() {
   englishState.value = {
     words: {}, revealed: {}, known: {},
     settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY },
+    readUnits: {},
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -207,4 +210,17 @@ export function queueNewWords(candidateIds: string[], now: number): string[] {
     (id) => !isKnown(id) && !englishState.value.words[id],
   );
   return fresh.slice(0, budget);
+}
+
+export function isUnitRead(id: string): boolean {
+  return englishState.value.readUnits[id] === true;
+}
+
+/** Mark a reading unit complete; seed its target words into the SRS deck. */
+export function markUnitRead(id: string, targetWords: string[], now: number) {
+  for (const w of targetWords) bumpSeen(w, now); // no-ops if already seen
+  englishState.value = {
+    ...englishState.value,
+    readUnits: { ...englishState.value.readUnits, [id]: true },
+  };
 }
