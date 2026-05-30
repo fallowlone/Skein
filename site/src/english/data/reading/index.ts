@@ -4,9 +4,12 @@ import { a2General } from "./a2-general";
 import { a2Engineering } from "./a2-engineering";
 import { b1General } from "./b1-general";
 import { b1Engineering } from "./b1-engineering";
+import { b2General } from "./b2-general";
+import { b2Engineering } from "./b2-engineering";
 
 export const readingUnits: ReadingUnit[] = [
   ...a2Engineering, ...a2General, ...b1General, ...b1Engineering,
+  ...b2General, ...b2Engineering,
 ];
 
 export function unitById(id: string): ReadingUnit | undefined {
