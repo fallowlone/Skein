@@ -112,3 +112,47 @@ export type OutputTask = {
   modelAnswer?: Bi;
   hint?: Bi;
 };
+
+/** One fill-in-the-gap practice item for a grammar point. */
+export type ClozeItem = {
+  id: string;
+  before: string;       // sentence fragment before the gap
+  after?: string;       // fragment after the gap (gap rendered between)
+  answer: string;       // primary accepted fill
+  alts?: string[];      // other accepted fills (compared case-insensitively, trimmed)
+  hint: Bi;             // bilingual nudge
+  explain?: Bi;         // why this form, shown after answering
+};
+
+/** A grammar-in-context micro-lesson: explanation + examples + cloze practice. */
+export type GrammarPoint = {
+  id: string;                 // "grammar:passive-engineering"
+  band: "B1" | "B2";
+  domain?: "general" | "engineering";
+  title: Bi;
+  structure: Bi;              // the rule named, e.g. "be + past participle"
+  explain: Bi;                // short in-context explanation, bilingual scaffolding
+  examples: { en: string; ru: string; note?: Bi }[];  // 2-3 in-context
+  cloze: ClozeItem[];         // >=2 per point
+  register?: Bi;              // when/why (engineering hedging, formality)
+};
+
+/** A single collocation / chunk, practiced as a gap-fill. */
+export type Collocation = {
+  id: string;
+  chunk: string;        // full collocation, "raise an exception"
+  ru: string;
+  gap: string;          // drill prompt with a ___ gap, "raise an ___"
+  answer: string;       // accepted fill, "exception"
+  alts?: string[];
+  example: string;      // natural sentence using the chunk
+  note?: Bi;
+};
+
+/** A themed group of collocations (engineering or general/academic). */
+export type CollocationSet = {
+  id: string;
+  title: Bi;
+  domain: "general" | "engineering";
+  items: Collocation[];
+};
