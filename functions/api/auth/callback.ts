@@ -26,8 +26,13 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
       clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET,
     });
     user = await upsertUserFromGithub(env.DB, gh);
-  } catch {
-    return new Response("Auth failed", { status: 502 });
+  } catch (err) {
+    // Surface the failing step without leaking secrets: the github.ts errors are
+    // fixed typed strings (never carry the token), and DB failures collapse to a
+    // generic code so schema details don't leak. Full error goes to the log only.
+    console.error("auth callback failed:", err);
+    const reason = err instanceof Error && err.message.startsWith("github_") ? err.message : "db_error";
+    return new Response(`Auth failed: ${reason}`, { status: 502 });
   }
 
   const sid = await createSession(env.SESSIONS, user.id);
