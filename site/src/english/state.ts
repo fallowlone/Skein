@@ -7,6 +7,7 @@
 import { signal, effect } from "@preact/signals";
 import { fsrsScheduler } from "./scheduler/fsrs";
 import type { CardState, Grade } from "./scheduler/types";
+import { recordActiveDay } from "~/scripts/user-state";
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -76,6 +77,7 @@ export function gradeWord(id: string, grade: Grade, now: number) {
       [id]: { card, seen: (prev?.seen ?? 0) + 1 },
     },
   };
+  if (typeof window !== "undefined") recordActiveDay();
 }
 
 /** Count a first exposure without scheduling (word shown in reading). */
@@ -120,4 +122,11 @@ export function recordReveal(unitId: string, passageCount: number) {
 export function resetEnglish() {
   englishState.value = { words: {}, revealed: {} };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
+}
+
+/** Total words currently at "known" maturity — feeds derived XP. */
+export function englishKnownTotal(): number {
+  return Object.values(englishState.value.words).filter(
+    (r) => r.card.reps > 0 && r.card.scheduled_days >= 21,
+  ).length;
 }
