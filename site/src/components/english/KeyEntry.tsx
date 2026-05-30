@@ -1,6 +1,6 @@
 // site/src/components/english/KeyEntry.tsx
 import { useState, useEffect } from "preact/hooks";
-import { hasKey, keyStatus, setKey, unlock, clearKey, type KeyStatus } from "~/english/byok";
+import { keyStatus, setKey, unlock, clearKey, type KeyStatus } from "~/english/byok";
 import { getGradingModel, setGradingModel, type GradingModel } from "~/english/state";
 import { type Locale } from "~/i18n";
 
