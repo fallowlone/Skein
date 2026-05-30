@@ -17,7 +17,7 @@ const tracksSchema = z.object({
 const unitsSchema = z.object({
   slug: z.string().regex(/^\d{2}-[a-z0-9-]+$/),
   track: Track,
-  order: z.number().int().positive(),
+  order: z.number().int().nonnegative(),
   title: Bi,
   crux: Bi,
   lessons: z.array(z.string().regex(/^\d{2}-[a-z0-9-]+$/)),
@@ -54,5 +54,17 @@ describe("content collections", () => {
       crux: { en: "?", ru: "?" },
       lessons: ["01-counting", "02-zero"],
     })).not.toThrow();
+  });
+
+  test("units schema accepts order: 0 for zero-level on-ramp units", () => {
+    const result = unitsSchema.safeParse({
+      slug: "00-start-here",
+      track: "deployment",
+      order: 0,
+      title: { en: "Start from zero", ru: "С нуля" },
+      crux: { en: "x", ru: "x" },
+      lessons: ["01-overview"],
+    });
+    expect(result.success).toBe(true);
   });
 });

@@ -25,7 +25,7 @@ const units = defineCollection({
   schema: z.object({
     slug: z.string().regex(SlugRe),
     track: Track,
-    order: z.number().int().positive(),
+    order: z.number().int().nonnegative(),
     title: Bi,
     crux: Bi,
     lessons: z.array(z.string().regex(SlugRe)),
