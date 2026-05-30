@@ -3,12 +3,16 @@ import type { ReadingUnit, VocabWord } from "~/english/types";
 import {
   englishState,
   statusOf,
-  isDue,
-  markKnown,
-  markLearning,
+  dueWordIds,
+  knownCount,
+  gradeWord,
   bumpSeen,
   recordReveal,
 } from "~/english/state";
+import type { Grade } from "~/english/scheduler/types";
+
+/** Monotonic clock for scheduling; injected so logic stays testable elsewhere. */
+const now = () => Date.now();
 import type { Locale } from "~/i18n";
 
 type Props = { unit: ReadingUnit; lang: Locale };
@@ -80,8 +84,8 @@ export default function EnReader({ unit, lang }: Props) {
   );
 
   // Subscribe to the signal so the bank counters re-render on change.
-  const st = englishState.value;
-  const knownCount = allWords.filter((w) => st.words[w.id]?.status === "known").length;
+  englishState.value; // subscribe to re-render on change
+  const known = knownCount(allWords.map((w) => w.id));
 
   return (
     <section class="max-w-[760px] mx-auto">
@@ -93,14 +97,14 @@ export default function EnReader({ unit, lang }: Props) {
           {unit.source[lang]}
         </div>
         <div class="ml-auto text-[12px] font-mono text-muted">
-          {knownCount} {l.of} {allWords.length} {l.known}
+          {known} {l.of} {allWords.length} {l.known}
         </div>
       </div>
 
       <div class="h-1 w-full bg-card rounded-full overflow-hidden mb-6">
         <div
           class="h-full bg-ink transition-[width] duration-300"
-          style={`width:${allWords.length ? (knownCount / allWords.length) * 100 : 0}%`}
+          style={`width:${allWords.length ? (known / allWords.length) * 100 : 0}%`}
         />
       </div>
 
@@ -190,7 +194,7 @@ function PassageBlock({
   }
 
   function tapWord(id: string) {
-    bumpSeen(id);
+    bumpSeen(id, now());
     setOpen((cur) => (cur === id ? null : id));
   }
 
@@ -211,7 +215,7 @@ function PassageBlock({
           <div class="meta mb-2">{l.words}</div>
           <div class="flex flex-wrap gap-2">
             {words.map((w) => {
-              const status = englishState.value.words[w.id]?.status ?? "new";
+              const status = (englishState.value, statusOf(w.id));
               return (
                 <button
                   key={w.id}
@@ -264,14 +268,14 @@ function WordCard({
       <div class="flex gap-2 mt-3">
         <button
           type="button"
-          onClick={() => { markKnown(word.id); onDone(); }}
+          onClick={() => { gradeWord(word.id, "good", now()); onDone(); }}
           class="font-mono text-[11px] uppercase tracking-[0.04em] px-3 py-1.5 border border-ink bg-ink text-paper rounded-[2px] cursor-pointer"
         >
           {l.gotIt}
         </button>
         <button
           type="button"
-          onClick={() => { markLearning(word.id); onDone(); }}
+          onClick={() => { gradeWord(word.id, "again", now()); onDone(); }}
           class="font-mono text-[11px] uppercase tracking-[0.04em] px-3 py-1.5 border border-rule-strong text-ink rounded-[2px] cursor-pointer hover:bg-card"
         >
           {l.learning}
@@ -301,16 +305,12 @@ function ReviewTab({
   l: (typeof L)["en"];
 }) {
   const st = englishState.value;
-  const queue = useMemo(
-    () =>
-      words.filter((w) => {
-        const status = st.words[w.id]?.status;
-        return status === "learning" && isDue(w.id);
-      }),
-    [words, st],
-  );
-  const learning = words.filter((w) => st.words[w.id]?.status === "learning");
-  const deck = queue.length ? queue : learning;
+  const due = useMemo(() => {
+    const ids = new Set(dueWordIds(words.map((w) => w.id), now()));
+    return words.filter((w) => ids.has(w.id));
+  }, [words, st]);
+  const learning = words.filter((w) => statusOf(w.id) === "learning");
+  const deck = due.length ? due : learning;
 
   const [i, setI] = useState(0);
   const [val, setVal] = useState("");
@@ -328,12 +328,11 @@ function ReviewTab({
   function submit() {
     const ok = norm(val) === norm(card.w);
     setGraded(ok);
-    if (ok) markKnown(card.id);
-    else markLearning(card.id);
+    gradeWord(card.id, ok ? "good" : "again", now());
   }
 
   function next(overrideCorrect?: boolean) {
-    if (overrideCorrect) markKnown(card.id); // learner self-corrects a typo
+    if (overrideCorrect) gradeWord(card.id, "good", now()); // learner self-corrects a typo
     setGraded(null);
     setVal("");
     setI((n) => n + 1);
