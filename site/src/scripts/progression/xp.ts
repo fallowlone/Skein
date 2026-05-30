@@ -1,10 +1,12 @@
 import type { UserState } from "../user-state";
+import { englishXp } from "~/english/xp";
 
 const XP = { pretest: 50, stage2: 100, lesson: 10, retrieval: 15, achievement: 25, drill: 8 };
 
 export function xpFromState(
   state: Pick<UserState, "pretest" | "history" | "retrieval" | "progression">,
   drillsSolved: number,
+  englishKnown = 0,
 ): number {
   let xp = 0;
   if (state.pretest) xp += XP.pretest;
@@ -13,6 +15,7 @@ export function xpFromState(
   xp += Object.keys(state.retrieval ?? {}).length * XP.retrieval;
   xp += Object.keys(state.progression?.achievements ?? {}).length * XP.achievement;
   xp += Math.max(0, drillsSolved) * XP.drill;
+  xp += englishXp(englishKnown);
   return xp;
 }
 
