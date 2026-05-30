@@ -101,3 +101,14 @@ export type VocabEntry = {
   collocations?: string[];
   domain?: "general" | "engineering";
 };
+
+export type OutputTask = {
+  id: string;
+  band: "A2" | "B1" | "B2";
+  type: "pr-comment" | "standup" | "design-rationale" | "bug-report"
+      | "incident-summary" | "commit-message" | "rfc-summary" | "review-reply";
+  prompt: Bi;
+  rubric: string[];
+  modelAnswer?: Bi;
+  hint?: Bi;
+};
