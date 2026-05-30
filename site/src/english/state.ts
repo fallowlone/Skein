@@ -127,6 +127,6 @@ export function resetEnglish() {
 /** Total words currently at "known" maturity — feeds derived XP. */
 export function englishKnownTotal(): number {
   return Object.values(englishState.value.words).filter(
-    (r) => r.card.reps > 0 && r.card.scheduled_days >= 21,
+    (r) => r.card.reps > 0 && r.card.scheduled_days >= MATURE_DAYS,
   ).length;
 }
