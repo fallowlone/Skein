@@ -1,47 +1,48 @@
-// English-for-Engineers — per-user vocabulary state.
+// site/src/english/state.ts
 //
-// Kept in its own localStorage key, separate from `awesome.user-state.v1`, so it
-// does not touch the account-synced progress schema. When the layer graduates,
-// this can be folded into user-state + account-sync. For now: local only.
-//
-// SRS model: 5-box Leitner. A correct recall promotes a word up a box (longer
-// interval); a miss drops it to box 1. `due` is computed from box + lastAt by
-// the review UI, so the schedule lives in code, not in storage.
+// English-for-Engineers — per-user vocabulary state, scheduler-backed.
+// Own localStorage key, separate from the synced user-state for now (P0).
+// One CardState per word; status is derived from the card's maturity.
 
 import { signal, effect } from "@preact/signals";
+import { fsrsScheduler } from "./scheduler/fsrs";
+import type { CardState, Grade } from "./scheduler/types";
 
-const KEY = "awesome.english.v1";
+const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
+const scheduler = fsrsScheduler();
+
+/** A card whose next interval is at least this many days counts as "known". */
+const MATURE_DAYS = 21;
+const DAY = 86_400_000;
 
 export type WordStatus = "new" | "learning" | "known";
 
 export type WordRecord = {
-  status: WordStatus;
-  /** Leitner box 1..5. Higher = longer interval. */
-  box: number;
-  /** Times the word has been surfaced/reviewed. */
+  card: CardState;
   seen: number;
-  /** Last interaction, epoch ms. */
-  lastAt: number;
 };
 
 export type EnglishState = {
   words: Record<string, WordRecord>;
-  /** unitId -> count of passages whose translation was revealed. */
   revealed: Record<string, number>;
 };
 
 const defaults: EnglishState = { words: {}, revealed: {} };
-
-/** Leitner intervals per box, in days. Box 1 = review same day. */
-export const BOX_DAYS = [0, 0, 1, 3, 7, 16];
-const DAY = 86_400_000;
 
 function load(): EnglishState {
   if (typeof window === "undefined") return defaults;
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaults;
-    return { ...defaults, ...JSON.parse(raw) } as EnglishState;
+    const parsed = JSON.parse(raw);
+    // Only accept v2 records (must carry a `card`); anything else is dropped.
+    const words: Record<string, WordRecord> = {};
+    for (const [id, rec] of Object.entries(parsed.words ?? {})) {
+      if (rec && typeof rec === "object" && "card" in (rec as object)) {
+        words[id] = rec as WordRecord;
+      }
+    }
+    return { words, revealed: parsed.revealed ?? {} };
   } catch {
     return defaults;
   }
@@ -58,57 +59,52 @@ if (typeof window !== "undefined") {
   effect(() => save(englishState.value));
 }
 
-function rec(id: string): WordRecord {
-  return (
-    englishState.value.words[id] ?? { status: "new", box: 1, seen: 0, lastAt: 0 }
-  );
+function statusFromCard(card: CardState): WordStatus {
+  if (card.reps === 0) return "new";
+  return card.scheduled_days >= MATURE_DAYS ? "known" : "learning";
 }
 
-function put(id: string, r: WordRecord) {
+/** Grade a word; creates the card on first grade. */
+export function gradeWord(id: string, grade: Grade, now: number) {
+  const prev = englishState.value.words[id];
+  const base = prev?.card ?? scheduler.newCard(now);
+  const card = scheduler.review(base, grade, now);
   englishState.value = {
     ...englishState.value,
-    words: { ...englishState.value.words, [id]: r },
+    words: {
+      ...englishState.value.words,
+      [id]: { card, seen: (prev?.seen ?? 0) + 1 },
+    },
   };
 }
 
-/** Mark a word as "still learning" — resets it to the shortest interval. */
-export function markLearning(id: string) {
-  const r = rec(id);
-  put(id, { ...r, status: "learning", box: 1, seen: r.seen + 1, lastAt: Date.now() });
-}
-
-/** Promote a word: correct recall moves it up a box; box 5 marks it known. */
-export function markKnown(id: string) {
-  const r = rec(id);
-  const box = Math.min(5, r.box + 1);
-  put(id, {
-    ...r,
-    box,
-    status: box >= 5 ? "known" : "learning",
-    seen: r.seen + 1,
-    lastAt: Date.now(),
-  });
-}
-
-/** A word just shown in reading — count exposure without changing status. */
-export function bumpSeen(id: string) {
-  const r = rec(id);
-  if (r.seen === 0 && r.status === "new") {
-    put(id, { ...r, seen: 1, lastAt: Date.now() });
-  }
+/** Count a first exposure without scheduling (word shown in reading). */
+export function bumpSeen(id: string, now: number) {
+  if (englishState.value.words[id]) return;
+  englishState.value = {
+    ...englishState.value,
+    words: {
+      ...englishState.value.words,
+      [id]: { card: scheduler.newCard(now), seen: 1 },
+    },
+  };
 }
 
 export function statusOf(id: string): WordStatus {
-  return englishState.value.words[id]?.status ?? "new";
+  const rec = englishState.value.words[id];
+  return rec ? statusFromCard(rec.card) : "new";
 }
 
-/** Is a learning word due for review now, by its Leitner box? */
-export function isDue(id: string): boolean {
-  const r = englishState.value.words[id];
-  if (!r || r.status === "known") return false;
-  if (r.status === "new") return false;
-  const wait = (BOX_DAYS[r.box] ?? 0) * DAY;
-  return Date.now() - r.lastAt >= wait;
+/** Of the given ids, those whose card is due at `now` (and already started). */
+export function dueWordIds(ids: string[], now: number): string[] {
+  return ids.filter((id) => {
+    const rec = englishState.value.words[id];
+    return rec && rec.card.reps > 0 && scheduler.isDue(rec.card, now);
+  });
+}
+
+export function knownCount(ids: string[]): number {
+  return ids.filter((id) => statusOf(id) === "known").length;
 }
 
 export function recordReveal(unitId: string, passageCount: number) {
@@ -118,4 +114,10 @@ export function recordReveal(unitId: string, passageCount: number) {
     ...englishState.value,
     revealed: { ...englishState.value.revealed, [unitId]: passageCount },
   };
+}
+
+/** Test/Settings helper: wipe English progress. */
+export function resetEnglish() {
+  englishState.value = { words: {}, revealed: {} };
+  if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
