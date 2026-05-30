@@ -4,10 +4,13 @@
 // epoch-ms CardState and ts-fsrs's Date-based Card at the boundary so nothing
 // outside this file depends on ts-fsrs internals.
 
-import { createEmptyCard, fsrs, Rating, type Card } from "ts-fsrs";
+import { createEmptyCard, fsrs, Rating, type Card, type Grade as FsrsGrade } from "ts-fsrs";
 import type { CardState, Grade, Scheduler } from "./types";
 
-const RATING: Record<Grade, Rating> = {
+// ts-fsrs's `next` accepts `Grade` (Again/Hard/Good/Easy) — the rateable subset
+// of `Rating` that excludes `Manual`. Typing the map to `FsrsGrade` keeps the
+// call site assignable without a cast.
+const RATING: Record<Grade, FsrsGrade> = {
   again: Rating.Again,
   hard: Rating.Hard,
   good: Rating.Good,
