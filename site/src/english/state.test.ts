@@ -131,3 +131,38 @@ describe("english state — P3 output", () => {
     expect(outputAttemptOf("t1")).toBeUndefined();
   });
 });
+
+import {
+  markGrammarDone, isGrammarDone, markCollocationDone, isCollocationDone,
+} from "./state";
+
+describe("english state — P4 grammar/collocation completion", () => {
+  beforeEach(() => resetEnglish());
+
+  it("marks and reads grammar completion", () => {
+    expect(isGrammarDone("grammar:passive")).toBe(false);
+    markGrammarDone("grammar:passive");
+    expect(isGrammarDone("grammar:passive")).toBe(true);
+  });
+
+  it("marks and reads collocation completion", () => {
+    expect(isCollocationDone("colloc:exceptions")).toBe(false);
+    markCollocationDone("colloc:exceptions");
+    expect(isCollocationDone("colloc:exceptions")).toBe(true);
+  });
+
+  it("resetEnglish clears P4 completion", () => {
+    markGrammarDone("grammar:passive");
+    markCollocationDone("colloc:exceptions");
+    resetEnglish();
+    expect(isGrammarDone("grammar:passive")).toBe(false);
+    expect(isCollocationDone("colloc:exceptions")).toBe(false);
+  });
+
+  it("survives a save/load round-trip via the signal", () => {
+    markGrammarDone("grammar:passive");
+    const json = JSON.stringify(englishState.value);
+    const parsed = JSON.parse(json);
+    expect(parsed.grammarDone["grammar:passive"]).toBe(true);
+  });
+});
