@@ -1,6 +1,7 @@
 // site/src/components/english/Today.tsx
 import { useMemo, useState } from "preact/hooks";
-import { englishState, dueWordIds, getPlacement } from "~/english/state";
+import { englishState, dueWordIds, getPlacement, isUnitRead } from "~/english/state";
+import { readingUnits } from "~/english/data/reading";
 import { type Locale } from "~/i18n";
 import PlacementTest from "./PlacementTest";
 import VocabModule from "./VocabModule";
@@ -17,11 +18,21 @@ export default function Today({ lang }: Props) {
   const startedIds = useMemo(() => Object.keys(englishState.value.words), [englishState.value]);
   const due = useMemo(() => dueWordIds(startedIds, now()).slice(0, REVIEW_CAP), [startedIds]);
 
+  const nextText = useMemo(() => {
+    const order = ["A2", "B1", "B2"];
+    const maxIdx = order.indexOf(placement?.band ?? "A2");
+    const eligible = readingUnits.filter((u) => order.indexOf(u.level) <= maxIdx && !isUnitRead(u.id));
+    return eligible.find((u) => u.stream === "engineering") ?? eligible[0] ?? null;
+  }, [englishState.value, placement]);
+
   const L = {
     due: lang === "en" ? "Reviews due" : "Повторений",
-    reviewHint: lang === "en" ? "Open the Reading tab's Review to clear them." : "Открой Review во вкладке Reading.",
+    reviewHint: lang === "en" ? "Open a text below and use its Review tab." : "Открой текст ниже и используй вкладку Review.",
     newWords: lang === "en" ? "New words" : "Новые слова",
     allClear: lang === "en" ? "All clear for today. 🎉" : "На сегодня всё. 🎉",
+    reading: lang === "en" ? "Today's reading" : "Чтение на сегодня",
+    readCta: lang === "en" ? "Open in Reading below ↓" : "Открой в разделе «Чтение» ниже ↓",
+    readDone: lang === "en" ? "Reading done for today. ✅" : "Чтение на сегодня сделано. ✅",
   };
 
   if (placing || !placement) {
@@ -37,6 +48,17 @@ export default function Today({ lang }: Props) {
       <div>
         <div class="meta mb-3">{L.newWords}</div>
         <VocabModule lang={lang} />
+      </div>
+      <div>
+        <div class="meta mb-2">{L.reading}</div>
+        {nextText ? (
+          <div class="text-[14px] text-ink">
+            <span class="font-semibold">{nextText.title[lang]}</span>
+            <span class="text-muted"> — {L.readCta}</span>
+          </div>
+        ) : (
+          <div class="text-[13px] text-ink">{L.readDone}</div>
+        )}
       </div>
     </div>
   );
