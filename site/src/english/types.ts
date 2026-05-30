@@ -63,6 +63,8 @@ export type Question = {
 export type ReadingUnit = {
   id: string;
   level: "A2" | "B1" | "B2";
+  /** Broad-English vs engineering artifacts (PR/RFC/incident/docs). */
+  stream: "general" | "engineering";
   title: Bi;
   blurb: Bi;
   /** What real-world text this mimics, shown as a tag. */
@@ -71,6 +73,8 @@ export type ReadingUnit = {
   phrases: Phrase[];
   /** Comprehension checks for the reading. */
   questions: Question[];
+  /** VocabEntry ids (P1 deck) this text teaches; seeded into SRS when read. */
+  targetWords?: string[];
 };
 
 /** CEFR band, mapped from frequency rank. */
