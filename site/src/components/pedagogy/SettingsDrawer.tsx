@@ -154,7 +154,7 @@ export default function SettingsDrawer({ lang }: Props) {
       <div class="mt-8 flex flex-wrap gap-3">
         <button
           type="button"
-          class="btn ghost text-[12px]"
+          class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
           onClick={() => {
             setPretest(0, []);
             location.href = `/${lang}/?retake=1`;
@@ -164,7 +164,7 @@ export default function SettingsDrawer({ lang }: Props) {
         </button>
         <button
           type="button"
-          class="btn text-[12px]"
+          class="oa-btn oa-btn-primary oa-btn-sm text-[12px]"
           style="background: var(--danger); border-color: var(--danger); color: var(--paper);"
           onClick={() => {
             const ok = confirm(l.resetConfirm);

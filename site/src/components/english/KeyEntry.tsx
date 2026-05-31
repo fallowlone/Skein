@@ -60,7 +60,7 @@ export default function KeyEntry({ lang, onChange }: Props) {
           <div class="flex gap-2">
             <input type="password" value={unlockPass} placeholder={L.passPh} onInput={(e) => setUnlockPass((e.target as HTMLInputElement).value)}
               class="flex-1 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
-            <button type="button" class="btn" disabled={busy} onClick={doUnlock}>{L.unlock}</button>
+            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={doUnlock}>{L.unlock}</button>
           </div>
         </div>
       ) : status === "none" ? (
@@ -79,12 +79,12 @@ export default function KeyEntry({ lang, onChange }: Props) {
             <input type="password" value={pass} placeholder={L.passPh} onInput={(e) => setPass((e.target as HTMLInputElement).value)}
               class="bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
           ) : null}
-          <button type="button" class="btn self-start" disabled={busy || apiKey.trim().length === 0 || (mode === "passphrase" && pass.length === 0)} onClick={save}>{L.save}</button>
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" disabled={busy || apiKey.trim().length === 0 || (mode === "passphrase" && pass.length === 0)} onClick={save}>{L.save}</button>
         </div>
       ) : (
         <div class="flex items-center gap-3 mb-4">
           <span class="text-[13px] text-ink">✓ {L.saved}</span>
-          <button type="button" class="btn ghost text-[12px]" onClick={remove}>{L.remove}</button>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={remove}>{L.remove}</button>
         </div>
       )}
 
