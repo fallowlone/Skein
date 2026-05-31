@@ -5,7 +5,15 @@ diagram kit. Additive — insert into the lesson Visual slot; never rewrite pros
 
 ## Steps
 1. Read `site/src/content/lessons/en/<track>/<unit>/<lesson>/index.mdx` and the RU mirror.
-2. **Idempotency:** if either file already contains `data-lesson-visual` (any diagram/figure), STOP and report "already has a visual — skipped".
+2. **Idempotency:** STOP and report "already has a visual — skipped" if either file
+   already renders a visual. The marker `data-lesson-visual` is emitted by the
+   *component*, not written literally in the MDX, so check for BOTH:
+   - the literal string `data-lesson-visual`, AND
+   - any import/usage of a figure component that emits it:
+     `MachineFigure`, `StructureFigure`, `ComplexityChart`, `AlgoTrace`,
+     `AnnotatedCode`, `FlowDiagram`, `StackDiagram`, `SequenceDiagram`, `DiagramFrame`.
+   (e.g. `grep -Eq 'data-lesson-visual|MachineFigure|StructureFigure|ComplexityChart|AlgoTrace|AnnotatedCode|FlowDiagram|StackDiagram|SequenceDiagram|DiagramFrame'`).
+   Note: most `base-cs` and `algorithms` lessons already carry a figure — expect to skip them.
 3. Choose the single best-fit primitive for the lesson's core concept:
    - `FlowDiagram` — a process / architecture / state flow (boxes + arrows).
    - `StackDiagram` — layers (encapsulation, tiers, request path).
