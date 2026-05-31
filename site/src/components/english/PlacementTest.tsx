@@ -69,8 +69,8 @@ export default function PlacementTest({ lang, onDone }: Props) {
           <div class="font-display text-[34px] font-bold text-ink leading-none my-1">~{est}</div>
           <div class="text-[13px] text-muted">{L.words} · {L.start}: <span class="text-ink font-semibold">{band}</span></div>
           <div class="flex gap-2.5 mt-4">
-            <button type="button" class="btn ghost text-[12px]" onClick={restart}>{L.again}</button>
-            {onDone ? <button type="button" class="btn link text-[12px]" onClick={onDone}>{lang === "en" ? "Continue" : "Дальше"}</button> : null}
+            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={restart}>{L.again}</button>
+            {onDone ? <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px]" onClick={onDone}>{lang === "en" ? "Continue" : "Дальше"}</button> : null}
           </div>
         </div>
       </aside>
@@ -84,7 +84,7 @@ export default function PlacementTest({ lang, onDone }: Props) {
           <span class="badge muted">{lang === "en" ? "~4 min" : "~4 мин"}</span></div>
         <div class="px-6 pt-5 pb-6">
           <p class="text-[14px] text-ink-2 leading-relaxed mt-0 mb-4">{L.intro}</p>
-          <button type="button" class="btn" onClick={() => setStarted(true)}>{L.begin}</button>
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setStarted(true)}>{L.begin}</button>
         </div>
       </aside>
     );
@@ -95,14 +95,14 @@ export default function PlacementTest({ lang, onDone }: Props) {
     <aside class={wrap}>
       <div class={header}>
         <span class="meta">{L.title} · {i + 1}/{items.length}</span>
-        <button type="button" class="btn link text-muted text-[11px]" onClick={restart}>{L.again}</button>
+        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted text-[11px]" onClick={restart}>{L.again}</button>
       </div>
       <div class="h-[2px] bg-rule relative"><div class="absolute inset-0 bg-ink" style={`width:${((i + 1) / items.length) * 100}%`} /></div>
       <div class="px-6 pt-8 pb-8 flex flex-col items-center gap-6">
         <div class="font-display text-[30px] font-bold text-ink">{item.lemma}</div>
         <div class="flex gap-3">
-          <button type="button" class="btn" onClick={() => answer(true)}>{L.know}</button>
-          <button type="button" class="btn ghost" onClick={() => answer(false)}>{L.dont}</button>
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => answer(true)}>{L.know}</button>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => answer(false)}>{L.dont}</button>
         </div>
       </div>
     </aside>

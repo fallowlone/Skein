@@ -21,7 +21,7 @@ const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);
 export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   return (
     <section data-practice-layer data-lesson-key={lessonKey} class="my-12">
-      <h2 class="font-bold text-ink text-2xl mb-1">{tt(lang, "Practice", "Практика")}</h2>
+      <h2 class="font-display font-[520] text-ink text-2xl mb-1">{tt(lang, "Practice", "Практика")}</h2>
       <p class="text-sm text-muted mb-6">
         {tt(lang, "Do these to turn recognition into skill.", "Сделай это, чтобы превратить узнавание в навык.")}
       </p>
@@ -45,11 +45,11 @@ function TaskCard({ lang, lessonKey, task }: { lang: Locale; lessonKey: string; 
     });
   };
   return (
-    <div data-practice-task={task.id} class="rounded-2xl border-2 border-rule bg-card p-5">
+    <div data-practice-task={task.id} class="rounded-[var(--r-md)] border-[0.5px] border-hairline-2 bg-card p-5">
       <button type="button" onClick={onOpen} class="w-full flex items-center justify-between gap-3 text-left">
-        <span class="font-semibold text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
+        <span class="font-medium text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
         <span class="flex items-center gap-2 shrink-0">
-          <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-full border border-rule text-muted">{task.difficulty}</span>
+          <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 text-muted">{task.difficulty}</span>
           <span class="text-xs font-mono text-muted">{task.estMin} min</span>
         </span>
       </button>
@@ -85,7 +85,7 @@ function TaskBody({ lang, lessonKey, task }: { lang: Locale; lessonKey: string; 
       }
       return (
         <div>
-          {task.evidence && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
+          {task.evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
           <Rubric lang={lang} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
           <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.grading.model.en, task.grading.model.ru)} />
         </div>
@@ -94,7 +94,7 @@ function TaskBody({ lang, lessonKey, task }: { lang: Locale; lessonKey: string; 
       if (task.grading.mode === "self") {
         return (
           <div>
-            {task.starter && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{task.starter}</pre>}
+            {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
             <Rubric lang={lang} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
             <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.grading.model.en, task.grading.model.ru)} />
           </div>
@@ -105,7 +105,7 @@ function TaskBody({ lang, lessonKey, task }: { lang: Locale; lessonKey: string; 
         const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => ok && done() };
         return (
           <div>
-            {task.starter && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{task.starter}</pre>}
+            {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
             <Suspense fallback={<Loading lang={lang} />}>
               {task.grading.runtime === "sql"
                 ? <SqlSandbox {...common} initialSql={task.starter ?? ""} />
@@ -139,9 +139,9 @@ function Reveal({ lang, lessonKey, taskId, body, pre }: { lang: Locale; lessonKe
   const [shown, setShown] = useState(false);
   return (
     <div>
-      {pre && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{pre}</pre>}
+      {pre && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{pre}</pre>}
       {!shown ? (
-        <button type="button" class="px-4 py-1.5 rounded-full border-2 border-ok text-ok text-sm font-semibold"
+        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
           onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "done"); }}>
           {tt(lang, "Reveal model answer", "Показать ответ")}
         </button>
@@ -195,15 +195,15 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks }: {
   };
   return (
     <div>
-      {evidence && <pre class="text-xs bg-card-2 p-3 rounded mb-3 overflow-x-auto">{evidence}</pre>}
+      {evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{evidence}</pre>}
       <ul class="space-y-3">
         {blanks.map((b) => (
           <li key={b.id}>
-            <input class="font-mono w-full max-w-md px-3 py-1.5 border border-gray-300 rounded"
+            <input class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
               value={values[b.id] ?? ""}
               onInput={(e) => setValues({ ...values, [b.id]: (e.target as HTMLInputElement).value })} />
             {result && (
-              <span class={`ml-2 text-sm ${result[b.id] ? "text-ok" : "text-red-600"}`}>
+              <span class={`ml-2 text-sm ${result[b.id] ? "text-ok" : "text-danger"}`}>
                 {result[b.id] ? "✓" : tt(lang, "try again", "ещё раз")}
               </span>
             )}
@@ -211,7 +211,7 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks }: {
           </li>
         ))}
       </ul>
-      <button type="button" class="mt-3 px-4 py-1.5 rounded-full bg-ink text-white text-sm font-semibold" onClick={submit}>
+      <button type="button" class="oa-btn oa-btn-primary oa-btn-sm mt-3" onClick={submit}>
         {tt(lang, "Check", "Проверить")}
       </button>
     </div>
@@ -226,7 +226,7 @@ function Incident({ lang, lessonKey, taskId, steps }: {
   return (
     <ol class="space-y-4">
       {steps.map((s, i) => (
-        <li key={i} class="border-l-2 border-rule pl-4">
+        <li key={i} class="border-l-2 border-hairline-strong pl-4">
           <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{s.label}</div>
           <div class="prose max-w-none text-sm mb-2" dangerouslySetInnerHTML={{ __html: s.prompt }} />
           {!revealed[i] ? (
@@ -239,7 +239,7 @@ function Incident({ lang, lessonKey, taskId, steps }: {
               {tt(lang, "Reveal", "Показать")}
             </button>
           ) : (
-            <div class="prose max-w-none text-sm bg-card-2 p-3 rounded" dangerouslySetInnerHTML={{ __html: s.reveal }} />
+            <div class="prose max-w-none text-sm bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)]" dangerouslySetInnerHTML={{ __html: s.reveal }} />
           )}
         </li>
       ))}

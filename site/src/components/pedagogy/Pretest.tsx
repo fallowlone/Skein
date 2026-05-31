@@ -77,7 +77,7 @@ export default function Pretest({ lang }: Props) {
           <p class="text-[14px] text-ink-2 leading-relaxed mt-2 mb-4">
             {lang === "en" ? "A standard round places you. Top scorers unlock a deeper round to earn the upper ranks."
               : "Стандартный раунд определяет уровень. Лучшие открывают углублённый раунд и зарабатывают верхние ранги."}</p>
-          <button type="button" class="btn" onClick={() => { setStage(1); setStep(0); setA1([]); setA2([]); setPhase("stage1"); }}>
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(1); setStep(0); setA1([]); setA2([]); setPhase("stage1"); }}>
             {lang === "en" ? "Begin" : "Начать"}
           </button>
         </div>
@@ -95,9 +95,9 @@ export default function Pretest({ lang }: Props) {
             ? "Take the advanced round to resolve your exact rank — Staff and above can only be earned here."
             : "Пройди углублённый раунд, чтобы определить точный ранг — Staff и выше зарабатываются только здесь."}</p>
           <div class="flex gap-2.5">
-            <button type="button" class="btn" onClick={() => { setStage(2); setStep(0); setPhase("stage2"); }}>
+            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(2); setStep(0); setPhase("stage2"); }}>
               {lang === "en" ? "Advanced round" : "Углублённый раунд"}</button>
-            <button type="button" class="btn ghost text-[12px]" onClick={() => {
+            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => {
               const s1 = scoreStage(a1, pretestQuestions) / maxScore(pretestQuestions); finalize(s1, a1);
             }}>{lang === "en" ? "Skip (cap at middle)" : "Пропустить (потолок — middle)"}</button>
           </div>
@@ -112,7 +112,7 @@ export default function Pretest({ lang }: Props) {
       <aside class={wrapClass}>
         <div class={headerClass}>
           <span class="meta">{stage === 1 ? (lang === "en" ? "standard" : "стандарт") : (lang === "en" ? "advanced" : "углублённый")} · {step + 1}/{bank.length}</span>
-          <button type="button" class="btn link text-muted text-[11px]" onClick={restart}>{lang === "en" ? "restart" : "заново"}</button>
+          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted text-[11px]" onClick={restart}>{lang === "en" ? "restart" : "заново"}</button>
         </div>
         <div class="h-[2px] bg-rule relative"><div class="absolute inset-0 bg-ink" style={`width:${((step + 1) / bank.length) * 100}%`} /></div>
         <div class="px-6 pt-5 pb-6">
@@ -138,8 +138,8 @@ export default function Pretest({ lang }: Props) {
       <div class="px-6 pt-5 pb-6">
         <RankUpReveal rating={result.rating} rankId={result.rank} confidence={result.confidence} lang={lang} />
         <div class="flex items-center gap-2.5 mt-4">
-          <button type="button" class="btn ghost text-[12px]" onClick={restart}>{lang === "en" ? "Re-climb" : "Переиграть"}</button>
-          <a class="btn link text-[12px]" href={`/${lang}/profile`}>{lang === "en" ? "View profile" : "Профиль"}</a>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={restart}>{lang === "en" ? "Re-climb" : "Переиграть"}</button>
+          <a class="oa-btn oa-btn-ghost oa-btn-sm text-[12px]" href={`/${lang}/profile`}>{lang === "en" ? "View profile" : "Профиль"}</a>
         </div>
       </div>
     </aside>

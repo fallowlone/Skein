@@ -23,18 +23,18 @@ export default function ProjectsFilter({ lang, projects }: Props) {
   return (
     <div>
       <div class="flex flex-wrap gap-3 mb-6">
-        <select class="text-sm border border-rule rounded px-2 py-1 bg-card" value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
+        <select class="text-sm border border-rule rounded-[var(--r-sm)] px-2 py-1 bg-card" value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All tracks", "Все треки")}</option>
           {tracks.map((tr) => <option value={tr} key={tr}>{tr}</option>)}
         </select>
-        <select class="text-sm border border-rule rounded px-2 py-1 bg-card" value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
+        <select class="text-sm border border-rule rounded-[var(--r-sm)] px-2 py-1 bg-card" value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All levels", "Все уровни")}</option>
           {["starter", "intermediate", "advanced"].map((d) => <option value={d} key={d}>{d}</option>)}
         </select>
       </div>
       <ul class="grid gap-4 md:grid-cols-2">
         {shown.map((p) => (
-          <li key={p.slug} class="rounded-2xl border-2 border-rule bg-card p-5">
+          <li key={p.slug} class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card p-5">
             <div class="flex items-center justify-between gap-2 mb-1">
               <h3 class="font-bold text-ink">{tt(lang, p.title.en, p.title.ru)}</h3>
               <span class="text-[10px] font-mono uppercase tracking-wide text-muted">{p.difficulty} · {p.estDays}d</span>
