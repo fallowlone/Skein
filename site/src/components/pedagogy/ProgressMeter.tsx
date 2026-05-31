@@ -42,8 +42,8 @@ export function ProgressMeter({ slugs, variant = "ring", size = 56 }: Props): JS
     );
   }
   return (
-    <div class="h-2 rounded-full bg-gray-100 overflow-hidden">
-      <div class="h-full bg-bbg-teal" style={{ width: `${pct * 100}%` }} />
+    <div class="h-2 rounded-full bg-card-2 overflow-hidden">
+      <div class="h-full bg-accent" style={{ width: `${pct * 100}%` }} />
     </div>
   );
 }

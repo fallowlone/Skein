@@ -68,13 +68,13 @@ export default function VocabModule({ lang }: Props) {
             {e.collocations?.length ? <div class="text-[12px] text-muted mt-1">{e.collocations.join(" · ")}</div> : null}
           </>
         ) : (
-          <button type="button" class="btn ghost self-start mt-2" onClick={() => setReveal(true)}>{L.show}</button>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start mt-2" onClick={() => setReveal(true)}>{L.show}</button>
         )}
       </div>
       {reveal ? (
         <div class="flex gap-2 mt-4 justify-center">
-          <button type="button" class="btn" onClick={() => grade(true)}>{L.know}</button>
-          <button type="button" class="btn ghost" onClick={() => grade(false)}>{L.learn}</button>
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => grade(true)}>{L.know}</button>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade(false)}>{L.learn}</button>
         </div>
       ) : null}
     </div>
