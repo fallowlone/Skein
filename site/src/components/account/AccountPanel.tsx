@@ -25,7 +25,7 @@ export default function AccountPanel({ lang }: { lang: Locale }) {
 
   if (!me) {
     return (
-      <a class="btn" href={`/api/auth/login?lang=${lang}`}>{t("account.signIn", lang)}</a>
+      <a class="oa-btn oa-btn-primary oa-btn-sm" href={`/api/auth/login?lang=${lang}`}>{t("account.signIn", lang)}</a>
     );
   }
 
@@ -65,7 +65,7 @@ export default function AccountPanel({ lang }: { lang: Locale }) {
         <div class="border border-rule rounded-md p-4 flex flex-col gap-3">
           <p>{t("account.termsGate", lang)}</p>
           <a class="underline text-[13px]" href={`/${lang}/terms`} target="_blank">{t("account.termsLink", lang)}</a>
-          <button class="btn" onClick={acceptTerms}>{t("account.termsAccept", lang)}</button>
+          <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={acceptTerms}>{t("account.termsAccept", lang)}</button>
         </div>
       ) : (
         <>
@@ -74,7 +74,7 @@ export default function AccountPanel({ lang }: { lang: Locale }) {
             <div class="flex gap-2">
               <input class="border border-rule rounded px-2 py-1 flex-1" value={nick}
                 onInput={(e) => setNick((e.target as HTMLInputElement).value)} maxLength={32} />
-              <button class="btn" onClick={saveNick}>{t("account.nicknameSave", lang)}</button>
+              <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={saveNick}>{t("account.nicknameSave", lang)}</button>
             </div>
             <p class="meta">{t("account.nicknameHint", lang)}</p>
             {msg && <p class="meta">{msg}</p>}
@@ -86,7 +86,7 @@ export default function AccountPanel({ lang }: { lang: Locale }) {
             <p class="meta">{t("account.deleteWarn", lang)}</p>
             <input class="border border-rule rounded px-2 py-1" placeholder={t("account.deleteConfirm", lang)}
               value={confirm} onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} />
-            <button class="btn" disabled={confirm !== me.nickname}
+            <button class="oa-btn oa-btn-primary oa-btn-sm" disabled={confirm !== me.nickname}
               style="background:var(--danger,#c0392b);color:#fff;" onClick={del}>
               {t("account.deleteCta", lang)}
             </button>

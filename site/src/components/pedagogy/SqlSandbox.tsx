@@ -47,20 +47,20 @@ export default function SqlSandbox({ lang, setup, initialSql, check, onResult }:
   };
 
   return (
-    <div class="rounded-xl border border-rule bg-card-2 p-3">
-      <textarea class="font-mono w-full text-xs p-2 rounded border border-gray-300 min-h-[96px]"
+    <div class="rounded-[var(--r-md)] border border-rule bg-card-2 p-3">
+      <textarea class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[96px]"
         value={sql} onInput={(e) => setSql((e.target as HTMLTextAreaElement).value)} />
       <button type="button" disabled={busy}
-        class="mt-2 px-4 py-1.5 rounded-full bg-ink text-white text-sm font-semibold disabled:opacity-50"
+        class="mt-2 oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50"
         onClick={run}>
         {busy ? tt(lang, "Running…", "Выполняю…") : tt(lang, "Run", "Запустить")}
       </button>
-      {error && <pre class="text-xs text-red-600 mt-2 whitespace-pre-wrap">{error}</pre>}
+      {error && <pre class="text-xs text-danger mt-2 whitespace-pre-wrap">{error}</pre>}
       {rows && (
-        <pre class="text-xs mt-2 overflow-x-auto bg-card p-2 rounded">{JSON.stringify(rows, null, 2)}</pre>
+        <pre class="text-xs mt-2 overflow-x-auto bg-card p-2 rounded-[var(--r-sm)] text-[var(--code-ink)]">{JSON.stringify(rows, null, 2)}</pre>
       )}
       {verdict !== null && (
-        <div class={`text-sm mt-2 font-semibold ${verdict ? "text-ok" : "text-red-600"}`}>
+        <div class={`text-sm mt-2 font-semibold ${verdict ? "text-ok" : "text-danger"}`}>
           {verdict ? tt(lang, "✓ passed", "✓ пройдено") : tt(lang, "✗ not yet", "✗ пока нет")}
         </div>
       )}

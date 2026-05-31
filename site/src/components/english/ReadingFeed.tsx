@@ -41,7 +41,7 @@ export default function ReadingFeed({ lang }: Props) {
   if (open) {
     return (
       <div class="max-w-[760px] mx-auto">
-        <button type="button" class="btn link text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
+        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
         <h2 class="font-display text-[24px] font-bold text-ink m-0 mb-1">{open.title[lang]}</h2>
         <p class="text-[14px] text-muted m-0 mb-5">{open.blurb[lang]}</p>
         <EnReader unit={open} lang={lang} onComplete={() => markUnitRead(open.id, open.targetWords ?? [], now())} />
