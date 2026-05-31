@@ -2,6 +2,7 @@
 import { useMemo, useState } from "preact/hooks";
 import { vocabA2 } from "~/english/data/vocab-a2";
 import { vocabB1 } from "~/english/data/vocab-b1";
+import { vocabB2 } from "~/english/data/vocab-b2";
 import type { VocabEntry, Band } from "~/english/types";
 import { englishState, gradeWord, queueNewWords, recordNewIntro, getPlacement, getNewWordsPerDay, introducedToday } from "~/english/state";
 import { type Locale } from "~/i18n";
@@ -10,7 +11,7 @@ type Props = { lang: Locale };
 
 const now = () => Date.now();
 
-const BANK: Record<Band, VocabEntry[]> = { A2: vocabA2, B1: vocabB1, B2: [] };
+const BANK: Record<Band, VocabEntry[]> = { A2: vocabA2, B1: vocabB1, B2: vocabB2 };
 
 export default function VocabModule({ lang }: Props) {
   englishState.value; // subscribe
@@ -30,18 +31,12 @@ export default function VocabModule({ lang }: Props) {
     none: lang === "en"
       ? "No new words queued right now — come back tomorrow."
       : "Новых слов сейчас нет — загляни завтра.",
-    b2: lang === "en"
-      ? "You've mastered the A2 and B1 bands. B2 vocabulary lands in a later phase."
-      : "Ты освоил уровни A2 и B1. Словарь B2 появится в следующей фазе.",
     show: lang === "en" ? "Show meaning" : "Показать значение",
     know: lang === "en" ? "I knew it" : "Знал",
     learn: lang === "en" ? "Learning" : "Учу",
     left: lang === "en" ? "new today" : "новых сегодня",
   };
 
-  if (band === "B2" && bank.length === 0) {
-    return <p class="text-[14px] text-muted max-w-[600px] mx-auto">{L.b2}</p>;
-  }
   if (queue.length === 0 || i >= queue.length) {
     return <p class="text-[14px] text-muted max-w-[600px] mx-auto">{L.none}</p>;
   }
