@@ -2,7 +2,8 @@ import { useEffect } from "preact/hooks";
 import { userState } from "~/scripts/user-state";
 import { loadStore } from "~/components/algo/drill-state";
 import { xpFromState } from "~/scripts/progression/xp";
-import { englishKnownTotal } from "~/english/state";
+import { englishKnownTotal, getPlacement } from "~/english/state";
+import { knownTotal, readUnitsCount, gradedOutputCount, grammarDoneCount, collocationDoneCount } from "~/english/stats";
 import RankBadge from "./RankBadge";
 import XpBar from "./XpBar";
 import AchievementGrid from "./AchievementGrid";
@@ -35,7 +36,16 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   const noHintSolve = solvedEntries.some(([, e]: any) => e.noHint);
   const pillarsVisited = new Set(Object.keys(s.history ?? {}).map((k) => k.split("/")[0])).size;
   const seniorAnswers = countSeniorAnswers(pretest);
-  const ctx = { drillsSolved, drillUnitsWithSolve, noHintSolve, hourOfDay: new Date().getHours(), seniorAnswers, pillarsVisited };
+  const ctx = {
+    drillsSolved, drillUnitsWithSolve, noHintSolve, hourOfDay: new Date().getHours(),
+    seniorAnswers, pillarsVisited,
+    englishKnown: knownTotal(),
+    englishBand: getPlacement()?.band ?? "none",
+    englishReadUnits: readUnitsCount(),
+    englishGraded: gradedOutputCount() > 0,
+    englishGrammarDone: grammarDoneCount(),
+    englishCollocationDone: collocationDoneCount(),
+  } as const;
   const unlocked = new Set(evaluateAchievements(s, ctx));
   const titles = titlesFromState(s);
 
