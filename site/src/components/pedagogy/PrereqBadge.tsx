@@ -10,8 +10,8 @@ export default function PrereqBadge({ prereqs, lang }: Props) {
   const ok = done === all;
   return (
     <span
-      class={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-mono ${
-        ok ? "bg-green-50 text-bbg-success" : "bg-amber-50 text-amber-700"
+      class={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-[var(--r-sm)] text-xs font-mono ${
+        ok ? "bg-accent-ghost text-accent" : "bg-card border-[0.5px] border-hairline-2 text-muted"
       }`}
       title={prereqs.join(", ")}
     >
