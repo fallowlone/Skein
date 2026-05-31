@@ -59,8 +59,9 @@ Shared infrastructure:
 - **TTS** via `SpeechSynthesis` wrapper (`src/english/speech/tts.ts`).
 - **BYOK** via existing `src/english/byok/*`, extended with speech grading and
   conversation calls.
-- **Progress/achievements** via the existing English progression engine
-  (`src/scripts/progression`), with new speaking events.
+- **Progress tracking** via the existing English progression engine
+  (`src/scripts/progression`). Speaking-specific **achievements are deferred** —
+  v1 records activity/progress only; gamified achievements come in a later pass.
 
 ## STT engine abstraction
 
@@ -278,6 +279,7 @@ site domain.
 ## Out of scope (deferred)
 
 - Listening/aural comprehension (separate iteration).
+- Speaking achievements / gamification (v1 tracks progress only; achievements later).
 - Phoneme-level pronunciation scoring (Azure / forced alignment).
 - In-browser LLM for fully-free Speak/Talk (future opt-in, same R2 pattern).
 - Vosk engine (the `SpeechRecognizer` abstraction leaves room to add it later).
