@@ -13,8 +13,11 @@ actual MDX and the rendered claim. Return a verdict.
 2. **On-brand:** Uses only kit primitives (`~/components/diagram/*` or the re-skinned
    `algo/*`) and tokens. Any raw palette (`bg-white`, `bg-panel-*`, `text-bbg-*`,
    `border-gray-*`, hardcoded hex, `rounded-2xl`) or raster image = FAIL.
-3. **Structure:** Exactly one `data-lesson-visual` added; placed in the Visual slot;
-   import path correct.
+3. **Structure:** Exactly ONE visual on the page; placed in the Visual slot; import
+   path correct. The marker `data-lesson-visual` comes from the component, not the MDX
+   — count figure components too (`MachineFigure`, `StructureFigure`, `ComplexityChart`,
+   `AlgoTrace`, `AnnotatedCode`, `FlowDiagram`, `StackDiagram`, `SequenceDiagram`,
+   `DiagramFrame`). Two figures on one lesson = FAIL (the author should have skipped).
 4. **i18n parity:** EN and RU each have the SAME diagram with localized labels/caption.
 5. **Build:** `cd site && bun run build` is green (0 errors) and the lesson page
    contains `data-lesson-visual`.
