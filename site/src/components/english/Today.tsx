@@ -1,7 +1,8 @@
 // site/src/components/english/Today.tsx
 import { useMemo, useState } from "preact/hooks";
-import { englishState, dueWordIds, getPlacement, isUnitRead, outputAttemptOf } from "~/english/state";
+import { englishState, dueWordIds, getPlacement, isUnitRead, outputAttemptOf, isGrammarDone } from "~/english/state";
 import { readingUnits } from "~/english/data/reading";
+import { grammarPoints } from "~/english/data/grammar";
 import { outputTasks } from "~/english/data/output/tasks";
 import { type Locale } from "~/i18n";
 import PlacementTest from "./PlacementTest";
@@ -34,6 +35,12 @@ export default function Today({ lang }: Props) {
     return outputTasks.find((t) => order.indexOf(t.band) <= maxIdx && !outputAttemptOf(t.id)) ?? null;
   }, [englishState.value, placement]);
 
+  const grammarPoint = useMemo(() => {
+    const order = ["A2", "B1", "B2"];
+    const maxIdx = order.indexOf(placement?.band ?? "A2");
+    return grammarPoints.find((p) => order.indexOf(p.band) <= maxIdx && !isGrammarDone(p.id)) ?? null;
+  }, [englishState.value, placement]);
+
   const L = {
     due: lang === "en" ? "Reviews due" : "Повторений",
     reviewHint: lang === "en" ? "Open a text below and use its Review tab." : "Открой текст ниже и используй вкладку Review.",
@@ -44,6 +51,9 @@ export default function Today({ lang }: Props) {
     readDone: lang === "en" ? "Reading done for today. ✅" : "Чтение на сегодня сделано. ✅",
     output: lang === "en" ? "Today's writing" : "Письмо на сегодня",
     outputCta: lang === "en" ? "Open in Output below ↓" : "Открой в разделе «Письмо» ниже ↓",
+    grammar: lang === "en" ? "Today's grammar" : "Грамматика на сегодня",
+    grammarCta: lang === "en" ? "Open in Grammar & Phrasing below ↓" : "Открой в разделе «Грамматика и фразы» ниже ↓",
+    grammarDone: lang === "en" ? "Grammar done for now. ✅" : "Грамматика пока пройдена. ✅",
   };
 
   if (placing || !placement) {
@@ -69,6 +79,17 @@ export default function Today({ lang }: Props) {
           </div>
         ) : (
           <div class="text-[13px] text-ink">{L.readDone}</div>
+        )}
+      </div>
+      <div>
+        <div class="meta mb-2">{L.grammar}</div>
+        {grammarPoint ? (
+          <div class="text-[14px] text-ink">
+            <span class="font-semibold">{grammarPoint.title[lang]}</span>
+            <span class="text-muted"> — {L.grammarCta}</span>
+          </div>
+        ) : (
+          <div class="text-[13px] text-ink">{L.grammarDone}</div>
         )}
       </div>
       {outputTask ? (
