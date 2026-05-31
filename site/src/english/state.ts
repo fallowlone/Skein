@@ -37,6 +37,8 @@ export type EnglishState = {
   daily?: { date: string; newIntroduced: number };
   readUnits: Record<string, true>;
   outputAttempts: Record<string, { at: number; scoreBand?: string }>;
+  grammarDone: Record<string, true>;
+  collocationDone: Record<string, true>;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
@@ -44,6 +46,7 @@ const defaults: EnglishState = {
   words: {}, revealed: {}, known: {},
   settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
   readUnits: {}, outputAttempts: {},
+  grammarDone: {}, collocationDone: {},
 };
 
 function load(): EnglishState {
@@ -71,6 +74,8 @@ function load(): EnglishState {
       daily: parsed.daily,
       readUnits: parsed.readUnits ?? {},
       outputAttempts: parsed.outputAttempts ?? {},
+      grammarDone: parsed.grammarDone ?? {},
+      collocationDone: parsed.collocationDone ?? {},
     };
   } catch {
     return defaults;
@@ -152,6 +157,7 @@ export function resetEnglish() {
     words: {}, revealed: {}, known: {},
     settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
     readUnits: {}, outputAttempts: {},
+    grammarDone: {}, collocationDone: {},
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -254,4 +260,30 @@ export function recordOutputAttempt(id: string, scoreBand: string | undefined, n
 
 export function outputAttemptOf(id: string): { at: number; scoreBand?: string } | undefined {
   return englishState.value.outputAttempts[id];
+}
+
+export function isGrammarDone(id: string): boolean {
+  return englishState.value.grammarDone[id] === true;
+}
+
+export function markGrammarDone(id: string) {
+  if (englishState.value.grammarDone[id]) return;
+  englishState.value = {
+    ...englishState.value,
+    grammarDone: { ...englishState.value.grammarDone, [id]: true },
+  };
+  if (typeof window !== "undefined") recordActiveDay();
+}
+
+export function isCollocationDone(id: string): boolean {
+  return englishState.value.collocationDone[id] === true;
+}
+
+export function markCollocationDone(id: string) {
+  if (englishState.value.collocationDone[id]) return;
+  englishState.value = {
+    ...englishState.value,
+    collocationDone: { ...englishState.value.collocationDone, [id]: true },
+  };
+  if (typeof window !== "undefined") recordActiveDay();
 }
