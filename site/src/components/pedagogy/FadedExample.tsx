@@ -57,17 +57,17 @@ export default function FadedExample({
   };
 
   return (
-    <section id={id} class="my-8 rounded-2xl border-2 border-bbg-success bg-card p-6">
+    <section id={id} class="my-8 rounded-[var(--r-lg)] border-[0.5px] border-ok bg-card p-6">
       <header class="flex items-center justify-between mb-3">
-        <h3 class="font-bold text-bbg-ink">{title}</h3>
-        <span class="text-xs font-mono text-bbg-muted">{step + 1}/3</span>
+        <h3 class="font-bold text-ink">{title}</h3>
+        <span class="text-xs font-mono text-muted">{step + 1}/3</span>
       </header>
       {step === 0 && (
         <>
           <div class="prose max-w-none">{steps.solved}</div>
           <button
             type="button"
-            class="mt-4 px-4 py-1.5 rounded-full bg-bbg-success text-white text-sm font-semibold"
+            class="mt-4 oa-btn oa-btn-primary oa-btn-sm"
             onClick={() => setStep(1)}
           >
             {t("fade.next", lang)}
@@ -84,7 +84,7 @@ export default function FadedExample({
               return (
                 <li key={b.id}>
                   <input
-                    class="font-mono w-full max-w-md px-3 py-1.5 border border-gray-300 rounded"
+                    class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
                     placeholder={b.placeholder ?? ""}
                     value={v}
                     onInput={(e) =>
@@ -92,10 +92,10 @@ export default function FadedExample({
                     }
                   />
                   {feedback[b.id] && (
-                    <div class="text-sm text-red-600 mt-1">{feedback[b.id]}</div>
+                    <div class="text-sm text-danger mt-1">{feedback[b.id]}</div>
                   )}
                   {misconceptions?.[miscKey] && (
-                    <div class="text-sm text-red-700 mt-1">{misconceptions[miscKey]}</div>
+                    <div class="text-sm text-danger mt-1">{misconceptions[miscKey]}</div>
                   )}
                 </li>
               );
@@ -104,14 +104,14 @@ export default function FadedExample({
           <div class="mt-4 flex gap-2">
             <button
               type="button"
-              class="px-4 py-1.5 rounded-full bg-bbg-ink text-white text-sm font-semibold"
+              class="oa-btn oa-btn-primary oa-btn-sm"
               onClick={submitSemi}
             >
               {t("fade.next", lang)}
             </button>
             <button
               type="button"
-              class="px-4 py-1.5 rounded-full text-bbg-muted text-sm"
+              class="oa-btn oa-btn-ghost oa-btn-sm"
               onClick={() => setStep(0)}
             >
               {t("fade.prev", lang)}
@@ -125,7 +125,7 @@ export default function FadedExample({
           {!revealed ? (
             <button
               type="button"
-              class="mt-4 px-4 py-1.5 rounded-full border-2 border-bbg-success text-bbg-success text-sm font-semibold"
+              class="mt-4 oa-btn oa-btn-ghost oa-btn-sm"
               onClick={() => {
                 setRevealed(true);
                 markFaded(pieceSlug, id);
