@@ -2,6 +2,8 @@
 // A reading-first vocabulary trainer for A2→B1 engineers who must read real
 // English engineering prose (PR reviews, docs, RFCs, standups) on the job.
 
+export type { EnglishSummary } from "~/scripts/progression/types";
+
 export type Bi = { en: string; ru: string };
 
 export type Pos =
