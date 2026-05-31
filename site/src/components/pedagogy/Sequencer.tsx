@@ -28,13 +28,13 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
     <section
       id={id}
       data-active-step={steps[active].id}
-      class="my-8 rounded-2xl border-2 border-bbg-ink/10 bg-card p-6"
+      class="my-8 rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card p-6"
     >
       <div class="relative">{children}</div>
       <div class="mt-4 flex items-center gap-3">
         <button
           type="button"
-          class="px-3 py-1 rounded border"
+          class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.max(0, active - 1))}
           aria-label="Previous step"
         >
@@ -42,7 +42,7 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
         </button>
         <button
           type="button"
-          class="px-3 py-1 rounded bg-bbg-ink text-white"
+          class="oa-btn oa-btn-primary oa-btn-sm"
           onClick={() => setPlaying(!playing)}
           aria-label={playing ? "Pause" : "Play"}
         >
@@ -50,13 +50,13 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
         </button>
         <button
           type="button"
-          class="px-3 py-1 rounded border"
+          class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.min(steps.length - 1, active + 1))}
           aria-label="Next step"
         >
           ›
         </button>
-        <span class="text-xs font-mono text-bbg-muted">
+        <span class="text-xs font-mono text-muted">
           {active + 1}/{steps.length} · {steps[active].label}
         </span>
       </div>
