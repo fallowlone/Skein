@@ -97,7 +97,7 @@ function GrammarRun({ lang, point, onClose }: { lang: Locale; point: GrammarPoin
 
   return (
     <div class="flex flex-col gap-4">
-      <button type="button" class="btn ghost self-start" onClick={onClose}>{L.back}</button>
+      <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</button>
       <div>
         <div class="text-[15px] font-semibold text-ink">{point.title[lang]}</div>
         <div class="text-[13px] text-muted mt-1">{point.explain[lang]}</div>
@@ -122,14 +122,14 @@ function GrammarRun({ lang, point, onClose }: { lang: Locale; point: GrammarPoin
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
             disabled={checked} placeholder="…" />
           {!checked ? (
-            <button type="button" class="btn self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
+            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
           ) : (
             <div class="flex flex-col gap-2">
               <div class={`text-[13px] ${ok ? "text-ink" : "text-muted"}`}>
                 {ok ? `✓ ${L.correct}` : `${L.answer}: ${c.answer}`}
               </div>
               {c.explain ? <div class="text-[12px] text-muted">{c.explain[lang]}</div> : null}
-              <button type="button" class="btn self-start" onClick={next}>
+              <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
                 {i + 1 >= point.cloze.length ? L.finish : L.next}
               </button>
             </div>
@@ -186,7 +186,7 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
 
   return (
     <div class="flex flex-col gap-4">
-      <button type="button" class="btn ghost self-start" onClick={onClose}>{L.back}</button>
+      <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</button>
       <div class="text-[15px] font-semibold text-ink">{set.title[lang]}</div>
       {done ? (
         <div class="text-[14px] text-ink">{L.fin}</div>
@@ -198,7 +198,7 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
             disabled={checked} placeholder="…" />
           {!checked ? (
-            <button type="button" class="btn self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
+            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
           ) : (
             <div class="flex flex-col gap-2">
               <div class={`text-[13px] ${ok ? "text-ink" : "text-muted"}`}>
@@ -206,7 +206,7 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
               </div>
               <div class="text-[13px] text-ink italic">“{it.example}”</div>
               {it.note ? <div class="text-[12px] text-muted">{it.note[lang]}</div> : null}
-              <button type="button" class="btn self-start" onClick={next}>
+              <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
                 {i + 1 >= set.items.length ? L.finish : L.next}
               </button>
             </div>

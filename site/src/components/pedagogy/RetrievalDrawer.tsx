@@ -81,7 +81,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
                     {!isOpen ? (
                       <button
                         type="button"
-                        class="btn ghost text-[12px]"
+                        class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
                         onClick={() => {
                           setRevealed({ ...revealed, [q.id]: true });
                           recordRetrieval(pieceSlug);
@@ -133,7 +133,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
       <footer class="mt-6 flex flex-wrap items-center gap-2 pt-4 hr-top">
         <button
           type="button"
-          class="btn text-[12px]"
+          class="oa-btn oa-btn-primary oa-btn-sm text-[12px]"
           onClick={() => setCompleted(true)}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
@@ -141,7 +141,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
         </button>
         <button
           type="button"
-          class="btn ghost text-[12px]"
+          class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
           aria-label={l.snooze}
           title={l.snooze}
           onClick={() => dismissRevisit(pieceSlug)}
