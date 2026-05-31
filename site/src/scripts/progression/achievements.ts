@@ -33,6 +33,15 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: "rank-architect", icon: "🏛️", xp: 90, label: { en: "Architect", ru: "Архитектор" }, desc: { en: "Reach the Architect tier", ru: "Достичь тира Architect" }, predicate: (s) => !!s.pretest && s.pretest.rating >= 930 },
   { id: "distinguished", icon: "👑", xp: 150, label: { en: "Distinguished", ru: "Distinguished" }, desc: { en: "Reach the apex rank", ru: "Достичь апекс-ранга" }, predicate: (s) => !!s.pretest && s.pretest.rating >= 990 },
   { id: "sure-footed", icon: "🪨", xp: 25, label: { en: "Sure-Footed", ru: "Уверенный" }, desc: { en: "Finish with high confidence", ru: "Завершить с высокой уверенностью" }, predicate: (s) => s.pretest?.confidence === "high" },
+  { id: "en-words-500", icon: "🔤", xp: 30, label: { en: "Word Hoard", ru: "Запас слов" }, desc: { en: "Know 500 English words", ru: "Знать 500 английских слов" }, predicate: (_s, c) => c.englishKnown >= 500 },
+  { id: "en-words-2000", icon: "📘", xp: 70, label: { en: "Lexicon", ru: "Лексикон" }, desc: { en: "Know 2000 English words", ru: "Знать 2000 английских слов" }, predicate: (_s, c) => c.englishKnown >= 2000 },
+  { id: "en-words-5000", icon: "🧠", xp: 150, label: { en: "Fluent Reader", ru: "Свободное чтение" }, desc: { en: "Know 5000 English words", ru: "Знать 5000 английских слов" }, predicate: (_s, c) => c.englishKnown >= 5000 },
+  { id: "en-band-b1", icon: "🇬🇧", xp: 40, label: { en: "Reached B1", ru: "Достиг B1" }, desc: { en: "Reach B1 English", ru: "Достичь уровня B1" }, predicate: (_s, c) => c.englishBand === "B1" || c.englishBand === "B2" },
+  { id: "en-band-b2", icon: "🎓", xp: 90, label: { en: "Reached B2", ru: "Достиг B2" }, desc: { en: "Reach B2 English", ru: "Достичь уровня B2" }, predicate: (_s, c) => c.englishBand === "B2" },
+  { id: "en-first-graded", icon: "✍️", xp: 25, label: { en: "Graded Writer", ru: "Письмо с оценкой" }, desc: { en: "Get your first AI-graded writing", ru: "Получить первую AI-оценку письма" }, predicate: (_s, c) => c.englishGraded },
+  { id: "en-reader-10", icon: "📰", xp: 30, label: { en: "Reader", ru: "Читатель" }, desc: { en: "Read 10 English texts", ru: "Прочитать 10 английских текстов" }, predicate: (_s, c) => c.englishReadUnits >= 10 },
+  { id: "en-reader-40", icon: "📚", xp: 60, label: { en: "Bookworm", ru: "Книжный червь EN" }, desc: { en: "Read 40 English texts", ru: "Прочитать 40 английских текстов" }, predicate: (_s, c) => c.englishReadUnits >= 40 },
+  { id: "en-grammar-5", icon: "🧩", xp: 25, label: { en: "Grammar Drilled", ru: "Грамматика в деле" }, desc: { en: "Practice five grammar points", ru: "Отработать пять грамматических тем" }, predicate: (_s, c) => c.englishGrammarDone >= 5 },
 ];
 
 export function evaluateAchievements(
