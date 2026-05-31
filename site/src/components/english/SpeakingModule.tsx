@@ -1,5 +1,5 @@
 // src/components/english/SpeakingModule.tsx
-import { useState } from "preact/hooks";
+import { useState, useRef } from "preact/hooks";
 import { WebSpeechRecognizer, webSpeechAvailable, type SpeechRecognizer } from "~/english/speech/recognizer";
 import { WhisperRecognizer, whisperReady, type DownloadState } from "~/english/speech/whisper";
 import ShadowExercise from "./ShadowExercise";
@@ -31,8 +31,15 @@ export default function SpeakingModule({ lang }: { lang: Locale }) {
   const [prefer, setPrefer] = useState<Prefer>("auto");
   const [dl, setDl] = useState<DownloadState>({ status: whisperReady() ? "ready" : "idle", pct: whisperReady() ? 100 : 0 });
 
-  const web = new WebSpeechRecognizer();
-  const whisper = new WhisperRecognizer(setDl);
+  // Persist engine instances across renders — they hold live MediaRecorder /
+  // stream / download state, so re-creating them per render would orphan an
+  // in-flight recording or download. setDl identity is stable across renders.
+  const webRef = useRef<WebSpeechRecognizer>();
+  if (!webRef.current) webRef.current = new WebSpeechRecognizer();
+  const whisperRef = useRef<WhisperRecognizer>();
+  if (!whisperRef.current) whisperRef.current = new WhisperRecognizer(setDl);
+  const web = webRef.current;
+  const whisper = whisperRef.current;
   const resolved: SpeechRecognizer | null =
     prefer === "whisper" ? (whisper.available() ? whisper : null)
     : prefer === "webspeech" ? (web.available() ? web : null)
