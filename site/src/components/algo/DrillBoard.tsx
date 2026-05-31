@@ -53,7 +53,7 @@ function ProblemCard({
         )}
         <span class="flex-1" />
         <button
-          class="btn ghost text-[11px]"
+          class="oa-btn oa-btn-secondary oa-btn-sm text-[11px]"
           style="padding:2px 8px;"
           onClick={() => onCycle(p.id)}
           aria-label={NEXT_LABEL[entry.status][lang]}
