@@ -13,7 +13,7 @@ describe("tier-router", () => {
   });
 
   test("scorePretest sums weights of selected answers", () => {
-    expect(pretestQuestions.length).toBe(3);
+    expect(pretestQuestions.length).toBe(4);
     const allCorrect = pretestQuestions.map(q =>
       q.choices.findIndex(c => c.weight === Math.max(...q.choices.map(x => x.weight)))
     );
