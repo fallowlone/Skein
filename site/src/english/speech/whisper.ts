@@ -75,13 +75,19 @@ export class WhisperRecognizer implements SpeechRecognizer {
     this.recorder.start();
   }
 
+  private empty(): RecognitionResult { return { transcript: "", words: [], confidence: 0 }; }
+
   async stop(): Promise<RecognitionResult> {
+    // stop() without a prior start() (or after the recorder was lost) → nothing
+    // to decode. Return an empty result rather than feeding an empty Blob to
+    // decodeAudioData (which throws a DOMException).
+    if (!this.recorder) return this.empty();
     const blob: Blob = await new Promise((resolve) => {
-      if (!this.recorder) return resolve(new Blob());
-      this.recorder.onstop = () => resolve(new Blob(this.chunks, { type: "audio/webm" }));
-      this.recorder.stop();
+      this.recorder!.onstop = () => resolve(new Blob(this.chunks, { type: "audio/webm" }));
+      this.recorder!.stop();
     });
     this.stream?.getTracks().forEach((t) => t.stop());
+    if (blob.size === 0) return this.empty();
     const audio = await blobToMono16k(blob);
     const transcriber = await loadTranscriber(this.onState);
     const out = await transcriber(audio);
