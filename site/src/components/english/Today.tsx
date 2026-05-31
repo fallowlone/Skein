@@ -25,7 +25,8 @@ export default function Today({ lang }: Props) {
   const welcomeBack = useMemo(() => {
     const last = userState.value.progression.streak.lastActiveDay;
     if (!last) return false;
-    const days = Math.round((Date.parse(todayISO()) - Date.parse(last)) / 86_400_000);
+    // Match the streak module's UTC convention (daysBetween appends T00:00:00Z).
+    const days = Math.round((Date.parse(todayISO() + "T00:00:00Z") - Date.parse(last + "T00:00:00Z")) / 86_400_000);
     return days >= 2;
   }, [userState.value]);
 
