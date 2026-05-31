@@ -54,4 +54,26 @@ describe("mergeProgress", () => {
     const server = { tier: "middle", pretest: { takenAt: 1, stage1: { score: 9, answers: [] }, stage2: { score: 9, answers: [] }, rating: 950, rank: "architect-3", confidence: "high" }, history: {}, retrieval: {} } as any;
     expect(mergeProgress(local, server).tier).toBe("senior");
   });
+
+  it("merges englishSummary: max per count, OR graded, latest band by updatedAt", () => {
+    const sumA = { knownTotal: 100, knownByBand: { A2: 80, B1: 20, B2: 0 }, band: "B1", readUnits: 5, grammarDone: 2, collocationDone: 1, graded: false, updatedAt: 200 };
+    const sumB = { knownTotal: 60, knownByBand: { A2: 50, B1: 10, B2: 0 }, band: "A2", readUnits: 9, grammarDone: 1, collocationDone: 3, graded: true, updatedAt: 100 };
+    const local = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [], englishSummary: sumA }, history: {}, retrieval: {} } as any;
+    const server = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [], englishSummary: sumB }, history: {}, retrieval: {} } as any;
+    const es = mergeProgress(local, server).progression.englishSummary!;
+    expect(es.knownTotal).toBe(100);
+    expect(es.knownByBand).toEqual({ A2: 80, B1: 20, B2: 0 });
+    expect(es.readUnits).toBe(9);          // max
+    expect(es.collocationDone).toBe(3);    // max
+    expect(es.graded).toBe(true);          // OR
+    expect(es.band).toBe("B1");            // newer updatedAt (200) wins
+    expect(es.updatedAt).toBe(200);
+  });
+
+  it("keeps the present englishSummary when only one side has it", () => {
+    const sum = { knownTotal: 10, knownByBand: { A2: 10, B1: 0, B2: 0 }, band: "A2", readUnits: 0, grammarDone: 0, collocationDone: 0, graded: false, updatedAt: 5 };
+    const local = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] }, history: {}, retrieval: {} } as any;
+    const server = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [], englishSummary: sum }, history: {}, retrieval: {} } as any;
+    expect(mergeProgress(local, server).progression.englishSummary).toEqual(sum);
+  });
 });
