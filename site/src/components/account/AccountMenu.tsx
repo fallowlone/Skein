@@ -38,7 +38,7 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
 
   if (!me) {
     return (
-      <a class="btn ghost shrink-0" href={`/api/auth/login?lang=${lang}`} style="padding:6px 10px;font-size:11px;">
+      <a class="oa-btn oa-btn-ghost oa-btn-sm shrink-0" href={`/api/auth/login?lang=${lang}`}>
         {t("account.signIn", lang)}
       </a>
     );
@@ -51,17 +51,17 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
 
   return (
     <div class="relative shrink-0" ref={rootRef}>
-      <button class="btn ghost flex items-center gap-1.5" style="padding:4px 8px;" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
+      <button class="icon-btn" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
         {me.avatarUrl
-          ? <img src={me.avatarUrl} alt="" width={20} height={20} class="rounded-full" />
-          : <span class="w-5 h-5 rounded-full bg-rule inline-block" />}
-        <span class="hidden sm:inline text-[12px] font-semibold">{me.nickname}</span>
+          ? <img src={me.avatarUrl} alt="" width={18} height={18} class="rounded-full" />
+          : <span class="w-[18px] h-[18px] rounded-full bg-hairline-2 inline-block" />}
+        <span class="hidden sm:inline text-[12px] font-medium">{me.nickname}</span>
       </button>
       {open && (
-        <div class="absolute right-0 mt-1 min-w-[160px] bg-paper border border-rule rounded-md shadow-lg py-1 z-50" role="menu">
-          <a class="block px-3 py-2 text-[13px] hover:bg-rule/30" href={`/${lang}/profile`} role="menuitem">{lang === "ru" ? "Профиль" : "Profile"}</a>
-          <a class="block px-3 py-2 text-[13px] hover:bg-rule/30" href={`/${lang}/account`} role="menuitem">{t("account.menu", lang)}</a>
-          <button class="block w-full text-left px-3 py-2 text-[13px] hover:bg-rule/30" onClick={signOut} role="menuitem">{t("account.signOut", lang)}</button>
+        <div class="absolute right-0 mt-1 min-w-[160px] bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-md)] shadow-soft-md py-1 z-50" role="menu">
+          <a class="block px-3 py-2 text-[13px] text-ink-2 hover:bg-card-2" href={`/${lang}/profile`} role="menuitem">{lang === "ru" ? "Профиль" : "Profile"}</a>
+          <a class="block px-3 py-2 text-[13px] text-ink-2 hover:bg-card-2" href={`/${lang}/account`} role="menuitem">{t("account.menu", lang)}</a>
+          <button class="block w-full text-left px-3 py-2 text-[13px] text-ink-2 hover:bg-card-2" onClick={signOut} role="menuitem">{t("account.signOut", lang)}</button>
         </div>
       )}
     </div>

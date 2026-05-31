@@ -63,16 +63,16 @@ export default function OutputModule({ lang }: Props) {
   if (task) {
     return (
       <div class="max-w-[620px] mx-auto">
-        <button type="button" class="btn link text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
+        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
         <p class="text-[15px] text-ink mb-1">{task.prompt[lang]}</p>
         <p class="text-[12px] text-muted mb-4">{L.rubric}: {task.rubric.join(" · ")}</p>
         <textarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} rows={6}
-          class="w-full bg-paper border border-rule-strong rounded-[2px] px-3 py-2 text-[14px] text-ink mb-3" placeholder={L.write} />
+          class="w-full bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink mb-3 focus:border-accent" placeholder={L.write} />
         <div class="flex gap-2">
-          <button type="button" class="btn" disabled={busy || text.trim().length === 0} onClick={submit}>{busy ? L.grading : L.submit}</button>
-          {task.modelAnswer ? <button type="button" class="btn ghost text-[12px]" onClick={() => setSelfAssess((v) => !v)}>{L.selfAssessBtn}</button> : null}
+          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || text.trim().length === 0} onClick={submit}>{busy ? L.grading : L.submit}</button>
+          {task.modelAnswer ? <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setSelfAssess((v) => !v)}>{L.selfAssessBtn}</button> : null}
         </div>
-        {err ? <div class="text-[12px] text-red-600 mt-3">{err}</div> : null}
+        {err ? <div class="text-[12px] text-danger mt-3">{err}</div> : null}
 
         {result ? (
           <div class="mt-5 flex flex-col gap-4">

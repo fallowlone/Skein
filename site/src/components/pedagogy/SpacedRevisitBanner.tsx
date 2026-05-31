@@ -22,15 +22,15 @@ export default function SpacedRevisitBanner({ lang }: Props) {
   const [slug] = due;
 
   return (
-    <div class="bg-panel-peach border-b-2 border-panel-peach-ink/40 px-6 py-2 text-sm flex items-center gap-3">
-      <strong class="text-panel-peach-ink">{t("revisit.title", lang)}</strong>
-      <a class="underline font-semibold text-bbg-ink" href={`?revisit=${slug}#retrieval`}>
+    <div class="bg-card-2 border-l-2 border-warn px-6 py-2 text-sm flex items-center gap-3">
+      <strong class="text-warn">{t("revisit.title", lang)}</strong>
+      <a class="underline font-semibold text-ink" href={`?revisit=${slug}#retrieval`}>
         {t("revisit.cta", lang)}
       </a>
-      <span class="font-mono text-xs text-bbg-muted">{slug}</span>
+      <span class="font-mono text-xs text-muted">{slug}</span>
       <button
         type="button"
-        class="ml-auto text-xs text-bbg-muted underline"
+        class="ml-auto text-xs text-muted underline"
         onClick={() => dismissRevisit(slug)}
       >
         {t("revisit.dismiss", lang)}
