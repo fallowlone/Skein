@@ -1277,7 +1277,9 @@ export default function ShadowExercise({ lang, recognizer }: { lang: Locale; rec
   };
   const finish = async () => {
     const r = await recognizer.stop();
-    setResult(scoreShadow(r.transcript, target));
+    // scoreShadow(reference, heard): first arg is the reference to label/score
+    // against (the target sentence), second is what was heard (the transcript).
+    setResult(scoreShadow(target, r.transcript));
     setBusy(false);
   };
 
