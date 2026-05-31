@@ -158,3 +158,31 @@ export type CollocationSet = {
   domain: "general" | "engineering";
   items: Collocation[];
 };
+
+/** Normalized STT output, engine-agnostic. */
+export type RecognitionResult = {
+  transcript: string;
+  words: { text: string; confidence?: number }[];
+  confidence: number;
+};
+
+/** One Talk scenario. Content is English; titleRu is for the UI only. */
+export type Scenario = {
+  id: string;
+  level: "A2" | "B1" | "B2";
+  role: string;     // who Claude plays, e.g. "a senior engineer doing your code review"
+  goal: string;     // what the learner is trying to do
+  opening: string;  // Claude's first line (English)
+  titleRu: string;  // UI label (Russian)
+};
+
+/** One turn of a Talk conversation. */
+export type ConversationTurn = { role: "assistant" | "user"; text: string };
+
+/** End-of-Talk structured review. */
+export type SpeechReview = {
+  wentWell: string[];
+  errors: { said: string; better: string; why: string }[];
+  scoreBand: "A2" | "B1" | "B2" | "C1";
+  practiceNext: string[];
+};
