@@ -27,10 +27,10 @@ export default function RequestBudgetSandbox({ lang }: Props) {
 
   const verdictClass =
     verdict === "good"
-      ? "bg-green-100 text-bbg-success"
+      ? "bg-card-2 text-ok"
       : verdict === "ok"
-        ? "bg-amber-100 text-amber-700"
-        : "bg-rose-100 text-bbg-warn";
+        ? "bg-card-2 text-warn"
+        : "bg-card-2 text-danger";
 
   return (
     <Sandbox
@@ -40,7 +40,7 @@ export default function RequestBudgetSandbox({ lang }: Props) {
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div class="space-y-4">
           <label class="block">
-            <span class="text-xs font-bold uppercase tracking-wider text-bbg-muted">RTT (ms)</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-muted">RTT (ms)</span>
             <input
               type="range"
               min={5}
@@ -52,9 +52,9 @@ export default function RequestBudgetSandbox({ lang }: Props) {
             <span class="font-mono">{rtt} ms</span>
           </label>
           <label class="block">
-            <span class="text-xs font-bold uppercase tracking-wider text-bbg-muted">L4</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-muted">L4</span>
             <select
-              class="block border rounded px-2 py-1"
+              class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={l4}
               onChange={(e) => setL4((e.target as HTMLSelectElement).value as L4)}
             >
@@ -64,9 +64,9 @@ export default function RequestBudgetSandbox({ lang }: Props) {
             </select>
           </label>
           <label class="block">
-            <span class="text-xs font-bold uppercase tracking-wider text-bbg-muted">Auth</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-muted">Auth</span>
             <select
-              class="block border rounded px-2 py-1"
+              class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={auth}
               onChange={(e) => setAuth((e.target as HTMLSelectElement).value as Auth)}
             >
@@ -76,9 +76,9 @@ export default function RequestBudgetSandbox({ lang }: Props) {
             </select>
           </label>
           <label class="block">
-            <span class="text-xs font-bold uppercase tracking-wider text-bbg-muted">Edge</span>
+            <span class="text-xs font-bold uppercase tracking-wider text-muted">Edge</span>
             <select
-              class="block border rounded px-2 py-1"
+              class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={edge}
               onChange={(e) => setEdge((e.target as HTMLSelectElement).value as Edge)}
             >
@@ -101,7 +101,7 @@ export default function RequestBudgetSandbox({ lang }: Props) {
           <div>
             LCP (est): <strong>{lcp.toFixed(0)} ms</strong>
           </div>
-          <div class={`mt-3 inline-block px-3 py-1 rounded-full font-bold ${verdictClass}`}>
+          <div class={`mt-3 inline-block px-3 py-1 rounded-[var(--r-sm)] font-bold ${verdictClass}`}>
             {verdict.toUpperCase()}
           </div>
         </div>
