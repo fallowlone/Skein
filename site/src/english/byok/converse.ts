@@ -51,5 +51,40 @@ export function converse(history: ConversationTurn[], scenario: Scenario, model:
   return converseWithClient(history, scenario, { fetch: fetch.bind(globalThis), withKey: defaultWithKey, model });
 }
 
-// endReview + parseReview are added in Task 8.
-export function parseReview(_text: string): SpeechReview | null { return null; }
+const REVIEW_SYSTEM = `You are an English speaking examiner. Given a practice dialogue transcript,
+return ONLY a JSON object reviewing the LEARNER's (user) turns:
+{"wentWell":["..."],"errors":[{"said":"...","better":"...","why":"..."}],"scoreBand":"A2|B1|B2|C1","practiceNext":["..."]}
+List at most 3 errors. Be specific and encouraging.`;
+
+export function parseReview(text: string): SpeechReview | null {
+  const m = text.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try {
+    const o = JSON.parse(m[0]);
+    if (!o || typeof o !== "object") return null;
+    if (!["A2", "B1", "B2", "C1"].includes(o.scoreBand)) return null;
+    return {
+      wentWell: Array.isArray(o.wentWell) ? o.wentWell : [],
+      errors: Array.isArray(o.errors) ? o.errors : [],
+      scoreBand: o.scoreBand,
+      practiceNext: Array.isArray(o.practiceNext) ? o.practiceNext : [],
+    };
+  } catch { return null; }
+}
+
+export async function endReviewWithClient(history: ConversationTurn[], deps: ConverseDeps): Promise<SpeechReview> {
+  const transcript = history.map((t) => `${t.role === "user" ? "LEARNER" : "PARTNER"}: ${t.text}`).join("\n");
+  const data = await postMessages({
+    model: deps.model,
+    max_tokens: 1024,
+    system: [{ type: "text", text: REVIEW_SYSTEM, cache_control: { type: "ephemeral" } }],
+    messages: [{ role: "user", content: transcript }],
+  }, deps);
+  const parsed = parseReview(data?.content?.[0]?.text ?? "");
+  if (!parsed) throw new Error("review failed: could not parse output");
+  return parsed;
+}
+
+export function endReview(history: ConversationTurn[], model: GradeModel = "claude-sonnet-4-6"): Promise<SpeechReview> {
+  return endReviewWithClient(history, { fetch: fetch.bind(globalThis), withKey: defaultWithKey, model });
+}
