@@ -4,6 +4,8 @@ import { englishState, dueWordIds, getPlacement, isUnitRead, outputAttemptOf, is
 import { readingUnits } from "~/english/data/reading";
 import { grammarPoints } from "~/english/data/grammar";
 import { outputTasks } from "~/english/data/output/tasks";
+import { userState } from "~/scripts/user-state";
+import { todayISO } from "~/scripts/progression/streak";
 import { type Locale } from "~/i18n";
 import PlacementTest from "./PlacementTest";
 import VocabModule from "./VocabModule";
@@ -19,6 +21,14 @@ export default function Today({ lang }: Props) {
 
   const startedIds = useMemo(() => Object.keys(englishState.value.words), [englishState.value]);
   const due = useMemo(() => dueWordIds(startedIds, now()).slice(0, REVIEW_CAP), [startedIds]);
+  const dueTotal = useMemo(() => dueWordIds(startedIds, now()).length, [startedIds]);
+  const welcomeBack = useMemo(() => {
+    const last = userState.value.progression.streak.lastActiveDay;
+    if (!last) return false;
+    // Match the streak module's UTC convention (daysBetween appends T00:00:00Z).
+    const days = Math.round((Date.parse(todayISO() + "T00:00:00Z") - Date.parse(last + "T00:00:00Z")) / 86_400_000);
+    return days >= 2;
+  }, [userState.value]);
 
   const nextText = useMemo(() => {
     const order = ["A2", "B1", "B2"];
@@ -54,6 +64,8 @@ export default function Today({ lang }: Props) {
     grammar: lang === "en" ? "Today's grammar" : "Грамматика на сегодня",
     grammarCta: lang === "en" ? "Open in Grammar & Phrasing below ↓" : "Открой в разделе «Грамматика и фразы» ниже ↓",
     grammarDone: lang === "en" ? "Grammar done for now. ✅" : "Грамматика пока пройдена. ✅",
+    waiting: lang === "en" ? `reviews waiting — capped at ${REVIEW_CAP} today` : `повторений ждёт — сегодня лимит ${REVIEW_CAP}`,
+    welcome: lang === "en" ? "Welcome back — your streak is safe. Pick up where you left off." : "С возвращением — серия сохранена. Продолжай с того места, где остановился.",
   };
 
   if (placing || !placement) {
@@ -62,9 +74,13 @@ export default function Today({ lang }: Props) {
 
   return (
     <div class="max-w-[620px] mx-auto flex flex-col gap-8">
-      <div class="flex items-center gap-4">
+      {welcomeBack ? (
+        <div class="text-[13px] text-ink bg-card border border-rule rounded-[2px] px-4 py-3">{L.welcome}</div>
+      ) : null}
+      <div class="flex items-center gap-4 flex-wrap">
         <div class="text-[13px] font-mono text-muted">{L.due}: <span class="text-ink font-semibold">{due.length}</span></div>
         {due.length ? <div class="text-[12px] text-muted">{L.reviewHint}</div> : <div class="text-[13px] text-ink">{L.allClear}</div>}
+        {dueTotal > REVIEW_CAP ? <div class="text-[12px] text-muted">· {dueTotal} {L.waiting}</div> : null}
       </div>
       <div>
         <div class="meta mb-3">{L.newWords}</div>
