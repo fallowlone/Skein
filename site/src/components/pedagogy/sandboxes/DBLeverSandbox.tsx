@@ -185,8 +185,8 @@ export default function DBLeverSandbox({ lang }: Props) {
 
         <ol class="space-y-3">
           {ranked.map((l, i) => (
-            <li class="border rounded p-3">
-              <div class="text-xs uppercase tracking-wide text-bbg-muted">
+            <li class="border-hairline-2 rounded-[var(--r-sm)] p-3">
+              <div class="text-xs uppercase tracking-wide text-muted">
                 #{i + 1} → piece {l.piece}
               </div>
               <div class="text-sm mt-1">{lang === "en" ? l.reason.en : l.reason.ru}</div>
