@@ -64,6 +64,17 @@ Connect the repo to Cloudflare Pages:
 - Build output directory: `site/dist`
 - Functions in `functions/` deploy automatically alongside the static assets.
 
+**Production branch.** In *Pages project → Settings → Build → Production branch*,
+set this to `main`. Only pushes to the production branch deploy to Production;
+every other branch produces a Preview deployment. If `main` pushes are landing in
+Preview, this field is pointing at the wrong branch — fix it here.
+
+For an explicit, git-trigger-independent production deploy from the CLI, run
+`bun run deploy:prod` (root) — it builds and runs
+`wrangler pages deploy site/dist --project-name=awesome-everything --branch=main`.
+Requires a one-time `wrangler login`. The `--branch=main` flag must match the
+configured production branch for the upload to count as Production.
+
 ## 5. Abuse protection (dashboard)
 The app already rate-limits mutating `/api/*` per IP in `_middleware.ts` and gates
 account creation behind a real GitHub account. Add edge protection on top:
