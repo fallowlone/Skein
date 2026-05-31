@@ -1,5 +1,5 @@
 import type { UserState } from "./user-state";
-import type { PretestResult, Progression } from "./progression/types";
+import type { PretestResult, Progression, EnglishSummary } from "./progression/types";
 import { rankToTier } from "./progression/rank-tier";
 
 type Stamped = { lastAt: number };
@@ -99,6 +99,26 @@ function pickBetterPretest(a?: PretestResult | null, b?: PretestResult | null): 
   return a.rating >= b.rating ? a : b;
 }
 
+function mergeEnglishSummary(a?: EnglishSummary, b?: EnglishSummary): EnglishSummary | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  const newer = a.updatedAt >= b.updatedAt ? a : b;
+  return {
+    knownTotal: Math.max(a.knownTotal, b.knownTotal),
+    knownByBand: {
+      A2: Math.max(a.knownByBand.A2, b.knownByBand.A2),
+      B1: Math.max(a.knownByBand.B1, b.knownByBand.B1),
+      B2: Math.max(a.knownByBand.B2, b.knownByBand.B2),
+    },
+    band: newer.band,
+    readUnits: Math.max(a.readUnits, b.readUnits),
+    grammarDone: Math.max(a.grammarDone, b.grammarDone),
+    collocationDone: Math.max(a.collocationDone, b.collocationDone),
+    graded: a.graded || b.graded,
+    updatedAt: Math.max(a.updatedAt, b.updatedAt),
+  };
+}
+
 function mergeProgression(a?: Progression, b?: Progression): Progression {
   const base: Progression = a ?? { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] };
   if (!b) return base;
@@ -112,5 +132,6 @@ function mergeProgression(a?: Progression, b?: Progression): Progression {
       best: Math.max(a?.streak.best ?? 0, b.streak.best ?? 0),
     },
     titles: Array.from(new Set([...(a?.titles ?? []), ...b.titles])),
+    englishSummary: mergeEnglishSummary(a?.englishSummary, b?.englishSummary),
   };
 }
