@@ -2,8 +2,9 @@ import { describe, it, expect } from "vitest";
 import { readingUnits } from "./index";
 import { vocabA2 } from "../vocab-a2";
 import { vocabB1 } from "../vocab-b1";
+import { vocabB2 } from "../vocab-b2";
 
-const vocabIds = new Set([...vocabA2, ...vocabB1].map((e) => e.id));
+const vocabIds = new Set([...vocabA2, ...vocabB1, ...vocabB2].map((e) => e.id));
 const LEVELS = ["A2", "B1", "B2"];
 const STREAMS = ["general", "engineering"];
 const bi = (b: unknown) =>
