@@ -105,6 +105,13 @@ export async function checkPracticeLessonKey(siteSrc: string): Promise<string[]>
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
 export const PRACTICE_REQUIRED_TRACKS: string[] = [];
 
+/** Assessment pseudo-lessons (quiz/project/drill blocks) carry their own format
+ *  and are NOT content lessons — they must not be asked for a practice file. */
+const PSEUDO_LESSON = /^(quiz(-[a-z]+)?|project|drill)$/;
+function isPseudoLesson(key: string): boolean {
+  return PSEUDO_LESSON.test(key.split("/")[2] ?? "");
+}
+
 export async function checkPracticeCount(siteSrc: string): Promise<{ errors: string[]; warnings: string[] }> {
   const errors: string[] = []; const warnings: string[] = [];
   // ready EN lessons → "<track>/<unit>/<slug>"
@@ -127,6 +134,7 @@ export async function checkPracticeCount(siteSrc: string): Promise<{ errors: str
   for (const { data } of await readPractice(siteSrc)) if (data?.lessonKey) practiceByKey.set(data.lessonKey, data);
 
   for (const key of readyKeys) {
+    if (isPseudoLesson(key)) continue; // quiz/project/drill blocks don't take practice files
     const track = key.split("/")[0];
     const required = PRACTICE_REQUIRED_TRACKS.includes(track);
     const data = practiceByKey.get(key);
