@@ -77,6 +77,7 @@ Done:
 - ✅ performance/01-profile-first (8) — why-profile-first, amdahl-and-self-time, measurement-loop, reading-flame-graphs, statistical-baselines, profiler-history-and-pitfalls, hardware-counters-and-cold-start, continuous-profiling-at-scale
 - ✅ performance/02-hot-paths (7) — what-makes-a-hot-path, five-shapes-of-hotspot, reading-parent-and-child-chains, jit-deopt-and-fix-verify, hardware-counters-and-tma, false-sharing-and-native-bridge, security-and-production-practice
 - ✅ performance/03-cache-vs-bigo (7) — memory-hierarchy, row-major-vs-column-major, cache-lines-and-false-sharing, branch-prediction, simd-and-data-layout, hardware-prefetcher-and-tlb, cache-oblivious-and-pgo
+- ✅ performance/04-gc (6) — gc-basics, gc-algorithms, gc-tradeoffs, gc-tuning, gc-internals, gc-production
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
