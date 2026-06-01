@@ -78,6 +78,7 @@ Done:
 - ✅ performance/02-hot-paths (7) — what-makes-a-hot-path, five-shapes-of-hotspot, reading-parent-and-child-chains, jit-deopt-and-fix-verify, hardware-counters-and-tma, false-sharing-and-native-bridge, security-and-production-practice
 - ✅ performance/03-cache-vs-bigo (7) — memory-hierarchy, row-major-vs-column-major, cache-lines-and-false-sharing, branch-prediction, simd-and-data-layout, hardware-prefetcher-and-tlb, cache-oblivious-and-pgo
 - ✅ performance/04-gc (6) — gc-basics, gc-algorithms, gc-tradeoffs, gc-tuning, gc-internals, gc-production
+- ✅ performance/05-n-plus-one (6) — what-is-nplus1, fix-families, detecting-nplus1, dataloader-pattern, fan-out-and-redis, nplus1-senior
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
