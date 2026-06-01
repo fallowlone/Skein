@@ -93,6 +93,7 @@ Done:
 - ✅ base-cs/09-data-in-memory (4) — arrays-as-contiguous-cells, indexing-and-offsets, objects-as-key-value, collections-in-memory
 - ✅ base-cs/10-abstraction (4) — what-abstraction-is, bundling-data-and-behaviour, modules, why-abstraction-exists
 - ✅ base-cs/11-when-a-program-fails (4) — errors-vs-exceptions, the-stack-trace, undefined-behaviour, debugging-as-reasoning
+- ✅ base-cs/12-time-and-concurrency (4) — why-async-exists, blocking-vs-non-blocking, the-event-loop, concurrency-vs-parallelism — **BASE-CS TRACK COMPLETE, flipped to PRACTICE_REQUIRED (5 tracks enforced)**
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
