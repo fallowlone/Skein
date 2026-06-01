@@ -87,6 +87,7 @@ Done:
 - ✅ base-cs/03-the-processor (5) — the-instruction, fetch-decode-execute, registers, machine-code, a-toy-cpu
 - ✅ base-cs/04-machine-code-to-language (5) — the-assembler-idea, why-high-level-languages, compilation-vs-interpretation, the-runtime, source-to-running-program
 - ✅ base-cs/05-values-and-types (4) — what-a-value-is, types-interpret-bits, primitive-types, why-types-exist
+- ✅ base-cs/06-variables-and-state (4) — a-variable-is-a-named-cell, assignment, mutation-and-state, references-vs-values
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
