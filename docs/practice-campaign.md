@@ -85,6 +85,7 @@ Done:
 - ✅ base-cs/01-what-a-computer-is (5) — bits-and-binary, counting-in-binary, encoding-the-world, boolean-logic, logic-gates (GOTCHA: sandbox `expected.kind` / exec `check.kind` must be stdout-equals|stdout-contains|rows-equal|no-error — NOT "equals"/"contains")
 - ✅ base-cs/02-memory (4) — addressable-cells, the-byte, value-vs-address, stack-and-heap
 - ✅ base-cs/03-the-processor (5) — the-instruction, fetch-decode-execute, registers, machine-code, a-toy-cpu
+- ✅ base-cs/04-machine-code-to-language (5) — the-assembler-idea, why-high-level-languages, compilation-vs-interpretation, the-runtime, source-to-running-program
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
