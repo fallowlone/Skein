@@ -61,6 +61,7 @@ Done:
 - ✅ networking/02-ip-packet (6)
 - ✅ networking/04-dns-resolution (5)
 - ✅ networking/05-tls-handshake (5)
+- ✅ networking/06-http-versions (7)
 
 **Remaining: ~589** (warning count; unattended /loop is grinding unit-by-unit). Per track (pre-loop snapshot):
 
