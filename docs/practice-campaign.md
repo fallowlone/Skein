@@ -64,6 +64,7 @@ Done:
 - ✅ algorithms/07-trees (6)
 - ✅ algorithms/08-heaps (5)
 - ✅ algorithms/09-graphs (8)
+- ✅ algorithms/10-dynamic-programming (8)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
