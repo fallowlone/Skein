@@ -67,6 +67,7 @@ Done:
 - ✅ networking/09-proxy-load-balancing (7)
 - ✅ networking/10-quic-internals (7)
 - ✅ networking/11-network-security (6)
+- ✅ networking/12-putting-it-together (7) — TRACK COMPLETE, flipped to PRACTICE_REQUIRED
 
 **Remaining: ~589** (warning count; unattended /loop is grinding unit-by-unit). Per track (pre-loop snapshot):
 
