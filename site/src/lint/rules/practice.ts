@@ -105,11 +105,13 @@ export async function checkPracticeLessonKey(siteSrc: string): Promise<string[]>
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
 export const PRACTICE_REQUIRED_TRACKS: string[] = [];
 
-/** Assessment pseudo-lessons (quiz/project/drill blocks) carry their own format
- *  and are NOT content lessons — they must not be asked for a practice file. */
+/** Assessment pseudo-lessons (quiz/project/drill blocks) carry their own format,
+ *  and `00-start-here` orientation lessons are roadmaps with no mechanism to drill
+ *  — neither is asked for a practice file. */
 const PSEUDO_LESSON = /^(quiz(-[a-z]+)?|project|drill)$/;
 function isPseudoLesson(key: string): boolean {
-  return PSEUDO_LESSON.test(key.split("/")[2] ?? "");
+  const [, unit, slug] = key.split("/");
+  return unit === "00-start-here" || PSEUDO_LESSON.test(slug ?? "");
 }
 
 export async function checkPracticeCount(siteSrc: string): Promise<{ errors: string[]; warnings: string[] }> {
