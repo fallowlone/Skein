@@ -152,3 +152,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ databases/07-sharding (7) — why-sharding-exists, shard-key-selection, partitioning-vs-sharding, colocation-and-citus, hot-shard-failure, schema-based-and-alternatives, resharding-and-operations
 - ✅ databases/08-putting-it-together (5) — the-seven-acts, schema-indexes-plans, mvcc-pool-migrations, sharding-and-tradeoffs, observability-and-triage  [databases track COMPLETE + enforced]
 - ✅ math/01-numbers (4) — counting, comparing, place-value, the-number-line
+- ✅ math/02-operations (4) — addition, subtraction, multiplication, division
