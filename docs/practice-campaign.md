@@ -63,6 +63,7 @@ Done:
 - ✅ algorithms/06-lists-stacks-queues (6)
 - ✅ algorithms/07-trees (6)
 - ✅ algorithms/08-heaps (5)
+- ✅ algorithms/09-graphs (8)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
