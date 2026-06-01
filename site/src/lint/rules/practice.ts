@@ -103,7 +103,7 @@ export async function checkPracticeLessonKey(siteSrc: string): Promise<string[]>
 
 /** Tracks flipped to error (lesson without a 3–5 task practice file fails the build).
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
-export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms"];
+export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability"];
 
 /** Assessment pseudo-lessons (quiz/project/drill blocks) carry their own format,
  *  and `00-start-here` orientation lessons are roadmaps with no mechanism to drill
