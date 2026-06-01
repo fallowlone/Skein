@@ -59,6 +59,7 @@ Done:
 - ✅ algorithms/01-thinking-complexity (7)
 - ✅ algorithms/02-arrays-strings (7)
 - ✅ algorithms/03-sorting-search (6)
+- ✅ algorithms/04-recursion-backtracking (6)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
