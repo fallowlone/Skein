@@ -142,3 +142,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ backend/04-pooling (6) — overview, pool-sizing, acquisition-and-timeouts, health-and-lifecycle, pool-exhaustion, pooling-distributed
 - ✅ backend/05-idempotency-retries (6) — why-idempotency, server-state-machine, retry-strategies, outbox-inbox-patterns, concurrency-and-cache, idempotency-senior
 - ✅ backend/06-circuit-breakers (6) — overview, the-state-machine, thresholds-and-windows, bulkheads-and-isolation, fallbacks-and-degradation, distributed-failure-modes
+- ✅ backend/07-graceful-shutdown (6) — overview, signals-and-grace-period, the-deregistration-race, draining-and-shutdown-order, in-flight-work-and-jobs, zero-downtime-deploys
