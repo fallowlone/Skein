@@ -148,3 +148,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ databases/02-indexes (7) — index-anatomy, leading-column-rule, partial-expression-covering, index-types, index-only-scans-and-visibility, production-failures-and-audit, index-design-exercise
 - ✅ databases/04-mvcc-isolation (7) — mvcc-basics, row-versions-and-snapshots, hot-updates-and-isolation-levels, vacuum-and-bloat, clog-xid-wraparound-and-multixact, ssi-and-production-tuning, real-world-failures-and-distributed
 - ✅ databases/05-pooling (7) — why-pools-exist, pgbouncer-modes, pool-sizing-math, pool-exhaustion-and-idle-in-transaction, transaction-mode-migration, postgres-process-model, pooler-landscape-and-failure-modes
+- ✅ databases/06-migrations (7) — what-a-migration-is, add-column-safely, lock-queue-incident, safe-ddl-patterns, expand-contract, advisory-lock-and-tooling, migration-failure-taxonomy
