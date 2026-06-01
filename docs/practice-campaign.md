@@ -136,3 +136,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ browser/06-ssr-vs-ssg (5) — rendering-strategies, strategy-mechanisms, hydration-cost, hydration-mismatch, rsc-and-observability
 - ✅ browser/07-core-web-vitals (6) — what-vitals-measure, lcp-mechanics, inp-mechanics, cls-causes-and-fixes, lab-vs-field, tradeoffs-and-observability
 - ✅ browser/08-putting-it-together (4) — the-full-picture, eight-layers-traced, five-canonical-breaks, three-track-method — **BROWSER TRACK COMPLETE, flipped to PRACTICE_REQUIRED (6 tracks enforced)**
+- ✅ backend/01-request-lifecycle (6) — overview, accept-and-parse, routing-and-middleware, handler-and-response, streaming-and-backpressure, timeouts-and-tail-latency
