@@ -146,3 +146,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ backend/08-putting-it-together (6) — overview, tracing-one-request, when-failures-compose, seeing-the-system, the-service-under-overload, production-readiness  [backend track COMPLETE + enforced]
 - ✅ databases/01-relational-model (7) — what-a-relation-is, constraints-and-keys, normalization, jsonb-and-arrays, heap-and-toast, schema-integrity, relational-vs-alternatives
 - ✅ databases/02-indexes (7) — index-anatomy, leading-column-rule, partial-expression-covering, index-types, index-only-scans-and-visibility, production-failures-and-audit, index-design-exercise
+- ✅ databases/04-mvcc-isolation (7) — mvcc-basics, row-versions-and-snapshots, hot-updates-and-isolation-levels, vacuum-and-bloat, clog-xid-wraparound-and-multixact, ssi-and-production-tuning, real-world-failures-and-distributed
