@@ -153,3 +153,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ databases/08-putting-it-together (5) — the-seven-acts, schema-indexes-plans, mvcc-pool-migrations, sharding-and-tradeoffs, observability-and-triage  [databases track COMPLETE + enforced]
 - ✅ math/01-numbers (4) — counting, comparing, place-value, the-number-line
 - ✅ math/02-operations (4) — addition, subtraction, multiplication, division
+- ✅ math/03-fractions (5) — what-is-a-fraction, equivalent-fractions, adding-fractions, decimals, percents
