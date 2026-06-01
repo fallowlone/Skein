@@ -140,3 +140,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ backend/02-middleware-di (6) — overview, writing-middleware, inversion-of-control, di-scopes-lifecycles, testing-and-seams, di-in-production
 - ✅ backend/03-async-blocking (6) — overview, the-event-loop, what-blocks-the-loop, offloading-cpu-work, backpressure-and-concurrency, throughput-under-load
 - ✅ backend/04-pooling (6) — overview, pool-sizing, acquisition-and-timeouts, health-and-lifecycle, pool-exhaustion, pooling-distributed
+- ✅ backend/05-idempotency-retries (6) — why-idempotency, server-state-machine, retry-strategies, outbox-inbox-patterns, concurrency-and-cache, idempotency-senior
