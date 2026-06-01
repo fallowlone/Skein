@@ -65,6 +65,7 @@ Done:
 - ✅ algorithms/08-heaps (5)
 - ✅ algorithms/09-graphs (8)
 - ✅ algorithms/10-dynamic-programming (8)
+- ✅ algorithms/11-greedy (4) — ALGORITHMS TRACK COMPLETE, flipped to PRACTICE_REQUIRED
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
