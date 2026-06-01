@@ -141,3 +141,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ backend/03-async-blocking (6) — overview, the-event-loop, what-blocks-the-loop, offloading-cpu-work, backpressure-and-concurrency, throughput-under-load
 - ✅ backend/04-pooling (6) — overview, pool-sizing, acquisition-and-timeouts, health-and-lifecycle, pool-exhaustion, pooling-distributed
 - ✅ backend/05-idempotency-retries (6) — why-idempotency, server-state-machine, retry-strategies, outbox-inbox-patterns, concurrency-and-cache, idempotency-senior
+- ✅ backend/06-circuit-breakers (6) — overview, the-state-machine, thresholds-and-windows, bulkheads-and-isolation, fallbacks-and-degradation, distributed-failure-modes
