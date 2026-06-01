@@ -144,3 +144,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ backend/06-circuit-breakers (6) — overview, the-state-machine, thresholds-and-windows, bulkheads-and-isolation, fallbacks-and-degradation, distributed-failure-modes
 - ✅ backend/07-graceful-shutdown (6) — overview, signals-and-grace-period, the-deregistration-race, draining-and-shutdown-order, in-flight-work-and-jobs, zero-downtime-deploys
 - ✅ backend/08-putting-it-together (6) — overview, tracing-one-request, when-failures-compose, seeing-the-system, the-service-under-overload, production-readiness  [backend track COMPLETE + enforced]
+- ✅ databases/01-relational-model (7) — what-a-relation-is, constraints-and-keys, normalization, jsonb-and-arrays, heap-and-toast, schema-integrity, relational-vs-alternatives
