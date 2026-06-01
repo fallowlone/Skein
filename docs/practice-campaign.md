@@ -66,6 +66,7 @@ Done:
 - ✅ networking/08-websocket-realtime (7)
 - ✅ networking/09-proxy-load-balancing (7)
 - ✅ networking/10-quic-internals (7)
+- ✅ networking/11-network-security (6)
 
 **Remaining: ~589** (warning count; unattended /loop is grinding unit-by-unit). Per track (pre-loop snapshot):
 
