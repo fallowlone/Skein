@@ -84,6 +84,7 @@ Done:
 - ✅ performance/08-putting-it-together (5) — the-performance-loop, classify-and-fix-families, observability-stack-and-gates, incident-to-enforcement, culture-economics-and-scale — **PERFORMANCE TRACK COMPLETE, flipped to PRACTICE_REQUIRED**
 - ✅ base-cs/01-what-a-computer-is (5) — bits-and-binary, counting-in-binary, encoding-the-world, boolean-logic, logic-gates (GOTCHA: sandbox `expected.kind` / exec `check.kind` must be stdout-equals|stdout-contains|rows-equal|no-error — NOT "equals"/"contains")
 - ✅ base-cs/02-memory (4) — addressable-cells, the-byte, value-vs-address, stack-and-heap
+- ✅ base-cs/03-the-processor (5) — the-instruction, fetch-decode-execute, registers, machine-code, a-toy-cpu
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
