@@ -11,8 +11,13 @@ describe("progressReducer", () => {
     expect(s.pct).toBe(55);
   });
 
-  it("done event marks ready at 100", () => {
+  it("per-file done does NOT flip to ready (whole pipeline is not loaded yet)", () => {
     const s = progressReducer({ status: "downloading", pct: 90 }, { status: "done", file: "a" });
+    expect(s).toEqual({ status: "downloading", pct: 90 });
+  });
+
+  it("leaves an already-ready state untouched on a late done event", () => {
+    const s = progressReducer({ status: "ready", pct: 100 }, { status: "done", file: "a" });
     expect(s).toEqual({ status: "ready", pct: 100 });
   });
 });
