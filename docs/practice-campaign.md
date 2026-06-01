@@ -155,3 +155,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ math/02-operations (4) — addition, subtraction, multiplication, division
 - ✅ math/03-fractions (5) — what-is-a-fraction, equivalent-fractions, adding-fractions, decimals, percents
 - ✅ math/04-powers (3) — exponents, powers-of-ten, square-roots
+- ✅ math/05-algebra (4) — variables, expressions, equations, inequalities
