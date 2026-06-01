@@ -5,6 +5,7 @@ import { vocabB1 } from "~/english/data/vocab-b1";
 import { vocabB2 } from "~/english/data/vocab-b2";
 import type { VocabEntry, Band } from "~/english/types";
 import { englishState, gradeWord, queueNewWords, recordNewIntro, getPlacement, getNewWordsPerDay, introducedToday } from "~/english/state";
+import { speak, ttsAvailable } from "~/english/speech/tts";
 import { type Locale } from "~/i18n";
 
 type Props = { lang: Locale };
@@ -35,7 +36,9 @@ export default function VocabModule({ lang }: Props) {
     know: lang === "en" ? "I knew it" : "Знал",
     learn: lang === "en" ? "Learning" : "Учу",
     left: lang === "en" ? "new today" : "новых сегодня",
+    say: lang === "en" ? "Pronounce" : "Произнести",
   };
+  const canSpeak = ttsAvailable();
 
   if (queue.length === 0 || i >= queue.length) {
     return <p class="text-[14px] text-muted max-w-[600px] mx-auto">{L.none}</p>;
@@ -57,6 +60,12 @@ export default function VocabModule({ lang }: Props) {
       <div class="bg-card border border-rule-strong rounded-[2px] p-8 min-h-[200px] flex flex-col gap-3">
         <div class="flex items-baseline gap-2 flex-wrap">
           <span class="font-display text-[26px] font-bold text-ink">{e.lemma}</span>
+          {canSpeak ? (
+            <button type="button" class="icon-btn shrink-0 self-center" title={L.say}
+              aria-label={`${L.say}: ${e.lemma}`} onClick={() => speak(e.lemma)}>
+              <span aria-hidden="true">🔊</span>
+            </button>
+          ) : null}
           {e.ipa ? <span class="text-[12px] font-mono text-muted">/{e.ipa}/</span> : null}
           <span class="text-[11px] font-mono uppercase text-muted">{e.pos}</span>
         </div>
@@ -64,7 +73,17 @@ export default function VocabModule({ lang }: Props) {
           <>
             <div class="text-[16px] text-ink">{e.ru}</div>
             <div class="text-[13px] text-muted">{e.gloss}</div>
-            {e.examples[0] ? <div class="text-[13px] text-ink italic mt-1">“{e.examples[0]}”</div> : null}
+            {e.examples[0] ? (
+              <div class="text-[13px] text-ink italic mt-1 flex items-start gap-2">
+                <span>“{e.examples[0]}”</span>
+                {canSpeak ? (
+                  <button type="button" class="icon-btn shrink-0 not-italic" title={L.say}
+                    aria-label={L.say} onClick={() => speak(e.examples[0])}>
+                    <span aria-hidden="true">🔊</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
             {e.collocations?.length ? <div class="text-[12px] text-muted mt-1">{e.collocations.join(" · ")}</div> : null}
           </>
         ) : (

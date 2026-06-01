@@ -10,7 +10,13 @@ type ProgressEvent = { status: "progress" | "done" | "initiate" | "ready"; file:
 /** Pure reducer so download UX is unit-testable without the WASM runtime. */
 export function progressReducer(s: DownloadState, e: ProgressEvent): DownloadState {
   if (e.status === "progress") return { status: "downloading", pct: Math.max(s.pct, Math.round(e.progress ?? 0)) };
-  if (e.status === "done") return { status: "ready", pct: 100 };
+  // A "done" event fires once PER weight shard (config, tokenizer, encoder,
+  // decoder…), not once for the whole model. Treating the first shard's "done"
+  // as ready flips the badge to "ready" while the pipeline is still loading and
+  // the cache flag is unset — so `available()` stays false and the UI blocks
+  // with "needs speech recognition". Stay in "downloading"; true readiness is
+  // emitted explicitly by loadTranscriber after pipeline() resolves.
+  if (e.status === "done") return s.status === "ready" ? s : { status: "downloading", pct: s.pct };
   return s;
 }
 
@@ -26,7 +32,7 @@ let transcriberPromise: Promise<any> | null = null;
  */
 async function loadTranscriber(onState: (s: DownloadState) => void): Promise<any> {
   if (transcriberPromise) return transcriberPromise;
-  transcriberPromise = (async () => {
+  const p = (async () => {
     const { pipeline, env } = await import("@xenova/transformers");
     env.allowLocalModels = false;
     env.remoteHost = `${location.origin}/models/`;
@@ -40,7 +46,17 @@ async function loadTranscriber(onState: (s: DownloadState) => void): Promise<any
     onState({ status: "ready", pct: 100 });
     return t;
   })();
-  return transcriberPromise;
+  transcriberPromise = p;
+  try {
+    return await p;
+  } catch (err) {
+    // A failed load (e.g. weights 404) must not poison the singleton — null it
+    // so the user can retry the download instead of being stuck on a rejected
+    // promise forever.
+    transcriberPromise = null;
+    onState({ status: "error", pct: 0 });
+    throw err;
+  }
 }
 
 /** Decode a recorded blob to 16 kHz mono Float32 for Whisper. */
