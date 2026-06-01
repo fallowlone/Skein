@@ -149,3 +149,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ databases/04-mvcc-isolation (7) — mvcc-basics, row-versions-and-snapshots, hot-updates-and-isolation-levels, vacuum-and-bloat, clog-xid-wraparound-and-multixact, ssi-and-production-tuning, real-world-failures-and-distributed
 - ✅ databases/05-pooling (7) — why-pools-exist, pgbouncer-modes, pool-sizing-math, pool-exhaustion-and-idle-in-transaction, transaction-mode-migration, postgres-process-model, pooler-landscape-and-failure-modes
 - ✅ databases/06-migrations (7) — what-a-migration-is, add-column-safely, lock-queue-incident, safe-ddl-patterns, expand-contract, advisory-lock-and-tooling, migration-failure-taxonomy
+- ✅ databases/07-sharding (7) — why-sharding-exists, shard-key-selection, partitioning-vs-sharding, colocation-and-citus, hot-shard-failure, schema-based-and-alternatives, resharding-and-operations
