@@ -58,6 +58,7 @@ Done:
 - ✅ algorithms/05-hashing (5)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
+- ✅ networking/02-ip-packet (6)
 
 **Remaining: ~589** (warning count; unattended /loop is grinding unit-by-unit). Per track (pre-loop snapshot):
 
