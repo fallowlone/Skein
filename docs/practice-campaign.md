@@ -57,6 +57,7 @@ Also exempted: `00-start-here` orientation units (roadmaps, no mechanism to dril
 Done:
 - ✅ algorithms/05-hashing (5)
 - ✅ algorithms/01-thinking-complexity (7)
+- ✅ algorithms/02-arrays-strings (7)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
