@@ -73,6 +73,7 @@ Done:
 - ✅ observability/05-slo-budgets (8)
 - ✅ observability/06-trace-propagation (7)
 - ✅ observability/07-profiling (7)
+- ✅ observability/08-putting-it-together (5) — OBSERVABILITY TRACK COMPLETE, flipped to PRACTICE_REQUIRED
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
