@@ -88,6 +88,7 @@ Done:
 - ✅ base-cs/04-machine-code-to-language (5) — the-assembler-idea, why-high-level-languages, compilation-vs-interpretation, the-runtime, source-to-running-program
 - ✅ base-cs/05-values-and-types (4) — what-a-value-is, types-interpret-bits, primitive-types, why-types-exist
 - ✅ base-cs/06-variables-and-state (4) — a-variable-is-a-named-cell, assignment, mutation-and-state, references-vs-values
+- ✅ base-cs/07-control-flow (4) — what-flow-means, conditionals-as-branches, loops-as-repeated-jumps, tracing-a-program
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
