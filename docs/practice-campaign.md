@@ -131,3 +131,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ browser/01-event-loop (6) — loop-model, queues-and-scheduling, timer-accuracy, microtask-starvation, node-differences, framework-and-observability
 - ✅ browser/02-render-pipeline (8) — the-six-stages, stages-and-threads, invalidation-and-cost, compositor-layers, devtools-and-frame-lifecycle, layout-thrash, beginmainframe-and-gpu, observability-and-attack-surface
 - ✅ browser/03-v8-internals (7) — what-v8-is, jit-pipeline, hidden-classes, inline-caches, gc-orinoco, turbofan-and-deopt, production-perf
+- ✅ browser/04-workers (7) — what-workers-are, web-worker-mechanics, structured-clone-and-transfer, service-worker-lifecycle, shared-array-buffer-and-atomics, service-worker-edge-cases, worker-pools-and-observability
