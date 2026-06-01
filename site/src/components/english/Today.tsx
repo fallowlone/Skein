@@ -9,6 +9,7 @@ import { todayISO } from "~/scripts/progression/streak";
 import { type Locale } from "~/i18n";
 import PlacementTest from "./PlacementTest";
 import VocabModule from "./VocabModule";
+import ReviewSession from "./ReviewSession";
 
 type Props = { lang: Locale };
 const now = () => Date.now();
@@ -53,7 +54,7 @@ export default function Today({ lang }: Props) {
 
   const L = {
     due: lang === "en" ? "Reviews due" : "Повторений",
-    reviewHint: lang === "en" ? "Open a text below and use its Review tab." : "Открой текст ниже и используй вкладку Review.",
+    reviews: lang === "en" ? "Reviews" : "Повторение",
     newWords: lang === "en" ? "New words" : "Новые слова",
     allClear: lang === "en" ? "All clear for today. 🎉" : "На сегодня всё. 🎉",
     reading: lang === "en" ? "Today's reading" : "Чтение на сегодня",
@@ -79,9 +80,15 @@ export default function Today({ lang }: Props) {
       ) : null}
       <div class="flex items-center gap-4 flex-wrap">
         <div class="text-[13px] font-mono text-muted">{L.due}: <span class="text-ink font-semibold">{due.length}</span></div>
-        {due.length ? <div class="text-[12px] text-muted">{L.reviewHint}</div> : <div class="text-[13px] text-ink">{L.allClear}</div>}
+        {due.length ? null : <div class="text-[13px] text-ink">{L.allClear}</div>}
         {dueTotal > REVIEW_CAP ? <div class="text-[12px] text-muted">· {dueTotal} {L.waiting}</div> : null}
       </div>
+      {due.length ? (
+        <div>
+          <div class="meta mb-3">{L.reviews}</div>
+          <ReviewSession lang={lang} ids={due} />
+        </div>
+      ) : null}
       <div>
         <div class="meta mb-3">{L.newWords}</div>
         <VocabModule lang={lang} />
