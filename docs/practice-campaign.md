@@ -138,3 +138,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ browser/08-putting-it-together (4) — the-full-picture, eight-layers-traced, five-canonical-breaks, three-track-method — **BROWSER TRACK COMPLETE, flipped to PRACTICE_REQUIRED (6 tracks enforced)**
 - ✅ backend/01-request-lifecycle (6) — overview, accept-and-parse, routing-and-middleware, handler-and-response, streaming-and-backpressure, timeouts-and-tail-latency
 - ✅ backend/02-middleware-di (6) — overview, writing-middleware, inversion-of-control, di-scopes-lifecycles, testing-and-seams, di-in-production
+- ✅ backend/03-async-blocking (6) — overview, the-event-loop, what-blocks-the-loop, offloading-cpu-work, backpressure-and-concurrency, throughput-under-load
