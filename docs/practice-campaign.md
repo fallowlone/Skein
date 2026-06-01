@@ -52,11 +52,14 @@ blocks with their own format. The lint rule already skips them.
 
 Baseline 2026-06-01: 1271 raw warnings → 622 real gap after excluding pseudo-lessons.
 
+Also exempted: `00-start-here` orientation units (roadmaps, no mechanism to drill).
+
 Done:
 - ✅ algorithms/05-hashing (5)
 - ✅ networking/03-tcp-handshake (6)
+- ✅ networking/01-physical-link (6)
 
-**Remaining: 611** real lessons. Per track:
+**Remaining: ~589** (warning count; unattended /loop is grinding unit-by-unit). Per track (pre-loop snapshot):
 
 | track | left | | track | left |
 |---|---|---|---|---|
