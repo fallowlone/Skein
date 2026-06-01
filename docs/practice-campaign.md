@@ -70,6 +70,7 @@ Done:
 - ✅ observability/02-structured-logging (7)
 - ✅ observability/03-otel (7)
 - ✅ observability/04-red-use (6)
+- ✅ observability/05-slo-budgets (8)
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
