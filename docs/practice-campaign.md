@@ -80,6 +80,7 @@ Done:
 - ✅ performance/04-gc (6) — gc-basics, gc-algorithms, gc-tradeoffs, gc-tuning, gc-internals, gc-production
 - ✅ performance/05-n-plus-one (6) — what-is-nplus1, fix-families, detecting-nplus1, dataloader-pattern, fan-out-and-redis, nplus1-senior
 - ✅ performance/06-batching (6) — basics, window, kafka-postgres, syscall-observability, nagle-io-uring, backpressure-production
+- ✅ performance/07-bundle-budgets (7) — what-a-bundle-costs, core-web-vitals, code-splitting, tree-shaking-and-compression, third-party-scripts, ci-enforcement, v8-pipeline-and-priorities
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
