@@ -1,0 +1,97 @@
+{
+  "lessonKey": "performance/06-batching/04-syscall-observability",
+  "track": "performance",
+  "tasks": [
+    {
+      "id": "predict-syscall-cost",
+      "type": "predict",
+      "difficulty": "recall",
+      "estMin": 4,
+      "title": { "en": "Predict the transition tax", "ru": "Предскажи налог на переходы" },
+      "prompt": { "en": "Before revealing, write down how much wall-clock time per second a service burns purely crossing the kernel boundary at the rate below, using the per-syscall cost from the lesson.", "ru": "Перед тем как открыть ответ, запиши, сколько реального времени в секунду сервис сжигает чисто на пересечении границы ядра при указанной ниже частоте, используя цену одного системного вызова из урока." },
+      "scenario": { "en": "A service does one <code>write()</code> per log line at 100k I/O ops/s. Each syscall is a controlled trap into ring 0 (save registers, switch page-table and stack, run handler, unwind) costing ~1-5µs before any real work. How many ms/s go to transitions, and what fraction of a core is that?", "ru": "Сервис делает один <code>write()</code> на строку лога при 100k операций в/в в секунду. Каждый системный вызов — управляемая ловушка в ring 0 (сохранить регистры, переключить таблицу страниц и стек, выполнить обработчик, развернуть) ценой ~1-5 мкс до всякой реальной работы. Сколько мс/с уходит на переходы и какая это доля ядра?" },
+      "reveal": { "en": "100,000 × 1-5µs = 100-500ms of every wall-clock second spent purely transitioning — a tenth to half a core gone before a single byte moves. Push to 1M ops/s and traditional read/write can burn a full millisecond per second on transitions alone, plus L1/L2 cache pollution on every crossing.", "ru": "100 000 × 1-5 мкс = 100-500 мс каждой реальной секунды чисто на переходах — от десятой до половины ядра уходит до того, как сдвинется хоть один байт. Подними до 1M оп/с, и традиционные read/write могут сжигать целую миллисекунду в секунду только на переходах, плюс загрязнение кэша L1/L2 при каждом пересечении." }
+    },
+    {
+      "id": "diagnose-million-writes",
+      "type": "diagnose",
+      "difficulty": "apply",
+      "estMin": 7,
+      "title": { "en": "A million write() calls in strace -c", "ru": "Миллион вызовов write() в strace -c" },
+      "prompt": { "en": "CPU is pinned at 90% but no business function is hot; the widest flamegraph band is entry_SYSCALL_64. Fill in the blanks with the root cause and the two-step fix.", "ru": "CPU забит на 90%, но ни одна бизнес-функция не горячая; самая широкая полоса флейм-графа — entry_SYSCALL_64. Заполни пропуски корневой причиной и двухшаговым фиксом." },
+      "evidence": { "en": "$ strace -c -p $(pgrep ingest)\n% time     calls  syscall\n 71.4   1002431  write\n  3.1      4002  epoll_wait\nFlamegraph: entry_SYSCALL_64 = 33% of every core", "ru": "$ strace -c -p $(pgrep ingest)\n% time     calls  syscall\n 71.4   1002431  write\n  3.1      4002  epoll_wait\nFlamegraph: entry_SYSCALL_64 = 33% of every core" },
+      "grading": {
+        "mode": "blanks",
+        "blanks": [
+          { "id": "b1", "accept": ["one write per log line", "unbuffered", "unbuffered I/O", "a write() per op", "one syscall per op", "per-line write"], "hint": { "en": "1M write calls = one syscall per individual log line.", "ru": "1M вызовов write = один системный вызов на каждую отдельную строку лога." } },
+          { "id": "b2", "accept": ["buffer and flush", "writev", "buffer + writev", "batch writes", "buffer then flush as one writev"], "hint": { "en": "Coalesce many small records and cross once.", "ru": "Объедини много мелких записей и пересеки границу один раз." } },
+          { "id": "b3", "accept": ["io_uring", "io_uring SQPOLL", "io_uring + SQPOLL", "SQPOLL"], "hint": { "en": "Shared mmap'd rings remove the per-op crossing entirely under load.", "ru": "Разделяемые mmap-кольца убирают пересечение на операцию вовсе под нагрузкой." } }
+        ]
+      }
+    },
+    {
+      "id": "fix-cork-flush-batcher",
+      "type": "fix",
+      "difficulty": "apply",
+      "estMin": 9,
+      "title": { "en": "Turn per-line writes into a buffer-and-flush batcher", "ru": "Преврати построчные записи в батчер с буфером и сбросом" },
+      "prompt": { "en": "Rewrite the hot logger so many records cross the kernel boundary as one writev, with a bounded buffer that flushes on max-size or max-wait. Name the runtime primitive you'd use and the trigger you must keep. Then reveal the model answer.", "ru": "Перепиши горячий логгер так, чтобы много записей пересекали границу ядра одним writev, с ограниченным буфером, сбрасывающимся по max-size или max-wait. Назови примитив runtime и триггер, который нужно сохранить. Затем открой образцовый ответ." },
+      "starter": "// hot path: one syscall per line\nfor (const line of lines) {\n  socket.write(line + '\\n'); // 1M write() per second\n}",
+      "grading": {
+        "mode": "self",
+        "model": { "en": "Buffer in userspace and flush as one crossing. In Node: <code>stream.cork()</code> buffers writes in memory and <code>uncork()</code> (deferred via <code>process.nextTick</code>) flushes them as a single <code>_writev()</code> — but only if the stream implements <code>_writev</code>; pair with backpressure via the <code>write()</code> return value. The shape is identical across runtimes (Go <code>bufio.Writer</code> + <code>time.Ticker</code>, Java <code>BufferedOutputStream</code>, Python <code>asyncio.Queue</code> drained in chunks, Rust <code>tokio::sync::mpsc</code> + <code>recv_many</code>): a bounded buffer with a <strong>max-size</strong> trigger, a <strong>max-wait</strong> trigger, and an explicit <strong>flush</strong>. You must keep the max-wait timer, or a low-traffic trickle never flushes.", "ru": "Буферизуй в пользовательском пространстве и сбрасывай одним пересечением. В Node: <code>stream.cork()</code> буферизует записи в памяти, а <code>uncork()</code> (отложенный через <code>process.nextTick</code>) сбрасывает их одним <code>_writev()</code> — но только если поток реализует <code>_writev</code>; сочетай с backpressure через возвращаемое значение <code>write()</code>. Форма одинакова между рантаймами (Go <code>bufio.Writer</code> + <code>time.Ticker</code>, Java <code>BufferedOutputStream</code>, Python <code>asyncio.Queue</code> чанками, Rust <code>tokio::sync::mpsc</code> + <code>recv_many</code>): ограниченный буфер с триггером <strong>max-size</strong>, триггером <strong>max-wait</strong> и явным <strong>flush</strong>. Таймер max-wait нужно сохранить, иначе слабый ручеёк трафика никогда не сбросится." },
+        "rubric": [
+          { "en": "Coalesces many writes into one syscall (writev / cork+uncork / bufio), not one-per-line.", "ru": "Схлопывает много записей в один системный вызов (writev / cork+uncork / bufio), а не по строке." },
+          { "en": "Keeps both a max-size AND a max-wait trigger so a light trickle still flushes.", "ru": "Сохраняет и триггер max-size, И триггер max-wait, чтобы слабый ручеёк всё равно сбрасывался." },
+          { "en": "Mentions backpressure (e.g. Node write() return value) so the buffer can't grow unbounded.", "ru": "Упоминает backpressure (например, возвращаемое значение write() в Node), чтобы буфер не рос без предела." }
+        ]
+      }
+    },
+    {
+      "id": "incident-silent-drop",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": { "en": "The dashboard says healthy while data vanishes", "ru": "Дашборд показывает «здоров», пока данные исчезают" },
+      "prompt": { "en": "A buffered, batching telemetry pipeline looks fine on the throughput graph, but p99 latency points are quietly disappearing from the dashboard under bursty load. Work the incident through the four batching metrics.", "ru": "Буферизованный пакетирующий конвейер телеметрии выглядит нормально на графике пропускной способности, но точки p99-задержки тихо исчезают с дашборда под всплесками нагрузки. Разбери инцидент через четыре метрики пакетирования." },
+      "steps": [
+        {
+          "label": { "en": "Confirm the loss", "ru": "Подтверди потерю" },
+          "prompt": { "en": "Throughput looks healthy. Which metric do you check first to prove data is actually being lost?", "ru": "Пропускная способность выглядит здоровой. Какую метрику проверяешь первой, чтобы доказать, что данные реально теряются?" },
+          "reveal": { "en": "The drop count (a counter). It should always be 0; nonzero means items were discarded on overflow. Throughput is a lagging indicator — it looks fine right up until the buffer overflows, because the survivors look healthy. Drop count and buffer depth are the leading indicators.", "ru": "Счётчик отброшенных (counter). Он всегда должен быть 0; ненулевое значит, что элементы выброшены при переполнении. Пропускная способность — запаздывающий индикатор: она выглядит нормально ровно до переполнения буфера, потому что выжившие выглядят здорово. Счётчик отброшенных и глубина буфера — опережающие индикаторы." }
+        },
+        {
+          "label": { "en": "Find the pressure", "ru": "Найди давление" },
+          "prompt": { "en": "Drops are nonzero. Which gauge tells you the buffer is overrun, and at what threshold should it have paged you earlier?", "ru": "Drops ненулевые. Какой датчик показывает, что буфер переполнен, и на каком пороге он должен был запейджить тебя раньше?" },
+          "reveal": { "en": "The buffer-depth gauge (current items as % of cap). Sustained spikes mean downstream can't keep up — backpressure building. You should alert at >80% of cap so depth rising toward the limit warns you before anything is lost, instead of finding out via the drop counter after the fact.", "ru": "Датчик глубины буфера (текущие элементы в % от предела). Устойчивые всплески значат, что downstream не успевает — нарастает backpressure. Алерт должен стоять на >80% предела, чтобы глубина, растущая к пределу, предупреждала тебя до потери, а не чтобы ты узнавал через счётчик отброшенных постфактум." }
+        },
+        {
+          "label": { "en": "Root cause", "ru": "Корневая причина" },
+          "prompt": { "en": "Why did the bounded buffer choose to drop instead of just growing to hold the burst?", "ru": "Почему ограниченный буфер выбрал отбрасывать, а не просто вырасти, чтобы вместить всплеск?" },
+          "reveal": { "en": "A bounded queue under downstream pressure must choose: block the producer (back up the whole app) or shed load. It chose to drop rather than grow without limit, which would be OOM. This is the Scribe war story: a single drop is a backpressure event — the producer is outrunning the consumer. Treat one drop like a dropped database write.", "ru": "Ограниченная очередь под давлением downstream обязана выбрать: заблокировать продюсера (запереть всё приложение) или сбросить нагрузку. Она выбрала отбрасывать, а не расти без предела (что было бы OOM). Это история Scribe: один сброс — это событие backpressure, продюсер обгоняет потребителя. Относись к одному дропу как к сброшенной записи в базу." }
+        },
+        {
+          "label": { "en": "Prevent", "ru": "Профилактика" },
+          "prompt": { "en": "What alerting and instrumentation change keeps a silent overflow from ever recurring?", "ru": "Какое изменение алертинга и инструментирования не даст тихому переполнению повториться?" },
+          "reveal": { "en": "Instrument all four metrics — batch-size histogram, batch wait time, buffer-depth gauge, drop count — and page on <code>drops > 0</code> and <code>depth > 80%</code> of cap. Then a silent overflow becomes a page you answer, not an incident you reconstruct from missing dashboard points.", "ru": "Инструментируй все четыре метрики — гистограмму размера пакета, время ожидания, датчик глубины буфера, счётчик отброшенных — и пейджи на <code>drops > 0</code> и <code>depth > 80%</code> предела. Тогда тихое переполнение становится пейджем, на который ты отвечаешь, а не инцидентом, который реконструируешь по пропавшим точкам дашборда." }
+        }
+      ]
+    },
+    {
+      "id": "design-window-vs-slo",
+      "type": "design",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Design the batch window against an SLO", "ru": "Спроектируй окно пакетирования против SLO" },
+      "prompt": { "en": "Choose the batching strategy for the CPU-bound telemetry path below, justify the window against the SLO, and say how you'd prove the choice. Self-grade against the rubric.", "ru": "Выбери стратегию пакетирования для CPU-связанного пути телеметрии ниже, обоснуй окно против SLO и скажи, как докажешь выбор. Оцени себя по рубрике." },
+      "constraints": { "en": "Telemetry ingest path: ~200k small writes/s, CPU-bound on syscall transitions. p99 end-to-end latency SLO is 200ms. Container runtime blocks io_uring syscalls by default (seccomp).", "ru": "Путь приёма телеметрии: ~200k мелких записей/с, упирается в CPU на переходах системных вызовов. SLO p99 сквозной задержки — 200 мс. Рантайм контейнера блокирует системные вызовы io_uring по умолчанию (seccomp)." },
+      "rubric": [
+        { "en": "Picks a max-wait window an order of magnitude under the SLO (e.g. ~20ms vs 200ms), not a huge 500ms window that blows it.", "ru": "Выбирает окно max-wait на порядок ниже SLO (например, ~20 мс против 200 мс), а не огромное окно 500 мс, которое его пробивает." },
+        { "en": "Adds a max-size trigger so high traffic fills batches instead of waiting the full window.", "ru": "Добавляет триггер max-size, чтобы при высоком трафике пакеты заполнялись, а не ждали всё окно." },
+        { "en": "Instruments the four metrics to prove batches fill (not timer-bound) and surface backpressure before data loss.", "ru": "Инструментирует четыре метрики, чтобы доказать заполнение пакетов (а не упор в таймер) и вскрыть backpressure до потери данных." },
+        { "en": "Rejects io_uring+SQPOLL here (seccomp-blocked → EPERM, burns a poller core, still needs the window + observability).", "ru": "Отвергает io_uring+SQPOLL здесь (заблокирован seccomp → EPERM, жжёт ядро под поллер, всё равно нужны окно и наблюдаемость)." }
+      ],
+      "model": { "en": "Batch with a max-size and a ~20ms max-wait window — an order of magnitude under the 200ms SLO, so it adds negligible tail latency while collapsing 200k crossings/s into a few thousand batched writev calls. Don't reach for io_uring+SQPOLL: it's seccomp-blocked here (returns EPERM), burns a dedicated poller core, needs privilege, and still leaves an uninstrumented buffer that can silently drop. Instrument size/wait/depth/drops to prove the window is right (batches filling, not timer-bound) and surface backpressure before it loses data — tune from evidence, not vibes. A 500ms window would maximize syscall savings but blow the 200ms p99 on its own, violating the exact latency contract batching is meant to balance.", "ru": "Пакетируй с max-size и окном max-wait ~20 мс — на порядок ниже SLO в 200 мс, поэтому оно добавляет ничтожную хвостовую задержку, схлопывая 200k пересечений/с в несколько тысяч пакетных вызовов writev. Не тянись к io_uring+SQPOLL: здесь он заблокирован seccomp (вернёт EPERM), жжёт выделенное ядро под поллер, требует привилегий и всё равно оставляет неинструментированный буфер, который может тихо терять данные. Инструментируй size/wait/depth/drops, чтобы доказать, что окно верное (пакеты заполняются, а не упираются в таймер), и вскрыть backpressure до потери данных — настраивай по фактам, а не по ощущениям. Окно 500 мс максимизировало бы экономию системных вызовов, но само по себе пробило бы p99 в 200 мс, нарушив тот самый контракт по задержке, который пакетирование должно балансировать." }
+    }
+  ]
+}
