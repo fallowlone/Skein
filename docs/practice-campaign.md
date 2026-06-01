@@ -128,3 +128,4 @@ build + commit per iteration until the gap is zero.
 
 Flip a track into `PRACTICE_REQUIRED_TRACKS` (in `practice.ts`) once it's fully
 covered, so its practice files become build-enforced (error, not warning).
+- ✅ browser/01-event-loop (6) — loop-model, queues-and-scheduling, timer-accuracy, microtask-starvation, node-differences, framework-and-observability
