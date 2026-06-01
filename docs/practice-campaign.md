@@ -133,3 +133,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ browser/03-v8-internals (7) — what-v8-is, jit-pipeline, hidden-classes, inline-caches, gc-orinoco, turbofan-and-deopt, production-perf
 - ✅ browser/04-workers (7) — what-workers-are, web-worker-mechanics, structured-clone-and-transfer, service-worker-lifecycle, shared-array-buffer-and-atomics, service-worker-edge-cases, worker-pools-and-observability
 - ✅ browser/05-react-fiber (7) — reconciler-overview, fiber-data-structure, render-and-commit-phases, reconciliation-and-keys, lanes-and-time-slicing, bailout-and-memoisation, profiler-and-compiler
+- ✅ browser/06-ssr-vs-ssg (5) — rendering-strategies, strategy-mechanisms, hydration-cost, hydration-mismatch, rsc-and-observability
