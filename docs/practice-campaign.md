@@ -74,6 +74,7 @@ Done:
 - ✅ observability/06-trace-propagation (7)
 - ✅ observability/07-profiling (7)
 - ✅ observability/08-putting-it-together (5) — OBSERVABILITY TRACK COMPLETE, flipped to PRACTICE_REQUIRED
+- ✅ performance/01-profile-first (8) — why-profile-first, amdahl-and-self-time, measurement-loop, reading-flame-graphs, statistical-baselines, profiler-history-and-pitfalls, hardware-counters-and-cold-start, continuous-profiling-at-scale
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
