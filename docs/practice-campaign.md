@@ -90,6 +90,7 @@ Done:
 - ✅ base-cs/06-variables-and-state (4) — a-variable-is-a-named-cell, assignment, mutation-and-state, references-vs-values
 - ✅ base-cs/07-control-flow (4) — what-flow-means, conditionals-as-branches, loops-as-repeated-jumps, tracing-a-program
 - ✅ base-cs/08-functions-and-the-call-stack (5) — what-a-function-is, the-call-stack, parameters-and-return, scope, recursion-preview
+- ✅ base-cs/09-data-in-memory (4) — arrays-as-contiguous-cells, indexing-and-offsets, objects-as-key-value, collections-in-memory
 - ✅ networking/03-tcp-handshake (6)
 - ✅ networking/01-physical-link (6)
 - ✅ networking/02-ip-packet (6)
