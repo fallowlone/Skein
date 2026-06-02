@@ -4,10 +4,204 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 4
-title: "Speculative optimization"
-summary: "Speculative optimization — stub; author to ready."
-estMin: 12
-status: stub
+title: "Speculation and guards"
+summary: "TurboFan bakes optimistic assumptions from feedback into fast code, protected by cheap guards — CheckMaps, CheckSmi, CheckBounds, CheckString. How guards gate the fast path, how inlining fuses small callees"
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - speculation
+  - CheckMaps
+  - CheckSmi
+  - CheckBounds
+  - inlining
+  - escape analysis
+  - scalar replacement
+deepensInto:
+  - "04-the-jit/05-deoptimization"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "03-turbofan"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/turbofan-jit
+  - https://webkit.org/blog/10308/speculation-in-javascriptcore/
+  - https://mrale.ph/blog/2016/08/29/heap-numbers.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The fastest way to read `point.x` is a single machine instruction: load the value at a fixed byte offset from the object pointer. But that is only correct if `point` really has the shape TurboFan assumed when it compiled the code. So TurboFan does something audacious — it emits that one-instruction load, and *in front of it* puts a single cheap comparison: "is this object's map still the one I expect?" If yes, the fast load runs. If no, the whole function bails. That comparison is a guard, and the entire art of speculative optimisation is making guards that almost never fail.
+</Hook>
+
+<Crux>TurboFan fronts optimistic fast code with cheap guards — CheckMaps, CheckSmi, CheckBounds — that pass to the fast path or deopt.</Crux>
+
+<Explanation>
+
+## Optimism, protected
+
+The previous lessons established the inputs: feedback says "this site always saw map M and Smi operands", and TurboFan can specialise on that. But "always saw" is a statement about the past. JavaScript is free to hand the function something different on the next call. Speculative optimisation resolves this tension with a simple contract: **assume the observed types, emit code that is only valid under that assumption, and protect every assumption with a guard that checks it cheaply before the fast code runs.**
+
+A guard is a tiny instruction sequence that tests the assumption and, on failure, transfers control out of the optimised code entirely (a deopt — lesson 05). The key property is asymmetry: when the guard passes — the overwhelmingly common case for stable code — it costs almost nothing (a compare and a not-taken branch), and the code behind it is maximally fast because it can assume the type with no further checks. The cost of correctness is paid only on the rare failing path.
+
+The guards you will see in `--trace-deopt` reasons:
+
+- **CheckMaps** — "this object still has hidden class M". Gates a property load/store at a fixed offset. Failure reason: `wrong map`.
+- **CheckSmi** / **CheckNumber** — "this value is a small integer" / "is a number". Gates integer or float64 arithmetic with no tag checks or boxing. Failure reason: `not a Smi`, `not a heap number`.
+- **CheckBounds** — "this index is within the array's length". Gates a raw element load with no bounds re-check inside the loop. Failure reason: `out of bounds`.
+- **CheckString**, **CheckInternalizedString**, **CheckHeapObject**, and friends — similar guards for string and pointer assumptions.
+
+<SequenceDiagram
+  label="A guarded property access in optimised code: the optimised function checks the object's map with CheckMaps; if the map matches it takes the fast path, a single-instruction load at a fixed offset; if it does not match it deoptimises and resumes in the interpreter."
+  hue="var(--accent)"
+  actors={["OptCode", "Guard", "FastPath", "Deopt"]}
+  messages={[
+    { from: "OptCode", to: "Guard", label: "CheckMaps(obj, M)" },
+    { from: "Guard", to: "FastPath", label: "map == M: load @offset" },
+    { from: "Guard", to: "Deopt", label: "map != M: bail out" },
+    { from: "Deopt", to: "OptCode", label: "resume in Ignition" },
+  ]}
+  caption="The guard is the only branch on the hot path. Pass = one instruction load, no boxing, no lookup. Fail = deopt to the interpreter at the exact bytecode offset."
+/>
+
+## Inlining: fusing guards and bodies
+
+A function call is a barrier: the optimiser can't see across it, and the call itself costs a frame setup. **Inlining** removes the barrier for small, hot callees whose feedback names a known target. TurboFan splices the callee's graph into the caller, and now the callee's guards and the caller's guards live in the same scope. The wins compound:
+
+- A `CheckMaps` the caller already proved is not repeated inside the inlined body (redundancy elimination across the inline boundary).
+- The callee's pure computation can be scheduled together with the caller's, hoisted out of shared loops, common-subexpressioned.
+- Escape analysis (next) can now see that an object the callee allocates and returns never actually escapes the *combined* function.
+
+Polymorphic inlining handles up to ~4 known targets with an upfront map check that dispatches between the inlined bodies; beyond that the site is megamorphic and the call stays a generic, uninlined call.
+
+## Escape analysis: deleting the allocation
+
+This is the optimisation that most surprises people, because it makes objects *free*. **Escape analysis** asks of each allocation: does any reference to this object escape the function — stored into a field that outlives the call, passed to a callee that might retain it, returned? If the answer is no — the object is purely a local scratchpad — TurboFan performs **scalar replacement**: it deletes the allocation entirely and replaces the object's fields with ordinary SSA values that live in registers.
+
+Consider a hot distance computation that builds a temporary point:
+
+```js
+function dist(ax, ay, bx, by) {
+  const d = { x: ax - bx, y: ay - by }; // temp object, never escapes
+  return Math.sqrt(d.x * d.x + d.y * d.y);
+}
+```
+
+Without escape analysis, every call allocates `d` on the heap, writes two fields, reads them back, and leaves garbage for the GC. With escape analysis, TurboFan proves `d` never escapes `dist`, deletes the allocation, and treats `d.x` and `d.y` as two register-resident values. The emitted code has **zero heap allocation**, no field stores, no field loads, and produces no GC pressure — the object existed only in the source text, not in the running machine code. This is enormous for the temporary points, iterators, options bags, and destructuring intermediates that pervade real code: written for clarity, compiled to nothing.
+
+<FlowDiagram
+  label="Before and after escape analysis on a temporary object: before, the object is heap-allocated, its two fields are stored and then loaded, and it becomes garbage; after, the allocation is deleted and the fields become two register values, eliminating the heap object entirely."
+  hue="var(--accent)"
+  perRow={3}
+  caption="Scalar replacement. The non-escaping `{x,y}` temp on the left is gone on the right; its fields are registers. No allocation, no GC pressure."
+  nodes={[
+    { id: "alloc", label: "Allocate {x,y}", sub: "heap object", col: 0, row: 0 },
+    { id: "store", label: "Store x, store y", sub: "field writes", col: 1, row: 0 },
+    { id: "load", label: "Load x, load y", sub: "field reads", col: 2, row: 0 },
+    { id: "rx", label: "value x", sub: "register", col: 0, row: 1 },
+    { id: "ry", label: "value y", sub: "register", col: 1, row: 1 },
+    { id: "use", label: "sqrt(x*x+y*y)", sub: "no alloc", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "alloc", to: "store", label: "before" },
+    { from: "store", to: "load", label: "before" },
+    { from: "rx", to: "use", label: "after" },
+    { from: "ry", to: "use", label: "after" },
+  ]}
+/>
+
+<NumbersCard
+  title="Guards and the optimisations they unlock"
+  data-lesson-visual
+  stats={[
+    { label: "CheckMaps cost (pass)", value: "1 compare + branch" },
+    { label: "Fast property load", value: "1 mov at fixed offset" },
+    { label: "CheckSmi gates", value: "untagged integer arithmetic" },
+    { label: "CheckBounds gates", value: "raw element load, no re-check" },
+    { label: "Polymorphic inline cap", value: "~4 targets" },
+    { label: "Escape analysis result", value: "0 alloc for non-escaping obj" },
+    { label: "Scalar-replaced fields", value: "live in registers" },
+    { label: "Failure path", value: "deopt to interpreter" },
+  ]}
+/>
+
+<Misconception id="mc-objects-free-always">
+  <p><strong>"Escape analysis makes all objects free."</strong> Only ones that provably do not escape the function. The moment one is returned, stored on `this` or a closure, passed to an un-inlined callee, or put in an outliving array, it escapes and is heap-allocated. It rewards local scratch objects.</p>
+</Misconception>
+
+<Quiz
+  id="q-guard-asymmetry"
+  lessonSlug="04-speculative-optimization"
+  lang="en"
+  question="Why is a CheckMaps guard cheap enough to put in front of every optimised property access?"
+  choices={[
+    { label: "Because the common case (guard passes) is a single compare and a not-taken branch; the expensive work happens only on the rare failing path", correct: true },
+    { label: "Because the guard is removed after the first successful check", misconception: "The guard stays — it must run every time, because the object's map could change on any call. Its cheapness, not its removal, is the point." },
+    { label: "Because guards run on a background thread in parallel with the fast path", misconception: "Guards are inline machine instructions on the hot path, not background work; they execute synchronously before the fast load." },
+    { label: "Because TurboFan only guards the first access and trusts the rest", misconception: "Each speculative access is individually guarded; trusting unchecked accesses would be unsound." },
+  ]}
+/>
+
+<Quiz
+  id="q-escape"
+  lessonSlug="04-speculative-optimization"
+  lang="en"
+  question="Which version of a temp object can escape analysis eliminate?"
+  choices={[
+    { label: "A `{x,y}` built, read locally for a computation, and never returned or stored — it stays inside the function", correct: true },
+    { label: "A `{x,y}` that the function returns to its caller", misconception: "Returning the object lets the reference outlive the call, so it escapes and must be heap-allocated." },
+    { label: "A `{x,y}` pushed into an array that lives in module scope", misconception: "Storing it in a longer-lived array makes it reachable after the call returns; it escapes." },
+    { label: "A `{x,y}` passed to an un-inlined library function", misconception: "An un-inlined callee is opaque, so TurboFan must assume it retains the object; it escapes." },
+  ]}
+/>
+
+<DragOrder
+  id="do-guarded-access"
+  pieceSlug="04-speculative-optimization"
+  lang="en"
+  prompt="Order what optimised code does at a speculated, monomorphic property read."
+  items={[
+    "Load the object's map pointer from its header",
+    "CheckMaps: compare it to the expected map M",
+    "Map matches: take the fast path",
+    "Load the property with one instruction at the precomputed offset",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why guard rather than re-derive the type each time? Because re-deriving — a full type dispatch on every operation — is exactly the generic interpreter behaviour TurboFan exists to escape. The guard is a bet: pay one cheap check up front, then run a long stretch of code that assumes the answer and needs no further checks. For stable, monomorphic code the bet pays off on essentially every call, and the amortised cost of correctness rounds to zero. The bet only goes bad when the assumption breaks repeatedly — which is the deopt-loop of lesson 05.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Speculation = optimistic code plus cheap guards. CheckMaps, CheckSmi, and CheckBounds gate fast paths that assume a shape, a Smi, or an in-range index, paying real cost only when they fail. Inlining fuses small callees so guards and bodies share a scope, and escape analysis scalar-replaces non-escaping objects, deleting the allocation outright.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="speculative-optimization-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a guard, name the common ones, and why is the design asymmetric?", a: "A guard is a small instruction sequence that tests a speculative assumption before the fast code runs and, on failure, transfers control out of the optimised code (a deopt). Common guards: CheckMaps ('object still has hidden class M', gates a fixed-offset property access, fails as 'wrong map'); CheckSmi / CheckNumber ('value is a small int / a number', gates untagged arithmetic, fails as 'not a Smi'); CheckBounds ('index within array length', gates a raw element load with no per-iteration re-check, fails as 'out of bounds'); plus CheckString and pointer guards. The design is asymmetric: a passing guard costs a single compare and a not-taken branch, and the code behind it is maximally fast because it needs no further type checks; the real cost is paid only on the rare failing path." },
+    { q: "How does inlining interact with guards and escape analysis?", a: "Inlining splices a small, hot callee whose feedback names a known target into the caller's graph, removing the call barrier. Now the callee's guards live in the caller's scope, so a CheckMaps the caller already proved need not be repeated in the inlined body (redundancy elimination across the boundary), and the callee's pure computation can be scheduled, hoisted, and common-subexpressioned with the caller's. Critically, inlining also lets escape analysis see that an object the callee allocates and hands back never escapes the combined function, enabling scalar replacement that would be impossible across an opaque call. Polymorphic inlining covers up to ~4 targets behind an upfront map check; beyond that the call goes megamorphic and stays uninlined." },
+    { q: "Explain escape analysis and scalar replacement with an example, and state its limit.", a: "Escape analysis asks whether any reference to a freshly-allocated object escapes the function: returned, stored into longer-lived state, or passed to an opaque callee. If nothing escapes, the object is a local scratchpad, and scalar replacement deletes the allocation and turns its fields into ordinary SSA values in registers. Example: function dist building const d = { x: ax-bx, y: ay-by } and only reading d.x and d.y to compute a length. Without it, every call heap-allocates d, writes and re-reads two fields, and produces garbage; with it, the allocation is gone, d.x and d.y are registers, and the emitted code has zero heap allocation and zero GC pressure. The limit: it only applies to objects that provably do not escape; the moment an object is returned, retained on this/a closure, stored in an outliving array, or passed to an un-inlined function, it escapes and must be heap-allocated." },
+  ]}
+/>
+
+<Recap lang="en">
+Speculative optimisation is how TurboFan turns past observations into fast code without giving up correctness. It assumes the types the feedback vector recorded, emits machine code valid only under those assumptions, and protects every assumption with a cheap guard: CheckMaps for object shape, CheckSmi/CheckNumber for numeric type, CheckBounds for array indices, plus string and pointer guards. The design is deliberately asymmetric — a passing guard is a single compare and a not-taken branch, so the fast path behind it (a one-instruction offset load, untagged arithmetic, a raw element read) is maximally fast, and real cost is paid only on the rare failing path, which deopts to the interpreter. Inlining fuses small, hot, known-target callees into the caller so their guards and bodies share a scope, enabling cross-boundary redundancy elimination, scheduling, and — crucially — escape analysis. Escape analysis identifies allocations that never escape the function and scalar-replaces them: the allocation is deleted and its fields become registers, so temporary points, iterators, and options bags compile to no allocation and no GC pressure at all. The one caveat: escape analysis only helps objects that provably stay local; anything returned, stored, or handed to an opaque callee escapes and is heap-allocated as usual.
+</Recap>

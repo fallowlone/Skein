@@ -4,10 +4,211 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 1
-title: "Tiers and warmup"
-summary: "Tiers and warmup — stub; author to ready."
-estMin: 12
-status: stub
+title: "Four tiers and how warm-up works"
+summary: "V8 runs four execution tiers — Ignition, Sparkplug, Maglev, TurboFan — that trade compile cost for run speed. How invocation counts and loop back-edges drive tier-up, and why higher tiers compile concurrently on background threads."
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - Ignition
+  - Sparkplug
+  - Maglev
+  - TurboFan
+  - tier-up
+  - back-edge counter
+  - concurrent compilation
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "03-hidden-classes/05-mono-poly-mega"
+  - "browser/03-v8-internals/02-jit-pipeline"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/sparkplug
+  - https://v8.dev/blog/maglev
+  - https://v8.dev/blog/launching-ignition-and-turbofan
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You run a function 10,000 times in a benchmark and watch its per-call time fall in three distinct steps — a small drop, then a bigger one, then a final cliff into native speed. Those steps are not noise. They are your function climbing four separate compilers, each willing to spend more time producing faster code than the one below it. Knowing which step you are on, and what triggers the next, is the difference between a benchmark that warms up and a production path that never does.
+</Hook>
+
+<Crux>V8 runs four tiers — Ignition, Sparkplug, Maglev, TurboFan — promoting up as invocation and back-edge counts trip budgets.</Crux>
+
+<Explanation>
+
+## Four tiers, one cost-versus-speed curve
+
+The overview lesson [V8's four-tier JIT pipeline](/learn/browser/02-jit-pipeline) sketched the ladder; this unit opens each rung. Start with the shape of the trade. Every tier sits at a point on a single axis: how long it takes to *produce* code versus how fast that code *runs*. Cheaper to compile means slower to run; faster to run means more expensive to compile. V8 ships four because no single point on that curve is right for all code.
+
+**Ignition** is the interpreter. The parser hands it an AST; Ignition lowers it once to compact, register-based **bytecode** and then executes that bytecode on a virtual machine. There is no machine-code generation here at all — execution is a dispatch loop that reads a bytecode, jumps to a handler, runs it, and advances. Entry cost is effectively zero (you already paid to produce the bytecode), and it is the only tier that records the type feedback the upper tiers depend on. Per operation it is roughly an order of magnitude slower than optimised native code, because every step pays the interpreter's table-lookup-and-indirect-jump dispatch overhead.
+
+**Sparkplug** is the baseline JIT, shipped in V8 9.1 (2021). It is the rung people most often misunderstand, so be precise: Sparkplug does **no optimisation**. It builds **no intermediate representation (IR)**, performs no inlining, no escape analysis, no type specialisation. It walks the existing bytecode once and emits a near-1:1 template of machine instructions — for each bytecode, a fixed small block of native code plus the occasional call back into the runtime. What it removes is exactly the interpreter's dispatch overhead: no more table lookup and indirect jump per operation, just straight-line native code. That alone buys roughly 1.5–2× over Ignition, and it compiles in **microseconds** (about 1 ms per kilobyte of bytecode). Because compilation is so cheap, Sparkplug code can be produced lazily on first hotness or eagerly.
+
+**Maglev** is the mid-tier optimising compiler, shipped in 2023. It is a genuine optimiser — it builds an SSA-form IR and uses the recorded type feedback to specialise property loads and arithmetic — but a *lightweight* one. It uses a fast linear-scan register allocator and skips TurboFan's heaviest passes (escape analysis, polymorphic inlining, iterative type narrowing). The result compiles about 10× faster than TurboFan while reaching roughly 50–70% of its code quality: the right tool for "hot but not the hottest" functions, where TurboFan's compile latency would hurt more than its extra speed helps.
+
+**TurboFan** is the full optimising compiler — sea-of-nodes IR, aggressive inlining, escape analysis, the works (lesson 03 of this unit opens it). It produces the fastest code V8 can make, at a compile cost of tens to hundreds of milliseconds per function. You only want to pay that for code that is both very hot and type-stable.
+
+<FlowDiagram
+  label="V8's four execution tiers arranged left to right by increasing compile cost and increasing run speed: Ignition the interpreter, Sparkplug the baseline JIT, Maglev the mid-tier optimiser, and TurboFan the full optimiser."
+  hue="var(--accent)"
+  perRow={4}
+  caption="The cost/speed trade per tier. Left is cheap to produce and slow to run; right is expensive to produce and fast to run. A function moves right only when it has earned the compile cost."
+  nodes={[
+    { id: "ign", label: "Ignition", sub: "interpret · 0 compile · ~10x slow", col: 0, row: 0 },
+    { id: "sp", label: "Sparkplug", sub: "baseline · us compile · 1.5-2x", col: 1, row: 0 },
+    { id: "mg", label: "Maglev", sub: "mid-tier SSA · ~10ms · ~50-70%", col: 2, row: 0 },
+    { id: "tf", label: "TurboFan", sub: "full optimiser · ~100ms · fastest", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "ign", to: "sp", label: "warm" },
+    { from: "sp", to: "mg", label: "warmer" },
+    { from: "mg", to: "tf", label: "hot" },
+  ]}
+/>
+
+## How warm-up actually triggers a tier-up
+
+A function does not climb because of a wall-clock timer. It climbs because two counters cross budgets. The first is the **invocation count** — how many times the function has been entered. The second is the **back-edge count** — how many times execution has jumped backwards to the top of a loop inside the function. V8 maintains a per-function budget (the "interrupt budget" / feedback budget); each invocation and each loop back-edge decrements it, and when it reaches zero the runtime fires a tier-up check. This is why both *hot functions* (called often) and *hot loops* (iterated often, even inside a function called once) can request a higher tier — the back-edge counter is what lets a single long-running loop get optimised without ever returning.
+
+```js
+// Called many times -> invocation count drives tier-up.
+function distance(a, b) {
+  const dx = a.x - b.x, dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+for (let i = 0; i < 1_000_000; i++) distance(p, q);
+
+// Called once, but the loop's back-edges drive tier-up of THIS frame.
+function sumTo(n) {
+  let total = 0;
+  for (let i = 0; i < n; i++) total += i; // each iteration = one back-edge
+  return total;
+}
+sumTo(100_000_000);
+```
+
+The thresholds are dynamic and tuned per release — roughly speaking, Sparkplug kicks in after low hundreds of invocations, Maglev after low thousands, TurboFan after tens of thousands — but never hardcode a number; treat them as ordering, not constants.
+
+<NumbersCard
+  title="The tier ladder, by the numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Ignition compile cost", value: "0 (already bytecode)" },
+    { label: "Sparkplug compile rate", value: "~1 ms / kB bytecode" },
+    { label: "Sparkplug speedup over Ignition", value: "~1.5-2x" },
+    { label: "Maglev compile time", value: "~10 ms / function" },
+    { label: "Maglev code quality vs TurboFan", value: "~50-70%" },
+    { label: "TurboFan compile time", value: "tens-hundreds of ms" },
+    { label: "Sparkplug shipped", value: "V8 9.1 (2021)" },
+    { label: "Maglev shipped", value: "V8 11.x (2023)" },
+  ]}
+/>
+
+## Concurrent compilation: the interpreter never blocks
+
+A tier-up does not stop your program. When the budget trips, V8 enqueues a compilation job and a **background thread** runs Maglev or TurboFan while the main thread keeps executing the function on its *current* tier. When the optimised code is ready, V8 swaps it in for the next entry (or mid-loop, via on-stack replacement — lesson 06). This is why you never see a 100 ms freeze when a function tiers up to TurboFan: the freeze would happen if compilation were synchronous, but it is not. The cost shows up instead as background CPU and a brief window where the function runs at the old speed despite being "scheduled" for the new tier.
+
+You can watch all of this. `--trace-opt` logs every optimisation decision (which function, which tier, why); `--no-opt` disables the optimising tiers entirely so you can compare against pure Ignition plus Sparkplug. In Node: `node --trace-opt --trace-deopt app.js`. In `d8`, add `--allow-natives-syntax` to call `%OptimizeFunctionOnNextCall(fn)` and force a tier-up immediately rather than warming up by hand.
+
+<Misconception id="mc-sparkplug-optimizes">
+  <p><strong>"Sparkplug optimises my hot code."</strong> No. Sparkplug is a <em>baseline</em> JIT: a near-1:1 machine-code template of the bytecode, zero specialisation — no IR, no inlining, no type assumptions. Its only win is deleting interpreter dispatch overhead. Real specialisation begins at Maglev and TurboFan.</p>
+</Misconception>
+
+<FlowDiagram
+  label="The control flow of a tier-up: the main thread runs a function in the current tier while its invocation and back-edge budget counts down; when the budget hits zero V8 queues a background compile and continues running the old code until the optimised version is swapped in."
+  hue="var(--accent)"
+  perRow={5}
+  caption="Concurrent tier-up. The main thread is never blocked by compilation; the new tier is installed for the next entry."
+  nodes={[
+    { id: "run", label: "Run current tier", sub: "main thread", col: 0, row: 0 },
+    { id: "budget", label: "Budget hits 0", sub: "invocations + back-edges", col: 1, row: 0 },
+    { id: "queue", label: "Queue compile", sub: "background thread", col: 2, row: 0 },
+    { id: "compile", label: "Maglev / TurboFan", sub: "off main thread", col: 3, row: 0 },
+    { id: "swap", label: "Install code", sub: "next entry", col: 4, row: 0 },
+  ]}
+  edges={[
+    { from: "run", to: "budget", label: "count down" },
+    { from: "budget", to: "queue", label: "trip" },
+    { from: "queue", to: "compile", label: "enqueue" },
+    { from: "compile", to: "swap", label: "ready" },
+  ]}
+/>
+
+<Quiz
+  id="q-sparkplug-nature"
+  lessonSlug="01-tiers-and-warmup"
+  lang="en"
+  question="What does Sparkplug actually do to your bytecode?"
+  choices={[
+    { label: "Emits a near-1:1 machine-code template, removing interpreter dispatch overhead — no IR, no specialisation", correct: true },
+    { label: "Builds an SSA graph and specialises arithmetic on observed types", misconception: "That is Maglev. Sparkplug builds no IR and does no type specialisation at all." },
+    { label: "Inlines hot callees and runs escape analysis", misconception: "Inlining and escape analysis are TurboFan passes. Sparkplug performs neither." },
+    { label: "Interprets the bytecode faster by caching dispatch targets", misconception: "Sparkplug does not interpret — it compiles to native code. Caching dispatch would still be interpretation." },
+  ]}
+/>
+
+<Quiz
+  id="q-backedge"
+  lessonSlug="01-tiers-and-warmup"
+  lang="en"
+  question="A function is called exactly once but contains a 50-million-iteration loop. What lets V8 optimise it?"
+  choices={[
+    { label: "Nothing — tier-up needs many invocations, so a once-called function stays in Ignition", misconception: "That ignores the back-edge counter; a single long loop absolutely can tier up." },
+    { label: "The loop's back-edge counter trips the budget, requesting a higher tier for the running frame (via OSR)", correct: true },
+    { label: "A wall-clock timer notices the function has run for too long and promotes it", misconception: "Tier-up is counter-driven, not timer-driven; V8 counts invocations and back-edges, not elapsed time." },
+    { label: "The garbage collector promotes the function during a minor GC", misconception: "The GC reclaims memory; it has no role in choosing compilation tiers." },
+  ]}
+/>
+
+<DragOrder
+  id="do-tier-ladder"
+  pieceSlug="01-tiers-and-warmup"
+  lang="en"
+  prompt="Order V8's tiers from cheapest-to-produce (runs first) to most heavily optimised (only the hottest code)."
+  items={[
+    "Ignition — interpret bytecode, record type feedback",
+    "Sparkplug — baseline JIT, 1:1 machine-code template",
+    "Maglev — mid-tier SSA optimiser, lightweight specialisation",
+    "TurboFan — full optimiser, fastest code",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why add Sparkplug *and* Maglev between Ignition and TurboFan rather than just tuning thresholds? Because the gap was both wide and bimodal. Sparkplug closes the dispatch-overhead gap for almost free, so warm-but-not-hot code stops paying the interpreter tax during page load. Maglev closes the specialisation gap for medium-hot code without TurboFan's compile latency, which matters for frame-time budgets — a 60 fps animation that called TurboFan on every newly-hot helper would blow its 16 ms frame on background compile contention. Two cheap intermediate rungs beat one big jump.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>V8 has four tiers spanning a compile-cost-versus-run-speed curve: Ignition interprets and records feedback, Sparkplug removes dispatch overhead with a 1:1 template (no optimisation), Maglev does cheap SSA specialisation, TurboFan does everything. Functions climb when invocation and loop-back-edge budgets trip, and the compile runs on a background thread so the main thread never blocks.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="tiers-and-warmup-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name V8's four tiers in order and the single defining property of each.", a: "Ignition: the interpreter — runs bytecode on a register VM, zero compile cost, and the only tier that records type feedback. Sparkplug: the baseline JIT — emits a near-1:1 machine-code template of the bytecode in microseconds, removing interpreter dispatch overhead but doing NO optimisation (no IR, no specialisation). Maglev: the mid-tier optimiser — builds SSA, uses feedback to specialise property loads and arithmetic, but is lightweight (linear-scan register allocation, skips escape analysis and inlining), ~10x faster to compile than TurboFan at ~50-70% of its quality. TurboFan: the full optimiser — sea-of-nodes IR, inlining, escape analysis, the fastest code, at tens-to-hundreds of ms compile cost." },
+    { q: "What two runtime counters drive tier-up, and why are both needed?", a: "The invocation count (how many times the function is entered) and the loop back-edge count (how many times execution jumps backwards to a loop header). Both decrement a per-function interrupt/feedback budget; when it hits zero V8 runs a tier-up check. The invocation count handles functions called many times; the back-edge count handles a function called once that contains a long hot loop — without it, a single 50-million-iteration loop could never be optimised because the function never returns to be re-entered. The back-edge path leads to on-stack replacement." },
+    { q: "Why does a tier-up to TurboFan not freeze the main thread for 100 ms, and how would you observe the whole process?", a: "Because compilation is concurrent: when the budget trips, V8 enqueues a job and a background thread runs Maglev/TurboFan while the main thread keeps executing the function on its current tier. The optimised code is installed for the next entry (or mid-loop via OSR). The cost surfaces as background CPU, not a main-thread stall. Observe it with --trace-opt (every optimisation decision and tier), --no-opt (disable optimising tiers to compare), and in d8 with --allow-natives-syntax plus %OptimizeFunctionOnNextCall / %GetOptimizationStatus to force and inspect tier state." },
+  ]}
+/>
+
+<Recap lang="en">
+V8 executes JavaScript across four tiers arranged on a single compile-cost-versus-run-speed curve. Ignition interprets register-based bytecode at zero compile cost and is the only tier that records the type feedback the optimisers need. Sparkplug is a baseline JIT that emits a near-1:1 machine-code template in microseconds, deleting interpreter dispatch overhead for a 1.5-2x win — but it performs no optimisation whatsoever: no IR, no inlining, no specialisation. Maglev is a lightweight SSA optimiser that uses feedback to specialise arithmetic and property access, compiling ~10x faster than TurboFan at ~50-70% of its code quality. TurboFan is the full optimiser, the fastest and most expensive. Functions climb the ladder when their invocation count and loop back-edge count trip a per-function budget — the back-edge counter is what lets a once-called function with a long loop get optimised. Compilation runs on background threads, so the main thread keeps running the current tier and never blocks; the new code is swapped in on the next entry. Watch it all with --trace-opt, --no-opt, and the natives-syntax intrinsics in d8.
+</Recap>

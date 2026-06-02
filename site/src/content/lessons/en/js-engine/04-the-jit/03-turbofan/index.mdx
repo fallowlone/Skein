@@ -4,10 +4,191 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 3
-title: "TurboFan and sea of nodes"
-summary: "TurboFan and sea of nodes — stub; author to ready."
-estMin: 12
-status: stub
+title: "TurboFan: the sea-of-nodes optimiser"
+summary: "TurboFan represents code as a sea-of-nodes graph — value, effect, and control edges — instead of a statement CFG, freeing the scheduler to place computation late. The full phase pipeline from bytecode and feedback to register allocation and code generation."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - sea-of-nodes
+  - value/effect/control edges
+  - typed lowering
+  - inlining
+  - escape analysis
+  - representation selection
+  - scheduling
+deepensInto:
+  - "04-the-jit/04-speculative-optimization"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "02-type-feedback"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/turbofan-jit
+  - https://mrale.ph/blog/2016/08/29/heap-numbers.html
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Two questions about the same line of code, `const d = a.x - b.x`, expose how TurboFan thinks. A traditional compiler asks "what statement comes before this one?" TurboFan asks "what value does `a.x` depend on, and is there any side effect between here and where it's used?" — and if the answer is "none", it is free to move that subtraction anywhere, even out of a loop, even past other statements. That freedom is the whole point of a sea-of-nodes IR, and it is why TurboFan can optimise far more aggressively than a statement-by-statement compiler.
+</Hook>
+
+<Crux>TurboFan optimises a sea-of-nodes graph, not a statement CFG, so its scheduler places each computation as late as data flow allows.</Crux>
+
+<Explanation>
+
+## Why a graph instead of a list of statements
+
+A traditional compiler models a function as a control-flow graph (CFG) of basic blocks, each a fixed sequence of statements. Order is baked in from the start: statement 3 comes after statement 2 because you wrote it that way. To move computation, such a compiler must prove the move is legal against that imposed order.
+
+TurboFan inverts this. Its IR is a **sea-of-nodes** graph in which a node is an operation and the *edges* — not the source order — encode every constraint that actually matters. There is no notion of "instruction order" until the very end. The graph carries three kinds of edge:
+
+- **Value edges** (data dependencies): `subtract` has value edges to the two loads it consumes. This says "I need these inputs", nothing about when.
+- **Effect edges** (ordering of observable side effects): a store, a call that might mutate state, a property load that could trigger a getter — these are chained on an *effect chain* so their relative order is preserved. Pure operations (arithmetic on known numbers) carry no effect edge and float free.
+- **Control edges** (branches, merges, loops): the skeleton of `if`/`loop`/`return` that decides which nodes execute at all.
+
+Because a pure subtraction has only value edges and no effect or control constraint, the **scheduler** (a late phase) can place it anywhere its inputs are available — including hoisting it out of a loop if its inputs are loop-invariant. This is what mrale.ph's writing means by "the scheduler places computation late": nodes have no fixed home until scheduling assigns one, and it assigns the cheapest legal one.
+
+## The phase pipeline
+
+TurboFan is a sequence of well-defined passes over that graph. The shape, in order:
+
+<FlowDiagram
+  label="TurboFan's phase pipeline: bytecode plus the feedback vector feed graph building, then typing and typed lowering, then the optimisation passes (inlining, escape analysis, load/store and redundancy elimination, constant folding, representation selection), then scheduling, instruction selection, register allocation, and finally code generation to native machine code."
+  hue="var(--accent)"
+  perRow={4}
+  caption="The pipeline. Front phases reason about the program abstractly (untyped then typed graph); back phases commit to a machine (schedule, select instructions, allocate registers, emit bytes)."
+  nodes={[
+    { id: "bc", label: "Bytecode + feedback", sub: "input", col: 0, row: 0 },
+    { id: "graph", label: "Graph building", sub: "sea-of-nodes", col: 1, row: 0 },
+    { id: "type", label: "Typing + typed lowering", sub: "infer + narrow", col: 2, row: 0 },
+    { id: "opt", label: "Optimisations", sub: "inline, EA, fold", col: 3, row: 0 },
+    { id: "repr", label: "Representation selection", sub: "tagged vs int vs float", col: 0, row: 1 },
+    { id: "sched", label: "Scheduling", sub: "place nodes in blocks", col: 1, row: 1 },
+    { id: "isel", label: "Instruction selection", sub: "graph -> machine ops", col: 2, row: 1 },
+    { id: "regs", label: "Register allocation", sub: "+ code generation", col: 3, row: 1 },
+  ]}
+  edges={[
+    { from: "bc", to: "graph", label: "build" },
+    { from: "graph", to: "type", label: "annotate" },
+    { from: "type", to: "opt", label: "rewrite" },
+    { from: "opt", to: "repr", label: "lower" },
+    { from: "repr", to: "sched", label: "order" },
+    { from: "sched", to: "isel", label: "select" },
+    { from: "isel", to: "regs", label: "emit" },
+  ]}
+/>
+
+**Graph building** turns bytecode into the initial sea-of-nodes graph, attaching the feedback vector's observations so later phases know the speculated types. **Typing and typed lowering** propagate types through the graph (a `+` of two `SignedSmall`-typed nodes is typed as a number in a known range) and replace abstract operations with type-specialised ones — a generic `JSAdd` becomes a `NumberAdd`, then potentially an `Int32Add`.
+
+Then the **optimisation passes** rewrite the graph:
+
+- **Inlining** — a call node whose feedback names a small, known target is replaced by a copy of the callee's graph, splicing its value and effect edges into the caller. This is what unlocks cross-function optimisation; without it, every call is an opaque effect.
+- **Escape analysis with scalar replacement** — an object whose reference never escapes the function (covered in depth in lesson 04) has its allocation deleted and its fields turned into ordinary graph nodes (registers), eliminating the heap allocation and the GC pressure.
+- **Load/store elimination** — a load that must read a value just stored is replaced by the stored value directly; a store overwritten before any read is deleted.
+- **Redundancy elimination and constant folding** — a CheckMaps that a dominating CheckMaps already proved is removed; `2 * 3` becomes `6`; a branch on a known-true condition is collapsed.
+- **Representation selection** — decides the machine representation of each value: a tagged pointer, a 32-bit integer in a register, or a 64-bit float in an FP register, inserting conversions only where a representation boundary is actually crossed.
+
+**Scheduling** is the phase that finally assigns nodes to basic blocks and an order within them — placing pure nodes as late and as un-loopy as legal. **Instruction selection** matches graph patterns to the target ISA's machine instructions. **Register allocation** (TurboFan uses a sophisticated allocator, not the linear scan Maglev uses) assigns physical registers and inserts spills. **Code generation** emits the final bytes. The output is a blob of native machine code installed on the function.
+
+<NumbersCard
+  title="TurboFan vs the lighter tiers"
+  data-lesson-visual
+  stats={[
+    { label: "IR form", value: "sea-of-nodes graph" },
+    { label: "Edge kinds", value: "value / effect / control" },
+    { label: "Register allocator", value: "graph-based (not linear scan)" },
+    { label: "Inlining cap (polymorphic)", value: "~4 known targets" },
+    { label: "Compile time", value: "tens-hundreds of ms / fn" },
+    { label: "Runs on", value: "background thread" },
+    { label: "Maglev quality vs TurboFan", value: "~50-70%" },
+    { label: "Trace flag", value: "--trace-turbo / --trace-opt" },
+  ]}
+/>
+
+## Where it runs and how to inspect it
+
+TurboFan compiles on a **background thread** (concurrent compilation, lesson 01): the main thread keeps running the function on its current tier and the optimised code is swapped in when ready. This is the source of the most common mental error about it (see below). To inspect the graph, `--trace-turbo` dumps the IR at each phase into files you can open in the Turbolizer visualiser; `--trace-opt` logs the higher-level decisions. mrale.ph and the v8.dev/blog posts are the canonical deep references for the graph and its phases.
+
+<Misconception id="mc-turbofan-runs">
+  <p><strong>"TurboFan runs my code."</strong> No. TurboFan is a compiler, not an executor. It <em>compiles</em> a function once, on a background thread, into native machine code; the CPU then runs that code directly. Time "in TurboFan" is compile time, not run time — and it is off the main thread.</p>
+</Misconception>
+
+<Quiz
+  id="q-edges"
+  lessonSlug="03-turbofan"
+  lang="en"
+  question="In TurboFan's sea-of-nodes IR, a pure integer subtraction inside a loop has only value edges (no effect or control edge tying it down). What can the scheduler do with it?"
+  choices={[
+    { label: "Place it anywhere its inputs are available, including hoisting it out of the loop if the inputs are loop-invariant", correct: true },
+    { label: "Nothing — it must execute exactly where it appeared in the source", misconception: "Source order is not a constraint in sea-of-nodes; only edges are. A node with no effect/control edge floats freely until scheduling." },
+    { label: "Delete it, since pure operations are always dead code", misconception: "Purity allows free placement, not deletion; the node is only deleted if its result is genuinely unused." },
+    { label: "Force it onto the effect chain so its order is preserved", misconception: "Pure operations carry no effect edge by definition; that is exactly why they can be scheduled freely." },
+  ]}
+/>
+
+<Quiz
+  id="q-phase-order"
+  lessonSlug="03-turbofan"
+  lang="en"
+  question="Why does typed lowering happen before scheduling and register allocation rather than after?"
+  choices={[
+    { label: "Because front phases reason about the program abstractly to enable rewrites; only once the graph is optimised and typed do back phases commit it to a concrete machine", correct: true },
+    { label: "Because register allocation produces the types that lowering needs", misconception: "Types come from feedback and typing, not from register allocation; the dependency runs the other way." },
+    { label: "Because scheduling must run first to know the statement order", misconception: "Sea-of-nodes has no statement order until scheduling; scheduling is deliberately late, after optimisation." },
+    { label: "They run in parallel, so order does not matter", misconception: "The pipeline is a sequence of dependent passes; each consumes the graph the previous produced." },
+  ]}
+/>
+
+<DragOrder
+  id="do-tf-pipeline"
+  pieceSlug="03-turbofan"
+  lang="en"
+  prompt="Order TurboFan's phases from input to native code."
+  items={[
+    "Build the sea-of-nodes graph from bytecode + feedback",
+    "Typing and typed lowering (specialise abstract ops)",
+    "Optimisation passes (inlining, escape analysis, folding)",
+    "Representation selection (tagged / int32 / float64)",
+    "Scheduling (assign nodes to blocks and order)",
+    "Instruction selection + register allocation + code generation",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does separating value, effect, and control edges matter so much in practice? Because most performance-critical JS is numeric or array work where the heavy operations are *pure* — arithmetic, comparisons, index computations. In a CFG, those are pinned to their basic block and only loop-invariant code motion can move them, with conservative aliasing assumptions. In a sea-of-nodes graph they have no home until scheduling, so the compiler can hoist them out of loops, common-subexpression them across branches, and fold redundant ones with far less ceremony. The cost is real — the compiler is more complex and harder to debug — but for specialising a dynamic language it is worth it.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>TurboFan optimises a sea-of-nodes graph where value, effect, and control edges encode the only real constraints, so pure computation has no fixed home until scheduling places it as cheaply as legal. Its pipeline runs from graph building and typed lowering through inlining, escape analysis, representation selection, scheduling, instruction selection, and register allocation — and all of it happens once, on a background thread.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="turbofan-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the three edge kinds in TurboFan's sea-of-nodes IR, and why does the distinction enable aggressive optimisation?", a: "Value edges (data dependencies: which nodes' outputs an operation consumes), effect edges (ordering of observable side effects like stores, getters, and calls, chained on an effect chain), and control edges (branches, merges, loops). The distinction matters because a pure operation (arithmetic on known numbers) carries only value edges — no effect or control edge — so it has no fixed position in the program until the scheduling phase. The scheduler can then place it as late and as un-loopy as the data flow allows: hoisting loop-invariant computation, common-subexpression elimination across branches, and folding redundancy, all without fighting an imposed statement order the way a CFG-based compiler must." },
+    { q: "Walk the TurboFan pipeline from bytecode to native code.", a: "1) Graph building: bytecode plus the feedback vector become the initial sea-of-nodes graph with speculated types attached. 2) Typing and typed lowering: types propagate through the graph and abstract ops are specialised (JSAdd -> NumberAdd -> Int32Add). 3) Optimisation passes: inlining (splice a small known callee's graph into the caller), escape analysis with scalar replacement (delete non-escaping allocations, turn fields into nodes), load/store elimination, redundancy elimination, constant folding. 4) Representation selection: pick tagged vs int32 vs float64 per value, inserting conversions at boundaries. 5) Scheduling: assign nodes to basic blocks and order them, placing pure nodes late. 6) Instruction selection: match graph patterns to machine instructions. 7) Register allocation (graph-based, not Maglev's linear scan) and code generation: emit native bytes installed on the function." },
+    { q: "Why is 'TurboFan runs my code' wrong, and where does its cost actually show up?", a: "TurboFan is a compiler, not an interpreter or executor. It compiles a hot function once into native machine code, then steps out of the way — the CPU runs the emitted code directly. Its cost is compile time (tens to hundreds of ms for a complex function), and crucially that compile runs on a background thread under concurrent compilation, so it does not block the main thread. While compilation is in flight, the main thread keeps executing the function on its current (lower) tier; the optimised code is swapped in for the next entry. So 'time in TurboFan' is background compile cost, never main-thread run time." },
+  ]}
+/>
+
+<Recap lang="en">
+TurboFan is V8's full optimising compiler, and its defining choice is the sea-of-nodes intermediate representation. Instead of a control-flow graph of ordered statements, it models a function as a graph whose edges — value (data dependencies), effect (observable side-effect ordering), and control (branches, loops, merges) — encode the only constraints that matter; source order does not. A pure operation carries only value edges, so it has no fixed position until the scheduling phase places it as late and as cheaply as legal, which is what makes loop hoisting, common-subexpression elimination, and redundancy folding so natural. The pipeline runs in order: graph building from bytecode and feedback, typing and typed lowering that specialise abstract operations, the optimisation passes (inlining, escape analysis with scalar replacement, load/store and redundancy elimination, constant folding), representation selection (tagged vs int32 vs float64), scheduling, instruction selection, register allocation with a graph-based allocator, and code generation. The whole compile runs once on a background thread, so TurboFan never executes your code and never blocks the main thread — it produces native code the CPU then runs directly. Inspect it with --trace-turbo and Turbolizer; the deep references are mrale.ph and the v8.dev blog.
+</Recap>

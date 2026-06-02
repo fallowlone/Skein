@@ -4,10 +4,182 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 5
-title: "Deoptimization"
-summary: "Deoptimization — stub; author to ready."
-estMin: 12
-status: stub
+title: "Deoptimization: falling off the cliff"
+summary: "Deopt abandons optimised machine code and resumes in Ignition at the exact bytecode offset. Eager vs lazy deopt, the frame-translation mechanism that reconstructs the interpreter frame, the catastrophic deopt-loop, and the triggers and flags to diagnose it."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - deoptimization
+  - eager deopt
+  - lazy deopt
+  - frame translation
+  - deopt-loop
+  - Smi overflow
+  - "--trace-deopt"
+deepensInto:
+  - "04-the-jit/06-osr"
+  - "08-measuring-optimizing/01-trace-opt-and-deopt"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "04-speculative-optimization"
+  - "browser/03-v8-internals/06-turbofan-and-deopt"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/turbofan-jit
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A function that ran at 40 ns per call in your benchmark suddenly costs 4 µs per call in production — a hundred times slower than uncompiled would have been. There is no infinite loop, no blocking I/O, no GC storm. What you are watching is a function being optimised and thrown away, optimised and thrown away, dozens of times a second, because one of TurboFan's guards keeps failing on a value it can't stop seeing. This is the deopt-loop, and it is the single most expensive way to be wrong about types in JavaScript.
+</Hook>
+
+<Crux>Deopt abandons optimised code and resumes in Ignition at the exact offset; a deopt-loop is far slower than never optimising.</Crux>
+
+<Explanation>
+
+## What deopt actually is
+
+A guard failure (lesson 04) does not crash and does not silently produce a wrong answer. It triggers a **deoptimization**: V8 abandons the optimised machine code for that function and resumes execution in the Ignition interpreter at the **exact bytecode offset** corresponding to where the optimised code gave up. Execution continues correctly, just slower. The optimised code is discarded (or marked invalid), and the function falls back to its lower tier; if it stays hot and its feedback stabilises, it can be re-optimised later.
+
+There are two flavours, distinguished by *what* invalidated the assumption.
+
+**Eager deopt** happens synchronously when a guard fails at runtime — the function is executing optimised code, hits a `CheckMaps` / `CheckSmi` / `CheckBounds`, the check fails, and control bails out right there. The trigger is local: this call saw a value the speculation didn't allow. In `--trace-deopt` it appears as `DEOPT eager` with a reason like `wrong map` or `not a Smi`.
+
+**Lazy deopt** happens when an assumption is invalidated *externally*, not by the function's own execution. You redefine a function the optimised code inlined, mutate a prototype it depended on, add a property to a shared object, or change a global. V8 cannot reach into a frame that may be running, so instead it **marks all dependent optimised code for deopt on next entry** — the code is "lazily" deoptimised the next time it would be called. In `--trace-deopt` it appears as `DEOPT lazy`. The classic cause is monkey-patching: `Array.prototype.map = ...` after hot code has been optimised against the original.
+
+## Frame translation: how it returns cleanly
+
+The hard part of deopt is that the optimised frame and the interpreter frame are *completely different layouts*. Optimised code keeps values in machine registers and a packed stack frame, often in unboxed representations (a raw int32, a raw float64). The interpreter expects values in its own register file (the interpreter's "registers" are stack slots) in their tagged, boxed form. To resume in the interpreter, V8 must rebuild the interpreter's frame from the optimised one.
+
+It does this with **deopt metadata** recorded at compile time: for each possible deopt point, TurboFan stores a description mapping every live optimised-frame location (this machine register holds local `i`, this stack slot holds `total`, this is an unboxed double that must be re-boxed) to the interpreter register it belongs in. At deopt time the **deoptimizer** reads that metadata and performs **frame translation** — it allocates and fills a fresh interpreter frame with every live value put back where Ignition expects it, re-boxing unboxed values, then jumps into the interpreter at the saved bytecode offset. A single deopt's translation is cheap, on the order of microseconds.
+
+<FlowDiagram
+  label="Deopt frame translation: the optimised frame holds values in machine registers and unboxed representations; the deoptimizer reads compile-time deopt metadata to map each live value into the interpreter frame's register slots, re-boxing as needed, then resumes Ignition at the saved bytecode offset."
+  hue="var(--accent)"
+  perRow={4}
+  caption="Frame translation. The deopt metadata is the dictionary that turns the optimised frame's register/stack layout back into an interpreter frame Ignition can run."
+  nodes={[
+    { id: "opt", label: "Optimised frame", sub: "regs + unboxed", col: 0, row: 0 },
+    { id: "meta", label: "Deopt metadata", sub: "value -> reg map", col: 1, row: 0 },
+    { id: "rebuild", label: "Rebuild frame", sub: "re-box + place", col: 2, row: 0 },
+    { id: "resume", label: "Resume Ignition", sub: "at bytecode offset", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "opt", to: "meta", label: "read" },
+    { from: "meta", to: "rebuild", label: "translate" },
+    { from: "rebuild", to: "resume", label: "jump" },
+  ]}
+/>
+
+## The deopt-loop: the actual catastrophe
+
+One deopt is fine — microseconds of bookkeeping, then the function re-warms with feedback that now includes the surprising case, re-optimises with a broader assumption, and stays optimised. The catastrophe is the **deopt-loop**: a function is repeatedly fed a shape or type it cannot keep stable, so it optimises, deopts, re-optimises (the function is still hot, so V8 promotes it again), deopts again — forever. Each cycle pays the deopt translation *plus* a fresh TurboFan compile (tens to hundreds of ms) *plus* the time spent running in the slow tier in between. A function in a deopt-loop is **orders of magnitude slower than if you had simply disabled optimisation** with `--no-opt`.
+
+The common triggers — each a way to make a guard fail on a recurring value:
+
+- **Smi overflow** — an arithmetic site optimised on `SignedSmall` produces a value past the Smi range (greater than 2^30-ish), failing `CheckSmi` every time the big value recurs.
+- **Shape change / hidden-class divergence** — a call site sees objects with diverging maps; `CheckMaps` fails. Adding properties in different orders, conditional fields, `delete`.
+- **Changing a field's type** — a field optimised as Smi later holds a string or object, so loads guarded on the field's representation deopt.
+- **Reading `arguments`** in optimised functions — historically forced deopt or blocked optimisation; modern V8 handles many cases but rest parameters are still the safe choice.
+- **Out-of-bounds or holey access** — `CheckBounds` failing, or transitioning a packed array to holey elements kind.
+
+You diagnose it with `--trace-deopt` (every deopt with its function, bytecode offset, and reason) and, in `d8` under `--allow-natives-syntax`, `%GetOptimizationStatus(fn)` to read the function's tier bits. The browser-track lesson [TurboFan's speculative engine and the deopt-loop trap](/learn/browser/06-turbofan-and-deopt) walks a full trace-and-fix; here the emphasis is the mechanism and the fix pattern: route the pathological value to a separate slow path *before* the hot block so the fast path stays type-stable.
+
+<NumbersCard
+  title="Deopt costs and triggers"
+  data-lesson-visual
+  stats={[
+    { label: "Single deopt translation", value: "~microseconds" },
+    { label: "Re-optimise (TurboFan)", value: "tens-hundreds of ms" },
+    { label: "Deopt-loop slowdown", value: "orders of magnitude" },
+    { label: "Eager deopt trigger", value: "guard fails at runtime" },
+    { label: "Lazy deopt trigger", value: "external invalidation" },
+    { label: "Smi range", value: "~31-bit signed" },
+    { label: "Diagnose flag", value: "--trace-deopt" },
+    { label: "Status intrinsic", value: "%GetOptimizationStatus(fn)" },
+  ]}
+/>
+
+<Misconception id="mc-deopt-fatal">
+  <p><strong>"A deopt means my function is permanently slow."</strong> No. A single deopt is microseconds; the function re-warms with broader feedback and re-optimises. Only the deopt-LOOP is a disaster, where a recurring value breaks a guard on every call. Fix the type instability — one deopt is by design.</p>
+</Misconception>
+
+<Quiz
+  id="q-eager-lazy"
+  lessonSlug="05-deoptimization"
+  lang="en"
+  question="You monkey-patch `Array.prototype.includes` at runtime, after a hot function that used it has been TurboFan-optimised. What kind of deopt does this cause?"
+  choices={[
+    { label: "Lazy deopt — the assumption was invalidated externally, so dependent optimised code is marked for deopt on next entry", correct: true },
+    { label: "Eager deopt — a guard fails synchronously during the function's own execution", misconception: "Eager deopt is triggered by the function's own running code hitting a failing guard; here the invalidation comes from outside, before re-entry." },
+    { label: "No deopt — prototype changes are invisible to optimised code", misconception: "Optimised code that inlined or specialised against the original method depends on it; changing the prototype must invalidate that code, hence lazy deopt." },
+    { label: "A crash — modifying built-in prototypes is illegal", misconception: "It is legal (if ill-advised); V8 handles it correctly via lazy deopt, just at a performance cost." },
+  ]}
+/>
+
+<Quiz
+  id="q-deopt-loop"
+  lessonSlug="05-deoptimization"
+  lang="en"
+  question="Why is a deopt-loop slower than running the same function with `--no-opt` (optimisation disabled entirely)?"
+  choices={[
+    { label: "Each loop pays the deopt translation plus a fresh TurboFan compile plus slow-tier run time — on top of never keeping the optimised code", correct: true },
+    { label: "Because --no-opt makes the interpreter faster", misconception: "--no-opt does not speed up the interpreter; it just avoids the wasted optimise/deopt churn the loop keeps paying." },
+    { label: "Because deopt corrupts the feedback vector permanently", misconception: "Deopt does not corrupt feedback; the loop is expensive due to repeated compiles, not data corruption." },
+    { label: "Because the GC runs on every deopt", misconception: "The GC is not tied to deopt; the cost is the repeated compilation and translation, not collection." },
+  ]}
+/>
+
+<DragOrder
+  id="do-deopt-sequence"
+  pieceSlug="05-deoptimization"
+  lang="en"
+  prompt="Order what happens during a single eager deopt."
+  items={[
+    "Optimised code executes and reaches a guard (e.g. CheckSmi)",
+    "The guard fails: the value violates the speculated type",
+    "The deoptimizer reads the compile-time deopt metadata",
+    "It rebuilds the interpreter frame, re-boxing live values into interpreter registers",
+    "Execution resumes in Ignition at the saved bytecode offset",
+  ]}
+/>
+
+<Inset kind="mistake" lang="en">
+A subtle deopt-loop hides in "defensive" code that returns mixed types: a parser that returns a number for valid input but `null` for invalid, feeding a hot arithmetic site. For 99% of inputs the site is Smi-stable and optimises; the occasional `null` fails `CheckSmi` and deopts; the site re-optimises on Smi again because nulls are rare; the next null deopts again. The fix is not "handle null faster" — it is to split the stream: validate and discard nulls *before* the hot loop so the arithmetic site only ever sees numbers.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Deopt abandons optimised code and resumes in Ignition at the exact bytecode offset, using compile-time deopt metadata to translate the optimised frame back into an interpreter frame. Eager deopt is a guard failing at runtime; lazy deopt is external invalidation marking dependent code. One deopt is microseconds; a deopt-loop — repeated optimise/deopt on a value you can't stabilise — is orders of magnitude slower than never optimising.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="deoptimization-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish eager and lazy deopt with a trigger for each.", a: "Eager deopt happens synchronously while the function runs its own optimised code: a guard (CheckMaps, CheckSmi, CheckBounds) fails on a value the speculation didn't allow, and control bails out right at that point. Trigger example: an arithmetic site optimised on SignedSmall produces a value past the Smi range, failing CheckSmi ('not a Smi'). Lazy deopt happens when an assumption is invalidated externally rather than by the function's own execution: you redefine an inlined function, mutate a prototype, or change a global the optimised code depended on. V8 cannot patch a possibly-running frame, so it marks all dependent optimised code for deopt on next entry. Trigger example: monkey-patching Array.prototype.includes after hot code was optimised against the original." },
+    { q: "Explain frame translation and why it is needed.", a: "Optimised code and the interpreter use completely different frame layouts: optimised code holds live values in machine registers and a packed stack frame, often in unboxed representations (raw int32, raw float64), whereas Ignition expects values in its own register slots in tagged/boxed form. To resume cleanly, V8 must rebuild the interpreter frame from the optimised one. It uses deopt metadata recorded at compile time — for each deopt point, a map from every live optimised-frame location to the interpreter register it belongs in. At deopt time the deoptimizer reads that metadata, allocates a fresh interpreter frame, re-boxes unboxed values, places each live value where Ignition expects it, and jumps to the saved bytecode offset. A single translation costs microseconds." },
+    { q: "What is a deopt-loop, why is it catastrophic, and how do you fix it?", a: "A deopt-loop is when a function is repeatedly fed a type/shape it cannot keep stable, so it optimises, deopts (guard fails), re-optimises because it is still hot, deopts again — endlessly. Each cycle pays the deopt translation plus a fresh TurboFan compile (tens to hundreds of ms) plus the slow-tier run time in between, so the function ends up orders of magnitude slower than if optimisation were simply disabled with --no-opt. Diagnose with --trace-deopt (repeated optimized/deoptimized pairs on one function, with the failing reason) and %GetOptimizationStatus(fn) in d8. Fix by removing the type instability: route the pathological value (the big number, the null, the off-shape object) to a separate slow path before the hot block, so the fast path's guards only ever see the stable type." },
+  ]}
+/>
+
+<Recap lang="en">
+Deoptimization is the safety valve that keeps speculative optimisation correct. When an assumption breaks, V8 abandons the optimised machine code and resumes in the Ignition interpreter at the exact bytecode offset where the optimised code gave up — execution stays correct, just slower. Eager deopt is synchronous: the function's own optimised code hits a failing guard (CheckMaps 'wrong map', CheckSmi 'not a Smi', CheckBounds 'out of bounds'). Lazy deopt is external: redefining an inlined function, mutating a prototype, or changing a global invalidates dependent optimised code, which V8 marks for deopt on next entry because it cannot patch a running frame. The clean return is possible thanks to frame translation: TurboFan records deopt metadata mapping every live optimised-frame value (in registers, often unboxed) to the interpreter register it belongs in, and at deopt time the deoptimizer rebuilds a tagged interpreter frame and jumps to the saved offset. A single deopt costs microseconds and is the system working as designed. The catastrophe is the deopt-loop: a recurring value breaks a guard on essentially every call, so V8 optimises and deopts forever, paying a fresh compile each cycle and ending up orders of magnitude slower than --no-opt. Triggers include Smi overflow, shape/hidden-class divergence, changing a field's type, reading arguments, and holey/out-of-bounds access. Diagnose with --trace-deopt and %GetOptimizationStatus; fix by routing the pathological value to a slow path before the hot block so the fast path stays type-stable.
+</Recap>

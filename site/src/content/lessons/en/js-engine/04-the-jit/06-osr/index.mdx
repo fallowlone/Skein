@@ -4,10 +4,181 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 6
-title: "On-stack replacement"
-summary: "On-stack replacement — stub; author to ready."
-estMin: 12
-status: stub
+title: "On-Stack Replacement: swapping the frame mid-loop"
+summary: "A function called once but containing a long hot loop never returns to be re-entered, so normal tier-up can't speed it up. OSR swaps the executing frame in flight"
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - on-stack replacement
+  - OSR entry
+  - back-edge counter
+  - loop header
+  - live state transfer
+  - "--trace-osr"
+  - microbenchmark warm-up
+deepensInto:
+  - "08-measuring-optimizing/01-trace-opt-and-deopt"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "05-deoptimization"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/turbofan-jit
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
+  - https://mrale.ph/blog/2016/08/29/heap-numbers.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+You write a script with one giant `for` loop that crunches ten million rows. The function is called exactly once — `main()` — and never returns until the loop is done. By the tiering rules you have learned, this function can never speed up: tier-up swaps the optimised code in on the *next call*, and there is no next call. Yet you measure it and the loop *does* accelerate, partway through, while it is still running. The only way that can happen is if V8 replaced the code under the running loop's feet. That trick is On-Stack Replacement.
+</Hook>
+
+<Crux>OSR optimises a running loop: when the back-edge budget trips, V8 compiles an OSR-entry version and moves live state to a new frame.</Crux>
+
+<Explanation>
+
+## The problem normal tier-up can't solve
+
+Recall how tier-up installs optimised code (lesson 01): when a function's budget trips, V8 compiles a faster version and swaps it in **for the next entry** to the function. That model has a blind spot. Consider a function that is called once and spends all its time in a single long loop:
+
+```js
+function crunch(rows) {
+  let acc = 0;
+  for (let i = 0; i < rows.length; i++) {   // 10,000,000 iterations
+    acc += score(rows[i]);
+  }
+  return acc;
+}
+crunch(tenMillionRows); // called exactly once
+```
+
+The loop is blazingly hot — millions of back-edges — so its **back-edge counter** trips the budget almost immediately (lesson 01 introduced this counter precisely for this case). V8 wants to optimise. But the normal mechanism is useless here: it would install optimised code for the *next* call to `crunch`, and `crunch` is mid-flight on the only call it will ever get. By the time `crunch` returns, the work is done. Waiting for re-entry means never optimising the one loop that matters.
+
+## OSR: replacing the frame in flight
+
+On-Stack Replacement is the mechanism that breaks this deadlock. Instead of waiting for the function to return and be re-called, V8 **replaces the executing frame in place, mid-loop**. The sequence:
+
+1. The loop's back-edge counter trips the tier-up budget while the loop is running in the interpreter (or baseline tier).
+2. V8 compiles a special **OSR-entry version** of the function — optimised machine code whose entry point is not the function's top, but the **loop header**. It is specialised to begin executing as if control had just arrived at the start of a loop iteration, with all the loop's live variables already in place.
+3. V8 performs a **live-state transfer**: it reads the current values of every live variable from the interpreter frame (the loop index `i`, the accumulator `acc`, the `rows` reference) and writes them into the optimised frame's registers and stack slots, in the representations the optimised code expects. This is the inverse of the deopt frame translation from lesson 05 — there we rebuilt an interpreter frame from an optimised one; here we build an optimised frame from an interpreter one.
+4. Control transfers into the OSR-entry optimised code at the loop header, and the **same loop continues** — but now in optimised machine code. The remaining nine-and-a-half million iterations run fast.
+5. After the loop finishes and `crunch` eventually returns, normal optimised code (a regular, top-entry compilation) takes over for any *subsequent* calls.
+
+<SequenceDiagram
+  label="On-stack replacement: the interpreter is running a loop when the back-edge counter trips; V8 compiles an OSR-entry version specialised to the loop header, transfers the live loop variables from the interpreter frame into the optimised frame, and continues the same loop in optimised code."
+  hue="var(--accent)"
+  actors={["Loop", "V8", "OSRCode", "OptFrame"]}
+  messages={[
+    { from: "Loop", to: "V8", label: "back-edge budget trips" },
+    { from: "V8", to: "OSRCode", label: "compile OSR-entry @ loop header" },
+    { from: "V8", to: "OptFrame", label: "transfer live state (i, acc...)" },
+    { from: "OSRCode", to: "Loop", label: "resume SAME loop, optimised" },
+  ]}
+  caption="The frame is swapped while the loop runs. No call boundary is crossed; the live variables are carried over and the loop continues in optimised code from the next iteration."
+/>
+
+## Why micro-benchmarks live or die by OSR
+
+This is the mechanism behind a notorious benchmarking pitfall. A micro-benchmark that wraps its work in a single huge loop — `for (let i = 0; i < 1e9; i++) work()` — does not warm up `work` through invocation-count tier-up in the usual way; it relies on OSR kicking in partway through to optimise the loop body live. That has two consequences for anyone measuring performance:
+
+- The first chunk of iterations runs unoptimised (interpreter/baseline), then there is a discontinuity where OSR fires and the rest run fast. If you time the whole loop as one number, you blend cold and hot execution and get a meaningless average.
+- OSR-entry code can be *slightly* worse than a normal top-entry optimisation, because it must accept the loop's live state as it found it rather than from a clean function entry, which constrains some optimisations. So an OSR-warmed measurement can under-report the steady-state speed you would see if the function were called many times normally.
+
+The fix is the standard one: warm up the function with many *separate calls* before timing (so it gets a normal, non-OSR optimisation), and measure steady-state iterations, not the warm-up transient. You can see OSR happen with `--trace-osr`; combined with `--trace-opt` it shows the OSR-entry compile distinct from the regular one.
+
+<NumbersCard
+  title="OSR at a glance"
+  data-lesson-visual
+  stats={[
+    { label: "Triggered by", value: "loop back-edge counter" },
+    { label: "Entry point", value: "loop header (not fn top)" },
+    { label: "State moved", value: "interpreter frame -> optimised" },
+    { label: "Relation to deopt", value: "inverse frame translation" },
+    { label: "OSR code vs normal opt", value: "sometimes slightly worse" },
+    { label: "After the loop", value: "normal opt for next calls" },
+    { label: "Trace flag", value: "--trace-osr" },
+    { label: "Benchmark relevance", value: "single-giant-loop benches" },
+  ]}
+/>
+
+<Misconception id="mc-loop-must-finish">
+  <p><strong>"A hot loop only speeds up after it finishes and the function is called again."</strong> No — that is what OSR prevents. When the back-edge counter trips, V8 compiles an OSR-entry version and moves the loop's live state into an optimised frame, so the <em>same loop</em> continues optimised, mid-iteration.</p>
+</Misconception>
+
+<Quiz
+  id="q-osr-need"
+  lessonSlug="06-osr"
+  lang="en"
+  question="Why can't normal tier-up optimise a function that is called once and spends all its time in one long loop?"
+  choices={[
+    { label: "Normal tier-up installs optimised code for the next CALL, but there is no next call — the function is mid-flight on its only one", correct: true },
+    { label: "Loops cannot be optimised by TurboFan at all", misconception: "Loops optimise extremely well; the issue is purely the timing of when normal tier-up installs code, not any inability to optimise loops." },
+    { label: "The back-edge counter does not count loop iterations", misconception: "The back-edge counter counts exactly that, and it does trip the budget here; the gap is in how the optimised code would be installed, which OSR fixes." },
+    { label: "Single-call functions are never considered hot", misconception: "Hotness comes from back-edges too, not only invocations; a single-call function with a huge loop is very hot." },
+  ]}
+/>
+
+<Quiz
+  id="q-osr-state"
+  lessonSlug="06-osr"
+  lang="en"
+  question="What does OSR have to do at the moment it swaps the frame, and how does it relate to deopt?"
+  choices={[
+    { label: "Transfer the loop's live variables from the interpreter frame into the optimised frame — the inverse of deopt's frame translation", correct: true },
+    { label: "Restart the loop from iteration zero in optimised code", misconception: "OSR continues the SAME loop from where it is; restarting from zero would redo completed work and could change results." },
+    { label: "Wait for the loop to reach its last iteration before swapping", misconception: "OSR swaps mid-loop precisely so it does not have to wait; waiting would defeat its purpose." },
+    { label: "Discard the live state and re-derive it from scratch", misconception: "The live state (loop index, accumulators) must be carried over exactly, or the computation would be wrong." },
+  ]}
+/>
+
+<DragOrder
+  id="do-osr-steps"
+  pieceSlug="06-osr"
+  lang="en"
+  prompt="Order how OSR optimises a long-running loop in a once-called function."
+  items={[
+    "The loop's back-edge counter trips the tier-up budget mid-execution",
+    "V8 compiles an OSR-entry version whose entry point is the loop header",
+    "V8 transfers live loop state from the interpreter frame into the optimised frame",
+    "Control resumes in the optimised code and the same loop continues fast",
+    "After the loop returns, normal optimised code serves any later calls",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does the OSR-entry version sometimes optimise slightly worse than a normal compilation? Because a normal top-entry optimisation gets to assume a clean function entry — fresh arguments, no live loop state mid-computation — and can lay out the whole function optimally. The OSR-entry version must instead accept the loop's live values exactly as they exist at the trip point and begin from the loop header, which pins some representations and limits a few rearrangements the compiler would otherwise make. It is still vastly faster than the interpreter; it is just occasionally a hair behind the steady-state code you get from many normal calls — which is exactly why warming with separate calls gives cleaner benchmark numbers.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>OSR optimises a loop that is already running. When the back-edge counter trips, V8 compiles an OSR-entry version specialised to the loop header and transfers the live loop variables from the interpreter frame into the optimised frame — the inverse of deopt — so the same in-flight loop continues in optimised code. It is why a once-called function with a giant loop can still speed up, and why single-loop micro-benchmarks must be warmed with separate calls.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="osr-retrieval"
+  lang="en"
+  questions={[
+    { q: "What problem does OSR solve that normal tier-up cannot?", a: "Normal tier-up installs optimised code for the NEXT entry to a function. That fails for a function called once that spends all its time in a single long loop: the loop is intensely hot (its back-edge counter trips the budget immediately), but the function is mid-flight on the only call it will ever receive, so there is no next entry to install optimised code for, and by the time the function returns the work is finished. OSR breaks this deadlock by optimising the loop that is currently executing instead of waiting for re-entry." },
+    { q: "Walk through the OSR mechanism step by step.", a: "1) The loop's back-edge counter trips the tier-up budget while the loop runs in the interpreter or baseline tier. 2) V8 compiles a special OSR-entry version of the function whose entry point is the loop header rather than the function top, specialised to resume mid-loop. 3) V8 performs a live-state transfer: it reads every live variable (loop index, accumulators, referenced objects) from the interpreter frame and writes them into the optimised frame's registers and stack slots in the expected representations - this is the inverse of deopt's frame translation, building an optimised frame from an interpreter one. 4) Control jumps into the OSR-entry code at the loop header and the SAME loop continues, now in optimised machine code, for its remaining iterations. 5) When the loop finishes and the function later returns, a normal top-entry optimisation serves any subsequent calls." },
+    { q: "Why must single-giant-loop micro-benchmarks be warmed with separate calls, and what does OSR have to do with it?", a: "A benchmark of the form for (i=0; i<1e9; i++) work() does not tier up work() through normal invocation-count thresholds within one loop; it depends on OSR firing partway through to optimise the loop body live. Two problems follow: first, the early iterations run unoptimised and then OSR causes a discontinuity into fast execution, so timing the whole loop as one number blends cold and hot and is meaningless; second, OSR-entry code can be slightly worse than a normal top-entry optimisation because it must accept the loop's live state as found, so it can under-report steady-state speed. The fix is to warm the function with many separate calls (yielding a clean normal optimisation) and measure steady-state iterations only, excluding the warm-up transient. Use --trace-osr (with --trace-opt) to see the OSR-entry compile distinct from the regular one." },
+  ]}
+/>
+
+<Recap lang="en">
+On-Stack Replacement is the mechanism that lets V8 optimise a loop that is already running, closing the one gap in normal tier-up. Normal tier-up installs optimised code for the next entry to a function, which is useless for a function called once that spends all its time in a single long loop: the loop is intensely hot via its back-edge counter, but there is no next call to install code for. OSR fixes this by replacing the executing frame in flight. When the back-edge budget trips, V8 compiles an OSR-entry version of the function whose entry point is the loop header, then performs a live-state transfer - reading every live loop variable out of the interpreter frame and writing it into the optimised frame in the representations the optimised code expects, the exact inverse of deopt's frame translation. Control jumps into the optimised code at the loop header and the same in-flight loop continues fast, with normal top-entry optimised code taking over for any later calls once the loop returns. Because single-giant-loop micro-benchmarks rely on OSR rather than ordinary tier-up, and because OSR-entry code can be marginally worse than a clean optimisation, such benchmarks must be warmed with many separate calls and measured at steady state. Observe it all with --trace-osr alongside --trace-opt.
+</Recap>
