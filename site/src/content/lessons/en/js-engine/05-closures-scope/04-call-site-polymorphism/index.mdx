@@ -4,10 +4,191 @@ lang: en
 track: "js-engine"
 unit: "05-closures-scope"
 order: 4
-title: "Call-site polymorphism"
-summary: "Call-site polymorphism — stub; author to ready."
-estMin: 12
-status: stub
+title: "Closures, feedback vectors, and call-site polymorphism"
+summary: "Every closure instance has its own feedback vector but shares bytecode via SharedFunctionInfo. A call through a variable forms a call IC recording targets: monomorphic for one callee, megamorphic for many. A hot dispatcher fed many function identities can't be inlined."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - feedback vector
+  - SharedFunctionInfo
+  - call IC
+  - monomorphic
+  - megamorphic
+  - inlining
+  - higher-order functions
+deepensInto: []
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "03-context-allocation"
+  - "03-hidden-classes/05-mono-poly-mega"
 sources:
-  - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/blog/turbofan-jit
+  - https://v8.dev/docs/turbofan
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You built a clean dispatcher: one hot loop that calls `handler(event)`, where `handler` is whichever of forty callbacks the registry returns. It is elegant, and it is slow — slower than forty separate loops would be. The reason is not your logic; it is that V8 watches *which function* flows through that one call site, and when it sees forty different function identities, it gives up trying to predict and inline, falling back to a generic indirect call on the hottest line in your program.
+</Hook>
+
+<Crux>One callee per call site is monomorphic and inlinable; many function identities make it megamorphic — an indirect call, no inlining.</Crux>
+
+<Explanation>
+
+## Shared code, private feedback
+
+When you create many instances of the same function — every arrow returned from a factory, every closure pushed in a loop — they do **not** each carry their own copy of the bytecode. They share one **SharedFunctionInfo** (SFI): the bytecode, the ScopeInfo, the source metadata. What each closure instance carries separately is its **feedback vector**: a per-instance array where the engine records the runtime type observations for that instance's call sites and property accesses.
+
+This split matters for performance. Sharing the SFI keeps memory low and lets the optimiser compile once. The per-instance feedback vector means two closures from the same factory can specialise differently if they are fed different types — and it means a closure only starts collecting useful feedback once *that instance* has run enough times.
+
+## Call sites form inline caches too
+
+You already know property reads form inline caches keyed on hidden class (see the hidden-classes unit's mono/poly/mega lesson). Calls do the same. A call expression like `fn(x)` — where `fn` is a variable or property holding a function — is a **call site** with its own IC slot in the feedback vector. That slot records *which function* (which callee identity) has been called here:
+
+- **Monomorphic** — the site has only ever called one function identity. V8 can speculate hard: it knows the exact target and can inline its body.
+- **Polymorphic** — a small number (up to ~4) of distinct callees. V8 keeps a little table and branches among them.
+- **Megamorphic** — too many distinct callees. V8 stops tracking identities and emits a generic indirect call through whatever `fn` currently holds.
+
+<FlowDiagram
+  label="One call site that always calls the same function settles monomorphic and is inlinable, while a call site fed many different function identities degrades to a megamorphic generic indirect call."
+  hue="var(--accent)"
+  caption="Two dispatchers, one call site each. Left: the site only ever sees fn A — monomorphic, TurboFan inlines A's body. Right: the site sees A, B, C, D, E… — megamorphic, an opaque indirect call that cannot be inlined."
+  nodes={[
+    { id: "mono", label: "call fn(x)", sub: "always A", col: 0, row: 0 },
+    { id: "inl", label: "Monomorphic", sub: "inline A", col: 1, row: 0 },
+    { id: "poly", label: "call fn(x)", sub: "A,B,C,D,E…", col: 0, row: 1 },
+    { id: "mega", label: "Megamorphic", sub: "indirect call", col: 1, row: 1 },
+  ]}
+  edges={[
+    { from: "mono", to: "inl", label: "1 identity" },
+    { from: "poly", to: "mega", label: "many identities" },
+  ]}
+/>
+
+## Why inlining is the whole game
+
+Inlining is the optimisation that unlocks the others. When TurboFan inlines a monomorphic callee into the caller, it can then constant-fold across the boundary, eliminate the call's argument-passing overhead, and specialise the merged code on the observed types. A megamorphic call site blocks all of that: TurboFan does not know which function will run, so it must emit an indirect call — push arguments, jump through a function pointer, no inlining, no cross-boundary optimisation. On a hot dispatch loop that overhead lands on every iteration.
+
+```js
+// Megamorphic: one site, many callee identities.
+const registry = { click: onClick, hover: onHover, /* …38 more */ };
+function dispatch(type, ev) {
+  return registry[type](ev);   // this call site sees dozens of identities -> megamorphic
+}
+
+// Monomorphic-friendly: route to a few stable, separately-compiled paths.
+function dispatchFast(type, ev) {
+  switch (type) {
+    case 'click': return onClick(ev);  // each call site has ONE identity
+    case 'hover': return onHover(ev);  // monomorphic, inlinable
+    default:      return onOther(ev);
+  }
+}
+```
+
+The `switch` version has many call sites, each monomorphic, instead of one megamorphic site. Each becomes individually inlinable. The "elegant" single-dispatch version concentrates all the identity variety onto one line and poisons it.
+
+## Higher-order functions: keep callbacks uniform
+
+The same effect bites `map`/`filter`/`reduce` and any higher-order helper. A generic helper called with a different callback each time has, internally, one call site (`cb(item)`) that sees many identities — megamorphic. It still works, but it cannot inline the callback. Patterns that keep it fast:
+
+- **Pass the same callback identity** when you can, rather than a fresh inline arrow every call. A fresh `arr.map(x => f(x))` literal creates a new function identity each call; `arr.map(f)` reuses one.
+- **Specialise hot helpers.** A truly hot reduction over numbers can be a hand-written loop with the operation inlined, rather than a generic `reduce(fn)` whose `fn(acc, x)` site is megamorphic.
+- **Keep argument shapes uniform too.** Even monomorphic-callee sites deopt if the *arguments* change hidden class wildly; uniform callees and uniform argument shapes both matter.
+
+<NumbersCard
+  title="Call-site IC states and inlining"
+  data-lesson-visual
+  stats={[
+    { label: "Distinct callees: monomorphic", value: "1" },
+    { label: "Distinct callees: polymorphic", value: "2–4" },
+    { label: "Distinct callees: megamorphic", value: "~5+" },
+    { label: "Monomorphic call", value: "inlinable" },
+    { label: "Megamorphic call", value: "indirect, not inlined" },
+    { label: "Shared per function family", value: "SharedFunctionInfo" },
+    { label: "Private per closure instance", value: "feedback vector" },
+  ]}
+/>
+
+<Misconception id="mc-shared-feedback">
+  <p><strong>"Closures from one factory share type feedback, so they optimise together."</strong> They share bytecode via SharedFunctionInfo but each owns its feedback vector. One instance fed clean types can be fast while a sibling fed mixed types stays slow.</p>
+</Misconception>
+
+<Quiz
+  id="q-callsite-mega"
+  lessonSlug="04-call-site-polymorphism"
+  lang="en"
+  question="A single hot line `registry[type](ev)` dispatches to ~40 different functions. What IC state does that call site reach, and what does TurboFan do?"
+  choices={[
+    { label: "Megamorphic — TurboFan emits a generic indirect call and cannot inline the callee", correct: true },
+    { label: "Monomorphic — it's literally one call expression in the source", misconception: "IC state is about distinct callee identities seen at runtime, not how many times the expression appears in source. ~40 identities is megamorphic." },
+    { label: "Polymorphic — V8 keeps a table of all 40 callees", misconception: "Polymorphic holds only a few (~4); ~40 exceeds that, so the site goes megamorphic and stops tracking identities." },
+    { label: "It throws a deopt error at runtime", misconception: "Megamorphic is not an error; it is a slower-but-correct generic call path." },
+  ]}
+/>
+
+<Quiz
+  id="q-callsite-share"
+  lessonSlug="04-call-site-polymorphism"
+  lang="en"
+  question="Two closures come from the same factory. What do they share, and what is private to each?"
+  choices={[
+    { label: "Shared: bytecode/ScopeInfo via SharedFunctionInfo. Private: each has its own feedback vector of type observations", correct: true },
+    { label: "Shared: both the bytecode and the feedback vector", misconception: "The feedback vector is per-instance; sharing it would mix two closures' observations. Only the SharedFunctionInfo is shared." },
+    { label: "Nothing is shared — each closure is fully independent", misconception: "They share the SharedFunctionInfo (code, ScopeInfo, metadata); duplicating bytecode per instance would waste memory." },
+    { label: "Shared: the feedback vector. Private: the bytecode", misconception: "It is the reverse: bytecode is shared via the SFI, feedback is private per instance." },
+  ]}
+/>
+
+<DragOrder
+  id="do-callsite-degrade"
+  pieceSlug="04-call-site-polymorphism"
+  lang="en"
+  prompt="Order what happens at one call site as more distinct function identities flow through it over time."
+  items={[
+    "First call: the IC slot is uninitialised, records the first callee identity",
+    "Same identity repeats: site is monomorphic, TurboFan can inline the callee",
+    "A few more identities appear: site becomes polymorphic with a small dispatch table",
+    "Many identities flow through: site goes megamorphic — generic indirect call, no inlining",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+You can watch this directly. Run with `--trace-ic` and grep for `CallIC`; a degrading dispatcher shows transitions `0 -> 1 -> P -> N` (uninitialised → monomorphic → polymorphic → megamorphic). Confirm the inlining loss with `--trace-turbo-inlining`: a monomorphic callee appears as inlined, a megamorphic site does not. For a quick local experiment, `%GetOptimizationStatus(fn)` under `--allow-natives-syntax` in `d8` tells you whether the dispatcher itself optimised.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Closures share bytecode via SharedFunctionInfo but each owns its feedback vector. A call through a variable forms a call IC keyed on callee identity: one identity is monomorphic and inlinable, many is megamorphic — an indirect call TurboFan cannot inline. Keep hot dispatch sites pointed at few, stable callees.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="call-site-polymorphism-retrieval"
+  lang="en"
+  questions={[
+    { q: "What do sibling closures share, and what is private to each, and why does it matter?", a: "All instances of the same function share one SharedFunctionInfo — the bytecode, ScopeInfo, and source metadata — so the engine compiles the body once and keeps memory low. What is private to each closure instance is its feedback vector: a per-instance array recording the runtime type and callee observations at that instance's call sites and property accesses. It matters because two closures from the same factory can specialise differently depending on the types each is fed, and an instance only collects useful feedback after it itself has run enough times. They do not pool their feedback, so 'they optimise together' is false." },
+    { q: "What are the call-site IC states, and what does each mean for inlining?", a: "A call expression where the callee comes from a variable or property has its own IC slot recording which function identities have been called there. Monomorphic means exactly one callee identity has been seen: V8 can speculate on it and TurboFan can inline the callee's body, enabling constant folding and cross-boundary optimisation. Polymorphic means a small number (about up to four) of distinct callees: V8 keeps a small dispatch table and branches. Megamorphic means too many distinct identities (~5+): V8 stops tracking and emits a generic indirect call through whatever the variable holds — no inlining, full call overhead on every invocation. Inlining is the optimisation that unlocks the rest, so going megamorphic on a hot line is a real cliff." },
+    { q: "How do you keep a hot dispatcher or higher-order helper from going megamorphic?", a: "Concentrate variety off the hot line. Replace one dispatch site that sees many identities (registry[type](ev)) with several sites that each see one identity (a switch routing to onClick(ev), onHover(ev), …) so each site is individually monomorphic and inlinable. For higher-order helpers, pass a stable callback identity rather than a fresh inline arrow each call (arr.map(f) not arr.map(x => f(x))), and specialise genuinely hot reductions as hand-written loops with the operation inlined instead of a generic reduce whose callback site is megamorphic. Keep argument shapes uniform too, since even a monomorphic callee can deopt on wildly varying argument hidden classes. Verify with --trace-ic (CallIC transitions) and --trace-turbo-inlining." },
+  ]}
+/>
+
+<Recap lang="en">
+Many instances of one function share a single SharedFunctionInfo — bytecode, ScopeInfo, metadata — but each closure instance carries its own feedback vector recording the runtime observations at its call sites and property accesses, so sibling closures specialise independently and do not pool feedback. A call expression whose callee lives in a variable or property is itself a call site with an IC slot keyed on callee identity: monomorphic when only one identity is seen (TurboFan can inline the callee), polymorphic for a few (a small dispatch table), and megamorphic for many (a generic indirect call that cannot be inlined). Because inlining is what unlocks constant folding and cross-boundary specialisation, a megamorphic call on a hot dispatch line is a genuine performance cliff: the indirect-call overhead lands every iteration. The remedies concentrate identity variety away from the hot line — replace one many-target dispatch with several single-target call sites via switch, pass stable callback identities into higher-order helpers rather than fresh inline arrows, specialise truly hot reductions as explicit loops, and keep argument shapes uniform. This is the closure-and-scope view of the same mono/poly/mega machinery the hidden-classes unit introduced for property access, now applied to which function flows through a call site — observable with --trace-ic and --trace-turbo-inlining.
+</Recap>
