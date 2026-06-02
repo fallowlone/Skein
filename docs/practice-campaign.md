@@ -165,3 +165,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ engineering-practice/02-contract-testing (5) — overview, consumer-driven-contracts, provider-verification-broker, can-i-deploy-and-versioning, contract-evolution-and-limits
 - ✅ engineering-practice/03-code-review (5) — overview, pr-size-and-latency, giving-and-receiving-review, automate-the-mechanical, anti-patterns-and-scaling
 - ✅ engineering-practice/04-trunk-based (5) — integration-frequency, short-lived-branches-vs-gitflow, feature-flags-dark-launch, the-green-trunk-gate, flag-debt-and-rollout-discipline
+- ✅ engineering-practice/05-feature-flags (1) — overview
