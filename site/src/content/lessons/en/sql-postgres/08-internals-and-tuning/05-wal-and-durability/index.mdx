@@ -5,9 +5,146 @@ track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 5
 title: "WAL and durability"
-summary: "WAL and durability — stub; author to ready."
-estMin: 12
-status: stub
+summary: "The write-ahead log records every change before the data page is touched. fsync and synchronous_commit are the durability-vs-throughput knob; checkpoints bound recovery time; the same WAL powers replication and PITR."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - write-ahead-log
+  - fsync-synchronous-commit
+  - checkpoints
+  - crash-recovery
+  - wal-replication-pitr
+prereqs:
+  - 04-vacuum-and-bloat
+  - 07-transactions-concurrency/01-acid-in-practice
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/wal-intro.html
+  - https://www.postgresql.org/docs/current/runtime-config-wal.html
+  - https://www.interdb.jp/pg/pgsql09.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A payments service commits an order, returns `200 OK` to the customer, and the box loses power 80 milliseconds later. On reboot the order is *there*, total intact — even though the actual table page never made it to disk before the crash. That survival is not luck; it's the write-ahead log doing exactly one job: writing down what you're about to change *before* you change it. Flip one config flag — `synchronous_commit = off` — and that same order can vanish on the next crash, in exchange for 3× write throughput. This lesson is that flag and the machinery behind it.
+</Hook>
+
+<Crux>WAL logs each change before touching the data page; that's durability. fsync and synchronous_commit trade durability for throughput.</Crux>
+
+<Explanation>
+
+## Write-ahead: log first, then the page
+
+The core rule of crash safety is **write-ahead logging**: before Postgres modifies a data page, it first appends a compact record of the change to the **WAL** — a sequential, append-only log. Only the WAL record must be flushed to durable storage at commit time; the actual table and index pages can be written later, lazily, by the background writer and checkpointer.
+
+Why is this faster *and* safer than writing the data page itself at commit? Because WAL writes are **sequential** (append to the end of the current log file) while data-page writes are **random** (scattered across the heap). Forcing one small sequential `fsync` per commit is far cheaper than forcing many random page writes — yet it's enough, because if the box crashes before the dirty pages are flushed, **recovery replays the WAL** and reconstructs them. The data pages are an optimization; the WAL is the source of truth.
+
+```sql
+-- Where WAL currently is, and how fast it's being generated:
+SELECT pg_current_wal_lsn();                       -- current write position (LSN)
+SHOW synchronous_commit;                            -- on | off | remote_apply ...
+SHOW wal_level;                                     -- replica (default) | logical | minimal
+SHOW max_wal_size;                                  -- soft ceiling that triggers checkpoints
+```
+
+<SequenceDiagram
+  label="A durable commit: the backend appends a WAL record for the change, fsyncs the WAL to disk, then acknowledges COMMIT to the client; the modified data page is flushed to the heap later, and a periodic checkpoint marks how far recovery can safely start from."
+  hue="var(--d-data)"
+  actors={["Client", "Backend", "WAL", "Heap"]}
+  messages={[
+    { from: "Client", to: "Backend", label: "UPDATE orders ..." },
+    { from: "Backend", to: "WAL", label: "append change record" },
+    { from: "Backend", to: "WAL", label: "fsync (durable)" },
+    { from: "Backend", to: "Client", label: "COMMIT ok" },
+    { from: "Backend", to: "Heap", label: "flush page (later)" },
+    { from: "WAL", to: "Heap", label: "checkpoint syncs" },
+  ]}
+  caption="Durability is achieved the moment the WAL fsync returns — before the heap page is written. On crash, replay from the last checkpoint rebuilds any page that hadn't been flushed."
+/>
+
+## The durability/throughput knob
+
+`synchronous_commit` controls *when* a commit is acknowledged relative to the WAL flush:
+
+- **`on` (default)** — `COMMIT` waits until the WAL record is `fsync`'d to durable storage. A committed transaction survives a crash. Full durability, one fsync of latency per commit.
+- **`off`** — `COMMIT` returns *immediately* after writing WAL to the OS buffer, *before* fsync. The flush happens asynchronously within `wal_writer_delay` (≈200 ms). On a crash you can lose the last fraction of a second of *committed* transactions — but **the database stays consistent** (no corruption, no torn state), you just lose the tail. In exchange, throughput on small write transactions can jump 2–3× because commits no longer block on disk.
+
+This is the single most consequential durability tuning decision. The senior framing: `synchronous_commit = off` is *not* "unsafe" the way disabling fsync is — it never corrupts the database, it only widens the window of *lost-but-acknowledged* commits. For a payments ledger: never. For an analytics ingest pipeline that can replay its source: often a free 3× win.
+
+Two related flags people confuse: **`fsync = off`** is the genuinely dangerous one — it lets the WAL itself skip the disk flush, so a crash can corrupt the cluster; never use it outside a throwaway test box. And `synchronous_commit = remote_apply` extends durability to a replica having applied the change (covered with replication below).
+
+## Checkpoints bound recovery
+
+If WAL accumulated forever, crash recovery would replay from the dawn of time. A **checkpoint** is the periodic act of flushing all dirty data pages to the heap and recording, "everything up to this WAL position is now safely on the data files." Recovery only needs to replay WAL *after* the last checkpoint — so checkpoint frequency bounds recovery time.
+
+The tradeoff: frequent checkpoints mean short recovery but more constant write I/O (flushing dirty pages often); rare checkpoints mean less steady I/O but a long, spiky recovery and large WAL. Postgres triggers a checkpoint when either `checkpoint_timeout` (default 5 min) elapses or WAL hits `max_wal_size` (default 1 GB). Production tuning usually *raises* both so checkpoints are spread out and write spikes smooth, accepting a longer recovery — `checkpoint_completion_target` (default 0.9) spreads the flush across the interval to avoid an I/O wall.
+
+<Inset kind="why" lang="en">
+Why is the same WAL the basis of both replication and point-in-time recovery? Because the WAL is a complete, ordered description of every change to the cluster. **Streaming replication** ships that WAL stream to a standby, which replays it continuously to stay a near-live copy — that's how read replicas and high-availability failover work. **Point-in-time recovery (PITR)** takes a base backup plus archived WAL segments and replays WAL up to any chosen timestamp or LSN, so you can restore to "5 seconds before the bad migration ran." Both are just "replay the WAL somewhere else" — which is exactly what crash recovery does locally. Set `wal_level = replica` (the default) or `logical` to keep enough WAL detail for these; `minimal` logs less and forfeits them.
+</Inset>
+
+<Quiz
+  id="05-wal-and-durability-quiz-1"
+  lessonSlug="05-wal-and-durability"
+  lang="en"
+  question="Why does logging the change to WAL before writing the data page make commits both fast and durable?"
+  choices={[
+    { label: "WAL writes are sequential and only the small WAL record must be fsync'd at commit; data pages flush later and are rebuilt from WAL after a crash", correct: true },
+    { label: "WAL skips the disk entirely, so commits never touch storage", misconception: "WAL is fsync'd to durable storage at commit (with synchronous_commit=on) — that's exactly what gives durability. It's fast because the write is sequential, not because it skips disk." },
+    { label: "Writing the data page first is always faster than writing WAL", misconception: "It's the opposite: data-page writes are random and scattered; one sequential WAL fsync is far cheaper than forcing many random page writes per commit." },
+    { label: "WAL means data pages never need to be written at all", misconception: "Data pages are still written, just lazily by the checkpointer/background writer; WAL lets that be deferred without losing durability." },
+  ]}
+/>
+
+<Quiz
+  id="05-wal-and-durability-quiz-2"
+  lessonSlug="05-wal-and-durability"
+  lang="en"
+  question="What exactly happens with synchronous_commit = off if the server crashes right after a COMMIT returned?"
+  choices={[
+    { label: "You may lose the last fraction of a second of committed transactions, but the database stays consistent and uncorrupted", correct: true },
+    { label: "The database can become corrupted and unrecoverable", misconception: "That's fsync = off. synchronous_commit = off only defers the WAL flush; it never corrupts the cluster — you only lose recently acknowledged commits, with no torn state." },
+    { label: "Nothing is ever lost — it's identical to synchronous_commit = on", misconception: "It is not identical: off acknowledges before the WAL fsync, so a crash can lose the most recent committed transactions. The gain is 2-3x write throughput." },
+    { label: "All transactions since the last checkpoint are lost", misconception: "Recovery still replays WAL from the last checkpoint; only the small tail not yet fsync'd (within wal_writer_delay) is at risk, not everything since the checkpoint." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-wal-and-durability-metaphor-1"
+  lessonSlug="05-wal-and-durability"
+  lang="en"
+  setup="Fill in the blank: a write-ahead log records the change _______ the data page is modified, so a crash can be repaired by replaying the log to reconstruct any page that wasn't yet flushed."
+  accepted={["before", "ahead of", "prior to"]}
+  canonical="before"
+  explanation="Write-ahead literally means the log is written before the data. Because the durable WAL record always precedes the (possibly lost) data-page write, recovery can replay the log from the last checkpoint and redo every change that hadn't reached the heap — turning a crash into a deterministic repair rather than data loss."
+/>
+
+</Explanation>
+
+<KeyTakeaway>The WAL records every change *before* the data page is touched; at commit only the small, sequential WAL record is fsync'd, and data pages flush lazily, so a crash is repaired by replaying WAL. `synchronous_commit = off` acknowledges before the fsync — losing the last sub-second of committed transactions on a crash but never corrupting the database, in exchange for 2–3× throughput (unlike the truly dangerous `fsync = off`). Checkpoints flush dirty pages and bound recovery time; tune `checkpoint_timeout`/`max_wal_size` to spread I/O. The same WAL drives streaming replication and PITR.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-wal-and-durability-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is write-ahead logging and why is it faster and safer than writing the data page at commit?", a: "WAL means appending a record of a change to a sequential, append-only log before modifying the actual data page. At commit only that small WAL record is fsync'd to durable storage; the heap/index pages are flushed later by the checkpointer. It's faster because WAL writes are sequential while data-page writes are random and scattered, so one sequential fsync beats many random writes. It's safe because if the box crashes before pages flush, recovery replays the WAL and rebuilds them — the WAL is the source of truth." },
+    { q: "What does synchronous_commit = off trade, and how is it different from fsync = off?", a: "synchronous_commit = off makes COMMIT return after writing WAL to the OS buffer but before the fsync, so on a crash you can lose the last fraction of a second of committed transactions — but the database stays fully consistent and uncorrupted. In return small-write throughput can rise 2-3x. fsync = off is entirely different and genuinely dangerous: it lets WAL skip the durable flush, so a crash can corrupt the whole cluster. Never use fsync = off in production; synchronous_commit = off is a legitimate durability/throughput tradeoff." },
+    { q: "What is a checkpoint and how does it relate to crash recovery and replication?", a: "A checkpoint flushes all dirty data pages to the heap and records that everything up to a given WAL position is now safely on the data files. Recovery only needs to replay WAL after the last checkpoint, so checkpoint frequency bounds recovery time (frequent = fast recovery but more I/O; rare = spiky long recovery, tuned via checkpoint_timeout, max_wal_size, checkpoint_completion_target). The same WAL stream that recovery replays locally is shipped to standbys for streaming replication and replayed up to a chosen point for point-in-time recovery." },
+  ]}
+/>
+
+<Recap lang="en">
+Write-ahead logging is Postgres's durability mechanism: every change is appended to the sequential **WAL** before the data page is modified, and at commit only that small WAL record is `fsync`'d — the heap and index pages flush lazily, because a crash is repaired by **replaying the WAL** from the last checkpoint. That's why commits are fast (one sequential fsync, not many random page writes) and durable (the WAL is the source of truth). The key knob is `synchronous_commit`: `on` waits for the WAL fsync (full durability); `off` acknowledges before it, risking the last sub-second of *committed* transactions on a crash while keeping the database **consistent and uncorrupted**, for a 2–3× throughput gain — categorically safer than the never-in-prod `fsync = off`. **Checkpoints** flush dirty pages and cap how much WAL recovery must replay; tune `checkpoint_timeout`, `max_wal_size`, and `checkpoint_completion_target` to spread write I/O against recovery time. Finally, the very same WAL is what powers **streaming replication** (ship and replay on a standby) and **PITR** (replay to a chosen timestamp) — recovery, replication, and time-travel restore are all just "replay the log."
+</Recap>

@@ -4,10 +4,172 @@ lang: en
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 6
-title: "A query tuning workflow"
-summary: "A query tuning workflow — stub; author to ready."
-estMin: 12
-status: stub
+title: "The tuning workflow"
+summary: "The systematic loop: find the slow query with pg_stat_statements, reproduce with EXPLAIN (ANALYZE, BUFFERS), diagnose the real cause, apply the smallest fix, verify, repeat. Measure, don't guess."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - pg-stat-statements
+  - reproduce-with-explain
+  - diagnose-root-cause
+  - smallest-fix
+  - measure-dont-guess
+prereqs:
+  - 05-wal-and-durability
+  - 01-explain-analyze
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/pgstatstatements.html
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://use-the-index-luke.com/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import SpiralCue from "~/components/prose/SpiralCue.astro";
+
+<Hook>
+Two engineers get the same ticket: "the app is slow." The first opens the codebase and starts adding indexes on every column a `WHERE` touches — three deploys later it's no faster and writes are now slower. The second runs one query against `pg_stat_statements`, finds that 78% of total database time is one report query, `EXPLAIN`s it, sees a misestimate, runs `ANALYZE`, and closes the ticket in twenty minutes. Same skill ceiling, opposite outcome. The difference is a *loop*, not a trick. This lesson is the loop that ties the whole unit together.
+</Hook>
+
+<Crux>Find the costly query, reproduce with EXPLAIN, diagnose the real cause, apply the smallest fix, verify, repeat — measure, never guess.</Crux>
+
+<Explanation>
+
+## Step 1 — find the query that actually matters
+
+You cannot tune what you haven't measured, and intuition about "the slow query" is almost always wrong. The first move is **`pg_stat_statements`** — an extension that aggregates every executed query (normalized, with literals stripped) and tracks its cumulative cost. The number that matters is **`total_exec_time`**, not `mean_exec_time`: a 5 ms query run 2 million times costs more total database time than a 4-second report run twice, and shaving the former saves more.
+
+```sql
+-- The queries eating the most total time across the whole server:
+SELECT
+  substring(query, 1, 60)        AS query,
+  calls,
+  round(total_exec_time)         AS total_ms,
+  round(mean_exec_time, 2)       AS mean_ms,
+  round(100 * total_exec_time / sum(total_exec_time) OVER (), 1) AS pct
+FROM pg_stat_statements
+ORDER BY total_exec_time DESC
+LIMIT 10;
+```
+
+Read the `pct` column: tuning is **Pareto**. If one query is 78% of total time, that's your whole afternoon; the rest is noise until it isn't. Sort by `total_exec_time`, pick the top, ignore everything else.
+
+## Step 2–4 — reproduce, diagnose, fix the smallest thing
+
+Once you have *the* query, the loop is mechanical:
+
+- **Reproduce** with `EXPLAIN (ANALYZE, BUFFERS)` (lesson 01). This is the ground truth — never tune from the query text alone.
+- **Diagnose** by matching the evidence to one root cause (the whole unit, compressed):
+  - Big **estimated-vs-actual row gap**? → stale or independence-assuming statistics → `ANALYZE` or `CREATE STATISTICS` (lesson 03).
+  - **Seq Scan** on a selective filter, high `read=` buffers? → missing index → add one (`CONCURRENTLY`), per the databases indexes chapter.
+  - Live rows tiny but **buffers/size huge**? → bloat → vacuum/`pg_repack` (lesson 04).
+  - Estimates fine, right scan, still slow? → genuinely too much data → rewrite, paginate, or pre-aggregate.
+- **Apply the smallest fix** that addresses *that* cause. One change. A targeted `ANALYZE` beats a new index; a new index beats a rewrite; a rewrite beats a config change — in that order of locality, because the smallest change has the least blast radius.
+- **Verify** by re-running `EXPLAIN (ANALYZE, BUFFERS)` and confirming the number moved. Then re-check `pg_stat_statements` after real traffic — sometimes the fix shifts the bottleneck to the next query, and the loop repeats.
+
+<FlowDiagram
+  label="The tuning loop as a cycle: find the costliest query in pg_stat_statements, reproduce it with EXPLAIN ANALYZE BUFFERS, diagnose the single root cause, apply the smallest fix, verify the number moved, then loop back to find the new top query."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "find", label: "Find", sub: "pg_stat_statements" },
+    { id: "repro", label: "Reproduce", sub: "EXPLAIN ANALYZE" },
+    { id: "diag", label: "Diagnose", sub: "one root cause" },
+    { id: "fix", label: "Smallest fix", sub: "ANALYZE/index/rewrite" },
+    { id: "verify", label: "Verify", sub: "number moved?" },
+  ]}
+  edges={[
+    { from: "find", to: "repro" },
+    { from: "repro", to: "diag" },
+    { from: "diag", to: "fix" },
+    { from: "fix", to: "verify" },
+    { from: "verify", to: "find" },
+  ]}
+  caption="It's a cycle, not a checklist: verify loops back to find, because the fix often promotes the next query to the top. Stop when the top query is acceptable, not when you've run out of ideas."
+/>
+
+## Why "measure, don't guess" is the whole discipline
+
+Every anti-pattern in tuning is a guess that skipped a measurement step:
+
+- **Premature indexing** — adding indexes "to be safe" before any query proves it needs one. Each index taxes every write (the databases indexes chapter quantifies it) and can mislead the planner; an unused index is pure cost. Add an index only after `EXPLAIN` shows the Seq Scan it would remove.
+- **Cargo-cult config** — copying `random_page_cost` or `work_mem` values from a blog without measuring your workload.
+- **Rewriting blind** — the junior in the hook rewrote SQL three times because *the text* felt slow, when the real cause was a stale estimate the rewrite couldn't touch.
+
+The senior reflex is the inverse: every change is preceded by a measurement that justifies it and followed by a measurement that confirms it. That's what makes the loop converge instead of thrash. (The unit-09 capstone runs this exact loop end-to-end on a realistic analytics API — this lesson is the method it applies.)
+
+<Inset kind="why" lang="en">
+Why sort by `total_exec_time` and not `mean_exec_time`? Because you're optimizing the *server's* time budget, and total time is what users collectively wait. A query averaging 2 ms but called 50 million times a day burns far more aggregate time — and more lock contention, more buffer churn, more CPU — than a 30-second monthly report. Fixing the 2 ms query to 1 ms saves more wall-clock across all users than halving the report. `mean_exec_time` matters for a *single* user-facing request's latency SLA, but for "where is the database spending its life?", total dominates. Use both lenses: total to find the systemic cost, mean to protect a specific interactive endpoint.
+</Inset>
+
+<DragOrder
+  id="06-tuning-workflow-drag-1"
+  lessonSlug="06-tuning-workflow"
+  lang="en"
+  prompt="Order the systematic tuning loop for a 'the app is slow' ticket:"
+  items={[
+    { id: "a", label: "Query pg_stat_statements; sort by total_exec_time to find the costliest query" },
+    { id: "b", label: "Reproduce that query with EXPLAIN (ANALYZE, BUFFERS)" },
+    { id: "c", label: "Diagnose the single root cause: misestimate, missing index, bloat, or too much data" },
+    { id: "d", label: "Apply the smallest fix that addresses that cause (e.g. ANALYZE before adding an index)" },
+    { id: "e", label: "Verify by re-running EXPLAIN and confirming the number actually moved" },
+    { id: "f", label: "Re-check pg_stat_statements after traffic; loop back to the new top query" },
+  ]}
+/>
+
+<Quiz
+  id="06-tuning-workflow-quiz-1"
+  lessonSlug="06-tuning-workflow"
+  lang="en"
+  question="In pg_stat_statements, which column tells you where the database is spending the most time overall?"
+  choices={[
+    { label: "total_exec_time — cumulative time across all calls of that query", correct: true },
+    { label: "mean_exec_time — the per-call average", misconception: "mean matters for a single request's latency, but a fast query called millions of times can dominate total server time even with a tiny mean. Sort by total_exec_time to find the systemic cost." },
+    { label: "calls — just the number of executions", misconception: "Call count alone says nothing about cost; a query could be called often yet be cheap. total_exec_time combines frequency and per-call cost." },
+    { label: "rows — the number of rows returned", misconception: "Rows returned is not a time metric; a query can return few rows yet be expensive (e.g. a huge scan with a tight filter)." },
+  ]}
+/>
+
+<Quiz
+  id="06-tuning-workflow-quiz-2"
+  lessonSlug="06-tuning-workflow"
+  lang="en"
+  question="EXPLAIN ANALYZE shows a big estimated-vs-actual row gap and a nested loop. What's the smallest correct first fix?"
+  choices={[
+    { label: "Run ANALYZE (or CREATE STATISTICS for correlated columns) to fix the estimate, then re-check the plan", correct: true },
+    { label: "Add indexes on every column in the query", misconception: "That's premature indexing — it taxes writes and doesn't address a misestimate. The row gap points at statistics, the smallest and most local fix; verify before reaching for indexes." },
+    { label: "Rewrite the query from scratch", misconception: "A rewrite is a large blast-radius change that usually can't fix a cardinality misestimate; fix the statistics first, the smallest change that targets the actual cause." },
+    { label: "Increase the server's CPU", misconception: "Hardware doesn't fix a planner fed wrong row counts; it would still pick the bad nested loop. Correct the estimate so the planner chooses a hash join itself." },
+  ]}
+/>
+
+<SpiralCue thread="latency" lang="en" />
+
+</Explanation>
+
+<KeyTakeaway>The tuning loop: (1) find the costliest query with `pg_stat_statements`, sorted by `total_exec_time` (tuning is Pareto — one query is often most of the time); (2) reproduce with `EXPLAIN (ANALYZE, BUFFERS)`; (3) diagnose one root cause — misestimate, missing index, bloat, or too much data; (4) apply the smallest fix (`ANALYZE` before index before rewrite before config); (5) verify the number moved, then loop. Every change is justified by a measurement before and confirmed by one after — measure, don't guess.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-tuning-workflow-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the first step of the tuning loop and which pg_stat_statements column do you sort by, and why?", a: "First find the query that actually costs the most, using pg_stat_statements, sorted by total_exec_time (cumulative time over all calls) — not mean_exec_time. Tuning is Pareto: a fast query called millions of times burns more total server time than a slow report run twice, so total_exec_time points you at the change that saves the most. Often one query is the majority of total time; fix that and ignore the rest until it matters." },
+    { q: "Given an EXPLAIN ANALYZE, how do you map evidence to the smallest fix?", a: "Match the symptom to one root cause: a large estimated-vs-actual row gap means stale or independence-assuming statistics, so ANALYZE or CREATE STATISTICS; a Seq Scan on a selective filter with high read buffers means a missing index, so add one CONCURRENTLY; tiny live rows but huge size/buffers means bloat, so vacuum or pg_repack; correct estimates and right scan but still slow means genuinely too much data, so rewrite/paginate/pre-aggregate. Apply the smallest, most local fix first — ANALYZE before index before rewrite before config — then verify." },
+    { q: "Why is 'measure, don't guess' the core discipline, and what anti-patterns does it prevent?", a: "Because every change has a cost and risk, and without measurement you can't know it helped. It prevents premature indexing (indexes added 'to be safe' that only tax writes and mislead the planner), cargo-cult config (copying work_mem/random_page_cost without checking your workload), and blind rewrites (changing SQL text when the real cause is a stale estimate). The reflex is: a measurement justifies each change and another confirms it, so the loop converges instead of thrashing." },
+  ]}
+/>
+
+<Recap lang="en">
+Tuning is a **loop**, and running it is what separates senior work from flailing. **Find** the query that actually matters with `pg_stat_statements`, sorted by `total_exec_time` — tuning is Pareto, and a cheap query run millions of times outweighs a rare expensive one. **Reproduce** it with `EXPLAIN (ANALYZE, BUFFERS)`; never tune from the text. **Diagnose** a single root cause by reading the evidence — a big estimate-vs-actual gap means statistics (lesson 03), a Seq Scan on a selective filter means a missing index, tiny live rows in a huge table mean bloat (lesson 04), and a clean plan that's still slow means genuinely too much data. **Apply the smallest fix** for *that* cause, in order of locality — `ANALYZE` before an index before a rewrite before config — because the least change has the least blast radius. **Verify** the number moved, then loop back, since the fix often promotes the next query to the top. The thread tying it together is *measure, don't guess*: every change is preceded by a measurement that justifies it and followed by one that confirms it. The unit-09 capstone walks this loop end-to-end on a real analytics API; this lesson is its method.
+</Recap>

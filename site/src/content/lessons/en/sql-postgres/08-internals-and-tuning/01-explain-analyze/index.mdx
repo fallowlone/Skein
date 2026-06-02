@@ -4,10 +4,175 @@ lang: en
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 1
-title: "EXPLAIN ANALYZE, deeply"
-summary: "EXPLAIN ANALYZE, deeply — stub; author to ready."
-estMin: 12
-status: stub
+title: "Reading EXPLAIN ANALYZE"
+summary: "EXPLAIN ANALYZE prints a plan tree annotated with estimate vs actual. The gap between estimated rows and actual rows is the signal that tells you the planner was lied to."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - explain-analyze
+  - estimate-vs-actual
+  - plan-tree
+  - loops-per-node
+  - buffers
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
+  - databases/03-execution-plans/01-explain-and-plans
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://use-the-index-luke.com/sql/explain-plan
+  - https://www.interdb.jp/pg/pgsql03.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import SpiralCue from "~/components/prose/SpiralCue.astro";
+
+<Hook>
+A report query times out at 30 s in production. A junior rewrites the SQL three times; nothing helps. You run `EXPLAIN ANALYZE` once and the answer is sitting on line three: a node says `rows=1` estimated, `rows=2,300,000` actual. The planner thought it would touch one row and built the whole join around that lie. Nobody had read the plan. Reading it is a five-minute skill that prevents five-hour incidents.
+</Hook>
+
+<Crux>EXPLAIN ANALYZE annotates each plan node with estimate vs actual; the row-estimate gap is the first thing a senior reads.</Crux>
+
+<Explanation>
+
+## What the output actually is
+
+`EXPLAIN ANALYZE <query>` runs your query and prints the **plan tree** that produced it, one node per line, indented to show nesting. The `databases` track's execution-plans chapter derives *why* the planner builds a tree of scans and joins; here you only learn to **read** it like a runbook. Each node line carries two cost groups:
+
+- **Estimates** (from planning): `cost=0.00..431.00` (startup..total in arbitrary cost units) and `rows=1000` — what the planner *guessed* before running.
+- **Actuals** (from execution): `actual time=0.012..4.318` (ms) and `rows=998 loops=1` — what *really happened*.
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
+SELECT o.id, o.total
+FROM orders o
+JOIN line_items li ON li.order_id = o.id
+WHERE o.status = 'shipped';
+```
+
+A real (trimmed) result:
+
+```
+Hash Join  (cost=33.50..812.40 rows=1200 width=20)
+            (actual time=1.2..58.7 rows=1180 loops=1)
+  Hash Cond: (li.order_id = o.id)
+  Buffers: shared hit=512 read=140
+  ->  Seq Scan on line_items li
+        (cost=0..512 rows=20000 width=12)
+        (actual time=0.01..21.3 rows=20000 loops=1)
+  ->  Hash  (cost=20..20 rows=300 width=12)
+              (actual time=1.1..1.1 rows=305 loops=1)
+        ->  Index Scan on orders o
+              (cost=0.29..20 rows=300 width=12)
+              (actual time=0.03..0.8 rows=305 loops=1)
+              Index Cond: (status = 'shipped')
+Planning Time: 0.4 ms
+Execution Time: 59.4 ms
+```
+
+## Read it inside-out, watch the gap
+
+The tree executes from the **deepest, innermost** nodes outward — leaves first, root last. Read it the same way. For each node ask one question: **does `rows=` estimated match `rows=` actual?**
+
+- Estimated 300, actual 305 → the planner is well calibrated. Trust this subtree.
+- Estimated 1, actual 2,300,000 → the planner was **misestimating**. Every decision above this node (which join algorithm, which join order) was made on a wrong row count, so the whole plan above it is suspect. This is the single highest-value signal in the output, and lesson 03 is entirely about fixing it.
+
+A 10× gap is a yellow flag; a 1000× gap is the bug. The fix is almost never "rewrite the query" — it's refresh statistics, add an index the planner can trust, or correct correlated-column estimates.
+
+<StackDiagram
+  label="An EXPLAIN ANALYZE plan node, decoded: the estimate line is the planner's guess; the actual line is reality; the row-estimate gap between them is the diagnostic signal; loops multiplies the per-iteration time; buffers shows pages from cache vs disk."
+  hue="var(--d-data)"
+  layers={[
+    { label: "Node type", note: "Hash Join / Seq Scan / Index Scan" },
+    { label: "Estimate", note: "cost=.. rows=1200 (planner guess)" },
+    { label: "Actual", note: "time=.. rows=1180 loops=1 (reality)" },
+    { label: "Row gap", note: "estimated vs actual = the signal" },
+    { label: "Buffers", note: "shared hit=cache  read=disk" },
+  ]}
+  caption="Read leaves first. For each node compare estimated rows to actual rows; the biggest gap is where the planner went wrong and where the fix lives."
+/>
+
+## Three numbers people misread
+
+**Loops — `actual time` is per-loop, not total.** On the inner side of a nested loop you'll see `actual time=0.05..0.06 rows=1 loops=50000`. That node ran 50,000 times. Total time at that node is roughly `per-loop time × loops` ≈ `0.06 ms × 50000` = 3 seconds, not 0.06 ms. The most common rookie misread is "this node is fast" while it is secretly the entire runtime. Likewise `rows` on a looped node is the **per-loop average**; multiply by `loops` for the real total.
+
+**Cost vs time.** `cost` is unitless and only meaningful for *comparing* candidate plans inside the planner (lesson 02). It is not milliseconds and not comparable across machines. For diagnosing a real query, ignore `cost` and read `actual time` and `rows`.
+
+**BUFFERS — where the I/O went.** `BUFFERS` adds `shared hit=N` (8 KB pages served from the buffer cache) and `read=N` (pages fetched from disk/OS). A node with `shared read=180000` is I/O-bound: it pulled 180k pages (~1.4 GB) off disk. That, not CPU, is your slowness — the fix is a more selective index or scanning less data. `BUFFERS` is the difference between guessing "maybe it's I/O" and proving it.
+
+<Inset kind="why" lang="en">
+Why does `EXPLAIN ANALYZE` actually execute the query (and so can be dangerous on writes)? Because the "ANALYZE" half means "instrument and run", not "plan only". Running `EXPLAIN ANALYZE` on an `UPDATE` or `DELETE` **performs the write**. To inspect a mutating statement safely, wrap it: `BEGIN; EXPLAIN ANALYZE UPDATE ...; ROLLBACK;`. The instrumentation itself also adds overhead (a clock read per node), so `Execution Time` here is slightly inflated versus the bare query — use it for comparison, not as an SLA number. `FORMAT TEXT` (the default) is for reading by eye; `FORMAT JSON` when a tool will parse it.
+</Inset>
+
+<DragOrder
+  id="01-explain-analyze-drag-1"
+  lessonSlug="01-explain-analyze"
+  lang="en"
+  prompt="Order how a senior reads an EXPLAIN ANALYZE plan to find the problem:"
+  items={[
+    { id: "a", label: "Run EXPLAIN (ANALYZE, BUFFERS) on the slow query" },
+    { id: "b", label: "Find the innermost (deepest-indented) nodes — they run first" },
+    { id: "c", label: "At each node compare estimated rows to actual rows" },
+    { id: "d", label: "Locate the node with the largest estimate-vs-actual gap" },
+    { id: "e", label: "Multiply per-loop time by loops to get that node's true cost" },
+    { id: "f", label: "Check BUFFERS to see whether the cost is disk reads or cache hits" },
+    { id: "g", label: "Decide the fix: stats refresh, index, or rewrite — by what the numbers showed" },
+  ]}
+/>
+
+<Quiz
+  id="01-explain-analyze-quiz-1"
+  lessonSlug="01-explain-analyze"
+  lang="en"
+  question="A nested-loop inner node shows: actual time=0.04..0.05 rows=1 loops=80000. How much wall time does this node really cost?"
+  choices={[
+    { label: "About 4 seconds — per-loop time (~0.05 ms) times 80,000 loops", correct: true },
+    { label: "About 0.05 ms — that's the actual time printed", misconception: "actual time on a looped node is PER LOOP. You must multiply by loops; 0.05 ms x 80,000 is roughly 4 s, the real cost." },
+    { label: "Zero — rows=1 means it barely did anything", misconception: "rows=1 is the per-loop average, not the total. Across 80,000 loops it returned about 80,000 rows and spent seconds doing it." },
+    { label: "Exactly 80,000 ms because loops=80000", misconception: "loops is a count, not milliseconds. Multiply loops by per-loop actual time, do not treat the loop count as ms." },
+  ]}
+/>
+
+<Quiz
+  id="01-explain-analyze-quiz-2"
+  lessonSlug="01-explain-analyze"
+  lang="en"
+  question="A Seq Scan node reads rows=1 estimated but rows=2,300,000 actual. What does this tell you first?"
+  choices={[
+    { label: "The planner's statistics are wrong here; every join choice built on this estimate is suspect", correct: true },
+    { label: "The query text is badly written and must be rewritten", misconception: "A row-estimate gap is a statistics/cardinality problem, not a syntax one. Rewriting rarely fixes a misestimate; refreshing stats or extended statistics does." },
+    { label: "The Seq Scan is fine because Seq Scans are always fast", misconception: "A Seq Scan over 2.3M rows the planner thought was 1 is exactly the failure: it likely chose a nested loop expecting one row and now loops millions of times." },
+    { label: "Nothing — estimates are always approximate, ignore them", misconception: "A 2,300,000x gap is not normal approximation; it is the root cause of the bad plan and the first thing to fix." },
+  ]}
+/>
+
+<SpiralCue thread="latency" lang="en" />
+
+</Explanation>
+
+<KeyTakeaway>EXPLAIN ANALYZE prints the plan tree with estimate and actual side by side. Read leaves first, hunt the biggest estimated-vs-actual row gap (that's where the planner was misled), remember `actual time` and `rows` are per-loop so multiply by `loops`, and use `BUFFERS` to prove disk-bound vs cache-bound. `cost` is only for comparing plans, not a time.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-explain-analyze-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the single most useful number to read in EXPLAIN ANALYZE output and why?", a: "The gap between estimated rows and actual rows at each node. If they match, the planner is calibrated and its plan choices are trustworthy. A large gap (10x is a flag, 1000x is the bug) means the planner built the plan on a wrong cardinality, so every join algorithm and join order decided above that node is suspect — that node is where the fix lives." },
+    { q: "Why is 'actual time=0.05 rows=1' on a looped node misleading, and how do you get the real cost?", a: "On a node with loops>1, both actual time and rows are PER LOOP averages, not totals. A node showing actual time=0.05 ms with loops=80000 actually cost about 0.05 x 80000 = 4 seconds and returned about 80,000 rows. Multiply per-loop time by loops to get the node's true contribution to runtime." },
+    { q: "What does BUFFERS add, and what does shared hit vs read tell you?", a: "BUFFERS reports 8 KB page accesses per node: shared hit=N is pages served from the buffer cache, read=N is pages fetched from disk/OS. A high read count means the node is I/O-bound (cold or large working set), so the fix is a more selective index or scanning less data; mostly hits with high time points instead at CPU/memory work like a big sort." },
+  ]}
+/>
+
+<Recap lang="en">
+`EXPLAIN ANALYZE` runs the query and prints the chosen **plan tree**, one indented node per line, each carrying the planner's **estimate** (`cost`, `rows`) beside the executor's **actual** (`time`, `rows`, `loops`). Read it inside-out — deepest nodes run first — and at every node compare estimated to actual rows: the largest gap is where the planner was misled and where the real fix belongs (statistics, an index, correlated-column estimates — lessons 02 and 03), not a query rewrite. Watch two traps: on looped nodes `actual time` and `rows` are *per loop*, so multiply by `loops` for the true cost; and `cost` is a unitless planning yardstick, not milliseconds. Add `BUFFERS` to turn "feels like I/O" into proof — `shared hit` is cache, `read` is disk. This reading skill is the entry point to the whole tuning loop you build across this unit.
+</Recap>
