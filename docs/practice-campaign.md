@@ -174,3 +174,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ caching/{01-layers,02-invalidation,04-etag,05-cache-control,06-swr,07-dogpile,08-putting-it-together} (7 overview lessons)
 - ✅ caching/03-stampede (6) — what-is-stampede, lock-and-single-flight, xfetch-probabilistic, stale-while-revalidate, detection-and-ttl-design, stampede-senior  [caching track COMPLETE + enforced]
 - ✅ distributed/{01-cap-practice,03-quorum,04-leader-election,05-clocks,06-sagas,07-retry-amplification,08-putting-it-together} (7 overview lessons)
+- ✅ distributed/02-raft-outline (6) — raft-roles-and-terms, log-replication-and-commit, leader-election-in-depth, failure-modes-and-recovery, advanced-extensions, raft-production-ops  [distributed track COMPLETE + enforced]
