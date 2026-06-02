@@ -183,3 +183,6 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ security/02-oauth-oidc (6) — 01-what-is-oauth, 02-auth-code-pkce, 03-id-token-validation, 04-refresh-tokens-and-scopes, 05-sender-constrained-tokens, 06-oauth-production  [security track COMPLETE + enforced]
 - ✅ ai-llm all units (8) — 01-prompt-caching, 02-tool-calls, 03-rag-architecture, 04-streaming, 05-cost-budgets, 06-agents, 07-evals, 08-putting-it-together  [ai-llm track COMPLETE + enforced]
 - ✅ data-engineering all units (8) — 01-oltp-vs-olap, 02-elt-vs-etl, 03-parquet, 04-materialized-views, 05-event-sourcing, 06-search, 07-vectors, 08-putting-it-together  [data-engineering track COMPLETE + enforced]
+- ✅ deployment all units (8) — 01-image-layers, 02-compose-vs-k8s, 03-k8s-objects, 04-rollout-strategies, 05-iac, 06-lb-levels, 07-secrets-at-deploy, 08-putting-it-together  [deployment track COMPLETE + enforced]
+
+## CAMPAIGN COMPLETE 2026-06-02 — 613/613 real ready lessons covered, 19/19 tracks build-enforced, lint warnings 0.
