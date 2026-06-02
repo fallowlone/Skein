@@ -20,6 +20,10 @@ export const TRACK_BAND: Record<Track, Band> = {
   "databases":          "surface",
   "caching":            "surface",
   "queues":             "surface",
+  // deep language/engine dives — sit with their day-to-day siblings
+  "sql-postgres":       "surface",
+  "js-engine":          "surface",
+  "typescript":         "surface",
   // middle — systems concerns
   "distributed":        "middle",
   "observability":      "middle",
