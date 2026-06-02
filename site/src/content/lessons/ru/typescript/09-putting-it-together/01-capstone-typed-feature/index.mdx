@@ -1,13 +1,304 @@
 ---
-slug: "01-capstone-typed-feature"
+concepts:
+  - single-source-of-truth
+  - zod-infer
+  - discriminated-union
+  - exhaustiveness
+  - generics-result
+  - satisfies
+  - inferred-client
+deepensInto: []
+estMin: 18
 lang: ru
+lessonType: topic
+level: senior
+order: 1
+prereqs:
+  - "typescript/08-real-world/03-trpc-end-to-end"
+  - "typescript/05-type-level-programming/03-utility-types-from-scratch"
+  - "frontend/02-data-fetching/03-rsc-and-streaming"
+  - "apis/01-rest-modeling/01-overview"
+slug: "01-capstone-typed-feature"
+sources:
+  - https://www.typescriptlang.org/docs/handbook/2/everyday-types.html
+  - https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html
+  - https://zod.dev/
+  - https://trpc.io/docs
+spiral:
+  - assignability
+  - inference
+  - type-level-programming
+  - runtime-validation
+status: ready
+summary: "Финал: выкатываем фичу «создать + показать постранично комментарии» насквозь типобезопасно. Одна схема zod порождает все слои; дискриминированный Result обрабатывается исчерпывающе; граница валидируется, а не приводится; тип клиента выводится — и каждый шаг называет свой юнит."
+title: "Capstone: выкатываем одну фичу, типизированную насквозь"
 track: "typescript"
 unit: "09-putting-it-together"
-order: 1
-title: "Capstone: a fully-typed feature"
-summary: "Capstone: a fully-typed feature — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://www.typescriptlang.org/docs/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+У вас одна фича на выкатку: **создать комментарий, а затем показать комментарии треда постранично**. Строка в Postgres, эндпойнт API, вызов с клиента, компонент `<CommentList>`. Каждому слою нужна форма комментария. Юниорский рефлекс — типизировать эту форму четыре раза (один раз для БД, один для ответа API, один для клиента, один для пропсов) и «синхронизировать» их руками. Сеньорский ход — объявить её **один раз** и дать компилятору протянуть её через все слои. Этот урок связывает воедино весь трек: мы типизируем именно эту фичу правильно и называем юнит, откуда взят каждый ход.
+</Hook>
+
+<Crux>Объяви домен один раз, выведи каждый слой из него, валидируй на границе и дай выводу донести тип до клиента — никогда не приводи.</Crux>
+
+<Explanation>
+
+## Один источник истины, затем вывод (юниты 00, 02, 05, 08)
+
+Вся стратегия держится на одном правиле из юнита 08: **выводи, не дублируй.** Выбери *один* артефакт, определяющий комментарий, и сделай каждый другой тип *функцией от* него. Схема zod — сильнейший выбор, потому что она одновременно рантайм-валидатор и статический тип:
+
+```ts
+import { z } from "zod";
+
+// ЭТО источник истины. Всё ниже по течению выводится из него.
+export const Comment = z.object({
+  id: z.string().uuid(),
+  threadId: z.string().uuid(),
+  body: z.string().min(1).max(2000),
+  authorId: z.string().uuid(),
+  createdAt: z.coerce.date(),
+});
+
+// `z.infer` превращает рантайм-схему в статический тип (`infer` из юнита 05,
+// тип-vs-значение из юнита 00: `Comment`-значение живёт в пространстве значений,
+// `Comment`-тип — в пространстве типов; одно имя, два пространства имён).
+export type Comment = z.infer<typeof Comment>;
+//          ^? { id: string; threadId: string; body: string; authorId: string; createdAt: Date }
+```
+
+`typeof Comment` читает *значение* (объект схемы) и поднимает его в пространство типов; `z.infer` затем разворачивает его в объектный тип. Одна правка схемы — добавить `editedAt` — и каждый выведенный тип меняется вместе с ней. Нет второго объявления, которое можно забыть.
+
+Вход для *создания* — строгое подмножество, и его мы тоже выводим, а не пишем руками (юнит 05 `Pick`/`Omit`, юнит 02 объектные типы):
+
+```ts
+export const NewComment = Comment.pick({ threadId: true, body: true, authorId: true });
+export type NewComment = z.infer<typeof NewComment>;
+//          ^? { threadId: string; body: string; authorId: string }
+```
+
+## Моделируй результат дискриминированным объединением, обрабатывай исчерпывающе (юнит 02)
+
+`createComment` может завершиться успехом, упереться в ошибку валидации или в несуществующий тред. Не возвращай `Comment | null`, теряя *почему* не вышло — смоделируй исходы **дискриминированным объединением** по литеральному ключу `tag` (юнит 02), чтобы сужение по `tag` сообщало компилятору, какие именно остальные поля есть:
+
+```ts
+type CreateResult =
+  | { tag: "created"; comment: Comment }
+  | { tag: "invalid"; issues: string[] }
+  | { tag: "thread_missing"; threadId: string };
+
+function describe(r: CreateResult): string {
+  switch (r.tag) {
+    case "created":        return `#${r.comment.id}`;     // r.comment в области видимости
+    case "invalid":        return r.issues.join(", ");    // r.issues в области видимости
+    case "thread_missing": return `no thread ${r.threadId}`;
+    default: {
+      // Страж исчерпываемости: если добавить новый tag и не обработать его,
+      // `r` здесь перестаёт быть `never`, и эта строка не скомпилируется.
+      const _exhaustive: never = r;
+      return _exhaustive;
+    }
+  }
+}
+```
+
+Присваивание в `never` — приём из юнита 02: в полностью обработанном switch анализ потока управления сужает `r` до `never` в `default`, и присваивание проходит проверку. Добавьте четвёртый вариант позже и забудьте `case` — `r` станет этим вариантом, несовместимым с `never`, и компилятор укажет на точную дыру.
+
+## Валидируй на границе — типы лишь обещания, пока не проверены (юнит 08)
+
+Вот ход, отделяющий настоящую типобезопасность от театра. Драйвер БД отдаёт вам `unknown` (или хуже — `any`). Статическая аннотация на этом значении — **обещание, которого рантайм не давал** (юнит 08 и тезис о стирании типов из юнита 00). Вы делаете обещание истинным *разбором* (`parse`), а не приведением:
+
+```ts
+declare function dbQuery(sql: string, args: unknown[]): Promise<unknown[]>;
+
+async function listComments(threadId: string): Promise<Comment[]> {
+  const rows = await dbQuery("select * from comments where thread_id = $1", [threadId]);
+  //    ^? unknown[]  — драйвер ничего не знает о нашей форме
+
+  // НЕПРАВИЛЬНО (так не делайте — это анти-паттерн из юнита 08):
+  // return rows as Comment[];   // ложь: ноль проверок в рантайме, createdAt всё ещё строка
+
+  // ПРАВИЛЬНО: разбор на границе. z.array(Comment) приводит createdAt и отбрасывает мусор.
+  return z.array(Comment).parse(rows);
+  //     ^? Comment[]   — теперь тип *заработан*, а не заявлен
+}
+```
+
+`as Comment[]` скомпилируется, а затем взорвётся в рантайме при первом же `createdAt`, который оказался строкой, а не `Date`. `parse` превращает кривую строку в брошенный `ZodError` *на границе*, где можно залогировать и вернуть 400 — вместо загадочного `.getTime is not a function` на три слоя глубже.
+
+<Inset kind="why" lang="ru">
+Почему `parse` строго лучше, чем написанный руками страж типа? Рукописная `function isComment(x: unknown): x is Comment` кодирует форму *третий* раз и может разойтись со схемой — а TypeScript не проверяет, что тело предиката действительно соответствует заявленному типу, так что багнутый страж — это молчаливый `as`. `z.array(Comment).parse` выводит проверку из того же источника истины, поэтому рантайм-проверка и статический тип не могут разойтись. Рукописные стражи приберегите для форм, которые нельзя выразить схемой.
+</Inset>
+
+## Один маленький дженерик, в меру умный (юниты 03, 04, 05)
+
+Эндпойнт списка постраничный, и *каждый* постраничный эндпойнт делит общую форму. Захвати её один раз дженериком — но держи скучной. Это урок сдержанности из юнита 05: дженерик зарабатывает место, убирая дублирование, а не красуясь гимнастикой условных типов, которая взрывает время компиляции.
+
+```ts
+// Одна переиспользуемая форма. `T` выводится в месте вызова, но тело остаётся
+// простым объектом (юнит 03 дженерик-функции, юнит 04 система типов,
+// юнит 05 «остановись, пока не стало умно»).
+interface Paginated<T> {
+  items: T[];
+  nextCursor: string | null;
+  total: number;
+}
+
+function makePage<T>(items: T[], total: number, nextCursor: string | null): Paginated<T> {
+  return { items, total, nextCursor };
+}
+
+const page = makePage(await listComments("t-1"), 42, "cursor-43");
+//    ^? Paginated<Comment>
+page.items[0].body;   // полностью типизировано; T выведен как Comment из аргумента
+```
+
+`T` выводится из аргумента `items` — без аннотации в месте вызова. Мы намеренно *не* потянулись за `DeepPartial<T>` или условным кодировщиком курсора: по юниту 05 эта умность стоит понятности для читателя и времени компиляции (глубоко рекурсивные условные типы — реальный обрыв производительности) и не даёт ничего, что команде нужно здесь. В меру умно = минимум, убивающий дублирование.
+
+## `satisfies` для таблицы маршрутов; страж типа на границе авторизации (юнит 06)
+
+Таблица маршрутов — это конфиг: вы хотите *сохранить* литеральные типы каждого обработчика (чтобы `routes.listComments` держал точную сигнатуру), при этом проверив весь объект на соответствие контракту. Ровно для этого и нужен `satisfies` (юнит 06, TS 4.9+) — `: RouteTable` расширил бы значения; `satisfies RouteTable` проверяет без расширения:
+
+```ts
+type Handler = (input: unknown) => Promise<unknown>;
+type RouteTable = Record<string, Handler>;
+
+const routes = {
+  createComment: async (input: unknown) => z.array(Comment).parse([]),
+  listComments:  async (input: unknown) => listComments(NewComment.parse(input).threadId),
+} satisfies RouteTable;
+
+// Ключи остаются литеральными — автодополнение знает "createComment" | "listComments",
+// а не просто `string`, ведь `satisfies` проверил форму без расширения.
+type RouteName = keyof typeof routes;
+//   ^? "createComment" | "listComments"
+```
+
+На границе авторизации **пользовательский страж типа** (юнит 06) сужает неаутентифицированный запрос до аутентифицированного на весь остаток обработчика:
+
+```ts
+type Ctx = { userId: string | null };
+function isAuthed(ctx: Ctx): ctx is Ctx & { userId: string } {
+  return ctx.userId !== null;
+}
+// после `if (isAuthed(ctx))` ctx.userId — это `string`, а не `string | null`.
+```
+
+## Поток между клиентом и сервером: выведи клиент, не переобъявляй его (юнит 08)
+
+Вознаграждение. С tRPC-подобным серверным роутером **тип клиента выводится из сервера**, так что форма комментария, объявленная один раз в схеме, доходит до React-компонента без единого переобъявления (юнит 08 trpc-end-to-end). Перетипизация ответа на клиенте — то самое дублирование, которое мы весь урок убивали:
+
+```ts
+// server.ts — форма роутера это просто объект процедур
+const appRouter = {
+  comments: {
+    list: (input: { threadId: string }): Promise<Comment[]> => listComments(input.threadId),
+    create: (input: NewComment): Promise<CreateResult> => { throw new Error("impl elided"); },
+  },
+};
+export type AppRouter = typeof appRouter;   // контракт, выведенный, а не написанный
+
+// client.tsx — клиент типизируется ИЗ AppRouter; здесь форма не переобъявляется
+declare const trpc: {
+  comments: { list: { useQuery: (i: { threadId: string }) => { data?: Comment[] } } };
+};
+
+function CommentList({ threadId }: { threadId: string }) {
+  const { data } = trpc.comments.list.useQuery({ threadId });
+  //      ^? Comment[] | undefined   — выведено насквозь из единственной схемы
+  return data?.map((c) => c.body) ?? [];   // c это Comment, полностью типизирован
+}
+```
+
+Поменяйте `body` на `text` в схеме zod — и React-компонент перестанет компилироваться: контракт по проводу обеспечивается выводом, а не дисциплиной. Про окружающую систему смотрите **React Server Components и потоковую передачу Suspense** (frontend) — где эти данные загружаются и рендерятся, и **Моделирование REST-ресурсов** (apis) — про форму эндпойнта, если вы отдаёте REST вместо tRPC.
+
+<SequenceDiagram
+  label="Capstone: тип комментария течёт от источника истины zod через каждый слой до UI."
+  hue="var(--accent)"
+  actors={["zod schema", "DB row", "server", "client"]}
+  messages={[
+    { from: "zod schema", to: "DB row", label: "z.infer => Comment" },
+    { from: "DB row", to: "server", label: "unknown[]" },
+    { from: "server", to: "server", label: "parse() => Comment[]" },
+    { from: "server", to: "client", label: "typeof appRouter" },
+    { from: "client", to: "client", label: "inferred Comment[]" },
+  ]}
+  caption="Одно объявление (схема) — единственное место, где форма записана. z.infer выводит статический тип; драйвер отдаёт unknown; parse() зарабатывает тип на границе; typeof appRouter экспортирует контракт; клиент выводит Comment[] без переобъявления."
+/>
+
+## Чего НЕ делать — переформулированные ловушки юнита 08
+
+- **Никакого `as` на границе.** `rows as Comment[]` — непроверенная ложь; `z.array(Comment).parse(rows)` зарабатывает тип. Единственное, что `as` покупает на границе, — это рантайм-сбой позже, дальше от причины.
+- **Выводи, не дублируй.** Если форма комментария появляется более чем в одном рукописном месте, удаление поля становится ручной охотой. Схема → `z.infer` → `Pick`/`Omit` → `typeof appRouter` означает: одна правка расходится по всему.
+- **Следи за производительностью вывода.** Умный дженерик, который вы не написали, стоит ноль времени компиляции. Глубоко рекурсивные условные/маппированные типы (юнит 05) могут застопорить `tsc` и подсказки редактора — тянитесь к ним, только когда простой интерфейс действительно не может выразить форму.
+
+<Quiz
+  id="09-capstone-quiz-1"
+  lessonSlug="01-capstone-typed-feature"
+  lang="ru"
+  question="В listComments драйвер возвращает unknown[]. Вам нужно значение типа Comment[]. Какая строка даёт настоящую, обеспеченную рантаймом типобезопасность?"
+  choices={[
+    { label: "return z.array(Comment).parse(rows) — разбор на границе и валидирует строки, и выдаёт Comment[], выведенный из единственной схемы.", correct: true },
+    { label: "return rows as Comment[] — приведение сообщает TypeScript форму, и этого достаточно.", misconception: "`as` не выполняет проверок в рантайме; оно заявляет форму, которой у данных может не быть. createdAt всё ещё строка и упадёт на .getTime() позже. Разбирай, а не приводи." },
+    { label: "Аннотируйте переменную: const rows: Comment[] = await dbQuery(...) — аннотация обеспечит форму.", misconception: "Аннотации стираются при компиляции и никогда не проверяют рантайм-значения; это просто скрытый `as`. Только рантайм-валидатор вроде zod реально обеспечивает форму." },
+    { label: "Напишите рукописную функцию isComment(x): x is Comment и отфильтруйте rows — это типобезопасно, ведь предикат типизирован.", misconception: "TypeScript не проверяет, что тело предиката-типа соответствует заявленному типу, так что багнутый страж — молчаливое приведение, и он кодирует форму третий раз, свободный разойтись со схемой." },
+  ]}
+/>
+
+<DragOrder
+  id="09-capstone-drag-1"
+  pieceSlug="01-capstone-typed-feature"
+  lang="ru"
+  prompt="Расставьте ходы по сборке фичи комментариев с типобезопасностью насквозь — от источника истины наружу:"
+  items={[
+    { id: "a", label: "Объяви ОДИН источник истины: схему zod Comment (и NewComment = Comment.pick(...))" },
+    { id: "b", label: "Выведи статические типы: type Comment = z.infer<typeof Comment> — без второго объявления" },
+    { id: "c", label: "Смоделируй исходы дискриминированным объединением CreateResult и обработай исчерпывающе (never в default)" },
+    { id: "d", label: "Валидируй на границе рантайма: z.array(Comment).parse(rows), никогда не `as Comment[]`" },
+    { id: "e", label: "Зафиксируй таблицу маршрутов через `satisfies RouteTable`, чтобы сохранить литеральные типы обработчиков" },
+    { id: "f", label: "Экспортируй typeof appRouter, чтобы клиент вывел Comment[] без переобъявления" },
+  ]}
+/>
+
+<MetaphorComplete
+  id="09-capstone-metaphor-1"
+  pieceSlug="01-capstone-typed-feature"
+  lang="ru"
+  setup="Схема zod — единственный источник истины, и z.infer / typeof / Pick / typeof appRouter все читают из неё. Одним словом: каждый другой тип фичи лучше описать не как копию, а как ____ этой схемы."
+  accepted={["производное", "вывод", "функцию", "проекцию", "деривацию"]}
+  canonical="производное"
+  explanation="Тип каждого слоя — производное от единственной схемы: меняешь схему — и каждый выведенный тип меняется вместе с ней, ведь руками ничего не дублировалось."
+/>
+
+</Explanation>
+
+<KeyTakeaway>
+Типизируйте фичу насквозь, заставив систему типов делать протягивание за вас. **Объявите домен один раз** — схема zod (юниты 00, 02, 05, 08) — и выведите каждый другой тип через `z.infer`, `typeof` и `Pick`/`Omit`, а не переписывая его. **Смоделируйте исходы** дискриминированным объединением и обработайте их **исчерпывающе** стражем `never` (юнит 02), чтобы добавление варианта ломало сборку на дыре. **Валидируйте на границе рантайма** через `parse`, а не `as` (юнит 08) — статическая аннотация на `unknown` из драйвера это обещание, которого рантайм не давал, пока вы не проверили. Добавьте **один маленький дженерик** вроде `Paginated<T>`, чтобы убить дублирование, и остановитесь — глубокая условная/маппированная умность стоит понятности и времени компиляции (юнит 05). Зафиксируйте таблицу маршрутов через **`satisfies`**, чтобы сохранить литеральные типы (юнит 06), защитите границу авторизации **предикатом типа** и **выведите клиент из сервера** (`typeof appRouter`, юнит 08), чтобы форма из схемы дошла до UI без переобъявления. Анти-паттерны — обратное: никакого `as` на границе, никогда не дублируй форму и следи за производительностью вывода.
+</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="09-capstone-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что конкретно означает «один источник истины, затем вывод» для фичи комментариев, и какие прежние механизмы выполняют вывод?", a: "Объяви форму комментария ровно в ОДНОМ артефакте — схеме zod `Comment = z.object({...})` — и сделай каждый другой тип функцией от неё, а не переписывай. `type Comment = z.infer<typeof Comment>` поднимает рантайм-схему в статический тип (юнит 05 infer; юнит 00 тип-vs-значение: одно имя живёт и в пространстве значений, и в пространстве типов). Тип входа создания — `Comment.pick({...})` + `z.infer` (юнит 05 Pick/Omit, юнит 02 объектные типы). Тип клиента приходит из `typeof appRouter` (юнит 08). Одна правка схемы расходится по всем выведенным типам, поэтому нет второго объявления, которое надо держать в синхроне." },
+    { q: "Почему `z.array(Comment).parse(rows)` — правильный ход на границе, а `rows as Comment[]` — неправильный?", a: "Драйвер БД возвращает `unknown[]` — он ничего не знает о нашей форме. Статический тип на этом значении лишь обещание; ничто его не проверило (стирание типов, юнит 00). `as Comment[]` заявляет форму с НУЛЁМ проверок в рантайме, так что первая же строка, где createdAt — строка, рухнет глубоко в коде на `.getTime`. `z.array(Comment).parse(rows)` реально валидирует каждую строку (и приводит createdAt к Date) по тому же источнику истины, бросая ZodError на границе, где можно вернуть 400. Так тип ЗАРАБОТАН, а не заявлен. Рукописный страж `x is Comment` тоже неправильный здесь: TS не проверяет, что тело предиката соответствует, так что багнутый страж — молчаливый `as`, и он кодирует форму третий раз." },
+    { q: "Как форма комментария доходит до клиента без переобъявления, и что такое «в меру умно» для дженерика пагинации?", a: "Сервер экспортирует `type AppRouter = typeof appRouter` — контракт выведен из значения роутера, а не написан руками. Клиент tRPC типизируется ИЗ AppRouter, так что `trpc.comments.list.useQuery(...)` выдаёт `Comment[] | undefined`, выведенный насквозь; переименуйте `body` в `text` в схеме — и React-компонент перестанет компилироваться (юнит 08). Для пагинации `interface Paginated<T> { items: T[]; nextCursor: string | null; total: number }` с `makePage<T>` выводит `T` из аргумента `items` — это минимум, нужный, чтобы убрать дублирование. В меру умно на этом и кончается: глубокие рекурсивные условные/маппированные типы (например условный кодировщик курсора) стоят времени компиляции и понятности (юнит 05) без выгоды, нужной фиче." },
+  ]}
+/>
+
+<Recap lang="ru">
+Это и есть весь трек в одной фиче: объяви один раз, выведи всё (юниты 00, 02, 05), смоделируй исходы дискриминированными объединениями и обработай исчерпывающе (юнит 02), разбирай на границе, чтобы типы были заработаны, а не обещаны (юнит 08), напиши один маленький дженерик и не больше (юниты 03, 04, 05), зафиксируй конфиг через `satisfies` и защити границы предикатами типов (юнит 06) и дай выводу донести контракт до клиента (юнит 08). Если какой-то из этих ходов казался шатким — глубокие юниты там, куда стоит вернуться: **условные типы** и **служебные типы с нуля** (юниты 04, 05) ради машинерии `infer`/`Pick`, **дженерик-функции и ограничения** (юнит 03) ради `Paginated<T>`, **перегрузки и `this`** (юнит 06) ради `satisfies` и стражей, и **zod / tRPC / частые ловушки** (юнит 08) ради границы и провода. Теперь вы знаете не только каждый механизм, но и порядок, в котором к ним тянуться — а именно это и требуется, чтобы выкатывать типизированный софт.
+</Recap>
