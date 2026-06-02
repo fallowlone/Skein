@@ -178,3 +178,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ frontend overview units (7) — 01-state-shape, 03-forms-a11y, 04-tokens, 05-monorepo, 06-code-splitting, 07-build-pipelines, 08-putting-it-together [deep unit 02-data-fetching pending]
 - ✅ frontend/02-data-fetching (6) — 01-fetch-location, 02-waterfalls-and-parallelism, 03-rsc-and-streaming, 04-client-cache-swr, 05-lcp-and-critical-path, 06-senior-internals  [frontend track COMPLETE + enforced]
 - ✅ queues overview units (7) — 02-kafka-partitions, 03-rabbit-exchanges, 04-ordering, 05-outbox, 06-cdc, 07-eventual-ux, 08-putting-it-together [deep unit 01-delivery-guarantees pending]
+- ✅ queues/01-delivery-guarantees (6) — 01-three-guarantees, 02-failure-modes, 03-consumer-dedup, 04-kafka-eos, 05-sqs-dlq, 06-exactly-once-in-production  [queues track COMPLETE + enforced]
