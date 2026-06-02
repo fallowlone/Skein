@@ -4,10 +4,193 @@ lang: en
 track: "js-engine"
 unit: "05-closures-scope"
 order: 2
-title: "Closure memory"
-summary: "Closure memory — stub; author to ready."
-estMin: 12
-status: stub
+title: "What a closure actually retains"
+summary: "A closure is a function plus a pointer to its Context. That Context keeps every context-allocated variable alive — including ones the closure never reads — because sibling closures share one Context. The canonical closure leak, and how to break it."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - closure
+  - shared Context
+  - retainer
+  - closure leak
+  - reachability
+  - shared scope
+deepensInto:
+  - "06-garbage-collection/05-memory-leaks"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "01-scope-chains"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/scope-info
+  - https://web.dev/articles/detached-window-memory-leaks
+  - https://developer.chrome.com/docs/devtools/memory-problems
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your server's heap climbs 40 MB an hour. The profiler points at a tiny event handler — three lines, no allocations, captures nothing big. You read it ten times and it looks innocent. The leak is not in that closure; it is in a *sibling* function created in the same scope, and a 50 MB buffer that the closure has no idea it is holding hostage. Two functions, one Context, one retained world.
+</Hook>
+
+<Crux>A closure retains its whole Context, so a tiny closure can pin a huge variable it never reads — siblings share one Context.</Crux>
+
+<Explanation>
+
+## A closure is a function plus a Context pointer
+
+In V8 a function object (a `JSFunction`) carries two things relevant here: a pointer to its **SharedFunctionInfo** (the code and ScopeInfo, shared by all instances of that function) and a pointer to its **Context** — the runtime scope object it was created in. That second pointer is the closure. "Closure" is not a special kind of object; it is the ordinary fact that the function holds a live reference to its defining Context.
+
+Because the function holds the Context, the Context is **reachable** as long as the function is reachable. And the garbage collector frees only unreachable objects. So the lifetime of every variable stored in that Context is tied to the lifetime of the closure — even variables the closure's body never mentions.
+
+## The trap: siblings share one Context
+
+Here is the part that surprises people. The compiler does **not** create a separate Context per closure. All functions defined in the same scope capture the **same** Context object — the one for that scope. If two inner functions live in one scope and the scope has context-allocated variables `a` and `b`, then *both* functions point at the *same* Context holding both `a` and `b`. Keeping either function alive keeps `a` and `b` alive.
+
+```js
+function makeHandlers() {
+  const big = new Array(5_000_000).fill(0); // ~40 MB, context-allocated
+  const small = () => 42;                    // captures the SAME Context as below
+  const reportSize = () => big.length;       // this one actually uses 'big'
+  return small;                              // we return only 'small'...
+}
+const keep = makeHandlers();
+// 'big' is STILL alive: 'small' shares the Context that holds 'big',
+// because 'reportSize' (defined in the same scope) forced 'big' to be
+// context-allocated. 'small' never reads 'big' — and pins it anyway.
+```
+
+We returned `small`, a function that computes `42`. Yet `big` cannot be collected. Why? `reportSize` references `big`, so the compiler marks `big` context-allocated and places it in the scope's one Context. `small` captures that very Context. As long as `keep` (the returned `small`) is reachable, its Context is reachable, and `big` inside it is reachable. The 40 MB stays.
+
+<FlowDiagram
+  label="A returned small closure points at the single shared Context for its scope; that Context holds a slot for a large array, so the array stays reachable through the closure even though the closure never reads it."
+  hue="var(--accent)"
+  caption="The shared-Context retention path. GC walks reachability: root → keep (small) → shared Context → big array. Nothing references big directly anymore, but the path through the Context keeps it alive."
+  nodes={[
+    { id: "root", label: "Root", sub: "keep variable", col: 0, row: 0 },
+    { id: "small", label: "small()", sub: "returned closure", col: 1, row: 0 },
+    { id: "ctx", label: "Shared Context", sub: "scope of makeHandlers", col: 2, row: 0 },
+    { id: "big", label: "big array", sub: "~40 MB", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "root", to: "small", label: "reachable" },
+    { from: "small", to: "ctx", label: "closure ptr" },
+    { from: "ctx", to: "big", label: "slot holds" },
+  ]}
+/>
+
+## Reading the retainer in DevTools
+
+This is exactly what a heap snapshot shows. Take a snapshot in Chrome DevTools (or `node --inspect`), find the `big` array, and look at its **Retainers** path. You will see it retained by a `system / Context` object, which is retained by the closure function. The Context is the smoking gun: when an object's retainer is a Context you didn't expect, a closure is holding the scope.
+
+<NumbersCard
+  title="Closure retention, in numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Contexts per scope (not per closure)", value: "1" },
+    { label: "What a closure pins", value: "the whole Context" },
+    { label: "Variables a closure can pin it never reads", value: "all captured siblings" },
+    { label: "Retainer chain shown in DevTools", value: "obj → Context → fn" },
+    { label: "JSFunction shares across instances", value: "SharedFunctionInfo" },
+    { label: "Cost of one stray long-lived handler", value: "entire scope's heap" },
+  ]}
+/>
+
+## Three ways to break the retention
+
+The fix is always to sever the path `closure → Context → big`:
+
+1. **Null it out.** After the last real use, assign `big = null`. The Context slot now holds `null`; the 40 MB becomes unreachable and collectable, even though the Context (and `small`) live on.
+2. **Don't context-allocate it.** Move `big` into a narrower scope (e.g. an IIFE or a separate function) so it is *not* in the Context that the long-lived closure captures. If no surviving closure captures `big`, it dies with its frame.
+3. **Separate the scopes.** Create the long-lived closure in a scope that simply does not contain the big variable. Build `small` in one function and `big` in another; they then capture different Contexts.
+
+```js
+function makeHandlers() {
+  const small = () => 42;            // its own scope, no big in sight
+  (function setup() {
+    const big = new Array(5_000_000).fill(0);
+    process(big);                    // used here, captured by nothing long-lived
+  })();                              // 'big' dies when setup() returns
+  return small;                      // retains only its (tiny) Context
+}
+```
+
+<Misconception id="mc-closure-uses">
+  <p><strong>"A closure only retains the variables it actually uses."</strong> No — it retains the whole Context for its scope. Since every function in a scope shares one Context, a closure pins all context-allocated siblings, including a buffer it never references. Null it or scope it out.</p>
+</Misconception>
+
+<Quiz
+  id="q-closure-shared-ctx"
+  lessonSlug="02-closure-memory"
+  lang="en"
+  question="Two arrows are defined in one scope; one reads a 40 MB array, the other reads nothing big. You return only the small one and drop the other. What happens to the array?"
+  choices={[
+    { label: "It stays alive — the returned closure shares the one Context that holds the array", correct: true },
+    { label: "It is collected, because the closure that read it was dropped", misconception: "The closure that read it being dropped is irrelevant: the surviving closure shares the same Context, and that Context still holds a slot pointing at the array." },
+    { label: "It is collected, because the small closure does not reference the array", misconception: "Reachability is about the Context, not the closure's source text. The shared Context retains the array regardless of which closure reads it." },
+    { label: "V8 gives each closure its own Context, so only used variables survive", misconception: "V8 allocates one Context per scope, shared by all closures in it — not one per closure." },
+  ]}
+/>
+
+<Quiz
+  id="q-closure-fix"
+  lessonSlug="02-closure-memory"
+  lang="en"
+  question="Which change reliably lets the GC reclaim the big array while keeping the small long-lived closure?"
+  choices={[
+    { label: "Assign `big = null` after its last real use, or move `big` into a scope no surviving closure captures", correct: true },
+    { label: "Call the small closure more often so V8 optimises the scope away", misconception: "Optimisation tiers do not remove a live retention path; calling it more just runs the same retaining closure more." },
+    { label: "Wrap the small closure in another closure", misconception: "Adding nesting does not sever the path to big; it can extend the retained scope chain instead." },
+    { label: "Use `var` instead of `const` for big", misconception: "The declaration keyword does not change capture; if a sibling references big, it is context-allocated and retained either way." },
+  ]}
+/>
+
+<DragOrder
+  id="do-retainer-path"
+  pieceSlug="02-closure-memory"
+  lang="en"
+  prompt="Order the reachability path the GC walks that keeps the big array alive through a returned small closure."
+  items={[
+    "A GC root references the returned closure (e.g. a module-level variable)",
+    "The closure holds a pointer to its defining Context",
+    "That shared Context holds a slot pointing at the big array",
+    "GC marks the big array reachable and does not free it",
+  ]}
+/>
+
+<Inset kind="mistake" lang="en">
+A subtle real-world version: a DOM event handler closes over a scope that also contains a reference to a large detached subtree or a previous render's data. The handler is tiny and "obviously fine", but it is registered on a long-lived element, so its Context — and everything context-allocated in that scope — outlives every render. The detached-DOM leak class is very often a shared-Context leak wearing a DOM costume.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A closure is a function plus a pointer to its defining Context, and that Context is one object shared by every closure in the scope. So a closure retains all context-allocated siblings — even a giant buffer it never reads. Break the path by nulling the variable, scoping it out, or separating the closures.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="closure-memory-retrieval"
+  lang="en"
+  questions={[
+    { q: "Precisely, what does a closure retain, and why is 'only what it uses' wrong?", a: "A closure is a JSFunction that holds a pointer to the Context of the scope it was created in. The garbage collector frees only unreachable objects, so while the closure is reachable its Context is reachable, and every context-allocated variable stored in that Context is reachable too. The compiler allocates one Context per scope, shared by all functions defined there — not one per closure — so a closure pins every captured sibling variable, including ones its own body never references. 'Only what it uses' is wrong because reachability is decided by the shared Context, not by which names appear in the closure's source." },
+    { q: "Walk through the canonical shared-Context leak.", a: "In one function scope you create a small returned closure (say, a handler) and also define, in the same scope, a sibling function that references a large array. Because the sibling references it, the array is context-allocated into the scope's single Context. The small closure captures that same Context. When you return only the small closure and keep it long-lived, its Context stays reachable, and the array inside the Context stays reachable — so the GC cannot collect it even though nothing reads it anymore. In a DevTools heap snapshot the array's Retainers path shows it held by a system / Context held by the closure." },
+    { q: "What are the three reliable fixes, and what does each do mechanically?", a: "First, null it out: after the last use set the variable to null, so the Context slot no longer points at the big object and the GC can reclaim it while the Context and closure live on. Second, do not context-allocate it: move the big variable into a narrower scope (an IIFE or separate function) that no surviving closure captures, so it dies with its own frame. Third, separate the scopes: define the long-lived closure in a scope that simply does not contain the big variable, so the closure captures a Context that has no slot for it. All three sever the reachability path closure → Context → big object." },
+  ]}
+/>
+
+<Recap lang="en">
+A closure in V8 is nothing exotic: it is a JSFunction holding a pointer to the Context of the scope where it was created, alongside its shared SharedFunctionInfo. Because the garbage collector keeps reachable objects, the closure keeps its Context alive, and the Context keeps every context-allocated variable in that scope alive. The decisive and surprising fact is that the compiler allocates one Context per scope, shared by all functions defined in it — so two sibling closures share a single Context, and a tiny returned closure pins every variable any sibling forced into that Context, including a multi-megabyte buffer it never reads. This is the canonical closure leak, and a heap snapshot exposes it as an object retained through a system / Context that is retained by the closure. The fixes all cut the path closure → Context → big object: null the variable after use, move it into a scope no surviving closure captures, or build the long-lived closure in a separate scope. The same pattern underlies many detached-DOM and per-request handler leaks — which is why this connects directly to the memory-leaks lesson in the garbage-collection unit.
+</Recap>
