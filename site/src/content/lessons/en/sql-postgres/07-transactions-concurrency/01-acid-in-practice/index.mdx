@@ -5,9 +5,155 @@ track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 1
 title: "ACID in practice"
-summary: "ACID in practice — stub; author to ready."
-estMin: 12
-status: stub
+summary: "A transaction is a fence: BEGIN…COMMIT makes a group of writes all-or-nothing, and SAVEPOINT carves rollback points inside it. But ACID is not concurrency control — by default it does not serialize."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - transactions
+  - atomicity
+  - savepoint
+  - rollback
+  - durability
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/tutorial-transactions.html
+  - https://www.postgresql.org/docs/current/sql-savepoint.html
+  - https://www.postgresql.org/docs/current/transaction-iso.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A payment service debits one account and credits another in two `UPDATE` statements. One night the process crashes between them: 1,200 customers were debited but never credited, and the money simply vanished from the ledger. The fix was three words the original author left out — `BEGIN` and `COMMIT`. A transaction would have made both writes land together or not at all. ACID is not academic; it is the difference between a ledger and a rumour.
+</Hook>
+
+<Crux>A transaction makes a group of writes all-or-nothing and durable on commit — but by itself it does not serialize concurrent transactions.</Crux>
+
+<Explanation>
+
+## What each letter actually buys you
+
+ACID is four guarantees, and engineers conflate the one they don't get with the ones they do.
+
+- **Atomicity** — every statement between `BEGIN` and `COMMIT` lands together, or none does. Any error, or a `ROLLBACK`, throws the whole batch away. The half-finished state is never visible and never persisted.
+- **Consistency** — a committed transaction leaves the database satisfying every constraint (foreign keys, `CHECK`, unique, `NOT NULL`). If a statement would violate one, the transaction errors and you must roll back. Postgres enforces the rules; *your* invariants ("balance never goes negative") you encode as constraints or they aren't guaranteed.
+- **Isolation** — concurrent transactions don't see each other's uncommitted work. Crucially, isolation has *levels*: the default, `READ COMMITTED`, is a weak promise, not full serializability. This is the letter people assume gives them more than it does.
+- **Durability** — once `COMMIT` returns, the change survives a crash or power loss. Postgres guarantees this by flushing the write-ahead log (WAL) to disk before acknowledging the commit.
+
+```sql
+-- Atomic money transfer: both rows move, or neither does.
+BEGIN;
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+UPDATE accounts SET balance = balance + 100 WHERE id = 2;
+COMMIT;   -- only now is the transfer durable and visible to others
+```
+
+If the second `UPDATE` errors (say account 2 was deleted), the transaction enters an aborted state; the first `UPDATE` is discarded on `ROLLBACK`. No money leaks.
+
+## BEGIN, COMMIT, ROLLBACK, and the implicit transaction
+
+Every statement you run is *already* in a transaction. Outside an explicit `BEGIN`, Postgres wraps each single statement in its own transaction that commits automatically (autocommit). That is why one `UPDATE accounts SET balance = balance * 1.05` is itself atomic — all matched rows change or none do, even without `BEGIN`.
+
+You write `BEGIN` only when you need **multiple** statements to be one atomic unit. After an error inside a transaction block, Postgres rejects every further statement with `current transaction is aborted` until you `ROLLBACK` (or `COMMIT`, which Postgres turns into a rollback). There is no "ignore the error and keep going" — unless you use a savepoint.
+
+<SequenceDiagram
+  label="A client opens a transaction, runs two debits, hits an error on the second, and rolls the whole unit back so the first debit is discarded too."
+  hue="var(--d-data)"
+  actors={["Client", "Postgres"]}
+  messages={[
+    { from: "Client", to: "Postgres", label: "BEGIN" },
+    { from: "Client", to: "Postgres", label: "UPDATE accounts (id=1)" },
+    { from: "Postgres", to: "Client", label: "ok" },
+    { from: "Client", to: "Postgres", label: "UPDATE id=2 -> ERROR" },
+    { from: "Postgres", to: "Client", label: "txn aborted" },
+    { from: "Client", to: "Postgres", label: "ROLLBACK" },
+    { from: "Postgres", to: "Client", label: "all discarded" },
+  ]}
+  caption="Atomicity in motion: once any statement errors, the transaction is poisoned. ROLLBACK throws away everything since BEGIN — the id=1 debit included — so the books stay balanced."
+/>
+
+## SAVEPOINT: partial rollback inside one transaction
+
+A `SAVEPOINT` is a named marker you can roll back to without abandoning the whole transaction. It lets one transaction tolerate a recoverable error in part of its work.
+
+```sql
+BEGIN;
+INSERT INTO jobs (id, status) VALUES (501, 'queued');
+
+SAVEPOINT try_dedupe;
+-- this might violate a unique index if the job already exists:
+INSERT INTO jobs (id, status) VALUES (501, 'queued');
+-- it errors; instead of losing the whole transaction, undo just to the savepoint:
+ROLLBACK TO SAVEPOINT try_dedupe;
+
+-- the first INSERT is still alive; continue and commit it:
+COMMIT;
+```
+
+This is exactly what most drivers do under the hood for "nested transactions" — there are no real nested transactions in Postgres, only savepoints. The cost is real, though: each savepoint consumes a subtransaction ID, and a transaction that opens tens of thousands of them can trigger the notorious **subtransaction (`subxid`) overflow** — once a backend exceeds 64 live subtransactions, others must consult `pg_subtrans` on disk, and read latency on a busy primary can jump from microseconds to milliseconds. Savepoints are a scalpel, not a loop body.
+
+<Inset kind="mistake" lang="en">
+The most common ACID misread: "I wrapped it in a transaction, so concurrent updates are safe." They aren't. Two transfers that `SELECT` the same balance under the default `READ COMMITTED` level can both read 500, both subtract 100, and both write 400 — a **lost update** — even though each is perfectly atomic and durable. Atomicity is about *your statements as a unit*; it says nothing about *interleaving with other sessions*. Serializing concurrent access is the job of isolation levels and explicit locks, the next lessons in this unit.
+</Inset>
+
+## What a transaction does NOT give you
+
+A transaction by default is **not** a mutex and **not** serializable. Under `READ COMMITTED` (Postgres's default) each statement sees a fresh snapshot taken at statement start, so two concurrent read-modify-write sequences can race. You get atomicity and durability for free; you do **not** get protection from lost updates, write skew, or phantom rows unless you raise the isolation level or take explicit row locks. Knowing this boundary is the whole reason the rest of this unit exists.
+
+<Quiz
+  id="01-acid-in-practice-quiz-1"
+  lessonSlug="01-acid-in-practice"
+  lang="en"
+  question="Two concurrent sessions each run, under the default isolation level: BEGIN; UPDATE accounts SET balance = balance - 100 WHERE id = 1; COMMIT. The starting balance is 500. What is guaranteed?"
+  choices={[
+    { label: "Both transactions are atomic and durable, and Postgres serializes the two UPDATEs on the same row via a row lock, so the result is a correct 300", correct: true },
+    { label: "One transaction silently overwrites the other and the balance ends at 400 — a lost update", misconception: "A blind UPDATE that reads and writes the same row in one statement takes a row lock; the second waits for the first to commit, re-reads, and subtracts again. The lost-update trap appears with a separate SELECT-then-UPDATE, not a single self-referential UPDATE." },
+    { label: "The second transaction errors with a serialization failure", misconception: "Serialization failures happen only under REPEATABLE READ or SERIALIZABLE. READ COMMITTED resolves the conflict by blocking and re-reading, not by aborting." },
+    { label: "Nothing is guaranteed; transactions don't affect concurrent writes at all", misconception: "Atomicity and durability are always guaranteed, and a single UPDATE on one row is serialized by the row lock. The unguaranteed part is multi-statement read-modify-write, not this case." },
+  ]}
+/>
+
+<DragOrder
+  id="01-acid-in-practice-drag-1"
+  lessonSlug="01-acid-in-practice"
+  lang="en"
+  prompt="Order the lifecycle of an atomic two-step transfer that recovers from a duplicate-insert error using a savepoint:"
+  items={[
+    { id: "a", label: "BEGIN — open an explicit transaction so the following statements are one unit" },
+    { id: "b", label: "Run the first write (debit account 1)" },
+    { id: "c", label: "SAVEPOINT before the write that might fail" },
+    { id: "d", label: "Attempt the risky write; on error, ROLLBACK TO SAVEPOINT to undo only that step" },
+    { id: "e", label: "COMMIT — make the surviving writes durable and visible" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]} />
+
+</Explanation>
+
+<KeyTakeaway>A transaction wraps statements into one atomic, durable unit: `BEGIN`/`COMMIT` make them all-or-nothing, `ROLLBACK` discards them, and `SAVEPOINT` gives you partial rollback inside one transaction. But ACID's "I" is leveled — the default `READ COMMITTED` does not serialize concurrent transactions, so atomicity alone never protects you from lost updates. That gap is what locks and higher isolation levels close.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-acid-in-practice-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does atomicity guarantee, and what is the smallest unit it already applies to without writing BEGIN?", a: "Atomicity guarantees that every statement between BEGIN and COMMIT lands together or not at all; any error or ROLLBACK discards the whole batch. It already applies to a single statement: in autocommit, each lone statement is its own transaction, so one UPDATE matching a million rows changes all or none even without an explicit BEGIN. You write BEGIN only to make multiple statements one unit." },
+    { q: "How is SAVEPOINT different from ROLLBACK, and what is its production cost at scale?", a: "ROLLBACK aborts the entire transaction back to BEGIN. ROLLBACK TO SAVEPOINT undoes only the work since a named savepoint, keeping the transaction alive so you can continue and still COMMIT. The cost: each savepoint consumes a subtransaction ID; once a backend exceeds 64 live subtransactions it overflows to pg_subtrans on disk, and on a busy primary that can turn microsecond reads into millisecond reads (subxid overflow). Use savepoints sparingly, not in a loop." },
+    { q: "Why does wrapping read-modify-write logic in a transaction NOT prevent a lost update by default?", a: "Because the default isolation level, READ COMMITTED, gives each statement a fresh snapshot at statement start and does not serialize separate transactions. Two sessions can SELECT the same balance of 500, each subtract 100, and each UPDATE to 400 — both atomic, both durable, but one update is lost. Atomicity bundles your own statements; it says nothing about interleaving with other sessions. Preventing the lost update needs an explicit row lock (SELECT FOR UPDATE) or a higher isolation level." },
+  ]}
+/>
+
+<Recap lang="en">
+ACID is four distinct promises and seniors keep them separate. **Atomicity**: `BEGIN`…`COMMIT` makes a group of writes all-or-nothing; any error poisons the transaction until you `ROLLBACK`, and even a single autocommit statement is atomic. **Consistency**: a commit must leave every constraint satisfied — Postgres enforces the declared rules, you encode the business invariants as constraints. **Isolation**: concurrent transactions hide their uncommitted work, but isolation is *leveled*, and the default `READ COMMITTED` is a weak promise that does not serialize. **Durability**: once `COMMIT` returns, the WAL is on disk and the change survives a crash. `SAVEPOINT` adds partial rollback inside one transaction, with a real subxid cost at scale. The one thing a transaction does **not** give you by default is protection from concurrent read-modify-write races — that needs the isolation levels and explicit locks you'll meet next, including the lost-update problem that `SELECT FOR UPDATE` exists to solve.
+</Recap>

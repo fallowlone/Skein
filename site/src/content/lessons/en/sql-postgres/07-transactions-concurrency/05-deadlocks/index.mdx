@@ -5,9 +5,168 @@ track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 5
 title: "Deadlocks"
-summary: "Deadlocks — stub; author to ready."
-estMin: 12
-status: stub
+summary: "A deadlock is a lock cycle: two transactions each hold a row the other needs. Postgres detects the cycle, kills a victim with error 40P01, and you retry — but consistent lock ordering prevents it entirely."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - deadlocks
+  - lock-ordering
+  - deadlock-timeout
+  - error-40P01
+  - retry
+prereqs:
+  - 04-advisory-locks
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/runtime-config-locks.html
+  - https://www.interdb.jp/pg/pgsql05.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A payments service deadlocked roughly forty times an hour at peak — each one a transaction killed mid-flight with `ERROR: deadlock detected`. The transfers were correct in isolation; the bug was that `transfer(A, B)` locked account A then B, while `transfer(B, A)` locked B then A. Whenever the two ran at once they grabbed one row each and then waited forever for the other's. Postgres broke the standoff by shooting one transaction. The permanent fix changed one line: always lock the lower account id first. Zero deadlocks since.
+</Hook>
+
+<Crux>A deadlock is a lock cycle: two transactions each hold what the other wants. Postgres kills one victim; you retry it.</Crux>
+
+<Explanation>
+
+## Anatomy of a deadlock
+
+A deadlock needs exactly one ingredient: two transactions that acquire the same locks in **opposite order**. Each grabs its first lock, then asks for the second — which the other already holds — and neither will release until it gets what it's blocked on. That's a cycle in the wait-for graph, and no amount of waiting resolves it.
+
+```sql
+-- Transaction 1                          -- Transaction 2
+BEGIN;                                     BEGIN;
+UPDATE accounts SET balance = balance - 100
+  WHERE id = 1;       -- locks row 1
+                                           UPDATE accounts SET balance = balance - 50
+                                             WHERE id = 2;     -- locks row 2
+UPDATE accounts SET balance = balance + 100
+  WHERE id = 2;       -- WAITS for row 2 (held by Tx2)
+                                           UPDATE accounts SET balance = balance + 50
+                                             WHERE id = 1;     -- WAITS for row 1 (held by Tx1)
+-- now both wait on each other forever -> deadlock
+```
+
+<SequenceDiagram
+  label="Transaction one locks row 1 and transaction two locks row 2, then each asks for the row the other holds, forming a cycle that Postgres detects and breaks by aborting one victim."
+  hue="var(--d-data)"
+  actors={["Tx 1", "Postgres", "Tx 2"]}
+  messages={[
+    { from: "Tx 1", to: "Postgres", label: "lock row 1 (ok)" },
+    { from: "Tx 2", to: "Postgres", label: "lock row 2 (ok)" },
+    { from: "Tx 1", to: "Postgres", label: "want row 2 -> wait" },
+    { from: "Tx 2", to: "Postgres", label: "want row 1 -> wait" },
+    { from: "Postgres", to: "Tx 2", label: "40P01: deadlock, abort" },
+    { from: "Tx 1", to: "Postgres", label: "row 1 frees -> proceeds" },
+  ]}
+  caption="The wait-for graph has a cycle: Tx1 waits on Tx2 and Tx2 waits on Tx1. Postgres's deadlock detector finds it and aborts one transaction (the victim) so the other can finish. Nothing hangs forever."
+/>
+
+## How Postgres detects and resolves it
+
+Postgres does not check for deadlocks on every lock wait — that would be expensive. Instead, when a transaction blocks on a lock, it waits `deadlock_timeout` (default **1 second**) and only then runs the deadlock detector, which walks the wait-for graph looking for a cycle. If it finds one, it picks a **victim** and aborts it with:
+
+```
+ERROR:  deadlock detected
+DETAIL:  Process 1234 waits for ShareLock on transaction 5678; blocked by process 4321.
+         Process 4321 waits for ShareLock on transaction 8765; blocked by process 1234.
+HINT:    See server log for query details.
+SQLSTATE: 40P01
+```
+
+The victim's transaction is rolled back entirely; the survivor proceeds. The 1-second `deadlock_timeout` means a genuine deadlock costs at least ~1s of latency before resolution, so frequent deadlocks are both a correctness smell and a latency problem. Lowering the timeout makes detection faster but adds CPU on every ordinary lock wait — don't tune it before fixing the ordering.
+
+## Prevention beats detection
+
+Detection is a safety net, not a strategy. The cure is **consistent lock ordering**: if every transaction that touches multiple rows always locks them in the same global order, a cycle is impossible.
+
+```sql
+-- Deadlock-proof transfer: lock both rows in one statement, lowest id first.
+BEGIN;
+SELECT id FROM accounts
+WHERE id IN (:from_id, :to_id)
+ORDER BY id           -- the magic: deterministic order, both directions
+FOR UPDATE;
+UPDATE accounts SET balance = balance - :amt WHERE id = :from_id;
+UPDATE accounts SET balance = balance + :amt WHERE id = :to_id;
+COMMIT;
+```
+
+Because `transfer(1, 2)` and `transfer(2, 1)` now both lock id 1 before id 2, one fully acquires before the other starts — no cycle. The other levers, in priority order: keep transactions **short** (less time holding locks = smaller collision window), touch rows in a stable order app-wide, and only then consider `NOWAIT` to fail fast instead of waiting out the timeout.
+
+<Inset kind="edgecase" lang="en">
+Deadlocks aren't only your explicit `UPDATE`s. Foreign keys take locks too: inserting a child row locks the parent with `FOR KEY SHARE`, and two transactions inserting children of two parents while also updating those parents can deadlock in non-obvious ways. Index and unique-constraint contention can also produce cycles when concurrent inserts touch the same index pages or conflict on the same key. The `jobs` queue from the previous lesson is a worked example: workers using `FOR UPDATE SKIP LOCKED` never deadlock on each other because nobody waits — they skip — which is one more reason `SKIP LOCKED` is the right queue primitive. When you do hit a deadlock, read the server log's `DETAIL`: it names the two processes and the locks in the cycle, which is usually enough to spot the ordering inversion. Always make the victim's caller **retry** the whole transaction with capped backoff; a retried transfer re-locks in the correct order and succeeds.
+</Inset>
+
+<Quiz
+  id="05-deadlocks-quiz-1"
+  lessonSlug="05-deadlocks"
+  lang="en"
+  question="Two transfer transactions, transfer(1,2) and transfer(2,1), run concurrently and each locks its source account first. What happens and what is the durable fix?"
+  choices={[
+    { label: "They deadlock (each holds one row, waits for the other); Postgres aborts one with 40P01. The fix is consistent lock ordering — always lock the lower id first", correct: true },
+    { label: "They block briefly then both succeed; no fix needed", misconception: "There is no order in which both can proceed — each holds the row the other needs, a true cycle. They don't both succeed; one is aborted with 40P01." },
+    { label: "Postgres serializes them automatically so deadlocks can't happen with row locks", misconception: "Postgres does not reorder your lock acquisitions; opposite-order locking on the same rows is exactly what creates the cycle. You must impose the consistent order yourself." },
+    { label: "The second transaction waits forever until you kill it manually", misconception: "Postgres detects the cycle after deadlock_timeout (~1s) and aborts a victim automatically; it does not hang indefinitely." },
+  ]}
+/>
+
+<Quiz
+  id="05-deadlocks-quiz-2"
+  lessonSlug="05-deadlocks"
+  lang="en"
+  question="Your app catches SQLSTATE 40P01 (deadlock). What is the correct response in application code?"
+  choices={[
+    { label: "Retry the entire transaction (with capped exponential backoff); on retry it re-acquires locks in order and typically succeeds", correct: true },
+    { label: "Lower deadlock_timeout to 0 so deadlocks never happen", misconception: "deadlock_timeout controls detection latency, not whether deadlocks occur, and 0 isn't valid; lowering it just burns CPU on every lock wait. It doesn't prevent the cycle." },
+    { label: "Ignore the error; the data is fine because the survivor committed", misconception: "The victim's transaction was rolled back entirely — its work did NOT happen. Ignoring 40P01 silently drops that unit of work; you must retry it." },
+    { label: "Commit the victim transaction again from where it failed", misconception: "A deadlock aborts the whole transaction; there's no partial state to resume from. You must re-run it from BEGIN, not resume mid-way." },
+  ]}
+/>
+
+<DragOrder
+  id="05-deadlocks-drag-1"
+  lessonSlug="05-deadlocks"
+  lang="en"
+  prompt="Order the lifecycle of a deadlock from formation to resolution to permanent fix:"
+  items={[
+    { id: "a", label: "Two transactions lock the same rows in opposite order, each holding one and wanting the other" },
+    { id: "b", label: "A blocked transaction waits out deadlock_timeout (default ~1s)" },
+    { id: "c", label: "The deadlock detector finds the cycle and aborts one victim with SQLSTATE 40P01" },
+    { id: "d", label: "The victim's caller retries the whole transaction with backoff" },
+    { id: "e", label: "You change the code to lock rows in a consistent order (e.g. ORDER BY id), so the cycle can never form again" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]} />
+
+</Explanation>
+
+<KeyTakeaway>A deadlock is a cycle in the wait-for graph: two transactions each hold a lock the other needs, so neither can proceed. Postgres waits `deadlock_timeout` (~1s), runs its detector, and aborts one victim with `ERROR: deadlock detected` (SQLSTATE 40P01); the survivor finishes. The victim's work is fully rolled back, so your app **must** retry the whole transaction with capped backoff. The real fix is prevention: lock multiple rows in a consistent global order (e.g. lowest id first) and keep transactions short, so the cycle can never form.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-deadlocks-retrieval"
+  lang="en"
+  questions={[
+    { q: "What exactly is a deadlock, and what single condition causes the classic two-row case?", a: "A deadlock is a cycle in the wait-for graph: transaction A holds a lock B needs while B holds a lock A needs, so neither can advance. The classic two-row case is caused by inconsistent lock ordering — two transactions acquiring the same two rows in opposite order (Tx1 locks row 1 then 2, Tx2 locks row 2 then 1). Each grabs its first row, then blocks forever on the second, forming the cycle." },
+    { q: "How does Postgres detect and resolve a deadlock, and what is the cost?", a: "When a transaction blocks on a lock, Postgres waits deadlock_timeout (default 1 second) before running the deadlock detector, which walks the wait-for graph for a cycle. If it finds one it aborts a victim transaction with ERROR: deadlock detected (SQLSTATE 40P01) and lets the survivor proceed. The cost is the ~1s of latency every genuine deadlock incurs before resolution, plus the fully rolled-back work of the victim — which is why frequent deadlocks are both a latency and a correctness problem." },
+    { q: "What is the durable fix for deadlocks and what must application code still do?", a: "The durable fix is prevention by consistent lock ordering: always lock multiple rows in the same global order (e.g. SELECT ... WHERE id IN (a,b) ORDER BY id FOR UPDATE so both directions lock the lower id first), and keep transactions short to shrink the collision window. Even so, application code must catch SQLSTATE 40P01 and retry the entire transaction with capped exponential backoff, because the victim's work was rolled back; the retry re-acquires locks in order and normally succeeds." },
+  ]}
+/>
+
+<Recap lang="en">
+A deadlock is the one concurrency failure Postgres resolves *for* you — by killing a transaction. It forms when two transactions acquire the same locks in opposite order: each holds one resource and blocks forever on the other, a cycle in the wait-for graph. Postgres doesn't poll for this on every wait; a blocked transaction sits for `deadlock_timeout` (default ~1 second) before the detector runs, finds the cycle, and aborts a **victim** with `ERROR: deadlock detected`, SQLSTATE **40P01**, rolling its work back entirely while the survivor commits. Because the victim's transaction vanished, your application must **retry** it with capped backoff. But retrying is the band-aid; the cure is prevention. Lock multiple rows in a consistent global order — the canonical trick is `ORDER BY id ... FOR UPDATE` so every direction of a transfer locks the lower id first — keep transactions short to minimize the window, and remember that foreign-key and index contention can deadlock too. The `FOR UPDATE SKIP LOCKED` queue from the previous lesson sidesteps deadlocks by never waiting. Read the log's `DETAIL` to find the inverted ordering, fix the order once, and the deadlocks stop.
+</Recap>

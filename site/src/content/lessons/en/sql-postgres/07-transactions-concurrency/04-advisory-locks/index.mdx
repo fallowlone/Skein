@@ -5,9 +5,151 @@ track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 4
 title: "Advisory locks"
-summary: "Advisory locks — stub; author to ready."
-estMin: 12
-status: stub
+summary: "Advisory locks are application-defined mutexes keyed by an integer, not tied to any row. They are perfect for leader election and cron dedup — and session-level ones silently leak through a transaction pooler."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - advisory-locks
+  - pg-advisory-lock
+  - xact-advisory-lock
+  - leader-election
+  - connection-pooling
+prereqs:
+  - 03-select-for-update
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/functions-admin.html
+  - https://www.interdb.jp/pg/pgsql05.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A nightly billing cron ran on three app servers for redundancy. One night all three fired at the same minute and every customer was charged three times. The team's first fix — a `SELECT FOR UPDATE` on a "lock row" — worked until they moved to PgBouncer in transaction mode, when the lock silently stopped holding across the job's queries. The real tool was one they'd never used: a Postgres **advisory lock**, an app-level mutex that isn't tied to any table at all. But advisory locks have a trap of their own that bit them next.
+</Hook>
+
+<Crux>Advisory locks are app-defined mutexes keyed by a number, not tied to rows — and session-level ones leak through a connection pool.</Crux>
+
+<Explanation>
+
+## A mutex that isn't a row
+
+Every lock so far protected a *row*. An **advisory lock** protects nothing in particular — it's a named latch the application agrees on, keyed by a 64-bit integer (or two 32-bit ints) that *you* assign meaning to. Postgres just guarantees at most one holder of a given key at a time, cluster-wide. It's a distributed mutex you get for free with the database you already have.
+
+```sql
+-- Try to become the single worker for "nightly-billing" (key 42).
+SELECT pg_try_advisory_lock(42);
+-- returns true  -> you hold it, do the work
+-- returns false -> someone else holds it, skip silently
+SELECT pg_advisory_unlock(42);   -- release when done
+```
+
+`pg_advisory_lock(key)` **blocks** until it can acquire; `pg_try_advisory_lock(key)` returns immediately with `true`/`false`. The non-blocking `try_` form is what you want for "only one of us should do this — the rest just skip."
+
+## Session-scoped vs transaction-scoped
+
+This is the distinction that decides whether your lock works in production.
+
+- **Session-level** (`pg_advisory_lock`, `pg_try_advisory_lock`) — the lock is held until you explicitly call `pg_advisory_unlock`, or the **session** (database connection) ends. It does **not** release at `COMMIT`.
+- **Transaction-level** (`pg_advisory_xact_lock`, `pg_try_advisory_xact_lock`) — the lock is automatically released at the end of the transaction (`COMMIT` or `ROLLBACK`). There is no unlock function and no way to leak it.
+
+```sql
+-- Transaction-scoped: released automatically at COMMIT/ROLLBACK. Pooler-safe.
+BEGIN;
+SELECT pg_try_advisory_xact_lock(42);
+-- ... do the guarded work ...
+COMMIT;   -- lock gone, guaranteed, even if your code forgot to unlock
+```
+
+<SequenceDiagram
+  label="Three cron instances each call pg_try_advisory_lock on the same key; only the first gets true and runs the billing job, the other two get false and skip, so customers are charged once."
+  hue="var(--d-data)"
+  actors={["Cron A", "Postgres", "Cron B/C"]}
+  messages={[
+    { from: "Cron A", to: "Postgres", label: "pg_try_advisory_lock(42)" },
+    { from: "Postgres", to: "Cron A", label: "true -> run billing" },
+    { from: "Cron B/C", to: "Postgres", label: "pg_try_advisory_lock(42)" },
+    { from: "Postgres", to: "Cron B/C", label: "false -> skip" },
+    { from: "Cron A", to: "Postgres", label: "unlock / COMMIT" },
+    { from: "Postgres", to: "Cron A", label: "released" },
+  ]}
+  caption="One key, one holder. The losers don't queue or error — they get false and bow out. This is the dedup pattern: every replica tries, exactly one wins, the job runs once across the fleet."
+/>
+
+## Where advisory locks shine
+
+- **Leader election / cron dedup** — N replicas each `pg_try_advisory_lock(key)`; the one that gets `true` runs the singleton task, the rest skip. No ZooKeeper, no Redis.
+- **App-level mutex over a logical resource** — serialize a code path keyed by something that isn't a single row: "rebuild tenant 99's search index" → `pg_advisory_xact_lock(99)`.
+- **Serializing a hot path** without locking real data rows, avoiding bloat and FK contention.
+
+Versus row locks: a row lock requires the row to exist and protects exactly that tuple; an advisory lock protects an abstract key that may correspond to no row, a future row, or a whole logical operation. Use row locks for data you're editing; advisory locks for coordination.
+
+<Inset kind="mistake" lang="en">
+The pooler trap, in full. Session-level advisory locks are bound to the **database connection**, not your application's logical request. Under a transaction-mode pooler (PgBouncer `pool_mode = transaction`, RDS Proxy, Supabase pooler), your app borrows a backend connection per *transaction* and returns it to the pool afterward — so a session lock you took in one transaction may be held on a connection that another request now reuses, or never released because "your" session was handed off. You get phantom contention and locks that outlive their owner. Two rules: (1) prefer `pg_advisory_xact_lock` so the lock dies with the transaction and can't be stranded on a pooled connection; (2) if you must use a session lock, don't run behind a transaction-mode pooler for that code path. Also beware **key-space collisions**: two unrelated features both hashing a name to the same 64-bit key will block each other for no visible reason — namespace your keys (e.g. use the two-int form with a per-feature classid).
+</Inset>
+
+<Quiz
+  id="04-advisory-locks-quiz-1"
+  lessonSlug="04-advisory-locks"
+  lang="en"
+  question="Your service runs behind PgBouncer in transaction mode. Which advisory lock call is safe, and why?"
+  choices={[
+    { label: "pg_advisory_xact_lock — it releases automatically at COMMIT/ROLLBACK, so it can't be stranded on a connection the pooler hands to another request", correct: true },
+    { label: "pg_advisory_lock — session locks are more reliable", misconception: "Session locks are bound to the physical connection, which a transaction-mode pooler reassigns between requests; the lock can leak onto another request's connection or never be released. That's exactly the unsafe case." },
+    { label: "Either works identically under a pooler", misconception: "They differ critically: session locks survive past COMMIT and are tied to the connection, so a transaction-mode pooler breaks them; xact locks are scoped to the transaction the pooler keeps intact." },
+    { label: "Neither; advisory locks don't work with poolers at all", misconception: "Transaction-scoped advisory locks work fine behind a transaction-mode pooler precisely because their lifetime matches the transaction boundary the pooler preserves." },
+  ]}
+/>
+
+<Quiz
+  id="04-advisory-locks-quiz-2"
+  lessonSlug="04-advisory-locks"
+  lang="en"
+  question="Five app replicas each run the same hourly cleanup job. You want exactly one to execute it per hour, with the others skipping silently. Best primitive?"
+  choices={[
+    { label: "pg_try_advisory_lock(key): each replica tries the same key, the one that gets true runs the job, the four that get false skip", correct: true },
+    { label: "SELECT FOR UPDATE on a dedicated 'lock' row", misconception: "It can work but ties the mutex to a real row (which must exist) and breaks under a transaction-mode pooler if held across statements; an advisory lock is the purpose-built, row-free primitive for this." },
+    { label: "pg_advisory_lock(key) — the blocking form", misconception: "The blocking form makes the other four replicas WAIT for the lock and then also run the job once it frees — you'd run the cleanup five times in sequence, not once. You want the non-blocking try_ form so losers skip." },
+    { label: "A unique constraint on a 'job_runs' table", misconception: "A unique insert can dedup a record but doesn't give you a held mutex around the work itself; concurrent runners can still execute the body before any insert commits. An advisory lock guards the whole critical section." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-advisory-locks-metaphor-1"
+  lessonSlug="04-advisory-locks"
+  lang="en"
+  setup="Fill in the blank: a session-level advisory lock is bound to the database _______, so under a transaction-mode pooler it can be stranded on one a different request later reuses — which is why the transaction-scoped variant is the safer default."
+  accepted={["connection", "session", "backend", "backend connection"]}
+  canonical="connection"
+  explanation="A session advisory lock lives with the physical backend connection and persists past COMMIT. A transaction-mode pooler reassigns that connection between logical requests, so the lock can leak onto another request or never release. pg_advisory_xact_lock ties the lock to the transaction the pooler keeps whole, removing the trap."
+/>
+
+</Explanation>
+
+<KeyTakeaway>An advisory lock is an application-defined mutex keyed by an integer, not attached to any row — ideal for leader election, cron dedup, and serializing a logical operation. The decisive choice is scope: `pg_advisory_xact_lock` releases at transaction end and is safe behind a transaction-mode pooler, while `pg_advisory_lock` (session-scoped) is bound to the connection, survives `COMMIT`, and silently leaks through PgBouncer-style poolers. Prefer the xact form, use `pg_try_*` so losers skip, and namespace keys to avoid collisions.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-advisory-locks-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does an advisory lock differ from a row lock like SELECT FOR UPDATE?", a: "A row lock protects a specific existing tuple and is acquired by reading that row; an advisory lock protects an abstract 64-bit key that you assign meaning to and that need not correspond to any row at all. Postgres just guarantees one holder per key, cluster-wide. Use row locks when you're editing actual data; use advisory locks for coordination over a logical resource — leader election, cron dedup, serializing a code path — where there's no single row to lock." },
+    { q: "What is the difference between pg_advisory_lock and pg_advisory_xact_lock, and which is pooler-safe?", a: "pg_advisory_lock is session-scoped: it's held until you call pg_advisory_unlock or the connection ends, and it does NOT release at COMMIT. pg_advisory_xact_lock is transaction-scoped: it releases automatically at COMMIT or ROLLBACK and can't be leaked. The xact form is pooler-safe because its lifetime matches the transaction boundary a transaction-mode pooler preserves; the session form is bound to the physical connection the pooler reassigns between requests, so it can strand or leak." },
+    { q: "Name two failure modes specific to advisory locks and how to avoid them.", a: "(1) Pool leakage: a session-level lock is tied to the backend connection, so under a transaction-mode pooler (PgBouncer transaction mode, RDS Proxy) it can be held on a connection another request reuses or never released — avoid by using pg_advisory_xact_lock, or don't run that path behind a transaction-mode pooler. (2) Key-space collisions: two unrelated features that hash names into the same 64-bit key block each other for no visible reason — avoid by namespacing keys, e.g. the two-int (classid, objid) form with a distinct classid per feature." },
+  ]}
+/>
+
+<Recap lang="en">
+An advisory lock is a mutex Postgres maintains over an integer key you define, decoupled from any row — the database becomes a distributed lock manager you already operate. The blocking `pg_advisory_lock` and non-blocking `pg_try_advisory_lock` cover "wait for it" versus "skip if taken"; for fleet-wide singletons (leader election, cron dedup) the `try_` form lets exactly one replica win and the rest bow out. The choice that decides production reliability is scope: session-level locks persist past `COMMIT` and are bound to the physical connection, so a transaction-mode pooler can strand or leak them; transaction-level `pg_advisory_xact_lock` releases at transaction end and is pooler-safe, making it the right default. Beyond the pooler trap, namespace your keys to avoid two features colliding on the same integer, and reach for advisory locks only for coordination — row locks remain the tool for guarding data you actually edit. Next, the failure that arises when locks of any kind are taken in conflicting orders: deadlocks.
+</Recap>
