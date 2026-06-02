@@ -4,10 +4,177 @@ lang: en
 track: "sql-postgres"
 unit: "03-aggregation"
 order: 5
-title: "Conditional aggregation with FILTER"
-summary: "Conditional aggregation with FILTER — stub; author to ready."
-estMin: 12
-status: stub
+title: "Conditional aggregation: pivot long rows into wide columns"
+summary: "SUM(CASE WHEN …) and COUNT(*) FILTER (WHERE …) turn one row-per-category into one column-per-category — pivoting reports without crosstab, combinable with GROUP BY."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - conditional-aggregation
+  - pivot
+  - filter-clause
+  - case-aggregate
+prereqs:
+  - 04-grouping-sets-rollup-cube
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-aggregate.html
+  - https://www.postgresql.org/docs/current/functions-conditional.html
+  - https://www.postgresql.org/docs/current/sql-expressions.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The product manager wants a dashboard: one row per day, with separate columns for `paid`, `pending`, and `cancelled` order counts side by side. A plain `GROUP BY status` gives the opposite shape — one row *per status*, stacked vertically — useless for a wide table. The frontend team's instinct is to fetch all rows and pivot in JavaScript. Wrong move: conditional aggregation pivots it in the database, in one query, with no extension and no crosstab.
+</Hook>
+
+<Crux>Conditional aggregation pivots long data into wide columns: one aggregate per category, each with its own row condition.</Crux>
+
+<Explanation>
+
+## Long versus wide
+
+A normal `GROUP BY status` produces **long** output: one row per category, value stacked beneath value. A report usually wants **wide** output: one row per entity (a day, a user), with one column per category. Pivoting is the transform between them, and the trick is to make each output column its own conditional aggregate.
+
+<FlowDiagram
+  label="Pivoting from long to wide: GROUP BY status yields one row per status (long), while conditional aggregation yields one row with one column per status (wide), counting only the matching rows in each column."
+  perRow={2}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "long", label: "Long (GROUP BY status)", sub: "paid:3 / pending:1 / cancelled:1 as 3 rows" },
+    { id: "wide", label: "Wide (conditional agg)", sub: "one row: paid=3, pending=1, cancelled=1" },
+  ]}
+  edges={[
+    { from: "long", to: "wide" },
+  ]}
+  caption="Same numbers, reshaped. Each wide column is an aggregate that only counts rows matching its category — the rest contribute nothing to that column."
+/>
+
+## Two ways to write a pivot column
+
+There are two idioms, and they're equivalent for counts and sums:
+
+```sql
+-- FILTER form (modern, standard, recommended):
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid')      AS paid,
+  COUNT(*) FILTER (WHERE status = 'pending')   AS pending,
+  COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+  SUM(total) FILTER (WHERE status = 'paid')    AS paid_revenue
+FROM orders
+GROUP BY created_at::date
+ORDER BY day;
+
+-- CASE form (portable, older, works everywhere):
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid') AS paid,        -- or:
+  SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+  SUM(CASE WHEN status = 'paid' THEN total END)    AS paid_revenue
+FROM orders
+GROUP BY created_at::date;
+```
+
+The mechanism is the same in both: each column is an aggregate that, per row, either includes the value or contributes nothing. With `FILTER`, the aggregate simply skips non-matching rows. With `CASE`, the non-matching branch returns `0` (for a `SUM`-count) or `NULL` (which aggregates ignore). `FILTER` is cleaner and is the senior default; `CASE` is the portable fallback for engines without `FILTER`.
+
+## The CASE counting trap
+
+The single most common bug here is counting with the wrong fallback:
+
+```sql
+-- WRONG: COUNT counts non-NULL, and 0 is non-NULL → counts EVERY row
+COUNT(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)   -- always = total rows
+
+-- RIGHT options:
+COUNT(CASE WHEN status = 'paid' THEN 1 END)          -- ELSE is NULL → COUNT skips it
+SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)     -- SUM adds 1s, 0s contribute nothing
+COUNT(*) FILTER (WHERE status = 'paid')              -- cleanest
+```
+
+`COUNT` counts non-NULL values; `0` is non-NULL, so `COUNT(CASE … ELSE 0 END)` counts all rows — a silent off-by-everything error. Either drop the `ELSE` (so non-matches are `NULL` and `COUNT` skips them), use `SUM` of 1/0, or use `FILTER`. This is exactly the pitfall `FILTER` was added to eliminate.
+
+## Combining with GROUP BY and totals
+
+Conditional aggregation composes with everything you've learned. Add a `GROUP BY` entity to get one wide row per entity; layer `ROLLUP` from the previous lesson to add a totals row across all days:
+
+```sql
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid')    AS paid,
+  COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled
+FROM orders
+GROUP BY ROLLUP (created_at::date)
+ORDER BY day NULLS LAST;
+```
+
+This is also the manual cousin of the `crosstab` function in the `tablefunc` extension and of window functions: window functions (next unit, `04-window-functions`) keep one row *per input row* while adding aggregate columns, whereas conditional aggregation **collapses** rows and spreads categories across columns. Pick conditional aggregation when you want a compact pivot table; reach for windows when you need to keep every detail row alongside its group's aggregate.
+
+<Inset kind="why" lang="en">
+Why pivot in SQL instead of the application? Three reasons. First, less data on the wire: a pivoted result is far smaller than every raw row plus client-side reshaping. Second, the database can compute the conditional aggregates in the same scan it was already doing for `GROUP BY` — near-zero extra cost. Third, correctness lives in one place: a JS pivot reimplements grouping logic the engine already does perfectly, and that reimplementation is where the bugs (and the NULL/zero confusion) creep in. The senior rule: aggregate and pivot at the source; ship the report shape, not the raw rows.
+</Inset>
+
+<Quiz
+  id="05-conditional-aggregation-quiz-1"
+  lessonSlug="05-conditional-aggregation"
+  lang="en"
+  question="You want one row per day with separate paid/pending/cancelled count columns. Which approach gives that shape?"
+  choices={[
+    { label: "GROUP BY day with one conditional aggregate (FILTER or CASE) per status column", correct: true },
+    { label: "GROUP BY day, status — and read the columns", misconception: "That gives one row per day+status (long, stacked), not one wide row per day with status columns. You'd still have to pivot afterwards." },
+    { label: "Fetch all rows and pivot in application code", misconception: "That works but moves more data over the wire and reimplements grouping the engine already does; conditional aggregation pivots in one query at the source." },
+    { label: "ORDER BY status", misconception: "Sorting doesn't reshape rows into columns; you need conditional aggregates to create per-status columns." },
+  ]}
+/>
+
+<Quiz
+  id="05-conditional-aggregation-quiz-2"
+  lessonSlug="05-conditional-aggregation"
+  lang="en"
+  question="Why does COUNT(CASE WHEN status='paid' THEN 1 ELSE 0 END) count every row instead of just paid ones?"
+  choices={[
+    { label: "COUNT counts non-NULL values, and the ELSE 0 makes every row non-NULL, so all rows are counted", correct: true },
+    { label: "CASE isn't allowed inside COUNT", misconception: "CASE inside COUNT is legal; the bug is the ELSE 0 — drop it (ELSE NULL) and COUNT skips non-matches." },
+    { label: "status='paid' is evaluated after grouping", misconception: "The condition is evaluated per row during aggregation, not after grouping; the bug is the non-NULL 0, not the timing." },
+    { label: "You must use SUM, never COUNT, for pivots", misconception: "COUNT works fine if non-matches are NULL (drop ELSE). SUM of 1/0 and COUNT(*) FILTER also work; the issue is only the ELSE 0." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-conditional-aggregation-metaphor-1"
+  lessonSlug="05-conditional-aggregation"
+  lang="en"
+  setup="Fill in the blank: conditional aggregation reshapes data from long to _______ — one row per entity with one column per category, each column an aggregate over only its matching rows."
+  accepted={["wide", "wide format", "a wide format"]}
+  canonical="wide"
+  explanation="Long format stacks one row per category; wide format spreads categories across columns, one row per entity. Conditional aggregation (FILTER or SUM(CASE …)) is the in-database pivot that performs this long→wide transform in a single grouped query."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Conditional aggregation pivots long data into wide report columns: each column is an aggregate restricted to its category via `FILTER (WHERE …)` (preferred) or `SUM(CASE WHEN …)`. It composes with `GROUP BY` (one wide row per entity) and `ROLLUP` (a totals row). Avoid the `COUNT(CASE … ELSE 0 END)` trap — `0` is non-NULL so `COUNT` counts everything; drop the `ELSE`, use `SUM` of 1/0, or use `FILTER`. Pivot at the source, not in the app.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-conditional-aggregation-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is conditional aggregation and what shape transform does it perform?", a: "It's using one aggregate per category, each restricted to the rows matching that category, to turn long output (one row per category) into wide output (one row per entity with one column per category). You write COUNT(*) FILTER (WHERE status='paid') AS paid, etc., grouped by the entity (e.g. day). It's an in-database pivot: long → wide in a single grouped query." },
+    { q: "Give the FILTER and CASE forms of a paid-orders count column, and explain the CASE counting trap.", a: "FILTER: COUNT(*) FILTER (WHERE status='paid'). CASE: SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END), or COUNT(CASE WHEN status='paid' THEN 1 END) with no ELSE. The trap is COUNT(CASE WHEN status='paid' THEN 1 ELSE 0 END): COUNT counts non-NULL values and 0 is non-NULL, so it counts every row, not just paid ones. Fix by dropping the ELSE (non-matches become NULL, which COUNT skips), using SUM of 1/0, or using FILTER." },
+    { q: "When would you use conditional aggregation versus a window function for a report?", a: "Use conditional aggregation when you want a compact pivot: collapse rows and spread categories across columns, one row per entity (e.g. daily counts per status). Use a window function when you need to keep every detail row while adding its group's aggregate alongside it (one output row per input row). Conditional aggregation reduces rows; window functions preserve them. Pivoting also keeps work and data at the source rather than reshaping in application code." },
+  ]}
+/>
+
+<Recap lang="en">
+Conditional aggregation is the in-database pivot: it reshapes **long** output (one row per category) into **wide** output (one row per entity, one column per category) by making each column an aggregate restricted to its category. The modern form is `COUNT(*) FILTER (WHERE …)` / `SUM(total) FILTER (WHERE …)`; the portable fallback is `SUM(CASE WHEN … THEN … ELSE 0 END)`. Watch the classic trap — `COUNT(CASE … ELSE 0 END)` counts every row because `0` is non-NULL, so drop the `ELSE`, use `SUM` of 1/0, or use `FILTER`. It composes cleanly with `GROUP BY` (a wide row per entity) and the previous lesson's `ROLLUP` (a totals row), and it belongs at the source: pivoting in SQL ships a small report shape instead of raw rows and keeps grouping logic in one correct place. When you instead need every detail row kept alongside its group's aggregate, that's the job of window functions — the very next unit.
+</Recap>

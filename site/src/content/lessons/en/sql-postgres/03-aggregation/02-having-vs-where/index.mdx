@@ -4,10 +4,180 @@ lang: en
 track: "sql-postgres"
 unit: "03-aggregation"
 order: 2
-title: "HAVING vs WHERE"
-summary: "HAVING vs WHERE — stub; author to ready."
-estMin: 12
-status: stub
+title: "HAVING vs WHERE: filter before or after grouping"
+summary: "WHERE filters rows before grouping; HAVING filters whole groups after aggregation. You can't aggregate in WHERE, and pushing row filters into WHERE is a real performance lever."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - where-clause
+  - having-clause
+  - aggregation-pipeline
+  - filter-pushdown
+prereqs:
+  - 01-group-by-model
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/tutorial-agg.html
+  - https://use-the-index-luke.com/sql/where-clause
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A revenue report shows "top customers with more than $10k in paid orders." The first draft put `paid` and `> 10000` in the same `HAVING` and ran for 9 seconds, scanning every order ever placed. Moving one predicate one clause up — `paid` into `WHERE` — dropped it to 200ms, because the grouping suddenly had a tenth as many rows to chew through. `WHERE` versus `HAVING` is not style; it changes what work the engine does.
+</Hook>
+
+<Crux>WHERE filters rows before grouping; HAVING filters groups after aggregation. Aggregates are illegal in WHERE.</Crux>
+
+<Explanation>
+
+## Two filters at two different times
+
+Aggregation has a fixed pipeline, and the two filter clauses sit on opposite sides of the collapse:
+
+1. **`FROM` / `JOIN`** — assemble the raw rows.
+2. **`WHERE`** — discard *rows* you don't want. This runs **before** grouping, so it works on individual rows and cannot see any aggregate (there are no groups yet).
+3. **`GROUP BY`** — collapse the surviving rows into buckets.
+4. **`HAVING`** — discard whole *groups* you don't want. This runs **after** aggregation, so it can reference aggregates like `SUM(total)` or `COUNT(*)`.
+5. **`SELECT` / `ORDER BY` / `LIMIT`** — shape the output.
+
+<FlowDiagram
+  label="The aggregation pipeline: FROM assembles rows, WHERE filters individual rows before grouping, GROUP BY collapses rows into buckets, HAVING filters whole groups after aggregation, then SELECT and ORDER BY shape the output."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "from", label: "FROM/JOIN", sub: "raw rows" },
+    { id: "where", label: "WHERE", sub: "filter rows" },
+    { id: "group", label: "GROUP BY", sub: "rows → buckets" },
+    { id: "having", label: "HAVING", sub: "filter groups" },
+    { id: "select", label: "SELECT", sub: "shape output" },
+  ]}
+  edges={[
+    { from: "from", to: "where" },
+    { from: "where", to: "group" },
+    { from: "group", to: "having" },
+    { from: "having", to: "select" },
+  ]}
+  caption="WHERE acts on rows before the collapse; HAVING acts on groups after it. Anything you can decide per row belongs in WHERE; only conditions on an aggregated value need HAVING."
+/>
+
+Concretely, the correct report:
+
+```sql
+SELECT user_id, SUM(total) AS paid_revenue
+FROM orders
+WHERE status = 'paid'          -- per-row condition → before grouping
+GROUP BY user_id
+HAVING SUM(total) > 10000;      -- condition on the aggregate → after grouping
+```
+
+`status = 'paid'` is decidable on a single row, so it goes in `WHERE` and shrinks the input to `GROUP BY`. `SUM(total) > 10000` can only be evaluated once a whole bucket exists, so it must be `HAVING`.
+
+## Why aggregates are illegal in WHERE
+
+Try moving the threshold into `WHERE` and Postgres refuses:
+
+```sql
+SELECT user_id, SUM(total)
+FROM orders
+WHERE SUM(total) > 10000        -- ERROR: aggregate functions are not allowed in WHERE
+GROUP BY user_id;
+```
+
+This isn't a missing feature — it's a timing impossibility. `WHERE` runs **before** `GROUP BY`, at a point where no group exists yet, so `SUM(total)` has nothing to sum over. The aggregate is undefined at that moment. `HAVING` exists precisely to be the filter that runs *after* the groups (and their aggregates) materialize.
+
+## The performance lever: push filters down
+
+Here's the part that separates a correct query from a fast one. Both of these return the same rows:
+
+```sql
+-- SLOW: every order gets grouped, then non-paid groups are... still wrong & costly
+SELECT user_id, SUM(total)
+FROM orders
+GROUP BY user_id
+HAVING bool_and(status = 'paid');   -- contorted, and groups ALL orders first
+
+-- FAST: drop non-paid rows before they ever reach the grouping
+SELECT user_id, SUM(total)
+FROM orders
+WHERE status = 'paid'
+GROUP BY user_id;
+```
+
+A row filter belongs in `WHERE` so fewer rows reach the (expensive) grouping step. Grouping has to hash or sort its input; halving the input roughly halves that cost, and if there's a partial index on `status` the planner can skip the non-matching rows entirely. **Putting a plain per-row condition in `HAVING` is a code smell**: it usually means a filter that should have run before grouping is running after it, doing the full grouping work on rows you were going to throw away.
+
+<Inset kind="mistake" lang="en">
+The classic trap: `HAVING status = 'paid'`. It can be syntactically legal in Postgres only if `status` is functionally dependent on the grouping key — otherwise you get the same "must appear in GROUP BY" error. Even when it parses, it's wrong-headed: you've grouped every order, including ones you'll discard. The rule of thumb — if a condition mentions **no aggregate**, it almost always belongs in `WHERE`. Reserve `HAVING` for conditions on `SUM`, `COUNT`, `AVG`, `MAX`, `MIN`, etc.
+</Inset>
+
+<Quiz
+  id="02-having-vs-where-quiz-1"
+  lessonSlug="02-having-vs-where"
+  lang="en"
+  question="Why does WHERE SUM(total) > 10000 raise an error?"
+  choices={[
+    { label: "WHERE runs before GROUP BY, so no group exists yet and SUM has nothing to aggregate over", correct: true },
+    { label: "SUM can only be used in SELECT, never in a filter", misconception: "SUM is fine in a filter — that filter is HAVING, which runs after grouping. The problem is the timing of WHERE, not the function." },
+    { label: "You must alias the SUM before filtering on it", misconception: "Aliasing doesn't change the timing; an aggregate is undefined in WHERE regardless of aliasing because WHERE precedes grouping." },
+    { label: "total must be indexed first", misconception: "Indexing is unrelated; the error is a logical-ordering error, not a performance or index issue." },
+  ]}
+/>
+
+<Quiz
+  id="02-having-vs-where-quiz-2"
+  lessonSlug="02-having-vs-where"
+  lang="en"
+  question="You want per-user paid revenue over $10k. status='paid' should go in which clause, and why?"
+  choices={[
+    { label: "WHERE — it's a per-row condition, so filtering before grouping means fewer rows reach the costly GROUP BY", correct: true },
+    { label: "HAVING — all filters belong after grouping for consistency", misconception: "Only aggregate conditions need HAVING. A per-row filter in HAVING forces grouping over rows you'll discard, which is slower." },
+    { label: "Either — they always perform identically", misconception: "They can return the same rows but not at the same cost: WHERE shrinks the input to grouping, often by an order of magnitude." },
+    { label: "ORDER BY — to sort out the paid ones", misconception: "ORDER BY sorts output, it doesn't filter. The paid condition is a filter, and a per-row one at that, so WHERE." },
+  ]}
+/>
+
+<DragOrder
+  id="02-having-vs-where-drag-1"
+  lessonSlug="02-having-vs-where"
+  lang="en"
+  prompt="Order the clauses by when Postgres logically applies them:"
+  items={[
+    { id: "a", label: "FROM / JOIN — assemble raw rows" },
+    { id: "b", label: "WHERE — filter individual rows" },
+    { id: "c", label: "GROUP BY — collapse rows into buckets" },
+    { id: "d", label: "HAVING — filter whole groups using aggregates" },
+    { id: "e", label: "SELECT — project the output columns" },
+    { id: "f", label: "ORDER BY / LIMIT — sort and trim" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>`WHERE` filters individual rows **before** grouping; `HAVING` filters whole groups **after** aggregation and is the only place an aggregate condition is legal. Aggregates can't appear in `WHERE` because no group exists there yet. Always push per-row conditions into `WHERE` so fewer rows reach the grouping step — a plain non-aggregate condition sitting in `HAVING` is a code smell.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-having-vs-where-retrieval"
+  lang="en"
+  questions={[
+    { q: "In one sentence each, what do WHERE and HAVING filter, and in what order do they run?", a: "WHERE filters individual rows before grouping (it runs first, on raw rows, and cannot see aggregates). HAVING filters whole groups after aggregation (it runs after GROUP BY and can reference aggregates like SUM or COUNT). Pipeline order: FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY." },
+    { q: "Why is WHERE SUM(total) > 10000 an error, and what's the fix?", a: "WHERE runs before GROUP BY, so at that point no group exists and SUM has no set of rows to aggregate — the aggregate is undefined there, so Postgres rejects it. The fix is to move the condition to HAVING (HAVING SUM(total) > 10000), which runs after grouping when each group's SUM is defined." },
+    { q: "Why is putting status = 'paid' in HAVING instead of WHERE both a smell and a performance problem?", a: "status = 'paid' is a per-row condition with no aggregate, so it can be decided before grouping. Putting it in HAVING forces Postgres to group every order — including the non-paid ones you intend to discard — and only then drops groups, wasting the grouping work. In WHERE it removes non-paid rows before grouping, so the GROUP BY hashes/sorts far fewer rows (often 10× fewer), and a partial index on status can be used. Non-aggregate conditions belong in WHERE." },
+  ]}
+/>
+
+<Recap lang="en">
+The aggregation pipeline runs `FROM` → `WHERE` → `GROUP BY` → `HAVING` → `SELECT` → `ORDER BY`, and the two filters sit on opposite sides of the collapse. `WHERE` filters individual rows **before** grouping and therefore cannot reference an aggregate — there are no groups yet, so `SUM(total)` is undefined and Postgres rejects it. `HAVING` filters whole groups **after** aggregation and is exactly where aggregate conditions like `SUM(total) > 10000` belong. The senior habit is to push every per-row predicate into `WHERE` so fewer rows reach the costly grouping step — halving the input roughly halves the hash/sort cost and lets partial indexes prune rows — and to treat a plain non-aggregate condition stranded in `HAVING` as a smell. Next we go deep on the aggregate functions themselves: how `COUNT(*)` differs from `COUNT(col)`, the `FILTER` clause, and the numeric pitfalls of `AVG` and `SUM`.
+</Recap>
