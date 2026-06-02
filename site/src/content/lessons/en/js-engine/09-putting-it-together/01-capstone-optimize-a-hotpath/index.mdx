@@ -5,9 +5,216 @@ track: "js-engine"
 unit: "09-putting-it-together"
 order: 1
 title: "Capstone: optimize a hot path"
-summary: "Capstone: optimize a hot path — stub; author to ready."
-estMin: 12
-status: stub
+summary: "One slow request handler, every layer of the engine in play. Profile it, read the deopt and IC traces, fix the shape, the boxing, the GC churn, and the microtask stall — then prove the win. The whole track, applied to one function."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - profiling
+  - hidden class stability
+  - deoptimization
+  - element kinds
+  - GC pressure
+  - microtask scheduling
+  - regression gating
+prereqs:
+  - "08-measuring-optimizing/04-real-world-wins"
+spiral:
+  - performance-cliffs
+  - statefulness
 sources:
   - https://v8.dev/docs
+  - https://v8.dev/blog/cost-of-javascript-2019
+  - https://mrale.ph/blog/2018/02/03/maybe-you-dont-need-rust-to-speed-up-your-js.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A scoring endpoint that used to clear 40k requests/second now barely manages 6k, and the only "change" was a refactor that "just tidied up the object construction." Nothing looks wrong in the code. Everything you learned in this track is about to converge on one 30-line function — because the engine is doing five different slow things at once, and you can name and fix every one.
+</Hook>
+
+<Crux>Hot-path wins come from naming the mechanism behind each cost — shape, boxing, GC, dispatch, schedule — then fix and re-measure.</Crux>
+
+<Explanation>
+
+## The method, before the function
+
+Optimisation without measurement is superstition. The loop is always the same: **profile to find the dominant cost, name the mechanism, make one change, re-measure.** This track gave you the vocabulary for the "name the mechanism" step — which is where most engineers get stuck, guessing instead of reading the trace.
+
+<StackDiagram
+  label="The optimisation loop applied top to bottom: measure to find the dominant cost, name the engine mechanism, change one thing, then verify against a guarded benchmark."
+  hue="var(--accent)"
+  caption="Never skip a layer upward. A microtask stall hidden under a deopt loop will mislead you until the deopt is fixed first."
+  layers={[
+    { label: "Measure", note: "--prof, --trace-deopt, heap snapshot" },
+    { label: "Name the mechanism", note: "shape / boxing / GC / dispatch / schedule" },
+    { label: "Change one thing", note: "smallest fix that targets the cost" },
+    { label: "Verify", note: "guarded benchmark + regression gate" },
+  ]}
+/>
+
+Here is the regressed handler. Read it as the engine would.
+
+```js
+function scoreBatch(rows) {
+  const out = [];
+  for (const row of rows) {
+    const e = {};
+    e.id = row.id;
+    if (row.name) e.name = row.name;       // conditional field
+    e.score = row.weight * 1e9 + row.bonus; // overflows Smi range
+    if (row.flagged) e.flag = true;          // late conditional field
+    out.push(e);
+    log(`scored ${e.id}`);                    // synchronous console in the hot loop
+  }
+  return out;
+}
+```
+
+## Layer 1 — the shape (units 02–03)
+
+`--trace-ic` shows the access site that reads `.score` downstream going **megamorphic**. The cause is the conditional fields: `name` and `flag` are added only sometimes, so objects walk different transition-tree branches and land on different hidden classes (unit 03). The IC at the consumer sees five-plus maps and falls back to the generic lookup — tens of cycles instead of one.
+
+Fix: initialise **every** property unconditionally, in a fixed order, so all objects share one Map.
+
+```js
+const e = {
+  id: row.id,
+  name: row.name ?? null,
+  score: 0,                 // set below
+  flag: row.flagged === true,
+};
+```
+
+## Layer 2 — the boxing and the deopt (units 02, 04)
+
+`--trace-deopt` shows `scoreBatch` deoptimising on a `CheckSmi` guard. `row.weight * 1e9` overflows the Smi range (±2³¹), so the result becomes a **HeapNumber** — a heap-allocated box (unit 02). TurboFan had speculated Smi from early feedback; the first overflow fails the guard and triggers a deopt, and because it recurs every batch, you get a **deopt loop** (unit 04): optimise → deopt → re-optimise, never staying fast.
+
+Fix: stop pretending the value is an integer. Compute in `double` from the start so the optimiser specialises on `Float64` and never guards on Smi — or, if the consumer is numeric-heavy, accumulate scores into a `Float64Array` instead of object fields, eliminating the box entirely.
+
+<NumbersCard
+  title="Cost of each mechanism on this path"
+  data-lesson-visual
+  stats={[
+    { label: "Megamorphic property load vs monomorphic", value: "~10–50×" },
+    { label: "Deopt loop (optimise/deopt churn)", value: "stays interpreted" },
+    { label: "HeapNumber box vs Smi", value: "alloc + deref vs 1 instr" },
+    { label: "Minor GC triggered by per-row allocation", value: "sub-ms, but frequent" },
+    { label: "Synchronous log() in a 100k loop", value: "blocks the turn" },
+  ]}
+/>
+
+## Layer 3 — the GC churn (unit 06)
+
+Even with shapes fixed, allocating one `out` object per row floods **new space**; the bump-pointer allocator fills a semi-space and triggers a **Scavenge** (unit 06) far more often than necessary. Minor GC is cheap individually but death by a thousand cuts at this volume, and survivors get promoted to old space, eventually forcing a major GC.
+
+Fix: reduce allocation. If `out` feeds a reducer, fold rows directly instead of materialising an array of objects; if the array is required, pre-size it (`new Array(rows.length)` is fine here because you fill every slot, keeping it `PACKED`). Fewer, longer-lived allocations beat a storm of short-lived ones.
+
+## Layer 4 — the scheduling (unit 07)
+
+The `log()` call is synchronous I/O inside the loop. Beyond its own cost, in a request context it interleaves with the event loop: a flood of synchronous work on the stack delays the **microtask checkpoint** and starves other handlers (unit 07). The fix is not "make logging async" — it is *don't log per row on a hot path*. Aggregate and emit once, or sample.
+
+<FlowDiagram
+  label="The five fixes in dependency order: fix the shape first so the optimiser has stable feedback, then remove the deopt trigger, then cut allocation, then fix scheduling, then lock it with a regression gate."
+  hue="var(--accent)"
+  perRow={5}
+  caption="Order matters: a stable shape is the precondition for the optimiser to produce good code, so it comes first; the regression gate comes last and keeps the win."
+  nodes={[
+    { id: "shape", label: "Shape", sub: "1 Map", col: 0, row: 0 },
+    { id: "deopt", label: "De-box", sub: "no Smi guard", col: 1, row: 0 },
+    { id: "gc", label: "Allocate less", sub: "fewer objects", col: 2, row: 0 },
+    { id: "sched", label: "Schedule", sub: "no per-row log", col: 3, row: 0 },
+    { id: "gate", label: "Gate", sub: "regression test", col: 4, row: 0 },
+  ]}
+  edges={[
+    { from: "shape", to: "deopt", label: "then" },
+    { from: "deopt", to: "gc", label: "then" },
+    { from: "gc", to: "sched", label: "then" },
+    { from: "sched", to: "gate", label: "lock" },
+  ]}
+/>
+
+## Layer 5 — prove it, then guard it (unit 08)
+
+Measure the rewrite against the original on warmed-up code, consuming the result so dead-code elimination can't delete your benchmark (unit 08), with allocation kept out of the timed region and the engine recorded. Then add a CI microbenchmark asserting a throughput floor, plus a unit test that counts distinct `Object.keys` signatures from `scoreBatch` and fails if it ever exceeds one. The shape regression that started this incident now cannot ship silently again.
+
+<Misconception id="mc-rewrite-in-rust">
+  <p><strong>"It's slow, so rewrite the hot path in WASM/Rust."</strong> The biggest wins here are a stable shape and no deopt loop — pure-JS changes that recover most throughput. Reach for WASM only after the JS path is monomorphic, box-free, allocation-lean, and still bound.</p>
+</Misconception>
+
+<Quiz
+  id="q-order"
+  lessonSlug="01-capstone-optimize-a-hotpath"
+  lang="en"
+  question="Why fix the hidden-class instability before chasing the deopt or the GC churn?"
+  choices={[
+    { label: "Shape changes are the only real bug; the rest are noise", misconception: "All four are real costs; the point is ordering, not dismissing the others." },
+    { label: "A stable shape gives the optimiser clean type feedback, so its compiled code (and your subsequent measurements) are trustworthy", correct: true },
+    { label: "Hidden classes are unrelated to the deopt", misconception: "They're related: shape divergence is itself a common deopt and feedback-pollution source — another reason to fix it first." },
+    { label: "GC can't be measured until shapes are fixed", misconception: "GC is measurable independently; shape is fixed first because it gates optimiser quality, not because it blocks GC measurement." },
+  ]}
+/>
+
+<Quiz
+  id="q-smi"
+  lessonSlug="01-capstone-optimize-a-hotpath"
+  lang="en"
+  question="`row.weight * 1e9 + row.bonus` triggered a deopt loop. What is the precise mechanism?"
+  choices={[
+    { label: "Multiplication is always slower than addition", misconception: "The operator isn't the issue; the value leaving Smi range is." },
+    { label: "The result overflows the Smi range, becomes a HeapNumber, fails TurboFan's CheckSmi guard, and re-deopts every batch", correct: true },
+    { label: "1e9 is not a valid JavaScript number", misconception: "1e9 is a perfectly valid double literal; the issue is the runtime value's representation, not the literal." },
+    { label: "The variable name `score` collides with a built-in", misconception: "There's no such collision; the cost is the Smi-to-HeapNumber transition and the resulting guard failure." },
+  ]}
+/>
+
+<DragOrder
+  id="do-method"
+  pieceSlug="01-capstone-optimize-a-hotpath"
+  lang="en"
+  prompt="Order the optimisation method for this incident."
+  items={[
+    "Profile to find the dominant cost (--prof, --trace-deopt, --trace-ic, heap snapshot)",
+    "Name the engine mechanism behind it (shape / boxing / GC / scheduling)",
+    "Make the smallest change that targets that mechanism",
+    "Re-measure on warmed-up code with the result consumed",
+    "Add a regression gate so the win cannot silently revert",
+  ]}
+/>
+
+<Inset kind="practice" lang="en">
+Apply this to your own code: pick one function your profiler flags as hot. Before touching it, write down which of the five layers you *expect* to be the cost, then run `--trace-deopt` and a heap snapshot to check. Most engineers are wrong about which layer dominates — that gap between intuition and the trace is exactly what this track was built to close.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A hot path is rarely slow for one reason. Profile first, then name each mechanism precisely — megamorphic shape, Smi-overflow deopt, allocation-driven GC, synchronous scheduling — fix the shape first because it gates optimiser quality, and lock every win behind a regression gate. Naming the mechanism is the skill; the fixes follow.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="capstone-optimize-a-hotpath-retrieval"
+  lang="en"
+  questions={[
+    { q: "The handler is slow. Walk the full diagnostic method end to end.", a: "Reproduce under load and profile (node --prof / --cpu-prof for the CPU breakdown; --trace-deopt for bail-outs; --trace-ic for IC states; a heap snapshot for retention/allocation). Find the DOMINANT cost first. Name the mechanism: megamorphic property access (shape divergence), Smi-to-HeapNumber deopt loop, new-space allocation churn driving Scavenges, or a synchronous call stalling the microtask checkpoint. Make the smallest change targeting that mechanism, then re-measure on warmed-up code with the result consumed (defeat DCE) and allocation kept out of the timed region. Iterate to the next dominant cost. Finally add a regression gate (throughput floor + a shape-stability assertion)." },
+    { q: "Why does conditional property initialisation regress a hot consumer, and what's the fix?", a: "Adding name/flag only sometimes makes objects walk different hidden-class transition branches, producing multiple Maps. A downstream property-access site then sees 5+ shapes, goes megamorphic, and falls back to the generic lookup (tens of cycles vs one), and the optimiser can't specialise. Fix: initialise every property unconditionally in a fixed order (defaults like null/0/false instead of omitting), so all objects share one Map and the consumer IC stays monomorphic. Guard it with a test counting distinct Object.keys signatures." },
+    { q: "When is rewriting the hot path in WASM/Rust actually justified?", a: "Only after the JavaScript path is already monomorphic (stable shapes, no megamorphic dispatch), box-free (numbers stay Smi or live in typed arrays, no HeapNumber churn), allocation-lean (not triggering constant GC), and free of deopt loops — and it is STILL bound by CPU on the metric that matters. Most 'rewrite it in Rust' cases are really 'fix the shape and the deopt' cases that recover the throughput in pure JS. WASM pays off for genuinely compute-bound, allocation-light numeric/byte work, not for shape-polluted object plumbing." },
+  ]}
+/>
+
+<Recap lang="en">
+This capstone put the whole track on one function. A regressed scoring handler was slow for five overlapping reasons, each nameable from this track: conditional property initialisation split objects across hidden classes and drove a consumer IC megamorphic (units 02–03); an integer that overflowed the Smi range became a HeapNumber and triggered a TurboFan deopt loop (units 02, 04); per-row object allocation churned new space into frequent Scavenges (unit 06); a synchronous log per iteration stalled the microtask checkpoint (unit 07). The method is invariant: profile to find the dominant cost, name the exact mechanism, change one thing, re-measure on warmed-up code with the result consumed, and lock the win behind a regression gate (unit 08). Fix shape first, because a stable shape is the precondition for the optimiser to produce trustworthy code and trustworthy measurements. The durable skill this track builds is not a list of tricks — it is the ability to look at a trace and name the mechanism, which is what turns guessing into engineering.
+</Recap>
