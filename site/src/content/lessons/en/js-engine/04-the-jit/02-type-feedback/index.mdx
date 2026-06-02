@@ -4,10 +4,205 @@ lang: en
 track: "js-engine"
 unit: "04-the-jit"
 order: 2
-title: "Type feedback"
-summary: "Type feedback — stub; author to ready."
-estMin: 12
-status: stub
+title: "Type feedback: the fuel for the optimiser"
+summary: "An optimiser is useless without runtime type information. How the feedback vector records, per IC site, the maps, primitive-type lattice, call targets, and binary-op types the interpreter observes — and why garbage feedback produces generic code or no optimisation at all."
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - feedback vector
+  - SharedFunctionInfo
+  - feedback slot
+  - type lattice
+  - polymorphism
+  - megamorphic
+  - speculation
+deepensInto:
+  - "04-the-jit/03-turbofan"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "01-tiers-and-warmup"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/maglev
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+TurboFan compiles a function that does `a + b` and produces, for that one operation, a single integer-add machine instruction with no boxing, no type check beyond a cheap guard. How does a compiler for a dynamically-typed language know `a` and `b` are integers? It doesn't — it asks the interpreter what it has *seen*. Strip that observation away and the same compiler can only emit the generic, branch-heavy "add anything to anything" routine. The fuel that turns a generic optimiser into a specialising one is type feedback.
+</Hook>
+
+<Crux>The optimiser can't see types statically; it specialises from runtime observations the interpreter records into a feedback vector.</Crux>
+
+<Explanation>
+
+## Why an optimiser is blind without feedback
+
+JavaScript has no static types the engine can trust. At the point `function add(a, b) { return a + b; }` is compiled, the engine cannot prove `a` is a number — it could be a string, an object with a `valueOf`, a BigInt. A naively-compiled `+` must therefore handle every case: check tags, branch on string-vs-number-vs-object, possibly call a user `valueOf`, box the result. That generic path is correct but slow.
+
+The way out is **speculation**: assume the types you have actually observed, emit fast code for exactly those, and protect it with a cheap guard that bails if the assumption breaks (lesson 04). But speculation needs evidence — and the evidence comes from the only tier that runs every operation while watching its operands: Ignition, the interpreter. As Ignition runs, it writes down what it sees at each "interesting" location. That record is the **feedback vector**.
+
+## The feedback vector: structure and ownership
+
+A feedback vector is a fixed-size array allocated in the GC heap. The crucial detail people get wrong is *what owns it*. The bytecode and the *layout* of the feedback slots are shared: they live on the function's **SharedFunctionInfo** (SFI), the engine's deduplicated record of "this function's code", one per source definition. But the feedback *vector itself* — the array holding the observed data — is allocated **per closure**. Two closures created from the same function source share bytecode and slot layout, but each has its own feedback vector, so their runtime observations don't pollute each other.
+
+Each slot corresponds to one **inline cache (IC) site** in the bytecode — a place where the type of the operands matters:
+
+- **Property access** (`obj.x`, `obj.x = v`) — records the **map** (hidden class) of the object seen, plus a handler describing how to load/store at that map.
+- **Calls** (`fn()`, `obj.method()`) — records the call **target(s)** observed, enabling inlining.
+- **Binary operations** (`a + b`, `a < b`) — records the **type lattice** of the operands: were they always Smi (small integer)? Smi-or-HeapNumber? String? Any?
+- **Element access** (`arr[i]`) — records the elements kind (packed Smi, packed double, holey, dictionary).
+
+<FlowDiagram
+  label="The interpreter executes bytecode operation by operation, and for each IC site writes the observed map, call target, or operand type into the function closure's feedback vector; the optimiser then reads that vector to decide what concrete types to specialise on."
+  hue="var(--accent)"
+  perRow={4}
+  caption="The feedback loop. Ignition is the only tier that fills the vector; Maglev and TurboFan only read it. No warm-up means an empty vector means no specialisation."
+  nodes={[
+    { id: "bc", label: "Ignition runs", sub: "each IC site", col: 0, row: 0 },
+    { id: "obs", label: "Observe operand", sub: "map / type / target", col: 1, row: 0 },
+    { id: "vec", label: "Feedback vector", sub: "per closure slot", col: 2, row: 0 },
+    { id: "opt", label: "Optimiser reads", sub: "Maglev / TurboFan", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "bc", to: "obs", label: "watch" },
+    { from: "obs", to: "vec", label: "record" },
+    { from: "vec", to: "opt", label: "consume" },
+  ]}
+/>
+
+## The primitive-type lattice
+
+For arithmetic, the feedback is not just "number". V8 tracks operand types on a small **lattice** that it widens monotonically as it sees more cases. A useful mental model for a `+` slot:
+
+```
+None  ->  SignedSmall (Smi)  ->  Number (Smi or HeapNumber)  ->  NumberOrOddball  ->  Any
+                       \-> String (if a string operand appears) -> Any
+```
+
+Each new observation can only move *up* the lattice (widen), never narrow. A slot that has only ever seen small integers stays at `SignedSmall`, and TurboFan can emit a 32-bit integer add guarded by a single "is Smi" check. The first time that slot sees a value that overflows Smi range, it widens to `Number`, and the next optimisation emits float64 arithmetic instead. If it ever sees a string, it widens toward `Any`, and arithmetic falls back to the fully generic routine. This monotonic widening is exactly why mixing types is so corrosive: one off-type value permanently pollutes the slot for the lifetime of that feedback vector.
+
+## Garbage in, generic out
+
+The optimiser is only as good as the feedback. Three states matter for any IC slot:
+
+- **Monomorphic** — one map / one stable type observed. The optimiser specialises hard: direct offset load, inlined call, integer add. Fastest.
+- **Polymorphic** — a small handful (V8's cap is 4) of maps/types. The optimiser can still inline with an upfront map check that branches between the known cases. Slower, still optimised.
+- **Megamorphic** — more than the cap. The slot is marked with a megamorphic sentinel; the optimiser gives up on specialising it and emits a generic dispatch (a runtime lookup). It may decline to optimise the surrounding function at all.
+
+<NumbersCard
+  title="Feedback states and what the optimiser does"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic", value: "1 map / type -> specialise" },
+    { label: "Polymorphic", value: "2-4 maps -> inline w/ check" },
+    { label: "Megamorphic threshold", value: "more than 4 maps" },
+    { label: "Megamorphic", value: "generic dispatch / no opt" },
+    { label: "Lattice widening", value: "monotonic, one-way" },
+    { label: "Feedback vector ownership", value: "per closure" },
+    { label: "Slot layout / bytecode owner", value: "SharedFunctionInfo" },
+    { label: "d8 inspector", value: "%DebugPrintFeedback(fn)" },
+  ]}
+/>
+
+The practical rule that falls out of this: **warm a function with consistent types before it tiers up**. If a hot function will mostly process integers, do not let the first dozen calls feed it strings; if a call site will mostly receive one object shape, do not route five shapes through it. The feedback vector is filled during the interpreted phase, and whatever lattice and map set it accumulates is exactly what the optimiser will (or won't) be able to specialise on.
+
+<Misconception id="mc-feedback-static">
+  <p><strong>"TypeScript types tell V8 what to optimise."</strong> No. TS types are erased at compile time and never reach V8, which specialises purely on runtime observations in the feedback vector. A perfectly-typed TS function fed polymorphic shapes gets polymorphic feedback and weak (or no) optimisation.</p>
+</Misconception>
+
+<FlowDiagram
+  label="Two feedback merges shown as a lattice: a slot that has only seen small integers stays at SignedSmall and gets integer code; once it also sees a heap number it widens to Number and gets float64 code; once it sees a string it widens toward Any and falls back to generic arithmetic."
+  hue="var(--accent)"
+  perRow={4}
+  caption="Monotonic widening of one binary-op feedback slot. Each new off-type value can only widen the slot; it never narrows back. Generic code is the absorbing state."
+  nodes={[
+    { id: "smi", label: "SignedSmall", sub: "int add + Smi guard", col: 0, row: 0 },
+    { id: "num", label: "Number", sub: "float64 add", col: 1, row: 0 },
+    { id: "ood", label: "NumberOrOddball", sub: "wider numeric", col: 2, row: 0 },
+    { id: "any", label: "Any", sub: "generic + (slow)", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "smi", to: "num", label: "sees HeapNumber" },
+    { from: "num", to: "ood", label: "sees null/undef" },
+    { from: "ood", to: "any", label: "sees string" },
+  ]}
+/>
+
+<Quiz
+  id="q-vector-owner"
+  lessonSlug="02-type-feedback"
+  lang="en"
+  question="Two closures are created from the same function source. What do they share, and what is per-closure?"
+  choices={[
+    { label: "They share bytecode and feedback-slot layout (on the SharedFunctionInfo), but each has its own feedback vector", correct: true },
+    { label: "They share everything, including the feedback vector — feedback is keyed by source position", misconception: "Sharing the vector would let one closure's observations pollute the other's; the vector is per closure precisely to avoid that." },
+    { label: "Nothing is shared; each closure recompiles its own bytecode", misconception: "Bytecode and slot layout are deduplicated on the SharedFunctionInfo; only the observed data differs." },
+    { label: "They share the feedback vector but have separate bytecode", misconception: "It is the reverse: bytecode is shared via the SFI, the feedback vector is per closure." },
+  ]}
+/>
+
+<Quiz
+  id="q-lattice"
+  lessonSlug="02-type-feedback"
+  lang="en"
+  question="A `+` site processes 9,999 integer pairs, then one pair where one operand is a string, then a million more integer pairs. What feedback does TurboFan see, and what code does it emit?"
+  choices={[
+    { label: "It self-heals back to integer feedback after the string, since integers dominate", misconception: "Lattice widening is monotonic — one string permanently widens the slot; it never narrows back, regardless of how many integers follow." },
+    { label: "The slot widened toward Any the moment it saw the string, so TurboFan emits generic addition for all of it", correct: true },
+    { label: "TurboFan ignores the one outlier and specialises on integers", misconception: "There is no outlier-discarding; the slot records the union of everything observed, and the string moved it up the lattice for good." },
+    { label: "It stays Smi because 99.99% of values are integers", misconception: "Feedback is not a majority vote; the slot widens to cover every type it has ever seen." },
+  ]}
+/>
+
+<DragOrder
+  id="do-feedback-flow"
+  pieceSlug="02-type-feedback"
+  lang="en"
+  prompt="Order the lifecycle of a single binary-op feedback slot from a cold function to specialised machine code."
+  items={[
+    "The slot starts at None (the function is cold, never run)",
+    "Ignition executes the op and records the observed operand type (e.g. SignedSmall)",
+    "Repeated calls keep the slot monomorphic at SignedSmall",
+    "The budget trips; the optimiser reads the slot and emits a Smi-guarded integer add",
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+A subtle consequence: feedback vectors are GC-heap objects and can be collected under memory pressure, then re-allocated empty. A long-lived process that suffers a feedback-vector flush effectively re-cools the affected functions — they must re-observe types before they can re-optimise. This is rare, but it explains the occasional "why did this hot function deopt to interpreter speed after an hour of uptime with no code change?" mystery: the vector was reclaimed and had to refill.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The optimiser specialises only on what the interpreter observed. Ignition fills a per-closure feedback vector — one slot per IC site recording maps, call targets, and a monotonically-widening operand-type lattice. Consistent types keep slots monomorphic and the code fast; one off-type value widens a slot for good and forces generic code.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="type-feedback-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the feedback vector, what does each slot record, and who owns it?", a: "A fixed-size array in the GC heap, one slot per IC site in a function's bytecode. Property-access slots record the object's map (hidden class) plus a load/store handler; call slots record observed call targets (for inlining); binary-op slots record the operand-type lattice (SignedSmall / Number / String / Any); element-access slots record elements kind. Ownership is split: the bytecode and the slot layout live on the deduplicated SharedFunctionInfo (one per source function), but the feedback vector itself is allocated per closure, so two closures of the same function record independent observations." },
+    { q: "Why is the operand-type lattice monotonic, and what is the practical cost?", a: "Each binary-op slot tracks the union of operand types it has ever seen, and observations can only widen the slot up the lattice (None -> SignedSmall -> Number -> NumberOrOddball -> Any, with a String branch), never narrow it. So a single off-type value permanently moves the slot up: one string through a hot integer-add site widens it toward Any, and TurboFan must thereafter emit generic addition with full type checks and boxing instead of a guarded integer add — even if a million integers follow. The fix is to keep arithmetic sites type-stable; do not let pathological values share a hot slot." },
+    { q: "Explain monomorphic vs polymorphic vs megamorphic feedback and what the optimiser does in each case.", a: "Monomorphic = one map/type observed: the optimiser specialises hard (direct offset load, inlined call, integer add) — fastest. Polymorphic = 2-4 maps/types: the optimiser can still inline behind an upfront map check that branches between the known cases — slower but optimised. Megamorphic = more than 4: the slot is flagged with a megamorphic sentinel, the optimiser stops specialising it and emits generic dispatch (a runtime lookup), and may decline to optimise the whole function. Inspect with %DebugPrintFeedback(fn) in d8 to see each slot's state and find the polluted one." },
+  ]}
+/>
+
+<Recap lang="en">
+A JavaScript optimiser cannot read your types statically, so it specialises by speculation on what was actually observed at runtime. Those observations live in the feedback vector: a fixed-size GC-heap array with one slot per inline-cache site. Each slot records what matters at that site — the map for a property access, the call target for a call, the elements kind for an array access, and a monotonically-widening type lattice for a binary op. Ownership is split between the SharedFunctionInfo (which holds the deduplicated bytecode and the slot layout, one per source function) and the per-closure feedback vector (which holds that closure's own observations). Only Ignition fills the vector; Maglev and TurboFan only read it. Feedback quality determines code quality: a monomorphic slot is specialised hard, a polymorphic slot (up to 4 maps) is inlined behind a check, and a megamorphic slot collapses to generic dispatch and can block optimisation entirely. Because the lattice only widens, one off-type value pollutes a slot for the life of the vector — so warming a function with consistent types before it tiers up is the whole game, and TypeScript annotations, being erased, contribute nothing.
+</Recap>
