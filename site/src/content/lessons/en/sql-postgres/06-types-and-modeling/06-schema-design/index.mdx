@@ -4,10 +4,169 @@ lang: en
 track: "sql-postgres"
 unit: "06-types-and-modeling"
 order: 6
-title: "Schema design"
-summary: "Schema design — stub; author to ready."
-estMin: 12
-status: stub
+title: "Schema design: normalize, then denormalize on purpose"
+summary: "Normalize so a fact lives in one place, model with real Postgres types instead of stringly-typed columns, pick surrogate vs natural keys deliberately, and denormalize only for read performance — kept consistent by the engine."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - normalization
+  - deliberate-denormalization
+  - surrogate-vs-natural-keys
+  - modeling-with-types
+  - consistency-by-generated-columns
+prereqs:
+  - 05-generated-and-identity
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/ddl.html
+  - https://www.postgresql.org/docs/current/ddl-generated-columns.html
+  - https://use-the-index-luke.com/
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A startup denormalized early "for speed": every order row copied the customer's name, email, and address. Fast reads, until a customer changed their email and support found three years of orders showing the old one — because the truth had been copied into a million rows and nobody updated them all. The opposite failure is just as real: a fully normalized analytics query joining eight tables timing out on the dashboard. Schema design is the discipline of knowing *when* a fact should live in exactly one place and when, deliberately and consistently, it should be duplicated for reads.
+</Hook>
+
+<Crux>Normalize so each fact lives once; denormalize only for reads, and let the engine keep the copy consistent.</Crux>
+
+<Explanation>
+
+## Normalize first: one fact, one place
+
+Normalization is the default, and the rule of thumb that captures most of it: **every fact lives in exactly one place.** A customer's email is stored once, on the `users` row; an order references the user by id and never copies the email. When the email changes, you update one row and every order automatically reflects the truth, because it was never duplicated. (The `databases` track's relational-model chapter covers the normal forms formally; here we focus on the engineering judgment.)
+
+The payoff is **update integrity**: there's no way for two copies of a fact to disagree, because there's only one copy. The cost is that reading a complete picture requires **joins** — to show an order with its customer's current name you join `orders` to `users`. For the overwhelming majority of OLTP workloads, that join is cheap (an indexed lookup) and the integrity is priceless. Start normalized. Always.
+
+<FlowDiagram
+  label="Normalized vs denormalized: in the normalized design orders references users by user_id and the email lives once on the users row, so changing it updates one place; in the denormalized design each order copies the email, so a change must rewrite every order row or the copies drift out of sync."
+  perRow={2}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "norm", label: "Normalized", sub: "orders.user_id → users.email (one copy)" },
+    { id: "denorm", label: "Denormalized", sub: "orders.email copied per row" },
+    { id: "normupd", label: "Email change", sub: "update 1 users row" },
+    { id: "denormupd", label: "Email change", sub: "rewrite N order rows or drift" },
+  ]}
+  edges={[
+    { from: "norm", to: "normupd" },
+    { from: "denorm", to: "denormupd" },
+  ]}
+  caption="Normalized keeps the email in one place — a change is one update with no drift risk. Denormalized copies it per row — fast to read, but a change must touch every copy or the data silently disagrees."
+/>
+
+## Model with Postgres types, not strings
+
+The throughline of this whole unit: a schema that leans on Postgres's type system is enforced by the engine; a *stringly-typed* schema pushes that work into fragile application code. Concretely, prefer:
+
+- a `status order_status` enum (or `CHECK ... IN`) over a free-text `status text` that can hold `'Paid'`, `'paid'`, and `'PAID'`;
+- a `tstzrange` with an `EXCLUDE` constraint over two `text` columns holding ISO strings the app must parse and compare;
+- `numeric`/integer cents over a `text` "amount"; `timestamptz` over a `text` date; a `tags text[]` (or join table) over a comma-joined string;
+- a `jsonb` document over a serialized blob the database can't index or validate;
+- a `domain` (`CREATE DOMAIN email AS text CHECK (value ~ '^[^@]+@[^@]+$')`) to attach a reusable constraint to a semantic type.
+
+Each of these moves a rule from "the app remembers to check" to "the engine guarantees." A stringly-typed column is a deferred bug: it accepts garbage today and surfaces it as a production incident later.
+
+## Surrogate vs natural keys
+
+A **natural key** is a column that's already a real-world identifier (an ISO country code, a SKU, an email). A **surrogate key** is a meaningless engine-generated id (`bigint` identity or uuid). The judgment:
+
+- **Surrogate** is the safe default for the primary key. It's stable (a customer can change their email; their `id` never changes), compact, and uniform. Foreign keys point at the surrogate, so a natural-value change doesn't cascade through the whole database.
+- **Natural** keys earn their place as `UNIQUE` constraints (you still want `users.email UNIQUE`), and occasionally as the primary key when the value is genuinely immutable and externally meaningful — a `currencies(code)` table keyed on `'USD'`, `'EUR'`. Even then, beware: "immutable" identifiers have a habit of changing (companies rename, countries split).
+
+The pragmatic rule: **surrogate primary key + natural unique constraints.** You get a stable join target and still enforce the real-world uniqueness rule.
+
+## Denormalize deliberately — and keep it consistent
+
+Denormalization is a *performance optimization you reach for after measuring*, not a starting posture. It's right when a read is hot, the join is genuinely expensive at your scale, and the duplicated fact rarely changes — a precomputed `order_total`, a cached `comment_count`, a search-friendly copy. The non-negotiable: a denormalized copy **must be kept consistent by the engine, not by hope.** Two clean ways:
+
+```sql
+-- 1) STORED generated column: derive within the same row, always correct, no trigger
+ALTER TABLE order_items
+  ADD COLUMN line_total bigint GENERATED ALWAYS AS (qty * unit_price_cents) STORED;
+
+-- 2) trigger: maintain a cross-row aggregate (e.g. orders.item_count) on item change
+CREATE FUNCTION bump_item_count() RETURNS trigger AS $$
+BEGIN
+  UPDATE orders SET item_count = item_count + 1 WHERE id = NEW.order_id;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+```
+
+A `STORED` generated column handles same-row derivations for free (no trigger, can't drift). Cross-row aggregates need a trigger or a periodically-refreshed materialized view — and that's a real maintenance cost you take on knowingly. The cardinal sin is the Hook's mistake: copying a fact and then *trusting the application* to update every copy. Application-maintained denormalization drifts; engine-maintained denormalization doesn't.
+
+<Inset kind="why" lang="en">
+Why not denormalize from the start "to be safe on performance"? Because you're trading a definite, permanent cost (every write must maintain the copies; every change risks drift) against a hypothetical, future read cost you haven't measured. Normalized OLTP schemas with the right indexes serve the vast majority of workloads with millisecond joins. Premature denormalization is the schema equivalent of premature optimization: it bakes in complexity and a class of consistency bugs to solve a problem you may never have. Normalize, index, measure — and denormalize only the specific hot path that proves it needs it, with the engine maintaining the copy.
+</Inset>
+
+<DragOrder
+  id="06-schema-design-drag-1"
+  lessonSlug="06-schema-design"
+  lang="en"
+  prompt="Order the schema-design workflow from default posture to last resort:"
+  items={[
+    { id: "a", label: "Normalize: put every fact in exactly one place" },
+    { id: "b", label: "Model with real Postgres types/constraints, not stringly-typed columns" },
+    { id: "c", label: "Use surrogate primary keys plus natural UNIQUE constraints" },
+    { id: "d", label: "Add indexes for the hot query paths and measure with EXPLAIN ANALYZE" },
+    { id: "e", label: "Only if a measured read is still too slow, denormalize that specific path" },
+    { id: "f", label: "Keep the denormalized copy consistent via a generated column or trigger" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="06-schema-design-quiz-1"
+  lessonSlug="06-schema-design"
+  lang="en"
+  question="An order row copies the customer's email. The customer changes their email. What's the core problem with this denormalized design?"
+  choices={[
+    { label: "The fact now lives in many places, so a change must rewrite every copy or the copies silently disagree (drift)", correct: true },
+    { label: "Copying email makes the table use too much disk", misconception: "Storage isn't the real issue. The core problem is integrity: duplicating a fact means a single change must update many rows or the copies drift apart and disagree." },
+    { label: "Emails can't be stored in more than one table", misconception: "They can be stored anywhere. The problem isn't a restriction — it's that duplicating a mutable fact creates copies that drift when it changes." },
+    { label: "It violates a NOT NULL constraint", misconception: "Nothing here is about NULLs. The issue is data drift: the copied email goes stale when the source changes and nothing updates the copies." },
+  ]}
+/>
+
+<Quiz
+  id="06-schema-design-quiz-2"
+  lessonSlug="06-schema-design"
+  lang="en"
+  question="You decide a denormalized line_total (qty × unit_price) is worth caching on order_items. How should you keep it consistent?"
+  choices={[
+    { label: "A STORED generated column GENERATED ALWAYS AS (qty * unit_price_cents) — same-row, always correct, no trigger", correct: true },
+    { label: "Update it from application code after each insert", misconception: "App-maintained copies drift: some code path will forget, or a concurrent/bulk update will bypass it. A same-row derivation should be an engine-maintained generated column." },
+    { label: "Recompute it in every SELECT and ignore the column", misconception: "Then you haven't denormalized at all and gained nothing. The point of caching the value is to store it correctly — a STORED generated column does that consistently." },
+    { label: "Leave it and hope qty and unit_price never change", misconception: "Hope isn't consistency. The whole risk of denormalization is drift; a generated column removes the risk by deriving the value automatically." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Start normalized so every fact lives in exactly one place — updates stay consistent and OLTP joins are cheap. Model with real Postgres types and constraints (enums, ranges, `numeric`, `timestamptz`, arrays, `jsonb`, domains) rather than stringly-typed columns, so the engine enforces rules the app would otherwise forget. Use surrogate primary keys plus natural `UNIQUE` constraints for stable joins. Denormalize only a measured hot read path, never as a default — and keep the copy consistent with a `STORED` generated column (same-row) or a trigger/materialized view (cross-row), never with application code that drifts.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-schema-design-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does normalization buy you, what does it cost, and why is it the default?", a: "Normalization puts every fact in exactly one place, so updates are consistent by construction — there's no second copy that can disagree. The cost is that reading a full picture needs joins. For OLTP workloads those joins are cheap indexed lookups while the integrity guarantee is priceless, so you start normalized always and only denormalize a specific hot path after measuring." },
+    { q: "Surrogate vs natural keys — which for the primary key, and where do natural keys belong?", a: "Use a surrogate (bigint identity or uuid) as the primary key by default: it's stable (a customer's email can change; the id never does), compact, and uniform, so foreign keys point at something that won't change. Natural keys earn UNIQUE constraints (e.g. users.email UNIQUE) to enforce real-world uniqueness, and can be the primary key only when the value is genuinely immutable and externally meaningful (like a currency code) — but beware that 'immutable' identifiers often turn out to change. Rule: surrogate PK + natural UNIQUE." },
+    { q: "When should you denormalize, and how do you keep the copy from drifting?", a: "Denormalize only when a read is hot, the join is genuinely expensive at your scale, and the duplicated fact changes rarely — and only after measuring with EXPLAIN ANALYZE, never as a starting posture. Keep the copy consistent with the engine, not the app: a STORED generated column for a same-row derivation (can't drift, no trigger), or a trigger / periodically-refreshed materialized view for a cross-row aggregate. The classic failure is copying a fact and trusting application code to update every copy — that always drifts." },
+  ]}
+/>
+
+<Recap lang="en">
+Schema design is the discipline of where a fact lives. The default is to normalize so each fact lives in exactly one place, which makes updates consistent by construction and keeps OLTP joins cheap — you start here always. Throughout, model with Postgres's real types and constraints — enums, ranges with `EXCLUDE`, `numeric`/cents, `timestamptz`, arrays, `jsonb`, and domains — so the engine enforces what a stringly-typed schema would leave to fragile application code. Choose surrogate primary keys (stable, compact `bigint` identity or uuid) for join targets and keep natural keys as `UNIQUE` constraints, promoting a natural key to primary only when it's genuinely immutable and externally meaningful. Denormalization is a measured, last-resort optimization for a proven hot read path, never a starting posture — and a denormalized copy must be maintained by the engine: a `STORED` generated column for same-row derivations (can't drift) or a trigger / materialized view for cross-row aggregates, never application code that silently lets copies disagree. That closes the types-and-modeling unit: pick the type for the meaning, let the engine enforce integrity, and model *with* Postgres rather than around it.
+</Recap>
