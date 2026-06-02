@@ -5,9 +5,154 @@ track: "sql-postgres"
 unit: "02-joins-deep"
 order: 5
 title: "LATERAL joins"
-summary: "LATERAL joins — stub; author to ready."
-estMin: 12
-status: stub
+summary: "LATERAL lets a subquery in FROM reference earlier FROM items, so it runs once per outer row. It's the clean way to do top-N-per-group and to unnest set-returning functions — usually one pass, beating correlated scalar subqueries."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - lateral-join
+  - correlated-from-subquery
+  - top-n-per-group
+  - set-returning-functions
+  - per-row-evaluation
+prereqs:
+  - 04-self-and-cross-joins
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://www.postgresql.org/docs/current/functions-srf.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+"Show each user's 3 most recent orders" sounds trivial until you try it. A `GROUP BY` can't return whole rows, only aggregates. A window function works but reads every order to rank them. The team's first version fired one query per user from application code — the N+1 pattern — and the endpoint took 4 seconds for 800 users. The one-query rewrite that brought it to 90 ms used a feature most engineers never reach for: `LATERAL`. It is the cleanest tool for "top-N per group", and once you have it you stop writing per-row loops.
+</Hook>
+
+<Crux>LATERAL is a subquery in FROM that can reference earlier FROM items, so it runs once per outer row — the clean way to do top-N-per-group.</Crux>
+
+<Explanation>
+
+## What LATERAL changes about FROM
+
+Normally, the table expressions in a `FROM` clause are independent: `FROM users u, orders o` lets `o` know nothing about `u` — the join condition links them afterward. A subquery in `FROM` is the same; it can't see the other tables. `LATERAL` removes that wall. A `LATERAL` subquery (or function) in `FROM` **may reference columns from FROM items that appear before it**, and it is evaluated **once per row** of those earlier items.
+
+That's the whole idea: a correlated subquery, but in `FROM` instead of `SELECT` or `WHERE`, so it can return *multiple columns and multiple rows* per outer row rather than a single scalar.
+
+```sql
+-- For each user, their 3 most recent orders — whole rows, not aggregates
+SELECT u.id, u.name, recent.id AS order_id, recent.created_at
+FROM users u
+CROSS JOIN LATERAL (
+  SELECT o.id, o.created_at
+  FROM orders o
+  WHERE o.user_id = u.id        -- references u — only legal because of LATERAL
+  ORDER BY o.created_at DESC
+  LIMIT 3
+) AS recent;
+```
+
+The inner subquery references `u.id`, which is only allowed because of `LATERAL`. For each user row, Postgres runs that little "top 3 orders for this user" query and joins the (up to 3) results back. This is the canonical **top-N-per-group** solution, and there is no concise non-lateral equivalent that returns whole rows.
+
+<SequenceDiagram
+  label="Per-row evaluation of a LATERAL subquery: for each user row the executor runs the correlated inner query and emits its rows, then advances to the next user."
+  hue="var(--d-data)"
+  actors={["Outer (users)", "LATERAL subquery"]}
+  messages={[
+    { from: "Outer (users)", to: "LATERAL subquery", label: "u1 → run top-3 for u1" },
+    { from: "LATERAL subquery", to: "Outer (users)", label: "3 orders" },
+    { from: "Outer (users)", to: "LATERAL subquery", label: "u2 → run top-3 for u2" },
+    { from: "LATERAL subquery", to: "Outer (users)", label: "3 orders" },
+    { from: "Outer (users)", to: "LATERAL subquery", label: "u3 → run top-3 for u3" },
+    { from: "LATERAL subquery", to: "Outer (users)", label: "1 order" },
+  ]}
+  caption="The lateral subquery fires once per outer row, seeing that row's values. u3 had only one order, so it contributes one row. CROSS JOIN LATERAL drops users with zero orders; LEFT JOIN LATERAL ... ON true keeps them, NULL-extended."
+/>
+
+## CROSS vs LEFT JOIN LATERAL, and set-returning functions
+
+`CROSS JOIN LATERAL (...)` drops an outer row if its subquery returns nothing — a user with zero orders disappears. To keep every outer row (NULL-extended when the subquery is empty), use `LEFT JOIN LATERAL (...) ON true`. The `ON true` is required syntax: a lateral left join still needs an `ON`, and the correlation already lives inside the subquery, so the join condition is just "always."
+
+`LATERAL` also shines with **set-returning functions** — functions that return many rows, like `jsonb_array_elements` or `generate_series`. To explode a JSONB array column into rows, one per element, per parent row:
+
+```sql
+-- One row per tag in each product's JSONB tags array
+SELECT p.id, tag.value AS tag
+FROM products p
+CROSS JOIN LATERAL jsonb_array_elements_text(p.tags) AS tag(value);
+```
+
+The function call references `p.tags`, which is implicitly lateral when a function in `FROM` references an earlier table — Postgres even lets you omit the keyword for functions, but writing it is clearer. This unnest-per-row pattern is everywhere once you store arrays or JSON (unit 06 goes deep on JSONB).
+
+## Why LATERAL often beats a correlated scalar subquery
+
+You can sometimes fake per-row results with correlated scalar subqueries in `SELECT` — but each one returns a *single* value and you need a separate subquery per column, each re-scanning the same orders. Want the latest order's id *and* date *and* total? That's three correlated subqueries, three scans. A single `LATERAL` returns all three columns from **one** evaluation per row. Fewer scans, fewer round trips than the application-side N+1 loop, and the planner can choose an index-driven nested loop where the inner `LIMIT 3` reads only a few index entries per user — turning the 4-second N+1 endpoint into a sub-100 ms single query.
+
+<Inset kind="why" lang="en">
+When is LATERAL the wrong tool? When you genuinely need a ranking or running computation over all rows, a window function (unit 04) is often cleaner and can be a single sequential pass. The rough rule: LATERAL excels at small top-N-per-group (LIMIT k per outer row) because an indexed nested loop reads only k entries per group; a window function excels when you need a value derived from the whole partition (rank, running total) and would otherwise rescan. For top-3-recent on an indexed (user_id, created_at), LATERAL with LIMIT 3 is typically the cheaper plan; for "rank every order within its user" it's the window function.
+</Inset>
+
+<Quiz
+  id="05-lateral-joins-quiz-1"
+  lessonSlug="05-lateral-joins"
+  lang="en"
+  question="What does LATERAL specifically enable that a normal FROM subquery cannot?"
+  choices={[
+    { label: "The subquery may reference columns from earlier FROM items and is evaluated once per outer row", correct: true },
+    { label: "It makes the subquery run only once, cached for all rows", misconception: "LATERAL is the opposite of cached-once: it evaluates per outer row precisely so it can use that row's values." },
+    { label: "It removes the need for an ON clause in every join", misconception: "LEFT JOIN LATERAL still needs ON true; LATERAL is about correlation in FROM, not about dropping ON." },
+    { label: "It converts the query to return only aggregates", misconception: "LATERAL returns whole rows per outer row — the opposite of collapsing to aggregates, which is GROUP BY's job." },
+  ]}
+/>
+
+<Quiz
+  id="05-lateral-joins-quiz-2"
+  lessonSlug="05-lateral-joins"
+  lang="en"
+  question="You use CROSS JOIN LATERAL to get each user's top 3 orders, but users with zero orders vanish from the result. How do you keep them?"
+  choices={[
+    { label: "Use LEFT JOIN LATERAL (...) ON true — empty subquery results are NULL-extended instead of dropping the user", correct: true },
+    { label: "Add WHERE order_id IS NOT NULL", misconception: "That would drop the zero-order users even harder; you want to KEEP them, which needs an outer (LEFT) lateral join." },
+    { label: "Remove the LIMIT 3", misconception: "The LIMIT controls top-N; removing it doesn't make a user with zero orders appear — there are still no rows to return for them." },
+    { label: "Switch to a plain INNER JOIN", misconception: "An inner join also drops users with no matching orders; the fix is the outer form LEFT JOIN LATERAL ... ON true." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-lateral-joins-metaphor-1"
+  lessonSlug="05-lateral-joins"
+  lang="en"
+  setup="Fill in the blank: a LATERAL subquery is evaluated once per _______ row of the earlier FROM items, and it may reference that row's columns — which is exactly why it can return each user's top-N orders."
+  accepted={["outer", "left", "driving", "each"]}
+  canonical="outer"
+  explanation="LATERAL turns a FROM subquery into a correlated, per-outer-row computation: for every row of the left/outer side, the subquery runs with that row's values in scope. That per-row firing is what makes top-N-per-group expressible in one query instead of an N+1 loop."
+/>
+
+</Explanation>
+
+<KeyTakeaway>LATERAL lets a FROM subquery reference earlier FROM items and runs it once per outer row — a correlated subquery that can return multiple columns and rows. It's the canonical top-N-per-group tool (CROSS JOIN LATERAL (... ORDER BY ... LIMIT k)) and the clean way to unnest set-returning functions like jsonb_array_elements. Use LEFT JOIN LATERAL ... ON true to keep outer rows whose subquery is empty. One LATERAL beats several correlated scalar subqueries (one pass, all columns) and an application-side N+1 loop.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-lateral-joins-retrieval"
+  lang="en"
+  questions={[
+    { q: "In one sentence, what is a LATERAL join and how is it evaluated?", a: "A LATERAL join is a subquery (or set-returning function) in the FROM clause that is allowed to reference columns from FROM items appearing before it, and Postgres evaluates it once per row of those earlier items — effectively a correlated subquery in FROM that can return multiple rows and columns per outer row." },
+    { q: "Write the shape of a top-3-orders-per-user query with LATERAL, and say how to keep users with no orders.", a: "SELECT u.id, r.* FROM users u CROSS JOIN LATERAL (SELECT o.id, o.created_at FROM orders o WHERE o.user_id = u.id ORDER BY o.created_at DESC LIMIT 3) AS r. CROSS JOIN LATERAL drops users whose subquery returns nothing; to keep zero-order users NULL-extended, switch to LEFT JOIN LATERAL (...) AS r ON true." },
+    { q: "Why does one LATERAL often outperform several correlated scalar subqueries or an N+1 application loop?", a: "A correlated scalar subquery returns one value, so fetching several fields needs several subqueries, each re-scanning the same data; a single LATERAL returns all the columns from one evaluation per outer row. Compared to an application N+1 loop (one query per user, many round trips), the LATERAL is a single query the planner can run as an index-driven nested loop where the inner LIMIT k reads only k index entries per group — turning seconds into milliseconds." },
+  ]}
+/>
+
+<Recap lang="en">
+`LATERAL` lifts the wall between `FROM` items: a `LATERAL` subquery or function may reference columns of the items before it and is evaluated **once per outer row**, making it a correlated subquery in `FROM` that can return many rows and columns per row. Its headline use is **top-N-per-group** — `CROSS JOIN LATERAL (SELECT ... WHERE o.user_id = u.id ORDER BY created_at DESC LIMIT 3)` — which has no concise whole-row equivalent without it. Use `CROSS JOIN LATERAL` to drop outer rows with an empty subquery, or `LEFT JOIN LATERAL (...) ON true` to keep them NULL-extended. `LATERAL` also unnests **set-returning functions** like `jsonb_array_elements` and `generate_series`, one element-row per parent. It wins over correlated scalar subqueries (one evaluation returns all columns, not one scan per field) and over the application-side N+1 loop (a single query the planner can run as an indexed nested loop reading only k entries per group). The dividing line with window functions: `LATERAL` for small per-group top-N over an index; a window function (unit 04) when you need a value computed across the whole partition.
+</Recap>

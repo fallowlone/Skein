@@ -5,9 +5,161 @@ track: "sql-postgres"
 unit: "02-joins-deep"
 order: 3
 title: "Semi and anti joins"
-summary: "Semi and anti joins — stub; author to ready."
-estMin: 12
-status: stub
+summary: "EXISTS/IN return left rows that have a match without fanning out (a semi-join); NOT EXISTS/NOT IN return left rows with no match (an anti-join). NOT IN breaks silently when the subquery yields a NULL — prefer NOT EXISTS."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - semi-join
+  - anti-join
+  - exists-vs-in
+  - not-in-null-trap
+  - no-fan-out
+prereqs:
+  - 02-inner-vs-outer
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-subquery.html
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://use-the-index-luke.com/sql/join
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A `NOT IN` query that powered a "customers with no failed payments" promotion shipped, looked correct in code review, and returned an empty set in production — so nobody got the offer. The subquery it checked against had exactly one row with a `NULL` payment_id, buried among millions. That single NULL flipped the entire `NOT IN` to "no rows," and three-valued logic did it silently, no error. The senior who debugged it didn't read the data; they recognized the shape. `NOT IN` + a nullable subquery column is a known landmine.
+</Hook>
+
+<Crux>EXISTS/IN = semi-join (matched left rows, no duplication). NOT EXISTS/NOT IN = anti-join. NOT IN breaks on a NULL — prefer NOT EXISTS.</Crux>
+
+<Explanation>
+
+## Semi-join: "does a match exist?" — yes/no, no fan-out
+
+Often you don't want the matched rows from the other table; you only want to know *whether* a match exists. "Users who have placed at least one order." A plain `JOIN` answers this badly: if a user has 50 orders, the join emits that user 50 times, and you have to bolt on `DISTINCT` to undo the damage. That's a fan-out followed by a cleanup.
+
+A **semi-join** is the right tool: it returns each qualifying left row **exactly once**, regardless of how many matches it has on the right. SQL spells it `EXISTS` or `IN`:
+
+```sql
+-- Users who have at least one order — each user once, never duplicated
+SELECT u.id, u.name
+FROM users u
+WHERE EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+
+-- Equivalent semi-join via IN
+SELECT u.id, u.name
+FROM users u
+WHERE u.id IN (SELECT user_id FROM orders);
+```
+
+`EXISTS` stops scanning the inner side as soon as it finds the first matching row — it's a short-circuit boolean, not a count. That's why a semi-join is usually cheaper than `JOIN ... DISTINCT`: it never builds the duplicated intermediate result just to collapse it again. The planner even shows this as a dedicated **Semi Join** node in `EXPLAIN` (the `databases` track's join-algorithms lesson covers how it's executed).
+
+<StackDiagram
+  label="Three join shapes compared by what they emit: INNER JOIN duplicates a left row per match; semi-join (EXISTS/IN) emits matched left rows once; anti-join (NOT EXISTS) emits unmatched left rows once."
+  hue="var(--d-data)"
+  layers={[
+    { label: "INNER JOIN orders", note: "user × each match → fan-out" },
+    { label: "Semi-join: EXISTS / IN", note: "matched users, once each" },
+    { label: "Anti-join: NOT EXISTS", note: "users with no order, once each" },
+  ]}
+  caption="A semi-join is a JOIN that returns left rows without duplication — it answers 'has a match?' as yes/no. An anti-join returns the complement: left rows with no match. Neither widens the result the way a plain JOIN does."
+/>
+
+## Anti-join: "has no match" — the complement
+
+The mirror of a semi-join is the **anti-join**: return the left rows that have *no* match. "Users who have never ordered." Spelled `NOT EXISTS` or `NOT IN`:
+
+```sql
+-- Users who have never ordered (anti-join via NOT EXISTS)
+SELECT u.id, u.name
+FROM users u
+WHERE NOT EXISTS (
+  SELECT 1 FROM orders o WHERE o.user_id = u.id
+);
+```
+
+This is the same set as the `LEFT JOIN ... WHERE o.id IS NULL` pattern from the previous lesson, and the planner often executes them identically (an **Anti Join** node). `NOT EXISTS` is the clearest way to express it and is immune to the NULL trap below.
+
+## The NOT IN + NULL trap — the reason this lesson exists
+
+`NOT IN` looks like the natural anti-join, and it works fine — until the subquery returns even one `NULL`. Then it silently returns **zero rows**, exactly the production bug from the hook.
+
+```sql
+-- DANGEROUS: if any order has a NULL user_id, this returns NOTHING
+SELECT u.id FROM users u
+WHERE u.id NOT IN (SELECT user_id FROM orders);
+```
+
+The cause is three-valued logic. `x NOT IN (a, b, NULL)` expands to `x <> a AND x <> b AND x <> NULL`. The last comparison `x <> NULL` is `UNKNOWN`, never true, so the whole `AND` can never be true — at best it's `UNKNOWN`, which `WHERE` discards. One NULL in the list makes the predicate un-satisfiable for every row. There's no error; the result set just collapses.
+
+`NOT EXISTS` does not have this flaw: it asks "is there a correlated matching row?" per left row, and a NULL on the right simply fails to match, which is the correct anti-join behavior. **Production rule: never write `NOT IN` against a subquery whose column can be NULL — use `NOT EXISTS`.** (Plain `IN` is safe; the trap is specific to `NOT IN`.) If you must keep `NOT IN`, guard it with `WHERE user_id IS NOT NULL` inside the subquery — but `NOT EXISTS` is simpler and faster.
+
+<Inset kind="edgecase" lang="en">
+Why doesn't IN have the same problem? Because <code>x IN (a, b, NULL)</code> is <code>x = a OR x = b OR x = NULL</code>; the NULL term is UNKNOWN, but an OR is true as soon as any real term matches, so a genuine match still surfaces. The asymmetry is the AND in NOT IN: one UNKNOWN poisons a conjunction (true AND UNKNOWN = UNKNOWN), but only a true term is needed to satisfy a disjunction. This is the same three-valued-logic reasoning from the NULL lesson in unit 01 — semi/anti joins are just where it bites hardest in practice.
+</Inset>
+
+<Quiz
+  id="03-semi-and-anti-joins-quiz-1"
+  lessonSlug="03-semi-and-anti-joins"
+  lang="en"
+  question="You want each user who has ordered, listed once. A user has 40 orders. Which approach lists that user exactly once without a DISTINCT?"
+  choices={[
+    { label: "WHERE EXISTS (SELECT 1 FROM orders o WHERE o.user_id = u.id) — a semi-join, one row per matching user", correct: true },
+    { label: "JOIN orders o ON o.user_id = u.id", misconception: "A plain join fans out: the 40-order user appears 40 times. You'd need DISTINCT to collapse, which a semi-join avoids." },
+    { label: "LEFT JOIN orders o ON o.user_id = u.id", misconception: "A left join also fans out matched users (40 rows) and additionally keeps non-orderers — neither is 'each matching user once'." },
+    { label: "CROSS JOIN orders o", misconception: "A cross join pairs every user with every order regardless of ownership — wildly wrong and explosive." },
+  ]}
+/>
+
+<Quiz
+  id="03-semi-and-anti-joins-quiz-2"
+  lessonSlug="03-semi-and-anti-joins"
+  lang="en"
+  question="u.id NOT IN (SELECT user_id FROM orders) returns zero rows even though many users clearly never ordered. Most likely cause?"
+  choices={[
+    { label: "The orders.user_id subquery contains at least one NULL, so the NOT IN predicate becomes UNKNOWN for every row", correct: true },
+    { label: "NOT IN is not valid SQL", misconception: "NOT IN is valid; the problem is its three-valued-logic behavior when the list contains a NULL, not a syntax issue." },
+    { label: "Every user really has ordered", misconception: "The premise says many users never ordered; a NULL in the subquery is the classic explanation for the empty result." },
+    { label: "You must use INNER JOIN for anti-joins", misconception: "An inner join cannot express 'has no match'; anti-joins use NOT EXISTS or LEFT JOIN ... IS NULL, not INNER JOIN." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-semi-and-anti-joins-metaphor-1"
+  lessonSlug="03-semi-and-anti-joins"
+  lang="en"
+  setup="Fill in the blank: a semi-join returns each qualifying left row exactly _______ no matter how many matches it has on the right — unlike a plain JOIN, which duplicates the left row per match."
+  accepted={["once", "one time", "1"]}
+  canonical="once"
+  explanation="A semi-join (EXISTS/IN) is a membership test: it asks 'does at least one match exist?' and emits the left row a single time. That non-duplication is exactly why it beats JOIN + DISTINCT — it never builds the fanned-out result to begin with."
+/>
+
+</Explanation>
+
+<KeyTakeaway>EXISTS/IN are semi-joins: they return matched left rows once each, no fan-out, so they beat JOIN + DISTINCT. NOT EXISTS/NOT IN are anti-joins: left rows with no match. But NOT IN silently returns zero rows if the subquery yields even one NULL (three-valued logic poisons the implicit AND). Production rule: use NOT EXISTS for anti-joins; the planner shows Semi Join / Anti Join nodes in EXPLAIN.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-semi-and-anti-joins-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a semi-join and why is it better than JOIN + DISTINCT for 'users who have ordered'?", a: "A semi-join (EXISTS or IN) returns each left row that has at least one match on the right exactly once, regardless of how many matches exist — it's a membership test, not a row combination. JOIN + DISTINCT instead fans out the left row once per match and then collapses the duplicates, building and discarding a wider intermediate result. EXISTS short-circuits on the first match, so it's typically cheaper, and the planner runs it as a dedicated Semi Join node." },
+    { q: "Explain precisely why NOT IN returns zero rows when the subquery contains a NULL.", a: "x NOT IN (a, b, NULL) is equivalent to x <> a AND x <> b AND x <> NULL. The comparison x <> NULL evaluates to UNKNOWN (never true), and because it's joined by AND, the whole predicate can never evaluate to true for any x — at best UNKNOWN, which WHERE treats as false. So every row is rejected and the result set is empty, with no error raised." },
+    { q: "Why is NOT EXISTS immune to the NULL trap, and what's the rule of thumb?", a: "NOT EXISTS evaluates a correlated subquery per left row and asks 'is there any matching row?'. A NULL on the right simply fails to match (it isn't equal to anything), which is the correct anti-join semantics — there's no implicit AND over the whole list to be poisoned. Rule of thumb: use NOT EXISTS for anti-joins; only use NOT IN when the subquery column is guaranteed NOT NULL." },
+  ]}
+/>
+
+<Recap lang="en">
+Semi- and anti-joins answer existence questions without combining rows. A **semi-join** (`EXISTS` / `IN`) returns each left row that has at least one match exactly once — a membership test, no fan-out — which is why it beats `JOIN ... DISTINCT` (no wide intermediate result to collapse, and `EXISTS` short-circuits on the first match). An **anti-join** (`NOT EXISTS`) returns the complement: left rows with no match, equivalent to `LEFT JOIN ... WHERE o.id IS NULL`. The trap that makes this lesson essential is `NOT IN` against a nullable subquery: a single `NULL` turns the implicit `x <> a AND x <> b AND x <> NULL` into a never-true predicate (three-valued logic), and the query silently returns zero rows. Plain `IN` is safe because its `OR` only needs one true term; `NOT IN`'s `AND` is poisoned by one `UNKNOWN`. The production rule is blunt: write anti-joins as `NOT EXISTS`. In `EXPLAIN`, these appear as `Semi Join` and `Anti Join` nodes — the planner's own confirmation that you expressed existence, not combination.
+</Recap>
