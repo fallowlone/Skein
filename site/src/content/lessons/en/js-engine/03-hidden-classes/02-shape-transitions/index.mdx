@@ -4,10 +4,196 @@ lang: en
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 2
-title: "Shape transitions"
-summary: "Shape transitions — stub; author to ready."
-estMin: 12
-status: stub
+title: "Transition trees, deprecation, and migration"
+summary: "Adding a property follows or creates a transition edge to a new Map; the tree branches by addition order, by elements-kind change, and by field-representation generalization. When a representation must widen across instances"
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - transition tree
+  - TransitionArray
+  - representation generalization
+  - map deprecation
+  - map migration
+  - constness loss
+  - elements-kind transition
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "01-shapes-and-maps"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/fast-properties
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/docs/hidden-classes
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You already know "property order matters" from the overview. But here is the part that surprises seniors: a Map can become *deprecated* — marked dead — while objects are still pointing at it, and V8 quietly rewrites those objects to a newer layout the next time you touch them. Assigning `2.5` to a field that used to hold integers can silently rebuild the shape of every object that shares it. This lesson is how the shape graph grows, mutates, and heals.
+</Hook>
+
+<Crux>Transitions arise from adding a property, kind/representation widening, or const loss; widening deprecates the Map, migrated lazily.</Crux>
+
+<Explanation>
+
+## Transitions are edges in a shared tree
+
+Recall the one-line version from `browser/03-v8-internals/03-hidden-classes`: adding `x` then `y` reaches a different leaf than adding `y` then `x`, so order matters. Now the mechanism. Every Map stores a forward **TransitionArray** keyed by `{property name, attributes}`. Adding a property:
+
+1. Looks up the `{name, attributes}` edge in the current Map's TransitionArray.
+2. If an edge exists, **follows** it — no allocation, you reuse the existing child Map and its (shared) DescriptorArray.
+3. If no edge exists, **creates** a new child Map (extending the parent's DescriptorArray by one descriptor), records the edge, and points the object at the new Map.
+
+Because the tree is shared across the entire isolate, the *second* object to walk a path is free — it follows edges the first object created. This is why building objects the same way is cheap and building them in scrambled orders is not: scrambled orders never re-find an edge, so every object forces a fresh Map.
+
+```js
+const a = {}; a.x = 1; a.y = 2;   // empty -> +x -> +x,y   (creates 2 edges)
+const b = {}; b.x = 3; b.y = 4;   // empty -> +x -> +x,y   (follows them; 0 new Maps)
+const c = {}; c.y = 5; c.x = 6;   // empty -> +y -> +y,x   (new branch; 2 new Maps)
+```
+
+## Three more ways to transition (not just adding properties)
+
+The overview implied transitions come only from adding properties. They do not. There are three other triggers, and they bite in production:
+
+- **Elements-kind change.** Writing a float into a `PACKED_SMI_ELEMENTS` array, or creating a hole, transitions the array's Map to a wider elements kind (`PACKED_SMI → PACKED_DOUBLE → PACKED_ELEMENTS`, and the HOLEY variants). One-way, like the property tree.
+- **Field representation generalization.** This is the big one. A field starts narrow — say `Smi`. If any instance later stores a value that does not fit (`2.5`, or a string), the field's representation must **widen** to `Double` or `Tagged`. But the representation is a property of the *Map*, shared by all instances. So V8 cannot just change one object; it must generalize the Map.
+- **Constness loss.** A field is `const` while every instance assigned it the same value. The first instance that assigns a *different* value flips the descriptor to `mutable`, which is itself a transition (the compiled code that inlined the constant must be invalidated).
+
+## Deprecation and migration: how V8 widens a shared field
+
+Here is the subtle part. Suppose 10000 objects share Map `M1` where field `temp` has representation `Smi`. Now one object assigns `obj.temp = 98.6`. The field must become `Double` — but for *the whole shape*, because the Map is shared. V8 cannot rewrite 10000 objects at that instant (it does not even have a list of them). Instead:
+
+1. It creates a *new* Map `M2` identical to `M1` except `temp` is `Double` (a more general representation). The split happens at the right place in the tree, and descendants are re-pointed.
+2. It marks `M1` as **deprecated** — a dead Map that should no longer be used. Existing objects still *point* at `M1` for now.
+3. **Migration is lazy.** The next time V8 touches one of those objects through a slow path (a property access whose inline cache misses, a `%DebugPrint`, etc.), it notices the object's Map is deprecated, walks to the corresponding non-deprecated Map (`M2`) using the back-pointers from lesson 01, rewrites the object's layout in place (boxing the integer into a double slot), and updates the object's map pointer. This is the "MigrationMarker" / migration path.
+
+So a single `obj.temp = 98.6` can begin deprecating a shape used by thousands of objects, each paying a small migration cost the next time it is accessed. If that field oscillates between integer and float, you can churn deprecation repeatedly — a real, hard-to-spot deopt source.
+
+<FlowDiagram
+  label="A transition tree where assigning a float to an integer field generalizes the field's representation: the original Map is deprecated and a new Map with a wider representation becomes the live target, with instances migrated lazily on next access."
+  hue="var(--accent)"
+  perRow={3}
+  caption="Generalization in the tree. M1 (temp: Smi) is shared by many objects. One float assignment forces a wider representation, so V8 splits to M2 (temp: Double), marks M1 deprecated, and migrates each instance lazily the next time it is touched — following back-pointers to find the live Map."
+  nodes={[
+    { id: "empty", label: "M0", sub: "empty", col: 0, row: 0 },
+    { id: "m1", label: "M1 (deprecated)", sub: "temp: Smi", col: 1, row: 0 },
+    { id: "m2", label: "M2 (live)", sub: "temp: Double", col: 2, row: 0 },
+    { id: "obj", label: "instances", sub: "point at M1", col: 1, row: 1 },
+    { id: "mig", label: "migrate", sub: "lazy, on access", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "empty", to: "m1", label: "+temp (Smi)" },
+    { from: "m1", to: "m2", label: "generalize" },
+    { from: "obj", to: "m1", label: "stale ptr" },
+    { from: "obj", to: "mig", label: "next access" },
+    { from: "mig", to: "m2", label: "via back-pointer" },
+  ]}
+/>
+
+<NumbersCard
+  title="Transition mechanics (V8)"
+  data-lesson-visual
+  stats={[
+    { label: "Transition lookup key", value: "{property name, attributes}" },
+    { label: "Re-walking an existing path", value: "0 new Maps — edges followed" },
+    { label: "Representation widening order", value: "Smi → Double → Tagged (one-way)" },
+    { label: "Old Map after generalization", value: "marked deprecated" },
+    { label: "Instance migration", value: "lazy, on next slow-path access" },
+    { label: "Finding the live Map", value: "walk back-pointers to non-deprecated descendant" },
+    { label: "Trace transitions", value: "--trace-maps in d8 / node" },
+  ]}
+/>
+
+## Why scrambled key orders are pathological
+
+Put the pieces together. A function that builds objects by iterating input keys in arbitrary order (a JSON re-serializer, a generic mapper, generated code) creates a *new branch* of the transition tree for almost every distinct order it sees. The shapes never repeat, so:
+
+- Every object allocates fresh Maps and DescriptorArrays (the lesson-01 memory blow-up).
+- The downstream inline cache that reads those objects sees a fresh Map nearly every time → it goes polymorphic, then megamorphic, then gives up (lesson 05).
+- TurboFan cannot specialize on a stable shape, so the hot function never reaches top tier or deopts repeatedly.
+
+The fix is always the same: build from a *fixed schema* in a constant order (defaulting absent fields to `null`), or store genuinely dynamic key sets in a `Map` collection that is built for arbitrary keys.
+
+<Misconception id="mc-only-adding">
+  <p><strong>"Hidden classes only change when I add or remove a property."</strong> They also change when an array's elements kind widens, a field's representation generalizes (a float into an int field), or a field loses constness — so an out-of-range value on an <em>existing</em> property mutates it, keys untouched.</p>
+</Misconception>
+
+<Quiz
+  id="q-generalize"
+  lessonSlug="02-shape-transitions"
+  lang="en"
+  question="10000 objects share a Map with field `score` represented as `Smi`. One object does `o.score = 1.5`. What happens to the shared Map?"
+  choices={[
+    { label: "Only that one object gets a new Map; the other 9999 are untouched", misconception: "Representation is a property of the shared Map, not the instance. V8 cannot widen the field for one object alone — it must generalize the Map the whole shape uses." },
+    { label: "The old Map is deprecated and a new Map with `score: Double` becomes the live target; instances migrate lazily on next access", correct: true },
+    { label: "Nothing — numbers are numbers, Smi and Double are the same to V8", misconception: "V8 distinguishes Smi (unboxed small integer) from Double (boxed/unboxed float). Crossing that boundary forces a representation change and a Map generalization." },
+    { label: "All 9999 other objects are rewritten immediately and synchronously", misconception: "V8 does not hold a list of every instance, so it cannot rewrite them eagerly. Migration is lazy: each object is fixed up the next time it is accessed through a slow path." },
+  ]}
+/>
+
+<Quiz
+  id="q-follow-edge"
+  lessonSlug="02-shape-transitions"
+  lang="en"
+  question="Object `a` was built `{}; a.p=1; a.q=2`. Object `b` is then built the same way. How many new Map objects does building `b` allocate?"
+  choices={[
+    { label: "Two — one per property added", misconception: "New Maps are allocated only the first time a transition edge is created. The edges already exist from building `a`, so `b` follows them." },
+    { label: "Zero — `b` follows the transition edges `a` already created", correct: true },
+    { label: "One — only the leaf Map is reused", misconception: "Both the intermediate (+p) and leaf (+p,q) edges already exist; b reuses the entire path, allocating no Maps." },
+    { label: "It depends on the values 1 and 2", misconception: "As long as both values share the representation already recorded (both Smi), no generalization is needed and b simply follows the existing edges." },
+  ]}
+/>
+
+<DragOrder
+  id="do-deprecation"
+  pieceSlug="02-shape-transitions"
+  lang="en"
+  prompt="Order what V8 does when one instance assigns a float to a field that the shared Map records as Smi."
+  items={[
+    "Detect the new value does not fit the field's current representation (Smi)",
+    "Create a new Map identical except the field is generalized to Double",
+    "Mark the old Map as deprecated so it stops being used for new objects",
+    "Leave existing instances pointing at the deprecated Map for now",
+    "On each instance's next slow-path access, walk back-pointers to the live Map and migrate it in place",
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+Numbers are not the only generalization. Assigning a heap object where a field previously held only `Smi`s generalizes the representation to `Tagged` (the most general), which permanently disables some of TurboFan's unboxing optimizations for that field. A field that holds `null` for "absent" and an object for "present" is already `Tagged` from the first non-Smi write — which is usually fine, but be aware it forecloses the unboxed-integer fast path. If a field is hot and numeric, keep it numeric.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Transitions are edges in a shared tree, created not only by adding properties but also by elements-kind changes, field-representation generalization, and constness loss. When a representation must widen across a shared shape, V8 deprecates the old Map, creates a generalized one, and migrates instances lazily via back-pointers on their next access. Scrambled construction orders branch the tree endlessly and feed IC churn.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="shape-transitions-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name every kind of event that creates a transition to a new Map, beyond adding a property.", a: "Four kinds: (1) adding a property follows or creates a `{name, attributes}` edge in the TransitionArray; (2) an elements-kind change widens the array's kind (PACKED_SMI → PACKED_DOUBLE → PACKED_ELEMENTS, plus HOLEY variants) when you store a wider element type or introduce a hole; (3) field-representation generalization widens a field's representation (Smi → Double → Tagged) when an instance stores a value the current representation cannot hold; (4) constness loss flips a field from const to mutable when a second distinct value is assigned across instances, invalidating any code that inlined the constant. The first follows edges; the last two also deprecate the old Map." },
+    { q: "Explain deprecation and lazy migration step by step.", a: "When a field must generalize across a shared shape, V8 creates a new Map that differs only in the widened representation and makes it the live target; the original Map is marked deprecated. V8 does not eagerly rewrite the (possibly thousands of) existing instances because it holds no list of them. Instead each instance keeps pointing at the deprecated Map until its next slow-path access (an IC miss, %DebugPrint, etc.). At that point V8 sees the deprecated marker, walks the back-pointers to find the corresponding non-deprecated Map, rewrites the object's storage in place (e.g. boxing an integer slot into a double slot), and updates the object's map pointer. This is the MigrationMarker / map-migration path." },
+    { q: "Why does building objects by iterating input keys in arbitrary order destroy performance, in terms of the transition tree?", a: "Each distinct key order walks a different branch from the empty Map, so almost every object ends on a fresh leaf Map with its own DescriptorArray — the transition tree branches combinatorially, wasting memory on Maps that are never reused. Worse, the inline cache that later reads those objects sees a new Map nearly every time, so it degrades through polymorphic to megamorphic and falls back to generic lookups, and TurboFan cannot specialize on a stable shape, so the hot function stays slow or deopts. The fix is to construct from a fixed schema in a constant order (defaulting missing fields to null) or to store dynamic key sets in a Map collection." },
+  ]}
+/>
+
+<Recap lang="en">
+A transition is an edge in a shape tree shared across the isolate. Adding a property looks up a `{name, attributes}` edge in the current Map's TransitionArray and follows it (free) or creates it (one new child Map extending the parent's DescriptorArray). But three other events also transition: an array's elements kind widening, a field's representation generalizing (Smi → Double → Tagged), and a field losing constness. Representation generalization is special because the representation belongs to the shared Map: V8 creates a generalized Map, deprecates the old one, and migrates each instance lazily — on its next slow-path access it follows back-pointers to the live Map and rewrites its storage in place. Building objects in scrambled key orders branches the tree endlessly, blowing up Map memory, driving the downstream inline cache megamorphic, and starving TurboFan of a stable shape; the fix is a fixed-schema construction order or a Map collection for truly dynamic keys. Trace it all with `--trace-maps`.
+</Recap>

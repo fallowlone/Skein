@@ -4,10 +4,181 @@ lang: en
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 5
-title: "Mono-, poly- and megamorphism"
-summary: "Mono-, poly- and megamorphism — stub; author to ready."
-estMin: 12
-status: stub
+title: "Monomorphic, polymorphic, megamorphic — and the stub cache"
+summary: "The IC state machine: uninitialized → premonomorphic → monomorphic (1 map) → polymorphic (2-4 maps, a scanned list) → megamorphic (≥5 maps, consult the global megamorphic stub cache, a hash probe far slower and JIT-hostile). Prototype ICs use validity cells."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - IC state machine
+  - monomorphic
+  - polymorphic
+  - megamorphic
+  - megamorphic stub cache
+  - validity cell
+  - shape stability
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "04-inline-caches"
 sources:
-  - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/blog/feedback-vectors
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The overview in `browser/03-v8-internals/04-inline-caches` gave you the four-word version: mono → poly → mega, and "megamorphic is slow." But when an IC goes megamorphic, where does the lookup actually go? It does not just shrug and do a name search every time — V8 has a global, process-wide hash table, the megamorphic stub cache, that every megamorphic site on the planet shares. This lesson walks the full state machine and opens that shared cache, plus the validity cells that police prototype-chain ICs.
+</Hook>
+
+<Crux>An IC climbs mono to poly (2-4 maps) to megamorphic (5+: it gives up and probes the global stub cache — far slower and JIT-hostile).</Crux>
+
+<Explanation>
+
+## The full state machine, not just three words
+
+A load IC slot transitions through more states than the overview implied. The full ladder, one-way toward megamorphic:
+
+- **uninitialized** — the slot has never run.
+- **premonomorphic** — V8's "seen once, waiting to confirm" state. The very first execution often records the map here without yet emitting a specialized handler, so a one-shot path does not pay for an IC it will never reuse. The second hit with the same map promotes to monomorphic.
+- **monomorphic** — exactly **one** map. The slot is `{map, handler}` (lesson 04). On a hit: load map, compare, apply handler — a couple of instructions. This is the target state.
+- **polymorphic** — **2 to 4** maps. The slot becomes a small list of `{map, handler}` pairs. A load scans the list (a few compares) and applies the matching handler. Still fast, but the branch chain grows with each shape.
+- **megamorphic** — **5 or more** maps. V8 stops tracking maps at this site entirely. The slot is marked megamorphic, and lookups fall through to the **megamorphic stub cache**.
+
+## The megamorphic stub cache: a process-wide hash table
+
+This is the part the overview never mentions. When a site is megamorphic, V8 does not do a fresh property search on every access. Instead it consults a single, **global** (per-isolate) hash table — the **megamorphic stub cache** — keyed by `(map, property name)` and storing the handler. The access becomes:
+
+1. Compute a hash from the object's map and the property name.
+2. Probe the stub cache (it is a small, fixed-size open-addressed table — primary and secondary tables).
+3. On a hit, use the cached handler. On a miss, do the full runtime lookup and insert the result.
+
+So a megamorphic site is a **hash probe plus a likely handler application** — much slower than a monomorphic compare-and-load (tens to low hundreds of cycles vs ~1), and because the table is shared and fixed-size, *different* megamorphic sites evict each other's entries. The cost is not just the probe; it is that the site can no longer be specialized.
+
+## Why megamorphic is JIT-hostile, not just slower
+
+The deeper cost is what it does to TurboFan. A monomorphic or low-polymorphic site gives the optimizer a small, known set of shapes, so it can inline the field load (or the whole method) and guard with a cheap map check. A megamorphic site gives TurboFan *no* usable shape information — the feedback is "anything" — so TurboFan must emit a generic call to the IC stub-cache machinery and cannot inline the access or anything reachable through it. One megamorphic property access in a hot inlined method can therefore block a whole chain of optimizations, costing far more than the per-access hash probe alone.
+
+<FlowDiagram
+  label="The inline-cache state machine: from uninitialized through premonomorphic to monomorphic at one map, polymorphic at two to four maps, and megamorphic at five or more, where the site consults the global megamorphic stub cache."
+  hue="var(--accent)"
+  perRow={5}
+  caption="The one-way ladder. Premonomorphic avoids paying for one-shot sites; monomorphic is the target (~1 cycle); polymorphic scans a 2-4 entry list; megamorphic abandons per-site tracking and probes the shared stub cache — far slower and unspecializable by TurboFan."
+  nodes={[
+    { id: "uninit", label: "uninitialized", sub: "0 maps", col: 0, row: 0 },
+    { id: "premono", label: "premonomorphic", sub: "seen once", col: 1, row: 0 },
+    { id: "mono", label: "monomorphic", sub: "1 map", col: 2, row: 0 },
+    { id: "poly", label: "polymorphic", sub: "2-4 maps", col: 3, row: 0 },
+    { id: "mega", label: "megamorphic", sub: "5+ -> stub cache", col: 4, row: 0 },
+  ]}
+  edges={[
+    { from: "uninit", to: "premono", label: "1st" },
+    { from: "premono", to: "mono", label: "same map" },
+    { from: "mono", to: "poly", label: "2nd map" },
+    { from: "poly", to: "mega", label: "5th map" },
+  ]}
+/>
+
+## Prototype-chain ICs and validity cells
+
+Many real loads do not find the property on the object itself but on its prototype (methods live on `Class.prototype`). A prototype-chain IC caches "the property is N levels up the chain, at this offset" — but that is only safe while the prototype chain has not changed. V8 guards it with a **validity cell**: a small heap cell, shared by the maps that depend on a given prototype, that is "valid" until someone mutates that prototype (adds/removes a property on it, or reassigns it). A prototype IC's fast path is: check map, check the validity cell is still valid, then load.
+
+The teeth: **mutating a prototype after objects exist invalidates the validity cell**, which deoptimizes every IC and every TurboFan-compiled function that relied on it. This is why monkey-patching `Array.prototype` or assigning to `SomeClass.prototype.method` at runtime (after the hot paths warmed up) can cause a sudden, global-feeling slowdown — you tripped a validity cell that thousands of sites trusted.
+
+<NumbersCard
+  title="IC states and the stub cache (V8)"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic load", value: "~1 cycle (compare + load)" },
+    { label: "Polymorphic", value: "2-4 maps, scan a short list" },
+    { label: "Megamorphic threshold", value: "5 distinct maps at the site" },
+    { label: "Megamorphic lookup", value: "global stub-cache hash probe (tens-hundreds of cycles)" },
+    { label: "Stub cache scope", value: "per-isolate, fixed-size, shared by all mega sites" },
+    { label: "Prototype IC guard", value: "validity cell (invalidated on proto mutation)" },
+    { label: "Inspect", value: "--trace-ic prints MONO/POLY/MEGA per site" },
+  ]}
+/>
+
+<Misconception id="mc-mega-recovers">
+  <p><strong>"A megamorphic site recovers once the extra shapes stop arriving."</strong> No — IC state is one-way. A site that has seen 5+ maps stays megamorphic for the life of that FeedbackVector. Recovery needs fresh feedback: a re-optimized function whose new FeedbackVector sees one map. Fix shapes upstream.</p>
+</Misconception>
+
+<Quiz
+  id="q-mega-lookup"
+  lessonSlug="05-mono-poly-mega"
+  lang="en"
+  question="A property-access site has gone megamorphic. What does an access do now, mechanically?"
+  choices={[
+    { label: "A linear scan of all 5+ cached maps in the slot", misconception: "V8 stops storing per-site maps at megamorphic — there is no list to scan. It falls through to a different mechanism entirely." },
+    { label: "Hashes (map, name) and probes the global, per-isolate megamorphic stub cache for the handler", correct: true },
+    { label: "Re-parses the property name from source each time", misconception: "Nothing is re-parsed. The slow path is a hash probe of the shared stub cache, with a runtime lookup only on a stub-cache miss." },
+    { label: "Immediately deoptimizes the entire function", misconception: "Going megamorphic does not by itself deopt the function; it makes that one site slow and unspecializable. A deopt is a separate event (a failed guard)." },
+  ]}
+/>
+
+<Quiz
+  id="q-validity-cell"
+  lessonSlug="05-mono-poly-mega"
+  lang="en"
+  question="An app warms up, then a library does `Array.prototype.last = function(){...}` at runtime. Hot array code suddenly slows across the board. Why?"
+  choices={[
+    { label: "The new method shadows a built-in, forcing re-parsing", misconception: "It does not shadow a built-in, and nothing is re-parsed. The slowdown is about invalidated prototype-IC guards, not parsing." },
+    { label: "Mutating Array.prototype invalidates the validity cell that prototype-chain ICs (and TurboFan code) relied on, deoptimizing all of them", correct: true },
+    { label: "Adding a method allocates so much memory it triggers constant GC", misconception: "One method assignment is negligible allocation. The global slowdown is from validity-cell invalidation, not GC pressure." },
+    { label: "All arrays transition to dictionary mode", misconception: "Adding a property to the prototype does not push instances into dictionary mode; it invalidates the prototype's validity cell, deoptimizing dependent ICs and compiled code." },
+  ]}
+/>
+
+<DragOrder
+  id="do-ic-states"
+  pieceSlug="05-mono-poly-mega"
+  lang="en"
+  prompt="Order the IC states a load site passes through as it observes 1, then 2, then 5 distinct maps."
+  items={[
+    "uninitialized — never executed",
+    "premonomorphic — first map seen, waiting to confirm reuse",
+    "monomorphic — one map, {map, handler}",
+    "polymorphic — 2 to 4 maps, a scanned list of pairs",
+    "megamorphic — 5+ maps, falls through to the global stub cache",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does a global stub cache help at all, instead of just doing a runtime lookup at every megamorphic site? Because even though a single site sees many shapes, the *combinations* of (map, name) that the whole program touches are far fewer than the number of accesses. Caching them in one shared table means the second time any megamorphic site loads property `x` off map `M`, it gets the handler from the cache rather than re-deriving it. It is a damage-control structure: it cannot restore inlining or monomorphic speed, but it keeps a megamorphic site from being a full lookup every single time.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The IC ladder is uninitialized → premonomorphic → monomorphic (1 map, ~1 cycle) → polymorphic (2-4 maps, scanned) → megamorphic (5+ maps), and it is one-way. Megamorphic abandons per-site tracking and probes a global, fixed-size megamorphic stub cache — slower per access and, worse, unspecializable by TurboFan. Prototype ICs are guarded by validity cells that mutating a prototype invalidates en masse. Stay monomorphic with stable shapes and consistent construction.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="mono-poly-mega-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full IC state machine, including the state the overview omitted, and the map count for each.", a: "uninitialized (0 maps, never run) → premonomorphic (first map seen, V8 waits to confirm the map will be reused before emitting a specialized handler, so one-shot sites do not pay for an IC) → monomorphic (exactly 1 map; slot is {map, handler}; ~1 cycle on hit) → polymorphic (2 to 4 maps; slot is a short scanned list of {map, handler} pairs) → megamorphic (5 or more maps; V8 stops per-site map tracking and consults the global megamorphic stub cache). Transitions are strictly one-way toward megamorphic; a site never climbs back within the same FeedbackVector." },
+    { q: "What is the megamorphic stub cache and why is going megamorphic worse than just 'a few more compares'?", a: "It is a single per-isolate, fixed-size hash table keyed by (map, property name) and storing handlers, shared by every megamorphic site in the program. A megamorphic access hashes (map, name) and probes this cache (primary/secondary tables); on a hit it uses the cached handler, on a miss it does a full runtime lookup and inserts. So a megamorphic access is a hash probe (tens to low hundreds of cycles vs ~1 monomorphic), and because the table is shared and fixed-size, unrelated megamorphic sites evict each other. The bigger cost is that megamorphic feedback is 'anything', so TurboFan cannot inline the access or specialize on shape — one megamorphic load in a hot inlined method blocks a whole chain of optimizations." },
+    { q: "What is a validity cell and how does mutating a prototype cause a broad slowdown?", a: "A prototype-chain IC caches that a property lives N levels up the chain at a given offset, and guards that assumption with a validity cell — a small heap cell shared by the maps depending on a given prototype, valid until that prototype is mutated. The IC fast path checks the map, checks the validity cell is still valid, then loads. Mutating a prototype after objects exist (adding/removing a property on it, monkey-patching Array.prototype, reassigning Class.prototype.method at runtime) invalidates the validity cell, which simultaneously deoptimizes every prototype IC and every TurboFan-compiled function that trusted it — producing a sudden, app-wide-feeling slowdown that traces back to one prototype write." },
+  ]}
+/>
+
+<Recap lang="en">
+An inline cache climbs a one-way ladder: uninitialized → premonomorphic (the state the overview skipped, where V8 records a first map but waits to confirm reuse before specializing) → monomorphic (exactly one map, a `{map, handler}` slot read in ~1 cycle) → polymorphic (2 to 4 maps, a short scanned list of pairs) → megamorphic (5 or more maps). At megamorphic, V8 abandons per-site map tracking and routes lookups through the megamorphic stub cache: a single per-isolate, fixed-size hash table keyed by (map, name), shared by all megamorphic sites, so accesses become hash probes and unrelated sites evict each other. The deeper penalty is that megamorphic feedback carries no shape, so TurboFan cannot inline or specialize the access — one such load can block a chain of optimizations. Prototype-chain ICs are guarded by validity cells; mutating a prototype after warm-up invalidates the shared cell and deoptimizes every dependent IC and compiled function at once. Because the states are one-way, you cannot un-megamorphic a live site — you fix it upstream by keeping shapes stable and construction consistent, so each hot site sees one map. This feeds directly into TurboFan's type-feedback consumption in unit 04.
+</Recap>

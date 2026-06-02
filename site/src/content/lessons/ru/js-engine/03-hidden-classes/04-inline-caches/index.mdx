@@ -4,10 +4,206 @@ lang: ru
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 4
-title: "Inline caches"
-summary: "Inline caches — stub; author to ready."
-estMin: 12
-status: stub
+title: "Inline cache в глубину: feedback-слоты и handlers"
+summary: "IC живёт в слоте feedback vector у функции; load IC кэширует {map → handler}. Handler — это Smi-кодированный field index для простого in-object-load или более богатый handler-объект для accessor-, prototype- или dictionary-load. У store'ов свои IC"
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - feedback vector
+  - IC slot
+  - load handler
+  - store IC
+  - BinaryOp feedback
+  - type feedback
+  - smi-encoded handler
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "03-property-access"
+  - "browser/03-v8-internals/04-inline-caches"
 sources:
-  - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/blog/feedback-vectors
+  - https://ponyfoo.com/articles/an-introduction-to-speculative-optimization-in-v8
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+Обзор в `browser/03-v8-internals/04-inline-caches` сказал вам, что inline cache «записывает hidden class и смещение». Верно — но где он записывает это и что за штуку хранит рядом с map? Это не буквально впатчено в поток инструкций, как намекает название «inline cache» из 1990-х. В современном V8 кэш живёт в боковой таблице, прикреплённой к функции, а значение рядом с map — это *handler*, иногда единственное целое, иногда маленькая программа. Этот урок вскрывает ту таблицу.
+</Hook>
+
+<Crux>IC — это слот FeedbackVector, спаривающий map с handler: Smi field index для простого load или объект для accessor/prototype-load.</Crux>
+
+<Explanation>
+
+## Feedback vector: где IC живут на самом деле
+
+Каждая функция, однажды выполнившись, получает **FeedbackVector** — объект кучи, прикреплённый к замыканию функции, который держит один или несколько **слотов**, аллоцированных при компиляции, по одному на каждую несущую IC операцию байт-кода (каждый load свойства, каждый store, каждый вызов, каждый бинарный оператор). «Inline cache» для `p.x` — это не байты, переписанные внутри машинного кода; это содержимое слота этой операции в FeedbackVector.
+
+Это разделение важно: один и тот же байт-код может разделяться между замыканиями, а *feedback* (наблюдённые типы и формы) живёт на FeedbackVector. Поэтому же feedback переживает смены ярусов — когда Ignition собирает feedback, а TurboFan позже компилирует, TurboFan читает именно эти слоты. FeedbackVector — это канал между интерпретатором и оптимизирующим компилятором. (Этот канал мы прослеживаем вперёд в `04-the-jit/02-type-feedback`.)
+
+<StackDiagram
+  label="Структура, связывающая функцию с её данными inline cache: функция указывает на FeedbackVector, который держит один слот на каждую несущую IC операцию, а load-слот держит map в паре с handler."
+  hue="var(--accent)"
+  caption="Где живёт IC. Кэш не впатчен в машинный код; это содержимое слота в FeedbackVector функции — map в паре с handler, который говорит, как достать значение."
+  layers={[
+    { label: "функция / замыкание", note: "указывает на общий байт-код + свой FeedbackVector" },
+    { label: "FeedbackVector", note: "один слот на IC-операцию (load, store, call, binop)" },
+    { label: "слот load IC", note: "для monomorphic: map в паре с handler" },
+    { label: "handler", note: "Smi field index (простой) ИЛИ handler-объект (сложный)" },
+  ]}
+/>
+
+## Load IC кэширует `{map → handler}`
+
+Для load свойства monomorphic-слот IC держит две вещи: **map**, который он ожидает (hidden class из урока 01), и **handler**, который говорит, *как* получить значение, как только map совпал. Быстрый путь:
+
+```
+загрузить указатель map объекта
+сравнить с закэшированным map слота
+если равно: применить handler  -> значение
+если не равно: miss -> уйти в рантайм промаха IC, обновить слот
+```
+
+Handler — интересная часть. Он бывает двух широких форм:
+
+- **Smi-кодированный handler (частый, быстрый случай).** Для простого load поля у объекта с этим map handler — это просто малое целое, кодирующее «загрузить поле по in-object-индексу N» (или «PropertyArray индекс N»). Это tagged Smi — без отдельной аллокации. Применить его — единственный load по закодированному смещению. Это handler за тем «1 MOV», что вы видели в обзоре.
+- **Handler-объект (сложный случай).** Когда load — это не простое чтение поля, handler — это объект кучи `LoadHandler`, описывающий маленький рецепт: вызови этот getter (accessor-handler), или иди к прототипу и грузи там (prototype-chain handler, с validity cell — урок 05), или сделай поиск по словарю (для объектов в dictionary mode), или верни константу из map. Они стоят дороже Smi-handler'а, но всё ещё намного дешевле полностью общего поиска, потому что проверка map уже сузила случай.
+
+```js
+// Концептуально, для monomorphic load `p.x`, где x — in-object-поле по индексу 0:
+//   slot = { map: M_point, handler: Smi(encode(in_object, 0)) }
+// Для `p.size`, где size — getter:
+//   slot = { map: M_point, handler: LoadHandler{ kind: accessor, getter: fn } }
+```
+
+## У store'ов свои IC — и они вызывают переходы
+
+Обзор сосредоточился на load'ах. Store'ы (`p.x = v`) получают свои слоты **StoreIC**, и они сложнее, потому что store может *изменить форму*. Store IC записывает не только map и смещение, но, когда store добавляет свойство, и **переход**, который надо взять: «из map M1, добавляя `x` с этими attributes, иди в map M2 и пиши значение в новое поле». Так что store IC — это место, где переходы форм из урока 02 на самом деле запускаются на горячем пути, и где обнаруживается обобщение representation (Smi → Double), когда хранимое значение не помещается в текущий representation поля.
+
+Store IC также различает «store в существующее поле» (просто пиши по смещению) и «store, создающий новое поле» (возьми переход, возможно нарасти PropertyArray). Store, переключающий representation или constness поля, инвалидирует оптимизированный код, предполагавший старое.
+
+## BinaryOp и Compare IC собирают feedback по числам
+
+Не все IC про форму объекта. У арифметических операций и сравнений есть слоты **BinaryOpIC** и **CompareIC**, записывающие *историю числовых типов* своих операндов: видели ли мы тут только `Smi`? `Smi` и `HeapNumber` (то есть `Number`)? `BigInt`? `String` (для `+`)? Или смесь (`Any`)?
+
+Этот feedback и позволяет TurboFan выпустить распакованную целочисленную арифметику для счётчика цикла или одну инструкцию с плавающей точкой для свёртки `Number` вместо общего рантайм-вызова «сложить что угодно с чем угодно». Цикл, который всегда складывал только Smi, строит Smi-feedback; в день, когда значение переполняется в HeapNumber, feedback расширяется, и любой код, специализированный на Smi, должен деоптнуться (классический деопт переполнения из `02-values-and-memory`). Так что BinaryOp IC одновременно *ускоряет* интерпретатор и *записывает* профиль типов, которому JIT будет доверять.
+
+<FlowDiagram
+  label="Load inline cache как слот feedback vector: слот спаривает ожидаемый map с handler; при совпадении map handler применяется для получения значения, а при промахе рантайм промаха IC обновляет слот."
+  hue="var(--accent)"
+  perRow={3}
+  caption="Load IC в глубину. Слот хранит {map, handler}. Smi-handler — это field index, применяемый одним load'ом; handler-объект кодирует рецепты accessor, prototype или dictionary. Промах map уходит в рантайм, который заполняет или расширяет слот — данные, которые TurboFan позже читает."
+  nodes={[
+    { id: "slot", label: "слот FeedbackVector", sub: "для p.x", col: 0, row: 0 },
+    { id: "map", label: "закэш. map", sub: "ожидаемая форма", col: 1, row: 0 },
+    { id: "handler", label: "handler", sub: "как достать", col: 2, row: 0 },
+    { id: "smi", label: "Smi index", sub: "1 load", col: 1, row: 1 },
+    { id: "obj", label: "handler-объект", sub: "accessor/proto", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "slot", to: "map", label: "compare" },
+    { from: "map", to: "handler", label: "при hit" },
+    { from: "handler", to: "smi", label: "простой" },
+    { from: "handler", to: "obj", label: "сложный" },
+  ]}
+/>
+
+<NumbersCard
+  title="Внутренности IC и feedback (V8)"
+  data-lesson-visual
+  stats={[
+    { label: "Где живёт IC", value: "слот в FeedbackVector функции" },
+    { label: "Monomorphic load-слот", value: "map + handler" },
+    { label: "Простой handler", value: "Smi-кодированный field index (1 load)" },
+    { label: "Сложный handler", value: "объект LoadHandler (accessor/proto/dictionary)" },
+    { label: "Дополнение store IC", value: "записывает переход map, который надо взять" },
+    { label: "BinaryOp feedback", value: "None/Smi/Number/BigInt/String/Any" },
+    { label: "Осмотр", value: "%DebugPrintFeedbackVector(fn), --trace-ic" },
+  ]}
+/>
+
+<Misconception id="mc-ic-patched">
+  <p><strong>«Inline cache — это машинный код, впатченный на месте в точке вызова».</strong> Название историческое. В современном V8 кэш — данные в FeedbackVector — map в паре с handler — а не переписанные инструкции. Поэтому feedback пер-замыкание, переживает ярусы Ignition/Sparkplug/TurboFan и сам объект кучи.</p>
+</Misconception>
+
+<Quiz
+  id="q-handler-kind"
+  lessonSlug="04-inline-caches"
+  lang="ru"
+  question="Monomorphic load IC для `p.x` читает `x` как getter (accessor-свойство). Как выглядит handler в слоте?"
+  choices={[
+    { label: "Smi, кодирующий in-object field index", misconception: "Smi-handler с field index — для простого чтения data-поля одним load'ом. Getter — не хранимое поле; его вызов требует более богатого рецепта, чем смещение." },
+    { label: "Объект LoadHandler, кодирующий «вызови этот accessor», применяемый после прохождения проверки map", correct: true },
+    { label: "Ничего — accessor-load'ы всегда уходят в megamorphic", misconception: "Accessor-load'ы могут быть прекрасно monomorphic; они просто используют handler-объект вместо Smi-handler'а. Проверка map всё равно сужает до одной формы." },
+    { label: "Исходный код getter'а, перепарсенный на каждый доступ", misconception: "Ничего не парсится заново при доступе. Handler ссылается на уже скомпилированный getter; IC лишь записывает, как до него добраться." },
+  ]}
+/>
+
+<Quiz
+  id="q-store-ic"
+  lessonSlug="04-inline-caches"
+  lang="ru"
+  question="Почему StoreIC нужно записывать больше, чем map и смещение, в отличие от простого LoadIC?"
+  choices={[
+    { label: "Store'ы медленнее load'ов на уровне процессора", misconception: "Store в существующее поле примерно так же дёшев, как load. Дополнительная запись — про изменения формы, а не про сырую стоимость store." },
+    { label: "Store может добавить свойство, поэтому IC записывает переход map, который надо взять (M1 + key → M2), и обнаруживает обобщение representation", correct: true },
+    { label: "Store'ы должны обновлять write barrier сборщика мусора, что IC отслеживает", misconception: "Write barrier выпускается компилятором для store'ов указателей, но это отдельно от задачи IC записывать feedback о форме и переходах." },
+    { label: "Load'ы никогда не промахиваются, так что им не нужен feedback", misconception: "Load'ы промахиваются и записывают feedback; разница в том, что store'ы дополнительно кодируют переход к новому map, когда создают свойство." },
+  ]}
+/>
+
+<DragOrder
+  id="do-load-ic-path"
+  pieceSlug="04-inline-caches"
+  lang="ru"
+  prompt="Расставьте по порядку, что происходит в monomorphic load IC для `p.x`, когда приходит объект ожидаемой формы."
+  items={[
+    "Прочитать слот FeedbackVector для этой операции load",
+    "Загрузить указатель map объекта и сравнить с закэшированным map слота",
+    "При совпадении взять handler слота",
+    "Применить handler — для простого поля загрузить по Smi-кодированному смещению",
+    "Вернуть значение без сравнения имени или поиска по хешу",
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем хранить handler отдельно, а не просто смещение? Потому что «как достать свойство» — это не всегда «загрузи по смещению N». Это может быть: вызови getter, иди по цепочке прототипов к другому объекту и грузи там, прочитай константу, свёрнутую в map, или хеш-зондируй словарь. Кодирование всего этого как единообразного «handler» позволяет IC оставаться одной формой слота (`{map, handler}`), поддерживая каждый вид доступа — и позволяет V8 поменять Smi-handler на более богатый без изменения структуры слота, когда доступ оказывается сложнее простого чтения поля.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Inline cache — это слот в FeedbackVector функции, а не впатченный машинный код. Load-слот спаривает ожидаемый map с handler: Smi-кодированный field index для простого load или объект LoadHandler для accessor-, prototype- или dictionary-load. Store IC дополнительно записывают переход map, который берёт запись, а BinaryOp/Compare IC записывают feedback по числовым типам. Всё это — канал, который читает JIT.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="inline-caches-deep-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Где физически живёт inline cache в современном V8 и почему это место важно?", a: "Он живёт в FeedbackVector функции — объекте кучи, прикреплённом к замыканию, с одним слотом на каждую несущую IC операцию байт-кода (load, store, call, бинарный оператор), аллоцированным при компиляции. Это не машинный код, впатченный в поток инструкций (название «inline» историческое). Это важно потому, что: feedback пер-замыкание, а байт-код общий; feedback переживает смены ярусов (Ignition собирает его, TurboFan читает), делая FeedbackVector каналом между интерпретатором и оптимизатором; и его можно осмотреть как объект кучи через %DebugPrintFeedbackVector или --trace-ic." },
+    { q: "Что такое handler в load IC и каковы две основные формы?", a: "Handler кодирует, как достать значение, как только закэшированный map совпал. Частая, быстрая форма — Smi-кодированный field index: tagged малое целое со смыслом «загрузи in-object (или PropertyArray) поле по индексу N», применяемое одним load'ом без аллокации — это быстрый путь «1 MOV». Сложная форма — объект кучи LoadHandler, описывающий рецепт для непростых чтений: вызови accessor (getter), иди по цепочке прототипов и грузи там (с проверкой validity cell), сделай поиск в dictionary mode или верни константу, свёрнутую в map. Handler-объекты стоят дороже Smi-handler'а, но намного дешевле полностью общего поиска, потому что проверка map уже выбрала случай." },
+    { q: "Чем store IC и BinaryOp IC отличаются от простого load IC?", a: "StoreIC записывает больше, чем map и смещение: когда store добавляет свойство, он кодирует переход map, который надо взять (из M1, добавляя key с attributes, иди в M2) — так что store горячего пути и есть место, где на самом деле запускаются переходы форм и обобщение representation (Smi -> Double); он также различает запись в существующее поле от создания нового. BinaryOpIC / CompareIC записывает историю числовых типов операндов (None, Smi, Number, BigInt, String или Any), а не формы; этот профиль позволяет TurboFan выпускать распакованные целочисленные или одиночные инструкции с плавающей точкой, а его расширение (например, Smi-счётчик цикла, переполняющийся в HeapNumber) вынуждает деопт кода, специализированного на более узком типе." },
+  ]}
+/>
+
+<Recap lang="ru">
+В современном V8 inline cache — это не впатченный машинный код; это данные в FeedbackVector функции, объекте кучи с одним слотом на каждую несущую IC операцию, аллоцированным при компиляции. Monomorphic load-слот спаривает ожидаемый map (hidden class) с handler. Handler — это либо Smi-кодированный field index — tagged целое, применяемое одним load'ом, быстрый путь «1 MOV», — либо объект LoadHandler, кодирующий рецепт для accessor-, prototype-chain-, dictionary- или константных load'ов, каждый всё ещё за дешёвой проверкой map. Store IC идут дальше: они записывают переход map, который берёт запись при добавлении свойства, так что store горячего пути и есть место, где срабатывают переходы и обобщение Smi -> Double. BinaryOp и Compare IC записывают feedback по числовым типам (None/Smi/Number/BigInt/String/Any) своих операндов. Поскольку всё это живёт пер-замыкание в FeedbackVector и переживает смены ярусов, это в точности канал, который Ignition заполняет, а TurboFan читает — тема урока type-feedback в юните JIT. Осматривайте через %DebugPrintFeedbackVector и --trace-ic.
+</Recap>
