@@ -4,10 +4,194 @@ lang: en
 track: "js-engine"
 unit: "02-values-and-memory"
 order: 4
-title: "The heap"
-summary: "The heap — stub; author to ready."
-estMin: 12
-status: stub
+title: "The V8 heap and object layout"
+summary: "The V8 heap is split into spaces — new space (two semi-spaces, bump-pointer allocation), old space, large-object space, code space, read-only space. Allocation in new space is a pointer bump until the semi-space fills, triggering a Scavenge."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - new space
+  - semi-space
+  - bump-pointer allocation
+  - old space
+  - large object space
+  - read-only space
+  - object layout
+  - Scavenge
+deepensInto:
+  - "06-garbage-collection/01-why-gc"
+spiral:
+  - performance-cliffs
+prereqs:
+  - "03-pointer-tagging"
 sources:
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/pointer-compression
   - https://v8.dev/docs
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+Allocating a fresh object in V8 is often *faster than `malloc`*. There is no free-list search, no size-class lookup — just a single pointer increment. The catch is that this only works because the memory it allocates into is disposable: a small nursery that gets evacuated wholesale every few milliseconds. Understanding how the heap is carved into spaces explains both why allocation is so cheap and why short-lived garbage is nearly free while long-lived data is expensive.
+</Hook>
+
+<Crux>The heap is split into spaces; new-space allocation is one bump, and when the semi-space fills, Scavenge evacuates survivors.</Crux>
+
+<Explanation>
+
+## The heap is not one pool — it's several spaces
+
+V8 does not treat the heap as one undifferentiated blob. It partitions it into **spaces**, each with its own allocation strategy and its own relationship to the garbage collector. The split is driven by the **generational hypothesis**: most objects die young, so it pays to allocate them somewhere cheap and disposable and only "promote" the rare survivors.
+
+<StackDiagram
+  label="The V8 heap divided into its spaces: a young-generation new space split into two semi-spaces, then the tenured old space, plus dedicated spaces for large objects, JIT code, and immutable read-only roots."
+  hue="var(--accent)"
+  caption="The spaces of a V8 isolate's heap. New space is small and fast and GC'd often; old space is large and GC'd rarely; the others are special-purpose."
+  layers={[
+    { label: "New space (young generation)", note: "two semi-spaces, bump-pointer alloc" },
+    { label: "Old space (tenured)", note: "survivors promoted here" },
+    { label: "Large object space (LO)", note: "objects > ~600 KB, never moved" },
+    { label: "Code space", note: "JIT-compiled machine code" },
+    { label: "Read-only space", note: "immutable roots, shared across isolates" },
+  ]}
+/>
+
+- **New space (young generation)** — small (a couple of MB up to tens of MB), where *every* normal object is born. It is split into **two semi-spaces** (from-space and to-space). Allocation here is the cheap path described below. New space is collected very frequently by a minor GC called the **Scavenger**.
+- **Old space (tenured)** — large, where objects that survive a couple of Scavenges get **promoted**. Collected rarely, by the major GC (mark-compact). Long-lived data lives here.
+- **Large object space (LOS)** — objects above a threshold (around 600 KB, roughly half a page-set) are allocated here directly and are **never moved**, because copying a huge object every GC would be wasteful. A big typed array or a giant string lands here.
+- **Code space** — holds JIT-compiled machine code from Sparkplug/Maglev/TurboFan. Often paired with a dedicated code-range so generated code sits in a known region.
+- **Read-only space** — immutable roots (the shared `undefined` Oddball, common Maps, internalised string roots). Being immutable, it can be **shared across isolates**, saving memory when you spawn many workers.
+
+(Historically there was also a separate **Map space** for hidden classes; later V8 folded it into old space.)
+
+## Bump-pointer allocation: why `new` is nearly free
+
+Inside a semi-space, allocation is a **bump-pointer**. V8 keeps two values: a pointer to the next free byte (`top`) and the end of the space (`limit`). To allocate N bytes:
+
+```js
+// Conceptual fast-path allocation in new space:
+function allocate(bytes) {
+  if (top + bytes > limit) return slowPath(bytes); // semi-space full -> trigger GC
+  const addr = top;
+  top += bytes;          // <-- the entire allocation: one pointer increment
+  return addr;
+}
+```
+
+That is it on the fast path: compare, then increment a pointer. No searching a free list, no coalescing, no size classes — the work `malloc` does. This is *only* possible because new space is collected by **copying**: when it fills, the live objects are moved out wholesale and the whole semi-space is reset to empty, so there is never fragmentation to manage.
+
+When `top` would pass `limit`, the semi-space is full and V8 runs a **Scavenge** (minor GC): it copies the live objects from from-space into to-space (and promotes objects that have already survived once into old space), then swaps the roles of the two semi-spaces. Dead objects are not touched at all — they are simply left behind in the abandoned from-space, which makes collecting short-lived garbage essentially free. This is the deep reason "allocating lots of short-lived objects is cheap; keeping lots of objects alive is expensive."
+
+## Object memory layout
+
+Now zoom into a single plain object on the heap. Its layout, in order:
+
+```
+JS object in memory:
+  [ Map pointer            ]  offset 0  — hidden class: kind + property layout
+  [ properties backing-store ptr ]      — out-of-object named properties (overflow)
+  [ elements backing-store ptr   ]      — indexed elements (the array part)
+  [ in-object property slot 0    ]      — first fast property, stored inline
+  [ in-object property slot 1    ]
+  ...
+```
+
+- **Map pointer** (offset 0) — the hidden class, as we established two lessons ago: what kind of object this is and where each named property lives.
+- **Properties backing store** — a pointer to an out-of-object array (or dictionary) holding properties that did not fit in the in-object slots.
+- **Elements backing store** — a pointer to the indexed elements (`obj[0]`, `obj[1]`, …); arrays keep their numeric-keyed data here, separate from named properties.
+- **In-object property slots** — the first several named properties are stored *inline* in the object's own memory block (one memory load to read), the rest spill to the properties backing store (an extra dereference).
+
+The number of in-object slots is fixed when the Map is created, which is why declaring your hot properties up front in a constructor keeps them in-object and fast. We go deep on hidden classes and in-object vs out-of-object properties in the hidden-classes unit; here, fix the skeleton: Map pointer, two backing-store pointers, then inline slots.
+
+<NumbersCard
+  title="Heap and layout numbers"
+  data-lesson-visual
+  stats={[
+    { label: "New space size", value: "a few MB to tens of MB" },
+    { label: "New-space allocation", value: "one pointer bump" },
+    { label: "Minor GC (Scavenge) cadence", value: "every few ms under load" },
+    { label: "Large object space threshold", value: "about 600 KB" },
+    { label: "Promotions to old space", value: "after surviving ~2 Scavenges" },
+    { label: "Object header before user data", value: "Map ptr + 2 backing-store ptrs" },
+  ]}
+/>
+
+<Misconception id="mc-alloc-slow">
+  <p><strong>"Allocating objects is slow, so I should pool everything."</strong> New-space allocation is one pointer bump, and short-lived objects are collected nearly free by the Scavenger. Pooling can <em>backfire</em>: it promotes objects to old space, paid for by the costly major GC. Allocate freely; avoid retention.</p>
+</Misconception>
+
+<Quiz
+  id="q-bump-pointer"
+  lessonSlug="04-the-heap"
+  lang="en"
+  question="Why can new-space allocation be a single pointer increment with no free-list search?"
+  choices={[
+    { label: "Because new space is collected by copying live objects out wholesale, so the space is reset to empty and never fragments", correct: true },
+    { label: "Because V8 pre-allocates a slot for every object you will ever create", misconception: "V8 cannot know future allocations. The bump works because of the copying collector resetting the space, not pre-allocation." },
+    { label: "Because objects in new space are never freed", misconception: "They are freed constantly — by Scavenge. Dead objects are abandoned in from-space, which is exactly what enables the bump pointer." },
+    { label: "Because new space uses a hash map of free blocks", misconception: "A free-block map is the malloc-style approach V8 avoids here. Bump allocation needs no such structure." },
+  ]}
+/>
+
+<Quiz
+  id="q-spaces"
+  lessonSlug="04-the-heap"
+  lang="en"
+  question="A 5 MB typed array is allocated. Which space does it go to, and what's special about it there?"
+  choices={[
+    { label: "New space, then promoted on the next Scavenge", misconception: "Objects above ~600 KB skip new space entirely; they would be too expensive to copy on every Scavenge." },
+    { label: "Large object space, where it is allocated directly and never moved by the GC", correct: true },
+    { label: "Read-only space, because large data is immutable", misconception: "Read-only space is for immutable engine roots, not user data. A typed array is mutable user data." },
+    { label: "Code space, since large buffers hold compiled code", misconception: "Code space holds JIT machine code, not user data buffers. The array goes to large object space." },
+  ]}
+/>
+
+<DragOrder
+  id="do-scavenge"
+  pieceSlug="04-the-heap"
+  lang="en"
+  prompt="Order what happens when new-space allocation hits the limit and a Scavenge runs."
+  items={[
+    "A bump allocation would push top past limit — the semi-space is full",
+    "V8 pauses and starts a Scavenge (minor GC)",
+    "Live objects are copied from from-space into to-space",
+    "Objects that already survived once are promoted to old space",
+    "The two semi-spaces swap roles; dead objects are abandoned, space reset",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why split new space into *two* semi-spaces instead of one? Because the Scavenger is a copying collector: it needs a destination to copy the survivors into while it reads the originals. From-space is where objects live now; to-space is the empty destination. After copying, the roles swap, so the just-emptied from-space becomes the next to-space. The price is that half of new space is always idle reserve — a classic space-for-speed trade that makes collection a simple copy-and-swap with zero fragmentation. We unpack the Scavenger and the major GC fully in the garbage-collection unit.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The V8 heap is partitioned into spaces — new space (two semi-spaces, bump-pointer allocation), old space (tenured survivors), large-object space (big, never-moved objects), code space, and read-only space. New-space allocation is one pointer increment; when the semi-space fills, a Scavenge copies survivors out and resets it, so short-lived garbage is nearly free. An object is laid out as a Map pointer, properties and elements backing-store pointers, then in-object slots.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="the-heap-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the V8 heap spaces and what each is for.", a: "New space (the young generation) is small and where every normal object is born; it is split into two semi-spaces and collected frequently by the Scavenger. Old space holds tenured objects promoted after surviving a couple of Scavenges and is collected rarely by the major mark-compact GC. Large object space holds objects above about 600 KB, allocated directly and never moved because copying them would be wasteful. Code space holds JIT-compiled machine code. Read-only space holds immutable engine roots (shared undefined, common Maps) and can be shared across isolates. A separate Map space existed historically and was later folded into old space." },
+    { q: "Explain bump-pointer allocation and why it is so cheap.", a: "Within a semi-space V8 tracks a top pointer (next free byte) and a limit. To allocate N bytes it checks top + N against limit and, if it fits, returns top and increments it by N — the whole allocation is one pointer bump, with no free-list search, coalescing, or size classes that malloc must do. This is only possible because new space is collected by copying: when it fills, live objects are moved out wholesale and the space is reset to empty, so it never fragments. Dead objects are simply abandoned in the old from-space, which is why allocating short-lived objects is nearly free and retaining many objects is what's expensive." },
+    { q: "Describe the memory layout of a plain JS object.", a: "In order: a Map pointer at offset 0 (the hidden class — the object's kind and where each named property lives), then a pointer to the properties backing store (out-of-object named properties that overflowed the inline slots), then a pointer to the elements backing store (indexed/array elements kept separately from named properties), then the in-object property slots holding the first several named properties inline. In-object slots cost one memory load to read; properties spilled to the backing store cost an extra dereference. The in-object slot count is fixed at Map creation, so declaring hot properties up front in a constructor keeps them in-object and fast." },
+  ]}
+/>
+
+<Recap lang="en">
+V8 partitions its heap into spaces rather than treating it as one pool, driven by the generational hypothesis that most objects die young. New space, the young generation, is small and split into two semi-spaces; it is where every normal object is born, and allocation there is a single bump of a top pointer checked against a limit — cheaper than malloc because there is no free-list management. That cheapness depends on collection by copying: when a semi-space fills, the Scavenger copies live objects into the other semi-space, promotes objects that have already survived once into old space, swaps the two semi-spaces, and abandons the dead, so short-lived garbage costs almost nothing. Old space holds tenured survivors and is collected rarely by the major mark-compact GC; large object space holds objects above roughly 600 KB that are allocated directly and never moved; code space holds JIT machine code; and read-only space holds immutable roots shared across isolates. A single object is laid out as a Map pointer at offset 0, then pointers to its properties and elements backing stores, then its in-object property slots — the inline ones costing one load and the overflow ones costing a dereference. The next unit, garbage collection, opens up the Scavenger and the major GC that this allocation model implies.
+</Recap>
