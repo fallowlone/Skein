@@ -37,15 +37,38 @@ export function lintCurriculum(): AstroIntegration {
         const errors: string[] = [];
         const warnings: string[] = [];
 
-        for (const f of files) {
-          const html = await readFile(f, "utf8");
-          errors.push(...checkTextBudgets(html, f));
-          errors.push(...checkHydrationBudget(html, f));
-          warnings.push(...checkSpiralCues(html, f));
-          errors.push(...checkSources(html, f));
-          errors.push(...checkPersonas(html, f));
-          errors.push(...checkLessonRules(html, f));
-          errors.push(...checkPracticeSandboxBudget(html, f));
+        // Read + check every emitted HTML page. Reads are IO-bound, so a bounded
+        // worker pool runs them concurrently while keeping output in file order
+        // (deterministic lint-report.json). Serial awaits here dominated the
+        // post-build phase once the site grew past a few thousand pages.
+        const perFile: Array<{ e: string[]; w: string[] }> = new Array(files.length);
+        let cursor = 0;
+        const CONCURRENCY = 24;
+        async function lintWorker() {
+          for (;;) {
+            const i = cursor++;
+            if (i >= files.length) return;
+            const f = files[i];
+            const html = await readFile(f, "utf8");
+            const e: string[] = [];
+            const w: string[] = [];
+            e.push(...checkTextBudgets(html, f));
+            e.push(...checkHydrationBudget(html, f));
+            w.push(...checkSpiralCues(html, f));
+            e.push(...checkSources(html, f));
+            e.push(...checkPersonas(html, f));
+            e.push(...checkLessonRules(html, f));
+            e.push(...checkPracticeSandboxBudget(html, f));
+            perFile[i] = { e, w };
+          }
+        }
+        await Promise.all(
+          Array.from({ length: Math.min(CONCURRENCY, files.length) }, lintWorker),
+        );
+        for (const r of perFile) {
+          if (!r) continue;
+          errors.push(...r.e);
+          warnings.push(...r.w);
         }
 
         // Source-level + global checks
