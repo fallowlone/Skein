@@ -4,10 +4,211 @@ lang: en
 track: "js-engine"
 unit: "07-async-deep"
 order: 3
-title: "Promise internals"
-summary: "Promise internals — stub; author to ready."
-estMin: 12
-status: stub
+title: "Inside a Promise"
+summary: "A Promise is a settle-once state machine holding a state, a value, and a list of PromiseReaction records. .then registers reactions and returns a new promise; settling enqueues a PromiseReactionJob per reaction. Resolving with a thenable costs an extra tick."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - promise state machine
+  - PromiseReaction record
+  - PromiseReactionJob
+  - PromiseResolveThenableJob
+  - tick counting
+  - unhandled rejection
+deepensInto:
+  - "07-async-deep/04-async-await-desugaring"
+spiral:
+  - statefulness
+  - performance-cliffs
+prereqs:
+  - "02-microtasks-vs-macrotasks"
 sources:
-  - https://v8.dev/docs
+  - https://tc39.es/ecma262/#sec-promise-objects
+  - https://v8.dev/blog/fast-async
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You write `await fetchUser()` and `await fetchPosts()` and someone asks: how many microtask ticks did that cost? Most engineers shrug. But the answer decides whether a hot async path adds one tick or four to every iteration — and at 10,000 iterations per render, that gap is the difference between a smooth list and a janky one. To count ticks, you have to know what a Promise actually is on the inside.
+</Hook>
+
+<Crux>A Promise is a settle-once state machine plus a list of reaction records; settling enqueues one microtask per registered reaction.</Crux>
+
+<Explanation>
+
+## A Promise is three fields and a list
+
+Strip away the API and a Promise object in V8 is small. Its essential internal slots are:
+
+- **`[[PromiseState]]`** — one of `pending`, `fulfilled`, `rejected`. It starts `pending` and transitions exactly once. This **settle-once** invariant is the heart of the machine: after it leaves `pending`, no later `resolve`/`reject` can change it.
+- **`[[PromiseResult]]`** — the value it fulfilled with or the reason it rejected with. Meaningless while `pending`.
+- **`[[PromiseFulfillReactions]]` / `[[PromiseRejectReactions]]`** — two lists of **PromiseReaction** records, the handlers registered by `.then`/`.catch` while the promise was still pending. Once settled, these lists are cleared and replaced by the result.
+
+A **PromiseReaction** record bundles three things: the *type* (fulfill or reject), the *handler* (your `onFulfilled` / `onRejected` callback, or `undefined`), and the *capability* of the **new promise** that `.then` returned (the resolve/reject functions that will settle that downstream promise). That last part is why chaining works at all.
+
+<StackDiagram
+  label="The internal layout of a pending Promise: a state slot currently pending, an as-yet-empty result slot, and two lists of PromiseReaction records — one for fulfill handlers and one for reject handlers — each record pointing at a downstream promise's resolve/reject capability."
+  hue="var(--accent)"
+  caption="A pending Promise. The reaction lists hold the handlers registered by .then; on settle, the matching list's reactions are each scheduled as a microtask and the lists are discarded."
+  layers={[
+    { label: "[[PromiseState]]: pending", note: "transitions once → fulfilled | rejected" },
+    { label: "[[PromiseResult]]: (empty)", note: "filled with value/reason on settle" },
+    { label: "[[PromiseFulfillReactions]]", note: "list of PromiseReaction records" },
+    { label: "[[PromiseRejectReactions]]", note: "list of PromiseReaction records" },
+    { label: "each reaction → downstream promise capability", note: "type + handler + resolve/reject of the .then result" },
+  ]}
+/>
+
+## What `.then` actually does
+
+`promise.then(onF, onR)` does three concrete things, in order:
+
+1. **Creates a new promise** (the "result capability") and remembers its resolve/reject functions.
+2. **Builds two PromiseReaction records** — one fulfill, one reject — each wrapping the matching handler and that new capability.
+3. **Either registers or schedules them.** If the original promise is still `pending`, the reactions are *appended to its reaction lists* and nothing runs yet. If the promise is **already settled**, `.then` does not run the handler synchronously — it immediately *enqueues a `PromiseReactionJob` as a microtask* for the matching reaction.
+
+```javascript
+const p = Promise.resolve(42);   // already fulfilled with 42
+const q = p.then(v => v + 1);     // q is a NEW promise; one PromiseReactionJob queued now
+// q settles with 43 after that job runs (one microtask later)
+```
+
+So `.then` never runs your handler "right now," even on an already-settled promise. It always defers to a microtask. That single guarantee is what makes Promise ordering predictable: a `.then` callback is always one microtask removed from the settling, never synchronous.
+
+## Settling enqueues one job per reaction
+
+When the producer calls the resolve function (settling the promise to `fulfilled`), the engine runs **`FulfillPromise`**: it sets `[[PromiseState]]` to `fulfilled`, stores the value, and then walks `[[PromiseFulfillReactions]]`, enqueuing a **PromiseReactionJob** microtask for *each* registered reaction. Each job, when the microtask checkpoint runs it, calls the reaction's handler with the result, and uses the return value to settle that reaction's downstream promise (which may itself have reactions, cascading more jobs). Rejection is symmetric via `RejectPromise` and `[[PromiseRejectReactions]]`.
+
+This is why **fan-out costs N microtasks**: `p.then(a); p.then(b); p.then(c)` on a settled `p` registers three reactions and enqueues three PromiseReactionJobs — `a`, `b`, `c` run as three separate microtasks in registration order.
+
+<NumbersCard
+  title="Tick costs you should be able to recite"
+  data-lesson-visual
+  stats={[
+    { label: "Promise.resolve().then(fn) → fn runs", value: "1 tick" },
+    { label: "N .then on one settled promise", value: "N ticks" },
+    { label: "Chain .then().then().then()", value: "1 tick per link" },
+    { label: "resolve(promise) — adopt a thenable", value: "+1 tick (resolve job)" },
+    { label: "resolve(non-native thenable)", value: "+1 tick (thenable job)" },
+    { label: "await nativePromise (V8 7.2+)", value: "1 tick (was 3)" },
+  ]}
+/>
+
+## The extra tick: resolving with a thenable
+
+Here is the subtlety that trips up tick-counting. If you resolve a promise **with another promise (or any thenable)**, the engine cannot adopt its value synchronously — a thenable might settle later. So `ResolvePromise` schedules a **`PromiseResolveThenableJob`**: a microtask whose only purpose is to call the inner thenable's `.then` to subscribe to it. That subscription is itself another deferral. The consequence: resolving promise `A` with promise `B` adds an extra microtask tick compared to resolving `A` with a plain value, because the engine must bounce through `PromiseResolveThenableJob` before `A` can even start adopting `B`'s eventual state.
+
+```javascript
+// Plain value: q settles one tick after p's reaction runs.
+Promise.resolve(1).then(v => v);
+
+// Thenable: returning a promise from a handler costs an extra tick,
+// because the outer promise must adopt the inner one via a resolve job.
+Promise.resolve(1).then(v => Promise.resolve(v));   // extra PromiseResolveThenableJob
+```
+
+This is the mechanical reason the original `await` cost three ticks (covered next lesson): the spec wrapped the awaited value in a throwaway promise and adopted it through a thenable job. V8 7.2 (2018) special-cased native promises to skip those extra jobs.
+
+<Misconception id="mc-then-sync">
+  <p><strong>".then on an already-resolved promise runs the callback immediately."</strong> It never does. Even <code>Promise.resolve(1).then(cb)</code> enqueues a PromiseReactionJob as a microtask; <code>cb</code> runs after the current synchronous code, one tick later. Promises guarantee asynchrony to avoid the release-of-Zalgo hazard.</p>
+</Misconception>
+
+## Unhandled-rejection tracking
+
+The engine also watches for rejections with no reject handler. When `RejectPromise` runs and the reject reaction list is empty (no `.catch`/`.then(_, onR)` attached), the promise is flagged as having a *potentially unhandled rejection*. The host is notified via `HostPromiseRejectionTracker`, which is what fires the browser's `unhandledrejection` event and Node's `process.on('unhandledRejection')`. Crucially this is *deferred*: a handler attached **later in the same turn** clears the flag (fires `rejectionhandled`), because attaching `.catch` registers a reject reaction that consumes the stored rejection. This deferral is why "add a `.catch` on the next line" still suppresses the warning — but a `.catch` attached a macrotask later does not.
+
+<FlowDiagram
+  label="The life of a reaction: .then on a pending promise appends a reaction record to a list; when the producer settles the promise, the engine walks the matching list and enqueues one PromiseReactionJob microtask per reaction; each job runs the handler and settles the downstream promise."
+  hue="var(--accent)"
+  caption="From .then to executed handler. Settling is the trigger that converts stored reactions into queued microtask jobs — one per reaction."
+  nodes={[
+    { id: "then", label: ".then(onF)", sub: "append reaction", col: 0, row: 0 },
+    { id: "pending", label: "Pending promise", sub: "holds reaction list", col: 1, row: 0 },
+    { id: "settle", label: "resolve()/reject()", sub: "settle-once", col: 2, row: 0 },
+    { id: "job", label: "PromiseReactionJob", sub: "microtask per reaction", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "then", to: "pending", label: "register" },
+    { from: "pending", to: "settle", label: "producer settles" },
+    { from: "settle", to: "job", label: "enqueue N jobs" },
+  ]}
+/>
+
+<Quiz
+  id="q-then-returns-new"
+  lessonSlug="03-promise-internals"
+  lang="en"
+  question="What does `const q = p.then(fn)` create, and when does `fn` run if `p` is already fulfilled?"
+  choices={[
+    { label: "`q` is a brand-new promise; `fn` runs one microtask later as a PromiseReactionJob, never synchronously", correct: true },
+    { label: "`q` is the same object as `p`; `fn` runs synchronously since `p` is settled", misconception: "`.then` always returns a new promise (the result capability), and never runs the handler synchronously — even on a settled promise it enqueues a PromiseReactionJob microtask." },
+    { label: "`q` is undefined; `.then` only registers a side-effect", misconception: "`.then` returns a new promise so chains can be built; that downstream promise is settled by fn's return value." },
+    { label: "`q` is a clone of `p` with the same reactions copied over", misconception: "No reactions are copied. `q` is a fresh pending promise whose resolve/reject are stored in the reaction record `.then` builds." },
+  ]}
+/>
+
+<Quiz
+  id="q-thenable-tick"
+  lessonSlug="03-promise-internals"
+  lang="en"
+  question="Why does resolving promise `A` with another promise `B` cost an extra microtask tick versus resolving `A` with the number 5?"
+  choices={[
+    { label: "Because adopting a thenable schedules a PromiseResolveThenableJob — an extra microtask to subscribe to B before A can adopt its state", correct: true },
+    { label: "Because promises are slower to allocate than numbers", misconception: "Allocation cost is not a microtask tick. The extra tick is the PromiseResolveThenableJob the engine schedules to subscribe to the inner thenable." },
+    { label: "Because B must be garbage-collected first", misconception: "The GC is unrelated to tick counting. The extra tick comes from the thenable-adoption job, not collection." },
+    { label: "There is no extra tick; resolving with a promise is free", misconception: "There is an extra tick. The engine cannot adopt a thenable's value synchronously, so it bounces through PromiseResolveThenableJob." },
+  ]}
+/>
+
+<DragOrder
+  id="do-then-internals"
+  pieceSlug="03-promise-internals"
+  lang="en"
+  prompt="Order what the engine does from calling `.then` on a still-pending promise through running the handler after the promise settles."
+  items={[
+    ".then creates a new downstream promise and remembers its resolve/reject",
+    ".then builds PromiseReaction records and appends them to the pending promise's lists",
+    "The producer calls resolve(); FulfillPromise stores the value and sets state to fulfilled",
+    "FulfillPromise enqueues a PromiseReactionJob microtask for each registered reaction",
+    "The microtask checkpoint runs each job: the handler runs and settles the downstream promise",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why force `.then` to always defer to a microtask, even when the promise is already settled? Because a function that sometimes calls its callback synchronously and sometimes asynchronously is impossible to reason about — the infamous "releasing Zalgo." By guaranteeing the handler always runs in a later microtask, Promises give you one invariant you can build on: the code after `.then(...)` on the current line always runs before the handler.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A Promise is a settle-once state machine: a state, a value, and two lists of PromiseReaction records. `.then` returns a new promise and registers reactions; settling enqueues one PromiseReactionJob microtask per reaction. Resolving with a thenable adds a tick via PromiseResolveThenableJob — the source of "extra tick" surprises.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-promise-internals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the internal structure of a Promise and the settle-once invariant.", a: "A Promise holds [[PromiseState]] (pending → fulfilled | rejected, transitioning exactly once), [[PromiseResult]] (the fulfilment value or rejection reason, meaningful only after settle), and two lists, [[PromiseFulfillReactions]] and [[PromiseRejectReactions]], of PromiseReaction records. Each PromiseReaction bundles a type (fulfill/reject), a handler (your callback or undefined), and the resolve/reject capability of the new promise that .then returned. Settle-once means once state leaves pending, no later resolve/reject changes it; on settle, the matching reaction list is consumed (each reaction scheduled as a microtask) and the lists are discarded." },
+    { q: "Walk through everything .then does and explain why the handler is never synchronous.", a: ".then(onF, onR) creates a new promise (the result capability) and stores its resolve/reject; builds two PromiseReaction records wrapping the matching handler and that capability; then either appends them to the original promise's reaction lists (if still pending) or, if already settled, immediately enqueues a PromiseReactionJob microtask for the matching reaction. It never runs the handler synchronously — even Promise.resolve(1).then(cb) defers cb to a microtask. This avoids the 'sometimes sync, sometimes async' Zalgo hazard and guarantees the code after .then on the current line runs before the handler." },
+    { q: "Explain the extra tick from resolving a promise with another promise, and connect it to await.", a: "When you resolve promise A with a thenable B, ResolvePromise cannot adopt B's value synchronously because B may settle later. It schedules a PromiseResolveThenableJob — a microtask whose job is to call B.then to subscribe to it. That subscription is an additional deferral, so resolving A with B costs an extra microtask tick versus resolving A with a plain value. This is the mechanical reason the original await cost three ticks: the spec wrapped the awaited value in a throwaway promise and adopted it through a thenable job. V8 7.2 special-cased native promises to skip those extra jobs, bringing await down to roughly one tick (next lesson)." },
+  ]}
+/>
+
+<Recap lang="en">
+A Promise is a compact settle-once state machine. Internally it is a state slot ([[PromiseState]]: pending → fulfilled | rejected, one-way), a result slot ([[PromiseResult]]), and two lists of PromiseReaction records ([[PromiseFulfillReactions]] / [[PromiseRejectReactions]]). Each reaction bundles a type, your handler, and the resolve/reject capability of the new promise .then returned — which is why chaining composes. .then always returns a new promise and never runs your handler synchronously: on a pending promise it appends reactions; on a settled one it immediately enqueues a PromiseReactionJob microtask. Settling (FulfillPromise/RejectPromise) walks the matching list and enqueues one job per reaction, so fan-out costs N microtasks and a chain costs one tick per link. The notorious extra tick comes from resolving a promise with a thenable: the engine schedules a PromiseResolveThenableJob to subscribe to the inner promise before it can adopt its state. Unhandled-rejection tracking fires when a rejected promise has no reject reaction, but a .catch added later in the same turn clears the flag. Knowing this machinery lets you count ticks exactly — the skill the next lesson cashes in to explain how async/await desugars and why V8 7.2 made await nearly free.
+</Recap>
