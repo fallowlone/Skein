@@ -4,10 +4,339 @@ lang: ru
 track: "sql-postgres"
 unit: "09-putting-it-together"
 order: 1
-title: "Capstone: an analytics query system"
-summary: "Capstone: an analytics query system — stub; author to ready."
-estMin: 12
-status: stub
+title: "Капстоун: аналитическая система запросов от начала до конца"
+summary: "Спроектируй и затюнь per-tenant аналитический API: схема с timestamptz + jsonb, метрики через FILTER, оконный top-N, keyset-страницы, JOIN без fan-out, rollup-воркер на SKIP LOCKED и фикс индекса по EXPLAIN — весь трек в одной системе запросов."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - analytics-api
+  - conditional-aggregation
+  - window-functions
+  - keyset-pagination
+  - skip-locked
+  - extended-statistics
+  - composite-index
+prereqs:
+  - 08-internals-and-tuning/06-tuning-workflow
+  - 03-aggregation/05-conditional-aggregation
+  - 04-window-functions/04-ranking-functions
+  - databases/03-execution-plans/01-explain-and-plans
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-aggregate.html
+  - https://www.postgresql.org/docs/current/functions-window.html
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://use-the-index-luke.com/no-offset
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import SpiralCue from "~/components/prose/SpiralCue.astro";
+
+<Hook>
+Дашборд — это демо продукта. Потенциальный клиент открывает вкладку аналитики, выбирает «последние 30 дней» и смотрит на спиннер девять секунд, пока `GROUP BY` одного тенанта плавит ядро CPU — а так одновременно делают 4000 тенантов. Баг никто не завёл; сейлз-инженер просто перестал показывать этот экран. Этот капстоун строит тот самый эндпоинт так, как его и надо было строить: схема, запрос, пагинация, конкурентность и один индекс, превращающий 9 секунд в 40 миллисекунд. Всё, что ты выучил в этом треке, сходится здесь одновременно.
+</Hook>
+
+<Crux>Аналитический API — весь трек сразу: типы, метрики FILTER, оконный top-N, keyset-страницы, SKIP LOCKED, один индекс.</Crux>
+
+<Explanation>
+
+## Форма системы
+
+Эндпоинт — `GET /tenants/:id/metrics?from=…&to=…&cursor=…`. Он возвращает per-tenant временной ряд — daily active users (DAU), выручку и топ типов событий — постранично, быстро, под тысячами конкурентных тенантов. За ним стоят сырой журнал событий и дневной rollup, который поддерживает фоновый воркер. Архитектура — это конвейер: сырые события текут в предагрегированный rollup; API читает rollup для временного ряда и сырую таблицу только для самого свежего дня; воркер держит rollup актуальным, не блокируя читателей.
+
+<FlowDiagram
+  label="Аналитический конвейер: приложение append-ит записи в таблицу events; фоновый rollup-воркер читает новые партиции событий через SKIP LOCKED и делает upsert в дневной rollup; API читает rollup для исторических дней и сырую таблицу events для сегодняшнего дня, затем отдаёт keyset-пагинированный временной ряд."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "app", label: "Запись app", sub: "INSERT events" },
+    { id: "events", label: "events", sub: "сырой лог + jsonb" },
+    { id: "worker", label: "Rollup-воркер", sub: "SKIP LOCKED" },
+    { id: "rollup", label: "metrics_daily", sub: "предагрегат" },
+    { id: "api", label: "Аналитический API", sub: "keyset-страницы" },
+    { id: "client", label: "Дашборд", sub: "временной ряд" },
+  ]}
+  edges={[
+    { from: "app", to: "events" },
+    { from: "events", to: "worker", label: "claim" },
+    { from: "worker", to: "rollup", label: "upsert" },
+    { from: "rollup", to: "api", label: "история" },
+    { from: "events", to: "api", label: "сегодня" },
+    { from: "api", to: "client" },
+  ]}
+  caption="Два пути чтения: rollup дёшево отвечает за исторические дни; сырая таблица — только за текущий, ещё меняющийся день. Предагрегация — вот что держит p99 ровным, пока журнал событий растёт за миллиард строк."
+/>
+
+## Схема и типы — фундамент (раздел 06)
+
+Подбери колонки правильно — и половина проблем производительности просто не возникнет. Эти решения не косметика:
+
+```sql
+CREATE TABLE events (
+  id         bigint GENERATED ALWAYS AS IDENTITY,
+  tenant_id  bigint      NOT NULL,
+  user_id    bigint      NOT NULL,
+  type       text        NOT NULL,
+  ts         timestamptz NOT NULL,            -- всегда tz-aware; никогда naive timestamp
+  props      jsonb       NOT NULL DEFAULT '{}',
+  PRIMARY KEY (tenant_id, id)                 -- tenant впереди, чтобы каждое чтение было tenant-local
+);
+
+-- Предагрегированный rollup, который API читает для исторических дней:
+CREATE TABLE metrics_daily (
+  tenant_id   bigint      NOT NULL,
+  day         date        NOT NULL,
+  dau         integer     NOT NULL,
+  revenue     numeric(14,2) NOT NULL,
+  PRIMARY KEY (tenant_id, day)
+);
+```
+
+В этом DDL спрятаны три сеньорских решения. `ts` — это `timestamptz`, а не `timestamp`: naive timestamp молча теряет смещение, поэтому пользователь в Токио и пользователь в Сан-Паулу попадают в один и тот же «день», и твой DAU неверен by design. `props` — это `jsonb`, а не `json`: `jsonb` разбирается один раз в бинарную форму, так что `props->>'amount'` и GIN-индексы работают; `json` перепарсится при каждом чтении. А `id` — это ключ `GENERATED ALWAYS AS IDENTITY`, стандартная замена `serial`, с составным первичным ключом `(tenant_id, id)`, так что таблица физически кластеризована по тенанту — каждый per-tenant скан остаётся в непрерывном куске индекса.
+
+## Запрос метрик — условная агрегация (раздел 03)
+
+DAU, выручка и разбивка по типам — это *один* проход по данным, а не три запроса. Клауза `FILTER` превращает один `GROUP BY` во множество условных метрик — приём из раздела 03 в реальной работе:
+
+```sql
+SELECT
+  date_trunc('day', ts)                                   AS day,
+  count(DISTINCT user_id)                                 AS dau,
+  count(*) FILTER (WHERE type = 'purchase')               AS purchases,
+  coalesce(sum((props->>'amount')::numeric)
+           FILTER (WHERE type = 'purchase'), 0)           AS revenue,
+  count(*) FILTER (WHERE type = 'signup')                 AS signups
+FROM events
+WHERE tenant_id = $1
+  AND ts >= $2 AND ts < $3
+GROUP BY 1
+ORDER BY 1;
+```
+
+Один скан среза одного тенанта выдаёт все метрики. Альтернатива — отдельный запрос на метрику — умножает round trips и перечитывает те же heap-страницы каждый раз. `FILTER` лучше `CASE WHEN ... END` здесь, потому что читается как намерение, а планировщик трактует их одинаково. Заметь: `count(DISTINCT user_id)` — дорогая часть: он форсирует сортировку или hash всех user_id в диапазоне, и именно поэтому исторические дни идут в предвычисленный rollup.
+
+## Top-N на тенанта и нарастающие итоги — оконные функции (раздел 04)
+
+«Топ-5 типов событий за период» и «накопленная выручка» — это работа оконных функций. Ранжирование партиционирует по тенанту; нарастающий итог накапливается внутри упорядоченного фрейма:
+
+```sql
+-- Топ-5 типов событий для одного тенанта, с долей каждого типа:
+SELECT type, n,
+       round(100.0 * n / sum(n) OVER (), 1) AS pct
+FROM (
+  SELECT type, count(*) AS n
+  FROM events
+  WHERE tenant_id = $1 AND ts >= $2 AND ts < $3
+  GROUP BY type
+) t
+ORDER BY n DESC
+LIMIT 5;
+
+-- Накопленная выручка по дневному ряду (после per-day rollup):
+SELECT day, revenue,
+       sum(revenue) OVER (ORDER BY day
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS revenue_to_date
+FROM metrics_daily
+WHERE tenant_id = $1 AND day >= $2 AND day < $3
+ORDER BY day;
+```
+
+`sum(n) OVER ()` с пустым окном считает общий итог *не схлопывая строки*, так что каждый тип сохраняет свою долю — `GROUP BY` так в одном проходе не смог бы. Для настоящего per-tenant top-N сразу по многим тенантам ты обернул бы `row_number() OVER (PARTITION BY tenant_id ORDER BY n DESC)` и отфильтровал `<= 5` — ровно паттерн из урока ранжирования раздела 04.
+
+## CTE-конвейер для производного измерения (раздел 05)
+
+Типы событий сворачиваются в категории (`purchase`, `refund` → `commerce`; `signup`, `login` → `lifecycle`). Дерево категорий естественно рекурсивно; рекурсивный CTE обходит его, а второй CTE соединяет события с разрешённой категорией. Это паттерн раздела 05 — читаемый, поэтапный конвейер вместо чащи вложенных подзапросов:
+
+```sql
+WITH RECURSIVE category_tree AS (
+  SELECT id, parent_id, name, name AS root
+  FROM event_categories WHERE parent_id IS NULL
+  UNION ALL
+  SELECT c.id, c.parent_id, c.name, t.root
+  FROM event_categories c JOIN category_tree t ON c.parent_id = t.id
+),
+typed AS (
+  SELECT et.type, ct.root AS category
+  FROM event_types et JOIN category_tree ct ON et.category_id = ct.id
+)
+SELECT typed.category, count(*) AS n
+FROM events e
+JOIN typed ON typed.type = e.type
+WHERE e.tenant_id = $1 AND e.ts >= $2 AND e.ts < $3
+GROUP BY typed.category
+ORDER BY n DESC;
+```
+
+## Keyset-пагинация — не OFFSET (разделы 01 и 05)
+
+`OFFSET 100000 LIMIT 50` заставляет Postgres прочитать и отбросить 100 000 строк, чтобы вернуть 50 — латентность страницы растёт линейно с её номером, так что самый глубокий скролл — самый медленный. Keyset- (она же cursor-) пагинация несёт ключ сортировки последней строки и сикает прямо к ней:
+
+```sql
+-- Первая страница: курсора нет.
+SELECT day, dau, revenue
+FROM metrics_daily
+WHERE tenant_id = $1
+ORDER BY day DESC
+LIMIT 50;
+
+-- Следующая страница: курсор — последний увиденный день; сикаем за него. O(log n), не O(offset).
+SELECT day, dau, revenue
+FROM metrics_daily
+WHERE tenant_id = $1
+  AND day < $2                       -- $2 = последний day с предыдущей страницы
+ORDER BY day DESC
+LIMIT 50;
+```
+
+С первичным ключом `(tenant_id, day)` предикат курсора — это index range scan: страница 1 и страница 10 000 стоят одинаково. Когда ключ сортировки не уникален, курсор должен быть кортежем — `(day, id) < ($cursor_day, $cursor_id)` — через сравнение строк (row comparison), чтобы никогда не пропустить и не задублировать строки на стыке равных значений.
+
+<SpiralCue thread="latency" lang="ru" />
+
+## JOIN без fan-out (раздел 02)
+
+Соединять события с per-event измерением (одна категория на тип) безопасно. Ловушка — соединение с *one-to-many* таблицей: скажем, таблица `tenant_features` с многими строками на тенанта молча размножает строки событий до агрегата, и DAU с выручкой возвращаются раздутыми. Фикс — агрегировать измерение до одной строки на ключ *до* JOIN, либо держать lookup измерения one-to-one:
+
+```sql
+-- НЕВЕРНО: у tenant_features N строк на тенанта → каждое событие посчитано N раз.
+-- SELECT count(*) FROM events e JOIN tenant_features f USING (tenant_id) ...
+
+-- ВЕРНО: сначала схлопни измерение, потом соединяй one-to-one.
+SELECT e.type, count(*) AS n
+FROM events e
+JOIN (SELECT tenant_id, max(plan) AS plan
+      FROM tenant_features GROUP BY tenant_id) f USING (tenant_id)
+WHERE e.tenant_id = $1
+GROUP BY e.type;
+```
+
+Раздутые агрегаты из fan-out JOIN — это аналитический баг, который доезжает до прода: запрос отрабатывает, возвращает числа, и числа тихо завышены в 3 раза.
+
+<Inset kind="why" lang="ru">
+Зачем вообще rollup — почему не запрашивать сырые events каждый раз? Потому что `count(DISTINCT user_id)` по растущему журналу — это O(строк): при 50M событий/день он дешевле не становится, и каждая загрузка дашборда переделывает ту же арифметику. Rollup делает исторические дни O(дней): график за 90 дней читает 90 предвычисленных строк вместо 4,5 миллиардов сырых. Цена — свежесть: rollup отстаёт на каденс воркера, поэтому API читает rollup для закрытых дней и сырую таблицу только для *сегодня*, где число строк ограничено одним днём. Это разделение — стандартная lambda-образная форма для аналитики на Postgres до того, как тянуться за колоночным хранилищем.
+</Inset>
+
+## Конкурентность: rollup-воркер (раздел 07)
+
+Множество инстансов воркера должны разгребать бэклог так, чтобы двое не обрабатывали одну пачку. `SELECT ... FOR UPDATE SKIP LOCKED` — это очередной примитив очереди: каждый воркер забирает строки, которые никто не держит, и пропускает залоченные вместо блокировки. Выбор изоляции тоже важен — воркер гоняет каждую пачку в `READ COMMITTED` (дефолт), потому что ему не нужен замороженный снапшот между стейтментами; отчётный экспорт, который должен быть внутренне согласованным, взял бы `REPEATABLE READ`.
+
+```sql
+BEGIN;  -- READ COMMITTED достаточно для идемпотентного upsert-воркера
+WITH batch AS (
+  SELECT id, tenant_id, ts, type, props
+  FROM events
+  WHERE rolled_up = false
+  ORDER BY id
+  LIMIT 1000
+  FOR UPDATE SKIP LOCKED          -- забрать 1000 строк, которые не держит другой воркер
+)
+INSERT INTO metrics_daily (tenant_id, day, dau, revenue)
+SELECT tenant_id, date_trunc('day', ts)::date,
+       count(DISTINCT user_id),
+       coalesce(sum((props->>'amount')::numeric) FILTER (WHERE type='purchase'),0)
+FROM batch GROUP BY 1, 2
+ON CONFLICT (tenant_id, day)
+  DO UPDATE SET dau = excluded.dau, revenue = excluded.revenue;
+-- (здесь пометить пачку rolled_up = true)
+COMMIT;
+```
+
+Без `SKIP LOCKED` десять воркеров сериализуются на одних и тех же строках в голове очереди, и ты получаешь пропускную способность одного воркера ценой десяти. С ним пропускная способность масштабируется почти линейно, пока не насытится I/O.
+
+## Тюнинг: пусть EXPLAIN скажет правду (раздел 08 + трек databases)
+
+Запрос метрик медленный в первый день, потому что нет полезного индекса — Postgres seq-сканит весь журнал событий на каждый запрос. Сеньорский workflow — измерь, диагностируй, почини одну вещь, перемерь:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT date_trunc('day', ts) AS day, count(DISTINCT user_id) AS dau
+FROM events
+WHERE tenant_id = 7 AND ts >= '2026-05-01' AND ts < '2026-06-01'
+GROUP BY 1;
+-- Seq Scan on events  (rows=480000)  Buffers: shared read=61000
+-- Планировщик оценил 12 строк; фактически 480000 → промах в 40 000×.
+```
+
+Два фикса, по порядку. Сначала промах оценки: `tenant_id` и `ts` коррелированы (события тенанта кластеризованы во времени), поэтому планировщик перемножает их селективности как независимые и гадает слишком мало строк. `CREATE STATISTICS` с `dependencies` учит его этой корреляции. Затем путь доступа: составной индекс с колонкой равенства первой и колонкой диапазона второй превращает seq scan в плотный index range scan.
+
+```sql
+-- Научи планировщик, что tenant_id и ts коррелированы (extended statistics):
+CREATE STATISTICS events_tenant_ts (dependencies)
+  ON tenant_id, ts FROM events;
+ANALYZE events;
+
+-- Индекс, который решает: равенство (tenant_id) первым, диапазон (ts) вторым.
+CREATE INDEX events_tenant_ts_idx ON events (tenant_id, ts);
+```
+
+Порядок колонок — это всё (правило ведущей колонки из трека databases): `(tenant_id, ts)` позволяет Postgres сикнуть к одному тенанту и затем range-сканить временное окно внутри него; `(ts, tenant_id)` форсировал бы скан всех тенантов в окне. После индекса тот же запрос — это `Index Scan`, читающий `shared read=420` вместо `61000` — вот тот скачок с 9 секунд до 40 миллисекунд. Наконец, следи за bloat: таблица rollup `UPDATE`-нагружена через upsert, так что мёртвые кортежи накапливаются; пусть autovacuum держит её поджарой (глава MVCC трека databases объясняет, почему мёртвые строки замедляют сканы даже после того, как живой набор сжался).
+
+<Quiz
+  id="01-capstone-quiz-1"
+  lessonSlug="01-capstone-analytics-api"
+  lang="ru"
+  question="Запрос дашборда фильтрует одного тенанта по диапазону дат. Какой составной индекс обслужит его лучше всего и почему?"
+  choices={[
+    { label: "(tenant_id, ts) — колонка равенства первой даёт Postgres сикнуть к тенанту, затем range-сканить ts внутри этого среза", correct: true },
+    { label: "(ts, tenant_id) — поставить колонку диапазона первой, чтобы даты были отсортированы", misconception: "Колонка диапазона первой форсирует скан всех тенантов в окне дат до фильтра по tenant_id; правило ведущей колонки требует предикат равенства первым." },
+    { label: "Два одноколоночных индекса по tenant_id и ts отдельно", misconception: "Postgres может bitmap-скомбинировать их, но единый составной (tenant_id, ts) — это один плотный range scan с куда меньшим числом чтений буферов, чем комбинация двух индексов." },
+    { label: "GIN-индекс по props, ведь запрос читает jsonb", misconception: "Этот запрос фильтрует по tenant_id и ts, а не по props; GIN-индекс по jsonb вообще не обслуживает предикат tenant + время." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-quiz-2"
+  lessonSlug="01-capstone-analytics-api"
+  lang="ru"
+  question="Десять rollup-воркеров работают конкурентно. Что даёт FOR UPDATE SKIP LOCKED по сравнению с простым FOR UPDATE?"
+  choices={[
+    { label: "Каждый воркер забирает непересекающуюся пачку и пропускает строки, уже залоченные другим воркером, вместо блокировки на них — пропускная способность масштабируется с числом воркеров", correct: true },
+    { label: "Он автоматически переводит транзакцию на изоляцию SERIALIZABLE", misconception: "SKIP LOCKED — это опция блокировки строк, а не уровень изоляции; он меняет, каких строк ты ждёшь, а не семантику снапшота." },
+    { label: "Он не даёт строкам залочиться вообще, так что конфликтов нет", misconception: "Забирающий воркер всё равно лочит свои строки; SKIP LOCKED лишь даёт ДРУГИМ воркерам пропустить уже залоченные строки, а не вставать за ними в очередь." },
+    { label: "Он коммитит каждую строку немедленно, чтобы другие воркеры её видели", misconception: "Видимость управляется COMMIT и изоляцией, а не SKIP LOCKED, который влияет только на поведение ожидания блокировки в момент SELECT." },
+  ]}
+/>
+
+<DragOrder
+  id="01-capstone-drag-1"
+  lessonSlug="01-capstone-analytics-api"
+  lang="ru"
+  prompt="Расставь по порядку сеньорский workflow фикса медленного запроса дашборда от начала до конца:"
+  items={[
+    { id: "a", label: "Воспроизвести через EXPLAIN (ANALYZE, BUFFERS) и прочитать оценку vs факт + буферы" },
+    { id: "b", label: "Заметить промах: tenant_id и ts коррелированы, планировщик угадал слишком мало строк" },
+    { id: "c", label: "CREATE STATISTICS (dependencies) ON tenant_id, ts; затем ANALYZE" },
+    { id: "d", label: "Добавить составной индекс (tenant_id, ts) — колонка равенства первой" },
+    { id: "e", label: "Перезапустить EXPLAIN ANALYZE; подтвердить Index Scan и падение чтений буферов" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Аналитический API — это трек, собранный воедино: типизированная схема (`timestamptz`, `jsonb`, identity-ключ, tenant-первый PK) делает данные корректными; `FILTER` сворачивает множество метрик в один скан; оконные функции дают top-N и нарастающие итоги; rollup плюс keyset-пагинация держат p99 ровным по мере роста журнала; `SKIP LOCKED` даёт rollup-воркеру масштабироваться; а один фикс по EXPLAIN — extended statistics плюс составной индекс `(tenant_id, ts)` — превращает seq scan в index range scan и 9 секунд в 40 миллисекунд.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-capstone-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему запрос метрик использует count(*) FILTER (WHERE …) вместо запроса на каждую метрику?", a: "FILTER считает все метрики — DAU, purchases, выручку, signups — в одном проходе GROUP BY по срезу тенанта. Отдельные запросы на метрику умножают round trips и перечитывают те же heap-страницы каждый раз. FILTER читается как намерение, а планировщик трактует его идентично CASE WHEN, так что много условных агрегатов получаются из одного скана." },
+    { q: "Почему keyset-пагинация предпочтительнее OFFSET для дашборда и как обработать неуникальный ключ сортировки?", a: "OFFSET n читает и отбрасывает n строк до выдачи страницы, так что латентность растёт линейно с глубиной страницы — самый глубокий скролл самый медленный. Keyset несёт ключ сортировки последней строки и сикает за него через index range scan, так что каждая страница стоит одинаково (O(log n)). Когда ключ сортировки не уникален, используй кортежный курсор со сравнением строк, например (day, id) < ($cursor_day, $cursor_id), чтобы на стыке равных значений строки не пропускались и не дублировались." },
+    { q: "Запрос метрик был seq scan с промахом оценки в 40 000×. Какие два фикса и в каком порядке?", a: "Сначала чини оценку: tenant_id и ts коррелированы, поэтому планировщик перемножает селективности как независимые и гадает слишком мало строк. CREATE STATISTICS (dependencies) ON tenant_id, ts, затем ANALYZE учит его корреляции. Затем чини путь доступа: CREATE INDEX (tenant_id, ts) — колонка равенства первой, диапазон вторым — превращает seq scan в плотный index range scan. Перезапусти EXPLAIN (ANALYZE, BUFFERS), чтобы подтвердить падение чтений буферов." },
+  ]}
+/>
+
+<Recap lang="ru">
+Этот капстоун связал весь трек в одну систему. Схема (раздел 06) делает данные надёжными: `timestamptz`, чтобы дневные бакеты были корректны через часовые пояса, `jsonb`, чтобы `props` был запрашиваемым, identity-ключ с tenant-первым первичным ключом, чтобы чтения оставались tenant-local. Запрос метрик (раздел 03) использует `count(*) FILTER`, чтобы свернуть DAU, выручку и счётчики по типам в один проход `GROUP BY`; оконные функции (раздел 04) добавляют долю top-N и нарастающие итоги, не схлопывая строки; рекурсивный CTE-конвейер (раздел 05) чисто разрешает измерение категорий. Чтения остаются быстрыми за счёт двух структурных решений: keyset-пагинация (разделы 01/05), чтобы глубокие страницы стоили столько же, сколько первая, и дисциплина JOIN (раздел 02), которая агрегирует one-to-many измерения до соединения, чтобы агрегаты не делали fan-out. Rollup-воркер (раздел 07) использует `FOR UPDATE SKIP LOCKED` под `READ COMMITTED`, чтобы разгребать бэклог многими инстансами без контеншена. Наконец цикл тюнинга (раздел 08, плюс главы execution-plans и indexes трека databases): `EXPLAIN (ANALYZE, BUFFERS)` обнажает промах в 40 000×, `CREATE STATISTICS` чинит взгляд планировщика на коррелированные колонки, а составной индекс `(tenant_id, ts)` — равенство первым, диапазон вторым — превращает seq scan на 61 000 буферов в index scan на 420 буферов. Проектируй на корректность, предагрегируй на масштаб, пагинируй по ключу и дай EXPLAIN — а не догадке — выбирать индекс.
+</Recap>
