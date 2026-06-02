@@ -4,10 +4,339 @@ lang: en
 track: "sql-postgres"
 unit: "09-putting-it-together"
 order: 1
-title: "Capstone: an analytics query system"
-summary: "Capstone: an analytics query system — stub; author to ready."
-estMin: 12
-status: stub
+title: "Capstone: an analytics query system end to end"
+summary: "Design and tune a per-tenant analytics API: timestamptz + jsonb schema, FILTER metrics, windowed top-N, keyset pages, fan-out-free joins, a SKIP LOCKED rollup worker, and an EXPLAIN-driven index fix — every unit of the track in one query system."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - analytics-api
+  - conditional-aggregation
+  - window-functions
+  - keyset-pagination
+  - skip-locked
+  - extended-statistics
+  - composite-index
+prereqs:
+  - 08-internals-and-tuning/06-tuning-workflow
+  - 03-aggregation/05-conditional-aggregation
+  - 04-window-functions/04-ranking-functions
+  - databases/03-execution-plans/01-explain-and-plans
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-aggregate.html
+  - https://www.postgresql.org/docs/current/functions-window.html
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/using-explain.html
+  - https://use-the-index-luke.com/no-offset
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import SpiralCue from "~/components/prose/SpiralCue.astro";
+
+<Hook>
+The dashboard is the product demo. A prospect opens the analytics tab, picks "last 30 days", and stares at a spinner for nine seconds while one tenant's `GROUP BY` melts a CPU core — and you have 4,000 tenants doing this at once. Nobody bug filed it; the sales engineer just stopped showing that screen. This capstone builds that endpoint the way it should have been built: schema, query, pagination, concurrency, and the one index that turns 9 seconds into 40 milliseconds. Everything you learned in this track lands here at the same time.
+</Hook>
+
+<Crux>An analytics API is the whole track at once: typed schema, FILTER metrics, windowed top-N, keyset pages, SKIP LOCKED, one tuned index.</Crux>
+
+<Explanation>
+
+## The shape of the system
+
+The endpoint is `GET /tenants/:id/metrics?from=…&to=…&cursor=…`. It returns a per-tenant time series — daily active users (DAU), revenue, and the top event types — paginated, fast, under thousands of concurrent tenants. Behind it sits a raw event log and a daily rollup that a background worker maintains. The architecture is a pipeline: raw events flow into a pre-aggregated rollup; the API reads the rollup for the time series and the raw table only for the freshest day; a worker keeps the rollup current without blocking readers.
+
+<FlowDiagram
+  label="Analytics pipeline: application writes append to the events table; a background rollup worker reads new event partitions with SKIP LOCKED and upserts into a daily rollup; the API reads the rollup for historical days and the raw events table for today, then serves a keyset-paginated time series."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "app", label: "App writes", sub: "INSERT events" },
+    { id: "events", label: "events", sub: "raw log + jsonb" },
+    { id: "worker", label: "Rollup worker", sub: "SKIP LOCKED" },
+    { id: "rollup", label: "metrics_daily", sub: "pre-aggregated" },
+    { id: "api", label: "Analytics API", sub: "keyset pages" },
+    { id: "client", label: "Dashboard", sub: "time series" },
+  ]}
+  edges={[
+    { from: "app", to: "events" },
+    { from: "events", to: "worker", label: "claim" },
+    { from: "worker", to: "rollup", label: "upsert" },
+    { from: "rollup", to: "api", label: "history" },
+    { from: "events", to: "api", label: "today" },
+    { from: "api", to: "client" },
+  ]}
+  caption="Two read paths: the rollup answers historical days cheaply; the raw table answers only the current, still-changing day. Pre-aggregation is what keeps the p99 flat as the event log grows past a billion rows."
+/>
+
+## Schema and types — the foundation (unit 06)
+
+Get the columns right and half the performance problems never exist. The choices are not cosmetic:
+
+```sql
+CREATE TABLE events (
+  id         bigint GENERATED ALWAYS AS IDENTITY,
+  tenant_id  bigint      NOT NULL,
+  user_id    bigint      NOT NULL,
+  type       text        NOT NULL,
+  ts         timestamptz NOT NULL,            -- always tz-aware; never naive timestamp
+  props      jsonb       NOT NULL DEFAULT '{}',
+  PRIMARY KEY (tenant_id, id)                 -- tenant-leading so every read is tenant-local
+);
+
+-- The pre-aggregated rollup the API reads for historical days:
+CREATE TABLE metrics_daily (
+  tenant_id   bigint      NOT NULL,
+  day         date        NOT NULL,
+  dau         integer     NOT NULL,
+  revenue     numeric(14,2) NOT NULL,
+  PRIMARY KEY (tenant_id, day)
+);
+```
+
+Three senior calls hide in that DDL. `ts` is `timestamptz`, not `timestamp` — a naive timestamp silently drops the offset, so a user in Tokyo and one in São Paulo land in the same "day" bucket and your DAU is wrong by design. `props` is `jsonb`, not `json` — `jsonb` is parsed once into a binary form, so `props->>'amount'` and GIN indexes work; `json` re-parses on every read. And `id` is a `GENERATED ALWAYS AS IDENTITY` key, the SQL-standard replacement for `serial`, with the composite primary key `(tenant_id, id)` so the table is physically clustered by tenant — every per-tenant scan stays in a contiguous slice of the index.
+
+## The metrics query — conditional aggregation (unit 03)
+
+DAU, revenue, and a per-type breakdown are *one* pass over the data, not three queries. The `FILTER` clause turns one `GROUP BY` into many conditional metrics — this is the unit-03 technique doing real work:
+
+```sql
+SELECT
+  date_trunc('day', ts)                                   AS day,
+  count(DISTINCT user_id)                                 AS dau,
+  count(*) FILTER (WHERE type = 'purchase')               AS purchases,
+  coalesce(sum((props->>'amount')::numeric)
+           FILTER (WHERE type = 'purchase'), 0)           AS revenue,
+  count(*) FILTER (WHERE type = 'signup')                 AS signups
+FROM events
+WHERE tenant_id = $1
+  AND ts >= $2 AND ts < $3
+GROUP BY 1
+ORDER BY 1;
+```
+
+One scan of one tenant's slice produces every metric. The alternative — a separate query per metric — multiplies round trips and re-reads the same heap pages each time. `FILTER` beats `CASE WHEN ... END` here because it reads as intent and the planner treats it identically. Note `count(DISTINCT user_id)` is the expensive part: it forces a sort or hash of every user_id in range, which is exactly why historical days go to the pre-computed rollup instead.
+
+## Top-N per tenant and running totals — window functions (units 04)
+
+"Top 5 event types this period" and "cumulative revenue" are window-function jobs. Ranking partitions per tenant; the running total accumulates within the ordered frame:
+
+```sql
+-- Top 5 event types for one tenant, with each type's share:
+SELECT type, n,
+       round(100.0 * n / sum(n) OVER (), 1) AS pct
+FROM (
+  SELECT type, count(*) AS n
+  FROM events
+  WHERE tenant_id = $1 AND ts >= $2 AND ts < $3
+  GROUP BY type
+) t
+ORDER BY n DESC
+LIMIT 5;
+
+-- Cumulative revenue across the daily series (run after the per-day rollup):
+SELECT day, revenue,
+       sum(revenue) OVER (ORDER BY day
+                          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS revenue_to_date
+FROM metrics_daily
+WHERE tenant_id = $1 AND day >= $2 AND day < $3
+ORDER BY day;
+```
+
+The `sum(n) OVER ()` with an empty window computes the grand total *without collapsing rows*, so each type keeps its share — a `GROUP BY` could not do that in the same pass. For true per-tenant top-N over many tenants at once, you would wrap `row_number() OVER (PARTITION BY tenant_id ORDER BY n DESC)` and filter `<= 5` — the exact pattern from unit 04's ranking lesson.
+
+## A CTE pipeline for a derived dimension (unit 05)
+
+Event types roll up into categories (`purchase`, `refund` → `commerce`; `signup`, `login` → `lifecycle`). A category tree is naturally recursive; a recursive CTE walks it, then a second CTE joins events to the resolved category. This is the unit-05 pattern — a readable, staged pipeline instead of a nested-subquery thicket:
+
+```sql
+WITH RECURSIVE category_tree AS (
+  SELECT id, parent_id, name, name AS root
+  FROM event_categories WHERE parent_id IS NULL
+  UNION ALL
+  SELECT c.id, c.parent_id, c.name, t.root
+  FROM event_categories c JOIN category_tree t ON c.parent_id = t.id
+),
+typed AS (
+  SELECT et.type, ct.root AS category
+  FROM event_types et JOIN category_tree ct ON et.category_id = ct.id
+)
+SELECT typed.category, count(*) AS n
+FROM events e
+JOIN typed ON typed.type = e.type
+WHERE e.tenant_id = $1 AND e.ts >= $2 AND e.ts < $3
+GROUP BY typed.category
+ORDER BY n DESC;
+```
+
+## Keyset pagination — not OFFSET (units 01 and 05)
+
+`OFFSET 100000 LIMIT 50` makes Postgres read and discard 100,000 rows to return 50 — page latency grows linearly with page number, so the deepest scroll is the slowest. Keyset (a.k.a. cursor) pagination carries the last row's sort key and seeks straight to it:
+
+```sql
+-- First page: no cursor.
+SELECT day, dau, revenue
+FROM metrics_daily
+WHERE tenant_id = $1
+ORDER BY day DESC
+LIMIT 50;
+
+-- Next page: cursor is the last day seen; seek past it. O(log n), not O(offset).
+SELECT day, dau, revenue
+FROM metrics_daily
+WHERE tenant_id = $1
+  AND day < $2                       -- $2 = last day from the previous page
+ORDER BY day DESC
+LIMIT 50;
+```
+
+With the primary key `(tenant_id, day)` the cursor predicate is an index range scan: page 1 and page 10,000 cost the same. When the sort key is not unique, the cursor must be a tuple — `(day, id) < ($cursor_day, $cursor_id)` — using row comparison so you never skip or duplicate rows across a tie.
+
+<SpiralCue thread="latency" lang="en" />
+
+## Joins without fan-out (unit 02)
+
+Joining events to a per-event dimension (one category per type) is safe. The trap is joining to a *one-to-many* table — say a `tenant_features` table with many rows per tenant — which silently multiplies your event rows before the aggregate, so DAU and revenue come back inflated. The fix is to aggregate the dimension to one row per key *before* the join, or to keep the dimension lookup one-to-one:
+
+```sql
+-- WRONG: tenant_features has N rows per tenant → every event counted N times.
+-- SELECT count(*) FROM events e JOIN tenant_features f USING (tenant_id) ...
+
+-- RIGHT: collapse the dimension first, then join one-to-one.
+SELECT e.type, count(*) AS n
+FROM events e
+JOIN (SELECT tenant_id, max(plan) AS plan
+      FROM tenant_features GROUP BY tenant_id) f USING (tenant_id)
+WHERE e.tenant_id = $1
+GROUP BY e.type;
+```
+
+Inflated aggregates from a fan-out join are the analytics bug that ships: the query runs, returns numbers, and the numbers are quietly 3× too high.
+
+<Inset kind="why" lang="en">
+Why a rollup at all — why not just query raw events every time? Because `count(DISTINCT user_id)` over a growing log is O(rows): at 50M events/day it never gets cheaper, and every dashboard load re-does the same arithmetic. The rollup makes historical days O(days): a 90-day chart reads 90 pre-computed rows instead of 4.5 billion raw ones. The cost is freshness — the rollup lags by the worker's cadence — so the API reads the rollup for closed days and the raw table for *today* only, where the row count is bounded by one day. This split is the standard lambda-ish shape for analytics on Postgres before you reach for a column store.
+</Inset>
+
+## Concurrency: the rollup worker (unit 07)
+
+Many worker instances must drain the backlog without two of them processing the same batch. `SELECT ... FOR UPDATE SKIP LOCKED` is the queue primitive: each worker claims rows no one else holds and skips locked ones instead of blocking. Isolation choice matters too — the worker runs each batch in `READ COMMITTED` (the default) because it does not need a frozen snapshot across statements; a reporting export that must be internally consistent would use `REPEATABLE READ` instead.
+
+```sql
+BEGIN;  -- READ COMMITTED is enough for an idempotent upsert worker
+WITH batch AS (
+  SELECT id, tenant_id, ts, type, props
+  FROM events
+  WHERE rolled_up = false
+  ORDER BY id
+  LIMIT 1000
+  FOR UPDATE SKIP LOCKED          -- claim 1000 rows no other worker holds
+)
+INSERT INTO metrics_daily (tenant_id, day, dau, revenue)
+SELECT tenant_id, date_trunc('day', ts)::date,
+       count(DISTINCT user_id),
+       coalesce(sum((props->>'amount')::numeric) FILTER (WHERE type='purchase'),0)
+FROM batch GROUP BY 1, 2
+ON CONFLICT (tenant_id, day)
+  DO UPDATE SET dau = excluded.dau, revenue = excluded.revenue;
+-- (mark the batch rolled_up = true here)
+COMMIT;
+```
+
+Without `SKIP LOCKED`, ten workers serialize on the same head-of-queue rows and you get one worker's throughput with ten workers' cost. With it, throughput scales close to linearly until I/O saturates.
+
+## Tuning: make EXPLAIN tell you the truth (unit 08 + databases tracks)
+
+The metrics query is slow on day one because there is no useful index — Postgres seq-scans the whole event log per request. The senior workflow is measure, diagnose, fix one thing, re-measure:
+
+```sql
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT date_trunc('day', ts) AS day, count(DISTINCT user_id) AS dau
+FROM events
+WHERE tenant_id = 7 AND ts >= '2026-05-01' AND ts < '2026-06-01'
+GROUP BY 1;
+-- Seq Scan on events  (rows=480000)  Buffers: shared read=61000
+-- Planner estimated 12 rows; actual 480000 → a 40,000× misestimate.
+```
+
+Two fixes, in order. First, the misestimate: `tenant_id` and `ts` are correlated (a tenant's events cluster in time), so the planner multiplies their selectivities as if independent and guesses far too few rows. `CREATE STATISTICS` with `dependencies` teaches it the correlation. Second, the access path: a composite index with the equality column first and the range column second turns the seq scan into a tight index range scan.
+
+```sql
+-- Teach the planner that tenant_id and ts are correlated (extended statistics):
+CREATE STATISTICS events_tenant_ts (dependencies)
+  ON tenant_id, ts FROM events;
+ANALYZE events;
+
+-- The index that matters: equality (tenant_id) first, range (ts) second.
+CREATE INDEX events_tenant_ts_idx ON events (tenant_id, ts);
+```
+
+Column order is the whole game (the databases track's leading-column rule): `(tenant_id, ts)` lets Postgres seek to one tenant and then range-scan the time window inside it; `(ts, tenant_id)` would force a scan of every tenant in the window. After the index, the same query is an `Index Scan` reading `shared read=420` instead of `61000` — that is the 9-seconds-to-40-milliseconds jump. Last, watch bloat: the rollup table is `UPDATE`-heavy via the upsert, so dead tuples accumulate; let autovacuum keep it lean (the databases MVCC chapter covers why dead rows slow scans even after the live set shrinks).
+
+<Quiz
+  id="01-capstone-quiz-1"
+  lessonSlug="01-capstone-analytics-api"
+  lang="en"
+  question="The dashboard query filters one tenant over a date range. Which composite index serves it best, and why?"
+  choices={[
+    { label: "(tenant_id, ts) — equality column first lets Postgres seek to the tenant, then range-scan ts inside that slice", correct: true },
+    { label: "(ts, tenant_id) — put the range column first so dates are sorted", misconception: "A range column first forces scanning every tenant within the date window before filtering tenant_id; the leading-column rule wants the equality predicate first." },
+    { label: "Two single-column indexes on tenant_id and ts separately", misconception: "Postgres can bitmap-combine them, but a single composite (tenant_id, ts) is one tight range scan with far fewer buffer reads than combining two indexes." },
+    { label: "A GIN index on props, since the query reads jsonb", misconception: "This query filters on tenant_id and ts, not on props; a GIN index on jsonb does not serve the tenant+time predicate at all." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-quiz-2"
+  lessonSlug="01-capstone-analytics-api"
+  lang="en"
+  question="Ten rollup workers run concurrently. What does FOR UPDATE SKIP LOCKED buy you over plain FOR UPDATE?"
+  choices={[
+    { label: "Each worker claims a disjoint batch and skips rows another worker already locked, instead of blocking on them — throughput scales with worker count", correct: true },
+    { label: "It makes the transaction run at SERIALIZABLE isolation automatically", misconception: "SKIP LOCKED is a row-locking option, not an isolation level; it changes which rows you wait for, not the snapshot semantics." },
+    { label: "It prevents the rows from ever being locked, so there are no conflicts", misconception: "The claiming worker still locks its rows; SKIP LOCKED only lets OTHER workers skip already-locked rows rather than queue behind them." },
+    { label: "It commits each row immediately so other workers see it", misconception: "Visibility is governed by COMMIT and isolation, not by SKIP LOCKED, which only affects lock-wait behavior at SELECT time." },
+  ]}
+/>
+
+<DragOrder
+  id="01-capstone-drag-1"
+  lessonSlug="01-capstone-analytics-api"
+  lang="en"
+  prompt="Order the senior workflow for fixing the slow dashboard query end to end:"
+  items={[
+    { id: "a", label: "Reproduce with EXPLAIN (ANALYZE, BUFFERS) and read estimate vs actual + buffers" },
+    { id: "b", label: "Spot the misestimate: tenant_id and ts correlated, planner guessed too few rows" },
+    { id: "c", label: "CREATE STATISTICS (dependencies) ON tenant_id, ts; then ANALYZE" },
+    { id: "d", label: "Add the composite index (tenant_id, ts) — equality column first" },
+    { id: "e", label: "Re-run EXPLAIN ANALYZE; confirm Index Scan and the drop in buffers read" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>An analytics API is the track integrated: typed schema (`timestamptz`, `jsonb`, identity key, tenant-leading PK) makes the data correct; `FILTER` collapses many metrics into one scan; window functions give top-N and running totals; a rollup plus keyset pagination keeps p99 flat as the log grows; `SKIP LOCKED` lets the rollup worker scale; and one EXPLAIN-driven fix — extended statistics plus a `(tenant_id, ts)` composite index — converts a seq scan into an index range scan and 9 seconds into 40 milliseconds.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-capstone-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does the metrics query use count(*) FILTER (WHERE …) instead of running one query per metric?", a: "FILTER computes every metric — DAU, purchases, revenue, signups — in a single GROUP BY pass over the tenant's slice. Separate per-metric queries multiply round trips and re-read the same heap pages each time. FILTER reads as intent and the planner treats it identically to CASE WHEN, so you get many conditional aggregates from one scan." },
+    { q: "Why is keyset pagination preferred over OFFSET for the dashboard, and how do you handle a non-unique sort key?", a: "OFFSET n reads and discards n rows before returning the page, so latency grows linearly with page depth — the deepest scroll is the slowest. Keyset carries the last row's sort key and seeks past it via an index range scan, so every page costs the same (O(log n)). When the sort key is not unique, use a tuple cursor with row comparison, e.g. (day, id) < ($cursor_day, $cursor_id), so ties never skip or duplicate rows." },
+    { q: "The metrics query was a seq scan with a 40,000× row misestimate. What are the two fixes and in what order?", a: "First fix the estimate: tenant_id and ts are correlated, so the planner multiplies selectivities as if independent and guesses far too few rows. CREATE STATISTICS (dependencies) ON tenant_id, ts then ANALYZE teaches it the correlation. Second fix the access path: CREATE INDEX (tenant_id, ts) — equality column first, range second — turns the seq scan into a tight index range scan. Re-run EXPLAIN (ANALYZE, BUFFERS) to confirm the buffers-read drop." },
+  ]}
+/>
+
+<Recap lang="en">
+This capstone wired the whole track into one system. The schema (unit 06) makes the data trustworthy: `timestamptz` so day-buckets are correct across zones, `jsonb` so `props` is queryable, an identity key with a tenant-leading primary key so reads stay tenant-local. The metrics query (unit 03) uses `count(*) FILTER` to fold DAU, revenue, and per-type counts into one `GROUP BY` pass; window functions (unit 04) add top-N share and running totals without collapsing rows; a recursive CTE pipeline (unit 05) resolves a category dimension cleanly. Reads stay fast through two structural choices: keyset pagination (units 01/05) so deep pages cost the same as the first, and a join discipline (unit 02) that aggregates one-to-many dimensions before joining so aggregates never fan out. The rollup worker (unit 07) uses `FOR UPDATE SKIP LOCKED` under `READ COMMITTED` to drain the backlog with many instances and no contention. Finally the tuning loop (unit 08, plus the databases execution-plans and indexes chapters): `EXPLAIN (ANALYZE, BUFFERS)` exposes a 40,000× misestimate, `CREATE STATISTICS` repairs the planner's view of correlated columns, and a `(tenant_id, ts)` composite index — equality first, range second — turns a 61,000-buffer seq scan into a 420-buffer index scan. Design for correctness, pre-aggregate for scale, paginate by key, and let EXPLAIN — never a hunch — pick the index.
+</Recap>
