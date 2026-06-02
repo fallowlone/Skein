@@ -4,10 +4,182 @@ lang: en
 track: "sql-postgres"
 unit: "06-types-and-modeling"
 order: 3
-title: "JSONB, deeply"
-summary: "JSONB, deeply — stub; author to ready."
-estMin: 12
-status: stub
+title: "JSONB, deeply: operators, GIN, and the boundary"
+summary: "jsonb is binary, dedups keys, and is indexable; json is text. Master the operators and GIN containment, and learn the real boundary — typed columns for hot filters, jsonb for the sparse tail."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - jsonb-vs-json
+  - jsonb-operators
+  - gin-containment
+  - jsonb-set
+  - column-vs-jsonb-boundary
+prereqs:
+  - 02-constraints
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/datatype-json.html
+  - https://www.postgresql.org/docs/current/functions-json.html
+  - https://www.postgresql.org/docs/current/gin.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A team modelled their entire `events` table as one `jsonb` blob — "schemaless, future-proof." A year in, the dashboard filtering `WHERE payload->>'tenant_id' = '7'` was doing a sequential scan over 90 million rows because nobody indexed inside the JSON, and every status update rewrote the whole document. The fix wasn't to abandon JSONB; it was to *promote the hot fields to real columns* and keep JSONB for the sparse tail. JSONB is a precision tool. Used as a dumping ground, it quietly becomes the slowest table you own.
+</Hook>
+
+<Crux>jsonb is binary and indexable; the skill is the boundary — typed columns for hot filters, jsonb for the sparse tail.</Crux>
+
+<Explanation>
+
+## jsonb vs json: binary wins
+
+Postgres has two JSON types and they are not interchangeable:
+
+- `json` stores the **exact text** you gave it — whitespace, key order, and duplicate keys preserved. Every read reparses it. There are no useful indexes on its contents.
+- `jsonb` parses on write into a **decomposed binary** form: keys are deduplicated (last value wins), order isn't preserved, and reads are fast because there's no reparse. Critically, `jsonb` **can be indexed** with GIN.
+
+For anything you query, the answer is `jsonb`. Use `json` only for the rare case where you must round-trip the exact original text (e.g. preserving a signature over the raw bytes). The write cost of `jsonb` parsing is paid once; the read and index wins are paid forever.
+
+## The operator vocabulary
+
+You navigate `jsonb` with a small set of operators. The trap that bites everyone: `->` returns `jsonb`, `->>` returns `text`.
+
+```sql
+SELECT
+  payload -> 'user'             AS user_json,    -- jsonb (a nested object)
+  payload -> 'user' ->> 'name'  AS user_name,    -- text  (chain -> then ->>)
+  payload #> '{user,roles,0}'   AS first_role_j, -- jsonb at a path
+  payload #>> '{user,roles,0}'  AS first_role_t  -- text  at a path
+FROM events;
+```
+
+- `->` get field/element **as jsonb**; `->>` get field/element **as text**.
+- `#>` get at a **path** as jsonb; `#>>` get at a path as text.
+- `@>` **containment** — does the left document contain the right one? `payload @> '{"tenant_id": 7}'`.
+- `?` does the document have this **top-level key**? `payload ? 'tenant_id'`.
+
+The text-vs-jsonb distinction matters because `->>'tenant_id' = '7'` compares text, while `@> '{"tenant_id": 7}'` compares structure — and only the containment form uses a GIN index well.
+
+## GIN indexing for containment
+
+A plain B-tree can't index "is this key/value somewhere inside this document." That's what **GIN** (Generalized Inverted Index) is for: it indexes the *contents* of each `jsonb` value so containment (`@>`) and key-exists (`?`) queries skip the sequential scan.
+
+```sql
+-- default GIN: supports @>, ?, ?|, ?& — bigger index, more operators
+CREATE INDEX ON events USING gin (payload);
+
+-- jsonb_path_ops: supports only @> — smaller and faster for containment
+CREATE INDEX ON events USING gin (payload jsonb_path_ops);
+
+-- now this uses the index instead of scanning 90M rows:
+SELECT * FROM events WHERE payload @> '{"tenant_id": 7}';
+```
+
+The two GIN flavours are a real tradeoff. The **default** `jsonb_ops` indexes every key and value, supporting `@>`, `?`, `?|`, `?&` — flexible but larger. `jsonb_path_ops` indexes only hashed paths-to-values, so it supports **only `@>`**, but the index is smaller and containment lookups are faster. Pick `jsonb_path_ops` when containment is all you do (the common case); pick the default when you also need key-existence operators.
+
+<FlowDiagram
+  label="Modelling decision for a field: if you filter or join on it often, make it a typed column; if it is sparse or varies per row, keep it in jsonb with a GIN index; if it is a many-to-many relationship, use a side table — never an array of ids inside jsonb."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "field", label: "A new field", sub: "where does it go?" },
+    { id: "hot", label: "Hot filter/join?", sub: "→ typed column" },
+    { id: "sparse", label: "Sparse / varies?", sub: "→ jsonb + GIN" },
+    { id: "m2m", label: "Many-to-many?", sub: "→ side table" },
+  ]}
+  edges={[
+    { from: "field", to: "hot" },
+    { from: "field", to: "sparse" },
+    { from: "field", to: "m2m" },
+  ]}
+  caption="The boundary in one picture: promote frequently-queried fields to columns (typed, constrained, cheaply indexed), reserve jsonb for the sparse long tail, and model relationships as side tables — not id arrays buried in a document."
+/>
+
+## The boundary: where JSONB earns its place
+
+This is the senior judgment call. JSONB is right for the **sparse, schema-varying long tail** — per-event metadata that differs by event type, optional attributes only 2% of rows set, third-party payloads you don't control. It is *wrong* as a substitute for columns you filter, sort, join, or constrain on. Those belong as **typed columns**: a `tenant_id bigint`, a `status text`, a `created_at timestamptz` — typed, `NOT NULL`-able, `CHECK`-able, and indexable with a cheap B-tree.
+
+And relationships are not JSONB's job at all. A list of tag ids inside a document can't be foreign-keyed, can't be joined efficiently, and forces a whole-document rewrite to add one tag. A **many-to-many** belongs in a side table (`event_tags(event_id, tag_id)`) with real foreign keys. (The `databases` track's relational-model chapter has a dedicated lesson on jsonb and arrays from the storage angle.)
+
+## Updates: jsonb_set and the whole-document cost
+
+You update a `jsonb` field with `jsonb_set` (or the `||` merge / `-` delete operators):
+
+```sql
+UPDATE events
+SET payload = jsonb_set(payload, '{status}', '"shipped"', true)  -- true = create if missing
+WHERE id = 42;
+```
+
+The cost that surprises people: there is **no in-place edit of one key**. `jsonb` is stored as a single value, so changing one field reads the whole document, builds a new version, and writes it back — and MVCC makes that a brand-new row version (dead tuple for vacuum to clean). A 30 KB document updated 100 times a second is 3 MB/s of rewrite churn plus bloat. This is the strongest argument for keeping hot, frequently-mutated fields as their own columns: updating a `status text` column rewrites the row too, but you avoid serializing and reparsing a fat document on every change.
+
+<Inset kind="edgecase" lang="en">
+A subtle correctness trap: `jsonb_set` returns NULL if the target document is SQL NULL, silently wiping the column. Guard with `COALESCE(payload, '{}'::jsonb)`. Also, `->>` on a missing key returns SQL NULL (not an error), so `WHERE payload->>'flag' = 'true'` silently excludes rows where `flag` is absent — which may or may not be what you want. JSONB's permissiveness is convenient until it hides a bug; that permissiveness is exactly why hot, must-be-correct fields are safer as constrained columns.
+</Inset>
+
+<Quiz
+  id="03-jsonb-deep-quiz-1"
+  lessonSlug="03-jsonb-deep"
+  lang="en"
+  question="What is the key practical difference between json and jsonb?"
+  choices={[
+    { label: "jsonb stores a decomposed binary form (dedup keys, no reparse, GIN-indexable); json stores exact text and reparses on every read", correct: true },
+    { label: "json is faster to query because it skips parsing", misconception: "Backwards: json stores raw text and must reparse on every read; jsonb parses once on write and is faster to query and indexable." },
+    { label: "Only json can be indexed", misconception: "Only jsonb can be usefully indexed (with GIN). json has no useful content index." },
+    { label: "They are identical; jsonb is just an alias", misconception: "They are different types with different storage. jsonb is binary and indexable; json is text-preserving and not." },
+  ]}
+/>
+
+<Quiz
+  id="03-jsonb-deep-quiz-2"
+  lessonSlug="03-jsonb-deep"
+  lang="en"
+  question="You filter events by tenant on most queries and the table has 90M rows. Where should tenant_id live?"
+  choices={[
+    { label: "As a typed tenant_id bigint column with a B-tree index — it's a hot filter, not sparse metadata", correct: true },
+    { label: "Inside the jsonb payload, queried with payload->>'tenant_id'", misconception: "A hot, always-filtered field shouldn't live in JSONB — extracting via ->> can't use a cheap B-tree and you lose type and NOT NULL guarantees. Promote it to a column." },
+    { label: "In a separate json (text) column for flexibility", misconception: "json (text) is the worst choice for a queried field: no index, reparse on every read. The field is hot and structured — it wants a typed column." },
+    { label: "As an array element in the payload", misconception: "An array buries a scalar filter even deeper and can't be cheaply equality-indexed. tenant_id is a single scalar hot filter — a typed column." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-jsonb-deep-metaphor-1"
+  lessonSlug="03-jsonb-deep"
+  lang="en"
+  setup={"Fill in the blank: to make WHERE payload @> '{\"tenant_id\": 7}' fast on a large table, you create a _______ index on the jsonb column, which indexes the document's contents for containment."}
+  accepted={["gin", "GIN"]}
+  canonical="gin"
+  explanation="A GIN (Generalized Inverted Index) indexes the contents of each jsonb value so containment (@>) and key-exists (?) queries avoid a sequential scan. Use jsonb_path_ops when you only need @> (smaller, faster); use the default jsonb_ops when you also need ?, ?|, ?&."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Use `jsonb` (binary, dedup keys, GIN-indexable) over `json` (text, reparsed) for anything you query. Navigate with `->`/`->>` (jsonb vs text), `#>`/`#>>` (by path), `@>` (containment), `?` (key exists); index containment with GIN — `jsonb_path_ops` for `@>`-only (smaller, faster) or the default for key-exists operators too. The real skill is the boundary: typed columns for hot filters/joins/constraints, `jsonb` for the sparse tail, a side table for many-to-many. And remember every `jsonb_set` rewrites the whole document into a new MVCC row version.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-jsonb-deep-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why prefer jsonb over json, and what do -> and ->> return?", a: "jsonb parses on write into a decomposed binary form — keys are deduplicated, reads don't reparse, and it can be indexed with GIN; json stores the exact text and must reparse on every read with no useful content index. So use jsonb for anything queryable. The operators: -> returns the field/element as jsonb (so you can chain), ->> returns it as text. #> and #>> do the same by a path array." },
+    { q: "How do you make a containment query on jsonb fast, and what's the jsonb_path_ops vs default GIN tradeoff?", a: "Create a GIN index on the jsonb column so payload @> '{...}' skips the sequential scan. The default jsonb_ops indexes every key and value and supports @>, ?, ?|, ?& but is larger; jsonb_path_ops indexes only hashed paths-to-values, supports only @>, and is smaller and faster for containment. Choose jsonb_path_ops when containment is all you do; the default when you also need key-existence operators." },
+    { q: "Where is the boundary between a typed column and jsonb, and why does jsonb_set churn?", a: "Put hot fields you filter, sort, join, or constrain on into typed columns (tenant_id bigint, status text, created_at timestamptz) — typed, NOT NULL-able, CHECK-able, cheaply B-tree indexed. Reserve jsonb for the sparse, schema-varying long tail, and model many-to-many as a side table with real foreign keys, never an id array inside a document. jsonb_set churns because jsonb is one stored value with no in-place key edit: changing one field reads the whole document, builds a new version, and writes a new MVCC row (dead tuple + bloat). Hot, frequently-mutated fields are cheaper and safer as their own columns." },
+  ]}
+/>
+
+<Recap lang="en">
+`jsonb` parses on write into a decomposed binary form — deduplicated keys, no reparse on read, and GIN-indexable — so it beats `json` (raw text, reparsed, unindexable) for everything you query; reserve `json` for the rare exact-text round-trip. Navigate with `->`/`->>` (jsonb vs text), `#>`/`#>>` (by path), `@>` (containment), and `?` (key exists), remembering that only the containment form indexes well. A GIN index makes `@>` and `?` skip the sequential scan; choose `jsonb_path_ops` (smaller, `@>`-only) or the default (larger, more operators). The senior judgment is the boundary: promote hot filter/join/constraint fields to typed columns, keep `jsonb` for the sparse long tail, and put many-to-many relationships in side tables with real foreign keys — never id arrays buried in a document. Finally, every `jsonb_set` rewrites the whole document into a new MVCC row version, so fat, frequently-mutated documents churn and bloat — another reason hot fields belong in their own columns. Next: native arrays and enums — two more Postgres types that, used at the right boundary, beat stringly-typed columns.
+</Recap>

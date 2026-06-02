@@ -4,10 +4,196 @@ lang: en
 track: "sql-postgres"
 unit: "06-types-and-modeling"
 order: 1
-title: "Core types"
-summary: "Core types — stub; author to ready."
-estMin: 12
-status: stub
+title: "Core types: money, text, time, identity"
+summary: "Postgres has a precise type system. Pick numeric (not float) for money, timestamptz (never timestamp) for time, and the right uuid version — the defaults bite you in production."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - numeric-vs-float
+  - text-vs-varchar
+  - timestamptz
+  - uuid-v4-vs-v7
+  - explicit-casts
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/datatype.html
+  - https://www.postgresql.org/docs/current/datatype-numeric.html
+  - https://www.postgresql.org/docs/current/datatype-datetime.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A billing service stored prices in a `double precision` column because "it's a number." For two years nobody noticed. Then an auditor summed 4.2 million line items and the total was off by $1,847 — not stolen, just *rounded away* one fraction of a cent at a time. `0.1 + 0.2` is not `0.3` in floating point, and a database is the worst possible place to learn that. The fix was a one-line type change and a painful backfill. The type you pick on day one is a decision you live with for years.
+</Hook>
+
+<Crux>Pick the type for the meaning, not the convenience: numeric for money, timestamptz for time, the right uuid for keys.</Crux>
+
+<Explanation>
+
+## Type families: pick by meaning
+
+Postgres groups its built-in types into a handful of families. Modelling well starts with mapping each column to the family that matches what the value *means*, not the family that's easiest to type.
+
+<StackDiagram
+  label="Postgres core type families: numbers (integer, bigint, numeric), money modelled as numeric or integer cents, text and varchar which are identical in storage, temporal types where timestamptz is the only safe default, boolean, and uuid for distributed keys."
+  hue="var(--d-data)"
+  layers={[
+    { label: "Numbers", note: "integer · bigint · numeric · real/double" },
+    { label: "Money", note: "numeric(12,2) OR integer cents — never float" },
+    { label: "Text", note: "text === varchar(n) in storage" },
+    { label: "Time", note: "timestamptz (UTC) · date · interval" },
+    { label: "Boolean", note: "true / false / NULL" },
+    { label: "Identity", note: "uuid v4 (random) · v7 (time-ordered)" },
+  ]}
+  caption="The senior reflex: choose the family by what the column means. Most production type bugs are a value put in the wrong family — money in a float, a timestamp without a zone."
+/>
+
+## Numbers: never store money in a float
+
+`integer` is a 4-byte signed whole number (up to ~2.1 billion); `bigint` is 8 bytes (up to ~9.2 quintillion). Use `bigint` for anything that counts events, rows, or money-in-cents at scale — `integer` overflow on a primary key is a real outage.
+
+The hard rule: **money is `numeric` or `integer` cents, never `real`/`double precision`.** `numeric` is an exact decimal — it stores the digits you gave it and does base-10 arithmetic, so `0.10 + 0.20` is exactly `0.30`. Floating point stores a binary approximation, and `0.1` has no exact binary representation. Watch it happen:
+
+```sql
+SELECT 0.1::float8 + 0.2::float8 AS float_sum,   -- 0.30000000000000004
+       0.1::numeric + 0.2::numeric AS exact_sum;  -- 0.3
+
+-- money column done right:
+CREATE TABLE orders (
+  id          bigint PRIMARY KEY,
+  total_cents bigint NOT NULL,        -- integer cents: fast, exact, no scale arg
+  tax         numeric(12, 2) NOT NULL -- or fixed-scale numeric
+);
+```
+
+`numeric(12, 2)` means up to 12 significant digits with 2 after the decimal. The tradeoff: `numeric` arithmetic is software-emulated and roughly 10–100× slower than the CPU's native float math, and each value is variable-width. For money that's a non-issue — correctness dominates — but don't reach for `numeric` on a hot scientific aggregation where a tiny rounding error is acceptable.
+
+## Text: `text` and `varchar(n)` are the same speed
+
+A persistent myth: `varchar(50)` is faster or smaller than `text`. In Postgres it is **not**. All three of `text`, `varchar(n)`, and `varchar` share the same storage and the same operators. The *only* thing `varchar(n)` adds is a length **check constraint** — Postgres verifies every write is at most `n` characters and rejects longer ones with an error.
+
+So the choice is purely about whether you want that constraint enforced. A length limit that reflects a real business rule (a 2-char country code) is good modelling; an arbitrary `varchar(255)` copied from a MySQL tutorial is noise. The Postgres-native habit is `text` plus an explicit `CHECK` when you actually need a bound — it's clearer and you can change the bound without an awkward type alter.
+
+```sql
+CREATE TABLE users (
+  id        bigint PRIMARY KEY,
+  email     text NOT NULL,
+  country   text NOT NULL CHECK (char_length(country) = 2)  -- real rule, explicit
+);
+```
+
+## Time: `timestamptz`, always
+
+This is the single most common modelling mistake, and it's a quiet one. There are two timestamp types:
+
+- `timestamp` (a.k.a. `timestamp without time zone`) stores a wall-clock value and *throws the zone away*. It's a naive "2026-06-02 14:00" with no anchor to a real instant.
+- `timestamptz` (`timestamp with time zone`) stores an absolute instant. On the way in, Postgres converts the input to UTC and stores that; on the way out, it renders in the session's `TimeZone`. It does **not** store the original zone — it stores the *moment*.
+
+`timestamptz` is the right default for essentially every event, log line, `created_at`, and deadline. With plain `timestamp`, two servers in different zones inserting "now" write different absolute instants that compare wrong, and you cannot recover the truth later. Store the instant; let the application decide how to display it.
+
+```sql
+CREATE TABLE events (
+  id          bigint PRIMARY KEY,
+  occurred_at timestamptz NOT NULL DEFAULT now(),  -- absolute instant in UTC
+  kind        text NOT NULL
+);
+
+-- date is for calendar dates with no time; interval is a span:
+SELECT occurred_at::date AS day,
+       now() - occurred_at AS age      -- age is an interval
+FROM events;
+```
+
+Use `date` for true calendar dates (a birthday, a billing day) and `interval` for spans ("7 days", "90 minutes") — subtracting two `timestamptz` values yields an `interval`.
+
+## UUID: v4 random vs v7 time-ordered
+
+`uuid` is a 16-byte type for keys you generate without a central sequence — useful across shards or before the row reaches the database. The version matters for *index locality*:
+
+- **v4** is fully random. Every insert lands at a random spot in the primary-key B-tree, so the index has no hot tail — writes scatter across pages, cache hit rates drop, and the index fragments and bloats under heavy insert load.
+- **v7** embeds a millisecond timestamp in the high bits, so values are roughly time-ordered. Inserts append to the right edge of the B-tree like a serial would, keeping the index compact and cache-friendly.
+
+For a high-insert table, v7 (or a `bigint` identity) can be meaningfully faster to write and far less prone to index bloat than v4. Reach for random v4 only when unguessability of the key itself is a requirement.
+
+<Inset kind="edgecase" lang="en">
+Postgres ships a built-in random generator (`gen_random_uuid()`, which is v4) in core. Native `uuidv7()` arrived in Postgres 18; on older versions you generate v7 in the application or with an extension. The takeaway isn't "always v7" — it's that a key's *physical ordering* drives index write performance, so a random key on a write-heavy table is a deliberate tradeoff, not a free default.
+</Inset>
+
+## Casts: be explicit at the boundary
+
+Postgres will *implicitly* cast in some contexts and refuse in others; relying on implicit casts is how you get surprising plans (an index skipped because a comparison forced a cast) or runtime errors. Make casts explicit with `::type` or `CAST(x AS type)` at the edges of your query, especially when comparing a column to a literal of a different type.
+
+```sql
+SELECT '42'::int + 1                 AS to_int,      -- 43
+       '2026-06-02'::date            AS to_date,
+       total_cents::numeric / 100    AS dollars      -- cents → display value
+FROM orders;
+```
+
+<Quiz
+  id="01-core-types-quiz-1"
+  lessonSlug="01-core-types"
+  lang="en"
+  question="Why must money never be stored in a double precision (float) column?"
+  choices={[
+    { label: "Float is a binary approximation, so values like 0.1 can't be represented exactly and sums drift over many rows", correct: true },
+    { label: "Float columns are slower to write than numeric", misconception: "Float is actually faster than numeric — native CPU math. Speed isn't the issue; the issue is that float arithmetic is inexact for decimal money." },
+    { label: "Postgres can't index a float column", misconception: "Postgres indexes floats fine. The problem is correctness: rounding error accumulates across rows, not indexability." },
+    { label: "Float can only hold whole numbers", misconception: "Float holds fractional values — that's the point. The problem is it holds them as inexact binary approximations." },
+  ]}
+/>
+
+<Quiz
+  id="01-core-types-quiz-2"
+  lessonSlug="01-core-types"
+  lang="en"
+  question="What does a timestamptz column actually store?"
+  choices={[
+    { label: "An absolute instant: the input is converted to UTC on write and rendered in the session zone on read", correct: true },
+    { label: "The original time zone the value was inserted with", misconception: "It does NOT keep the original zone. It stores the absolute instant in UTC and only uses the session zone to render output." },
+    { label: "A naive wall-clock value with no zone, exactly like timestamp", misconception: "That describes plain timestamp (without time zone). timestamptz anchors to an absolute instant; plain timestamp throws the zone away." },
+    { label: "A string formatted with the zone abbreviation appended", misconception: "It's stored as a binary 8-byte instant, not a formatted string with a zone tag." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-core-types-metaphor-1"
+  lessonSlug="01-core-types"
+  lang="en"
+  setup="Fill in the blank: text and varchar(n) store data identically in Postgres; the only thing varchar(n) adds is a length _______ that rejects strings longer than n."
+  accepted={["check", "constraint", "check constraint", "limit"]}
+  canonical="check"
+  explanation="varchar(n) is just text plus a built-in length check constraint. There's no storage or speed difference. So pick text by default and add an explicit CHECK only when a real length rule exists — it's clearer and easier to change than a column-type alter."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Choose the type by what the value means. Money is `numeric` or integer cents — never float, which drifts because `0.1` has no exact binary form. Time is `timestamptz` (absolute UTC instant), never plain `timestamp`, which discards the zone. `text` and `varchar(n)` are identical except for a length check. For keys, v7 (or `bigint` identity) keeps the index compact; random v4 trades write locality for unguessability. Cast explicitly at boundaries.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-core-types-retrieval"
+  lang="en"
+  questions={[
+    { q: "Two ways to store money correctly in Postgres, and why float is wrong.", a: "Use numeric with a fixed scale (e.g. numeric(12,2)) or store integer/bigint cents. Both are exact. double precision (float) stores a binary approximation — 0.1 and 0.2 have no exact binary form, so 0.1 + 0.2 = 0.30000000000000004 and the error accumulates across millions of rows, corrupting totals." },
+    { q: "What does timestamptz store, and why prefer it over timestamp?", a: "timestamptz stores an absolute instant: input is converted to UTC on write and rendered in the session's TimeZone on read — it does not keep the original zone, it keeps the moment. Plain timestamp stores a naive wall-clock value and discards the zone, so two servers in different zones recording 'now' write different, incomparable instants you can't reconcile later. Always default to timestamptz." },
+    { q: "Is varchar(50) faster or smaller than text in Postgres? What's the real difference, and what about uuid v4 vs v7?", a: "No — text, varchar(n), and varchar share identical storage and operators; varchar(n) only adds a length check constraint. Prefer text plus an explicit CHECK when a real bound exists. For uuid: v4 is fully random so inserts scatter across the B-tree (fragmentation, bloat, poor cache locality on write-heavy tables); v7 embeds a timestamp so values are time-ordered and append to the index's right edge like a serial, keeping it compact. Use random v4 only when key unguessability is required." },
+  ]}
+/>
+
+<Recap lang="en">
+Modelling with Postgres starts at the column: pick the type for what the value *means*. Money is `numeric` (exact decimal) or integer cents — never `real`/`double precision`, because binary floating point can't represent `0.1` exactly and the rounding error accumulates into wrong totals. Time is `timestamptz`, which stores an absolute UTC instant and renders in the session zone; plain `timestamp` throws the zone away and lets servers in different zones write incomparable values. `text` and `varchar(n)` are identical in storage and speed — `varchar(n)` only adds a length check, so prefer `text` plus an explicit `CHECK` for real rules. For keys, prefer a `bigint` identity or a time-ordered uuid v7 to keep the index compact; random v4 fragments the B-tree and is justified only when the key must be unguessable. And cast explicitly at query boundaries so the planner sees the comparison you intend. Next: how constraints turn these well-chosen types into integrity the *engine* enforces, not the app.
+</Recap>

@@ -4,10 +4,181 @@ lang: en
 track: "sql-postgres"
 unit: "06-types-and-modeling"
 order: 4
-title: "Arrays and enums"
-summary: "Arrays and enums — stub; author to ready."
-estMin: 12
-status: stub
+title: "Arrays and enums: when each beats a string"
+summary: "Native arrays (ANY, unnest, @> with GIN) and enums (ordered, compact) are powerful at the right boundary — but the enum ALTER pain and array's join-hostility decide when a lookup table wins."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - postgres-arrays
+  - array-containment
+  - enum-type
+  - enum-vs-lookup-table
+  - any-all-unnest
+prereqs:
+  - 03-jsonb-deep
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/arrays.html
+  - https://www.postgresql.org/docs/current/datatype-enum.html
+  - https://www.postgresql.org/docs/current/functions-array.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A team defined `status` as an enum with three values, shipped it, and six months later product asked for a fourth value — *between* two existing ones. Adding to the end was a one-liner; inserting in the middle, and later removing a value entirely, turned into a multi-hour migration that rewrote a dependent view and a function. Meanwhile a different team used a `text[]` array for "roles" and discovered they couldn't put a foreign key on the role ids. Both types are excellent — at the boundary where their tradeoffs are features, not surprises. This lesson is about finding that boundary.
+</Hook>
+
+<Crux>Arrays and enums beat strings at the right boundary; the enum ALTER pain and array's join-hostility tell you when a lookup table wins.</Crux>
+
+<Explanation>
+
+## Native arrays: a real first-class type
+
+Postgres arrays aren't a hack — any type can be an array (`int[]`, `text[]`, even `jsonb[]`), with literal syntax and a rich operator set. They shine for a small, ordered, single-table list that you never join to: a row's tags, a set of flags, a path.
+
+```sql
+CREATE TABLE products (
+  id   bigint PRIMARY KEY,
+  tags text[] NOT NULL DEFAULT '{}'        -- array literal: empty array
+);
+
+INSERT INTO products (id, tags) VALUES (1, '{sale,featured,new}');
+
+SELECT * FROM products WHERE 'sale' = ANY(tags);      -- membership test
+SELECT * FROM products WHERE tags @> '{sale,new}';    -- contains ALL of these
+SELECT id, unnest(tags) AS tag FROM products;         -- explode to rows
+SELECT array_agg(id) FROM products WHERE 'sale' = ANY(tags);  -- collapse to array
+```
+
+The core operators: `ANY(arr)` / `ALL(arr)` for "matches some / every element", `@>` containment ("contains all of"), `unnest()` to explode an array into rows, and `array_agg()` to collapse rows back into an array. And arrays are indexable — a **GIN** index on a `text[]` makes `@>` and `= ANY` containment queries fast, exactly like JSONB.
+
+```sql
+CREATE INDEX ON products USING gin (tags);   -- now @> and = ANY use the index
+```
+
+The catch that decides everything: **you can't put a foreign key on an array element.** A `tag_id int[]` can hold ids that don't exist in any tags table, and Postgres won't stop it. Arrays trade referential integrity and join performance for locality and simplicity. Great for a self-contained list; wrong for a relationship.
+
+## Enums: ordered and compact
+
+An `enum` is a custom type with a fixed, *ordered* set of label values. It's compact (stored as a 4-byte oid, not the full text) and the order is meaningful — comparisons follow declaration order, which is perfect for things like severity or workflow stages.
+
+```sql
+CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'delivered');
+
+CREATE TABLE orders (
+  id     bigint PRIMARY KEY,
+  status order_status NOT NULL DEFAULT 'pending'
+);
+
+-- ordering follows declaration order, not alphabetical:
+SELECT * FROM orders WHERE status >= 'shipped';   -- shipped + delivered
+```
+
+That ordering is the enum's superpower over a `CHECK (status IN (...))` on a text column — you can't naturally order arbitrary strings by workflow stage, but enum comparisons just work.
+
+## The enum ALTER pain
+
+Here's the tradeoff that bites in production. `ADD VALUE` to an enum is easy and online in modern Postgres:
+
+```sql
+ALTER TYPE order_status ADD VALUE 'returned';            -- appended, fine
+ALTER TYPE order_status ADD VALUE 'cancelled' BEFORE 'paid';  -- positioned, also fine
+```
+
+But **you cannot remove or rename-away a value** without effectively rebuilding the type: you'd create a new enum, alter every column that uses it, drop the old type, and recreate any dependent views and functions — a real migration, not a one-liner. Enums are a one-way ratchet: easy to add to, painful to shrink. If your value set is genuinely fixed for the life of the system (severity levels, blood types), the enum's compactness and ordering are pure win. If it churns — categories the business keeps reorganizing — the rigidity becomes a recurring tax.
+
+## Enum vs CHECK vs lookup table
+
+Three ways to model "a column from a small set", on a spectrum from rigid-and-fast to flexible-and-relational:
+
+<StackDiagram
+  label="Three ways to model a small value set: an enum type is compact and ordered but painful to shrink; a CHECK constraint on text is flexible and easy to edit but unordered; a lookup table with a foreign key is fully relational, lets you attach metadata and remove values, at the cost of a join."
+  hue="var(--d-data)"
+  layers={[
+    { label: "ENUM type", note: "compact + ordered · ADD easy, REMOVE painful" },
+    { label: "CHECK (x IN ...)", note: "text + flexible · edit constraint, no order" },
+    { label: "Lookup table + FK", note: "relational · metadata, remove values · costs a join" },
+  ]}
+  caption="Pick by churn and metadata needs: fixed ordered set → enum; small flexible set, no metadata → CHECK; evolving set or needs extra columns (labels, sort order, active flag) → lookup table with a foreign key."
+/>
+
+- **Enum** — value set is fixed and ordering matters. Compact, fast, self-documenting; ALTER pain on removal.
+- **CHECK (`status IN ('a','b')`)** on a `text` column — small set, no ordering need, easy to edit (just alter the constraint). No order, slightly larger storage, no metadata.
+- **Lookup table** (`statuses(code text PK, label text, sort_order int, is_active bool)`) with a foreign key — the relational answer when the set evolves, needs metadata, or must be foreign-keyed. You pay a join, but you can add/remove/relabel values as ordinary `INSERT`/`UPDATE`/`DELETE` and attach as many attributes as you like.
+
+The senior heuristic: **fixed + ordered → enum; small + flexible → CHECK; evolving or needs metadata → lookup table.** Defaulting to a lookup table is rarely wrong; defaulting to an enum on a churning value set is a future migration you scheduled for yourself.
+
+<Inset kind="mistake" lang="en">
+The classic over-use of arrays: storing `tag_ids int[]` to model product-to-tag. It feels tidy, but you can't foreign-key the ids (orphans creep in), you can't efficiently answer "which products have this tag" without a GIN index and even then it's clumsier than a join, and adding one tag rewrites the whole array (and the row). The relational answer — a `product_tags(product_id, tag_id)` join table — gives you integrity, two-way joins, and cheap single-row inserts. Reserve arrays for lists you never relate to other tables.
+</Inset>
+
+<DragOrder
+  id="04-arrays-and-enums-drag-1"
+  lessonSlug="04-arrays-and-enums"
+  lang="en"
+  prompt="A small value set is evolving and now needs a display label and a sort order. Order the steps to move from an enum to a lookup table:"
+  items={[
+    { id: "a", label: "Create a lookup table: statuses(code text PRIMARY KEY, label text, sort_order int)" },
+    { id: "b", label: "Seed it with the current enum values plus the new metadata columns" },
+    { id: "c", label: "Add a status_code text column to orders with a FK to statuses(code)" },
+    { id: "d", label: "Backfill status_code from the existing enum column" },
+    { id: "e", label: "Switch reads/writes to status_code, then drop the old enum column and type" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Quiz
+  id="04-arrays-and-enums-quiz-1"
+  lessonSlug="04-arrays-and-enums"
+  lang="en"
+  question="Why is a tag_id int[] array a poor way to model a product-to-tag many-to-many relationship?"
+  choices={[
+    { label: "Array elements can't have a foreign key, so ids can become orphans, and joins/edits are clumsier than a join table", correct: true },
+    { label: "Postgres arrays can't be indexed at all", misconception: "Arrays can be GIN-indexed for @> and = ANY. The real problem is no foreign key on elements and poor relational joinability, not indexability." },
+    { label: "Arrays can only hold text, not ids", misconception: "Arrays hold any type including int. The problem is referential integrity and join performance, not the element type." },
+    { label: "Arrays are limited to 3 elements", misconception: "There's no such tiny limit. The issue is modelling a relationship without foreign keys, not array size." },
+  ]}
+/>
+
+<Quiz
+  id="04-arrays-and-enums-quiz-2"
+  lessonSlug="04-arrays-and-enums"
+  lang="en"
+  question="A status set keeps changing — values get added, reordered, and occasionally removed, and product wants a display label per value. Best model?"
+  choices={[
+    { label: "A lookup table with a foreign key — easy to add/remove/relabel and can carry metadata", correct: true },
+    { label: "An enum — it's the most compact", misconception: "Compactness doesn't help when the set churns: removing an enum value is a painful type rebuild, and enums can't carry a label column. A churning, metadata-bearing set wants a lookup table." },
+    { label: "A text[] array", misconception: "An array models a list per row, not a shared, evolving set of valid values with metadata. This is a single-valued column from an evolving set — a lookup table." },
+    { label: "A jsonb column", misconception: "jsonb adds no integrity or ordering here and can't foreign-key the value. For an evolving, labelled value set, a lookup table is the relational fit." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Native arrays (`ANY`/`ALL`, `unnest`, `array_agg`, `@>` with a GIN index) are great for a self-contained per-row list, but you can't foreign-key an element — so they're wrong for relationships. Enums are compact and ordered, ideal for a *fixed* set, but removing a value is a painful type rebuild. Model a small value set with the right tool: fixed + ordered → enum; small + flexible → `CHECK (... IN ...)`; evolving or needs metadata → a lookup table with a foreign key. A many-to-many is always a join table, never an id array.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-arrays-and-enums-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the core array operators, and what's the one thing arrays can't do that decides against them for relationships?", a: "= ANY(arr) / ALL(arr) test membership against some/every element, @> tests containment (contains all of), unnest() explodes an array into rows, and array_agg() collapses rows into an array; a GIN index makes @> and = ANY fast. The decisive limitation: you cannot put a foreign key on an array element, so an id array can hold orphan ids with no referential integrity — which is why a many-to-many belongs in a join table, not an array." },
+    { q: "What's easy and what's painful about altering an enum, and what does that imply for modelling?", a: "Adding a value is easy and online — ALTER TYPE ... ADD VALUE 'x' (optionally BEFORE/AFTER an existing one). Removing or renaming-away a value is painful: there's no DROP VALUE, so you effectively rebuild the type (new enum, alter every column, drop old type, recreate dependent views/functions). So enums fit value sets that are genuinely fixed and where ordering matters; a churning set should be a lookup table instead." },
+    { q: "Give the heuristic for enum vs CHECK vs lookup table.", a: "Fixed + ordered set → enum (compact, ordering follows declaration, ADD easy / REMOVE painful). Small, flexible set with no ordering or metadata need → CHECK (status IN ('a','b')) on a text column (just alter the constraint to change it). Evolving set, or one that needs metadata (display label, sort order, active flag) or must be foreign-keyed → a lookup table with a foreign key (costs a join, but add/remove/relabel are ordinary DML). Defaulting to a lookup table is rarely wrong." },
+  ]}
+/>
+
+<Recap lang="en">
+Postgres arrays are a real first-class type — any element type, with `= ANY`/`ALL` membership, `@>` containment, `unnest`, `array_agg`, and GIN indexing — ideal for a small, self-contained, per-row list you never join to. Their hard limit is that an array element can't carry a foreign key, so an id array silently permits orphans and is the wrong tool for a relationship; a many-to-many is always a join table. Enums are compact (a 4-byte oid) and *ordered* (comparisons follow declaration order, beating a text `CHECK` when stage ordering matters), but they're a one-way ratchet: `ADD VALUE` is easy and online while removing a value is a painful type rebuild that drags dependent views and functions along. So model a small value set deliberately — fixed and ordered favours an enum, small and flexible favours a `CHECK`, and an evolving set or one needing metadata favours a lookup table with a foreign key, where add/remove/relabel are ordinary DML. Next: generated and identity columns — letting the engine produce values so you don't have to.
+</Recap>

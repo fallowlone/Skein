@@ -4,10 +4,189 @@ lang: en
 track: "sql-postgres"
 unit: "06-types-and-modeling"
 order: 2
-title: "Constraints"
-summary: "Constraints — stub; author to ready."
-estMin: 12
-status: stub
+title: "Constraints: integrity the engine enforces"
+summary: "NOT NULL, CHECK, UNIQUE, foreign keys with ON DELETE actions, DEFERRABLE checks, and EXCLUDE constraints push data integrity into the engine — where the app can't forget it."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - check-constraint
+  - foreign-key-actions
+  - deferrable-constraints
+  - exclude-constraint
+  - data-integrity
+prereqs:
+  - 01-core-types
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/ddl-constraints.html
+  - https://www.postgresql.org/docs/current/sql-createtable.html
+  - https://www.postgresql.org/docs/current/rangetypes.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A booking system enforced "no double-booking a room" in the application: read the calendar, check for overlap, then insert. It worked in every test. In production two requests hit the same room in the same 40ms window, both read an empty slot, both inserted — and a wedding party and a conference walked into the same hall. No amount of careful application code fixes a race the *database* could have rejected atomically. Constraints aren't validation sugar; they're the last and only line that two concurrent transactions cannot both slip past.
+</Hook>
+
+<Crux>A constraint is a data rule the engine enforces on every write — the app can forget it; the engine never does.</Crux>
+
+<Explanation>
+
+## The point: integrity belongs in the engine
+
+Every rule about valid data — "price is never negative", "an order points at a real user", "no two rooms double-booked" — can live in two places: scattered through application code, or declared once on the table. Application checks are *advisory*: they run only on the paths that remembered to call them, and they lose every concurrency race. A constraint is *enforced*: it runs inside the same transaction as the write, holds the right locks, and rejects bad data atomically no matter which service, script, or psql session attempts it. (The `databases` track's relational-model chapter covers constraints and keys from the theory side; here we wire them up in Postgres.)
+
+<StackDiagram
+  label="Constraint layers from cheapest to richest: NOT NULL forbids missing values, CHECK enforces a per-row predicate, UNIQUE forbids duplicate keys, PRIMARY KEY is NOT NULL plus UNIQUE, FOREIGN KEY enforces referential integrity across tables, and EXCLUDE forbids rows that conflict under an operator like range overlap."
+  hue="var(--d-data)"
+  layers={[
+    { label: "NOT NULL", note: "value must be present" },
+    { label: "CHECK (expr)", note: "per-row predicate must hold" },
+    { label: "UNIQUE", note: "no duplicate key (backed by an index)" },
+    { label: "PRIMARY KEY", note: "NOT NULL + UNIQUE, one per table" },
+    { label: "FOREIGN KEY", note: "must reference an existing row" },
+    { label: "EXCLUDE", note: "no two rows conflict under an operator" },
+  ]}
+  caption="Each layer rejects a wider class of bad data than the one above it. PRIMARY KEY is just NOT NULL plus UNIQUE with a name; EXCLUDE generalizes UNIQUE from equality to any operator (e.g. range overlap)."
+/>
+
+## NOT NULL, CHECK, UNIQUE, PRIMARY KEY
+
+The everyday three. `NOT NULL` forbids a missing value. `CHECK` enforces a boolean predicate per row — the workhorse for business rules. `UNIQUE` forbids duplicate values and is backed by a unique index, so it costs an index per constraint. `PRIMARY KEY` is exactly `NOT NULL` + `UNIQUE`, plus the marker that this is *the* identity of the row (one per table).
+
+```sql
+CREATE TABLE products (
+  id          bigint PRIMARY KEY,
+  sku         text NOT NULL UNIQUE,                 -- no two products share a SKU
+  price_cents bigint NOT NULL CHECK (price_cents >= 0),
+  status      text NOT NULL CHECK (status IN ('draft','active','archived'))
+);
+```
+
+A `CHECK` can reference multiple columns of the same row (`CHECK (sale_price <= price_cents)`) but **not** other rows or other tables — it's strictly per-row. For "valid across rows" you need `UNIQUE`, `EXCLUDE`, or a trigger.
+
+## Foreign keys and ON DELETE / ON UPDATE actions
+
+A `FOREIGN KEY` says "this column must match an existing row in another table" — referential integrity. The interesting part is what happens when the referenced row is deleted or its key changes. You declare the action:
+
+- `ON DELETE RESTRICT` (and the similar `NO ACTION`) — refuse to delete the parent while children exist. The safe default for most relationships; it surfaces accidental cascading deletes as errors.
+- `ON DELETE CASCADE` — delete the children too. Right for true ownership (delete an order, its line items go with it); dangerous when the "child" is shared or valuable.
+- `ON DELETE SET NULL` — keep the child but null its reference. For optional links (an employee's `manager_id` when the manager leaves).
+
+```sql
+CREATE TABLE orders (
+  id      bigint PRIMARY KEY,
+  user_id bigint NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+);
+
+CREATE TABLE order_items (
+  id       bigint PRIMARY KEY,
+  order_id bigint NOT NULL REFERENCES orders(id) ON DELETE CASCADE,  -- owned by the order
+  product_id bigint NOT NULL REFERENCES products(id) ON DELETE RESTRICT
+);
+```
+
+Note the deliberate mix: deleting an order cascades to its `order_items` (they have no meaning without it), but you can't delete a `product` that any order item references — that would rewrite history. Choosing the action per relationship *is* the modelling.
+
+## DEFERRABLE: check at COMMIT, not at statement
+
+By default a constraint is checked immediately, the moment a statement runs. That breaks cyclic or order-dependent writes — inserting two rows that reference each other, or reordering a list where positions must stay unique mid-update. A `DEFERRABLE INITIALLY DEFERRED` constraint is checked once, at `COMMIT`, so the data can be temporarily inconsistent *within* the transaction as long as it's consistent when you commit.
+
+```sql
+ALTER TABLE order_items
+  ADD CONSTRAINT uniq_position UNIQUE (order_id, position)
+  DEFERRABLE INITIALLY DEFERRED;
+-- now you can swap positions 1 and 2 in two UPDATEs;
+-- the unique check runs only at COMMIT, when they're consistent again.
+```
+
+## EXCLUDE: UNIQUE generalized to any operator
+
+`UNIQUE` says "no two rows are *equal* on these columns." `EXCLUDE` generalizes that to any operator: "no two rows *conflict* under operator `X`." The killer use is the no-overlap booking — combine a range type with the overlap operator `&&` and a GiST index, and the *database* makes double-booking physically impossible:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE TABLE bookings (
+  id      bigint PRIMARY KEY,
+  room_id bigint NOT NULL,
+  during  tstzrange NOT NULL,
+  EXCLUDE USING gist (room_id WITH =, during WITH &&)  -- same room AND overlapping time → reject
+);
+```
+
+This is the atomic fix for the Hook's race. Two concurrent inserts for the same room and overlapping window can't both succeed: the GiST index serializes the conflict check, and the second insert is rejected. No read-then-write window, no application logic, no race.
+
+<Inset kind="why" lang="en">
+Why not just enforce all this in the app and keep the schema simple? Because the app is plural and forgetful. There's the API, the admin tool, the nightly batch job, the data-fix script someone runs in psql at 2am, and next year's rewrite in a different language. Every one of them must remember every rule, and none of them can win a concurrency race the way a constraint backed by a lock and an index can. A constraint is enforced once, for all writers, forever — that's why "push integrity into the database" is a senior reflex, not gold-plating.
+</Inset>
+
+<DragOrder
+  id="02-constraints-drag-1"
+  lessonSlug="02-constraints"
+  lang="en"
+  prompt="Order these constraints from the narrowest rule to the widest class of bad data it rejects:"
+  items={[
+    { id: "a", label: "NOT NULL — a single value must be present" },
+    { id: "b", label: "CHECK — a per-row predicate must hold" },
+    { id: "c", label: "UNIQUE — no two rows are equal on the key" },
+    { id: "d", label: "FOREIGN KEY — the value must reference an existing row in another table" },
+    { id: "e", label: "EXCLUDE — no two rows conflict under an operator (e.g. range overlap)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Quiz
+  id="02-constraints-quiz-1"
+  lessonSlug="02-constraints"
+  lang="en"
+  question="Why is a UNIQUE constraint the correct fix for double-booking, instead of 'read the calendar, then insert' in application code?"
+  choices={[
+    { label: "The app's read-then-insert has a race window; an EXCLUDE/UNIQUE constraint rejects the conflict atomically inside the write", correct: true },
+    { label: "Application code can't run SELECT and INSERT in one query", misconception: "It can — the problem isn't capability, it's atomicity: between the read and the insert, another transaction can slip in and both think the slot is free." },
+    { label: "Constraints make the query faster", misconception: "Speed isn't the point. The point is correctness under concurrency — the app check loses the race; the constraint can't be bypassed." },
+    { label: "Postgres forbids SELECT before INSERT in a transaction", misconception: "Postgres allows that freely. The issue is that the gap between them is a race window that a constraint closes." },
+  ]}
+/>
+
+<Quiz
+  id="02-constraints-quiz-2"
+  lessonSlug="02-constraints"
+  lang="en"
+  question="You delete a product that order_items still reference. The FK is ON DELETE RESTRICT. What happens?"
+  choices={[
+    { label: "The delete is rejected with a foreign-key violation, because children still exist", correct: true },
+    { label: "The referencing order_items are deleted too", misconception: "That's ON DELETE CASCADE. RESTRICT refuses the delete while any child row references the parent." },
+    { label: "The order_items' product_id is set to NULL", misconception: "That's ON DELETE SET NULL. RESTRICT doesn't modify children — it blocks the parent delete entirely." },
+    { label: "The delete succeeds, leaving dangling references", misconception: "A foreign key never permits dangling references; RESTRICT specifically refuses the delete to prevent exactly that." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Constraints push data rules into the engine, where every writer is forced to obey them and no concurrency race can slip past. `NOT NULL`/`CHECK`/`UNIQUE`/`PRIMARY KEY` cover per-row and uniqueness rules; foreign keys enforce referential integrity with `ON DELETE` actions (`RESTRICT` for safety, `CASCADE` for true ownership, `SET NULL` for optional links); `DEFERRABLE INITIALLY DEFERRED` moves the check to `COMMIT` for order-dependent writes; and `EXCLUDE` generalizes `UNIQUE` to any operator — a range `&&` overlap exclusion makes double-booking atomically impossible.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-constraints-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is a database constraint stronger than the same rule enforced in application code?", a: "A constraint runs inside the same transaction as the write, holds the right locks, and is enforced for every writer — the API, batch jobs, admin tools, ad-hoc psql sessions — with no way to forget it or bypass it. Application checks are advisory: they run only where someone remembered to call them, and a read-then-write check loses concurrency races (two transactions both see a free slot and both insert). The constraint rejects the second write atomically." },
+    { q: "Name the three ON DELETE actions and when each is right.", a: "ON DELETE RESTRICT (or NO ACTION): refuse to delete the parent while children exist — the safe default, surfaces accidental cascades as errors. ON DELETE CASCADE: delete the children too — correct for true ownership like an order and its line items, dangerous for shared/valuable children. ON DELETE SET NULL: keep the child but null its reference — for optional links such as an employee's manager_id when the manager leaves." },
+    { q: "What does EXCLUDE add over UNIQUE, and how does it prevent double-booking?", a: "UNIQUE forbids rows that are equal on the key; EXCLUDE forbids rows that conflict under any operator. For bookings you write EXCLUDE USING gist (room_id WITH =, during WITH &&) so two rows with the same room and overlapping time ranges (the && operator on a range type) are rejected. The GiST index serializes the conflict check, so two concurrent overlapping inserts can't both succeed — double-booking becomes physically impossible with no application logic and no race window." },
+  ]}
+/>
+
+<Recap lang="en">
+A constraint is a data rule the engine enforces on every write, inside the transaction, for every writer — which is why integrity belongs in the database, not scattered through forgetful, race-losing application code. The layers stack from narrow to wide: `NOT NULL` (value present), `CHECK` (a per-row predicate, the workhorse for business rules but blind to other rows), `UNIQUE` (no duplicate key, backed by an index), `PRIMARY KEY` (`NOT NULL` + `UNIQUE`, the row's identity), `FOREIGN KEY` (referential integrity, where the `ON DELETE` action — `RESTRICT`, `CASCADE`, or `SET NULL` — is a real modelling decision per relationship), and `EXCLUDE` (UNIQUE generalized to any operator). `DEFERRABLE INITIALLY DEFERRED` defers checking to `COMMIT` so order-dependent writes can be transiently inconsistent. The standout is `EXCLUDE USING gist (... WITH &&)` on a range type: it makes double-booking atomically impossible, the proper fix for the read-then-write race no application code can win. Next: JSONB, where the *absence* of a fixed schema is the modelling choice — and how to bound it.
+</Recap>
