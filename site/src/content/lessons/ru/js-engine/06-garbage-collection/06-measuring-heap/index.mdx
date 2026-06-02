@@ -4,10 +4,191 @@ lang: ru
 track: "js-engine"
 unit: "06-garbage-collection"
 order: 6
-title: "Measuring the heap"
-summary: "Measuring the heap — stub; author to ready."
-estMin: 12
-status: stub
+title: "Измерение кучи"
+summary: "Инструменты, превращающие «память всё растёт» в названного удержателя: heap snapshots (shallow vs retained size, доминаторы, техника трёх снимков), allocation timeline, process.memoryUsage(), --trace-gc, v8.getHeapStatistics()"
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - heap snapshot
+  - shallow vs retained size
+  - dominator tree
+  - техника трёх снимков
+  - process.memoryUsage
+  - trace-gc
+spiral:
+  - observability
+  - performance-cliffs
+prereqs:
+  - "05-memory-leaks"
+  - "performance/04-gc/06-gc-production"
 sources:
-  - https://v8.dev/docs
+  - https://developer.chrome.com/docs/devtools/memory-problems/heap-snapshots
+  - https://nodejs.org/api/v8.html
+  - https://developer.mozilla.org/en-US/docs/Web/API/Performance/measureUserAgentSpecificMemory
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+«Память всё растёт» — это ощущение. «47 000 удержанных объектов `Session`, каждый закреплён через `app.activeSockets`, держат 12 МБ на всех» — это баг-репорт, который можно починить. Расстояние между этими двумя предложениями — целиком инструментарий: heap snapshots, dominator trees и пара флагов Node. Прошлый урок сказал, что каждая утечка — это retainer path; этот — о том, как заставить движок *показать* вам этот путь вместо догадок.
+</Hook>
+
+<Crux>Heap snapshots раскрывают retained size и dominator tree; техника трёх снимков находит, что растёт; флаги Node отслеживают итоги.</Crux>
+
+<Explanation>
+
+## Shallow size против retained size — различие, которое важно
+
+Этот урок — компаньон уровня движка к `performance/04-gc/06-gc-production` (которое покрывает сторону эксплуатации — алерты, лимиты, рестарты). Здесь — как читать кучу напрямую.
+
+**Heap snapshot** — это полный дамп графа объектов в один миг: каждый объект, его размер и его ссылки. Два числа размера на объект, и путаница между ними тратит часы:
+
+- **Shallow size** — память, которую объект занимает сам (его собственные поля), исключая то, на что он ссылается. У массива shallow size крошечный, даже если он держит миллионы огромных объектов.
+- **Retained size** — память, которая освободилась бы при удалении этого объекта, то есть объект *плюс всё достижимое только через него*. Это число говорит вам стоимость утечки: маленький объект с огромным retained size якорит большое поддерево.
+
+Утечки ищут по **retained size**, а не shallow size. У утёкшего `Map` тривиальный shallow size, но retained size — каждая запись, которую он один держит живой.
+
+## Dominator tree
+
+Чтобы вычислить retained size, V8 строит **dominator tree** графа объектов. Объект A **доминирует** объект B, если *каждый* путь от корня к B проходит через A — то есть, если A освобождён, B неизбежно тоже становится недостижимым. Retained size объекта — это суммарный shallow size всего, что он доминирует.
+
+Dominator tree — карта охотника за утечками: идите вниз от корней и найдите объект, чей retained size велик и неожидан. Его доминируемое поддерево — ровно то, что он держит живым, а путь от корня к нему — это **retainer path**, который надо оборвать.
+
+<FlowDiagram
+  label="Dominator tree: корень GC доминирует объект app, который доминирует Map-кэш, который доминирует множество записей; retained size у Map — сумма всего, что он один держит достижимым, поэтому удаление его освобождает всё доминируемое поддерево."
+  hue="var(--accent)"
+  caption="Доминаторы. Shallow size у Map крошечный, но он доминирует каждую запись, поэтому его retained size — это всё поддерево. Найдите маленький объект с огромным retained size — это якорь вашей утечки."
+  nodes={[
+    { id: "root", label: "GC root", sub: "dominates all", col: 0, row: 0 },
+    { id: "app", label: "app", sub: "singleton", col: 1, row: 0 },
+    { id: "map", label: "cache Map", sub: "tiny shallow", col: 2, row: 0 },
+    { id: "e1", label: "entries", sub: "huge retained", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "root", to: "app", label: "global" },
+    { from: "app", to: "map", label: "field" },
+    { from: "map", to: "e1", label: "dominates" },
+  ]}
+/>
+
+## Техника трёх снимков
+
+Один снимок показывает, что в куче, но не что *растёт*. Классический метод поиска утечек — **три снимка**:
+
+1. Снимок 1 — задать базовую линию после разогрева.
+2. Погонять подозреваемую операцию N раз (навигация, запрос и т.д.).
+3. Снимок 2.
+4. Погонять её ещё N раз.
+5. Снимок 3.
+
+Сравнение DevTools «Objects allocated between snapshots» показывает объекты, рождённые после снимка 1 и *всё ещё живые* в снимке 3. В здоровой операции их должно быть около нуля (всё недолговечное собрано); утечка показывает число, растущее линейно с N. Отсортируйте выживших по retained size, откройте одного и прочитайте его retainer path до корня. Эта последовательность — diff, сортировка по retained, чтение retainer — и есть весь процесс.
+
+## Allocation timeline и sampling
+
+Снимки — это точка во времени; **allocation timeline** (DevTools) и **allocation sampling** отвечают «откуда текучка?», относя аллокации к стекам вызовов, которые их сделали, во времени. Sampling достаточно низкооверхедный для около-продакшен использования. Так находят горячее место аллокации, гонящее давление GC (проблема minor-GC из урока 02), отличную от утечки удержания.
+
+## Счётчики Node и программные
+
+DevTools не всегда подключён. Числа, которые можно логировать:
+
+- **`process.memoryUsage()`** → `{ rss, heapTotal, heapUsed, external, arrayBuffers }`. `heapUsed` = живые объекты кучи V8; `heapTotal` = выделенная куча V8; `rss` = вся резидентная память процесса (включая нативную, стеки, код); `external` / `arrayBuffers` = память, удерживаемая C++-объектами, привязанными к JS (Buffer, ArrayBuffer). Растущий `heapUsed` ⇒ утечка удержания JS; растущий `external`/`arrayBuffers` при плоском `heapUsed` ⇒ утечка Buffer/нативная; высокий `rss` при плоском `heapUsed` ⇒ фрагментация.
+- **`v8.getHeapStatistics()`** / `getHeapSpaceStatistics()` — размеры по пространствам (new vs old vs large-object), `used_heap_size`, `heap_size_limit`. Позволяет следить именно за old space.
+- **`--trace-gc`** / **`--trace-gc-verbose`** — логировать каждое событие GC с heap-before/heap-after и временем паузы. Постройте old-space-after во времени: монотонный рост = утечка; колебание вокруг среднего = GC справляется.
+- **`--max-old-space-size=<MB>`** — потолок old space; его поднятие покупает запас, но не чинит утечку (лишь оттягивает OOM и удлиняет паузы major GC). По умолчанию это примерно 2 ГБ на современном 64-битном Node, но зависит от версии — измеряйте, не предполагайте.
+- **`v8.writeHeapSnapshot()`** — выгрузить `.heapsnapshot` изнутри процесса (например, по сигналу), чтобы загрузить в DevTools офлайн. Бесценно в продакшене, где нельзя подключить отладчик.
+
+В браузере **`performance.measureUserAgentSpecificMemory()`** даёт cross-origin-isolated оценку памяти страницы с разбивкой по типам — поддерживаемого преемника старого нестандартного `performance.memory`.
+
+<NumbersCard
+  title="Шпаргалка измерения кучи"
+  data-lesson-visual
+  stats={[
+    { label: "Искать утечки по", value: "retained size, не shallow" },
+    { label: "Retained size из", value: "dominator tree" },
+    { label: "Что растёт?", value: "diff трёх снимков" },
+    { label: "heapUsed растёт", value: "утечка удержания JS" },
+    { label: "external/arrayBuffers растёт", value: "утечка Buffer / нативная" },
+    { label: "rss высок, heapUsed плоский", value: "фрагментация" },
+  ]}
+/>
+
+<Misconception id="mc-shallow-vs-retained">
+  <p><strong>«Отсортируй снимок по shallow size, чтобы найти утечку».</strong> Shallow size — только собственные байты объекта. У утекающего <code>Map</code> крошечный shallow size, но он удерживает мегабайты через записи. Сортируйте по <em>retained</em> size, чтобы найти объект, якорящий большое доминируемое поддерево.</p>
+</Misconception>
+
+<Quiz
+  id="q-retained-size"
+  lessonSlug="06-measuring-heap"
+  lang="ru"
+  question="У массива shallow size 200 байт, но retained size 80 МБ. О чём это говорит?"
+  choices={[
+    { label: "Массив доминирует 80 МБ объектов, достижимых только через него — удаление его освободило бы это поддерево", correct: true },
+    { label: "Сам массив хранит 80 МБ данных инлайн", misconception: "Это был бы его shallow size. 200 байт shallow значит, что собственное хранилище массива крошечно; 80 МБ — это то, что он удерживает через свои элементы." },
+    { label: "Снимок повреждён; retained не может превышать shallow", misconception: "Retained size обычно намного больше shallow — он включает всё доминируемое поддерево, а не только собственные байты объекта." },
+    { label: "80 МБ массива — это мусор, ждущий сбора", misconception: "Retained значит достижимый и живой через этот объект. Это не мусор; это ровно то, что массив держит живым." },
+  ]}
+/>
+
+<Quiz
+  id="q-memoryusage"
+  lessonSlug="06-measuring-heap"
+  lang="ru"
+  question="process.memoryUsage() показывает растущий rss и растущий external, но heapUsed плоский. Какова вероятная причина?"
+  choices={[
+    { label: "Утечка нативная/Buffer — память, удерживаемая C++-объектами (Buffer, ArrayBuffer), а не кучей JS-объектов", correct: true },
+    { label: "Обычная утечка удержания JS-объектов", misconception: "Утечка удержания JS показывает растущий heapUsed. Плоский heapUsed при растущем external указывает на C++-память (Buffer/ArrayBuffer), а не на кучу JS." },
+    { label: "GC работает слишком редко", misconception: "Частота GC не дала бы плоский heapUsed при растущем external; эта сигнатура — нативная память, которой GC JS не владеет напрямую." },
+    { label: "Фрагментация old space", misconception: "Фрагментация показывает высокий rss при плоском heapUsed, но external не рос бы. Растущий external указывает именно на рост Buffer/ArrayBuffer." },
+  ]}
+/>
+
+<DragOrder
+  id="do-three-snapshot"
+  pieceSlug="06-measuring-heap"
+  lang="ru"
+  prompt="Расставьте по порядку процесс поиска утечки тремя снимками в DevTools."
+  items={[
+    "Снять снимок 1 как базовую линию после разогрева",
+    "Погонять подозреваемую операцию N раз",
+    "Снять снимок 2",
+    "Погонять операцию ещё N раз, затем снять снимок 3",
+    "Сравнить «объекты, аллоцированные между 1 и 2 и всё ещё живые в 3», отсортировать по retained size",
+    "Открыть верхнего удержателя и прочитать его retainer path до корня GC, чтобы найти, что обрывать",
+  ]}
+/>
+
+<Inset kind="practice" lang="ru">
+Безопасная для продакшена рутина: зарегистрируйте обработчик SIGUSR2, вызывающий <code>v8.writeHeapSnapshot()</code>, и петлю метрик, логирующую <code>process.memoryUsage()</code> плюс <code>v8.getHeapStatistics().used_heap_size</code> каждую минуту. Когда срабатывают алерты RSS, выгрузите два снимка с разницей в несколько минут и сделайте diff офлайн в DevTools. Это даёт retainer path из живого, неотлаживаемого процесса без подключения <code>--inspect</code> (что под нагрузкой обычно нельзя). Сочетайте с <code>--trace-gc</code>, перенаправленным в лог, чтобы постфактум скоррелировать рост с поведением GC.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Ищите утечки по retained size (сумме dominator tree того, что объект один держит живым), а не shallow size; используйте diff трёх снимков, чтобы найти, что растёт, и прочитайте его retainer path до корня. process.memoryUsage() отличает утечку удержания JS (растёт heapUsed) от нативной/Buffer (растёт external) от фрагментации (rss высок, heapUsed плоский); --trace-gc, v8.getHeapStatistics() и writeHeapSnapshot() дают ту же картину без подключённого отладчика.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="measuring-heap-retrieval"
+  lang="ru"
+  questions={[
+    { q: "В чём разница между shallow и retained size и почему утечки ищут по retained size?", a: "Shallow size — память, которую объект занимает под собственные поля, исключая всё, на что он ссылается, — у массива или Map shallow size мал, сколько бы он ни держал. Retained size — память, освобождаемая при удалении объекта: объект плюс всё достижимое только через него (его доминируемое поддерево). Ищут по retained size, потому что утечка обычно — это маленький контейнер (Map, массив, синглтон) с крошечным shallow size, но огромным retained size — он якорит большое поддерево. Сортировка по shallow size прячет ровно те объекты, что вызывают утечку." },
+    { q: "Что такое dominator tree и как оно связано с retainer paths?", a: "Объект A доминирует объект B, если каждый путь от корня GC к B проходит через A, поэтому освобождение A неизбежно делает B недостижимым. Dominator tree организует кучу по этому отношению, и retained size объекта — суммарный shallow size всего, что он доминирует. Это карта охотника за утечками: найдите узел с неожиданно большим retained size, и его доминируемое поддерево — это то, что он держит живым. Путь от корня вниз к этому узлу — это retainer path из прошлого урока: цепочка, которую надо оборвать (eviction, clearInterval, removeEventListener, сброс ссылки), чтобы GC забрал поддерево." },
+    { q: "Как отличить утечку удержания JS, нативную/Buffer утечку и фрагментацию через process.memoryUsage()?", a: "process.memoryUsage() возвращает rss, heapTotal, heapUsed, external и arrayBuffers. heapUsed — живые объекты JS-кучи V8; external/arrayBuffers — память C++-объектов (Buffer, ArrayBuffer); rss — весь резидентный процесс. Растущий heapUsed (в ногу с rss) значит утечку удержания JS — объекты накапливаются в графе. Растущий external/arrayBuffers при плоском heapUsed значит нативную/Buffer утечку, которой JS-куча не владеет напрямую. Высокий rss при плоском, низком heapUsed значит фрагментацию кучи (объекты собраны, но страницы не возвращены). Каждая сигнатура указывает на своё лечение: оборвать retainer path, освободить Buffer или запустить/разрешить compaction соответственно." },
+  ]}
+/>
+
+<Recap lang="ru">
+Измерение кучи превращает «память всё растёт» в названного удержателя. Heap snapshot выгружает весь граф объектов; важное число — retained size (память, освобождаемая при удалении объекта, то есть объект плюс его доминируемое поддерево), а не shallow size, который лишь собственные байты объекта. V8 вычисляет retained size из dominator tree, где A доминирует B, если каждый путь корень→B идёт через A; маленький объект с огромным retained size — якорь вашей утечки, а путь от корня к нему — retainer path, который надо оборвать. Чтобы найти, что растёт, а не что просто существует, используйте технику трёх снимков: базовая линия, погонять, снимок, погонять, снимок, затем diff на объекты, аллоцированные рано и всё ещё живые поздно, отсортированные по retained size. Allocation timeline и sampling относят текучку к стекам вызовов для отдельной проблемы давления minor GC. Без отладчика process.memoryUsage() разделяет утечку удержания JS (растёт heapUsed), нативную/Buffer утечку (растут external/arrayBuffers) и фрагментацию (rss высок, heapUsed плоский); v8.getHeapStatistics() даёт размеры по пространствам и лимит кучи; --trace-gc логирует каждую сборку для построения роста old space; --max-old-space-size ограничивает old space (оттягивая, а не починяя утечку); а v8.writeHeapSnapshot() плюс measureUserAgentSpecificMemory() захватывают кучу в продакшене и в браузере. Вместе с практиками эксплуатации из performance/04-gc/06-gc-production эти инструменты замыкают петлю от симптома к оборванной ссылке.
+</Recap>

@@ -4,10 +4,183 @@ lang: en
 track: "js-engine"
 unit: "06-garbage-collection"
 order: 4
-title: "Write barriers"
-summary: "Write barriers — stub; author to ready."
-estMin: 12
-status: stub
+title: "Write barriers: the price of incremental and generational GC"
+summary: "Every pointer store into a heap object runs a write barrier. It serves two masters: a generational barrier records old→young pointers into a remembered set so minor GC need not scan old space"
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - write barrier
+  - remembered set / store buffer
+  - generational barrier
+  - Dijkstra incremental barrier
+  - tri-color invariant
+  - Smi
+deepensInto:
+  - "06-garbage-collection/05-memory-leaks"
+spiral:
+  - performance-cliffs
+  - latency
+prereqs:
+  - "03-mark-sweep-compact"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/concurrent-marking
+  - https://mrale.ph/blog/2018/09/01/maybe-you-dont-need-rust-and-wasm.html
+  - https://www.memorymanagement.org/glossary/w.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+`obj.next = node` looks like a single store — write a pointer, done. But the GC has two open questions that store could invalidate. If `obj` lives in old space and `node` is young, a minor GC that scans only young space would miss this brand-new reference and free a live object. If a concurrent mark is in flight and `obj` is already black, this store could sneak a white object past the marker. So that one assignment is not one instruction — V8 quietly wraps it in a check called the write barrier, and it runs on nearly every pointer store in your program.
+</Hook>
+
+<Crux>A write barrier runs on every pointer store: it records old→young refs for the Scavenger and re-greys targets for the marker.</Crux>
+
+<Explanation>
+
+## Why a store is not free
+
+The previous two lessons left two correctness debts, both created by the same thing — a pointer mutated *between or during* collections:
+
+1. **Generational debt.** A minor GC scans only young space (plus roots), because scanning gigabytes of old space on every Scavenge would destroy the whole point of generational GC. But old objects *can* hold references to young objects (`oldArray.push(youngObj)`). If V8 ignored those, it would free a young object that old space still references.
+2. **Marking debt.** Concurrent/incremental marking lets JS mutate the graph mid-trace. A store can make a black (scanned) object point to a white (unreached) object, violating the tri-color invariant, so the marker finishes without visiting a live object and the sweep collects it.
+
+A **write barrier** is a small piece of code the compiler emits *around* (nearly) every store of a pointer into a heap object. It runs at `obj.field = ptr` time and does whatever bookkeeping is needed to keep both questions answered. One barrier, two jobs.
+
+## Job 1: the generational barrier and the remembered set
+
+To avoid scanning old space on a minor GC, V8 maintains a **remembered set** (implemented via a **store buffer** that is later processed into per-page slot sets): a record of every slot in old space that holds a pointer into young space. When you write `oldObj.field = youngObj`, the generational write barrier notices the store crosses old→young and records that slot.
+
+At the next Scavenge, V8 treats the remembered set as **extra roots**: it scans those recorded slots to find young objects kept alive by old-space references, *without* walking old space at all. After the Scavenge updates the moved young objects' addresses, the remembered set is what lets the old-space pointers be fixed up.
+
+```js
+const cache = [];          // promoted to old space over time
+function handle(req) {
+  const entry = { req };   // young
+  cache.push(entry);       // OLD array now references YOUNG entry
+  //                          ^ generational write barrier records this slot
+}
+```
+
+The barrier only fires for the old→young direction. Young→young and young→old stores are uninteresting to a minor GC (young is fully scanned anyway; old→? is the major GC's problem), so V8 elides the barrier in those cases.
+
+## Job 2: the incremental/marking barrier (Dijkstra-style)
+
+During concurrent marking, the same store hook protects the tri-color invariant. V8 uses a **Dijkstra-style insertion barrier**: when the mutator stores a pointer to a **white** object into any object during marking, the barrier **greys the white target** (pushes it onto the marking worklist). This guarantees the marker will eventually scan it, so it cannot be left white and wrongly collected. (The classic alternative is a Yuasa snapshot-at-the-beginning barrier, which greys the *overwritten* old referent instead; V8's design uses Dijkstra-style insertion for its concurrent marker. Either way the goal is identical: no live object escapes the trace.)
+
+Because both jobs trigger on the same event — a pointer store into a heap slot — V8 fuses them into a single barrier path that checks the relevant conditions (is marking active? does this store cross old→young?) and does the minimum work.
+
+<SequenceDiagram
+  label="A pointer store under an active concurrent mark: the JS mutator writes obj.field = target; the write barrier intercepts it, greys the white target onto the marking worklist and, if the store crosses old to young, records the slot in the remembered set; the marker later scans the now-grey target."
+  hue="var(--accent)"
+  caption="One store, two duties. The barrier sits between the mutator and the heap: re-grey the target so the marker visits it, and record old→young slots so the Scavenger finds young survivors without scanning old space."
+  actors={["Mutator", "Barrier", "Marker"]}
+  messages={[
+    { from: "Mutator", to: "Barrier", label: "obj.field = target" },
+    { from: "Barrier", to: "Barrier", label: "marking? grey target" },
+    { from: "Barrier", to: "Barrier", label: "old->young? remember slot" },
+    { from: "Barrier", to: "Marker", label: "push target to worklist" },
+    { from: "Marker", to: "Marker", label: "later: scan target" },
+  ]}
+/>
+
+## Why Smi stores skip the barrier
+
+The barrier exists only to track **pointers between heap objects**. A **Smi** (small integer — a 31-bit integer on 64-bit V8) is not a pointer: it is encoded directly inside the tagged value, with its low tag bit zero, so it cannot reference a heap object at all. Storing a Smi into a field — `obj.count = 42` — creates no inter-object reference, so V8 emits **no write barrier** for it. The same is true for storing other immediates. This is one more reason the Smi/HeapNumber distinction from unit 02 matters for performance: integer-heavy field writes are barrier-free, while writes that store object or boxed-double pointers pay the barrier check.
+
+## The cost, and where it bites
+
+Each barrier is cheap individually — a few instructions: load the target's page metadata or check a marking flag, branch, and in the slow case push to a worklist or store buffer. Call it a handful of cycles per pointer store. That is invisible in ordinary code. It becomes measurable in **allocation- and mutation-heavy hot paths**: tight loops that build large object graphs, repeatedly repoint fields, or push millions of object references into long-lived containers. There, barrier overhead is real, and it is one of the hidden costs of "just push objects into an array" versus working with typed arrays or Smi-encoded data.
+
+<NumbersCard
+  title="Write barrier facts"
+  data-lesson-visual
+  stats={[
+    { label: "Runs on", value: "~every heap pointer store" },
+    { label: "Generational job", value: "record old→young slot" },
+    { label: "Marking job (V8)", value: "Dijkstra insertion: grey target" },
+    { label: "Remembered set via", value: "store buffer → slot sets" },
+    { label: "Smi / immediate store", value: "no barrier" },
+    { label: "Typical cost", value: "a few cycles / store" },
+  ]}
+/>
+
+<Misconception id="mc-assignment-free">
+  <p><strong>"Assignment is free — it's just writing a word."</strong> A pointer store into a heap object is not free under a generational, concurrent GC. V8 emits a write barrier on nearly every such store to record old→young refs and keep the marker's tri-color invariant. A Smi store is barrier-free.</p>
+</Misconception>
+
+<Quiz
+  id="q-remembered-set"
+  lessonSlug="04-write-barriers"
+  lang="en"
+  question="Why does a minor GC (Scavenge) need the remembered set at all?"
+  choices={[
+    { label: "Because old objects can reference young ones, and the Scavenger does not scan old space — the remembered set supplies those old→young references as extra roots", correct: true },
+    { label: "To remember which young objects to promote", misconception: "Promotion is decided by survival count, not the remembered set. The remembered set tracks old→young pointer slots so young survivors held by old space are found." },
+    { label: "To speed up marking of old space", misconception: "Marking is the major GC's job. The remembered set is what lets the minor GC avoid scanning old space, by recording the cross-generational references." },
+    { label: "To store the colors of objects during a concurrent mark", misconception: "Colors are mark bits on objects. The remembered set records old→young pointer slots; it is a generational mechanism, not a marking color store." },
+  ]}
+/>
+
+<Quiz
+  id="q-smi-barrier"
+  lessonSlug="04-write-barriers"
+  lang="en"
+  question="`obj.count = 42` versus `obj.child = someObject`. Which store(s) emit a write barrier, and why?"
+  choices={[
+    { label: "Only the second — 42 is a Smi (not a pointer) so it creates no inter-object reference; someObject is a heap pointer that the barrier must track", correct: true },
+    { label: "Both, because every property write goes through the barrier", misconception: "The barrier tracks pointers between heap objects. A Smi store creates no such pointer, so V8 emits no barrier for it." },
+    { label: "Neither, because barriers only run during a full GC", misconception: "Barriers are emitted inline at stores and run whenever the relevant condition holds (marking active, or old→young) — not only during a stop-the-world GC." },
+    { label: "Only the first, because numbers need boxing", misconception: "A small integer is a Smi encoded inline, not boxed and not a pointer; it is exactly the case that needs no barrier. The object store is the one that does." },
+  ]}
+/>
+
+<DragOrder
+  id="do-barrier"
+  pieceSlug="04-write-barriers"
+  lang="en"
+  prompt="Order what happens when JS executes `oldObj.field = youngWhiteObj` during an active concurrent mark."
+  items={[
+    "The store reaches the inlined write barrier instead of writing directly",
+    "Barrier checks: marking is active, so grey the white target onto the marking worklist",
+    "Barrier checks: store crosses old→young, so record the slot in the remembered set",
+    "The actual pointer is written into the field",
+    "Later, the marker scans the now-grey target so it is not wrongly collected",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why insert a barrier on writes rather than reads? Because writes are far rarer than reads in typical code and are the only operations that can change reachability or break the tri-color invariant — reading a pointer cannot create a new edge in the object graph. A read barrier (used by some collectors, e.g. for relocation in ZGC/Shenandoah) is more expensive precisely because reads dominate. V8 chooses write barriers as the cheaper place to pay, which is why the cost concentrates on mutation-heavy code.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A write barrier runs on nearly every pointer store and does two jobs: it records old→young references into the remembered set so the Scavenger finds young survivors without scanning old space, and it greys the target (Dijkstra-style) so concurrent marking never loses a live object. Smi and immediate stores create no inter-object pointer, so they skip the barrier — which is why barrier cost concentrates in mutation-heavy hot paths.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="write-barriers-retrieval"
+  lang="en"
+  questions={[
+    { q: "What two correctness problems does the write barrier solve, and how?", a: "First, the generational problem: a minor GC scans only young space, but old objects can reference young ones; without help, those young objects would be wrongly freed. The generational write barrier records every old→young pointer slot into a remembered set (via a store buffer), and the Scavenger uses those slots as extra roots so it finds young survivors without scanning old space. Second, the concurrent-marking problem: JS can mutate the graph mid-trace and make a black object point to a white one, breaking the tri-color invariant. V8's Dijkstra-style insertion barrier greys the stored white target onto the marking worklist so the marker visits it and never wrongly collects a live object. Both jobs fire on the same event — a pointer store — so V8 fuses them into one barrier." },
+    { q: "Why do Smi stores skip the write barrier, and why does that matter for performance?", a: "A Smi (small integer, 31-bit on 64-bit V8) is encoded directly inside the tagged value with a zero low tag bit; it is not a pointer and cannot reference a heap object. Storing a Smi into a field therefore creates no inter-object reference, so neither the generational nor the marking job has anything to track and V8 emits no barrier. Storing an object reference (or a boxed HeapNumber pointer) does create such a reference and pays the barrier check. In allocation- and mutation-heavy hot paths, choosing Smi-encoded or typed-array data over object-pointer churn avoids both the allocation and the per-store barrier cost." },
+    { q: "Where does write-barrier overhead actually become measurable, and why insert barriers on writes rather than reads?", a: "Individually a barrier is a few cycles (check a marking flag / page metadata, branch, and in the slow path push to a worklist or store buffer), invisible in ordinary code. It becomes measurable in tight loops that build large object graphs, repeatedly repoint fields, or push millions of object references into long-lived containers — mutation-heavy hot paths. Barriers go on writes, not reads, because writes are rarer and are the only operations that change reachability or violate the tri-color invariant; a read cannot create a new graph edge. Read-barrier collectors (ZGC, Shenandoah) pay more precisely because reads dominate." },
+  ]}
+/>
+
+<Recap lang="en">
+A write barrier is code V8 emits around nearly every pointer store into a heap object, and it pays off two correctness debts from the previous lessons. Generationally, because a minor GC scans only young space, old→young pointers would be invisible to it; the barrier records each such store's slot into a remembered set (backed by a store buffer), and the Scavenger uses those slots as extra roots to find young survivors without scanning old space. For marking, because concurrent/incremental marking lets JS mutate the graph mid-trace, a store could make a black object reference a white one and break the tri-color invariant; V8's Dijkstra-style insertion barrier greys the white target onto the worklist so the marker still visits it and never collects a live object. The two jobs share one trigger — a pointer store — so V8 fuses them. Storing a Smi or other immediate creates no inter-object pointer, so it skips the barrier, which is why barrier overhead concentrates in allocation- and mutation-heavy hot paths and is a real, if small, hidden cost of object-pointer churn. The next lesson turns the same reachability machinery into the diagnosis of leaks.
+</Recap>
