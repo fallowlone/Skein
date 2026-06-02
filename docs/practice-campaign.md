@@ -176,3 +176,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ distributed/{01-cap-practice,03-quorum,04-leader-election,05-clocks,06-sagas,07-retry-amplification,08-putting-it-together} (7 overview lessons)
 - ✅ distributed/02-raft-outline (6) — raft-roles-and-terms, log-replication-and-commit, leader-election-in-depth, failure-modes-and-recovery, advanced-extensions, raft-production-ops  [distributed track COMPLETE + enforced]
 - ✅ frontend overview units (7) — 01-state-shape, 03-forms-a11y, 04-tokens, 05-monorepo, 06-code-splitting, 07-build-pipelines, 08-putting-it-together [deep unit 02-data-fetching pending]
+- ✅ frontend/02-data-fetching (6) — 01-fetch-location, 02-waterfalls-and-parallelism, 03-rsc-and-streaming, 04-client-cache-swr, 05-lcp-and-critical-path, 06-senior-internals  [frontend track COMPLETE + enforced]
