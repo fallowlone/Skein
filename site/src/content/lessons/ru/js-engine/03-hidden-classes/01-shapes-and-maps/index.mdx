@@ -4,10 +4,208 @@ lang: ru
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 1
-title: "Shapes and maps"
-summary: "Shapes and maps — stub; author to ready."
-estMin: 12
-status: stub
+title: "Что такое Map на самом деле: вскрываем hidden class"
+summary: "Map в V8 — это HeapObject фиксированного размера, описывающий одну раскладку объекта: instance size, DescriptorArray (имя → field index, representation, constness, attributes), elements kind, back-pointer и transitions."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - Map
+  - hidden class
+  - DescriptorArray
+  - field representation
+  - instance size
+  - in-object slots
+  - back-pointer
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "02-values-and-memory/05-string-internals"
+  - "browser/03-v8-internals/03-hidden-classes"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/fast-properties
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/v8/v8/blob/main/src/objects/map.h
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+В `browser/03-v8-internals` вы узнали, что два объекта с одинаковым порядком добавления свойств «разделяют hidden class» и что именно это делает чтение свойств быстрым. Хорошо — но что это *за штука*? Это не тег и не флаг. Это настоящий, выделенный в памяти C++-объект, лежащий в куче, с точной раскладкой, которую можно осмотреть в `d8`. Этот урок вскрывает коробку и называет каждое поле внутри `Map`.
+</Hook>
+
+<Crux>Map в V8 — общий HeapObject для одной раскладки: DescriptorArray полей плюс size, kind, transitions. Объекты держат лишь значения.</Crux>
+
+<Explanation>
+
+## Объект почти пуст; знание держит Map
+
+Вы видели обзор в `browser/03-v8-internals/03-hidden-classes`: объекты, разделяющие hidden class, разделяют быстрый путь inline cache. Здесь мы вскрываем эту коробку. Главный структурный факт V8 такой: **объект JavaScript почти не несёт собственных метаданных.** Тело обычного объекта в памяти — это маленький непрерывный блок:
+
+```
+[ map pointer ][ properties pointer ][ elements pointer ][ in-object slot 0 ][ slot 1 ] ...
+```
+
+Первое слово — это указатель на **Map** (имя hidden class в V8; `Shape` в SpiderMonkey, `Structure` в JavaScriptCore). Всё, что сообщает V8, *что это за объект* — какие имена свойств есть, где каждое лежит, какой тип хранит, — находится **не** в объекте. Оно в Map. Объект хранит лишь *значения*, упакованные в анонимные слоты по фиксированным байтовым смещениям. Имена и смещения живут на одну индирекцию дальше, в общем Map.
+
+В этом весь фокус. Поскольку знание о раскладке вынесено в Map, чтение свойства `p.x` может скомпилироваться так: загрузить указатель на map, сравнить его с тем map, который ожидает inline cache, и при совпадении прочитать слот по жёстко зашитому смещению. Никакого сравнения имён, никакого поиска по хешу — имя `x` было разрешено в смещение один раз, на уровне Map, и переиспользуется для каждого объекта, разделяющего этот Map.
+
+<StackDiagram
+  label="Поля внутри объекта Map в V8: от дескриптора раскладки свойств сверху вниз до указателя transitions, связывающего его в дерево форм."
+  hue="var(--accent)"
+  caption="Map — это HeapObject фиксированного размера. Его DescriptorArray и transitions — отдельные объекты кучи, на которые он указывает; всё остальное — встроенные поля самого Map."
+  layers={[
+    { label: "instance size", note: "байт на экземпляр, включая in-object-слоты" },
+    { label: "instance type + bit-поля", note: "объект/функция/массив; callable, extensible, deprecated" },
+    { label: "число own descriptors", note: "сколько именованных свойств объявляет раскладка" },
+    { label: "указатель DescriptorArray", note: "имя в field index, representation, constness, attributes" },
+    { label: "elements kind", note: "PACKED_SMI / DOUBLE / HOLEY ... для индексных элементов" },
+    { label: "указатель prototype", note: "прототип объекта" },
+    { label: "back-pointer", note: "на родительский Map, из которого перешли" },
+    { label: "указатель transitions", note: "на TransitionArray дочерних Map (следующее свойство)" },
+  ]}
+/>
+
+## Внутри DescriptorArray
+
+Сердце Map — это **DescriptorArray**, таблица, превращающая имя свойства во всё, что V8 нужно для чтения или записи. Одна запись на каждое *именованное* (со строковым ключом) собственное свойство, в порядке объявления. Каждый дескриптор хранит:
+
+- **Ключ** — (обычно интернированное) имя свойства, например `"x"`. Интернированные имена сравниваются по указателю, так что поиск дескриптора — это скан указателей, а не сравнение строк.
+- **Field index** — *какой* слот держит значение и является ли он **in-object** (встроенным в тело объекта) или **out-of-object** (в отдельном PropertyArray). Это мы полностью раскрываем в уроке 03.
+- **Representation** — какого *рода* значение поле статически известно держать: `Smi` (малое целое, без бокса), `Double` (распакованный 64-битный float в слоте «mutable HeapNumber»), `HeapObject` (указатель на любой объект кучи) или `Tagged` (что угодно — самое общее). Более узкие representations позволяют TurboFan пропустить бокс и проверки типа.
+- **Constness** — `const`, если полю за всё время присваивалось ровно одно значение по всем экземплярам этого Map (тогда компилятор может заинлайнить значение), или `mutable`, как только появляется второе значение.
+- **Attributes** — биты `writable` / `enumerable` / `configurable` свойства, плюс является ли это обычным data-полем, `const`-слотом данных, свёрнутым в дескриптор, или парой accessor (getter/setter).
+
+```js
+// Логическое содержимое DescriptorArray для объекта { x: 1, y: 2.5 }:
+// index 0:  key="x"  field#=0  rep=Smi      const=true  attrs=W,E,C  storage=in-object
+// index 1:  key="y"  field#=1  rep=Double   const=true  attrs=W,E,C  storage=in-object
+```
+
+Важно: два разных Map могут *разделять один DescriptorArray* — родительский Map и дочерний, добавивший лишь одно свойство в конце, могут указывать на тот же backing-массив дескрипторов, причём дочерний объявляет, что владеет на один дескриптор больше родителя. Поэтому строить дерево родственных форм дёшево: большая часть данных дескрипторов переиспользуется, а не копируется.
+
+## Back-pointer и transitions: Map знает соседей
+
+Map — это узел дерева, и он хранит рёбра:
+
+- **Back-pointer** указывает на Map, из которого этот был выведен — раскладку *до* добавления последнего свойства. V8 идёт по back-pointer'ам, чтобы найти общего предка при согласовании форм и (как увидим в уроке 02) при миграции устаревших раскладок.
+- Указатель **transitions** ведёт вперёд, в `TransitionArray` с ключом `{имя свойства, attributes}`, к дочерним Map, достигаемым добавлением следующего свойства. Добавление `"y"` к Map-для-`{x}` следует (или создаёт) ребро перехода `"y"` к Map-для-`{x,y}`.
+
+Так что Map одновременно и *описание* текущей раскладки, и *маршрутизатор* к соседним. Эта двойная роль делает переходы форм амортизированно O(1) и делает весь граф форм разделяемым в пределах изолята.
+
+<NumbersCard
+  title="Что где лежит (V8, 64 бита)"
+  data-lesson-visual
+  stats={[
+    { label: "Заголовок объекта до in-object-слотов", value: "map + properties + elements = 3 слова" },
+    { label: "Размер Map (фиксированный)", value: "~10 полей размером с указатель" },
+    { label: "Map на раскладку (общий)", value: "1 — все подходящие объекты разделяют его" },
+    { label: "Representations поля", value: "Smi, Double, HeapObject, Tagged" },
+    { label: "Чтение свойства при совпадении map", value: "загрузка map, сравнение, чтение по смещению (~2-3 инстр.)" },
+    { label: "Осмотр Map в d8", value: "%DebugPrint(obj) при --allow-natives-syntax" },
+  ]}
+/>
+
+Всё это видно напрямую. В `d8 --allow-natives-syntax` команда `%DebugPrint(obj)` печатает адрес Map объекта, его DescriptorArray с representation и field index каждого свойства, elements kind и прототип. Два объекта, которые «разделяют hidden class», печатают *один и тот же* адрес Map; два разошедшихся печатают разные.
+
+<Misconception id="mc-map-per-object">
+  <p><strong>«У каждого объекта свой hidden class, описывающий его».</strong> Нет — Map <em>общий</em>. Тысячи объектов с одинаковой раскладкой и историей создания указывают на один Map. Новый объект переиспользует листовой Map, на котором кончается путь создания; новый Map появляется лишь при первой <em>новой</em> раскладке.</p>
+</Misconception>
+
+<FlowDiagram
+  label="Объект JavaScript указывает на общий Map; Map указывает на DescriptorArray, который разрешает каждое имя свойства в field index, representation и attributes; тело объекта держит только значения."
+  hue="var(--accent)"
+  perRow={3}
+  caption="Индирекция, которая окупается: знание раскладки (имена, смещения, типы) живёт один раз в Map и DescriptorArray; каждый объект хранит лишь анонимные слоты значений. Одно сравнение указателя map авторизует целую пачку чтений по фиксированным смещениям."
+  nodes={[
+    { id: "obj", label: "объект", sub: "map + слоты", col: 0, row: 0 },
+    { id: "map", label: "Map", sub: "size, kind, ptrs", col: 1, row: 0 },
+    { id: "desc", label: "DescriptorArray", sub: "имя в field", col: 2, row: 0 },
+    { id: "vals", label: "слоты значений", sub: "анонимные", col: 0, row: 1 },
+    { id: "rep", label: "representation", sub: "Smi/Double/Tagged", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "obj", to: "map", label: "map ptr" },
+    { from: "map", to: "desc", label: "descriptors" },
+    { from: "obj", to: "vals", label: "держит" },
+    { from: "desc", to: "rep", label: "на поле" },
+  ]}
+/>
+
+<Quiz
+  id="q-what-is-in-the-object"
+  lessonSlug="01-shapes-and-maps"
+  lang="ru"
+  question="Для обычного объекта `{x:1, y:2}` где физически живёт информация «свойство x лежит по field index 0»?"
+  choices={[
+    { label: "В собственном заголовке объекта, рядом со значениями", misconception: "Объект хранит лишь указатель на map плюс анонимные слоты значений. Отображения имя-в-смещение в объекте нет — в этом весь смысл вынесения его в Map." },
+    { label: "В DescriptorArray, на который указывает Map объекта", correct: true },
+    { label: "В глобальной хеш-таблице по имени свойства", misconception: "Объекты в dictionary mode используют пер-объектную хеш-таблицу, но быстрые объекты разрешают имена в смещения через DescriptorArray своего общего Map, а не через глобальную таблицу." },
+    { label: "Это пересчитывается повторным парсингом исходника при каждом доступе", misconception: "Ничего не парсится заново при доступе; имя было разрешено в field index один раз при создании Map и переиспользуется для каждого объекта, разделяющего его." },
+  ]}
+/>
+
+<Quiz
+  id="q-shared-map"
+  lessonSlug="01-shapes-and-maps"
+  lang="ru"
+  question="Вы аллоцируете 100000 объектов через `new Point(x, y)`, все с одинаковыми двумя полями в одинаковом порядке. Сколько объектов Map существует для них?"
+  choices={[
+    { label: "100000 — один Map на объект", misconception: "Map разделяются по раскладке, а не на экземпляр. Пер-объектные Map свели бы на нет весь смысл inline cache, который ключуется по одному указателю map." },
+    { label: "Один листовой Map — все экземпляры указывают на один финальный Map этой раскладки", correct: true },
+    { label: "Два — один для пустого объекта и один для финальной раскладки", misconception: "По пути переходов есть промежуточные Map (пустой к плюс-x к плюс-x-y), но все 100000 экземпляров разделяют один финальный листовой Map; промежуточные существуют один раз, а не на объект." },
+    { label: "Зависит от значений x и y", misconception: "Map кодирует раскладку и representation, а не конкретные значения. Одна раскладка (например, оба поля Smi) даёт один общий Map независимо от конкретных целых." },
+  ]}
+/>
+
+<DragOrder
+  id="do-read-path"
+  pieceSlug="01-shapes-and-maps"
+  lang="ru"
+  prompt="Расставьте по порядку шаги, которыми V8 читает `p.x` у объекта, чей Map совпадает с ожиданием inline cache."
+  items={[
+    "Загрузить указатель на map из заголовка объекта",
+    "Сравнить его с Map, который inline cache записал для этой точки",
+    "При совпадении взять закэшированный field index, разрешённый ранее из DescriptorArray",
+    "Прочитать значение прямо из этого фиксированного слота — без сравнения имени, без поиска по хешу",
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем вообще выносить раскладку из объекта? Потому что большинство объектов данного типа структурно идентичны — миллионы узлов DOM, узлов AST или fiber'ов React разделяют горстку форм. Хранить таблицу имя-в-смещение каждого из них встроенно значило бы умножить память на число полей и сделать каждое чтение поиском. Разделение одного Map на раскладку превращает «опиши этот объект» из пер-объектных данных в один кэшируемый указатель — именно его и сравнивает inline cache.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Map — это настоящий, общий HeapObject, описывающий одну раскладку: instance size, DescriptorArray (имя → field index, representation, constness, attributes), elements kind, прототип, back-pointer на родителя и forward-transitions. Сам объект держит лишь `[map ptr][слоты значений]`. Это разделение и есть причина, почему чтение свойства — это «сверь указатель map, прочитай по фиксированному смещению».</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="shapes-and-maps-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Перечислите поля, хранимые в Map V8, и скажите, какие встроенные, а какие — указатели на другие объекты кучи.", a: "Встроенные поля Map: instance size (байт на экземпляр, включая in-object-слоты), instance type и bit-поля (объект/функция/массив; callable, extensible, deprecated), число own descriptors и elements kind. Поля-указатели на другие объекты кучи: DescriptorArray (имя в field index, representation, constness, attributes), прототип, back-pointer на родительский Map, из которого перешли, и указатель transitions на TransitionArray дочерних Map. Сам экземпляр объекта не хранит ничего из этого — только [map ptr][properties ptr][elements ptr][in-object-слоты значений]." },
+    { q: "Что лежит в одной записи DescriptorArray и почему это делает чтения быстрыми?", a: "Каждая запись держит: (интернированное) имя свойства, field index плюс флаг in-object или out-of-object, representation (Smi / Double / HeapObject / Tagged), constness (const, если присвоено лишь одно значение, иначе mutable) и attributes (writable/enumerable/configurable, data против accessor). Поскольку имя было разрешено в фиксированный field index один раз на уровне Map, каждый объект, разделяющий этот Map, читает свойство по жёстко зашитому смещению: загрузить указатель map, сравнить с ожидаемым Map, прочитать слот — без сравнения имени и без хеширования на каждый доступ." },
+    { q: "Почему аллокация миллиона объектов одной формы не аллоцирует миллион Map, и как это подтвердить?", a: "Map ключуются по раскладке и истории создания, а не по экземпляру. Каждый объект, чьё создание идёт по тому же пути переходов, заканчивается на том же листовом Map и хранит указатель на него; аллоцируются лишь промежуточные и листовой Map этого пути, по одному разу, и разделяются. Подтвердить в d8 --allow-natives-syntax: %DebugPrint(a) и %DebugPrint(b) на двух одинаковых по форме объектах печатают один адрес Map, а разошедшийся объект печатает другой." },
+  ]}
+/>
+
+<Recap lang="ru">
+Map в V8 (hidden class; Shape в SpiderMonkey, Structure в JavaScriptCore) — это настоящий HeapObject фиксированного размера, полностью описывающий одну раскладку объекта и разделяемый всеми объектами с такой же раскладкой и историей. Его встроенные поля — instance size, instance type и bit-поля, число own descriptors и elements kind; он указывает на DescriptorArray, прототип, back-pointer на родительский Map и TransitionArray детей. DescriptorArray отображает каждое имя свойства в field index, representation (Smi/Double/HeapObject/Tagged), флаг constness и attributes. Сам экземпляр объекта почти пуст — лишь указатель map плюс анонимные слоты значений по фиксированным смещениям. Это разделение и есть движок быстрых чтений: разреши имя в смещение один раз в Map, затем читай `p.x` как «загрузить указатель map, сравнить с Map из inline cache, прочитать слот». Следующие уроки идут по этой структуре вперёд (transitions, deprecation и migration) и вниз (как на самом деле устроены хранение и доступ к полям).
+</Recap>

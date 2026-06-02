@@ -4,10 +4,181 @@ lang: ru
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 5
-title: "Mono-, poly- and megamorphism"
-summary: "Mono-, poly- and megamorphism — stub; author to ready."
-estMin: 12
-status: stub
+title: "Monomorphic, polymorphic, megamorphic — и stub cache"
+summary: "Машина состояний IC: uninitialized → premonomorphic → monomorphic (1 map) → polymorphic (2-4 map, сканируемый список) → megamorphic (≥5 map, обращение к глобальному megamorphic stub cache, хеш-зонд намного медленнее и враждебный к JIT)."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - IC state machine
+  - monomorphic
+  - polymorphic
+  - megamorphic
+  - megamorphic stub cache
+  - validity cell
+  - shape stability
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "04-inline-caches"
 sources:
-  - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/blog/feedback-vectors
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Обзор в `browser/03-v8-internals/04-inline-caches` дал вам версию из четырёх слов: mono → poly → mega, и «megamorphic медленный». Но когда IC становится megamorphic, куда на самом деле уходит поиск? Он не просто пожимает плечами и делает поиск по имени каждый раз — у V8 есть глобальная, общая на весь процесс хеш-таблица, megamorphic stub cache, которую разделяет каждая megamorphic-точка на планете. Этот урок проходит полную машину состояний и вскрывает тот общий кэш плюс validity cell, которые охраняют prototype-chain IC.
+</Hook>
+
+<Crux>IC поднимается от mono к poly (2-4 map) к megamorphic (5+: сдаётся и зондирует глобальный stub cache — медленнее и враждебно к JIT).</Crux>
+
+<Explanation>
+
+## Полная машина состояний, а не три слова
+
+Слот load IC проходит больше состояний, чем намекал обзор. Полная лестница, односторонняя к megamorphic:
+
+- **uninitialized** — слот никогда не выполнялся.
+- **premonomorphic** — состояние V8 «видел раз, жду подтверждения». Самое первое выполнение часто записывает map здесь, ещё не выпуская специализированный handler, так что одноразовый путь не платит за IC, который никогда не переиспользует. Второе попадание с тем же map повышает до monomorphic.
+- **monomorphic** — ровно **один** map. Слот — это `{map, handler}` (урок 04). При попадании: загрузить map, сравнить, применить handler — пара инструкций. Это целевое состояние.
+- **polymorphic** — **от 2 до 4** map. Слот становится маленьким списком пар `{map, handler}`. Load сканирует список (несколько сравнений) и применяет совпавший handler. Всё ещё быстро, но цепочка ветвлений растёт с каждой формой.
+- **megamorphic** — **5 или более** map. V8 полностью прекращает отслеживать map в этой точке. Слот помечается megamorphic, и поиски проваливаются в **megamorphic stub cache**.
+
+## Megamorphic stub cache: хеш-таблица на весь процесс
+
+Это часть, о которой обзор никогда не упоминает. Когда точка megamorphic, V8 не делает свежий поиск свойства на каждый доступ. Вместо этого он обращается к единственной, **глобальной** (пер-изолят) хеш-таблице — **megamorphic stub cache** — с ключом `(map, имя свойства)`, хранящей handler. Доступ становится:
+
+1. Вычислить хеш из map объекта и имени свойства.
+2. Зондировать stub cache (это маленькая, фиксированного размера таблица с открытой адресацией — первичная и вторичная таблицы).
+3. При попадании использовать закэшированный handler. При промахе сделать полный рантайм-поиск и вставить результат.
+
+Так что megamorphic-точка — это **хеш-зонд плюс вероятное применение handler** — намного медленнее, чем monomorphic-сравнение-и-load (десятки-низкие сотни циклов против ~1), и поскольку таблица общая и фиксированного размера, *разные* megamorphic-точки вытесняют записи друг друга. Стоимость не только в зонде; она в том, что точку больше нельзя специализировать.
+
+## Почему megamorphic враждебен к JIT, а не просто медленнее
+
+Более глубокая стоимость — что это делает с TurboFan. Monomorphic- или низко-polymorphic-точка даёт оптимизатору маленький, известный набор форм, так что он может заинлайнить load поля (или весь метод) и защититься дешёвой проверкой map. Megamorphic-точка не даёт TurboFan *никакой* пригодной информации о форме — feedback — это «что угодно» — так что TurboFan должен выпустить общий вызов к машинерии stub cache и не может заинлайнить доступ или что-либо достижимое через него. Один megamorphic-доступ к свойству в горячем заинлайненном методе поэтому может заблокировать целую цепочку оптимизаций, стоя намного больше, чем один лишь хеш-зонд на доступ.
+
+<FlowDiagram
+  label="Машина состояний inline cache: от uninitialized через premonomorphic к monomorphic на одном map, polymorphic на двух-четырёх map и megamorphic на пяти и более, где точка обращается к глобальному megamorphic stub cache."
+  hue="var(--accent)"
+  perRow={5}
+  caption="Односторонняя лестница. Premonomorphic избегает платы за одноразовые точки; monomorphic — цель (~1 цикл); polymorphic сканирует список из 2-4 записей; megamorphic отказывается от пер-точечного отслеживания и зондирует общий stub cache — намного медленнее и неспециализируемо TurboFan'ом."
+  nodes={[
+    { id: "uninit", label: "uninitialized", sub: "0 map", col: 0, row: 0 },
+    { id: "premono", label: "premonomorphic", sub: "видел раз", col: 1, row: 0 },
+    { id: "mono", label: "monomorphic", sub: "1 map", col: 2, row: 0 },
+    { id: "poly", label: "polymorphic", sub: "2-4 map", col: 3, row: 0 },
+    { id: "mega", label: "megamorphic", sub: "5+ -> stub cache", col: 4, row: 0 },
+  ]}
+  edges={[
+    { from: "uninit", to: "premono", label: "1-й" },
+    { from: "premono", to: "mono", label: "тот же map" },
+    { from: "mono", to: "poly", label: "2-й map" },
+    { from: "poly", to: "mega", label: "5-й map" },
+  ]}
+/>
+
+## Prototype-chain IC и validity cell
+
+Многие реальные load'ы находят свойство не на самом объекте, а на его прототипе (методы живут на `Class.prototype`). Prototype-chain IC кэширует «свойство на N уровней вверх по цепочке, по этому смещению» — но это безопасно лишь пока цепочка прототипов не изменилась. V8 охраняет это **validity cell**: маленькой ячейкой кучи, разделяемой map'ами, зависящими от данного прототипа, которая «валидна», пока кто-то не мутирует тот прототип (добавит/удалит свойство на нём или переприсвоит его). Быстрый путь prototype IC: проверь map, проверь, что validity cell всё ещё валидна, затем грузи.
+
+Зубы: **мутация прототипа после того, как объекты существуют, инвалидирует validity cell**, что деоптимизирует каждый IC и каждую скомпилированную TurboFan'ом функцию, опиравшуюся на неё. Поэтому monkey-patching `Array.prototype` или присваивание `SomeClass.prototype.method` во время работы (после того как горячие пути разогрелись) может вызвать внезапное, ощущаемое как глобальное замедление — вы задели validity cell, которой доверяли тысячи точек.
+
+<NumbersCard
+  title="Состояния IC и stub cache (V8)"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic load", value: "~1 цикл (сравнение + load)" },
+    { label: "Polymorphic", value: "2-4 map, скан короткого списка" },
+    { label: "Порог megamorphic", value: "5 различных map в точке" },
+    { label: "Поиск megamorphic", value: "хеш-зонд глобального stub cache (десятки-сотни циклов)" },
+    { label: "Область stub cache", value: "пер-изолят, фиксированный размер, общий для всех mega-точек" },
+    { label: "Страж prototype IC", value: "validity cell (инвалидируется при мутации proto)" },
+    { label: "Осмотр", value: "--trace-ic печатает MONO/POLY/MEGA на точку" },
+  ]}
+/>
+
+<Misconception id="mc-mega-recovers">
+  <p><strong>«Megamorphic-точка восстанавливается, как только лишние формы перестают приходить».</strong> Нет — состояние IC одностороннее. Увидев 5+ map, точка остаётся megamorphic на всю жизнь этого FeedbackVector. Восстановление требует свежего feedback: переоптимизации с вектором на один map. Чините выше.</p>
+</Misconception>
+
+<Quiz
+  id="q-mega-lookup"
+  lessonSlug="05-mono-poly-mega"
+  lang="ru"
+  question="Точка доступа к свойству стала megamorphic. Что теперь делает доступ механически?"
+  choices={[
+    { label: "Линейный скан всех 5+ закэшированных map в слоте", misconception: "V8 прекращает хранить пер-точечные map на megamorphic — списка для скана нет. Он проваливается в совсем другой механизм." },
+    { label: "Хеширует (map, имя) и зондирует глобальный, пер-изолятный megamorphic stub cache на handler", correct: true },
+    { label: "Перепарсивает имя свойства из исходника каждый раз", misconception: "Ничего не перепарсивается. Медленный путь — хеш-зонд общего stub cache, с рантайм-поиском лишь при промахе stub cache." },
+    { label: "Немедленно деоптимизирует всю функцию", misconception: "Переход в megamorphic сам по себе не деоптит функцию; он делает ту одну точку медленной и неспециализируемой. Деопт — отдельное событие (провалившийся guard)." },
+  ]}
+/>
+
+<Quiz
+  id="q-validity-cell"
+  lessonSlug="05-mono-poly-mega"
+  lang="ru"
+  question="Приложение разогревается, затем библиотека делает `Array.prototype.last = function(){...}` во время работы. Горячий код по массивам внезапно замедляется повсеместно. Почему?"
+  choices={[
+    { label: "Новый метод затеняет встроенный, вынуждая перепарсинг", misconception: "Он не затеняет встроенный, и ничего не перепарсивается. Замедление — про инвалидированные стражи prototype-IC, а не про парсинг." },
+    { label: "Мутация Array.prototype инвалидирует validity cell, на которую опирались prototype-chain IC (и код TurboFan), деоптимизируя их все", correct: true },
+    { label: "Добавление метода аллоцирует столько памяти, что запускает постоянный GC", misconception: "Одно присваивание метода — ничтожная аллокация. Глобальное замедление — от инвалидации validity cell, а не от давления GC." },
+    { label: "Все массивы переходят в dictionary mode", misconception: "Добавление свойства к прототипу не толкает экземпляры в dictionary mode; оно инвалидирует validity cell прототипа, деоптимизируя зависимые IC и скомпилированный код." },
+  ]}
+/>
+
+<DragOrder
+  id="do-ic-states"
+  pieceSlug="05-mono-poly-mega"
+  lang="ru"
+  prompt="Расставьте по порядку состояния IC, через которые проходит точка load, наблюдая 1, затем 2, затем 5 различных map."
+  items={[
+    "uninitialized — никогда не выполнялась",
+    "premonomorphic — первый map увиден, ждёт подтверждения переиспользования",
+    "monomorphic — один map, {map, handler}",
+    "polymorphic — от 2 до 4 map, сканируемый список пар",
+    "megamorphic — 5+ map, проваливается в глобальный stub cache",
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем глобальный stub cache вообще помогает, вместо того чтобы просто делать рантайм-поиск в каждой megamorphic-точке? Потому что, хотя одна точка видит много форм, *комбинаций* (map, имя), которые трогает вся программа, гораздо меньше, чем число доступов. Кэшировать их в одной общей таблице значит, что во второй раз, когда любая megamorphic-точка грузит свойство `x` у map `M`, она получает handler из кэша, а не выводит его заново. Это структура контроля ущерба: она не может восстановить инлайнинг или monomorphic-скорость, но удерживает megamorphic-точку от полного поиска каждый раз.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Лестница IC — это uninitialized → premonomorphic → monomorphic (1 map, ~1 цикл) → polymorphic (2-4 map, сканируются) → megamorphic (5+ map), и она односторонняя. Megamorphic отказывается от пер-точечного отслеживания и зондирует глобальный фиксированного размера megamorphic stub cache — медленнее на доступ и, хуже, неспециализируемо TurboFan'ом. Prototype IC охраняются validity cell, которые мутация прототипа инвалидирует массово. Оставайтесь monomorphic стабильными формами и консистентным созданием.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="mono-poly-mega-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройдите полную машину состояний IC, включая состояние, опущенное обзором, и число map для каждого.", a: "uninitialized (0 map, не выполнялась) → premonomorphic (первый map увиден, V8 ждёт подтверждения, что map будет переиспользован, прежде чем выпускать специализированный handler, так что одноразовые точки не платят за IC) → monomorphic (ровно 1 map; слот — {map, handler}; ~1 цикл при попадании) → polymorphic (от 2 до 4 map; слот — короткий сканируемый список пар {map, handler}) → megamorphic (5 или более map; V8 прекращает пер-точечное отслеживание map и обращается к глобальному megamorphic stub cache). Переходы строго односторонние к megamorphic; точка никогда не поднимается обратно в пределах того же FeedbackVector." },
+    { q: "Что такое megamorphic stub cache и почему переход в megamorphic хуже, чем просто «несколько лишних сравнений»?", a: "Это единственная пер-изолятная фиксированного размера хеш-таблица с ключом (map, имя свойства), хранящая handlers, разделяемая каждой megamorphic-точкой в программе. Megamorphic-доступ хеширует (map, имя) и зондирует этот кэш (первичная/вторичная таблицы); при попадании использует закэшированный handler, при промахе делает полный рантайм-поиск и вставляет. Так что megamorphic-доступ — это хеш-зонд (десятки-низкие сотни циклов против ~1 monomorphic), и поскольку таблица общая и фиксированного размера, несвязанные megamorphic-точки вытесняют друг друга. Большая стоимость в том, что megamorphic-feedback — это «что угодно», так что TurboFan не может заинлайнить доступ или специализироваться на форме — один megamorphic-load в горячем заинлайненном методе блокирует целую цепочку оптимизаций." },
+    { q: "Что такое validity cell и как мутация прототипа вызывает широкое замедление?", a: "Prototype-chain IC кэширует, что свойство живёт на N уровней вверх по цепочке по данному смещению, и охраняет это предположение validity cell — маленькой ячейкой кучи, разделяемой map'ами, зависящими от данного прототипа, валидной, пока тот прототип не мутирован. Быстрый путь IC проверяет map, проверяет, что validity cell всё ещё валидна, затем грузит. Мутация прототипа после того, как объекты существуют (добавление/удаление свойства на нём, monkey-patching Array.prototype, переприсваивание Class.prototype.method во время работы), инвалидирует validity cell, что одновременно деоптимизирует каждый prototype IC и каждую скомпилированную TurboFan'ом функцию, доверявшую ей — давая внезапное, ощущаемое как общеприложенческое замедление, которое прослеживается до одной записи в прототип." },
+  ]}
+/>
+
+<Recap lang="ru">
+Inline cache поднимается по односторонней лестнице: uninitialized → premonomorphic (состояние, пропущенное обзором, где V8 записывает первый map, но ждёт подтверждения переиспользования перед специализацией) → monomorphic (ровно один map, слот `{map, handler}`, читаемый за ~1 цикл) → polymorphic (от 2 до 4 map, короткий сканируемый список пар) → megamorphic (5 или более map). На megamorphic V8 отказывается от пер-точечного отслеживания map и маршрутизирует поиски через megamorphic stub cache: единственную пер-изолятную фиксированного размера хеш-таблицу с ключом (map, имя), разделяемую всеми megamorphic-точками, так что доступы становятся хеш-зондами, а несвязанные точки вытесняют друг друга. Более глубокая кара в том, что megamorphic-feedback не несёт формы, так что TurboFan не может заинлайнить или специализировать доступ — один такой load может заблокировать цепочку оптимизаций. Prototype-chain IC охраняются validity cell; мутация прототипа после разогрева инвалидирует общую ячейку и деоптимизирует каждый зависимый IC и скомпилированную функцию разом. Поскольку состояния односторонние, нельзя «раз-megamorphic'ить» живую точку — её чинят выше по потоку, держа формы стабильными и создание консистентным, чтобы каждая горячая точка видела один map. Это напрямую питает потребление type-feedback TurboFan'ом в юните 04.
+</Recap>

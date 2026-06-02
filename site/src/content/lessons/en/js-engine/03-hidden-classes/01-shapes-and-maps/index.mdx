@@ -4,10 +4,208 @@ lang: en
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 1
-title: "Shapes and maps"
-summary: "Shapes and maps — stub; author to ready."
-estMin: 12
-status: stub
+title: "What a Map really is: opening the hidden class"
+summary: "A V8 Map is a fixed-size HeapObject describing one object layout: instance size, a DescriptorArray (name → field index, representation, constness, attributes), elements kind, a back-pointer, and transitions. Objects with identical layout+history share it"
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - Map
+  - hidden class
+  - DescriptorArray
+  - field representation
+  - instance size
+  - in-object slots
+  - back-pointer
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "02-values-and-memory/05-string-internals"
+  - "browser/03-v8-internals/03-hidden-classes"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/fast-properties
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://github.com/v8/v8/blob/main/src/objects/map.h
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+In `browser/03-v8-internals` you learned that two objects with the same property-addition order "share a hidden class," and that this is what makes property reads fast. Fine — but what *is* that thing? It is not a tag or a flag. It is a real, allocated C++ object sitting on the heap, with a precise layout you can inspect in `d8`. This lesson opens the box and names every field inside a `Map`.
+</Hook>
+
+<Crux>A V8 Map is a shared HeapObject for one layout — a DescriptorArray of fields plus size, kind, transitions. Objects hold only values.</Crux>
+
+<Explanation>
+
+## The object is almost empty; the Map holds the knowledge
+
+You saw the overview in `browser/03-v8-internals/03-hidden-classes`: objects sharing a hidden class share the fast inline-cache path. Here we open that box. The single most important structural fact in V8 is this: **a JavaScript object carries almost no metadata of its own.** A plain object's body in memory is just a small contiguous block:
+
+```
+[ map pointer ][ properties pointer ][ elements pointer ][ in-object slot 0 ][ slot 1 ] ...
+```
+
+The first word is a pointer to a **Map** (V8's name for the hidden class; `Shape` in SpiderMonkey, `Structure` in JavaScriptCore). Everything that tells V8 *what this object is* — which property names exist, where each one lives, what type each holds — is **not** in the object. It is in the Map. The object only stores the *values*, packed into anonymous slots at fixed byte offsets. The names and offsets live one indirection away, in the shared Map.
+
+That is the whole trick. Because the layout knowledge is factored out into the Map, a property read `p.x` can compile to: load the map pointer, compare it to the map the inline cache expects, and on a match load the slot at a hard-coded offset. No name comparison, no hash lookup — the name `x` was resolved to an offset once, at the Map level, and reused for every object that shares that Map.
+
+<StackDiagram
+  label="The fields inside a V8 Map object, from the descriptor of property layout at the top down to the transition pointer that links it into the shape tree."
+  hue="var(--accent)"
+  caption="A Map is a fixed-size HeapObject. Its DescriptorArray and transitions are separate heap objects it points at; everything else is inline fields of the Map itself."
+  layers={[
+    { label: "instance size", note: "bytes to allocate per instance, incl. in-object slots" },
+    { label: "instance type + bit-fields", note: "object/function/array; callable, extensible, deprecated" },
+    { label: "number of own descriptors", note: "how many named properties this layout declares" },
+    { label: "DescriptorArray pointer", note: "name to field index, representation, constness, attributes" },
+    { label: "elements kind", note: "PACKED_SMI / DOUBLE / HOLEY ... for indexed elements" },
+    { label: "prototype pointer", note: "the object's prototype" },
+    { label: "back-pointer", note: "to the parent Map this one transitioned from" },
+    { label: "transitions pointer", note: "to a TransitionArray of child Maps (next property added)" },
+  ]}
+/>
+
+## Inside the DescriptorArray
+
+The heart of the Map is the **DescriptorArray** — the table that turns a property name into everything V8 needs to read or write it. One entry per *named* (string-keyed) own property, in declaration order. Each descriptor records:
+
+- **The key** — the (usually interned) property name, e.g. `"x"`. Interned names compare by pointer, so finding a descriptor is a pointer scan, not a string compare.
+- **The field index** — *which* slot holds the value, and whether that slot is **in-object** (inline in the object body) or **out-of-object** (in a separate PropertyArray). We open this fully in lesson 03.
+- **The representation** — what *kind* of value the field is statically known to hold: `Smi` (small integer, unboxed), `Double` (an unboxed 64-bit float stored in a "mutable HeapNumber" slot), `HeapObject` (a pointer to any heap object), or `Tagged` (anything — the most general). Narrower representations let TurboFan skip boxing and type checks.
+- **Constness** — `const` if the field has only ever been assigned one value across all instances of this Map (so the compiler may inline the value), or `mutable` once a second value appears.
+- **Attributes** — the property's `writable` / `enumerable` / `configurable` bits, plus whether it is a plain data field, a `const` data slot folded into the descriptor, or an accessor (getter/setter) pair.
+
+```js
+// Logical contents of the DescriptorArray for an object built as { x: 1, y: 2.5 }:
+// index 0:  key="x"  field#=0  rep=Smi      const=true  attrs=W,E,C  storage=in-object
+// index 1:  key="y"  field#=1  rep=Double   const=true  attrs=W,E,C  storage=in-object
+```
+
+Crucially, two different Maps can *share the same DescriptorArray* — a parent Map and a child Map that only added one property at the end can point at the same backing descriptor array, with the child declaring it owns one more descriptor than the parent. This is why building a tree of related shapes is cheap: most of the descriptor data is reused, not copied.
+
+## The back-pointer and transitions: a Map knows its neighbours
+
+A Map is a node in a tree, and it stores the edges:
+
+- The **back-pointer** points to the Map this one was derived from — the layout *before* the last property was added. V8 walks back-pointers to find a common ancestor when reconciling shapes, and (as we will see in lesson 02) to migrate deprecated layouts.
+- The **transitions** pointer points forward, into a `TransitionArray` keyed by `{property name, attributes}`, to the child Maps reached by adding the next property. Adding `"y"` to a Map-for-`{x}` follows (or creates) the `"y"` transition edge to the Map-for-`{x,y}`.
+
+So a Map is simultaneously a *description* of the current layout and a *router* to neighbouring layouts. That dual role is what makes shape transitions O(1) amortised and what makes the whole shape graph shareable across the isolate.
+
+<NumbersCard
+  title="What lives where (V8, 64-bit)"
+  data-lesson-visual
+  stats={[
+    { label: "Object header before in-object slots", value: "map + properties + elements = 3 words" },
+    { label: "Map size (fixed)", value: "~10 pointer-sized fields" },
+    { label: "Maps per layout (shared)", value: "1 — all matching objects share it" },
+    { label: "Field representations", value: "Smi, Double, HeapObject, Tagged" },
+    { label: "Property read on map hit", value: "load map, compare, load at offset (~2-3 instrs)" },
+    { label: "Inspect a Map in d8", value: "%DebugPrint(obj) at --allow-natives-syntax" },
+  ]}
+/>
+
+You can see all of this directly. In `d8 --allow-natives-syntax`, `%DebugPrint(obj)` prints the object's Map address, its DescriptorArray with each property's representation and field index, the elements kind, and the prototype. Two objects that "share a hidden class" print the *same* Map address; two that diverged print different ones.
+
+<Misconception id="mc-map-per-object">
+  <p><strong>"Every object has its own hidden class describing it."</strong> No — a Map is <em>shared</em>. Thousands of objects with the same layout and construction history point at one Map. A new object reuses the leaf Map its construction path ends on; a new Map appears only when a <em>new</em> layout is first seen.</p>
+</Misconception>
+
+<FlowDiagram
+  label="A JavaScript object points at a shared Map; the Map points at a DescriptorArray that resolves each property name to a field index, representation, and attributes; the object body holds only the values."
+  hue="var(--accent)"
+  perRow={3}
+  caption="The indirection that pays for itself: layout knowledge (names, offsets, types) lives once in the Map and DescriptorArray; each object stores only anonymous value slots. One map-pointer comparison authorises a whole batch of fixed-offset loads."
+  nodes={[
+    { id: "obj", label: "object", sub: "map + slots", col: 0, row: 0 },
+    { id: "map", label: "Map", sub: "size, kind, ptrs", col: 1, row: 0 },
+    { id: "desc", label: "DescriptorArray", sub: "name to field", col: 2, row: 0 },
+    { id: "vals", label: "value slots", sub: "anonymous", col: 0, row: 1 },
+    { id: "rep", label: "representation", sub: "Smi/Double/Tagged", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "obj", to: "map", label: "map ptr" },
+    { from: "map", to: "desc", label: "descriptors" },
+    { from: "obj", to: "vals", label: "holds" },
+    { from: "desc", to: "rep", label: "per field" },
+  ]}
+/>
+
+<Quiz
+  id="q-what-is-in-the-object"
+  lessonSlug="01-shapes-and-maps"
+  lang="en"
+  question="For a plain object `{x:1, y:2}`, where does the information 'property x lives at field index 0' physically live?"
+  choices={[
+    { label: "In the object's own header, next to the values", misconception: "The object stores only the map pointer plus anonymous value slots. The name-to-offset mapping is not in the object — that is the whole point of factoring it into the Map." },
+    { label: "In the DescriptorArray that the object's Map points to", correct: true },
+    { label: "In a global hash table keyed by property name", misconception: "Dictionary-mode objects use a per-object hash table, but fast objects resolve names to offsets through their shared Map's DescriptorArray, not a global table." },
+    { label: "It is recomputed by re-parsing the source on each access", misconception: "Nothing is re-parsed at access time; the name was resolved to a field index once when the Map was created and is reused for every object sharing it." },
+  ]}
+/>
+
+<Quiz
+  id="q-shared-map"
+  lessonSlug="01-shapes-and-maps"
+  lang="en"
+  question="You allocate 100000 objects via `new Point(x, y)`, all with the same two fields in the same order. How many Map objects exist for them?"
+  choices={[
+    { label: "100000 — one Map per object", misconception: "Maps are shared by layout, not per instance. Per-object Maps would defeat the entire point of inline caches keying off a single map pointer." },
+    { label: "One leaf Map — all instances point at the same final Map for that layout", correct: true },
+    { label: "Two — one for the empty object and one for the final layout", misconception: "There are intermediate Maps along the transition path (empty to plus-x to plus-x-y), but all 100000 instances share the same final leaf Map; the intermediates exist once, not per object." },
+    { label: "It depends on the values of x and y", misconception: "The Map encodes layout and representation, not concrete values. The same layout (e.g. both fields Smi) yields one shared Map regardless of the specific integers." },
+  ]}
+/>
+
+<DragOrder
+  id="do-read-path"
+  pieceSlug="01-shapes-and-maps"
+  lang="en"
+  prompt="Order the steps V8 takes to read `p.x` on an object whose Map matches the inline cache's expectation."
+  items={[
+    "Load the map pointer from the object's header",
+    "Compare it to the Map the inline cache recorded for this site",
+    "On a match, take the cached field index resolved earlier from the DescriptorArray",
+    "Load the value directly from that fixed slot — no name compare, no hash lookup",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why factor layout out of the object at all? Because most objects of a given type are structurally identical — millions of DOM nodes, AST nodes, or React fibers share a handful of shapes. Storing each one's name-to-offset table inline would multiply memory by the field count and make every read a search. Sharing one Map per layout turns "describe this object" from per-instance data into a single, cacheable pointer — which is exactly what an inline cache compares.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A Map is a real, shared HeapObject that describes one layout: instance size, a DescriptorArray (name → field index, representation, constness, attributes), elements kind, a prototype, a back-pointer to its parent, and forward transitions. The object itself holds only `[map ptr][value slots]`. That separation is why a property read is "check the map pointer, load at a fixed offset."</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="shapes-and-maps-retrieval"
+  lang="en"
+  questions={[
+    { q: "List the fields stored in a V8 Map and say which are inline versus pointers to other heap objects.", a: "Inline fields of the Map: instance size (bytes to allocate per instance, including in-object slots), instance type and bit-fields (object/function/array; callable, extensible, deprecated), number of own descriptors, and elements kind. Pointer fields to other heap objects: the DescriptorArray (name to field index, representation, constness, attributes), the prototype, the back-pointer to the parent Map it transitioned from, and the transitions pointer to a TransitionArray of child Maps. The object instance itself stores none of this — only [map ptr][properties ptr][elements ptr][in-object value slots]." },
+    { q: "What is in one DescriptorArray entry, and why does it make reads fast?", a: "Each entry holds: the (interned) property name, the field index plus whether the slot is in-object or out-of-object, the representation (Smi / Double / HeapObject / Tagged), the constness (const if only one value ever assigned, else mutable), and the attributes (writable/enumerable/configurable, data vs accessor). Because the name was resolved to a fixed field index once at Map level, every object sharing that Map reads the property at a hard-coded offset: load map pointer, compare to the expected Map, load the slot — no name comparison and no hashing per access." },
+    { q: "Why does allocating a million objects of the same shape not allocate a million Maps, and how would you confirm it?", a: "Maps are keyed by layout and construction history, not by instance. Every object whose construction follows the same transition path ends on the same leaf Map and stores a pointer to it; only the intermediate and leaf Maps along that path are allocated, once, and shared. Confirm in d8 --allow-natives-syntax: %DebugPrint(a) and %DebugPrint(b) on two same-shape objects print the same Map address, while a divergent object prints a different one." },
+  ]}
+/>
+
+<Recap lang="en">
+A V8 Map (the hidden class; Shape in SpiderMonkey, Structure in JavaScriptCore) is a real, fixed-size HeapObject that fully describes one object layout, and it is shared by every object built with the same layout and history. Its inline fields are the instance size, the instance type and bit-fields, the count of own descriptors, and the elements kind; it points to a DescriptorArray, a prototype, a back-pointer to the parent Map, and a TransitionArray of children. The DescriptorArray maps each property name to a field index, a representation (Smi/Double/HeapObject/Tagged), a constness flag, and attributes. The object instance itself is almost empty — just the map pointer plus anonymous value slots at fixed offsets. That separation is the engine for fast reads: resolve the name to an offset once in the Map, then read `p.x` as "load map pointer, compare to the inline cache's Map, load the slot." The next lessons follow this structure forward (transitions, deprecation, and migration) and downward (how field storage and access actually work).
+</Recap>

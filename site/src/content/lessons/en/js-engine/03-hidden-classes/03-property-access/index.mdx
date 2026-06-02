@@ -4,10 +4,199 @@ lang: en
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 3
-title: "Property access"
-summary: "Property access — stub; author to ready."
-estMin: 12
-status: stub
+title: "Fast properties, slow properties, and slack tracking"
+summary: "Three storage modes: in-object properties (inline in the body, single load), out-of-object fast properties (PropertyArray, +1 dereference), and dictionary mode (NameDictionary hashmap, ~50-100 cycles, set by deletes or too many props)."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - in-object properties
+  - PropertyArray
+  - dictionary mode
+  - NameDictionary
+  - slack tracking
+  - HasFastProperties
+  - const folding
+deepensInto:
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "02-shape-transitions"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/fast-properties
+  - https://v8.dev/blog/slack-tracking
+  - https://mathiasbynens.be/notes/shapes-ics
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You construct a class with three fields, but the very first instances V8 allocates are *bigger* than they need to be — padded with empty slots. Then, after a few hundred instances, V8 quietly shrinks the class and frees the padding. This is slack tracking, and if you never knew it existed you have been mis-reading heap snapshots taken during warm-up. Property storage in V8 has three modes and one self-tuning allocator, and which one your object lands in decides whether a read is one instruction or a hash probe.
+</Hook>
+
+<Crux>Properties are in-object (one load), in a PropertyArray (+1 deref), or dictionary mode (~50-100 cycles); slack tracking sizes slots.</Crux>
+
+<Explanation>
+
+## Three storage modes, three speeds
+
+The DescriptorArray from lesson 01 tells V8 *where* a field lives. There are three possible answers, in descending speed order:
+
+1. **In-object properties.** Stored inline in the object's own memory block, right after the header. Reading one is a single load at a constant offset — the fastest possible. The number of in-object slots is fixed when the Map is created.
+2. **Out-of-object ("normal") fast properties.** When an object outgrows its in-object slots, further properties spill into a separate **PropertyArray** that the object points to. These are still fast (fixed-offset, IC-friendly) but cost **one extra pointer dereference**: load the PropertyArray pointer, then load the slot. The DescriptorArray records a negative-ish index meaning "this field is in the PropertyArray at index N."
+3. **Dictionary mode (slow properties).** When an object becomes too dynamic — too many properties, or any `delete` — V8 abandons the fixed-offset layout entirely and switches the object to a **NameDictionary**: a per-object hash table from property name to value+attributes. Every access is now a generic hash lookup, roughly **50–100 cycles** versus ~1 for an in-object load, and the inline cache cannot help. `%HasFastProperties(obj)` returns `false`.
+
+```js
+// d8 --allow-natives-syntax
+const a = { p: 1, q: 2, r: 3 };
+%HasFastProperties(a);   // true  — in-object, fixed offsets
+delete a.q;
+%HasFastProperties(a);   // false — now a NameDictionary, permanently slow
+```
+
+<StackDiagram
+  label="The three property-storage layouts in V8, from the fastest in-object inline slots at the top, through the out-of-object PropertyArray, to the slow per-object NameDictionary at the bottom."
+  hue="var(--accent)"
+  caption="Storage modes ranked by cost. In-object is one load; PropertyArray adds a dereference; dictionary mode replaces fixed offsets with a hash probe and disables inline caching. delete or excessive dynamism drops you to the bottom — permanently."
+  layers={[
+    { label: "In-object properties", note: "inline after header; 1 load at a constant offset (fastest)" },
+    { label: "Out-of-object PropertyArray", note: "spill store; +1 pointer dereference, still IC-friendly" },
+    { label: "Dictionary mode (NameDictionary)", note: "per-object hashmap; ~50-100 cycles, no inline cache" },
+  ]}
+/>
+
+## Slack tracking: V8 right-sizes your objects
+
+Here is the self-tuning part the overview skipped. When you define a constructor or class, V8 does not yet know how many properties instances will end up with — `this.x = ...; this.y = ...` might be followed by more assignments in methods called later. Allocating exactly two in-object slots up front would force a PropertyArray spill the moment a third field appears.
+
+So V8 **over-allocates**: the initial Map for the constructor reserves *extra* in-object slots (slack) — more than the constructor's body declares. As instances are created and run, V8 watches the maximum number of in-object properties they actually use. After enough instances have been allocated (a fixed construction-count threshold), it **completes slack tracking**: it trims the unused slots, shrinks the instance size in the Map, and **finalizes** the Map. From then on, every new instance is allocated at the trimmed, exact size.
+
+The consequences for a senior:
+
+- **Warm-up instances are larger than steady-state instances.** A heap snapshot taken before slack tracking completes overstates per-object size. Measure after warm-up.
+- **The Map is not "final" immediately.** Code that depends on a stabilized shape (and TurboFan's specialization) only gets it after slack tracking finishes. Microbenchmarks that allocate a handful of objects can see a different shape than production at scale.
+- **Adding properties outside the constructor after finalization** can no longer fit the in-object area and spills to a PropertyArray (or, if dynamic enough, dictionary mode).
+
+<FlowDiagram
+  label="The slack-tracking lifecycle: a constructor's Map starts with extra in-object slots, instances are allocated and observed, and once a threshold of instances exists V8 trims the unused slots and finalizes the Map at the exact instance size."
+  hue="var(--accent)"
+  perRow={4}
+  caption="Slack tracking. Early instances carry padding so late field additions stay in-object; after the construction-count threshold V8 trims the slack, shrinks instance size, and finalizes the Map — so measure object size after warm-up, not during it."
+  nodes={[
+    { id: "init", label: "initial Map", sub: "extra slots", col: 0, row: 0 },
+    { id: "alloc", label: "allocate", sub: "observe usage", col: 1, row: 0 },
+    { id: "thresh", label: "threshold", sub: "enough instances", col: 2, row: 0 },
+    { id: "final", label: "finalize", sub: "trim + shrink", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "init", to: "alloc", label: "new()" },
+    { from: "alloc", to: "thresh", label: "count up" },
+    { from: "thresh", to: "final", label: "complete" },
+  ]}
+/>
+
+## What pushes an object into dictionary mode
+
+Dictionary mode is the cliff. You fall off it via:
+
+- **`delete obj.prop`** on a fast object — the single most common cause. V8 cannot leave a hole in a fixed-offset layout, so it converts the whole object to a NameDictionary. This is *permanent*: the object never climbs back to fast properties.
+- **Too many properties** added dynamically (the threshold is large, on the order of many hundreds to ~1000+, and depends on the version), so it is rarely the real culprit — `delete` is.
+- **Adding properties in a way that defeats the transition tree** — extreme shape churn can cause V8 to give up and switch to dictionary mode to stop allocating Maps.
+
+Note `const` folding interacts here: when a field is `const` (only one value ever assigned across instances), V8 can store the value *in the Map* (in the descriptor) rather than in the object, so reads become "load the constant from the Map" — but the first divergent assignment loses constness (lesson 02) and the value moves into a real field. Dictionary mode abandons all of this.
+
+<NumbersCard
+  title="Property storage costs (V8, 64-bit)"
+  data-lesson-visual
+  stats={[
+    { label: "In-object read", value: "1 load (~1 cycle)" },
+    { label: "PropertyArray read", value: "2 loads (+1 dereference)" },
+    { label: "Dictionary-mode read", value: "~50-100 cycles, hash probe" },
+    { label: "What triggers dictionary mode", value: "delete, or extreme dynamism" },
+    { label: "Recovery from dictionary mode", value: "none — needs a fresh object" },
+    { label: "Slack tracking completes after", value: "a fixed construction-count threshold" },
+    { label: "Detect mode", value: "%HasFastProperties(obj) in d8" },
+  ]}
+/>
+
+<Misconception id="mc-delete-frees">
+  <p><strong>"delete frees memory, so it's good hygiene."</strong> On a fast object, <code>delete</code> converts it to a NameDictionary — a per-object hashmap <em>larger</em> than the slot it removed and ~50-100x slower to read, permanently. Assign <code>null</code> instead to keep the shape.</p>
+</Misconception>
+
+<Quiz
+  id="q-storage-mode"
+  lessonSlug="03-property-access"
+  lang="en"
+  question="A property read compiles to 'load PropertyArray pointer, then load slot 2 of that array'. Which storage mode is this property in?"
+  choices={[
+    { label: "In-object — it is read directly from the object body", misconception: "An in-object read is a single load at a constant offset into the object itself, with no intermediate array pointer. The extra dereference here means it spilled out-of-object." },
+    { label: "Out-of-object fast property (PropertyArray)", correct: true },
+    { label: "Dictionary mode", misconception: "Dictionary mode does a hash probe by property name, not a fixed-index load into a PropertyArray. The fixed index here means it is still a fast property, just spilled." },
+    { label: "Const-folded into the Map", misconception: "A const-folded value is read from the Map's descriptor, not via a PropertyArray load. The presence of an array index means it is a real stored field." },
+  ]}
+/>
+
+<Quiz
+  id="q-slack"
+  lessonSlug="03-property-access"
+  lang="en"
+  question="A heap snapshot taken after allocating 10 instances of a class shows each instance is larger than a snapshot taken after allocating 10000. Why?"
+  choices={[
+    { label: "The snapshot tool is inaccurate for small samples", misconception: "The tool is accurate; the object sizes genuinely differ because the Map changed between the two snapshots." },
+    { label: "Slack tracking had not completed at 10 instances, so early objects still carried over-allocated in-object slots; by 10000 V8 trimmed them and finalized the Map", correct: true },
+    { label: "The GC compacted the later objects to a smaller size", misconception: "GC compaction moves objects, it does not change their property-slot count. The size difference comes from slack tracking trimming in-object slots, not from GC." },
+    { label: "The later objects went into dictionary mode, which is smaller", misconception: "Dictionary mode is generally larger, not smaller, and it is not the steady state for a normal class. The shrink is slack tracking trimming unused in-object slots." },
+  ]}
+/>
+
+<DragOrder
+  id="do-slack-lifecycle"
+  pieceSlug="03-property-access"
+  lang="en"
+  prompt="Order the slack-tracking lifecycle for a constructor's instances."
+  items={[
+    "The initial Map reserves extra in-object slots beyond what the constructor body declares",
+    "Instances are allocated; V8 records the maximum in-object properties actually used",
+    "A fixed construction-count threshold of instances is reached",
+    "V8 trims the unused in-object slots and shrinks the instance size",
+    "The Map is finalized; every later instance is allocated at the trimmed exact size",
+  ]}
+/>
+
+<Inset kind="mistake" lang="en">
+A common self-inflicted dictionary-mode wound: using a plain object as a hash map with user-controlled keys (`cache[userId] = entry`) and then `delete cache[userId]` to evict. The first delete converts `cache` to dictionary mode — which is actually *correct* for a real map, but you also lose any IC benefit on it and pay hash-probe cost on every access. If the object is conceptually a dictionary, use a real `Map` from the start: it is built for arbitrary keys and deletions, never churns hidden classes, and has predictable performance.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Properties live in one of three places: in-object (one load), an out-of-object PropertyArray (one extra dereference), or a per-object NameDictionary in dictionary mode (~50-100 cycles, no inline cache, permanent). `delete` is the usual trigger for the cliff. Slack tracking over-allocates in-object slots, then trims and finalizes the Map after a construction-count threshold, so object sizes only settle after warm-up.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="property-access-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the three property-storage modes and the cost of a read in each.", a: "In-object properties are stored inline in the object body after the header; a read is a single load at a constant offset (~1 cycle), the fastest. Out-of-object fast properties live in a separate PropertyArray the object points to; a read costs one extra pointer dereference (load the array pointer, then the slot at a fixed index) but is still IC-friendly. Dictionary mode replaces the fixed-offset layout with a per-object NameDictionary (a hash table from name to value+attributes); every read is a generic hash probe (~50-100 cycles), the inline cache cannot help, and %HasFastProperties returns false." },
+    { q: "What is slack tracking and why must you measure object size after warm-up?", a: "When a constructor or class is first used, V8 does not know the final in-object property count, so the initial Map over-allocates extra in-object slots (slack) to keep later field additions in-object. As instances are allocated, V8 tracks the maximum in-object properties actually used; after a fixed construction-count threshold it completes slack tracking, trims the unused slots, shrinks the instance size, and finalizes the Map. Therefore early (warm-up) instances are larger than steady-state ones — a heap snapshot taken before completion overstates per-object size, and microbenchmarks allocating few objects can see a different (un-finalized) shape than production." },
+    { q: "Why is `delete` worse than assigning null, in storage terms?", a: "Deleting a property from a fast object would leave a hole in the fixed-offset layout, which V8 cannot represent, so it converts the entire object to dictionary mode — a NameDictionary hash table. This is permanent: the object never returns to fast properties, every access becomes a ~50-100 cycle hash probe, and inline caches stop working for it. Assigning null (or undefined) keeps the field, the offset, the shape, and the fast in-object read; you only change the value. For objects that are genuinely dictionaries with churning keys, use a real Map collection from the start instead of object properties." },
+  ]}
+/>
+
+<Recap lang="en">
+V8 stores an object's named properties in one of three modes. In-object properties sit inline in the object's body and read in a single load at a constant offset. When an object outgrows its in-object slots, extra properties spill into an out-of-object PropertyArray, costing one additional pointer dereference per read but staying fixed-offset and IC-friendly. Dictionary mode is the cliff: triggered chiefly by `delete` (and by extreme dynamism), it swaps the fixed layout for a per-object NameDictionary hash table, making every access a ~50-100 cycle hash probe with no inline-cache help, and it is permanent — only a fresh object recovers fast properties. Slack tracking is V8's self-tuning allocator for fast objects: the constructor's initial Map reserves extra in-object slots, V8 observes how many instances actually use as they are created, and after a fixed construction-count threshold it trims the slack, shrinks the instance size, and finalizes the Map — so per-object memory only settles after warm-up. Detect the mode with `%HasFastProperties(obj)`, prefer `null` over `delete`, and reach for a real `Map` when keys are genuinely dynamic.
+</Recap>
