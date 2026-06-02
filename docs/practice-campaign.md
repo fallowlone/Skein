@@ -167,3 +167,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ engineering-practice/04-trunk-based (5) — integration-frequency, short-lived-branches-vs-gitflow, feature-flags-dark-launch, the-green-trunk-gate, flag-debt-and-rollout-discipline
 - ✅ engineering-practice/05-feature-flags (1) — overview
 - ✅ engineering-practice/06-postmortems (1) — overview
+- ✅ engineering-practice/07-on-call (1) — overview
