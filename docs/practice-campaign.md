@@ -160,3 +160,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ math/07-logic (3) — true-and-false, and-or-not, sets
 - ✅ math/08-growth (2) — linear-vs-exponential, logarithms
 - ✅ math/09-combinatorics (3) — counting-principle, permutations, combinations
+- ✅ math/10-probability (2) — what-is-probability, combining-events  [math track COMPLETE + enforced]
