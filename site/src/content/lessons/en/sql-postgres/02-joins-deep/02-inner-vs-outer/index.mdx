@@ -5,9 +5,180 @@ track: "sql-postgres"
 unit: "02-joins-deep"
 order: 2
 title: "Inner vs outer joins"
-summary: "Inner vs outer joins — stub; author to ready."
-estMin: 12
-status: stub
+summary: "INNER keeps only matched pairs; LEFT/RIGHT/FULL OUTER also keep unmatched rows, NULL-extended. The classic prod bug: a predicate on the outer table in WHERE silently demotes a LEFT JOIN to an INNER JOIN."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - inner-join
+  - left-outer-join
+  - null-extension
+  - where-vs-on-predicate
+  - coalesce
+prereqs:
+  - 01-join-as-product
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/tutorial-join.html
+  - https://use-the-index-luke.com/sql/join
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A "users who haven't ordered yet" report quietly showed zero rows for three weeks. The query was a `LEFT JOIN` from `users` to `orders` — correct so far — but a `WHERE o.status = 'cancelled'` clause sat at the bottom. That one line turned the outer join back into an inner join and erased every unmatched user. The dashboard wasn't broken; it was filtering on a column that is `NULL` for exactly the rows it was supposed to find. This is the most common join bug in production, and it hides in plain sight.
+</Hook>
+
+<Crux>INNER keeps matched pairs; OUTER keeps unmatched rows too, NULL-extended. A WHERE on the outer table silently demotes LEFT to INNER.</Crux>
+
+<Explanation>
+
+## INNER keeps matches; OUTER keeps the unmatched too
+
+From the last lesson: a join is a filtered product, and the question is what to do with rows that find no partner. That choice *is* the inner/outer distinction.
+
+- **INNER JOIN** — keep only the surviving pairs. A user with no orders simply vanishes from the result.
+- **LEFT OUTER JOIN** — keep every left row no matter what. If a left row finds a match, it's paired normally; if it finds none, it is still emitted once, with every right-side column set to `NULL`. This is **NULL-extension**.
+- **RIGHT OUTER JOIN** — the mirror image: keep every right row, NULL-extend the unmatched left. (`A RIGHT JOIN B` ≡ `B LEFT JOIN A`; most teams normalize to `LEFT` for readability.)
+- **FULL OUTER JOIN** — keep everything: matched pairs, unmatched left rows (right NULL-extended), and unmatched right rows (left NULL-extended).
+
+```sql
+-- Every user, plus their orders if any; users with none get NULL order columns
+SELECT u.id, u.name, o.id AS order_id, o.total
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id;
+```
+
+A user who never ordered appears once here with `order_id` and `total` as `NULL`. That row is the entire reason to use an outer join — it carries the information "this left row had no partner."
+
+<FlowDiagram
+  label="Row-matching for a LEFT JOIN of users to orders: u1 and u2 match orders and pass through paired; u3 has no order and is emitted once with NULL-extended order columns."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "u1", label: "u1", sub: "→ matches o10" },
+    { id: "u2", label: "u2", sub: "→ matches o22" },
+    { id: "u3", label: "u3", sub: "→ no order" },
+    { id: "r1", label: "u1, o10", sub: "paired" },
+    { id: "r2", label: "u2, o22", sub: "paired" },
+    { id: "r3", label: "u3, NULL", sub: "NULL-extended" },
+  ]}
+  edges={[
+    { from: "u1", to: "r1" },
+    { from: "u2", to: "r2" },
+    { from: "u3", to: "r3" },
+  ]}
+  caption="An INNER JOIN would drop u3 entirely. The LEFT JOIN keeps it, filling the missing right-side columns with NULL — which is exactly how you find 'left rows with no partner'."
+/>
+
+## The trap: WHERE on the outer table demotes the join
+
+Here is the bug from the hook, distilled. The placement of a predicate decides whether it filters the *product* (in `ON`) or the *result* (in `WHERE`) — and for an outer join those are not the same.
+
+```sql
+-- WRONG: this is secretly an INNER JOIN
+SELECT u.id, u.name, o.id AS order_id
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE o.status = 'shipped';   -- runs AFTER NULL-extension
+```
+
+For a user with no orders, `o.status` is `NULL`. The comparison `NULL = 'shipped'` is `UNKNOWN`, which `WHERE` treats as false, so that NULL-extended row is discarded. Every unmatched left row is thrown away — the `LEFT JOIN` now behaves exactly like an `INNER JOIN`. The fix is to move the condition into `ON`, so it filters which orders count as a match *before* NULL-extension:
+
+```sql
+-- RIGHT: filter the match in ON, keep the outer semantics
+SELECT u.id, u.name, o.id AS order_id
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id AND o.status = 'shipped';
+```
+
+Now users with no shipped order are still emitted, NULL-extended. The rule: **a predicate on the outer (right) table belongs in `ON`, not `WHERE`.** A WHERE on a NULLable outer column is almost always a demoted outer join. The one legitimate exception is `WHERE o.id IS NULL`, which deliberately keeps *only* the unmatched rows — that's the anti-join pattern in the next lesson.
+
+## Reading and counting outer results
+
+Because unmatched rows carry NULLs, you usually wrap outer columns in `COALESCE` for display or aggregation:
+
+```sql
+SELECT u.id,
+       COUNT(o.id)                  AS order_count,   -- COUNT ignores NULLs → 0 for non-orderers
+       COALESCE(SUM(o.total), 0)    AS lifetime_value -- SUM of no rows is NULL, not 0
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.id;
+```
+
+Two senior details hide here. `COUNT(o.id)` counts non-NULL values, so a user with no orders correctly gets `0` — but `COUNT(*)` would count the NULL-extended row as `1`, a classic off-by-one. And `SUM` over zero matching rows returns `NULL`, not `0`, so `COALESCE(SUM(...), 0)` is required for a sane total. To split matched from unmatched, count `o.id IS NULL`: that's your "users who never ordered" number.
+
+<Inset kind="mistake" lang="en">
+A subtler version of the trap: <code>LEFT JOIN orders o ON o.user_id = u.id WHERE o.total &gt; 100</code>. People read it as "users and their orders over 100, including users with no such order." It is not — it silently drops every user whose orders are all under 100 (and every user with no orders), because their NULL or filtered-out rows fail the WHERE. If you want "users, with their big orders attached when present," the &gt; 100 condition must live in ON. The mental test: would this predicate reject a NULL-extended row? If yes, and you wanted to keep that row, it belongs in ON.
+</Inset>
+
+<Quiz
+  id="02-inner-vs-outer-quiz-1"
+  lessonSlug="02-inner-vs-outer"
+  lang="en"
+  question="You want every user plus their orders, including users with zero orders. Which clause keeps the zero-order users?"
+  choices={[
+    { label: "LEFT JOIN orders o ON o.user_id = u.id — unmatched users are NULL-extended, not dropped", correct: true },
+    { label: "INNER JOIN orders o ON o.user_id = u.id", misconception: "An inner join keeps only matched pairs, so users with no order are dropped entirely — the opposite of what you want." },
+    { label: "LEFT JOIN ... then WHERE o.user_id = u.id", misconception: "That WHERE re-checks the join key on the NULL-extended rows, where o.user_id is NULL, demoting the LEFT JOIN back to an inner join." },
+    { label: "CROSS JOIN orders o", misconception: "A cross join pairs every user with every order — no relationship at all, and the count explodes." },
+  ]}
+/>
+
+<Quiz
+  id="02-inner-vs-outer-quiz-2"
+  lessonSlug="02-inner-vs-outer"
+  lang="en"
+  question="A LEFT JOIN from users to orders has WHERE o.status = 'paid' appended. What actually happens to users who never ordered?"
+  choices={[
+    { label: "They are dropped — NULL = 'paid' is UNKNOWN, which WHERE treats as false, so the join behaves like INNER", correct: true },
+    { label: "They are kept with status shown as 'paid'", misconception: "Their o.status is NULL, not 'paid'. The WHERE rejects them; nothing fabricates a 'paid' value." },
+    { label: "They are kept because LEFT JOIN always keeps left rows", misconception: "The LEFT JOIN does NULL-extend them, but the subsequent WHERE on o.status then filters those NULL rows out." },
+    { label: "It raises an error about comparing NULL", misconception: "Comparing NULL doesn't error; it yields UNKNOWN, which WHERE silently treats as false — that's why the bug is invisible." },
+  ]}
+/>
+
+<DragOrder
+  id="02-inner-vs-outer-drag-1"
+  lessonSlug="02-inner-vs-outer"
+  lang="en"
+  prompt="Order the logical steps Postgres takes for SELECT ... FROM users u LEFT JOIN orders o ON o.user_id=u.id WHERE u.country='JP':"
+  items={[
+    { id: "a", label: "Form the conceptual product of users and orders" },
+    { id: "b", label: "Apply the ON predicate to decide which pairs are matches" },
+    { id: "c", label: "NULL-extend every left (user) row that found no matching order" },
+    { id: "d", label: "Apply the WHERE filter (u.country = 'JP') to the resulting rows" },
+    { id: "e", label: "Project the SELECT columns and return the rows" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>INNER keeps only matched pairs; LEFT/RIGHT/FULL OUTER also keep unmatched rows, NULL-extending the missing side. The number-one join bug: a WHERE predicate on the outer table's NULLable columns rejects the NULL-extended rows, silently turning a LEFT JOIN into an INNER JOIN. Put match conditions in ON; reserve WHERE for the left table (and `o.id IS NULL` for anti-joins). Use COUNT(o.id) and COALESCE(SUM(...),0) to handle the NULLs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-inner-vs-outer-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does NULL-extension mean, and which join produces it?", a: "When an outer join keeps a row that found no partner, it still emits one output row but sets all the columns from the missing side to NULL — that filling-in is NULL-extension. A LEFT OUTER JOIN NULL-extends unmatched left rows; RIGHT does the unmatched right rows; FULL does both. An INNER JOIN never NULL-extends because it drops unmatched rows entirely." },
+    { q: "Explain how WHERE o.status = 'x' silently turns a LEFT JOIN into an INNER JOIN.", a: "After the LEFT JOIN NULL-extends unmatched left rows, o.status on those rows is NULL. The WHERE evaluates NULL = 'x' as UNKNOWN, which WHERE treats as false, so every NULL-extended row is filtered out — leaving only matched rows, exactly the INNER JOIN result. The fix is to move the condition into ON so it filters matches before NULL-extension, preserving the outer rows." },
+    { q: "Why use COUNT(o.id) and COALESCE(SUM(o.total),0) when aggregating a LEFT JOIN by user?", a: "COUNT(o.id) counts only non-NULL order ids, so a user with no orders correctly gets 0 (whereas COUNT(*) would count the single NULL-extended row as 1). SUM over zero matching rows returns NULL rather than 0, so wrapping it in COALESCE(..., 0) yields a sensible lifetime-value total instead of NULL for non-orderers." },
+  ]}
+/>
+
+<Recap lang="en">
+The inner/outer distinction answers "what about rows with no partner." **INNER** drops them; **LEFT/RIGHT/FULL OUTER** keep the unmatched rows and NULL-extend the missing side, so a user with no orders still appears once with NULL order columns — the row that carries "no match" information. The dominant production bug is predicate placement: a condition on the outer (right) table belongs in `ON`, because a `WHERE` runs *after* NULL-extension and rejects the NULL rows (`NULL = 'x'` is UNKNOWN → false), silently demoting the `LEFT JOIN` to an `INNER JOIN`. The mental test is "would this predicate reject a NULL-extended row I want to keep?" — if yes, it goes in `ON`. The legitimate `WHERE o.id IS NULL` is the exception: it deliberately keeps only unmatched rows, which is the anti-join you'll meet next. When you aggregate outer results, use `COUNT(o.id)` (NULL-aware) and `COALESCE(SUM(...),0)` to handle the NULLs cleanly.
+</Recap>

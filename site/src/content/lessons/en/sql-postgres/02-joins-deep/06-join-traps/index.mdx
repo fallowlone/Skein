@@ -5,9 +5,174 @@ track: "sql-postgres"
 unit: "02-joins-deep"
 order: 6
 title: "Join traps and row explosions"
-summary: "Join traps and row explosions — stub; author to ready."
-estMin: 12
-status: stub
+summary: "Joining two one-to-many children to a parent multiplies rows and silently doubles your SUM and COUNT — the fan-out bug. The fix is to aggregate each child separately first. Plus missing conditions, duplicate keys, and join order."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - fan-out
+  - row-explosion
+  - double-counting
+  - pre-aggregation
+  - duplicate-join-keys
+prereqs:
+  - 05-lateral-joins
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/tutorial-agg.html
+  - https://use-the-index-luke.com/sql/join
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A finance dashboard reported $2.4M in monthly revenue. The accounting system said $1.2M. Exactly double. The bug was a single query that joined `orders` to both `order_items` and `payments` in one statement and summed the order total. Each order had ~2 payments, so every order row was duplicated, and the `SUM(o.total)` counted each order's amount once per payment row. No error, no warning — a join silently doubled a number the whole company trusted. This is the fan-out, and it is the most expensive join bug there is because the query *runs fine*.
+</Hook>
+
+<Crux>Joining two one-to-many children to a parent multiplies rows and doubles SUM/COUNT — the fan-out. Fix: pre-aggregate each child first.</Crux>
+
+<Explanation>
+
+## The fan-out: two children, multiplied rows
+
+Recall lesson 1: a join is a product, and the row count multiplies. A fan-out is that multiplication striking where you didn't expect it. Take one parent (`orders`) with two **one-to-many** children: `order_items` (the line items) and `payments` (installments). Join all three in one query:
+
+```sql
+-- WRONG: revenue is doubled (or worse)
+SELECT SUM(o.total) AS revenue,
+       SUM(oi.quantity) AS units
+FROM orders o
+JOIN order_items oi ON oi.order_id = o.id
+JOIN payments    p  ON p.order_id  = o.id;
+```
+
+If an order has 3 items and 2 payments, the join produces 3 × 2 = 6 rows for that single order — every item paired with every payment, because both children join on `order_id` independently. Now `SUM(o.total)` adds that order's total **6 times**, and `SUM(oi.quantity)` counts each item **2 times** (once per payment). The order's amount didn't change; the number of rows carrying it did. The two children fanned out against each other — a Cartesian product *within* each order's group.
+
+<FlowDiagram
+  label="Fan-out multiplication: one order with 3 items and 2 payments joins into 3 times 2 equals 6 rows, so any per-order value is summed 6 times instead of once."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "order", label: "1 order", sub: "total = 100" },
+    { id: "items", label: "3 items", sub: "one-to-many" },
+    { id: "pays", label: "2 payments", sub: "one-to-many" },
+    { id: "rows", label: "6 rows", sub: "3 × 2" },
+    { id: "sum", label: "SUM(total)", sub: "= 600, not 100" },
+  ]}
+  edges={[
+    { from: "order", to: "items" },
+    { from: "order", to: "pays" },
+    { from: "items", to: "rows" },
+    { from: "pays", to: "rows" },
+    { from: "rows", to: "sum" },
+  ]}
+  caption="Two independent one-to-many joins on the same parent multiply: 3 items × 2 payments = 6 output rows per order. Aggregates over those rows over-count any value that belongs to the order itself (its total) or to the other child."
+/>
+
+## The fix: pre-aggregate each child before joining
+
+The rule is blunt: **never join two independent one-to-many children to a parent and then aggregate.** Collapse each child to one row per parent *first* — in a subquery or CTE — then join those pre-aggregated results, which are now one-to-one with the parent and cannot fan out:
+
+```sql
+-- RIGHT: each child aggregated to one row per order, then joined
+SELECT o.id,
+       o.total,
+       items.units,
+       pays.paid
+FROM orders o
+LEFT JOIN (
+  SELECT order_id, SUM(quantity) AS units
+  FROM order_items GROUP BY order_id
+) items ON items.order_id = o.id
+LEFT JOIN (
+  SELECT order_id, SUM(amount) AS paid
+  FROM payments GROUP BY order_id
+) pays ON pays.order_id = o.id;
+```
+
+Each subquery returns at most one row per `order_id`, so neither join multiplies. `SUM(o.total)` over this is now correct. The pattern generalizes to any number of children: aggregate each in its own CTE/subquery, then join the one-row-per-parent summaries. (`LATERAL` from the last lesson is another way to compute these per-parent aggregates inline.)
+
+For a quick *count* you can sometimes patch a fan-out with `COUNT(DISTINCT oi.id)` instead of `COUNT(*)` — distinct counting ignores the duplicated rows. But `SUM(DISTINCT o.total)` is a trap: two different orders can legitimately have the same total, and `DISTINCT` would collapse them. `COUNT(DISTINCT)` rescues counts; only pre-aggregation reliably rescues sums.
+
+## The other traps: missing conditions, duplicate keys, join order
+
+The fan-out is the subtle one, but three blunter traps share the unit:
+
+- **Missing join condition** → the accidental cross join from lesson 1. A forgotten `ON`, or an `ON` that doesn't actually relate the tables, yields `|A| × |B|` rows — an instant explosion, not a quiet doubling.
+- **Non-unique join keys** → even an "innocent" join duplicates rows if the key isn't unique on the side you assumed was unique. Joining `orders` to `users` on `email` instead of `id` will fan out if two users share an email. Always join on a key that is unique on at least one side, or know exactly why it isn't.
+- **Join order and the planner** → you write joins left to right, but the **planner reorders them freely** to minimize cost; the *result* is identical regardless of written order (for inner joins). So don't hand-tune join order for correctness or speed — fix the predicates and statistics and let the planner choose. (Outer joins constrain reordering; the `databases` execution-plans chapter covers when.)
+
+<Inset kind="mistake" lang="en">
+The reason fan-out is so dangerous is that it is invisible in small data. In dev, an order has one item and one payment, so 1 × 1 = 1 — the query looks correct and ships. In production, orders have many items and installment payments, the multiplication kicks in, and the dashboard is silently 2× or 5× high. The defense is a habit, not a tool: whenever a query joins more than one child table to a parent and then aggregates, stop and pre-aggregate each child. Sanity-check by comparing the joined row count to the parent row count — if joining added rows, any per-parent aggregate is now wrong.
+</Inset>
+
+<Quiz
+  id="06-join-traps-quiz-1"
+  lessonSlug="06-join-traps"
+  lang="en"
+  question="An order has 3 items and 2 payments. You SELECT SUM(o.total) joining orders to BOTH order_items and payments. The true total is $100. What does the query report?"
+  choices={[
+    { label: "$600 — the join makes 3 × 2 = 6 rows for the order, so o.total is summed six times", correct: true },
+    { label: "$100 — the join doesn't affect aggregates", misconception: "It absolutely does: each of the 6 fanned-out rows carries o.total = 100, and SUM adds all six, giving 600." },
+    { label: "$500 — 3 items + 2 payments = 5 rows", misconception: "Independent one-to-many joins multiply, not add: it's 3 × 2 = 6 rows, so the total is summed 6 times = 600." },
+    { label: "$300 — only the items fan out", misconception: "Both children fan out against each other. With 2 payments too, it's 6 rows, not 3 — the payments double the already-tripled count." },
+  ]}
+/>
+
+<Quiz
+  id="06-join-traps-quiz-2"
+  lessonSlug="06-join-traps"
+  lang="en"
+  question="What is the reliable fix for a fan-out when summing a parent value across multiple child tables?"
+  choices={[
+    { label: "Pre-aggregate each child to one row per parent (subquery/CTE), then join those summaries", correct: true },
+    { label: "Wrap every SUM in SUM(DISTINCT ...)", misconception: "SUM(DISTINCT) collapses legitimately-equal values (two orders with the same total become one), giving a different wrong answer — it's not a general fix." },
+    { label: "Add ORDER BY to the query", misconception: "Ordering doesn't change which rows exist or how many times a value is summed; the fan-out remains." },
+    { label: "Switch the joins to LEFT JOIN", misconception: "Inner vs outer doesn't address duplication; a LEFT JOIN of two one-to-many children still multiplies the matched rows." },
+  ]}
+/>
+
+<DragOrder
+  id="06-join-traps-drag-1"
+  lessonSlug="06-join-traps"
+  lang="en"
+  prompt="Order the steps to safely report revenue and units across orders, items, and payments:"
+  items={[
+    { id: "a", label: "Notice the query joins TWO one-to-many children (items, payments) to orders and aggregates" },
+    { id: "b", label: "Recognize this fans out: rows = items × payments per order, so sums over-count" },
+    { id: "c", label: "Aggregate order_items to one row per order_id (SUM quantity) in a subquery/CTE" },
+    { id: "d", label: "Aggregate payments to one row per order_id (SUM amount) in a separate subquery/CTE" },
+    { id: "e", label: "Join the two one-row-per-order summaries to orders (now one-to-one, no fan-out)" },
+    { id: "f", label: "Verify the joined row count equals the orders row count" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The fan-out: joining two independent one-to-many children to a parent multiplies rows (items × payments per parent), so SUM and COUNT over-count any per-parent value — silently, with no error. Reliable fix: pre-aggregate each child to one row per parent in a subquery/CTE, then join those one-to-one summaries. COUNT(DISTINCT id) can rescue a count; SUM(DISTINCT) cannot rescue a sum (equal values collapse). Watch the blunter traps too: a missing/loose ON is a cross join, a non-unique join key duplicates rows, and the planner — not you — chooses join order.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-join-traps-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the fan-out bug: why does joining orders to both order_items and payments double the revenue?", a: "Both children join to orders on order_id independently, so within each order's group the two one-to-many joins form a Cartesian product: an order with i items and p payments produces i × p output rows. Every one of those rows carries the same o.total, so SUM(o.total) adds the order's amount i × p times instead of once. The order data is unchanged; the join multiplied the rows that carry it, over-counting any per-order value." },
+    { q: "What is the reliable fix, and why is SUM(DISTINCT) not it?", a: "Pre-aggregate each child to exactly one row per parent in its own subquery or CTE (e.g. SUM(quantity) GROUP BY order_id, SUM(amount) GROUP BY order_id), then LEFT JOIN those summaries to orders — now each join is one-to-one and cannot fan out, so SUM(o.total) is correct. SUM(DISTINCT o.total) fails because two genuinely different orders can share the same total; DISTINCT would collapse them, producing a different wrong number. COUNT(DISTINCT id) can fix a duplicated count, but only pre-aggregation fixes a sum." },
+    { q: "Should you hand-order your joins for performance, and what causes duplicate rows from a 'normal' join?", a: "No — for inner joins the planner reorders freely to minimize cost and the result is identical regardless of written order, so tune predicates and statistics instead of join order (outer joins do constrain reordering). Duplicate rows from a normal join come from a non-unique join key: if you join on a column that isn't unique on the side you assumed was unique (e.g. users.email when two users share an email), each match multiplies, fanning out exactly like the two-children case." },
+  ]}
+/>
+
+<Recap lang="en">
+The **fan-out** is the unit's most expensive bug because the query succeeds while the number is wrong. Joining two independent one-to-many children to one parent forms a Cartesian product *within* each parent group: `i` items × `p` payments = `i × p` rows per order, so `SUM(o.total)` adds the order's amount `i × p` times and a finance dashboard silently doubles. The reliable fix is **pre-aggregation**: collapse each child to one row per parent in its own subquery or CTE, then join those one-to-one summaries (or compute them with `LATERAL`); `COUNT(DISTINCT id)` can patch a count but `SUM(DISTINCT)` cannot patch a sum, since equal values collapse. The unit's other traps are blunter: a missing or too-loose `ON` is the accidental cross join from lesson 1; a non-unique join key duplicates rows the same way (join on a key unique on at least one side); and join *order* is the planner's job, not yours — fix predicates and statistics, not the written sequence. The closing habit: any time a query joins more than one child to a parent and aggregates, compare the joined row count to the parent count — if the join added rows, every per-parent aggregate is already wrong. This connects forward to unit 03's aggregation, where these sums get their own chapter.
+</Recap>
