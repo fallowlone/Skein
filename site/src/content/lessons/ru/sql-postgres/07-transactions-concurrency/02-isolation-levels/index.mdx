@@ -4,10 +4,177 @@ lang: ru
 track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 2
-title: "Isolation levels in Postgres"
-summary: "Isolation levels in Postgres — stub; author to ready."
-estMin: 12
-status: stub
+title: "Уровни изоляции в Postgres"
+summary: "READ COMMITTED, REPEATABLE READ и SERIALIZABLE — нарастающие обещания о том, какие аномалии видят конкурентные транзакции. Только SERIALIZABLE останавливает write skew — и заставляет писать retry-логику."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - isolation-levels
+  - read-committed
+  - repeatable-read
+  - serializable
+  - write-skew
+prereqs:
+  - 01-acid-in-practice
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/transaction-iso.html
+  - https://www.postgresql.org/docs/current/sql-set-transaction.html
+  - https://www.interdb.jp/pg/pgsql05.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Система дежурств в больнице держала одно правило: хотя бы один врач должен оставаться на дежурстве. Два врача, оба на дежурстве, оба нажали «уйти с дежурства» в одну секунду. Каждая транзакция прочитала «на дежурстве 2, нормально» и удалила себя. Итог: ноль дежурных — правило, которое уважала каждая отдельная транзакция, сломано их чередованием. Ни одного бага в запросах; баг был в уровне изоляции. У этой аномалии есть имя — **write skew** — и ровно один уровень её останавливает.
+</Hook>
+
+<Crux>Каждый уровень изоляции — обещание о том, какие аномалии ты не увидишь; и только SERIALIZABLE останавливает write skew.</Crux>
+
+<Explanation>
+
+## Уровни как лестница обещаний
+
+Уровень изоляции — не ручка производительности; это контракт о том, какие **аномалии** позволено наблюдать конкурентным транзакциям. Postgres предлагает три рабочих уровня (он принимает `READ UNCOMMITTED`, но трактует его как `READ COMMITTED` — грязные чтения в Postgres невозможны никогда).
+
+- **READ COMMITTED** (по умолчанию) — ты видишь только *закоммиченные* данные, но каждый оператор берёт **свежий снимок** в начале оператора. Так что внутри одной транзакции два `SELECT` одной строки могут вернуть разные значения, если другая транзакция закоммитила между ними. Предотвращает: грязные чтения. Допускает: non-repeatable read, фантомы, lost update, write skew.
+- **REPEATABLE READ** — транзакция берёт **один снимок** на первом операторе и использует его всю транзакцию. Каждое чтение видит базу на тот момент. Предотвращает: грязные чтения, non-repeatable read и (в Postgres) фантомы. Допускает: write skew. Запись, конфликтующая с коммитом другой транзакции, падает с serialization error.
+- **SERIALIZABLE** — ведёт себя так, будто каждая транзакция шла одна за другой в некотором последовательном порядке. Реализован через **Serializable Snapshot Isolation (SSI)**: отслеживает read/write-зависимости и прерывает транзакцию, чей коммит создал бы несериализуемое расписание. Предотвращает: всё, включая write skew. Цена: больше serialization failure, которые ты обязан повторять.
+
+<StackDiagram
+  label="Матрица аномалия-против-уровня. READ COMMITTED останавливает только грязные чтения. REPEATABLE READ добавляет non-repeatable read и фантомы. SERIALIZABLE добавляет write skew, блокируя каждую аномалию."
+  hue="var(--d-data)"
+  layers={[
+    { label: "SERIALIZABLE", note: "также стопит write skew" },
+    { label: "REPEATABLE READ", note: "стопит non-repeatable read + фантомы" },
+    { label: "READ COMMITTED (умолчание)", note: "стопит только грязные чтения" },
+    { label: "(грязное чтение)", note: "в Postgres невозможно" },
+  ]}
+  caption="Выше по стеку = меньше видимых аномалий. Каждый уровень добавляет то, что нижний не мог обещать; write skew сидит на самом верху, достижим только SERIALIZABLE."
+/>
+
+## Снимок на оператор против снимка на транзакцию
+
+Самое важное различие двух распространённых уровней — *когда* берётся снимок.
+
+```sql
+-- READ COMMITTED: каждый оператор переснимает.
+BEGIN;  -- уровень по умолчанию
+SELECT qty FROM inventory WHERE sku = 'A';   -- видит 10
+-- ... другая сессия коммитит qty = 3 здесь ...
+SELECT qty FROM inventory WHERE sku = 'A';   -- теперь видит 3  (non-repeatable read)
+COMMIT;
+```
+
+```sql
+-- REPEATABLE READ: один снимок на всю транзакцию.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT qty FROM inventory WHERE sku = 'A';   -- видит 10
+-- ... другая сессия коммитит qty = 3 здесь ...
+SELECT qty FROM inventory WHERE sku = 'A';   -- всё ещё видит 10  (стабильное чтение)
+COMMIT;
+```
+
+`READ COMMITTED` правилен для коротких OLTP-операторов, где нужны самые свежие закоммиченные данные. `REPEATABLE READ` правилен для отчёта или многооператорного чтения, которое должно быть внутренне согласованным — баланс, который не сдвигается под тобой посреди запроса.
+
+Внутренности — как снимки, xmin/xmax и видимость работают на самом деле — это глава MVCC трека `databases`; здесь мы остаёмся на уровне SQL-контракта. Смотри `databases/04-mvcc-isolation/03-hot-updates-and-isolation-levels` для механизма версий строк и `databases/04-mvcc-isolation/06-ssi-and-production-tuning` про то, как SSI отслеживает конфликты.
+
+## Write skew и почему его ловит только SERIALIZABLE
+
+Write skew — аномалия, удивляющая сеньоров. Две транзакции читают **пересекающийся набор** строк, каждая проверяет инвариант, который сейчас держится, затем каждая пишет **другую** строку. Ни одна запись не конфликтует с другой (разные строки), так что проверка «первый-обновивший-выигрывает» REPEATABLE READ не срабатывает — но вместе они ломают инвариант.
+
+<SequenceDiagram
+  label="Два дежурных врача каждый читают, что дежурят двое, каждый решают, что уйти безопасно, и каждый обновляют свою строку, оставляя ноль дежурных — write skew."
+  hue="var(--d-data)"
+  actors={["Tx A", "Postgres", "Tx B"]}
+  messages={[
+    { from: "Tx A", to: "Postgres", label: "count on_call = 2, ok" },
+    { from: "Tx B", to: "Postgres", label: "count on_call = 2, ok" },
+    { from: "Tx A", to: "Postgres", label: "UPDATE doc A off" },
+    { from: "Tx B", to: "Postgres", label: "UPDATE doc B off" },
+    { from: "Tx A", to: "Postgres", label: "COMMIT (ok)" },
+    { from: "Tx B", to: "Postgres", label: "COMMIT -> 0 дежурных!" },
+  ]}
+  caption="Пишутся разные строки, так что нет write-write конфликта, который поймал бы REPEATABLE READ. На SERIALIZABLE SSI видит цикл read-write зависимости и прерывает одну транзакцию с SQLSTATE 40001 — ты её повторяешь, она перечитывает count = 1 и отказывается."
+/>
+
+```sql
+-- Инвариант дежурства, защищённый через SERIALIZABLE:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT count(*) FROM doctors WHERE on_call = true;  -- должно остаться >= 1
+-- приложение проверяет count >= 2 перед тем как разрешить это:
+UPDATE doctors SET on_call = false WHERE id = 17;
+COMMIT;   -- если конкурентная txn сломала сериализуемость, тут поднимется 40001
+```
+
+На SERIALIZABLE одна из двух конкурентных транзакций коммитится; другая получает `ERROR: could not serialize access due to read/write dependencies among transactions` (SQLSTATE **40001**). Твоё приложение **обязано** ловить 40001 и повторять всю транзакцию. На повторе она перечитывает `count = 1` и корректно отказывает. Без retry-логики SERIALIZABLE просто превращает тихую порчу данных в видимые ошибки, которые видят пользователи.
+
+<Inset kind="edgecase" lang="ru">
+SERIALIZABLE не бесплатен и не магия. SSI ведёт бухгалтерию predicate-блокировок (SIReadLocks) на каждое чтение, что стоит памяти и под нагрузкой может эскалировать с гранулярности строки на страницу и на отношение, повышая ложноположительные аборты. Продакшн-правило: используй SERIALIZABLE для конкретных транзакций, несущих кросс-строчный инвариант (бронирование, резерв склада, правила дежурства), держи вокруг них retry-логику с ограниченным экспоненциальным backoff, а остальной трафик держи на READ COMMITTED. Резервирование строк явной блокировкой `SELECT ... FOR UPDATE` часто дешевле и предсказуемее — следующий урок.
+</Inset>
+
+<Quiz
+  id="02-isolation-levels-quiz-1"
+  lessonSlug="02-isolation-levels"
+  lang="ru"
+  question="Транзакция на REPEATABLE READ делает два одинаковых SELECT inventory.qty для одного sku, а другая сессия коммитит изменение между ними. Что вернёт второй SELECT?"
+  choices={[
+    { label: "То же значение, что первый — REPEATABLE READ использует один снимок на всю транзакцию, так что закоммиченное изменение невидимо до конца этой транзакции", correct: true },
+    { label: "Новое закоммиченное значение — Postgres всегда показывает самые свежие закоммиченные данные", misconception: "Это поведение READ COMMITTED, где каждый оператор переснимает. REPEATABLE READ замораживает один снимок на первом операторе транзакции." },
+    { label: "Ошибку, потому что строка изменилась под ней", misconception: "Чистое чтение никогда не падает на REPEATABLE READ; serialization error возникает только при конфликтующей записи, а не при чтении строки, изменённой другой сессией." },
+    { label: "NULL, потому что снимок устарел", misconception: "Снимок намеренно стабилен, а не сломан-устарел; он возвращает значение на момент старта транзакции, в чём и весь смысл." },
+  ]}
+/>
+
+<Quiz
+  id="02-isolation-levels-quiz-2"
+  lessonSlug="02-isolation-levels"
+  lang="ru"
+  question="Нужно гарантировать «хотя бы одна строка набора остаётся true» через конкурентные транзакции, каждая из которых меняет другую строку. Какой уровень и что нужно добавить?"
+  choices={[
+    { label: "SERIALIZABLE плюс retry-логика в приложении, перезапускающая транзакцию на SQLSTATE 40001", correct: true },
+    { label: "REPEATABLE READ — он предотвращает фантомы, этого достаточно", misconception: "REPEATABLE READ предотвращает фантомы, но не write skew. Записи в разные строки не конфликтуют, так что инвариант всё равно может сломаться; только SSI у SERIALIZABLE обнаруживает цикл зависимости." },
+    { label: "READ COMMITTED с более длинной транзакцией", misconception: "Длина транзакции не важна; READ COMMITTED берёт свежий снимок на оператор и не даёт никакой межтранзакционной сериализации." },
+    { label: "Только SERIALIZABLE, без лишнего кода", misconception: "SERIALIZABLE превращает аномалию в ошибку 40001 вместо тихой порчи данных — но без retry-логики эта ошибка доходит до пользователя. Retry обязателен." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-isolation-levels-metaphor-1"
+  lessonSlug="02-isolation-levels"
+  lang="ru"
+  setup="Заполни пропуск: аномалия, где две транзакции читают пересекающийся набор, каждая проверяет держащийся инвариант, затем каждая пишет другую строку и вместе ломают инвариант, называется write _______."
+  accepted={["skew", "write skew", "скью"]}
+  canonical="skew"
+  explanation="Write skew невидим для REPEATABLE READ, потому что две транзакции пишут разные строки, и нет write-write конфликта для обнаружения. Только SERIALIZABLE через Serializable Snapshot Isolation отслеживает read-write зависимость и прерывает одну из них с SQLSTATE 40001 — который твой код обязан повторить."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Уровни изоляции — лестница обещаний о видимых аномалиях. `READ COMMITTED` (умолчание) переснимает на оператор и стопит только грязные чтения; `REPEATABLE READ` замораживает один снимок на транзакцию и дополнительно стопит non-repeatable read и фантомы; `SERIALIZABLE` ведёт себя как последовательное выполнение и **единственный** уровень, останавливающий write skew, через SSI. Всё выше READ COMMITTED может поднять serialization failure (SQLSTATE 40001), который приложение обязано ловить и повторять.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-isolation-levels-retrieval"
+  lang="ru"
+  questions={[
+    { q: "В чём ключевое поведенческое различие READ COMMITTED и REPEATABLE READ?", a: "Когда берётся снимок. READ COMMITTED берёт свежий снимок в начале каждого оператора, так что два чтения одной строки в одной транзакции могут различаться, если другая сессия закоммитила между ними (non-repeatable read). REPEATABLE READ берёт один снимок на первом операторе транзакции и переиспользует его всю транзакцию, так что каждое чтение видит базу на тот один момент — стабильно, но, возможно, не самое свежее закоммиченное значение." },
+    { q: "Что такое write skew и какой уровень изоляции нужен, чтобы его предотвратить?", a: "Write skew — когда две конкурентные транзакции читают пересекающийся набор строк, каждая подтверждает держащийся инвариант, затем каждая пишет ДРУГУЮ строку; по отдельности каждая валидна, но вместе они ломают инвариант. Поскольку пишутся разные строки, нет write-write конфликта, так что REPEATABLE READ это не ловит. Только SERIALIZABLE, используя Serializable Snapshot Isolation для отслеживания read-write зависимостей, обнаруживает несериализуемое расписание и прерывает одну транзакцию с SQLSTATE 40001." },
+    { q: "Если перевести транзакцию на SERIALIZABLE, какую новую обязанность берёт код приложения?", a: "Retry-логику. SERIALIZABLE (и REPEATABLE READ) превращают аномалии в serialization failure вместо тихой порчи: конфликтующая транзакция падает с SQLSTATE 40001 ('could not serialize access'). Приложение обязано ловить 40001 и перезапускать всю транзакцию, желательно с ограниченным экспоненциальным backoff. Без retry SERIALIZABLE просто отдаёт ошибки пользователю вместо порчи данных." },
+  ]}
+/>
+
+<Recap lang="ru">
+Уровень изоляции — контракт о том, какие аномалии могут наблюдать конкурентные транзакции, а не настройка скорости. **READ COMMITTED**, умолчание Postgres, берёт свежий снимок на оператор: блокирует грязные чтения, но допускает non-repeatable read, фантомы, lost update и write skew. **REPEATABLE READ** берёт один снимок на всю транзакцию, давая стабильные чтения и (в Postgres) отсутствие фантомов, но всё ещё допускает write skew, потому что две транзакции, пишущие разные строки, никогда не конфликтуют. **SERIALIZABLE** использует Serializable Snapshot Isolation, чтобы вести себя как поочерёдное выполнение; это единственный уровень, предотвращающий write skew, ценой большего числа serialization failure (SQLSTATE 40001), которые приложение обязано ловить и повторять. Продакшн-дисциплина: держи основной трафик на READ COMMITTED, поднимай до SERIALIZABLE только транзакции с кросс-строчным инвариантом и retry-логикой, либо резервируй строки явно блокировками, которые узнаешь дальше. MVCC-машинерия за всем этим — снимки, версии строк, predicate-блокировки SSI — живёт в главе MVCC трека `databases`; этот урок — обещание на уровне SQL.
+</Recap>

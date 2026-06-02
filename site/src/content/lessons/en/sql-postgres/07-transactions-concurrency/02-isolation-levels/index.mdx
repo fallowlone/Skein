@@ -5,9 +5,176 @@ track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 2
 title: "Isolation levels in Postgres"
-summary: "Isolation levels in Postgres — stub; author to ready."
-estMin: 12
-status: stub
+summary: "READ COMMITTED, REPEATABLE READ, and SERIALIZABLE are escalating promises about which anomalies concurrent transactions can see. Only SERIALIZABLE stops write skew — and it makes you write retry logic."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - isolation-levels
+  - read-committed
+  - repeatable-read
+  - serializable
+  - write-skew
+prereqs:
+  - 01-acid-in-practice
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/transaction-iso.html
+  - https://www.postgresql.org/docs/current/sql-set-transaction.html
+  - https://www.interdb.jp/pg/pgsql05.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A hospital scheduling system enforced one rule: at least one doctor must stay on call. Two doctors, each on call, both clicked "go off duty" at the same second. Each transaction read "2 on call, fine" and removed itself. Result: zero doctors on call — a rule that every individual transaction respected, broken by their interleaving. No bug in either query; the bug was the isolation level. This anomaly has a name — **write skew** — and exactly one level stops it.
+</Hook>
+
+<Crux>Each isolation level is a promise about which anomalies you cannot see — and only SERIALIZABLE stops write skew.</Crux>
+
+<Explanation>
+
+## The levels as a ladder of promises
+
+An isolation level is not a performance dial; it is a contract about which **anomalies** concurrent transactions are allowed to observe. Postgres offers three usable levels (it accepts `READ UNCOMMITTED` but treats it as `READ COMMITTED` — dirty reads are never possible in Postgres).
+
+- **READ COMMITTED** (the default) — you only ever see *committed* data, but each statement takes a **fresh snapshot** at statement start. So within one transaction, two `SELECT`s of the same row can return different values if another transaction committed in between. Prevents: dirty reads. Allows: non-repeatable reads, phantoms, lost updates, write skew.
+- **REPEATABLE READ** — the transaction takes **one snapshot** at its first statement and uses it for the whole transaction. Every read sees the database as of that instant. Prevents: dirty reads, non-repeatable reads, and (in Postgres) phantoms. Allows: write skew. A write that conflicts with another transaction's commit aborts with a serialization error.
+- **SERIALIZABLE** — behaves as if every transaction ran one after another in some serial order. Implemented via **Serializable Snapshot Isolation (SSI)**: it tracks read/write dependencies and aborts a transaction whose commit would create a non-serializable schedule. Prevents: everything, including write skew. Cost: more serialization failures you must retry.
+
+<StackDiagram
+  label="Anomaly-versus-level matrix. READ COMMITTED stops only dirty reads. REPEATABLE READ adds non-repeatable reads and phantoms. SERIALIZABLE adds write skew, blocking every anomaly."
+  hue="var(--d-data)"
+  layers={[
+    { label: "SERIALIZABLE", note: "also stops write skew" },
+    { label: "REPEATABLE READ", note: "stops non-repeatable read + phantoms" },
+    { label: "READ COMMITTED (default)", note: "stops dirty reads only" },
+    { label: "(dirty read)", note: "never possible in Postgres" },
+  ]}
+  caption="Higher on the stack = fewer anomalies visible. Each level adds what the one below could not promise; write skew sits at the very top, reachable only by SERIALIZABLE."
+/>
+
+## Per-statement snapshot vs transaction snapshot
+
+The single most consequential difference between the two common levels is *when* the snapshot is taken.
+
+```sql
+-- READ COMMITTED: each statement re-snapshots.
+BEGIN;  -- default level
+SELECT qty FROM inventory WHERE sku = 'A';   -- sees 10
+-- ... another session commits qty = 3 here ...
+SELECT qty FROM inventory WHERE sku = 'A';   -- now sees 3  (non-repeatable read)
+COMMIT;
+```
+
+```sql
+-- REPEATABLE READ: one snapshot for the whole transaction.
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT qty FROM inventory WHERE sku = 'A';   -- sees 10
+-- ... another session commits qty = 3 here ...
+SELECT qty FROM inventory WHERE sku = 'A';   -- still sees 10  (stable read)
+COMMIT;
+```
+
+`READ COMMITTED` is right for short OLTP statements where you want the freshest committed data. `REPEATABLE READ` is right for a report or multi-statement read that must be internally consistent — a balance sheet that doesn't shift under you mid-query.
+
+The internals — how snapshots, xmin/xmax, and visibility actually work — are the `databases` track's MVCC chapter; here we stay at the SQL contract level. Cross-reference `databases/04-mvcc-isolation/03-hot-updates-and-isolation-levels` for the row-version mechanism and `databases/04-mvcc-isolation/06-ssi-and-production-tuning` for how SSI tracks conflicts.
+
+## Write skew and why only SERIALIZABLE catches it
+
+Write skew is the anomaly that surprises seniors. Two transactions read an **overlapping set** of rows, each checks an invariant that currently holds, then each writes a **different** row. Neither write conflicts with the other (different rows), so REPEATABLE READ's first-updater-wins check never fires — but together they break the invariant.
+
+<SequenceDiagram
+  label="Two on-call doctors each read that two are on call, each decide it is safe to go off duty, and each update their own row, leaving zero on call — write skew."
+  hue="var(--d-data)"
+  actors={["Tx A", "Postgres", "Tx B"]}
+  messages={[
+    { from: "Tx A", to: "Postgres", label: "count on_call = 2, ok" },
+    { from: "Tx B", to: "Postgres", label: "count on_call = 2, ok" },
+    { from: "Tx A", to: "Postgres", label: "UPDATE doc A off" },
+    { from: "Tx B", to: "Postgres", label: "UPDATE doc B off" },
+    { from: "Tx A", to: "Postgres", label: "COMMIT (ok)" },
+    { from: "Tx B", to: "Postgres", label: "COMMIT -> 0 on call!" },
+  ]}
+  caption="Different rows are written, so there is no write-write conflict for REPEATABLE READ to catch. Under SERIALIZABLE, SSI sees the read-write dependency cycle and aborts one transaction with SQLSTATE 40001 — you retry it, it re-reads count = 1, and refuses."
+/>
+
+```sql
+-- The on-call invariant, made safe with SERIALIZABLE:
+BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT count(*) FROM doctors WHERE on_call = true;  -- must stay >= 1
+-- app checks count >= 2 before allowing this:
+UPDATE doctors SET on_call = false WHERE id = 17;
+COMMIT;   -- if a concurrent txn broke serializability, this raises 40001
+```
+
+Under SERIALIZABLE one of the two concurrent transactions commits; the other gets `ERROR: could not serialize access due to read/write dependencies among transactions` (SQLSTATE **40001**). Your application **must** catch 40001 and retry the whole transaction. On retry it re-reads `count = 1` and correctly refuses. Without retry logic, SERIALIZABLE just converts silent corruption into visible errors your users see.
+
+<Inset kind="edgecase" lang="en">
+SERIALIZABLE is not free and not magic. SSI keeps predicate-lock bookkeeping (SIReadLocks) for every read, which costs memory and can escalate from row to page to relation granularity under load, raising false-positive aborts. The production rule of thumb: use SERIALIZABLE for the specific transactions that carry a cross-row invariant (booking, inventory reservation, on-call rules), keep retry logic with capped exponential backoff around them, and keep the rest of your traffic on READ COMMITTED. Reserving rows with an explicit `SELECT ... FOR UPDATE` lock is often the cheaper, more predictable alternative — the next lesson.
+</Inset>
+
+<Quiz
+  id="02-isolation-levels-quiz-1"
+  lessonSlug="02-isolation-levels"
+  lang="en"
+  question="A transaction at REPEATABLE READ runs two identical SELECTs of inventory.qty for the same sku, and another session commits a change in between. What does the second SELECT return?"
+  choices={[
+    { label: "The same value as the first — REPEATABLE READ uses one transaction-wide snapshot, so the committed change is invisible until this transaction ends", correct: true },
+    { label: "The new committed value — Postgres always shows the latest committed data", misconception: "That's READ COMMITTED behaviour, where each statement re-snapshots. REPEATABLE READ freezes one snapshot at the transaction's first statement." },
+    { label: "An error, because the row changed under it", misconception: "A pure read never errors under REPEATABLE READ; serialization errors arise only on a conflicting write, not on reading a row another session changed." },
+    { label: "NULL, because the snapshot is stale", misconception: "The snapshot is intentionally stable, not stale-as-in-broken; it returns the value as of the transaction's start, which is the whole point." },
+  ]}
+/>
+
+<Quiz
+  id="02-isolation-levels-quiz-2"
+  lessonSlug="02-isolation-levels"
+  lang="en"
+  question="You need to guarantee 'at least one row in a set stays true' across concurrent transactions that each modify a different row. Which level, and what must you add?"
+  choices={[
+    { label: "SERIALIZABLE, plus application retry logic that re-runs the transaction on SQLSTATE 40001", correct: true },
+    { label: "REPEATABLE READ — it prevents phantoms, which is enough", misconception: "REPEATABLE READ prevents phantoms but not write skew. Different-row writes don't conflict, so the invariant can still break; only SERIALIZABLE's SSI detects the dependency cycle." },
+    { label: "READ COMMITTED with a longer transaction", misconception: "Transaction length is irrelevant; READ COMMITTED takes a fresh snapshot per statement and provides no cross-transaction serialization at all." },
+    { label: "SERIALIZABLE alone, no extra code", misconception: "SERIALIZABLE converts the anomaly into a 40001 error rather than silently corrupting data — but without retry logic that error reaches the user. Retry is mandatory." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-isolation-levels-metaphor-1"
+  lessonSlug="02-isolation-levels"
+  lang="en"
+  setup="Fill in the blank: the anomaly where two transactions each read an overlapping set, each verify an invariant that holds, then each write a different row and together break the invariant, is called write _______."
+  accepted={["skew", "write skew", "skew anomaly"]}
+  canonical="skew"
+  explanation="Write skew is invisible to REPEATABLE READ because the two transactions write different rows, so there is no write-write conflict to detect. Only SERIALIZABLE, via Serializable Snapshot Isolation, tracks the read-write dependency and aborts one of them with SQLSTATE 40001 — which your code must retry."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Isolation levels are a ladder of promises about visible anomalies. `READ COMMITTED` (default) re-snapshots per statement and stops only dirty reads; `REPEATABLE READ` freezes one snapshot per transaction and additionally stops non-repeatable reads and phantoms; `SERIALIZABLE` behaves as if transactions ran serially and is the **only** level that stops write skew, via SSI. Anything above READ COMMITTED can raise serialization failures (SQLSTATE 40001) that your application must catch and retry.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-isolation-levels-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the key behavioural difference between READ COMMITTED and REPEATABLE READ?", a: "When the snapshot is taken. READ COMMITTED takes a fresh snapshot at the start of each statement, so two reads of the same row in one transaction can differ if another session commits in between (non-repeatable read). REPEATABLE READ takes a single snapshot at the transaction's first statement and reuses it for the whole transaction, so every read sees the database as of that one instant — stable, but possibly not the freshest committed value." },
+    { q: "What is write skew, and which isolation level is required to prevent it?", a: "Write skew is when two concurrent transactions read an overlapping set of rows, each confirm an invariant that currently holds, then each write a DIFFERENT row; individually each is valid but together they break the invariant. Because they write different rows there's no write-write conflict, so REPEATABLE READ does not catch it. Only SERIALIZABLE, using Serializable Snapshot Isolation to track read-write dependencies, detects the unserializable schedule and aborts one transaction with SQLSTATE 40001." },
+    { q: "If you switch a transaction to SERIALIZABLE, what new responsibility does your application code take on?", a: "Retry logic. SERIALIZABLE (and REPEATABLE READ) turn anomalies into serialization failures rather than silent corruption: a conflicting transaction aborts with SQLSTATE 40001 ('could not serialize access'). Your app must catch 40001 and re-run the entire transaction, ideally with capped exponential backoff. Without retry, SERIALIZABLE simply surfaces errors to the user instead of corrupting data." },
+  ]}
+/>
+
+<Recap lang="en">
+An isolation level is a contract over which anomalies concurrent transactions may observe, not a speed setting. **READ COMMITTED**, Postgres's default, takes a fresh snapshot per statement: it blocks dirty reads but allows non-repeatable reads, phantoms, lost updates, and write skew. **REPEATABLE READ** takes one snapshot for the whole transaction, giving stable reads and (in Postgres) no phantoms, but it still allows write skew because two transactions writing different rows never conflict. **SERIALIZABLE** uses Serializable Snapshot Isolation to behave as if transactions ran one at a time; it is the only level that prevents write skew, at the price of more serialization failures (SQLSTATE 40001) that your application must catch and retry. The production discipline: keep most traffic on READ COMMITTED, escalate only the transactions carrying a cross-row invariant to SERIALIZABLE with retry logic, or reserve rows explicitly with the locks you'll learn next. The MVCC machinery behind all of this — snapshots, row versions, SSI predicate locks — lives in the `databases` track's MVCC chapter; this lesson is the SQL-level promise.
+</Recap>

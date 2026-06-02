@@ -4,10 +4,186 @@ lang: en
 track: "sql-postgres"
 unit: "07-transactions-concurrency"
 order: 3
-title: "SELECT FOR UPDATE"
-summary: "SELECT FOR UPDATE — stub; author to ready."
-estMin: 12
-status: stub
+title: "SELECT FOR UPDATE and the job queue"
+summary: "Pessimistic row locks fix the lost-update race: FOR UPDATE locks rows you read so the next write is safe. FOR UPDATE SKIP LOCKED turns one table into a contention-free concurrent job queue."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - select-for-update
+  - row-locks
+  - lost-update
+  - skip-locked
+  - job-queue
+prereqs:
+  - 02-isolation-levels
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://www.interdb.jp/pg/pgsql05.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A team built a worker pool against a `jobs` table: each worker ran `SELECT id FROM jobs WHERE status='queued' LIMIT 1` then marked it `running`. With one worker it was flawless. At ten workers, every job got picked up by three or four of them — duplicate emails, triple charges, the works. The fix was eight characters: `FOR UPDATE SKIP LOCKED`. The same eight characters turn a plain table into a production-grade concurrent queue. This is the most useful locking clause in Postgres.
+</Hook>
+
+<Crux>SELECT FOR UPDATE locks the rows you read so a read-modify-write is safe; SKIP LOCKED turns that into a concurrent job queue.</Crux>
+
+<Explanation>
+
+## The lost-update race, and the pessimistic fix
+
+The default `READ COMMITTED` level does not serialize a **read-then-write** done in two statements. Two sessions can both read a balance, both compute a new value off the stale read, and both write — the second silently overwrites the first. That is the **lost update**.
+
+```sql
+-- Session 1 and Session 2 both run this, interleaved:
+SELECT balance FROM accounts WHERE id = 1;   -- both read 500
+-- app computes 500 - 100 = 400
+UPDATE accounts SET balance = 400 WHERE id = 1;  -- both write 400; one debit vanishes
+```
+
+`SELECT ... FOR UPDATE` fixes it pessimistically: it takes a **row-level write lock** on every row it returns. A second transaction that tries to lock the same row **blocks** until the first commits, then proceeds against the now-current data.
+
+```sql
+BEGIN;
+SELECT balance FROM accounts WHERE id = 1 FOR UPDATE;  -- locks the row
+-- only this transaction holds it; others wait here
+UPDATE accounts SET balance = balance - 100 WHERE id = 1;
+COMMIT;  -- lock releases; the next waiter re-reads the fresh balance
+```
+
+The lock lives for the rest of the transaction and releases on `COMMIT` or `ROLLBACK`. The cost is serialization: contended rows process one transaction at a time. That's the point — correctness over throughput on the hot row.
+
+<SequenceDiagram
+  label="Two transactions both SELECT FOR UPDATE the same account row; the second blocks until the first commits, then re-reads the fresh balance, so no debit is lost."
+  hue="var(--d-data)"
+  actors={["Tx A", "Postgres", "Tx B"]}
+  messages={[
+    { from: "Tx A", to: "Postgres", label: "SELECT id=1 FOR UPDATE" },
+    { from: "Postgres", to: "Tx A", label: "row locked: 500" },
+    { from: "Tx B", to: "Postgres", label: "SELECT id=1 FOR UPDATE" },
+    { from: "Postgres", to: "Tx B", label: "...blocks..." },
+    { from: "Tx A", to: "Postgres", label: "UPDATE -> 400; COMMIT" },
+    { from: "Postgres", to: "Tx B", label: "unblocks: now 400" },
+  ]}
+  caption="The lock forces the two transactions into a serial order on this row. Tx B never acts on the stale 500 — it waits, then reads 400 and subtracts from the correct base. No lost update."
+/>
+
+## The four lock strengths
+
+Postgres has four row-lock modes, from strongest to weakest. Picking the weakest one that's correct lets more concurrency through.
+
+- **FOR UPDATE** — full write lock. Blocks any other `FOR UPDATE`/`FOR SHARE` and blocks `UPDATE`/`DELETE` of the row. Use when you will modify the row.
+- **FOR NO KEY UPDATE** — slightly weaker; taken automatically by a plain `UPDATE` that doesn't touch a key column. It does **not** block `FOR KEY SHARE`, which is what foreign-key checks take — so it reduces FK-related contention.
+- **FOR SHARE** — shared read lock. Multiple transactions can hold it; it blocks writers. Use to pin a row you're reading but not changing.
+- **FOR KEY SHARE** — weakest; what a foreign-key existence check acquires on the parent row. It only blocks changes to the row's key.
+
+The practical lesson: a child-table `INSERT` takes `FOR KEY SHARE` on the parent, and a parent `UPDATE` of a non-key column takes `FOR NO KEY UPDATE` — these two were made compatible so ordinary FK traffic doesn't serialize. Reach for plain `FOR UPDATE` only when you truly intend to update the locked row.
+
+## SKIP LOCKED: the canonical concurrent queue
+
+`SKIP LOCKED` changes the wait behaviour: instead of blocking on an already-locked row, the query **skips it** and returns the next available one. That is exactly what a job queue needs — each worker grabs a *different* unlocked job.
+
+```sql
+-- One worker's atomic dequeue: claim the oldest free job, skipping any a peer holds.
+BEGIN;
+SELECT id FROM jobs
+WHERE status = 'queued'
+ORDER BY id
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+-- mark the claimed row so it won't be re-selected after commit:
+UPDATE jobs SET status = 'running', locked_at = now() WHERE id = :claimed_id;
+COMMIT;
+```
+
+Ten workers running this in parallel each lock and claim a distinct row; no duplicates, no blocking, near-linear scaling. This is how Sidekiq-Pro, `pg-boss`, Que, and most modern Postgres queues work — no separate broker, just `FOR UPDATE SKIP LOCKED`.
+
+<SequenceDiagram
+  label="Two workers dequeue concurrently; worker A locks job 1, worker B skips the locked job 1 and claims job 2 instead, so each gets a distinct job with no blocking."
+  hue="var(--d-data)"
+  actors={["Worker A", "jobs", "Worker B"]}
+  messages={[
+    { from: "Worker A", to: "jobs", label: "FOR UPDATE SKIP LOCKED" },
+    { from: "jobs", to: "Worker A", label: "claims job 1" },
+    { from: "Worker B", to: "jobs", label: "FOR UPDATE SKIP LOCKED" },
+    { from: "jobs", to: "Worker B", label: "skips 1, claims job 2" },
+    { from: "Worker A", to: "jobs", label: "set running; COMMIT" },
+    { from: "Worker B", to: "jobs", label: "set running; COMMIT" },
+  ]}
+  caption="SKIP LOCKED never blocks: it walks past rows other workers hold. The ORDER BY + LIMIT 1 inside the locking SELECT makes each worker take the oldest free job, so throughput scales with worker count."
+/>
+
+<Inset kind="edgecase" lang="en">
+Two more knobs. `NOWAIT` is the opposite of `SKIP LOCKED`: instead of waiting or skipping, it errors immediately (`55P03`) if any target row is locked — useful when "someone else is editing this" should be an instant failure, not a wait. And **consistent lock ordering** is the rule that prevents deadlocks (next lesson): if every transaction that locks multiple rows always locks them in the same order — e.g. always `ORDER BY id` before `FOR UPDATE` — two transactions can never each hold a row the other wants. A money transfer locking accounts 1 and 2 must lock the lower id first in *both* directions of the transfer, or you'll deadlock under load.
+</Inset>
+
+<Quiz
+  id="03-select-for-update-quiz-1"
+  lessonSlug="03-select-for-update"
+  lang="en"
+  question="A job-queue worker uses SELECT ... FOR UPDATE (without SKIP LOCKED) with LIMIT 1 to claim a job. With ten workers, what happens?"
+  choices={[
+    { label: "Nine workers block waiting on the one row the first worker locked, so the pool effectively serializes — throughput collapses to one job at a time", correct: true },
+    { label: "Each worker claims a distinct job, just like SKIP LOCKED", misconception: "Plain FOR UPDATE blocks on a locked row; it does not skip to the next free one. Without SKIP LOCKED the LIMIT 1 makes all workers contend for the same first row." },
+    { label: "Postgres raises a deadlock error", misconception: "There's no deadlock — every worker waits on the same single lock holder, which is contention/serialization, not a cycle." },
+    { label: "Each worker gets the same job and processes it ten times", misconception: "They block rather than duplicate; the waiters re-read after the holder commits. SKIP LOCKED is what gives distinct jobs, not duplicates." },
+  ]}
+/>
+
+<Quiz
+  id="03-select-for-update-quiz-2"
+  lessonSlug="03-select-for-update"
+  lang="en"
+  question="You want 'editing this record fails instantly if another session is already editing it' — no waiting, no skipping. Which clause?"
+  choices={[
+    { label: "FOR UPDATE NOWAIT — it errors with 55P03 immediately if any target row is already locked", correct: true },
+    { label: "FOR UPDATE SKIP LOCKED", misconception: "SKIP LOCKED silently omits the locked row from the result, so you'd get an empty result, not an error — wrong signal for 'someone is editing this'." },
+    { label: "Plain FOR UPDATE", misconception: "Plain FOR UPDATE waits indefinitely for the lock; you asked for instant failure, not a wait." },
+    { label: "FOR SHARE", misconception: "FOR SHARE is a shared read lock that lets other readers in and only blocks writers; it neither fails fast nor guarantees exclusivity for editing." },
+  ]}
+/>
+
+<DragOrder
+  id="03-select-for-update-drag-1"
+  lessonSlug="03-select-for-update"
+  lang="en"
+  prompt="Order one worker's atomic, lost-update-free dequeue from a jobs table shared by ten workers:"
+  items={[
+    { id: "a", label: "BEGIN a transaction so the claim and the status update are one unit" },
+    { id: "b", label: "SELECT the oldest queued job with ORDER BY id ... FOR UPDATE SKIP LOCKED LIMIT 1" },
+    { id: "c", label: "UPDATE that row to status='running', locked_at=now()" },
+    { id: "d", label: "COMMIT to release the lock and make the claim durable" },
+  ]}
+  correctOrder={["a", "b", "c", "d"]} />
+
+</Explanation>
+
+<KeyTakeaway>`SELECT ... FOR UPDATE` takes a row-level write lock on every row it returns, so a two-statement read-then-write can't lose an update — concurrent lockers block until you commit. Add `SKIP LOCKED` and the query steps past locked rows instead of waiting, which is the canonical way to build a contention-free concurrent job queue on a plain table. Use the weakest lock strength that's correct, lock multiple rows in a consistent order, and pick `NOWAIT` when "already locked" should fail fast.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-select-for-update-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the lost-update problem and how does SELECT FOR UPDATE prevent it?", a: "A lost update happens when two transactions each read a value (e.g. balance 500), compute a new value from that stale read, and both write — the second overwrites the first, so one change is lost. This slips through READ COMMITTED because a separate SELECT then UPDATE isn't serialized. SELECT ... FOR UPDATE prevents it by taking a row write lock at read time: the second transaction blocks until the first commits, then re-reads the now-current value before writing, so no update is lost." },
+    { q: "How does FOR UPDATE SKIP LOCKED build a concurrent job queue, and what does the dequeue query look like?", a: "SKIP LOCKED makes the locking SELECT skip rows that other transactions already hold instead of blocking on them, so each worker claims a distinct free row. The dequeue is: BEGIN; SELECT id FROM jobs WHERE status='queued' ORDER BY id FOR UPDATE SKIP LOCKED LIMIT 1; UPDATE jobs SET status='running', locked_at=now() WHERE id=<claimed>; COMMIT. Ten workers run this in parallel, each taking the oldest unlocked job, with no duplicates and near-linear scaling — the basis of pg-boss, Que, and similar queues." },
+    { q: "When would you use NOWAIT instead of SKIP LOCKED or a plain lock, and how do they differ on a locked row?", a: "On a row another session already locks: plain FOR UPDATE WAITS until the lock frees; SKIP LOCKED silently OMITS that row from the result and returns other free rows; NOWAIT immediately ERRORS with SQLSTATE 55P03. Use NOWAIT when contention should be an instant, explicit failure — e.g. an interactive edit where you want to tell the user 'someone else is editing this' rather than hang or silently return nothing." },
+  ]}
+/>
+
+<Recap lang="en">
+The default isolation level leaves a two-statement read-then-write open to the **lost update**: two sessions read the same value, compute from the stale read, and both write, dropping one change. `SELECT ... FOR UPDATE` closes it pessimistically by taking a row write lock at read time; a competing locker blocks until you commit, then works from fresh data, so the hot row is processed one transaction at a time. Postgres offers four lock strengths — `FOR UPDATE`, `FOR NO KEY UPDATE`, `FOR SHARE`, `FOR KEY SHARE` — and you take the weakest that's correct so ordinary foreign-key traffic doesn't serialize. The standout pattern is `FOR UPDATE SKIP LOCKED`: it steps past rows other workers hold, so a plain `jobs` table becomes a contention-free concurrent queue where each worker claims a distinct row with `ORDER BY id ... LIMIT 1`. Round it out with `NOWAIT` for fail-fast editing and a consistent lock order to avoid the deadlocks you'll study next.
+</Recap>
