@@ -4,10 +4,186 @@ lang: en
 track: "js-engine"
 unit: "01-how-js-runs"
 order: 3
-title: "Ignition bytecode"
-summary: "Ignition bytecode — stub; author to ready."
-estMin: 12
-status: stub
+title: "Ignition and the bytecode"
+summary: "Ignition is V8's register-based bytecode interpreter. Bytecode is far more compact than machine code — its original motivation was memory, cutting V8's code memory roughly in half on mobile. A single accumulator plus a register file"
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - Ignition
+  - bytecode
+  - register machine
+  - accumulator
+  - register file
+  - feedback vector slot
+deepensInto:
+  - "04-interpreter-loop"
+  - "04-the-jit/02-type-feedback"
+spiral:
+  - performance-cliffs
+  - statefulness
+prereqs:
+  - "02-lazy-parsing"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/ignition-interpreter
+  - https://v8.dev/blog/launching-ignition-and-turbofan
+  - https://v8.dev/docs/torque
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+When V8 shipped Ignition in 2017, the headline was not speed — it was *memory*. On a low-end Android phone, the machine code V8 generated for every function was eating tens of megabytes of RAM, much of it for code that ran a handful of times. The fix was to stop generating machine code up front and run a compact bytecode instead, cutting V8's code memory roughly in half. That bytecode, and the register machine that runs it, is what stands between your parsed AST and a fast path.
+</Hook>
+
+<Crux>Ignition is a register-based bytecode interpreter: an accumulator and register file, with a feedback slot on each type-sensitive op.</Crux>
+
+<Explanation>
+
+## Bytecode: compact by design, and the reason was memory
+
+After the parser builds the AST (and only when a function is actually called — recall lazy parsing), the **bytecode generator** lowers that tree into **Ignition bytecode**: a flat sequence of small instructions for a virtual machine. Bytecode sits between source and machine code. It is slower to execute than native machine code, but it is dramatically **more compact** — one bytecode is typically one or two bytes, versus dozens of bytes of machine code for the same operation.
+
+That compactness was the *point*. Before Ignition, V8's baseline compiler generated machine code for every function eagerly, and on memory-constrained mobile devices the accumulated code blew the RAM budget. Ignition replaced eager machine code with bytecode that V8 interprets, **roughly halving V8's code memory** while keeping startup snappy. Speed came later, from the JIT tiers compiling the hot bytecode; the founding motivation was footprint.
+
+<NumbersCard
+  title="Why bytecode, and what it costs"
+  data-lesson-visual
+  stats={[
+    { label: "Original Ignition motivation (2016)", value: "memory" },
+    { label: "V8 code-memory reduction", value: "~50%" },
+    { label: "Typical bytecode size", value: "1-2 bytes / op" },
+    { label: "Ignition VM style", value: "register-based" },
+    { label: "JVM / CPython VM style", value: "stack-based" },
+    { label: "Flag to view bytecode", value: "--print-bytecode" },
+  ]}
+/>
+
+## Register machine, not stack machine
+
+There are two classic ways to build a bytecode VM. A **stack machine** (the JVM, CPython) keeps operands on an implicit operand stack: `PUSH a; PUSH b; ADD` pops two, pushes the sum. A **register machine** keeps operands in named registers and operations reference them directly: `ADD r1, r2`. Ignition is a **register machine**.
+
+Register bytecode is a little harder to generate but yields **fewer, denser instructions** — there is no constant push/pop churn for every operand — which means fewer dispatches in the interpreter loop per unit of work. That density is part of why a register design suits a JIT-backed engine: fewer bytecodes to interpret while cold, and a cleaner stream to compile when hot.
+
+Ignition's register model is specifically an **accumulator + register file**:
+
+- The **accumulator** is a single implicit register that most bytecodes read from and write to. It threads intermediate values from one instruction to the next, so operands do not all need an explicit name. Many ops take *one* explicit operand and implicitly use the accumulator as the other input and as the output.
+- The **register file** is the set of named local registers — `r0`, `r1`, `r2`, … — holding the function's locals and temporaries, allocated per function frame.
+
+<StackDiagram
+  label="Ignition's execution state for one function frame: the single accumulator register threads values between bytecodes, the named register file holds locals and temporaries, and the per-function feedback vector collects type observations for the JIT."
+  hue="var(--accent)"
+  caption="The accumulator is the implicit hub — most bytecodes read it and write it. The register file holds named locals; the feedback vector is written as type-sensitive bytecodes execute."
+  layers={[
+    { label: "Accumulator", note: "single implicit register; threads values op-to-op" },
+    { label: "Register file (r0, r1, r2, …)", note: "named locals and temporaries for this frame" },
+    { label: "Feedback vector", note: "one slot per type-sensitive bytecode; primes the JIT" },
+    { label: "Bytecode array + offset", note: "the instructions and the current position" },
+  ]}
+/>
+
+## Reading real bytecode
+
+Take the simplest function and look at what Ignition runs. Run `d8 --print-bytecode add.js` on:
+
+```js
+function add(a, b) { return a + b; }
+add(1, 2);
+```
+
+You get something close to this (operands and slot indices abbreviated):
+
+```text
+Ldar a1          // load argument b into the accumulator
+Add a0, [0]      // accumulator = a0 (a) + accumulator (b); feedback slot 0
+Return           // return the accumulator
+```
+
+Notice the accumulator-centric shape: `Ldar` (**L**oa**d** **A**ccumulator from **R**egister) puts `b` in the accumulator; `Add a0, [0]` adds register `a0` (the argument `a`) to the accumulator and leaves the sum in the accumulator; `Return` returns the accumulator. There is no `Push`/`Pop` — the accumulator is the shared workspace.
+
+## The `[slot]` is where the JIT gets its type information
+
+Look again at `Add a0, [0]`. That `[0]` is a **feedback-vector slot index**. Every bytecode whose behaviour depends on runtime types — arithmetic, property loads/stores, calls, comparisons — carries a slot index into the function's **feedback vector**, a per-function array allocated alongside the bytecode. As the interpreter executes that bytecode, it records *what it actually saw* into that slot: the operands of `Add` were Smis, or the object at a property load had a particular hidden class, or this call site always hit one function.
+
+This is the bridge to the optimiser. The interpreter is, in effect, **profiling the program for free** while it runs it. When a function gets hot, the JIT (Maglev, TurboFan — covered in unit 04) reads the feedback vector to make speculative assumptions: "this `Add` only ever sees integers, so emit an integer add." Type feedback is collected *here*, in Ignition, one slot per type-sensitive bytecode — which is why this lesson sits directly upstream of the JIT and of type feedback.
+
+<Misconception id="mc-bytecode-fast">
+  <p><strong>"Bytecode exists to make JavaScript faster than machine code."</strong> No — Ignition's bytecode runs <em>slower</em> than the machine code it replaced. Its goal was memory: bytecode is far more compact, cutting V8's code memory ~50% on mobile. Speed comes from the JIT compiling hot bytecode later.</p>
+</Misconception>
+
+## Shared handlers, written in Torque
+
+You might expect each bytecode to be hand-written assembly per CPU. Instead, V8 writes each bytecode's **handler** — the routine that performs that opcode's work — once, in a portable low-level DSL: originally **CodeStubAssembler (CSA)**, now mostly **Torque**, which compiles down to CSA. These handlers are generated into machine code at build time and **shared across all functions**: there is one `Add` handler, one `LdaNamedProperty` handler, and so on. The interpreter is essentially a table of these shared handlers, and running a function means dispatching through them — the subject of the next lesson, the interpreter loop.
+
+<Quiz
+  id="q-why-bytecode"
+  lessonSlug="03-ignition-bytecode"
+  lang="en"
+  question="Ignition replaced eagerly-generated machine code with interpreted bytecode in 2017. What was the primary motivation?"
+  choices={[
+    { label: "Bytecode executes faster than machine code", misconception: "It executes slower. Bytecode trades execution speed for compactness; speed comes from the JIT compiling hot bytecode." },
+    { label: "Memory — bytecode is far more compact, cutting V8's code memory roughly in half on mobile", correct: true },
+    { label: "Bytecode is portable across CPUs, so V8 needed no architecture-specific code", misconception: "The handlers are still compiled to machine code per architecture; portability is a nice property but the driving reason was memory footprint." },
+    { label: "It removed the need for a garbage collector", misconception: "The GC is unrelated; Ignition changed how code is represented, not how objects are reclaimed." },
+  ]}
+/>
+
+<Quiz
+  id="q-slot"
+  lessonSlug="03-ignition-bytecode"
+  lang="en"
+  question="In the bytecode `Add a0, [0]`, what is the `[0]`?"
+  choices={[
+    { label: "A second source register holding another operand", misconception: "The operands are the accumulator and a0; [0] is not a register, it's a feedback-vector slot index." },
+    { label: "A feedback-vector slot index where the interpreter records observed types to prime the JIT", correct: true },
+    { label: "The CPU instruction count for the add", misconception: "Bytecode does not encode CPU cycle counts; [0] indexes the feedback vector, not timing." },
+    { label: "The stack depth before the operation", misconception: "Ignition is register-based with an accumulator, not a stack machine; there is no operand-stack depth here." },
+  ]}
+/>
+
+<DragOrder
+  id="do-add-bytecode"
+  pieceSlug="03-ignition-bytecode"
+  lang="en"
+  prompt="Order the bytecodes Ignition runs for `function add(a, b) { return a + b; }`, given a0 holds a and a1 holds b."
+  items={[
+    "Ldar a1 — load argument b into the accumulator",
+    "Add a0, [0] — add register a0 to the accumulator; record types in feedback slot 0",
+    "Return — return the value in the accumulator",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why an accumulator at all, instead of always naming both operands like `Add r1, r2, r3`? The accumulator lets most bytecodes carry *one fewer operand* — the result and one input are implicit — which makes the bytecode stream shorter and the dispatch loop tighter. It is a classic interpreter trade-off: a tiny bit of extra `Ldar`/`Star` (load/store accumulator) traffic in exchange for denser, faster-to-dispatch common operations. V8's measurements found the accumulator design a net win for interpreter throughput and code size.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Ignition is a register-based bytecode interpreter; bytecode exists primarily for memory (compact, ~50% less code memory than eager machine code). Its model is a single accumulator plus a named register file, with handlers written once in Torque/CSA and shared. Every type-sensitive bytecode carries a feedback-vector `[slot]` where the interpreter records observed types — the data the JIT later reads.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ignition-bytecode-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does Ignition use bytecode at all, and what was the original motivation?", a: "After the parser builds the AST and a function is first called, the bytecode generator lowers the tree to compact Ignition bytecode (typically 1-2 bytes per op) that V8 interprets. The founding motivation in 2016-2017 was memory, not speed: V8 previously generated machine code for every function eagerly, blowing the RAM budget on low-end mobile. Switching to interpreted bytecode cut V8's code memory roughly in half. Bytecode executes slower than machine code; speed is recovered later by the JIT tiers compiling the hot bytecode." },
+    { q: "Describe Ignition's register model and contrast it with a stack machine.", a: "Ignition is a register machine: operands live in named registers and ops reference them directly (Add a0, [slot]), unlike a stack machine (JVM, CPython) that pushes and pops operands on an implicit operand stack. Specifically Ignition uses an accumulator plus a register file: the accumulator is one implicit register most bytecodes read and write, threading intermediate values op-to-op; the register file is the named locals r0, r1, r2... for the frame. The register/accumulator design yields fewer, denser bytecodes and fewer dispatches per unit of work." },
+    { q: "What is the [slot] in a bytecode like `Add a0, [0]`, and why does it matter for performance?", a: "It is an index into the function's feedback vector, a per-function array allocated alongside the bytecode. Every type-sensitive bytecode (arithmetic, property load/store, call, comparison) carries a slot index, and as the interpreter runs it records what it actually observed — operand types, hidden classes, call targets — into that slot. The interpreter thus profiles the program for free. When the function gets hot, the JIT reads the feedback vector to make speculative type assumptions (e.g. emit an integer add if the slot only ever saw Smis). So type feedback is collected in Ignition, one slot per type-sensitive op." },
+  ]}
+/>
+
+<Recap lang="en">
+Once a function is first called, V8's bytecode generator lowers its AST into Ignition bytecode — a flat sequence of small (1-2 byte) instructions for a virtual machine. Bytecode exists primarily for memory: replacing eagerly-generated machine code with interpreted bytecode cut V8's code memory roughly in half on mobile, which was Ignition's founding motivation in 2016-2017; execution speed is slower than machine code and is recovered later by the JIT tiers. Ignition is a register machine rather than a stack machine (JVM/CPython), and specifically uses an accumulator plus a register file: the single accumulator threads values from one bytecode to the next, while named registers r0, r1, … hold the frame's locals. A function as simple as `add(a, b)` compiles to roughly `Ldar a1; Add a0, [0]; Return`, showing the accumulator-centric shape and no push/pop. The `[0]` is a feedback-vector slot index: every type-sensitive bytecode carries one, and the interpreter records observed types there as it runs, profiling the program for free so the JIT can later specialise. Bytecode handlers are written once in Torque/CSA and shared across all functions. View it all with `d8 --print-bytecode`.
+</Recap>
