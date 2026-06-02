@@ -182,3 +182,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ security overview units (7) — 01-owasp-modern, 03-jwt-pitfalls, 04-csrf, 05-password-hashing, 06-secrets, 07-supply-chain, 08-putting-it-together [deep unit 02-oauth-oidc pending]
 - ✅ security/02-oauth-oidc (6) — 01-what-is-oauth, 02-auth-code-pkce, 03-id-token-validation, 04-refresh-tokens-and-scopes, 05-sender-constrained-tokens, 06-oauth-production  [security track COMPLETE + enforced]
 - ✅ ai-llm all units (8) — 01-prompt-caching, 02-tool-calls, 03-rag-architecture, 04-streaming, 05-cost-budgets, 06-agents, 07-evals, 08-putting-it-together  [ai-llm track COMPLETE + enforced]
+- ✅ data-engineering all units (8) — 01-oltp-vs-olap, 02-elt-vs-etl, 03-parquet, 04-materialized-views, 05-event-sourcing, 06-search, 07-vectors, 08-putting-it-together  [data-engineering track COMPLETE + enforced]
