@@ -83,16 +83,33 @@ jobs:
         run: bun run build
         working-directory: site
 
+      # Read the dispatch input via env (never interpolate untrusted input into a
+      # run: command) and validate it against a safe charset before use.
       - name: Resolve deploy branch
         id: branch
-        run: echo "name=${{ github.event_name == 'workflow_dispatch' && inputs.branch || 'main' }}" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BRANCH: ${{ inputs.branch }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_BRANCH" ]; then
+            name="$INPUT_BRANCH"
+          else
+            name="main"
+          fi
+          if ! printf '%s' "$name" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Invalid branch name: $name" >&2
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
 
       # Run from repo ROOT so the functions/ auth dir is bundled (CF docs).
+      # Branch passed via env (validated above); no untrusted value in the command.
       - name: Deploy to Cloudflare Pages
-        run: bunx wrangler pages deploy site/dist --project-name=awesome-everything --branch="${{ steps.branch.outputs.name }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEPLOY_BRANCH: ${{ steps.branch.outputs.name }}
+        run: bunx wrangler pages deploy site/dist --project-name=awesome-everything --branch="$DEPLOY_BRANCH"
 ```
 
 - [ ] **Step 2: Verify the YAML parses**
@@ -125,12 +142,14 @@ secrets wired OK
 
 - [ ] **Step 4: Confirm the deploy step runs from repo root (functions/ bundling)**
 
-The `Deploy` step must have **no** `working-directory:` (so it runs at repo root where `functions/` lives). Run:
+The `Deploy` step must have **no** `working-directory:` (so it runs at repo root where `functions/` lives). Only the two `site/` install/build steps may carry `working-directory: site`. Run:
 ```bash
 cd /Users/artemmac/dev/awesome-everything
-awk '/name: Deploy to Cloudflare Pages/{f=1} f&&/working-directory/{print "FAIL: deploy step has working-directory"; exit 1} f&&/^      - name:/&&!/Deploy to Cloudflare/{exit 0} END{print "deploy runs at repo root OK"}' .github/workflows/deploy.yml
+test "$(grep -c 'working-directory: site' .github/workflows/deploy.yml)" = "2" \
+  && test "$(grep -c 'working-directory' .github/workflows/deploy.yml)" = "2" \
+  && awk '/^      - name: Deploy to Cloudflare Pages/{f=1} f&&/working-directory/{print "FAIL"; exit 1} END{print "deploy runs at repo root OK"}' .github/workflows/deploy.yml
 ```
-Expected: `deploy runs at repo root OK` (no FAIL line).
+Expected: `deploy runs at repo root OK` (no `FAIL`). Note: anchor the `awk` on the step line `^      - name: Deploy…` — the **workflow-level** `name:` on line 1 is the same string and would otherwise set the flag from the top, catching the legit `working-directory: site` on the install/build steps.
 
 - [ ] **Step 5: Commit**
 
