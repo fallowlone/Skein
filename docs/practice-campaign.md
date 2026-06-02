@@ -164,3 +164,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ engineering-practice/01-tdd-property (5) — rgr-design-loop, test-doubles-london-detroit, property-based-testing, when-tdd-hurts, mutation-testing
 - ✅ engineering-practice/02-contract-testing (5) — overview, consumer-driven-contracts, provider-verification-broker, can-i-deploy-and-versioning, contract-evolution-and-limits
 - ✅ engineering-practice/03-code-review (5) — overview, pr-size-and-latency, giving-and-receiving-review, automate-the-mechanical, anti-patterns-and-scaling
+- ✅ engineering-practice/04-trunk-based (5) — integration-frequency, short-lived-branches-vs-gitflow, feature-flags-dark-launch, the-green-trunk-gate, flag-debt-and-rollout-discipline
