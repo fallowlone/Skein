@@ -170,3 +170,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ engineering-practice/07-on-call (1) — overview
 - ✅ engineering-practice/08-putting-it-together (1) — overview  [engineering-practice track COMPLETE + enforced]
 - ✅ apis/{01-rest-modeling,02-status-codes-real,03-pagination,04-openapi,05-grpc-protobuf,07-rate-limiting,08-putting-it-together} (7 overview lessons)
+- ✅ apis/06-graphql-n-plus-one (6) — why-graphql-gets-nplus1, dataloader-mechanics, batch-function-contracts, federation-and-lookahead, query-complexity-defences, graphql-api-senior  [apis track COMPLETE + enforced]
