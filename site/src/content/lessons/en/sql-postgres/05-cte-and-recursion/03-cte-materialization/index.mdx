@@ -4,10 +4,159 @@ lang: en
 track: "sql-postgres"
 unit: "05-cte-and-recursion"
 order: 3
-title: "CTE materialization"
-summary: "CTE materialization — stub; author to ready."
-estMin: 12
-status: stub
+title: "CTE materialization: the fence that moved"
+summary: "Postgres 12 turned the old unconditional CTE optimization fence into smart inlining — and gave you MATERIALIZED / NOT MATERIALIZED to force either when the planner guesses wrong."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - cte-materialization
+  - optimization-fence
+  - predicate-pushdown
+  - inlining
+  - explain-reading
+prereqs:
+  - 02-cte-vs-subquery
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-with.html
+  - https://www.postgresql.org/docs/current/using-explain.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You upgrade a database from Postgres 11 to 14 and a report that took eight seconds now takes forty milliseconds — you changed nothing but the version. Or the reverse: a query that was fast for years suddenly regresses after the upgrade. Both are the same root cause. Postgres 12 quietly redefined what a CTE *does* to your plan. The old guarantee — "a CTE is always computed once, separately" — was a load-bearing assumption in a lot of production SQL, and when it went away, plans shifted. Knowing the rule, and the two keywords that override it, is senior-level table stakes.
+</Hook>
+
+<Crux>Postgres 12 inlines CTEs when safe instead of always materializing; MATERIALIZED / NOT MATERIALIZED force either way.</Crux>
+
+<Explanation>
+
+## The fence, and the day it moved
+
+Before Postgres 12, every CTE was an **unconditional optimization fence**. The planner computed each CTE exactly once, stored its full result in memory (materialized it), and then ran the outer query against that stored result. It never pushed the outer query's filters *down* into the CTE. That made a CTE a predictable but often expensive boundary: handy when you wanted to compute something once and reuse it, ruinous when the outer query only needed a sliver of a huge CTE.
+
+Postgres 12 changed the default to **inlining**: a CTE that is referenced **once** and is **side-effect-free** and **not recursive** is folded into the outer query, exactly as if you'd written it as a subquery — so predicates push down and indexes get used. If any of those conditions fails — the CTE is referenced more than once, or it contains a data-modifying statement (`INSERT`/`UPDATE`/`DELETE ... RETURNING`), or it's recursive — Postgres still materializes it.
+
+```sql
+-- PG12+: referenced once, no side effects → inlined.
+-- tenant_id = 7 pushes down into the CTE and hits an index.
+WITH e AS (SELECT * FROM events)
+SELECT * FROM e WHERE tenant_id = 7;
+
+-- Referenced twice → materialized (computed once, reused).
+WITH e AS (SELECT * FROM events WHERE created_at > now() - interval '1 day')
+SELECT (SELECT count(*) FROM e) AS total,
+       (SELECT count(*) FROM e WHERE tenant_id = 7) AS for_seven;
+```
+
+<FlowDiagram
+  label="Two plan shapes for the same CTE. Inlined: the CTE folds into the outer query so the WHERE predicate pushes down to an index scan. Materialized: the CTE is computed once into a stored result, then the outer query filters that result with no pushdown."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "q", label: "WITH cte ... SELECT", sub: "your query" },
+    { id: "inline", label: "Inlined", sub: "fold into outer" },
+    { id: "push", label: "predicate pushdown", sub: "index scan" },
+    { id: "mat", label: "Materialized", sub: "compute once" },
+    { id: "store", label: "CTE Scan", sub: "filter stored result" },
+  ]}
+  edges={[
+    { from: "q", to: "inline" },
+    { from: "inline", to: "push" },
+    { from: "q", to: "mat" },
+    { from: "mat", to: "store" },
+  ]}
+  caption="Inlining enables predicate pushdown (fast when you need a slice); materialization computes the whole CTE once (fast when you reuse it or it's expensive). The planner chooses; the keywords override."
+/>
+
+## The two keywords that override the planner
+
+You are not at the planner's mercy. Two explicit keywords force the behavior:
+
+```sql
+-- Force materialization: compute once, even though referenced once.
+WITH e AS MATERIALIZED (SELECT * FROM big_expensive_function_call())
+SELECT * FROM e WHERE id = 42;
+
+-- Force inlining: fold in even though referenced twice (you accept recomputation).
+WITH e AS NOT MATERIALIZED (SELECT * FROM events WHERE tenant_id = 7)
+SELECT ... ;
+```
+
+**When to force `MATERIALIZED`:** the CTE is genuinely expensive to compute (a costly function, a heavy aggregate) and referenced once, but inlining would cause that expensive work to run *per outer row* or be repeated; or the CTE has side effects you must run exactly once; or — the real-world rescue — inlining produced a *worse* plan and you want to restore the old fence behavior to break a bad join order. **When to force `NOT MATERIALIZED`:** the CTE is referenced multiple times so Postgres materialized it, but each reference only needs a filtered slice, and you'd rather the predicate push down than materialize the whole thing.
+
+The trap cuts both ways. `MATERIALIZED` reintroduces the fence, so a selective `WHERE` in the outer query **cannot** push into the CTE — you may scan the entire base table to build the CTE, then filter. That's the exact pre-12 footgun. Use `MATERIALIZED` deliberately, not as a reflex.
+
+## Spotting it in EXPLAIN
+
+`EXPLAIN` tells you which path the planner took. A materialized CTE shows a `CTE Scan` node reading from a separately computed `CTE <name>` subplan; an inlined CTE shows *no* `CTE Scan` at all — the CTE's tables appear directly in the main plan tree, and you'll see the outer predicate applied as an `Index Cond` deep inside. So the diagnostic is simple: grep the plan for `CTE Scan`. Present means materialized; absent means inlined. The deep skill of reading these plans — cost numbers, estimate-vs-actual rows, join nodes — belongs to unit 08 and to the `databases` track's execution-plans chapter; here you only need to recognize the fork.
+
+<Inset kind="mistake" lang="en">
+The classic post-upgrade regression: a team relied on the pre-12 fence as a manual optimization. They wrote a CTE specifically to *stop* the planner from a bad choice — materializing it forced a sane join order. After upgrading to 12+, that same CTE got inlined, the planner reverted to its bad choice, and the query regressed 20×. The fix is one word: mark the CTE `AS MATERIALIZED` to restore the old behavior. The lesson is that the fence was load-bearing in places nobody documented — so when you upgrade across the 12 boundary, the CTEs that were silently acting as planner hints are exactly the ones to re-check with `EXPLAIN`.
+</Inset>
+
+<Quiz
+  id="03-cte-materialization-quiz-1"
+  lessonSlug="03-cte-materialization"
+  lang="en"
+  question="On Postgres 14, when does a CTE get inlined into the outer query by default?"
+  choices={[
+    { label: "When it's referenced exactly once, has no side effects, and isn't recursive", correct: true },
+    { label: "Always — Postgres 12+ never materializes a CTE", misconception: "It still materializes when the CTE is referenced more than once, is data-modifying, or is recursive; inlining is the default only when those don't apply." },
+    { label: "Only if you write NOT MATERIALIZED explicitly", misconception: "Inlining is the default since PG12 for the qualifying cases; NOT MATERIALIZED is only needed to force inlining when it otherwise wouldn't happen (e.g. multiple references)." },
+    { label: "Never by default; you must always opt in", misconception: "The default flipped to inlining in PG12; you opt out with MATERIALIZED, not in." },
+  ]}
+/>
+
+<Quiz
+  id="03-cte-materialization-quiz-2"
+  lessonSlug="03-cte-materialization"
+  lang="en"
+  question="A CTE wraps a whole table and the outer query filters one tenant, but EXPLAIN shows a CTE Scan over millions of rows. Which one-word change likely fixes it on PG12+?"
+  choices={[
+    { label: "Mark it NOT MATERIALIZED so the tenant filter pushes down into an index scan", correct: true },
+    { label: "Mark it MATERIALIZED to make it faster", misconception: "MATERIALIZED is the fence — it blocks predicate pushdown, which is exactly what's causing the full scan here." },
+    { label: "Add DISTINCT to the CTE", misconception: "DISTINCT doesn't change pushdown; the issue is the CTE was materialized (likely referenced more than once), so the filter can't reach the base table." },
+    { label: "Nothing — a CTE Scan always means the query is optimal", misconception: "A CTE Scan over millions of rows when you need one tenant is the materialization fence preventing pushdown; that's the symptom to fix." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-cte-materialization-metaphor-1"
+  lessonSlug="03-cte-materialization"
+  lang="en"
+  setup="Fill in the blank: forcing a CTE AS MATERIALIZED reintroduces the optimization _______, so the outer query's predicates can no longer push down into the CTE."
+  accepted={["fence", "barrier", "optimization fence"]}
+  canonical="fence"
+  explanation="MATERIALIZED restores the pre-12 behavior: the CTE is computed whole and stored, and the planner treats it as an opaque boundary. That blocks predicate pushdown — useful when you deliberately want a compute-once boundary, harmful when you needed the filter to reach a base-table index."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Pre-12, every CTE was an unconditional optimization fence (always materialized). Postgres 12 inlines a CTE when it's referenced once, side-effect-free, and non-recursive — enabling predicate pushdown. `MATERIALIZED` forces the fence back; `NOT MATERIALIZED` forces inlining. In `EXPLAIN`, a `CTE Scan` node means materialized; its absence means inlined.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-cte-materialization-retrieval"
+  lang="en"
+  questions={[
+    { q: "What was the pre-12 CTE behavior and what did Postgres 12 change?", a: "Before 12 every CTE was an unconditional optimization fence: computed once, materialized, with no predicate pushdown from the outer query. Postgres 12 made a CTE inline by default when it's referenced exactly once, has no side effects, and isn't recursive — folding it into the outer query so filters and indexes apply. Otherwise it still materializes." },
+    { q: "When should you force MATERIALIZED, and what's the cost?", a: "Force MATERIALIZED when the CTE is expensive and you want it computed exactly once, when it has side effects that must run once, or when inlining produced a worse plan and you want the old fence to fix a bad join order. The cost is that the fence blocks predicate pushdown — a selective outer WHERE can no longer reach into the CTE, so you may scan the whole base table first." },
+    { q: "How do you tell from EXPLAIN whether a CTE was inlined or materialized?", a: "A materialized CTE shows a CTE Scan node reading from a separate 'CTE <name>' subplan. An inlined CTE has no CTE Scan — the CTE's tables appear directly in the main plan tree, often with the outer predicate applied as an Index Cond. Present CTE Scan = materialized; absent = inlined." },
+  ]}
+/>
+
+<Recap lang="en">
+The single most important fact about CTEs and performance is that the rule changed at Postgres 12. Before then, every CTE was an unconditional optimization fence: computed once, materialized in full, with no predicate pushdown — predictable, sometimes a useful manual hint, often needlessly expensive. Postgres 12 flipped the default to inlining for the common case — a CTE referenced exactly once, free of side effects, and non-recursive folds into the outer query like a subquery, so filters push down and indexes get used; everything else (multiple references, data-modifying CTEs, recursion) still materializes. You override the planner with two keywords: `MATERIALIZED` to force the compute-once fence (for genuinely expensive or side-effecting CTEs, or to restore a good plan inlining broke), and `NOT MATERIALIZED` to force inlining so a filter can push down through what would otherwise be a fence. The footgun is that `MATERIALIZED` blocks pushdown — the exact pre-12 cost — so use it on purpose. Read it in `EXPLAIN` by looking for a `CTE Scan` node: present means materialized, absent means inlined. The deeper plan-reading craft lives in unit 08 and the `databases` execution-plans chapter; here you own the fork and its two override keywords.
+</Recap>
