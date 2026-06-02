@@ -4,10 +4,174 @@ lang: en
 track: "sql-postgres"
 unit: "04-window-functions"
 order: 4
-title: "Ranking functions"
-summary: "Ranking functions — stub; author to ready."
-estMin: 12
-status: stub
+title: "Ranking functions and top-N-per-group"
+summary: "ROW_NUMBER, RANK, and DENSE_RANK differ only in how they treat ties. ROW_NUMBER is the workhorse for top-N-per-group and dedup: rank inside a subquery, then filter rn <= N — the pattern that replaces a dozen correlated subqueries."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - row-number
+  - rank-dense-rank
+  - ntile
+  - top-n-per-group
+  - dedup
+prereqs:
+  - 03-window-frames
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-window.html
+  - https://www.postgresql.org/docs/current/tutorial-window.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+"Top 3 salespeople per region." A junior reaches for `GROUP BY` and `LIMIT` and discovers `LIMIT` applies to the whole result, not per group — there's no `LIMIT 3 PER region`. They try a correlated subquery counting "how many in this region beat me," which works and runs in O(n²), melting on the first real table. The one-line senior answer is `ROW_NUMBER() OVER (PARTITION BY region ORDER BY total DESC)` in a subquery, then `WHERE rn <= 3`. Ranking functions are how you do top-N-per-group, dedup, and pagination without quadratic pain.
+</Hook>
+
+<Crux>ROW_NUMBER, RANK, DENSE_RANK differ only in tie handling; ROW_NUMBER in a subquery filtered by rn ≤ N is the top-N-per-group pattern.</Crux>
+
+<Explanation>
+
+## Three ranking functions, one difference: ties
+
+All three assign a position within an ordered partition. They agree on everything *except* what happens when two rows tie on the `ORDER BY` value:
+
+- **`ROW_NUMBER()`** — a strict 1, 2, 3, 4… No ties allowed; if two rows are equal it still gives them different numbers (the order between them is arbitrary unless you add a tiebreaker column). Use it when you need a unique sequence: top-N, dedup, pagination.
+- **`RANK()`** — ties get the *same* rank, then the next rank **skips**. Two rows tied for 1st are both `1`, and the next row is `3` (2 is gone). This is "Olympic" ranking: two golds, no silver.
+- **`DENSE_RANK()`** — ties get the same rank, but the next rank does **not** skip. Two `1`s, then `2`. Use it for "how many distinct levels are there," e.g. distinct price tiers.
+
+```sql
+SELECT region, salesperson, total,
+       ROW_NUMBER() OVER (PARTITION BY region ORDER BY total DESC) AS rn,
+       RANK()       OVER (PARTITION BY region ORDER BY total DESC) AS rnk,
+       DENSE_RANK() OVER (PARTITION BY region ORDER BY total DESC) AS drnk
+FROM region_sales;
+```
+
+<FlowDiagram
+  label="Four salespeople in one region, two tied at 500. ROW_NUMBER gives 1,2,3,4 (arbitrary split of the tie). RANK gives 1,1,3,4 (skips 2). DENSE_RANK gives 1,1,2,3 (no skip). Same data, three tie policies."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "r1", label: "600", sub: "rn1 / rnk1 / d1" },
+    { id: "r2", label: "500 (tie)", sub: "rn2 / rnk2 / d2" },
+    { id: "r3", label: "500 (tie)", sub: "rn3 / rnk2 / d2" },
+    { id: "r4", label: "400", sub: "rn4 / rnk4 / d3" },
+  ]}
+  edges={[
+    { from: "r1", to: "r2" },
+    { from: "r2", to: "r3" },
+    { from: "r3", to: "r4" },
+  ]}
+  caption="The tied 500s split the functions: ROW_NUMBER forces 2 and 3, RANK gives both 2 then jumps to 4, DENSE_RANK gives both 2 then 3. Pick the tie policy your requirement actually means."
+/>
+
+## Top-N-per-group: the canonical pattern
+
+You cannot filter on a window function in the same `SELECT`'s `WHERE` — window functions are computed *after* `WHERE`, in a later logical phase. So the pattern is always two levels: compute the rank in a subquery (or CTE), then filter the rank in the outer query.
+
+```sql
+SELECT region, salesperson, total
+FROM (
+  SELECT region, salesperson, total,
+         ROW_NUMBER() OVER (PARTITION BY region ORDER BY total DESC) AS rn
+  FROM region_sales
+) ranked
+WHERE rn <= 3
+ORDER BY region, rn;
+```
+
+This is the answer to "top 3 per region," "5 most recent orders per customer," "the highest-paid employee in each department." Choosing the ranking function matters here: `ROW_NUMBER` gives **exactly** N rows per group (ties broken arbitrarily); `RANK` may return **more** than N if there's a tie at the boundary (three people tied for 3rd all have rank 3 and all pass `rnk <= 3`). For "exactly the top 3," use `ROW_NUMBER` with a deterministic tiebreaker; for "everyone who reached the top-3 score," use `RANK`.
+
+## Dedup: keep one row per key
+
+The same machinery deduplicates. To collapse duplicate rows to the newest per key, rank by recency and keep `rn = 1`:
+
+```sql
+-- keep the most recent event per user, drop older duplicates
+SELECT user_id, ts, payload
+FROM (
+  SELECT user_id, ts, payload,
+         ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) AS rn
+  FROM events
+) e
+WHERE rn = 1;
+```
+
+`PARTITION BY user_id` makes each user a group; `ORDER BY ts DESC` puts the newest first; `rn = 1` is that newest row. This is cleaner and far faster than `DISTINCT ON` gymnastics or a self-join, and it generalizes: `rn <= k` keeps the k newest.
+
+`NTILE(n)` is the bucketing cousin — it splits the ordered partition into `n` roughly equal buckets and labels each row 1…n, the basis for quartiles and percentile bands. `PERCENT_RANK()` and `CUME_DIST()` give the relative standing of a row as a fraction in `[0, 1]` — "this sale is in the 92nd percentile of its region."
+
+<Inset kind="mistake" lang="en">
+The number-one ranking bug: filtering the window function directly, `WHERE ROW_NUMBER() OVER (...) <= 3`. Postgres rejects it — `window functions are not allowed in WHERE` — because windows are evaluated after `WHERE` in the logical pipeline (`FROM` → `WHERE` → `GROUP BY` → window → `SELECT` → `ORDER BY`). The window doesn't exist yet when `WHERE` runs. You must materialize the rank one query level down (subquery or CTE) and filter it in the outer query. Same reason you can't put an alias from `SELECT` into `WHERE`: the phase that creates it hasn't run.
+</Inset>
+
+<Quiz
+  id="04-ranking-functions-quiz-1"
+  lessonSlug="04-ranking-functions"
+  lang="en"
+  question="Two rows tie for the top score in a region. Which function gives them DIFFERENT numbers, and which gives the SAME rank but then skips the next number?"
+  choices={[
+    { label: "ROW_NUMBER gives different numbers (1, 2); RANK gives the same rank then skips (1, 1, 3)", correct: true },
+    { label: "RANK gives different numbers; ROW_NUMBER gives the same and skips", misconception: "Reversed. ROW_NUMBER never ties (always distinct), RANK ties then skips the next number." },
+    { label: "Both give the same rank with no skip", misconception: "That describes DENSE_RANK only. ROW_NUMBER never ties, and RANK skips after a tie." },
+    { label: "DENSE_RANK gives different numbers; RANK gives the same with no skip", misconception: "Swapped: DENSE_RANK ties without skipping, RANK ties then skips, and neither gives all-distinct numbers — that's ROW_NUMBER." },
+  ]}
+/>
+
+<Quiz
+  id="04-ranking-functions-quiz-2"
+  lessonSlug="04-ranking-functions"
+  lang="en"
+  question="Why can't you write WHERE ROW_NUMBER() OVER (PARTITION BY region ORDER BY total DESC) <= 3 directly?"
+  choices={[
+    { label: "Window functions are computed after WHERE in the logical pipeline, so the rank doesn't exist yet when WHERE runs; rank in a subquery/CTE and filter outside", correct: true },
+    { label: "ROW_NUMBER isn't allowed with PARTITION BY", misconception: "It absolutely is; the restriction is that no window function may appear in WHERE, regardless of how it's partitioned." },
+    { label: "You must use RANK, not ROW_NUMBER, in a WHERE clause", misconception: "No window function is allowed in WHERE — neither RANK nor ROW_NUMBER. The fix is a subquery, not a different function." },
+    { label: "It works fine; the error is unrelated", misconception: "It does not work — Postgres raises 'window functions are not allowed in WHERE' because windows are evaluated after WHERE." },
+  ]}
+/>
+
+<DragOrder
+  id="04-ranking-functions-drag-1"
+  lessonSlug="04-ranking-functions"
+  lang="en"
+  prompt="Order the steps of the top-3-salespeople-per-region pattern:"
+  items={[
+    { id: "a", label: "Inner query: SELECT region, salesperson, total FROM region_sales" },
+    { id: "b", label: "Add ROW_NUMBER() OVER (PARTITION BY region ORDER BY total DESC) AS rn" },
+    { id: "c", label: "Wrap it as a subquery (or CTE) so rn becomes a real column" },
+    { id: "d", label: "Outer query filters WHERE rn <= 3" },
+    { id: "e", label: "ORDER BY region, rn to present the top-3 per region" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>`ROW_NUMBER`, `RANK`, and `DENSE_RANK` are identical except for ties: `ROW_NUMBER` always assigns distinct numbers, `RANK` repeats then skips, `DENSE_RANK` repeats without skipping. `ROW_NUMBER` is the engine of top-N-per-group and dedup — rank in a subquery/CTE, then filter `rn <= N` (or `rn = 1` to keep the newest), because window functions can't be filtered in `WHERE` directly. Use `RANK` when boundary ties should all qualify; `NTILE`/`PERCENT_RANK`/`CUME_DIST` for buckets and percentiles.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-ranking-functions-retrieval"
+  lang="en"
+  questions={[
+    { q: "How do ROW_NUMBER, RANK, and DENSE_RANK differ when two rows tie?", a: "ROW_NUMBER gives them distinct consecutive numbers (e.g. 2 and 3) with arbitrary order unless you add a tiebreaker. RANK gives both the same rank then skips the next value (1, 1, 3). DENSE_RANK gives both the same rank with no gap (1, 1, 2). They are otherwise identical." },
+    { q: "Write the shape of the top-N-per-group pattern and say why it needs two query levels.", a: "Inner query: SELECT ..., ROW_NUMBER() OVER (PARTITION BY group ORDER BY metric DESC) AS rn FROM t. Outer query: SELECT ... FROM (inner) WHERE rn <= N. Two levels are required because window functions are computed after WHERE, so you can't filter on rn in the same SELECT — you materialize rn in a subquery/CTE and filter it in the outer query." },
+    { q: "You want exactly one row per user_id, keeping the most recent. Which function and filter?", a: "ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY ts DESC) AS rn in a subquery, then WHERE rn = 1 in the outer query. PARTITION BY user_id groups by user, ORDER BY ts DESC puts the newest first, rn = 1 keeps exactly that newest row per user — a clean, fast dedup." },
+  ]}
+/>
+
+<Recap lang="en">
+Ranking functions assign a position within an ordered partition and differ only in tie policy: `ROW_NUMBER` is strictly distinct (1, 2, 3, 4), `RANK` repeats a tie then skips (1, 1, 3), `DENSE_RANK` repeats without skipping (1, 1, 2). That distinction is the whole choice — pick the one whose tie behavior matches your requirement. The dominant use is `ROW_NUMBER` for top-N-per-group and dedup: because window functions are evaluated after `WHERE`, you compute the rank in a subquery or CTE and then filter `rn <= N` (top N) or `rn = 1` (keep the newest) in the outer query — a pattern that replaces O(n²) correlated subqueries with one linear pass. `RANK` is the right call when every row tied at the cutoff should qualify; `NTILE` buckets the partition into equal slices, and `PERCENT_RANK`/`CUME_DIST` express a row's relative standing as a fraction. The next lesson moves from position to accumulation: running totals, moving averages, `LAG`/`LEAD` deltas, and the `LAST_VALUE` frame trap.
+</Recap>

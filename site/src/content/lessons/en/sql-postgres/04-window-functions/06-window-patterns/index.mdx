@@ -4,10 +4,160 @@ lang: en
 track: "sql-postgres"
 unit: "04-window-functions"
 order: 6
-title: "Real-world window patterns"
-summary: "Real-world window patterns — stub; author to ready."
-estMin: 12
-status: stub
+title: "Real-world window patterns: gaps, islands, sessions"
+summary: "Gaps-and-islands detects consecutive runs via the row_number difference trick; sessionization flags a new session when LAG on the timestamp shows a gap over threshold, then SUMs the flags. Each distinct window ORDER BY adds a Sort/WindowAgg node — order windows to share sorts."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - gaps-and-islands
+  - sessionization
+  - dedup
+  - window-performance
+  - shared-sort
+prereqs:
+  - 05-running-totals
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-window.html
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Product asks: "how many distinct sessions did each user have, where a session ends after 30 minutes of inactivity?" There is no `session_id` in the events table — sessions are implicit in the gaps between timestamps. The naive answer is a loop in application code pulling every event and tracking state; on 50M events it runs for hours. The window answer is three lines: `LAG` the timestamp, flag the rows where the gap exceeds 30 minutes, then run a cumulative `SUM` of those flags. That is sessionization, and it is the crown jewel of window patterns.
+</Hook>
+
+<Crux>Gaps-and-islands and sessionization both work by flagging boundaries with LAG, then running a cumulative SUM of the flags to label runs.</Crux>
+
+<Explanation>
+
+## Sessionization: LAG a timestamp, flag gaps, cumulative-SUM the flags
+
+Sessionization assigns a session number to each event so that events within an inactivity gap belong to the same session. The recipe is three windowed steps over `(PARTITION BY user_id ORDER BY ts)`:
+
+1. **`LAG(ts)`** gives the previous event's timestamp for each row.
+2. A **boundary flag** is 1 when `ts - prev_ts > interval '30 min'` (or the first event), else 0.
+3. A **cumulative `SUM` of the flag** turns those 1s into a monotonically increasing session number — every flag bumps the counter, every non-flag keeps it.
+
+```sql
+SELECT user_id, ts,
+       SUM(is_new_session) OVER (
+         PARTITION BY user_id ORDER BY ts
+         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+       ) AS session_id
+FROM (
+  SELECT user_id, ts,
+         CASE WHEN ts - LAG(ts) OVER (PARTITION BY user_id ORDER BY ts)
+                   > interval '30 minutes'
+               OR LAG(ts) OVER (PARTITION BY user_id ORDER BY ts) IS NULL
+              THEN 1 ELSE 0 END AS is_new_session
+  FROM events
+) flagged;
+```
+
+<SequenceDiagram
+  label="Sessionization pipeline: events flow through LAG to get the previous timestamp, a CASE flags gaps over the threshold as a new session, and a cumulative SUM of those flags emits an increasing session id."
+  hue="var(--d-data)"
+  actors={["Events", "LAG(ts)", "Flag gaps", "SUM flags"]}
+  messages={[
+    { from: "Events", to: "LAG(ts)", label: "ordered by ts per user" },
+    { from: "LAG(ts)", to: "Flag gaps", label: "ts - prev_ts" },
+    { from: "Flag gaps", to: "SUM flags", label: "1 if gap > 30 min" },
+    { from: "SUM flags", to: "Events", label: "session_id per row" },
+  ]}
+  caption="The flag is a 0/1 boundary marker; the cumulative SUM converts boundaries into group ids. The same flag-then-cumsum shape powers most run-detection problems."
+/>
+
+## Gaps-and-islands: the row_number difference trick
+
+"Islands" are runs of consecutive values; "gaps" are the holes between them. The classic problem: given login dates, find each streak of consecutive days. The trick is that for a run of consecutive integers (or dates), the value minus its row number is **constant** within a run, because both increase by 1 in lockstep. When the sequence skips, the difference changes — a new island.
+
+```sql
+SELECT user_id, MIN(login_date) AS streak_start,
+       MAX(login_date) AS streak_end, COUNT(*) AS streak_len
+FROM (
+  SELECT user_id, login_date,
+         login_date - (ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY login_date))::int AS grp
+  FROM daily_logins
+) t
+GROUP BY user_id, grp
+ORDER BY user_id, streak_start;
+```
+
+`grp` is the anchor: all rows in one consecutive streak share the same `login_date - row_number` value, so `GROUP BY grp` collapses each streak into one summary row. This is the canonical gaps-and-islands solution — `ROW_NUMBER` plus arithmetic plus a `GROUP BY` on the derived key. Dedup (lesson 4) and cumulative distributions (lesson 5) are smaller members of the same family: every one is "use a window to derive a key, then aggregate or filter on it."
+
+## Performance: each distinct window ORDER BY costs a sort
+
+Window functions are not free. Each **distinct** window definition — specifically each unique `PARTITION BY ... ORDER BY ...` — forces Postgres to materialize the rows in that order, which means a `Sort` node feeding a `WindowAgg` node in the plan. Stack three windows with three different orderings and you get three sorts; on a large table that is the dominant cost.
+
+The optimization is to make windows **share** their ordering. Postgres reuses a single sort for all window functions that have the *same* `PARTITION BY`/`ORDER BY`, so writing `SUM(...) OVER w`, `ROW_NUMBER() OVER w`, `LAG(...) OVER w` against one named `WINDOW w AS (PARTITION BY user_id ORDER BY ts)` lets them ride one sort instead of three. When you genuinely need different orderings, order the window clauses so that compatible sorts are adjacent — the planner can sometimes pipeline a sort into the next if it is a prefix. Always confirm with `EXPLAIN ANALYZE`: count the `Sort` and `WindowAgg` nodes and watch for `Sort Method: external merge Disk:` which means the sort spilled past `work_mem` and is hitting disk — the moment a window query goes from milliseconds to seconds.
+
+<Inset kind="why" lang="en">
+Why does sharing a sort matter so much? A sort is O(n log n) and, worse, becomes O(disk) the moment its working set exceeds `work_mem` — Postgres spills to temp files and the query can slow by 10–100×. A single 50M-row sort that fits in memory might take 2 seconds; the same sort spilling to disk can take 40. Three separate spilling sorts is three times that pain. Consolidating windows onto one ordering, and bumping `work_mem` for the session running a heavy analytic query, are the two levers. The databases track's execution-plans chapter shows how to read the `Sort`/`WindowAgg`/`Incremental Sort` nodes and spot the disk spill; here the rule is simply: fewer distinct window orderings, verified in the plan.
+</Inset>
+
+<Quiz
+  id="06-window-patterns-quiz-1"
+  lessonSlug="06-window-patterns"
+  lang="en"
+  question="In sessionization, after you flag each row 1 when the gap exceeds the threshold and 0 otherwise, what turns those flags into a session id?"
+  choices={[
+    { label: "A cumulative SUM of the flag over (PARTITION BY user ORDER BY ts) — each 1 bumps the running counter to the next session number", correct: true },
+    { label: "COUNT(*) grouped by user", misconception: "A grouped COUNT collapses rows and loses per-event detail; the session id must be a running value attached to each event, which a cumulative SUM provides." },
+    { label: "ROW_NUMBER() over the flagged rows", misconception: "ROW_NUMBER numbers every row 1..n regardless of the flag; it doesn't increment only on boundaries. The cumulative SUM of the 0/1 flag is what increments per gap." },
+    { label: "RANK() on the timestamp", misconception: "RANK ranks by timestamp value; it has nothing to do with counting gap boundaries. You need a running SUM of the boundary flags." },
+  ]}
+/>
+
+<Quiz
+  id="06-window-patterns-quiz-2"
+  lessonSlug="06-window-patterns"
+  lang="en"
+  question="A report uses three window functions with three different PARTITION BY/ORDER BY clauses and is slow. What does EXPLAIN ANALYZE most likely show, and what's the fix?"
+  choices={[
+    { label: "Three Sort + WindowAgg pairs; consolidate functions onto a shared window ordering so they reuse one sort", correct: true },
+    { label: "A single Seq Scan that just needs an index on the partition column", misconception: "An index rarely removes the sort a window needs; the dominant cost is the multiple Sort nodes, one per distinct window ordering. Sharing the ordering is the lever." },
+    { label: "Nothing fixable — window functions are inherently slow", misconception: "They aren't inherently slow; the cost is the number of distinct sorts. Reusing one ordering across windows can cut it dramatically." },
+    { label: "A nested loop join that should be a hash join", misconception: "There's no join here; the issue is multiple sorts feeding multiple WindowAgg nodes, fixed by sharing the window ordering." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-window-patterns-metaphor-1"
+  lessonSlug="06-window-patterns"
+  lang="en"
+  setup="Fill in the blank: in gaps-and-islands, all rows in one run of consecutive values share the same value-minus-_______ , so grouping on that derived key collapses each run into one summary row."
+  accepted={["row_number", "rownumber", "row-number", "rn", "rownum"]}
+  canonical="row_number"
+  explanation="For consecutive values, both the value and the row number increase by 1 each step, so value - row_number stays constant within a run and changes at every gap. Grouping on that constant key is the canonical islands solution."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Most window patterns are one shape: derive a key with a window, then aggregate or filter on it. Sessionization flags new sessions when `LAG(ts)` shows a gap over threshold, then cumulative-`SUM`s the flag into a session id. Gaps-and-islands groups consecutive runs on the constant `value - ROW_NUMBER` key. The performance rule: each distinct `PARTITION BY/ORDER BY` is a separate `Sort` + `WindowAgg`, so share one window ordering across functions and verify the sort count (and any disk spill) with `EXPLAIN ANALYZE`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-window-patterns-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the three steps of sessionization with window functions.", a: "Over (PARTITION BY user_id ORDER BY ts): (1) LAG(ts) to get the previous event's timestamp; (2) a CASE flag = 1 when ts - prev_ts exceeds the inactivity threshold (or the previous timestamp is NULL, the first event), else 0; (3) a cumulative SUM of that flag, which increments at each boundary, yielding a session id per event." },
+    { q: "What is the row_number difference trick for gaps-and-islands and why does it work?", a: "Compute value - ROW_NUMBER() OVER (ORDER BY value) (e.g. login_date minus row number). Within a run of consecutive values both the value and the row number increase by 1 each step, so their difference is constant across the whole run and changes only at a gap. Grouping on that derived key collapses each consecutive island into one row." },
+    { q: "Why do multiple window functions sometimes make a query slow, and how do you reduce it?", a: "Each distinct PARTITION BY/ORDER BY forces its own Sort feeding a WindowAgg node, so N different window orderings mean N sorts — and a sort that exceeds work_mem spills to disk, slowing 10–100×. Reduce it by giving functions a shared window ordering (a named WINDOW clause) so they reuse one sort, and verify with EXPLAIN ANALYZE that the Sort count dropped and no external-merge disk spill remains." },
+  ]}
+/>
+
+<Recap lang="en">
+The real power of window functions is that a handful of primitives compose into the analytics patterns teams actually need, all sharing one shape: use a window to derive a key, then aggregate or filter on it. Sessionization is the showcase — `LAG` the timestamp, flag rows where the inactivity gap crosses a threshold, and run a cumulative `SUM` of those 0/1 flags to mint a session id per event, replacing an hours-long application loop with three windowed lines. Gaps-and-islands uses the `value - ROW_NUMBER` trick: consecutive values share a constant derived key, so a `GROUP BY` on it collapses each run into a summary; dedup and cumulative distributions are smaller cousins of the same idea. The senior caveat is performance: every distinct `PARTITION BY/ORDER BY` is a separate `Sort` + `WindowAgg`, and a sort that outgrows `work_mem` spills to disk and slows the query by an order of magnitude — so share one window ordering across functions, watch the `Sort`/`WindowAgg` node count in `EXPLAIN ANALYZE`, and bump `work_mem` for heavy analytic sessions. With this, the window-functions unit is complete: you can aggregate without collapsing, frame deliberately, rank, accumulate, and assemble the production patterns — the senior SQL superpower.
+</Recap>
