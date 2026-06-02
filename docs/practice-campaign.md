@@ -161,3 +161,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ math/08-growth (2) — linear-vs-exponential, logarithms
 - ✅ math/09-combinatorics (3) — counting-principle, permutations, combinations
 - ✅ math/10-probability (2) — what-is-probability, combining-events  [math track COMPLETE + enforced]
+- ✅ engineering-practice/01-tdd-property (5) — rgr-design-loop, test-doubles-london-detroit, property-based-testing, when-tdd-hurts, mutation-testing
