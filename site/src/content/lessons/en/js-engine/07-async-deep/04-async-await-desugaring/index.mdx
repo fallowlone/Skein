@@ -4,10 +4,192 @@ lang: en
 track: "js-engine"
 unit: "07-async-deep"
 order: 4
-title: "async/await desugaring"
-summary: "async/await desugaring — stub; author to ready."
-estMin: 12
-status: stub
+title: "async/await, desugared"
+summary: "An async function returns a promise; await suspends it, wraps the operand via PromiseResolve, and resumes via a microtask when the operand settles — a generator plus a driver. V8 7.2 (2018) removed await's extra ticks for native promises"
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - async function desugaring
+  - await suspension
+  - microtask continuation
+  - V8 await optimization
+  - zero-cost async stack traces
+  - error propagation
+deepensInto: []
+spiral:
+  - statefulness
+  - performance-cliffs
+prereqs:
+  - "03-promise-internals"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/fast-async
+  - https://tc39.es/ecma262/#sec-async-function-definitions
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/await
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A teammate insists "`await` blocks until the data comes back — that is the whole point." So why does the server keep handling 5,000 other requests while one of them awaits a slow database call? Because `await` does not block anything. It *suspends one function* and hands the thread back. Understanding the difference — suspend, not block — is the line between someone who uses async/await and someone who can debug it under load.
+</Hook>
+
+<Crux>await suspends the function and registers a microtask continuation; it never blocks the thread, which keeps running other tasks.</Crux>
+
+<Explanation>
+
+## async/await is a generator plus a driver
+
+`async`/`await` is pure syntax sugar; the engine desugars it to a coroutine. An `async function` is, mechanically, a generator whose `yield` points are the `await`s, paired with an automatic *driver* that advances the generator each time an awaited value settles. Two facts fall out immediately:
+
+1. **An `async function` always returns a promise.** Calling it runs the body synchronously up to the first `await`, then returns a pending promise representing "the eventual completion of this function." A `return x` inside fulfils that promise with `x`; a thrown error rejects it.
+2. **`await x` is a suspension point.** When control hits `await x`, the engine: wraps `x` via `PromiseResolve` (turning any value or thenable into a promise to subscribe to), registers a continuation as a reaction on that promise, and **returns from the function** — yielding the thread back to the host. When the awaited promise settles, the registered reaction (a microtask) resumes the function right after the `await`, with the value substituted in (or rethrowing the rejection).
+
+Because resuming is a microtask, an `async function` with two awaits is *not* one synchronous unit — it is sliced into pieces that interleave with every other pending microtask between resumptions. This is the lens for the lesson: `await` is a `yield` to a driver, and the driver runs on the microtask queue.
+
+<SequenceDiagram
+  label="Desugaring one await: the async function runs synchronously to the await point, wraps the operand into a promise and registers a resume continuation, then returns control to the caller and the host; when the operand settles, the engine runs the continuation as a microtask, resuming the function body after the await."
+  hue="var(--accent)"
+  caption="await = suspend + register microtask continuation + return. The function resumes only when the awaited promise settles and its reaction microtask runs — the thread is free in between."
+  actors={["async fn", "Engine", "Host loop"]}
+  messages={[
+    { from: "async fn", to: "Engine", label: "hit await x" },
+    { from: "Engine", to: "Engine", label: "PromiseResolve(x); register resume" },
+    { from: "Engine", to: "Host loop", label: "return (suspended)" },
+    { from: "Host loop", to: "Host loop", label: "run other tasks" },
+    { from: "Engine", to: "async fn", label: "x settled: resume (microtask)" },
+  ]}
+/>
+
+## The history: await used to cost three ticks
+
+The original ES2017 spec for `await` was wasteful. To handle the case where you `await` a thenable, the spec said: take the operand, create a **brand-new throwaway promise**, resolve *that* with the operand, then `.then` onto it to subscribe. Even when the operand was already a native promise, you paid for the throwaway promise and its thenable-adoption job. The cost, measured in microtask ticks before the function resumed, was about **three ticks** for `await p` where `p` is a native promise — versus **one tick** for the equivalent `p.then(...)`. In a hot loop full of awaits, this tripled the microtask traffic.
+
+```javascript
+// Before V8 7.2, `await p` was roughly equivalent to:
+const throwaway = new Promise(resolve => resolve(p)); // adopt p — extra ticks
+throwaway.then(resume);                                // subscribe — another tick
+// ≈ 3 microtask ticks to resume, even for a native promise p
+```
+
+## V8 7.2 (2018): await ≈ p.then
+
+V8 7.2 shipped the **await optimization**. When the awaited operand is a **native promise** (a genuine `Promise`, not a foreign thenable), the engine skips the throwaway-promise dance entirely and registers the resume reaction directly on the operand — exactly as `p.then(resume)` would. That collapses `await p` from ~3 ticks to **1 tick**, matching hand-written `.then`. TC39 then changed the spec itself to match (the `--harmony-await-optimization` flag gated it during rollout; it is now the default and the spec behaviour). The practical upshot for seniors: since late-2018 engines, you no longer pay a tick tax for using `await` over `.then` on native promises — write whichever reads clearer. The tax only returns if you `await` a *non-native* thenable, which still needs the adoption job.
+
+<NumbersCard
+  title="await tick costs across V8 versions"
+  data-lesson-visual
+  stats={[
+    { label: "await nativePromise (pre-7.2)", value: "~3 ticks" },
+    { label: "await nativePromise (7.2+, today)", value: "1 tick" },
+    { label: "p.then(resume) — always", value: "1 tick" },
+    { label: "await nonNativeThenable", value: "+adoption tick" },
+    { label: "V8 version with the fix", value: "7.2 (Oct 2018)" },
+    { label: "Flag during rollout", value: "--harmony-await-optimization" },
+  ]}
+/>
+
+## Zero-cost async stack traces
+
+The same release era brought **zero-cost async stack traces**. The problem: when an error surfaces three awaits deep, the synchronous call stack is long gone — each `await` returned to the host, so a naive trace shows only the innermost resumption with no caller chain. The old fix (kept under a flag) recorded a stack on *every* promise creation, which was expensive in hot paths. The zero-cost approach instead **reconstructs** the async frames *on demand* from the promise chain: V8 walks the `[[PromiseFulfillReactions]]` links (from lesson 3) backwards to rebuild the logical async call stack only when DevTools actually asks for it (when you hit a breakpoint or read `error.stack` in a debugging context). The fast path pays nothing — no per-await allocation — yet you still get a full async trace in the debugger. "Zero-cost" means zero cost when you are *not* debugging.
+
+<Misconception id="mc-await-blocks">
+  <p><strong>"await blocks the thread until the promise resolves."</strong> It suspends the <em>function</em>, not the thread. await returns control to the host, which keeps running other tasks — that is why one awaiting request does not stall a server handling thousands. The function resumes later via a microtask.</p>
+</Misconception>
+
+## Error propagation: a rejection becomes a throw
+
+Because the resume reaction is registered for *both* fulfilment and rejection, `await` converts an asynchronous rejection back into a synchronous-looking `throw` inside the function. When the awaited promise rejects, the engine resumes the function by **throwing** the rejection reason at the `await` expression — so a `try/catch` around the `await` catches it exactly as if a synchronous function had thrown. This is the entire ergonomic win of async/await: linear error handling over inherently non-linear control flow. The flip side is the trap from lesson 3 — an unawaited, uncaught rejected promise triggers `unhandledrejection`, because no reaction was registered to convert it into a catchable throw.
+
+<FlowDiagram
+  label="The await lifecycle inside an async function: run synchronously to the await, suspend and register a dual fulfil/reject continuation, return to the host which runs other work, and on settle either resume with the value or rethrow the rejection at the await expression."
+  hue="var(--accent)"
+  caption="await desugars to suspend → register continuation → return → resume-or-rethrow. A rejection is rethrown at the await, so try/catch around it works."
+  nodes={[
+    { id: "run", label: "Run to await", sub: "synchronous", col: 0, row: 0 },
+    { id: "suspend", label: "Suspend + register", sub: "continuation reaction", col: 1, row: 0 },
+    { id: "return", label: "Return to host", sub: "thread free", col: 2, row: 0 },
+    { id: "resume", label: "Resume or rethrow", sub: "microtask on settle", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "run", to: "suspend", label: "hit await" },
+    { from: "suspend", to: "return", label: "yield thread" },
+    { from: "return", to: "resume", label: "promise settles" },
+  ]}
+/>
+
+<Quiz
+  id="q-await-suspends"
+  lessonSlug="04-async-await-desugaring"
+  lang="en"
+  question="A Node server awaits a slow DB query inside one request handler. What happens to the 5,000 other in-flight requests during that await?"
+  choices={[
+    { label: "They keep being handled — await suspended one function and returned the thread to the loop, which runs other tasks", correct: true },
+    { label: "They block until the DB query resolves, because await holds the thread", misconception: "await suspends the function, not the thread. Control returns to the host loop, which continues processing other tasks; the awaiting handler resumes later via a microtask." },
+    { label: "They are handled on separate OS threads spawned by await", misconception: "await spawns no threads. JavaScript stays single-threaded; await is a suspension that frees the one thread for other tasks." },
+    { label: "They are dropped and must be retried by the client", misconception: "Nothing is dropped. The other requests proceed normally while the one handler is suspended." },
+  ]}
+/>
+
+<Quiz
+  id="q-await-ticks"
+  lessonSlug="04-async-await-desugaring"
+  lang="en"
+  question="On a modern V8 (7.2+), how does the microtask tick cost of `await nativePromise` compare to `nativePromise.then(resume)`?"
+  choices={[
+    { label: "They cost the same — one tick; the 7.2 await optimization registers the resume directly on the native promise", correct: true },
+    { label: "await still costs ~3 ticks because it always creates a throwaway promise", misconception: "That was the pre-7.2 behaviour. V8 7.2 special-cased native promises to skip the throwaway promise and its adoption job, collapsing await to one tick." },
+    { label: "await is cheaper — it skips the microtask queue entirely", misconception: "await still resumes via a microtask; it cannot skip the queue. It just no longer pays the extra adoption ticks for native promises." },
+    { label: "`.then` is cheaper because it avoids the generator machinery", misconception: "The generator/driver machinery is not a microtask tick. After the 7.2 optimization, both resume in one tick for native promises." },
+  ]}
+/>
+
+<DragOrder
+  id="do-await-lifecycle"
+  pieceSlug="04-async-await-desugaring"
+  lang="en"
+  prompt="Order what the engine does when an async function hits `await fetchUser()` and the fetch later fulfils."
+  items={[
+    "Run the function body synchronously up to the await expression",
+    "Wrap the operand via PromiseResolve and register a resume continuation on it",
+    "Return control to the host, which is free to run other tasks",
+    "When the awaited promise settles, enqueue the continuation as a microtask",
+    "The microtask runs: resume the function after the await with the value substituted in",
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+A subtle consequence of "await = suspend via microtask": `await Promise.resolve()` is a clean, idiomatic way to defer a single tick — it yields to the microtask queue and resumes after currently-pending microtasks. But it does <em>not</em> yield to the host (no rendering, no macrotasks run), because the resume is a microtask, not a macrotask. To actually yield to rendering you need a macrotask boundary (`setTimeout`, `MessageChannel`, `scheduler.yield()`) — the distinction from lesson 2 that decides whether the page can paint.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>An async function returns a promise; `await` suspends the function (not the thread), wraps the operand via PromiseResolve, and resumes via a microtask when it settles. V8 7.2 made `await nativePromise` cost one tick, like `.then`. Rejections are rethrown at the await, so `try/catch` works; the thread stays free throughout.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-async-await-desugaring-retrieval"
+  lang="en"
+  questions={[
+    { q: "Desugar async/await: what does an async function return, and what exactly does await do?", a: "An async function is mechanically a generator (its await points are yields) driven by an automatic driver. Calling it runs the body synchronously up to the first await, then returns a pending promise; a return fulfils that promise, a throw rejects it. await x wraps x via PromiseResolve into a promise, registers a continuation as a reaction (for both fulfil and reject), and returns from the function — yielding the thread to the host. When the awaited promise settles, the reaction runs as a microtask and resumes the function right after the await, substituting the value or rethrowing the rejection. So an async function with two awaits is sliced into pieces that interleave with other microtasks between resumptions." },
+    { q: "Why did await once cost ~3 ticks, and what did V8 7.2 change?", a: "The original ES2017 spec, to support awaiting arbitrary thenables, created a brand-new throwaway promise, resolved it with the operand (a thenable-adoption job), then subscribed via .then — costing about three microtask ticks before resuming, even when the operand was already a native promise. V8 7.2 (Oct 2018) shipped the await optimization: when the operand is a native promise, the engine registers the resume reaction directly on it, skipping the throwaway promise and its adoption job, collapsing await to one tick — identical to p.then(resume). TC39 changed the spec to match (gated by --harmony-await-optimization during rollout). Today you pay no tick tax for await over .then on native promises; the tax only returns for non-native thenables." },
+    { q: "How do zero-cost async stack traces work, and what does 'zero-cost' mean?", a: "When an error surfaces several awaits deep, the synchronous stack is gone because each await returned to the host. Recording a stack on every promise creation (the old approach) was expensive in hot paths. The zero-cost approach instead reconstructs the async frames on demand by walking the promise chain's reaction links backwards, only when DevTools asks (at a breakpoint or when reading error.stack in a debugging context). The fast path allocates nothing per await, so there is zero runtime cost when you are not debugging — yet you still get a full async trace in the debugger." },
+  ]}
+/>
+
+<Recap lang="en">
+async/await is syntax sugar the engine desugars into a coroutine: an async function is a generator whose awaits are yields, advanced by an automatic driver. Calling it runs synchronously to the first await and returns a pending promise (return fulfils it, throw rejects it). await x wraps x via PromiseResolve, registers a dual fulfil/reject continuation as a reaction, and returns control to the host — suspending the function, never blocking the thread, which is why one awaiting request does not stall thousands of others. On settle, the continuation runs as a microtask, resuming after the await with the value or rethrowing the rejection (so try/catch around await works, giving linear error handling over non-linear flow). Historically await cost about three microtask ticks because the spec adopted the operand through a throwaway promise; V8 7.2 (October 2018) special-cased native promises to register the resume directly, cutting await to one tick — equal to p.then — and TC39 adopted the change. The same era brought zero-cost async stack traces, which reconstruct async frames from the promise chain on demand so the fast path pays nothing. This closes the async-deep unit: from the engine having no loop, through the two queues, into the Promise state machine, and finally into the await coroutine built on top of it.
+</Recap>

@@ -4,10 +4,211 @@ lang: ru
 track: "js-engine"
 unit: "07-async-deep"
 order: 3
-title: "Promise internals"
-summary: "Promise internals — stub; author to ready."
-estMin: 12
-status: stub
+title: "Внутри Promise"
+summary: "Promise — это конечный автомат, урегулируемый единожды, который хранит состояние, значение и список записей PromiseReaction. .then регистрирует реакции и возвращает новый Promise; урегулирование ставит по PromiseReactionJob на реакцию. Урегулирование thenable стоит лишнего тика."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - конечный автомат promise
+  - PromiseReaction record
+  - PromiseReactionJob
+  - PromiseResolveThenableJob
+  - подсчёт тиков
+  - unhandled rejection
+deepensInto:
+  - "07-async-deep/04-async-await-desugaring"
+spiral:
+  - statefulness
+  - performance-cliffs
+prereqs:
+  - "02-microtasks-vs-macrotasks"
 sources:
-  - https://v8.dev/docs
+  - https://tc39.es/ecma262/#sec-promise-objects
+  - https://v8.dev/blog/fast-async
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Вы пишете `await fetchUser()` и `await fetchPosts()`, и кто-то спрашивает: сколько тиков микрозадач это стоило? Большинство инженеров пожмут плечами. Но ответ решает, добавляет ли горячий асинхронный путь один тик или четыре на каждую итерацию — а при 10 000 итераций на рендер этот разрыв и есть разница между плавным списком и дёрганым. Чтобы считать тики, нужно знать, что такое Promise внутри.
+</Hook>
+
+<Crux>Promise — автомат, урегулируемый единожды, плюс список реакций; урегулирование ставит по микрозадаче на каждую реакцию.</Crux>
+
+<Explanation>
+
+## Promise — это три поля и список
+
+Снимите API, и объект Promise в V8 окажется маленьким. Его существенные внутренние слоты:
+
+- **`[[PromiseState]]`** — одно из `pending`, `fulfilled`, `rejected`. Начинается с `pending` и переходит ровно один раз. Этот инвариант **урегулирования единожды** — сердце автомата: после ухода из `pending` никакой более поздний `resolve`/`reject` его не изменит.
+- **`[[PromiseResult]]`** — значение, которым он fulfilled, или причина, которой rejected. Бессмысленно, пока `pending`.
+- **`[[PromiseFulfillReactions]]` / `[[PromiseRejectReactions]]`** — два списка записей **PromiseReaction**, обработчиков, зарегистрированных через `.then`/`.catch`, пока Promise был ещё pending. После урегулирования эти списки очищаются и заменяются результатом.
+
+Запись **PromiseReaction** связывает три вещи: *тип* (fulfill или reject), *обработчик* (ваш колбэк `onFulfilled` / `onRejected` или `undefined`) и *capability* **нового Promise**, который вернул `.then` (функции resolve/reject, которые урегулируют этот нижестоящий Promise). Эта последняя часть — причина, по которой сцепление вообще работает.
+
+<StackDiagram
+  label="Внутренняя раскладка pending-Promise: слот состояния, сейчас pending, пока пустой слот результата и два списка записей PromiseReaction — один для fulfill-обработчиков и один для reject-обработчиков — каждая запись указывает на capability resolve/reject нижестоящего Promise."
+  hue="var(--accent)"
+  caption="Pending-Promise. Списки реакций держат обработчики, зарегистрированные через .then; при урегулировании реакции совпадающего списка планируются каждая как микрозадача, а списки отбрасываются."
+  layers={[
+    { label: "[[PromiseState]]: pending", note: "переходит один раз → fulfilled | rejected" },
+    { label: "[[PromiseResult]]: (пусто)", note: "заполняется значением/причиной при урегулировании" },
+    { label: "[[PromiseFulfillReactions]]", note: "список записей PromiseReaction" },
+    { label: "[[PromiseRejectReactions]]", note: "список записей PromiseReaction" },
+    { label: "каждая реакция → capability нижестоящего Promise", note: "тип + обработчик + resolve/reject результата .then" },
+  ]}
+/>
+
+## Что на самом деле делает `.then`
+
+`promise.then(onF, onR)` делает три конкретные вещи по порядку:
+
+1. **Создаёт новый Promise** («result capability») и запоминает его функции resolve/reject.
+2. **Строит две записи PromiseReaction** — одну fulfill, одну reject — каждая оборачивает совпадающий обработчик и эту новую capability.
+3. **Либо регистрирует, либо планирует их.** Если исходный Promise ещё `pending`, реакции *добавляются в его списки реакций* и пока ничего не запускается. Если Promise **уже урегулирован**, `.then` не запускает обработчик синхронно — он немедленно *ставит `PromiseReactionJob` как микрозадачу* для совпадающей реакции.
+
+```javascript
+const p = Promise.resolve(42);   // уже fulfilled значением 42
+const q = p.then(v => v + 1);     // q — НОВЫЙ Promise; одна PromiseReactionJob поставлена сейчас
+// q урегулируется значением 43 после того, как этот job выполнится (одной микрозадачей позже)
+```
+
+Итак, `.then` никогда не запускает ваш обработчик «прямо сейчас», даже на уже урегулированном Promise. Он всегда откладывает на микрозадачу. Эта единственная гарантия и делает порядок Promise предсказуемым: колбэк `.then` всегда отстоит на одну микрозадачу от урегулирования, никогда не синхронен.
+
+## Урегулирование ставит по одному job на реакцию
+
+Когда продюсер вызывает функцию resolve (урегулируя Promise в `fulfilled`), движок выполняет **`FulfillPromise`**: устанавливает `[[PromiseState]]` в `fulfilled`, сохраняет значение, а затем обходит `[[PromiseFulfillReactions]]`, ставя микрозадачу **PromiseReactionJob** для *каждой* зарегистрированной реакции. Каждый job, когда его выполнит чекпоинт микрозадач, вызывает обработчик реакции с результатом и использует возвращённое значение, чтобы урегулировать нижестоящий Promise этой реакции (у которого могут быть собственные реакции, каскадом порождающие новые jobs). Отклонение симметрично через **`RejectPromise`** и `[[PromiseRejectReactions]]`.
+
+Вот почему **fan-out стоит N микрозадач**: `p.then(a); p.then(b); p.then(c)` на урегулированном `p` регистрирует три реакции и ставит три PromiseReactionJob — `a`, `b`, `c` выполняются как три отдельные микрозадачи в порядке регистрации.
+
+<NumbersCard
+  title="Стоимости тиков, которые надо уметь называть"
+  data-lesson-visual
+  stats={[
+    { label: "Promise.resolve().then(fn) → fn запускается", value: "1 тик" },
+    { label: "N .then на одном урегулированном Promise", value: "N тиков" },
+    { label: "Цепочка .then().then().then()", value: "1 тик на звено" },
+    { label: "resolve(promise) — принять thenable", value: "+1 тик (resolve job)" },
+    { label: "resolve(не-нативный thenable)", value: "+1 тик (thenable job)" },
+    { label: "await нативного Promise (V8 7.2+)", value: "1 тик (было 3)" },
+  ]}
+/>
+
+## Лишний тик: урегулирование через thenable
+
+Вот тонкость, спотыкающая подсчёт тиков. Если вы урегулируете Promise **другим Promise (или любым thenable)**, движок не может принять его значение синхронно — thenable может урегулироваться позже. Поэтому `ResolvePromise` планирует **`PromiseResolveThenableJob`**: микрозадачу, единственная цель которой — вызвать `.then` внутреннего thenable, чтобы подписаться на него. Эта подписка сама по себе ещё одно откладывание. Следствие: урегулирование Promise `A` через Promise `B` добавляет лишний тик микрозадачи по сравнению с урегулированием `A` обычным значением, потому что движок должен отскочить через `PromiseResolveThenableJob`, прежде чем `A` сможет хотя бы начать принимать будущее состояние `B`.
+
+```javascript
+// Обычное значение: q урегулируется одним тиком после запуска реакции p.
+Promise.resolve(1).then(v => v);
+
+// Thenable: возврат Promise из обработчика стоит лишнего тика,
+// потому что внешний Promise должен принять внутренний через resolve job.
+Promise.resolve(1).then(v => Promise.resolve(v));   // лишний PromiseResolveThenableJob
+```
+
+Это и есть механическая причина, по которой исходный `await` стоил три тика (разбирается в следующем уроке): спецификация оборачивала ожидаемое значение в одноразовый Promise и принимала его через thenable job. V8 7.2 (2018) сделал особый случай для нативных Promise, пропускающий эти лишние jobs.
+
+<Misconception id="mc-then-sync">
+  <p><strong>«.then на уже урегулированном Promise запускает колбэк немедленно».</strong> Никогда. Даже <code>Promise.resolve(1).then(cb)</code> ставит PromiseReactionJob как микрозадачу; <code>cb</code> идёт после текущего синхронного кода, тиком позже. Promise гарантируют асинхронность, чтобы избежать release of Zalgo.</p>
+</Misconception>
+
+## Отслеживание необработанных отклонений
+
+Движок также следит за отклонениями без reject-обработчика. Когда выполняется `RejectPromise`, а список reject-реакций пуст (не прикреплён `.catch`/`.then(_, onR)`), Promise помечается как имеющий *потенциально необработанное отклонение*. Хост уведомляется через `HostPromiseRejectionTracker`, что и порождает браузерное событие `unhandledrejection` и `process.on('unhandledRejection')` в Node. Важно, что это *отложено*: обработчик, прикреплённый **позже в том же обороте**, снимает флаг (порождает `rejectionhandled`), потому что прикрепление `.catch` регистрирует reject-реакцию, которая потребляет сохранённое отклонение. Это откладывание — причина, по которой «добавьте `.catch` на следующей строке» всё ещё подавляет предупреждение — а вот `.catch`, прикреплённый макрозадачей позже, уже нет.
+
+<FlowDiagram
+  label="Жизнь реакции: .then на pending-Promise добавляет запись реакции в список; когда продюсер урегулирует Promise, движок обходит совпадающий список и ставит по одной микрозадаче PromiseReactionJob на реакцию; каждый job запускает обработчик и урегулирует нижестоящий Promise."
+  hue="var(--accent)"
+  caption="От .then к выполненному обработчику. Урегулирование — триггер, превращающий сохранённые реакции в поставленные в очередь микрозадачи-jobs, по одной на реакцию."
+  nodes={[
+    { id: "then", label: ".then(onF)", sub: "добавить реакцию", col: 0, row: 0 },
+    { id: "pending", label: "Pending-Promise", sub: "держит список реакций", col: 1, row: 0 },
+    { id: "settle", label: "resolve()/reject()", sub: "урегулирование единожды", col: 2, row: 0 },
+    { id: "job", label: "PromiseReactionJob", sub: "микрозадача на реакцию", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "then", to: "pending", label: "регистрация" },
+    { from: "pending", to: "settle", label: "продюсер урегулирует" },
+    { from: "settle", to: "job", label: "поставить N jobs" },
+  ]}
+/>
+
+<Quiz
+  id="q-then-returns-new"
+  lessonSlug="03-promise-internals"
+  lang="ru"
+  question="Что создаёт `const q = p.then(fn)`, и когда запустится `fn`, если `p` уже fulfilled?"
+  choices={[
+    { label: "`q` — совершенно новый Promise; `fn` запускается одной микрозадачей позже как PromiseReactionJob, никогда не синхронно", correct: true },
+    { label: "`q` — тот же объект, что и `p`; `fn` запускается синхронно, раз `p` урегулирован", misconception: "`.then` всегда возвращает новый Promise (result capability) и никогда не запускает обработчик синхронно — даже на урегулированном Promise он ставит микрозадачу PromiseReactionJob." },
+    { label: "`q` — undefined; `.then` лишь регистрирует побочный эффект", misconception: "`.then` возвращает новый Promise, чтобы можно было строить цепочки; этот нижестоящий Promise урегулируется возвращённым значением fn." },
+    { label: "`q` — клон `p` с теми же скопированными реакциями", misconception: "Никакие реакции не копируются. `q` — свежий pending-Promise, чьи resolve/reject хранятся в записи реакции, которую строит `.then`." },
+  ]}
+/>
+
+<Quiz
+  id="q-thenable-tick"
+  lessonSlug="03-promise-internals"
+  lang="ru"
+  question="Почему урегулирование Promise `A` другим Promise `B` стоит лишнего тика микрозадачи против урегулирования `A` числом 5?"
+  choices={[
+    { label: "Потому что принятие thenable планирует PromiseResolveThenableJob — лишнюю микрозадачу, чтобы подписаться на B, прежде чем A сможет принять его состояние", correct: true },
+    { label: "Потому что Promise дольше аллоцируются, чем числа", misconception: "Стоимость аллокации — это не тик микрозадачи. Лишний тик — это PromiseResolveThenableJob, который движок планирует для подписки на внутренний thenable." },
+    { label: "Потому что B сначала должен быть собран сборщиком мусора", misconception: "GC не связан с подсчётом тиков. Лишний тик идёт от job принятия thenable, а не от сборки." },
+    { label: "Лишнего тика нет; урегулирование через Promise бесплатно", misconception: "Лишний тик есть. Движок не может принять значение thenable синхронно, поэтому отскакивает через PromiseResolveThenableJob." },
+  ]}
+/>
+
+<DragOrder
+  id="do-then-internals"
+  pieceSlug="03-promise-internals"
+  lang="ru"
+  prompt="Расставьте по порядку, что делает движок от вызова `.then` на ещё pending-Promise до запуска обработчика после урегулирования Promise."
+  items={[
+    ".then создаёт новый нижестоящий Promise и запоминает его resolve/reject",
+    ".then строит записи PromiseReaction и добавляет их в списки pending-Promise",
+    "Продюсер вызывает resolve(); FulfillPromise сохраняет значение и ставит состояние fulfilled",
+    "FulfillPromise ставит микрозадачу PromiseReactionJob для каждой зарегистрированной реакции",
+    "Чекпоинт микрозадач выполняет каждый job: обработчик запускается и урегулирует нижестоящий Promise",
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем заставлять `.then` всегда откладывать на микрозадачу, даже когда Promise уже урегулирован? Потому что функция, которая иногда вызывает свой колбэк синхронно, а иногда асинхронно, неподдаётся рассуждению — печально известное «выпускание Zalgo». Гарантируя, что обработчик всегда запускается в более поздней микрозадаче, Promise дают вам один инвариант, на который можно опереться: код после `.then(...)` на текущей строке всегда выполняется до обработчика.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Promise — это конечный автомат, урегулируемый единожды: состояние, значение и два списка записей PromiseReaction. `.then` возвращает новый Promise и регистрирует реакции; урегулирование ставит по одной микрозадаче PromiseReactionJob на реакцию. Урегулирование через thenable добавляет тик через PromiseResolveThenableJob — источник сюрпризов с «лишним тиком».</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-promise-internals-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опишите внутреннюю структуру Promise и инвариант урегулирования единожды.", a: "Promise хранит [[PromiseState]] (pending → fulfilled | rejected, переходит ровно один раз), [[PromiseResult]] (значение fulfilment или причина rejection, осмысленно только после урегулирования) и два списка, [[PromiseFulfillReactions]] и [[PromiseRejectReactions]], из записей PromiseReaction. Каждая PromiseReaction связывает тип (fulfill/reject), обработчик (ваш колбэк или undefined) и capability resolve/reject нового Promise, который вернул .then. Урегулирование единожды означает: как только состояние ушло из pending, никакой более поздний resolve/reject его не меняет; при урегулировании совпадающий список реакций потребляется (каждая реакция планируется как микрозадача), а списки отбрасываются." },
+    { q: "Пройдите всё, что делает .then, и объясните, почему обработчик никогда не синхронен.", a: ".then(onF, onR) создаёт новый Promise (result capability) и хранит его resolve/reject; строит две записи PromiseReaction, оборачивающие совпадающий обработчик и эту capability; затем либо добавляет их в списки реакций исходного Promise (если ещё pending), либо, если уже урегулирован, немедленно ставит микрозадачу PromiseReactionJob для совпадающей реакции. Он никогда не запускает обработчик синхронно — даже Promise.resolve(1).then(cb) откладывает cb на микрозадачу. Это избегает опасности «иногда синхронно, иногда асинхронно» (Zalgo) и гарантирует, что код после .then на текущей строке выполняется до обработчика." },
+    { q: "Объясните лишний тик от урегулирования Promise другим Promise и свяжите его с await.", a: "Когда вы урегулируете Promise A через thenable B, ResolvePromise не может принять значение B синхронно, потому что B может урегулироваться позже. Он планирует PromiseResolveThenableJob — микрозадачу, чья задача вызвать B.then, чтобы подписаться на него. Эта подписка — дополнительное откладывание, поэтому урегулирование A через B стоит лишнего тика микрозадачи против урегулирования A обычным значением. Это механическая причина, по которой исходный await стоил три тика: спецификация оборачивала ожидаемое значение в одноразовый Promise и принимала его через thenable job. V8 7.2 сделал особый случай для нативных Promise, пропускающий эти лишние jobs, сведя await примерно к одному тику (следующий урок)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Promise — компактный конечный автомат, урегулируемый единожды. Внутри это слот состояния ([[PromiseState]]: pending → fulfilled | rejected, в одну сторону), слот результата ([[PromiseResult]]) и два списка записей PromiseReaction ([[PromiseFulfillReactions]] / [[PromiseRejectReactions]]). Каждая реакция связывает тип, ваш обработчик и capability resolve/reject нового Promise, который вернул .then — поэтому сцепление и композируется. .then всегда возвращает новый Promise и никогда не запускает ваш обработчик синхронно: на pending-Promise он добавляет реакции; на урегулированном немедленно ставит микрозадачу PromiseReactionJob. Урегулирование (FulfillPromise/RejectPromise) обходит совпадающий список и ставит по job на реакцию, поэтому fan-out стоит N микрозадач, а цепочка — один тик на звено. Печально известный лишний тик идёт от урегулирования Promise через thenable: движок планирует PromiseResolveThenableJob, чтобы подписаться на внутренний Promise, прежде чем принять его состояние. Отслеживание необработанных отклонений срабатывает, когда у отклонённого Promise нет reject-реакции, но .catch, добавленный позже в том же обороте, снимает флаг. Знание этой машинерии позволяет считать тики точно — навык, который следующий урок обналичивает, объясняя, как десахаризируется async/await и почему V8 7.2 сделал await почти бесплатным.
+</Recap>
