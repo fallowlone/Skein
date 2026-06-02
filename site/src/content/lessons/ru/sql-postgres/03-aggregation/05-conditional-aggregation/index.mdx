@@ -4,10 +4,177 @@ lang: ru
 track: "sql-postgres"
 unit: "03-aggregation"
 order: 5
-title: "Conditional aggregation with FILTER"
-summary: "Conditional aggregation with FILTER — stub; author to ready."
-estMin: 12
-status: stub
+title: "Условная агрегация: длинные строки в широкие колонки"
+summary: "SUM(CASE WHEN …) и COUNT(*) FILTER (WHERE …) превращают строку-на-категорию в колонку-на-категорию — сводный отчёт без crosstab, сочетается с GROUP BY."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - conditional-aggregation
+  - pivot
+  - filter-clause
+  - case-aggregate
+prereqs:
+  - 04-grouping-sets-rollup-cube
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-aggregate.html
+  - https://www.postgresql.org/docs/current/functions-conditional.html
+  - https://www.postgresql.org/docs/current/sql-expressions.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Продакт хочет дашборд: одна строка на день, с отдельными колонками для счёта заказов `paid`, `pending` и `cancelled` бок о бок. Простой `GROUP BY status` даёт обратную форму — одну строку *на статус*, сложенную вертикально, — бесполезную для широкой таблицы. Инстинкт фронтенд-команды — забрать все строки и развернуть в JavaScript. Неверный ход: условная агрегация разворачивает это в базе, одним запросом, без расширения и без crosstab.
+</Hook>
+
+<Crux>Условная агрегация разворачивает длинные данные в широкие колонки: один агрегат на категорию, у каждого своё построчное условие.</Crux>
+
+<Explanation>
+
+## Длинное против широкого
+
+Обычный `GROUP BY status` даёт **длинный** вывод: одна строка на категорию, значение под значением. Отчёту обычно нужен **широкий** вывод: одна строка на сущность (день, пользователь) с одной колонкой на категорию. Разворот (pivot) — это переход между ними, и фокус в том, чтобы каждая выходная колонка была своим условным агрегатом.
+
+<FlowDiagram
+  label="Разворот из длинного в широкое: GROUP BY status даёт одну строку на статус (длинное), тогда как условная агрегация даёт одну строку с одной колонкой на статус (широкое), считая в каждой колонке только совпавшие строки."
+  perRow={2}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "long", label: "Длинное (GROUP BY status)", sub: "paid:3 / pending:1 / cancelled:1 как 3 строки" },
+    { id: "wide", label: "Широкое (условная агр.)", sub: "одна строка: paid=3, pending=1, cancelled=1" },
+  ]}
+  edges={[
+    { from: "long", to: "wide" },
+  ]}
+  caption="Те же числа, переформованные. Каждая широкая колонка — агрегат, считающий только строки своей категории; остальные не вносят вклада в эту колонку."
+/>
+
+## Два способа написать колонку разворота
+
+Есть две идиомы, и для счётов и сумм они эквивалентны:
+
+```sql
+-- Форма FILTER (современная, стандартная, рекомендуемая):
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid')      AS paid,
+  COUNT(*) FILTER (WHERE status = 'pending')   AS pending,
+  COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+  SUM(total) FILTER (WHERE status = 'paid')    AS paid_revenue
+FROM orders
+GROUP BY created_at::date
+ORDER BY day;
+
+-- Форма CASE (переносимая, старая, работает везде):
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid') AS paid,        -- или:
+  SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END) AS paid_count,
+  SUM(CASE WHEN status = 'paid' THEN total END)    AS paid_revenue
+FROM orders
+GROUP BY created_at::date;
+```
+
+Механизм одинаков в обеих: каждая колонка — агрегат, который построчно либо включает значение, либо не вносит ничего. С `FILTER` агрегат просто пропускает несовпавшие строки. С `CASE` несовпавшая ветка возвращает `0` (для счёта через `SUM`) или `NULL` (который агрегаты игнорируют). `FILTER` чище и является сеньорским дефолтом; `CASE` — переносимый запасной вариант для движков без `FILTER`.
+
+## Ловушка счёта через CASE
+
+Самый частый баг здесь — счёт с неверным запасным значением:
+
+```sql
+-- НЕВЕРНО: COUNT считает не-NULL, а 0 — не NULL → считает КАЖДУЮ строку
+COUNT(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)   -- всегда = число всех строк
+
+-- ВЕРНЫЕ варианты:
+COUNT(CASE WHEN status = 'paid' THEN 1 END)          -- ELSE это NULL → COUNT пропустит
+SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END)     -- SUM складывает 1, 0 не вносят вклада
+COUNT(*) FILTER (WHERE status = 'paid')              -- чище всего
+```
+
+`COUNT` считает не-NULL значения; `0` — не NULL, поэтому `COUNT(CASE … ELSE 0 END)` считает все строки — тихая ошибка «промах на всё». Либо убери `ELSE` (тогда несовпадения это `NULL` и `COUNT` их пропустит), используй `SUM` из 1/0, либо используй `FILTER`. Это ровно та ловушка, ради устранения которой добавили `FILTER`.
+
+## Сочетание с GROUP BY и итогами
+
+Условная агрегация компонуется со всем, что ты выучил. Добавь `GROUP BY` по сущности, чтобы получить одну широкую строку на сущность; наложи `ROLLUP` из прошлого урока, чтобы добавить строку итогов по всем дням:
+
+```sql
+SELECT
+  created_at::date AS day,
+  COUNT(*) FILTER (WHERE status = 'paid')    AS paid,
+  COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled
+FROM orders
+GROUP BY ROLLUP (created_at::date)
+ORDER BY day NULLS LAST;
+```
+
+Это также ручной родственник функции `crosstab` из расширения `tablefunc` и оконных функций: оконные функции (следующий раздел, `04-window-functions`) сохраняют одну строку *на входную строку*, добавляя агрегатные колонки, тогда как условная агрегация **сворачивает** строки и распределяет категории по колонкам. Выбирай условную агрегацию, когда нужна компактная сводная таблица; тянись за окнами, когда нужно сохранить каждую детальную строку рядом с агрегатом её группы.
+
+<Inset kind="why" lang="ru">
+Зачем разворачивать в SQL, а не в приложении? Три причины. Первая — меньше данных по сети: развёрнутый результат гораздо меньше, чем все сырые строки плюс переформовка на клиенте. Вторая — база может посчитать условные агрегаты в том же скане, что уже делала для `GROUP BY`, — почти без доплаты. Третья — корректность живёт в одном месте: JS-pivot переизобретает логику группировки, которую движок уже делает идеально, и именно в этом переизобретении заводятся баги (и путаница NULL/ноль). Сеньорское правило: агрегируй и разворачивай у источника; отправляй форму отчёта, а не сырые строки.
+</Inset>
+
+<Quiz
+  id="05-conditional-aggregation-quiz-1"
+  lessonSlug="05-conditional-aggregation"
+  lang="ru"
+  question="Нужна одна строка на день с отдельными колонками счёта paid/pending/cancelled. Какой подход даёт такую форму?"
+  choices={[
+    { label: "GROUP BY day с одним условным агрегатом (FILTER или CASE) на каждую колонку статуса", correct: true },
+    { label: "GROUP BY day, status — и читать колонки", misconception: "Это даёт одну строку на пару day+status (длинное, стопкой), а не одну широкую строку на день с колонками-статусами. Разворачивать всё равно придётся после." },
+    { label: "Забрать все строки и развернуть в коде приложения", misconception: "Работает, но гонит больше данных по сети и переизобретает группировку, которую движок уже делает; условная агрегация разворачивает за один запрос у источника." },
+    { label: "ORDER BY status", misconception: "Сортировка не переформовывает строки в колонки; нужны условные агрегаты, чтобы создать колонки на статус." },
+  ]}
+/>
+
+<Quiz
+  id="05-conditional-aggregation-quiz-2"
+  lessonSlug="05-conditional-aggregation"
+  lang="ru"
+  question="Почему COUNT(CASE WHEN status='paid' THEN 1 ELSE 0 END) считает каждую строку, а не только оплаченные?"
+  choices={[
+    { label: "COUNT считает не-NULL значения, а ELSE 0 делает каждую строку не-NULL, так что считаются все строки", correct: true },
+    { label: "CASE не разрешён внутри COUNT", misconception: "CASE внутри COUNT законен; баг в ELSE 0 — убери его (ELSE NULL), и COUNT пропустит несовпадения." },
+    { label: "status='paid' вычисляется после группировки", misconception: "Условие вычисляется построчно во время агрегации, а не после группировки; баг в не-NULL нуле, а не во времени." },
+    { label: "Для разворотов нужно использовать SUM, никогда COUNT", misconception: "COUNT прекрасно работает, если несовпадения это NULL (убери ELSE). SUM из 1/0 и COUNT(*) FILTER тоже работают; проблема только в ELSE 0." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-conditional-aggregation-metaphor-1"
+  lessonSlug="05-conditional-aggregation"
+  lang="ru"
+  setup="Заполни пропуск: условная агрегация переформовывает данные из длинного в _______ — одна строка на сущность с одной колонкой на категорию, каждая колонка — агрегат лишь по своим совпавшим строкам."
+  accepted={["широкое", "широкий формат", "широкий"]}
+  canonical="широкое"
+  explanation="Длинный формат складывает по строке на категорию; широкий формат распределяет категории по колонкам, одна строка на сущность. Условная агрегация (FILTER или SUM(CASE …)) — это разворот в базе, выполняющий переход длинное→широкое одним сгруппированным запросом."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Условная агрегация разворачивает длинные данные в широкие отчётные колонки: каждая колонка — агрегат, ограниченный своей категорией через `FILTER (WHERE …)` (предпочтительно) или `SUM(CASE WHEN …)`. Она компонуется с `GROUP BY` (одна широкая строка на сущность) и `ROLLUP` (строка итогов). Избегай ловушки `COUNT(CASE … ELSE 0 END)` — `0` не NULL, так что `COUNT` считает всё; убери `ELSE`, используй `SUM` из 1/0 или `FILTER`. Разворачивай у источника, а не в приложении.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-conditional-aggregation-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое условная агрегация и какое преобразование формы она выполняет?", a: "Это использование одного агрегата на категорию, каждый ограничен совпавшими строками, чтобы превратить длинный вывод (одна строка на категорию) в широкий (одна строка на сущность с одной колонкой на категорию). Пишешь COUNT(*) FILTER (WHERE status='paid') AS paid и т.д., сгруппировав по сущности (например по дню). Это разворот в базе: длинное → широкое одним сгруппированным запросом." },
+    { q: "Дай формы FILTER и CASE для колонки счёта оплаченных заказов и объясни ловушку счёта через CASE.", a: "FILTER: COUNT(*) FILTER (WHERE status='paid'). CASE: SUM(CASE WHEN status='paid' THEN 1 ELSE 0 END) или COUNT(CASE WHEN status='paid' THEN 1 END) без ELSE. Ловушка — COUNT(CASE WHEN status='paid' THEN 1 ELSE 0 END): COUNT считает не-NULL значения, а 0 не NULL, поэтому он считает каждую строку, а не только оплаченные. Чинь, убрав ELSE (несовпадения становятся NULL, который COUNT пропускает), используя SUM из 1/0 или используя FILTER." },
+    { q: "Когда использовать условную агрегацию против оконной функции для отчёта?", a: "Используй условную агрегацию, когда нужна компактная сводка: свернуть строки и распределить категории по колонкам, одна строка на сущность (например дневные счёты по статусам). Используй оконную функцию, когда нужно сохранить каждую детальную строку, добавив рядом агрегат её группы (одна выходная строка на входную). Условная агрегация уменьшает строки; оконные функции их сохраняют. Разворот также держит работу и данные у источника, а не переформовывает в коде приложения." },
+  ]}
+/>
+
+<Recap lang="ru">
+Условная агрегация — это разворот в базе: она переформовывает **длинный** вывод (одна строка на категорию) в **широкий** (одна строка на сущность, одна колонка на категорию), делая каждую колонку агрегатом, ограниченным своей категорией. Современная форма — `COUNT(*) FILTER (WHERE …)` / `SUM(total) FILTER (WHERE …)`; переносимый запасной вариант — `SUM(CASE WHEN … THEN … ELSE 0 END)`. Следи за классической ловушкой — `COUNT(CASE … ELSE 0 END)` считает каждую строку, ведь `0` не NULL, поэтому убери `ELSE`, используй `SUM` из 1/0 или `FILTER`. Она чисто компонуется с `GROUP BY` (широкая строка на сущность) и `ROLLUP` из прошлого урока (строка итогов) и место ей у источника: разворот в SQL отправляет маленькую форму отчёта вместо сырых строк и держит логику группировки в одном корректном месте. Когда же нужно сохранить каждую детальную строку рядом с агрегатом её группы — это работа оконных функций, ровно следующего раздела.
+</Recap>

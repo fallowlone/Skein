@@ -4,10 +4,179 @@ lang: en
 track: "sql-postgres"
 unit: "03-aggregation"
 order: 1
-title: "The GROUP BY model"
-summary: "The GROUP BY model — stub; author to ready."
-estMin: 12
-status: stub
+title: "The GROUP BY model: rows into buckets"
+summary: "GROUP BY collapses many rows into one row per distinct key. The iron rule follows from that collapse: every SELECT expression must be in GROUP BY or wrapped in an aggregate."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - group-by
+  - aggregation-buckets
+  - functional-dependency
+  - select-list-rule
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://use-the-index-luke.com/sql/sorting-grouping
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A junior ships `SELECT user_id, status, SUM(total) FROM orders GROUP BY user_id`. Locally it returns clean per-user totals. In review it won't even run: `ERROR: column "orders.status" must appear in the GROUP BY clause or be used in an aggregate function`. That error is not Postgres being pedantic — it's the database telling you the query asked an impossible question. Understand *why* it's impossible and you'll never fight `GROUP BY` again.
+</Hook>
+
+<Crux>GROUP BY collapses rows into buckets; everything in SELECT must be per-bucket — in GROUP BY or wrapped in an aggregate.</Crux>
+
+<Explanation>
+
+## Grouping is bucketing
+
+`GROUP BY` takes the rows that survived `WHERE` and sorts them into **buckets** by the value of the grouping key. All rows with the same key land in the same bucket. Then — this is the whole idea — **each bucket collapses into exactly one output row**.
+
+Picture five orders. Group by `status`:
+
+```sql
+SELECT status, COUNT(*) AS n, SUM(total) AS revenue
+FROM orders
+GROUP BY status;
+```
+
+Postgres partitions the rows into one bucket per distinct `status` (`paid`, `pending`, `cancelled`, …) and emits one row per bucket. The output is no longer "orders" — it's "statuses", one row each.
+
+<FlowDiagram
+  label="GROUP BY status takes many individual order rows and partitions them into one bucket per distinct status value, then collapses each bucket into a single output row carrying the grouping key plus aggregates."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "rows", label: "5 order rows", sub: "paid, paid, pending, paid, cancelled" },
+    { id: "bucket1", label: "Bucket: paid", sub: "3 rows" },
+    { id: "bucket2", label: "Bucket: pending", sub: "1 row" },
+    { id: "bucket3", label: "Bucket: cancelled", sub: "1 row" },
+    { id: "out1", label: "paid, 3, sum", sub: "1 output row" },
+    { id: "out2", label: "pending, 1, sum", sub: "1 output row" },
+    { id: "out3", label: "cancelled, 1, sum", sub: "1 output row" },
+  ]}
+  edges={[
+    { from: "rows", to: "bucket1" },
+    { from: "rows", to: "bucket2" },
+    { from: "rows", to: "bucket3" },
+    { from: "bucket1", to: "out1" },
+    { from: "bucket2", to: "out2" },
+    { from: "bucket3", to: "out3" },
+  ]}
+  caption="Many rows in, one row per bucket out. After the collapse there is no single 'order' anymore — only a status and the numbers computed across its bucket."
+/>
+
+## The iron rule, and why it's not arbitrary
+
+Once a bucket holds three orders, ask: what is *the* `id` of that bucket? There isn't one — there are three. What's *the* `created_at`? Three again. The bucket has one defined `status` (that's the key) but no single value for any other raw column. So Postgres faces a contradiction: you asked for one output row per bucket, but `SELECT id` demands a value the bucket doesn't have.
+
+That's the rule, and it falls straight out of the collapse:
+
+> **Every expression in the `SELECT` list must be either listed in `GROUP BY` (so it has one value per bucket) or wrapped in an aggregate (which computes one value *from* the bucket).**
+
+`COUNT(*)`, `SUM(total)`, `MAX(created_at)`, `array_agg(id)` — every aggregate takes the whole bucket and returns one scalar. Anything *not* aggregated must be constant within the bucket, which is exactly what putting it in `GROUP BY` guarantees. The "must appear in GROUP BY or be used in an aggregate" error is Postgres refusing to silently pick one arbitrary row's value — which is what MySQL's old default did, and what silently produced wrong reports for a decade.
+
+```sql
+-- WRONG: status is neither grouped nor aggregated
+SELECT user_id, status, SUM(total)
+FROM orders
+GROUP BY user_id;            -- ERROR: status must appear in GROUP BY or an aggregate
+
+-- RIGHT, option A: group by it too (one row per user+status pair)
+SELECT user_id, status, SUM(total)
+FROM orders
+GROUP BY user_id, status;
+
+-- RIGHT, option B: aggregate it away (one row per user)
+SELECT user_id, MAX(status) AS some_status, SUM(total)
+FROM orders
+GROUP BY user_id;
+```
+
+## The functional-dependency exception
+
+There is one place Postgres relaxes the rule, and it's not a loophole — it's correctness. If you `GROUP BY` a table's **primary key**, every other column of that table is *functionally dependent* on the key: the key uniquely determines the row, so each bucket holds exactly one row of that table, and every column has a single well-defined value. Postgres knows this from the catalog and lets you select those dependent columns ungrouped:
+
+```sql
+-- u.id is the PK of users, so u.name and u.email are functionally
+-- dependent on it — Postgres allows them without listing them in GROUP BY:
+SELECT u.id, u.name, u.email, COUNT(o.id) AS order_count
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+GROUP BY u.id;               -- not u.id, u.name, u.email — the PK is enough
+```
+
+This is part of the SQL standard (the SQL:1999 functional-dependency rule), and Postgres implements it for primary keys and other not-null unique constraints. It saves you from padding `GROUP BY` with a dozen columns just to print them.
+
+<Inset kind="edgecase" lang="en">
+The dependency must be one Postgres can *prove* from a constraint. Grouping by `u.id` works because it's the declared primary key. Grouping by a column that merely happens to be unique in your data, but has no `UNIQUE`/`PRIMARY KEY` constraint, is still rejected — the planner can't trust runtime uniqueness, only declared constraints. And the dependency is per-table: grouping by `users.id` lets you select other `users` columns ungrouped, but not raw `orders` columns, since one user can own many orders.
+</Inset>
+
+<Quiz
+  id="01-group-by-model-quiz-1"
+  lessonSlug="01-group-by-model"
+  lang="en"
+  question="Why does SELECT user_id, status, SUM(total) FROM orders GROUP BY user_id fail?"
+  choices={[
+    { label: "After grouping by user_id, each bucket can hold many different status values, so status has no single value to return per output row", correct: true },
+    { label: "SUM can't be combined with non-aggregated columns at all", misconception: "It can — the issue is only that status is neither grouped nor aggregated. Adding status to GROUP BY or wrapping it in an aggregate both work." },
+    { label: "status must always be the first column in GROUP BY", misconception: "Column order in GROUP BY is irrelevant; the problem is that status isn't in GROUP BY (nor aggregated) at all." },
+    { label: "GROUP BY only allows one column", misconception: "GROUP BY accepts many columns; grouping by user_id, status would in fact make this query valid." },
+  ]}
+/>
+
+<Quiz
+  id="01-group-by-model-quiz-2"
+  lessonSlug="01-group-by-model"
+  lang="en"
+  question="SELECT u.id, u.name, u.email, COUNT(o.id) FROM users u LEFT JOIN orders o ON o.user_id=u.id GROUP BY u.id is accepted. Why are u.name and u.email allowed without listing them?"
+  choices={[
+    { label: "u.id is the primary key of users, so name and email are functionally dependent on it — each bucket holds exactly one users row", correct: true },
+    { label: "Postgres always lets you select any column from a joined table", misconception: "It doesn't — try selecting a raw orders column here and it's rejected. The exception is specifically for columns functionally dependent on a grouped primary key." },
+    { label: "Text columns are exempt from the GROUP BY rule", misconception: "Data type is irrelevant. The exception is about functional dependency on the grouped PK, not about being text." },
+    { label: "It works only because of the LEFT JOIN", misconception: "The join type is unrelated. The same exception applies in a plain single-table GROUP BY u.id." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-group-by-model-metaphor-1"
+  lessonSlug="01-group-by-model"
+  lang="en"
+  setup="Fill in the blank: GROUP BY sorts rows into buckets, then collapses each bucket into one output row — so a column you SELECT must either be the bucket's key or be _______ from the whole bucket."
+  accepted={["aggregated", "computed", "summarized", "summarised", "an aggregate"]}
+  canonical="aggregated"
+  explanation="Each bucket becomes one row. A raw column has many values inside a bucket and no single answer, so it must either be the grouping key (one value by construction) or be reduced by an aggregate like SUM/COUNT/MAX that turns the whole bucket into one scalar."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`GROUP BY` partitions surviving rows into buckets by key and collapses each bucket to one row. Therefore every `SELECT` expression must be in `GROUP BY` or inside an aggregate — otherwise it has no single per-bucket value. The one relaxation: grouping by a table's primary key lets you select that table's other columns ungrouped, because they're functionally dependent on the key.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-group-by-model-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the GROUP BY select-list rule and explain why it exists.", a: "Every expression in the SELECT list must appear in the GROUP BY clause or be wrapped in an aggregate function. It exists because GROUP BY collapses each bucket of rows into a single output row: a column that isn't the grouping key can hold many different values inside one bucket, so it has no single value to return. Listing it in GROUP BY makes it constant per bucket; aggregating it computes one value from the bucket." },
+    { q: "What is the functional-dependency exception and when does it apply?", a: "If you GROUP BY a table's primary key (or another declared not-null unique constraint), every other column of that table is functionally dependent on the key — the key uniquely identifies the row — so each bucket holds exactly one row of that table and every column has one well-defined value. Postgres then lets you select those dependent columns without listing them in GROUP BY. It only works for dependencies provable from a declared constraint, and only for columns of the table whose key was grouped." },
+    { q: "Give two valid fixes for SELECT user_id, status, SUM(total) FROM orders GROUP BY user_id and say how the results differ.", a: "Option A: add status to GROUP BY (GROUP BY user_id, status) — one row per distinct user+status pair, finer granularity, more rows. Option B: wrap status in an aggregate (e.g. MAX(status) or string_agg(DISTINCT status, ',')) — one row per user with status collapsed into a single derived value. A changes the grouping granularity; B keeps one row per user." },
+  ]}
+/>
+
+<Recap lang="en">
+`GROUP BY` is a bucketing operation: rows that survive `WHERE` are partitioned by the grouping key, and each bucket collapses into exactly one output row. That collapse is the source of the iron rule — every `SELECT` expression must be in `GROUP BY` (constant per bucket) or inside an aggregate (one value computed from the bucket), because a raw column has no single value across a multi-row bucket. Postgres enforces this rather than silently returning an arbitrary row, which is the discipline that keeps reports correct. The single relaxation is the functional-dependency exception: group by a primary key and you may select that table's other columns ungrouped, since the key determines them. Next we look at *when* filtering happens around this collapse — `WHERE` before grouping versus `HAVING` after — which decides both correctness and performance.
+</Recap>

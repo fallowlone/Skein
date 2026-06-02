@@ -4,10 +4,171 @@ lang: en
 track: "sql-postgres"
 unit: "03-aggregation"
 order: 3
-title: "Aggregate functions"
-summary: "Aggregate functions — stub; author to ready."
-estMin: 12
-status: stub
+title: "Aggregate functions: COUNT, SUM, FILTER, and the traps"
+summary: "COUNT(*) counts rows, COUNT(col) skips NULLs, COUNT(DISTINCT) dedupes. FILTER beats CASE for conditional aggregates, and integer AVG plus SUM overflow are the silent bugs."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - count-variants
+  - filter-clause
+  - string-agg-ordering
+  - numeric-overflow
+prereqs:
+  - 02-having-vs-where
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/functions-aggregate.html
+  - https://www.postgresql.org/docs/current/sql-expressions.html
+  - https://www.postgresql.org/docs/current/datatype-numeric.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+"Average order value is $0." A dashboard quietly showed zero for a week. The cause: `AVG(total)` where `total` was an `integer` column, so Postgres did integer division and floored every fractional cent. The same week, a `SUM(amount)` on a high-volume `int` column wrapped past 2.1 billion and threw `integer out of range` at 3am. Aggregates look trivial; the bugs they hide are not.
+</Hook>
+
+<Crux>COUNT(*) counts rows; COUNT(col) skips NULLs; FILTER beats CASE; integer AVG and SUM overflow are silent traps.</Crux>
+
+<Explanation>
+
+## The three faces of COUNT
+
+`COUNT` has three distinct behaviors that beginners conflate — and the difference changes the answer:
+
+- **`COUNT(*)`** — counts **rows**, period. NULLs included; it never inspects column values.
+- **`COUNT(col)`** — counts rows where `col` **is not NULL**. It silently skips NULLs.
+- **`COUNT(DISTINCT col)`** — counts **distinct non-NULL** values of `col`.
+
+```sql
+SELECT
+  COUNT(*)               AS total_orders,      -- every row
+  COUNT(discount_code)   AS with_discount,     -- rows where code is not NULL
+  COUNT(DISTINCT user_id) AS distinct_buyers   -- unique users
+FROM orders;
+```
+
+If 1,000 orders exist but only 200 have a `discount_code`, `COUNT(*)` is 1000 and `COUNT(discount_code)` is 200. Reaching for `COUNT(some_column)` when you meant "all rows" is a top-5 reporting bug — a single NULL in that column silently undercounts.
+
+<FlowDiagram
+  label="Three COUNT variants over the same column: COUNT(*) counts all rows including NULLs, COUNT(col) counts only non-NULL values, and COUNT(DISTINCT col) counts unique non-NULL values."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "data", label: "Values", sub: "A, A, NULL, B, NULL" },
+    { id: "star", label: "COUNT(*)", sub: "= 5 (all rows)" },
+    { id: "col", label: "COUNT(col)", sub: "= 3 (skip NULL)" },
+    { id: "dist", label: "COUNT(DISTINCT col)", sub: "= 2 (A, B)" },
+  ]}
+  edges={[
+    { from: "data", to: "star" },
+    { from: "data", to: "col" },
+    { from: "data", to: "dist" },
+  ]}
+  caption="Same five values, three answers. The NULL-skipping of COUNT(col) is the silent one — it makes a column-COUNT undercount whenever any value is missing."
+/>
+
+## FILTER: conditional aggregates without CASE
+
+You often want "count of paid orders" and "count of cancelled orders" in the same row. The old trick is `CASE` inside the aggregate; the modern, clearer way is the `FILTER` clause:
+
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE status = 'paid')      AS paid,
+  COUNT(*) FILTER (WHERE status = 'cancelled') AS cancelled,
+  SUM(total) FILTER (WHERE status = 'paid')    AS paid_revenue
+FROM orders;
+```
+
+`FILTER (WHERE …)` restricts *which rows that one aggregate sees*, independently per aggregate, without touching the query's `WHERE`. It reads cleaner than `SUM(CASE WHEN status='paid' THEN total END)` and — crucially — `COUNT(*) FILTER (WHERE …)` counts matching rows, whereas `COUNT(CASE WHEN … THEN 1 END)` works only because the non-matching branch returns NULL (a subtlety that bites people who write `THEN 0`, which counts everything). `FILTER` is standard SQL and is the senior default for conditional aggregation. (You'll build full pivot tables with it in lesson 05.)
+
+## Ordered aggregates: string_agg / array_agg
+
+Some aggregates care about order. `string_agg` and `array_agg` concatenate the group's values, and you can specify the order *inside* the aggregate:
+
+```sql
+SELECT user_id,
+       string_agg(status, ',' ORDER BY created_at) AS status_timeline,
+       array_agg(id ORDER BY created_at DESC)      AS recent_first
+FROM orders
+GROUP BY user_id;
+```
+
+Without `ORDER BY` inside the aggregate, the concatenation order is **undefined** — it depends on the plan and can change between runs. If order matters (a timeline, a CSV), always specify it inside the parentheses, not in the query's outer `ORDER BY` (which only sorts the final rows, not the values inside each aggregate).
+
+## The numeric traps
+
+Two aggregate bugs are silent and expensive:
+
+**Integer AVG.** `AVG` of an `integer` column returns `numeric` in Postgres (good), but `SUM`/division you write by hand on integers truncates. The classic is `SUM(total)/COUNT(*)` on `int` columns — that's integer division, dropping the fraction. Cast first: `SUM(total)::numeric / COUNT(*)` or just use `AVG(total)`.
+
+**SUM overflow.** `SUM` over an `integer` column returns `bigint` (safe to ~9.2×10^18), but `SUM` over a `bigint` column returns `numeric` — and `SUM` over a column that's `int` with billions of large rows can still overflow if you cast back. The real-world failure: summing a money column stored as `int` cents across a busy table eventually trips `integer out of range`. Defend by storing money as `numeric` (or `bigint` cents) and, when in doubt, cast inside the SUM: `SUM(amount::bigint)`.
+
+<Inset kind="why" lang="en">
+Why does Postgres widen `SUM(int)` to `bigint` automatically but not protect every case? Because the result type is chosen from the *input* type, not the runtime magnitude — the planner can't know your row count in advance. `SUM(int)` → `bigint` covers almost everything, but `SUM(bigint)` → `numeric` (arbitrary precision, slower) is the safety net for truly huge totals. The lesson: pick the storage type for the *sum* you'll compute, not just the individual value. A per-row `int` is fine; a yearly `SUM` of millions of them may need `bigint` or `numeric`.
+</Inset>
+
+<Quiz
+  id="03-aggregate-functions-quiz-1"
+  lessonSlug="03-aggregate-functions"
+  lang="en"
+  question="orders has 1000 rows; 200 have a non-NULL discount_code. What does COUNT(discount_code) return?"
+  choices={[
+    { label: "200 — COUNT(col) counts only rows where the column is not NULL", correct: true },
+    { label: "1000 — COUNT always counts every row", misconception: "That's COUNT(*). COUNT(col) skips NULLs, so it returns only the 200 non-NULL rows." },
+    { label: "It errors because some values are NULL", misconception: "NULLs are not an error for COUNT(col); they're simply not counted." },
+    { label: "The number of distinct discount codes", misconception: "That would be COUNT(DISTINCT discount_code). COUNT(col) counts non-NULL rows, including duplicates." },
+  ]}
+/>
+
+<Quiz
+  id="03-aggregate-functions-quiz-2"
+  lessonSlug="03-aggregate-functions"
+  lang="en"
+  question="Why prefer COUNT(*) FILTER (WHERE status='paid') over COUNT(CASE WHEN status='paid' THEN 0 END)?"
+  choices={[
+    { label: "FILTER reads clearly and counts matching rows; the CASE with THEN 0 counts every row because 0 is non-NULL", correct: true },
+    { label: "FILTER is faster because it skips the GROUP BY", misconception: "FILTER doesn't change grouping; both run within the same aggregation. The point is correctness and clarity, not skipping GROUP BY." },
+    { label: "CASE inside an aggregate is illegal in Postgres", misconception: "CASE in an aggregate is legal; the bug is THEN 0, which makes COUNT count all rows since 0 is not NULL. THEN 1 (and only the matching branch) would work." },
+    { label: "FILTER allows aggregates in WHERE", misconception: "FILTER is a per-aggregate row restriction, unrelated to putting aggregates in WHERE (still illegal)." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-aggregate-functions-metaphor-1"
+  lessonSlug="03-aggregate-functions"
+  lang="en"
+  setup="Fill in the blank: to make string_agg or array_agg produce values in a guaranteed order, put the ORDER BY _______ the aggregate's parentheses, not in the query's outer ORDER BY."
+  accepted={["inside", "within", "in"]}
+  canonical="inside"
+  explanation="An ordered-set / ordered aggregate takes its own ORDER BY: string_agg(status, ',' ORDER BY created_at). The query's outer ORDER BY only sorts the final output rows; it cannot order the values concatenated inside a single aggregate. Without the inner ORDER BY, concatenation order is undefined and can change between runs."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`COUNT(*)` counts rows; `COUNT(col)` skips NULLs; `COUNT(DISTINCT col)` dedupes. Use `FILTER (WHERE …)` for per-aggregate conditions — clearer and safer than `CASE`. Put `ORDER BY` *inside* `string_agg`/`array_agg` when order matters. Guard the numeric traps: integer division truncates (cast first), and `SUM` over `int` can overflow on busy tables (store money as `numeric`/`bigint`).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-aggregate-functions-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish COUNT(*), COUNT(col), and COUNT(DISTINCT col) with one example.", a: "Over the values A, A, NULL, B, NULL: COUNT(*) = 5 (all rows, NULLs included), COUNT(col) = 3 (only non-NULL values, duplicates kept), COUNT(DISTINCT col) = 2 (unique non-NULL values, A and B). The trap is COUNT(col) silently skipping NULLs, which undercounts whenever you meant 'all rows'." },
+    { q: "What does FILTER (WHERE …) do, and why is it better than CASE for conditional aggregation?", a: "FILTER restricts which rows a single aggregate sees, independently per aggregate, without changing the query's WHERE — so you can compute paid count and cancelled count in one row. It's clearer than SUM(CASE WHEN …) and avoids the classic CASE bug where COUNT(CASE WHEN … THEN 0 END) counts every row because 0 is non-NULL. FILTER is standard SQL and the senior default." },
+    { q: "Name the two silent numeric aggregate traps and how to avoid each.", a: "(1) Integer division: hand-writing SUM(total)/COUNT(*) on integer columns truncates the fraction (e.g. average shows as a floored integer). Fix: cast first, SUM(total)::numeric / COUNT(*), or use AVG. (2) SUM overflow: SUM over an int column returns bigint, but summing money stored as int across a busy table can still trip 'integer out of range'. Fix: store money as numeric or bigint cents, or cast inside the SUM (SUM(amount::bigint))." },
+  ]}
+/>
+
+<Recap lang="en">
+Aggregate functions look simple and hide sharp edges. `COUNT(*)` counts rows; `COUNT(col)` silently skips NULLs; `COUNT(DISTINCT col)` counts unique non-NULL values — confusing them is a classic reporting bug. The `FILTER (WHERE …)` clause is the modern, standard way to do conditional aggregation: it restricts which rows each aggregate sees independently, reading more clearly than `CASE` and dodging the `THEN 0` trap. When concatenation order matters, `string_agg` and `array_agg` take their own `ORDER BY` *inside* the parentheses — the outer `ORDER BY` won't help. Finally, two numeric traps: integer division truncates (cast to `numeric` or use `AVG`), and `SUM` over `int` can overflow on high-volume tables (store money as `numeric`/`bigint`). The next lesson scales aggregation up: `GROUPING SETS`, `ROLLUP`, and `CUBE` compute many groupings — subtotals and grand totals — in a single pass.
+</Recap>
