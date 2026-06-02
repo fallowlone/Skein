@@ -4,10 +4,165 @@ lang: en
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 3
-title: "Statistics and estimates"
-summary: "Statistics and estimates — stub; author to ready."
-estMin: 12
-status: stub
+title: "Statistics and the misestimate"
+summary: "The planner estimates rows from pg_statistic — n_distinct, MCV lists, histograms. Correlated columns break the independence assumption; CREATE STATISTICS is the fix before the misestimate cascades into a bad join."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - pg-statistic
+  - mcv-and-histogram
+  - n-distinct
+  - extended-statistics
+  - correlated-columns
+prereqs:
+  - 02-the-planner
+  - databases/03-execution-plans/04-statistics-and-analyze
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+  - https://www.postgresql.org/docs/current/using-explain.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A dashboard query that joins `orders` to `line_items` and filters `WHERE city = 'Paris' AND country = 'France'` ran in 40 ms for a year. One morning it's 22 seconds. Nothing deployed, no data spike. `EXPLAIN ANALYZE` shows the filter estimated 12 rows, actual 480,000 — a 40,000× miss. The planner, believing 12 rows, chose a nested loop and is now probing an index 480,000 times. The data didn't change; the *correlation* between two columns finally broke the planner's math. This lesson is that bug and its one-line fix.
+</Hook>
+
+<Crux>The planner estimates rows from per-column stats assuming independence; correlated predicates break that, and CREATE STATISTICS restores it.</Crux>
+
+<Explanation>
+
+## What the planner knows about your data
+
+Every estimate the planner makes (lesson 02) comes from one place: the `pg_statistic` catalog, readable through the `pg_stats` view. `ANALYZE` (run manually, or automatically by autovacuum — lesson 04) samples each table and stores three things per column. The `databases` track's statistics chapter covers the sampling internals; here we read these as the levers a SQL author pulls:
+
+- **`n_distinct`** — how many distinct values the column has. Drives "how many rows match one value?" → roughly `row_count / n_distinct`.
+- **Most Common Values (`most_common_vals` + `most_common_freqs`)** — the top values and their exact frequencies. For `status = 'placed'` the planner doesn't guess; it reads the stored frequency. This is why skewed columns estimate well *for the common values*.
+- **Histogram (`histogram_bounds`)** — buckets of equal row-count for everything not in the MCV list, used for range predicates like `total > 100`.
+
+```sql
+-- Inspect what the planner believes about a column:
+SELECT attname, n_distinct, most_common_vals, most_common_freqs
+FROM pg_stats
+WHERE tablename = 'orders' AND attname = 'status';
+```
+
+`default_statistics_target` (default 100) controls how many MCV entries and histogram buckets are kept. Raise it on a column with many distinct values or heavy skew (`ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000;`) to trade a slower `ANALYZE` for sharper estimates.
+
+<FlowDiagram
+  label="How one estimate is formed: ANALYZE samples the table into pg_statistic; for a predicate the planner reads n_distinct, the MCV list, or the histogram, and multiplies frequencies to get an estimated row count that feeds the cost model."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "analyze", label: "ANALYZE", sub: "samples table" },
+    { id: "stat", label: "pg_statistic", sub: "n_distinct, MCV, histogram" },
+    { id: "pred", label: "Predicate", sub: "WHERE city='Paris'" },
+    { id: "est", label: "Row estimate", sub: "freq × rows" },
+    { id: "cost", label: "Cost model", sub: "picks the plan" },
+  ]}
+  edges={[
+    { from: "analyze", to: "stat" },
+    { from: "stat", to: "est" },
+    { from: "pred", to: "est" },
+    { from: "est", to: "cost" },
+  ]}
+  caption="Bad estimate in, bad plan out. The fix lives at the left: refresh or enrich pg_statistic so the row estimate feeding the cost model is true."
+/>
+
+## The correlated-columns trap
+
+Here's the math that breaks. By default the planner estimates a multi-column filter by assuming the columns are **independent**: it multiplies their individual selectivities. For `WHERE city = 'Paris' AND country = 'France'`:
+
+```
+estimate = P(city='Paris') × P(country='France') × row_count
+```
+
+If 1% of rows are Paris and 2% are France, the planner predicts `0.01 × 0.02 = 0.0002` → 0.02% of rows. But `city` and `country` are **functionally dependent** — every Paris row *is* a France row. The real selectivity is just 1%, fifty times higher. The planner under-estimates by ~50×, expects a handful of rows, picks a nested loop, and detonates when reality delivers 480,000.
+
+This is the most common senior-level misestimate in production, and it is invisible until a join is built on top of it. The independence assumption is fine for genuinely unrelated columns; it's catastrophic for correlated ones (city/country, brand/model, zip/state, status/shipped_at).
+
+The fix is **extended statistics** — you tell Postgres these columns travel together:
+
+```sql
+CREATE STATISTICS orders_city_country (dependencies, ndistinct, mcv)
+  ON city, country FROM orders;
+ANALYZE orders;   -- extended stats only populate on the next ANALYZE
+```
+
+Three kinds, each fixing a different miss:
+- **`dependencies`** — captures functional dependency (Paris ⇒ France), fixing the multiplied-selectivity under-estimate above.
+- **`ndistinct`** — captures the *combined* distinct count of a column group, fixing `GROUP BY a, b` estimates (independence over-counts groups).
+- **`mcv`** — a multi-column most-common-values list for skewed combinations.
+
+After `CREATE STATISTICS` + `ANALYZE`, the same query re-plans: estimate 480,000, actual 480,000, planner picks a hash join, 22 s → 60 ms. No query rewrite, no index, no hint — you corrected the *estimate*.
+
+<Inset kind="why" lang="en">
+Why doesn't Postgres just gather multi-column stats automatically for every pair? Combinatorics. A 30-column table has 435 column pairs and far more triples; auto-collecting all of them would make `ANALYZE` quadratically expensive and bloat the catalog. So Postgres defaults to the cheap independence assumption and lets you opt in with `CREATE STATISTICS` exactly on the column groups you know are correlated. Finding them is detective work: scan `EXPLAIN ANALYZE` for nodes where estimated and actual rows diverge sharply on a multi-column filter — that gap is the signature of a missing extended-statistics object.
+</Inset>
+
+<Quiz
+  id="03-statistics-and-estimates-quiz-1"
+  lessonSlug="03-statistics-and-estimates"
+  lang="en"
+  question="WHERE city='Paris' AND country='France' estimates 12 rows but actually returns 480,000. What is the root cause?"
+  choices={[
+    { label: "The planner multiplied the two column selectivities assuming independence, but the columns are correlated", correct: true },
+    { label: "The index on city is corrupt", misconception: "This is an estimation error, not a corrupt index. The planner mis-priced the filter before any index was even chosen; reindexing changes nothing." },
+    { label: "ANALYZE has never been run on the table", misconception: "Even with perfectly fresh per-column stats the planner still multiplies city and country selectivities as if independent — that's the trap. Fresh single-column stats don't capture the correlation." },
+    { label: "The query needs a LIMIT to be fast", misconception: "A LIMIT masks the symptom on this query but leaves the misestimate (and bad join choice) intact for every other query on these columns." },
+  ]}
+/>
+
+<Quiz
+  id="03-statistics-and-estimates-quiz-2"
+  lessonSlug="03-statistics-and-estimates"
+  lang="en"
+  question="Which CREATE STATISTICS kind fixes the under-estimate from multiplying two correlated single-column selectivities?"
+  choices={[
+    { label: "dependencies — it captures the functional dependency between the columns", correct: true },
+    { label: "ndistinct — it only fixes combined distinct counts for GROUP BY", misconception: "ndistinct corrects estimates for the number of distinct groups, e.g. GROUP BY a,b — not the multiplied-selectivity filter under-estimate, which dependencies handles." },
+    { label: "A unique constraint on (city, country)", misconception: "A constraint enforces uniqueness, it does not feed the planner correlation statistics; you still need CREATE STATISTICS for the estimate." },
+    { label: "Lowering random_page_cost", misconception: "That's a scan-cost knob; it doesn't change the row estimate at all, which is the actual defect here." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-statistics-and-estimates-metaphor-1"
+  lessonSlug="03-statistics-and-estimates"
+  lang="en"
+  setup="Fill in the blank: by default the planner assumes columns are _______, so it multiplies their selectivities; for correlated columns this under-estimates badly until CREATE STATISTICS tells it the truth."
+  accepted={["independent", "uncorrelated", "unrelated"]}
+  canonical="independent"
+  explanation="The independence assumption — treating each column's selectivity as unrelated and multiplying them — is the default because gathering multi-column stats for every combination is too expensive. It's correct for unrelated columns and catastrophic for correlated ones like city/country, which is exactly what extended statistics (CREATE STATISTICS) repairs."
+/>
+
+</Explanation>
+
+<KeyTakeaway>The planner estimates rows from `pg_statistic`: `n_distinct`, MCV lists, and histograms, refreshed by `ANALYZE`. For multi-column filters it assumes column independence and multiplies selectivities — which under-estimates correlated columns (city/country) by orders of magnitude, triggering a nested loop that explodes. The fix is `CREATE STATISTICS (dependencies, ndistinct, mcv)` on the correlated group, then `ANALYZE`. You correct the estimate; the planner fixes the plan itself.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-statistics-and-estimates-retrieval"
+  lang="en"
+  questions={[
+    { q: "What three statistics does ANALYZE store per column and what is each used for?", a: "n_distinct (number of distinct values, used to estimate rows-per-value as row_count/n_distinct for equality on uncommon values); the most-common-values list with their frequencies (exact selectivity for frequent values, so skewed columns estimate well); and a histogram of bucket boundaries (for everything not in the MCV list, used by range predicates like total > 100). They live in pg_statistic and are read via pg_stats." },
+    { q: "Why does WHERE city='Paris' AND country='France' get badly under-estimated, and how do you fix it?", a: "By default the planner assumes columns are independent and multiplies their selectivities: P(Paris) x P(France). But the columns are functionally dependent — every Paris row is a France row — so the real selectivity is much higher than the product, and the estimate can be off by 50x or more. The fix is extended statistics: CREATE STATISTICS name (dependencies, ndistinct, mcv) ON city, country FROM orders; then ANALYZE so the object populates." },
+    { q: "How does a single misestimate cascade into a bad join, and how do you spot it?", a: "If a filter is estimated at 12 rows but is really 480,000, the planner thinks the join's outer side is tiny and chooses a nested loop, probing the inner index once per outer row — 480,000 times instead of one hash build. So one wrong cardinality flips the join algorithm and the runtime from milliseconds to seconds. You spot it in EXPLAIN ANALYZE as a large estimated-vs-actual row gap on a multi-column filter node feeding a join." },
+  ]}
+/>
+
+<Recap lang="en">
+Every planner estimate traces back to `pg_statistic`, populated by `ANALYZE`: `n_distinct` (rows per value), the **MCV** list (exact frequencies for common values, so skew estimates well), and a **histogram** (range predicates). Raise `default_statistics_target` per column to sharpen them. The senior trap is the **independence assumption**: for a multi-column filter the planner multiplies single-column selectivities, which is fine for unrelated columns but under-estimates correlated ones — `city='Paris' AND country='France'` can miss by 40,000×. That single misestimate cascades: believing a handful of rows, the planner picks a nested loop that then probes an index hundreds of thousands of times, turning 40 ms into 22 s. The fix is `CREATE STATISTICS (dependencies, ndistinct, mcv)` on the correlated group plus an `ANALYZE` — you repair the *estimate* and the planner re-derives a hash join on its own. Hunt these by scanning `EXPLAIN ANALYZE` for big estimate-vs-actual gaps on multi-column predicates.
+</Recap>

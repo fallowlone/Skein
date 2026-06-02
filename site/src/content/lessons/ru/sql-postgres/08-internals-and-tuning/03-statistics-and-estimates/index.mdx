@@ -4,10 +4,165 @@ lang: ru
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 3
-title: "Statistics and estimates"
-summary: "Statistics and estimates — stub; author to ready."
-estMin: 12
-status: stub
+title: "Статистика и промах в оценке"
+summary: "Планировщик оценивает строки из pg_statistic — n_distinct, списки MCV, гистограммы. Коррелированные колонки ломают допущение независимости; CREATE STATISTICS — фикс до того, как промах каскадирует в плохой join."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - pg-statistic
+  - mcv-and-histogram
+  - n-distinct
+  - extended-statistics
+  - correlated-columns
+prereqs:
+  - 02-the-planner
+  - databases/03-execution-plans/04-statistics-and-analyze
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/planner-stats.html
+  - https://www.postgresql.org/docs/current/sql-createstatistics.html
+  - https://www.postgresql.org/docs/current/using-explain.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Дашбордовый запрос, соединяющий `orders` с `line_items` и фильтрующий `WHERE city = 'Paris' AND country = 'France'`, год работал за 40 мс. Однажды утром он 22 секунды. Ничего не деплоили, всплеска данных нет. `EXPLAIN ANALYZE` показывает: фильтр оценён в 12 строк, факт 480 000 — промах в 40 000×. Планировщик, поверив в 12 строк, выбрал nested loop и теперь зондирует индекс 480 000 раз. Данные не менялись; *корреляция* между двумя колонками наконец сломала математику планировщика. Этот урок — про этот баг и его фикс в одну строку.
+</Hook>
+
+<Crux>Планировщик оценивает строки, считая колонки независимыми; коррелированные предикаты ломают это, а CREATE STATISTICS чинит.</Crux>
+
+<Explanation>
+
+## Что планировщик знает о твоих данных
+
+Каждая оценка планировщика (урок 02) идёт из одного места: каталога `pg_statistic`, читаемого через вью `pg_stats`. `ANALYZE` (вручную или автоматически через autovacuum — урок 04) семплирует каждую таблицу и хранит три вещи на колонку. Глава статистики трека `databases` разбирает внутренности семплирования; здесь читаем это как рычаги, которые дёргает SQL-автор:
+
+- **`n_distinct`** — сколько различных значений в колонке. Ведёт оценку «сколько строк совпадёт с одним значением?» → примерно `row_count / n_distinct`.
+- **Most Common Values (`most_common_vals` + `most_common_freqs`)** — топ-значения и их точные частоты. Для `status = 'placed'` планировщик не гадает; он читает сохранённую частоту. Поэтому перекошенные колонки хорошо оцениваются *для частых значений*.
+- **Гистограмма (`histogram_bounds`)** — корзины равного числа строк для всего, что не в списке MCV, для диапазонных предикатов вроде `total > 100`.
+
+```sql
+-- Осмотри, во что планировщик верит про колонку:
+SELECT attname, n_distinct, most_common_vals, most_common_freqs
+FROM pg_stats
+WHERE tablename = 'orders' AND attname = 'status';
+```
+
+`default_statistics_target` (по умолчанию 100) управляет, сколько записей MCV и корзин гистограммы хранится. Подними его на колонке со множеством различных значений или сильным перекосом (`ALTER TABLE orders ALTER COLUMN status SET STATISTICS 1000;`), меняя более медленный `ANALYZE` на более резкие оценки.
+
+<FlowDiagram
+  label="Как формируется одна оценка: ANALYZE семплирует таблицу в pg_statistic; для предиката планировщик читает n_distinct, список MCV или гистограмму и перемножает частоты, получая оценочное число строк, которое кормит стоимостную модель."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "analyze", label: "ANALYZE", sub: "семплирует таблицу" },
+    { id: "stat", label: "pg_statistic", sub: "n_distinct, MCV, гистограмма" },
+    { id: "pred", label: "Предикат", sub: "WHERE city='Paris'" },
+    { id: "est", label: "Оценка строк", sub: "частота × строки" },
+    { id: "cost", label: "Стоим. модель", sub: "выбирает план" },
+  ]}
+  edges={[
+    { from: "analyze", to: "stat" },
+    { from: "stat", to: "est" },
+    { from: "pred", to: "est" },
+    { from: "est", to: "cost" },
+  ]}
+  caption="Плохая оценка на входе — плохой план на выходе. Фикс живёт слева: обнови или обогати pg_statistic, чтобы оценка строк, кормящая стоимостную модель, была верной."
+/>
+
+## Ловушка коррелированных колонок
+
+Вот математика, которая ломается. По умолчанию планировщик оценивает многоколоночный фильтр, считая колонки **независимыми**: он перемножает их индивидуальные селективности. Для `WHERE city = 'Paris' AND country = 'France'`:
+
+```
+оценка = P(city='Paris') × P(country='France') × row_count
+```
+
+Если 1% строк — Paris, а 2% — France, планировщик предскажет `0.01 × 0.02 = 0.0002` → 0.02% строк. Но `city` и `country` **функционально зависимы** — каждая строка Paris *и есть* строка France. Реальная селективность — просто 1%, в пятьдесят раз выше. Планировщик недооценивает в ~50×, ждёт горстку строк, выбирает nested loop и детонирует, когда реальность выдаёт 480 000.
+
+Это самый частый сеньорский промах оценки на проде, и он невидим, пока поверх него не построят join. Допущение независимости нормально для действительно несвязанных колонок; оно катастрофично для коррелированных (city/country, brand/model, zip/state, status/shipped_at).
+
+Фикс — **extended statistics** — ты говоришь Postgres, что эти колонки ходят вместе:
+
+```sql
+CREATE STATISTICS orders_city_country (dependencies, ndistinct, mcv)
+  ON city, country FROM orders;
+ANALYZE orders;   -- extended stats заполняются только на следующем ANALYZE
+```
+
+Три вида, каждый чинит свой промах:
+- **`dependencies`** — захватывает функциональную зависимость (Paris ⇒ France), чиня недооценку перемноженной селективности выше.
+- **`ndistinct`** — захватывает *комбинированное* число различных значений группы колонок, чиня оценки `GROUP BY a, b` (независимость пересчитывает группы).
+- **`mcv`** — многоколоночный список most-common-values для перекошенных комбинаций.
+
+После `CREATE STATISTICS` + `ANALYZE` тот же запрос перепланируется: оценка 480 000, факт 480 000, планировщик берёт hash join, 22 с → 60 мс. Без переписывания запроса, без индекса, без хинта — ты поправил *оценку*.
+
+<Inset kind="why" lang="ru">
+Почему Postgres просто не собирает многоколоночную статистику автоматически для каждой пары? Комбинаторика. У таблицы из 30 колонок 435 пар колонок и куда больше троек; автосбор всех сделал бы `ANALYZE` квадратично дорогим и раздул каталог. Поэтому Postgres по умолчанию берёт дешёвое допущение независимости и даёт включить `CREATE STATISTICS` ровно на тех группах колонок, про которые ты знаешь, что они коррелированы. Найти их — детективная работа: проверь `EXPLAIN ANALYZE` на узлы, где оценочные и фактические строки резко расходятся на многоколоночном фильтре — этот зазор и есть подпись отсутствующего объекта extended statistics.
+</Inset>
+
+<Quiz
+  id="03-statistics-and-estimates-quiz-1"
+  lessonSlug="03-statistics-and-estimates"
+  lang="ru"
+  question="WHERE city='Paris' AND country='France' оценивается в 12 строк, но реально возвращает 480 000. В чём корневая причина?"
+  choices={[
+    { label: "Планировщик перемножил селективности двух колонок, считая независимость, но колонки коррелированы", correct: true },
+    { label: "Индекс на city повреждён", misconception: "Это ошибка оценки, а не повреждённый индекс. Планировщик неверно оценил фильтр ещё до выбора любого индекса; реиндексация ничего не меняет." },
+    { label: "ANALYZE никогда не запускали на таблице", misconception: "Даже с идеально свежей постолбцовой статистикой планировщик всё равно перемножает селективности city и country как независимые — это и есть ловушка. Свежая одноколоночная статистика не захватывает корреляцию." },
+    { label: "Запросу нужен LIMIT, чтобы быть быстрым", misconception: "LIMIT маскирует симптом на этом запросе, но оставляет промах оценки (и плохой выбор join) на каждом другом запросе по этим колонкам." },
+  ]}
+/>
+
+<Quiz
+  id="03-statistics-and-estimates-quiz-2"
+  lessonSlug="03-statistics-and-estimates"
+  lang="ru"
+  question="Какой вид CREATE STATISTICS чинит недооценку от перемножения двух коррелированных одноколоночных селективностей?"
+  choices={[
+    { label: "dependencies — он захватывает функциональную зависимость между колонками", correct: true },
+    { label: "ndistinct — он чинит только комбинированные числа различных значений для GROUP BY", misconception: "ndistinct правит оценки числа различных групп, например GROUP BY a,b — а не недооценку перемноженной селективности фильтра, которую решает dependencies." },
+    { label: "Ограничение уникальности на (city, country)", misconception: "Ограничение навязывает уникальность, оно не кормит планировщик статистикой корреляции; для оценки всё равно нужен CREATE STATISTICS." },
+    { label: "Снижение random_page_cost", misconception: "Это рычаг стоимости скана; он вообще не меняет оценку строк, а именно она тут дефектна." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-statistics-and-estimates-metaphor-1"
+  lessonSlug="03-statistics-and-estimates"
+  lang="ru"
+  setup="Заполни пропуск: по умолчанию планировщик считает колонки _______, поэтому перемножает их селективности; для коррелированных колонок это сильно недооценивает, пока CREATE STATISTICS не скажет ему правду."
+  accepted={["независимыми", "некоррелированными", "несвязанными"]}
+  canonical="независимыми"
+  explanation="Допущение независимости — трактовать селективность каждой колонки как несвязанную и перемножать их — это дефолт, потому что сбор многоколоночной статистики для каждой комбинации слишком дорог. Оно верно для несвязанных колонок и катастрофично для коррелированных вроде city/country, что и чинит extended statistics (CREATE STATISTICS)."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Планировщик оценивает строки из `pg_statistic`: `n_distinct`, списки MCV и гистограммы, обновляемые `ANALYZE`. Для многоколоночных фильтров он считает независимость колонок и перемножает селективности — что недооценивает коррелированные колонки (city/country) на порядки, запуская взрывающийся nested loop. Фикс — `CREATE STATISTICS (dependencies, ndistinct, mcv)` на коррелированной группе, затем `ANALYZE`. Ты правишь оценку; план планировщик чинит сам.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-statistics-and-estimates-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Какие три статистики ANALYZE хранит на колонку и для чего каждая?", a: "n_distinct (число различных значений, для оценки строк-на-значение как row_count/n_distinct для равенства по нечастым значениям); список most-common-values с их частотами (точная селективность для частых значений, поэтому перекошенные колонки хорошо оцениваются); и гистограмма границ корзин (для всего, что не в списке MCV, для диапазонных предикатов вроде total > 100). Они живут в pg_statistic и читаются через pg_stats." },
+    { q: "Почему WHERE city='Paris' AND country='France' сильно недооценивается и как это починить?", a: "По умолчанию планировщик считает колонки независимыми и перемножает их селективности: P(Paris) x P(France). Но колонки функционально зависимы — каждая строка Paris это строка France — поэтому реальная селективность куда выше произведения, и оценка может промахнуться в 50x и больше. Фикс — extended statistics: CREATE STATISTICS name (dependencies, ndistinct, mcv) ON city, country FROM orders; затем ANALYZE, чтобы объект заполнился." },
+    { q: "Как один промах оценки каскадирует в плохой join и как его заметить?", a: "Если фильтр оценён в 12 строк, а реально их 480 000, планировщик думает, что внешняя сторона join крошечная, и выбирает nested loop, зондируя внутренний индекс по разу на внешнюю строку — 480 000 раз вместо одной сборки hash. Так одна неверная кардинальность переключает алгоритм join и время выполнения с миллисекунд на секунды. Замечаешь в EXPLAIN ANALYZE как большой зазор оценка-против-факта на узле многоколоночного фильтра, кормящего join." },
+  ]}
+/>
+
+<Recap lang="ru">
+Каждая оценка планировщика восходит к `pg_statistic`, заполняемому `ANALYZE`: `n_distinct` (строк на значение), список **MCV** (точные частоты для частых значений, поэтому перекос оценивается хорошо) и **гистограмма** (диапазонные предикаты). Подними `default_statistics_target` на колонке, чтобы их заострить. Сеньорская ловушка — **допущение независимости**: для многоколоночного фильтра планировщик перемножает одноколоночные селективности, что нормально для несвязанных колонок, но недооценивает коррелированные — `city='Paris' AND country='France'` может промахнуться в 40 000×. Этот единственный промах каскадирует: веря в горстку строк, планировщик выбирает nested loop, который затем зондирует индекс сотни тысяч раз, превращая 40 мс в 22 с. Фикс — `CREATE STATISTICS (dependencies, ndistinct, mcv)` на коррелированной группе плюс `ANALYZE` — ты чинишь *оценку*, и планировщик сам заново выводит hash join. Охоться на это, проверяя `EXPLAIN ANALYZE` на большие зазоры оценка-против-факта на многоколоночных предикатах.
+</Recap>

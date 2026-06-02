@@ -4,10 +4,160 @@ lang: en
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 4
-title: "VACUUM and bloat"
-summary: "VACUUM and bloat — stub; author to ready."
-estMin: 12
-status: stub
+title: "VACUUM and table bloat"
+summary: "MVCC leaves dead tuples behind every UPDATE and DELETE; autovacuum reclaims them. When it falls behind, bloat inflates every scan — and VACUUM FULL's exclusive lock is the wrong cure in production."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - dead-tuples
+  - autovacuum
+  - table-bloat
+  - vacuum-full-vs-pg-repack
+  - visibility-map
+prereqs:
+  - 03-statistics-and-estimates
+  - databases/04-mvcc-isolation/04-vacuum-and-bloat
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/routine-vacuuming.html
+  - https://www.postgresql.org/docs/current/runtime-config-autovacuum.html
+  - https://www.interdb.jp/pg/pgsql06.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A queue table — rows inserted, processed, deleted, thousands per minute — has 4,000 live rows at any moment. Its on-disk size is 9 GB. A `SELECT count(*)` that should be instant takes 6 seconds because the table is 99.9% dead tuples the planner still has to scan past. Someone, in a 2 a.m. panic, runs `VACUUM FULL` and locks the table for 11 minutes mid-incident. Both the bloat and the cure were avoidable. This lesson is why MVCC creates the garbage and how to collect it without taking an outage.
+</Hook>
+
+<Crux>MVCC leaves dead tuples; autovacuum reclaims them. When it lags, bloat slows every scan — and VACUUM FULL's lock is the wrong fix in prod.</Crux>
+
+<Explanation>
+
+## Where dead tuples come from
+
+The `databases` track's MVCC chapter derives this in depth; the SQL author needs the consequence. Under MVCC, Postgres never overwrites a row in place. An `UPDATE` writes a **new** row version and marks the old one dead; a `DELETE` just marks the row dead. The old version lingers because some still-running transaction's snapshot might need to see it. So every `UPDATE` and `DELETE` produces a **dead tuple** — a row that's invisible to new queries but still physically occupies a page on disk.
+
+Until those dead tuples are cleaned, they cost you twice: they take space, and every sequential or index scan still has to read the pages they sit on and skip them. A table that's 90% dead tuples does roughly 10× the I/O for the same live data.
+
+```sql
+-- See the damage on any table:
+SELECT relname, n_live_tup, n_dead_tup,
+       round(100.0 * n_dead_tup / nullif(n_live_tup + n_dead_tup, 0), 1) AS dead_pct,
+       last_autovacuum
+FROM pg_stat_user_tables
+WHERE relname IN ('orders', 'events', 'line_items')
+ORDER BY n_dead_tup DESC;
+```
+
+<FlowDiagram
+  label="The dead-tuple lifecycle: an UPDATE creates a new live version and leaves the old as dead; dead tuples accumulate and inflate the table; when n_dead_tup crosses the autovacuum threshold, autovacuum reclaims the space for reuse, returning the table toward its live size."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "upd", label: "UPDATE/DELETE", sub: "marks row dead" },
+    { id: "dead", label: "Dead tuples", sub: "still on disk" },
+    { id: "bloat", label: "Bloat grows", sub: "scans read past them" },
+    { id: "trig", label: "Threshold hit", sub: "n_dead_tup crosses" },
+    { id: "vac", label: "Autovacuum", sub: "reclaims for reuse" },
+  ]}
+  edges={[
+    { from: "upd", to: "dead" },
+    { from: "dead", to: "bloat" },
+    { from: "bloat", to: "trig" },
+    { from: "trig", to: "vac" },
+  ]}
+  caption="Steady-state churn produces a sawtooth: dead tuples accumulate, autovacuum reclaims, repeat. Bloat is what happens when the reclaim can't keep up with the churn."
+/>
+
+## Autovacuum: what triggers it
+
+`autovacuum` is a background process that runs `VACUUM` automatically. It does **not** shrink the file — it marks dead-tuple space as **reusable** so new rows fill the holes instead of extending the table. It also runs the `ANALYZE` that keeps statistics fresh (lesson 03) and updates the **visibility map**.
+
+It triggers per table when:
+
+```
+n_dead_tup  >  autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor × n_live_tup
+```
+
+Defaults: `threshold = 50`, `scale_factor = 0.2`. So a table autovacuums when dead tuples exceed 20% of live rows. That 0.2 is fine for a 10k-row table (vacuum at 2k dead) but **terrible** for a 100M-row table — it waits for 20M dead tuples, by which time scans are already bloated. The production rule: lower `scale_factor` per large/hot table, e.g. `ALTER TABLE events SET (autovacuum_vacuum_scale_factor = 0.02);` so it vacuums at 2% churn.
+
+## The visibility map and index-only scans
+
+`VACUUM` maintains the **visibility map**: a bitmap marking pages where *every* tuple is visible to all transactions. This is what makes an **index-only scan** possible — if the page is all-visible, Postgres can answer from the index alone without a heap fetch to check visibility (the `databases` indexes chapter goes deep). A bloated, under-vacuumed table has a stale visibility map, so "index-only" scans silently degrade into heap fetches. Vacuuming isn't just garbage collection; it's what keeps your fastest scan type fast.
+
+## VACUUM vs VACUUM FULL — and the prod trap
+
+- **`VACUUM` (plain)** — reclaims dead space *in place* for reuse. Takes only a `SHARE UPDATE EXCLUSIVE` lock; reads and writes continue. This is what autovacuum runs. It does not return disk to the OS, but it stops the bloat from growing.
+- **`VACUUM FULL`** — rewrites the entire table into a new compact file, returning space to the OS. But it takes an **`ACCESS EXCLUSIVE` lock** for the whole rewrite — every read and write blocks until it finishes. On a large table that's minutes of total outage. **Never run `VACUUM FULL` on a live production table.**
+
+To actually reclaim disk on a bloated production table, use **`pg_repack`** (an extension): it rebuilds the table into a fresh copy *online*, taking the exclusive lock only for a brief final swap. Same compaction, no outage.
+
+<Inset kind="mistake" lang="en">
+The classic incident: a long-running transaction (an idle `BEGIN`, a stuck analytics query, a forgotten `psql` session) holds back the **xmin horizon** — the oldest snapshot still in use. Autovacuum cannot reclaim any tuple newer than that horizon, on *any* table, because that ancient transaction might still need to see it. So a single forgotten `idle in transaction` connection can make bloat balloon database-wide while autovacuum runs constantly but reclaims nothing. Check `SELECT * FROM pg_stat_activity WHERE state = 'idle in transaction' ORDER BY xact_start;` and set `idle_in_transaction_session_timeout` to kill them automatically. This is why "autovacuum is running but bloat keeps growing" is almost always a long-transaction problem, not an autovacuum-tuning problem.
+</Inset>
+
+<Quiz
+  id="04-vacuum-and-bloat-quiz-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  question="A high-churn queue table holds 4,000 live rows but is 9 GB on disk and slow to scan. What is happening?"
+  choices={[
+    { label: "Dead tuples from constant UPDATE/DELETE have bloated the table; scans read past 99.9% dead space", correct: true },
+    { label: "The table needs more indexes to speed up the count", misconception: "More indexes won't help a count over a bloated heap; the problem is dead-tuple bloat, which adds I/O. Vacuuming/repacking is the fix, not indexing." },
+    { label: "Postgres stores 9 GB because rows are large", misconception: "4,000 live rows can't be 9 GB of live data; the size is dead tuples MVCC left behind that vacuum hasn't reclaimed." },
+    { label: "The disk is failing", misconception: "This is normal MVCC bloat from churn outrunning autovacuum, not hardware failure." },
+  ]}
+/>
+
+<Quiz
+  id="04-vacuum-and-bloat-quiz-2"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  question="You need to reclaim disk from a badly bloated table on a live production system. Best tool?"
+  choices={[
+    { label: "pg_repack — rebuilds the table online, taking the exclusive lock only for a brief final swap", correct: true },
+    { label: "VACUUM FULL — it compacts the table", misconception: "VACUUM FULL takes an ACCESS EXCLUSIVE lock for the whole rewrite, blocking all reads and writes for minutes — an outage on a live table. Use pg_repack for online compaction." },
+    { label: "Plain VACUUM — it returns the disk to the OS", misconception: "Plain VACUUM reclaims space for reuse in place but does NOT shrink the file or return disk to the OS; for that you need VACUUM FULL or pg_repack." },
+    { label: "DROP and recreate the table", misconception: "Destructive and unnecessary; pg_repack compacts online without losing data or taking a long outage." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-vacuum-and-bloat-metaphor-1"
+  lessonSlug="04-vacuum-and-bloat"
+  lang="en"
+  setup="Fill in the blank: plain VACUUM marks dead-tuple space as _______ for new rows but does not shrink the file; VACUUM FULL rewrites the file to return disk to the OS, at the cost of an exclusive lock."
+  accepted={["reusable", "reclaimable", "free", "available"]}
+  canonical="reusable"
+  explanation="Plain VACUUM is in-place: it marks the dead space reusable so future INSERTs and UPDATEs fill the holes instead of extending the file, stopping bloat from growing without an outage. Only VACUUM FULL (or pg_repack online) actually rewrites the table and returns physical disk to the operating system."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every `UPDATE`/`DELETE` under MVCC leaves a dead tuple; autovacuum reclaims that space in place (and refreshes statistics and the visibility map that powers index-only scans). It triggers at `threshold + scale_factor × live_rows` — the 0.2 default is too lax for large tables, so lower `autovacuum_vacuum_scale_factor` per hot table. Bloat slows every scan. Never use `VACUUM FULL` in production (ACCESS EXCLUSIVE lock); use `pg_repack` to compact online. If bloat grows despite autovacuum, hunt a long `idle in transaction` holding the xmin horizon.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-vacuum-and-bloat-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does every UPDATE and DELETE create a dead tuple, and what does that cost?", a: "Under MVCC Postgres never overwrites in place: an UPDATE writes a new row version and marks the old one dead, a DELETE just marks the row dead. The old version stays because a still-running transaction's snapshot might need it. Until vacuum reclaims them, dead tuples cost space and force every sequential and index scan to read the pages they occupy and skip past them — a 90%-dead table does roughly 10x the I/O for the same live data." },
+    { q: "What triggers autovacuum, and why is the default scale_factor a problem on large tables?", a: "Autovacuum vacuums a table when n_dead_tup exceeds autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor x n_live_tup, with defaults 50 and 0.2 (so at 20% dead). On a 100M-row table 0.2 means waiting for 20M dead tuples before cleanup, by which time scans are already heavily bloated. The fix is to lower autovacuum_vacuum_scale_factor per large/hot table (e.g. 0.02) so it vacuums at a few percent churn." },
+    { q: "How do VACUUM, VACUUM FULL, and pg_repack differ, and which is safe in production?", a: "Plain VACUUM reclaims dead space in place for reuse under a light SHARE UPDATE EXCLUSIVE lock (reads/writes continue) but doesn't shrink the file. VACUUM FULL rewrites the table into a compact new file and returns disk to the OS, but holds an ACCESS EXCLUSIVE lock for the entire rewrite, blocking all access — never run it on a live table. pg_repack does the same compaction online, taking the exclusive lock only for a brief final swap, so it's the production-safe way to reclaim disk." },
+  ]}
+/>
+
+<Recap lang="en">
+MVCC never overwrites a row, so every `UPDATE` and `DELETE` leaves a **dead tuple** that lingers on disk until vacuum reclaims it — and until then it bloats the table and forces every scan to read past it, easily 10× the I/O on a heavily-churned table. **Autovacuum** reclaims that space *in place* (not shrinking the file), refreshes statistics, and maintains the **visibility map** that keeps index-only scans fast; it fires at `threshold + scale_factor × live_rows`, and the 0.2 default scale factor is too lax for large tables — lower it per hot table. To reclaim actual disk, `VACUUM` won't (it only frees space for reuse) and `VACUUM FULL` will but with an `ACCESS EXCLUSIVE` lock that means an outage — so use **`pg_repack`** to compact online. And when autovacuum runs yet bloat keeps growing, the cause is almost always a long-lived `idle in transaction` connection pinning the xmin horizon so nothing newer can be reclaimed database-wide. Monitor `n_dead_tup` and `pg_stat_activity`; tune before it becomes the 2 a.m. incident.
+</Recap>

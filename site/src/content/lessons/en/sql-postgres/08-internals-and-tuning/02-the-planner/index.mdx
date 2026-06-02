@@ -4,10 +4,156 @@ lang: en
 track: "sql-postgres"
 unit: "08-internals-and-tuning"
 order: 2
-title: "The query planner"
-summary: "The query planner — stub; author to ready."
-estMin: 12
-status: stub
+title: "The cost-based planner"
+summary: "The planner prices every candidate scan and join by an estimated cost and picks the cheapest. Postgres ships no query hints on purpose — you tune the inputs, not the output."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - cost-based-planner
+  - scan-choice
+  - join-algorithm-choice
+  - no-query-hints
+  - random-page-cost
+prereqs:
+  - 01-explain-analyze
+  - databases/03-execution-plans/02-scan-types
+  - databases/03-execution-plans/03-join-algorithms
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/planner-optimizer.html
+  - https://www.postgresql.org/docs/current/runtime-config-query.html
+  - https://use-the-index-luke.com/sql/explain-plan
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A new engineer, fresh from Oracle, opens a ticket: "Postgres won't let me add an index hint. How do I force it to use my_index?" The answer — "you can't, and that's deliberate" — sounds insane until you've watched a hinted Oracle query stay locked to a plan that became catastrophic after the data tripled. Postgres made a bet 25 years ago: tune the planner's *inputs*, never override its *output*. This lesson is how that bet pays off and where it bites.
+</Hook>
+
+<Crux>The planner prices every candidate plan and runs the cheapest; Postgres ships no hints, so you tune its inputs — stats, indexes, config.</Crux>
+
+<Explanation>
+
+## How it chooses: cost, not rules
+
+The planner takes your analyzed query and enumerates *candidate physical plans* — different scan methods, different join algorithms, different join orders — then assigns each a numeric **cost** and picks the lowest. The `databases` track's execution-plans chapter derives the cost model and the scan/join taxonomy in depth; here the point is the *decision loop* the SQL author sees from outside.
+
+Cost is built from estimated row counts (from statistics, lesson 03) multiplied by per-operation constants. The defaults that matter most: `seq_page_cost = 1.0` (read one page sequentially), `random_page_cost = 4.0` (read one page randomly), `cpu_tuple_cost = 0.01` (process one row). An index scan does random page reads; a sequential scan does cheap sequential ones. So the planner's verdict on "index or seq scan?" is really arithmetic: *how many rows match × random cost* versus *whole table × sequential cost*.
+
+**Scan choice** for `WHERE status = 'shipped'`:
+- Few matching rows → **Index Scan** (cheap to jump straight to them).
+- Many matching rows → **Seq Scan** (random I/O per row would cost more than reading the whole table in order). This is *correct*, not a bug — a Seq Scan on a non-selective filter beats an index.
+- A middling fraction → **Bitmap Index Scan** (collect matching page pointers, sort them, read pages in physical order — index precision without random thrashing).
+
+**Join choice** for `orders ⋈ line_items`:
+- Tiny outer side → **Nested Loop** (for each outer row, probe an index on the inner — great when "few × indexed lookup").
+- Two large unsorted sides → **Hash Join** (build a hash table on the smaller, stream the larger past it).
+- Two already-sorted inputs → **Merge Join** (walk both in lockstep).
+
+```sql
+-- Watch the scan flip as selectivity changes:
+EXPLAIN SELECT * FROM orders WHERE status = 'cancelled';  -- rare → Index Scan
+EXPLAIN SELECT * FROM orders WHERE status = 'placed';     -- common → Seq Scan
+```
+
+<FlowDiagram
+  label="The planner's decision loop: from the analyzed query it enumerates candidate plans, prices each by estimated rows times per-operation cost constants, picks the cheapest, and hands it to the executor. You influence the price inputs, never the pick."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "q", label: "Query tree", sub: "what you want" },
+    { id: "cand", label: "Candidates", sub: "scans × joins × order" },
+    { id: "price", label: "Price each", sub: "rows × cost consts" },
+    { id: "pick", label: "Pick cheapest", sub: "lowest total cost" },
+    { id: "exec", label: "Executor", sub: "runs the winner" },
+  ]}
+  edges={[
+    { from: "q", to: "cand" },
+    { from: "cand", to: "price" },
+    { from: "price", to: "pick" },
+    { from: "pick", to: "exec" },
+  ]}
+  caption="You tune the leftmost inputs — statistics (row estimates), indexes (which candidates exist), and config constants (the prices). The planner owns the pick."
+/>
+
+## Why Postgres has no hints
+
+Oracle and SQL Server let you pin a plan with a hint. Postgres refuses, and the reasoning is durable: a hint is a *frozen decision* against a *moving dataset*. The query you hint to "use the index" today is the query that does 50M random reads next year when the table grew and that index stopped being selective. The planner, fed fresh statistics, would have switched to a Seq Scan on its own. A hint forbids that adaptation.
+
+So the senior workflow is to **fix the inputs** so the planner reaches the right plan itself:
+
+1. **Statistics** — run `ANALYZE`, or raise `default_statistics_target` / add extended statistics (lesson 03). Most "wrong plans" are wrong *estimates*.
+2. **Indexes** — add or drop an index to change which candidates exist. The planner can only pick from what's available.
+3. **Config** — on SSD/NVMe, `random_page_cost = 4.0` is a spinning-disk default that wildly over-penalizes index scans; lowering it to `1.1` is the single most common production tweak. `effective_cache_size` tells the planner how much OS cache it can assume.
+4. **Rewrite the query** — sometimes a `LATERAL`, a `EXISTS` instead of `IN`, or splitting a query changes the candidate space for the better.
+5. **`join_collapse_limit`** — past ~8 joined tables the planner stops exhaustively reordering joins (the search space is factorial) and trusts your written order. Raising it lets it optimize bigger joins at planning-time cost.
+
+<Inset kind="mistake" lang="en">
+The most common self-inflicted bad plan: leaving `random_page_cost` at 4.0 on NVMe storage. On modern SSDs a random page read is only marginally more expensive than a sequential one, so 4.0 tells the planner that index scans cost ~4× what they really do — and it dodges perfectly good indexes in favor of Seq Scans. Teams stare at "why won't it use my index?" for hours. The fix is one line: `ALTER SYSTEM SET random_page_cost = 1.1;` then `SELECT pg_reload_conf();`. This is not a hint — it corrects a *price*, and the planner re-derives every plan correctly. (The genuine `pg_hint_plan` extension exists for the rare case you truly need to pin a plan, but reach for it last, never first.)
+</Inset>
+
+<Quiz
+  id="02-the-planner-quiz-1"
+  lessonSlug="02-the-planner"
+  lang="en"
+  question="EXPLAIN shows a Seq Scan for WHERE status = 'placed', which matches 40% of a large table. Is this a bug?"
+  choices={[
+    { label: "No — for a non-selective filter a Seq Scan is genuinely cheaper than 40% random index lookups", correct: true },
+    { label: "Yes — an index scan is always faster, force it with a hint", misconception: "Postgres has no hints, and for a 40% filter an index scan would do millions of random page reads — far more expensive than reading the table sequentially. The planner is correct." },
+    { label: "Yes — the index is broken; drop and recreate it", misconception: "The index is fine; it is simply not the cheaper plan at this selectivity. Re-creating it changes nothing about the cost arithmetic." },
+    { label: "Yes — Postgres never uses indexes on text columns", misconception: "Postgres indexes text columns fine; the choice here is driven by selectivity and cost, not the column type." },
+  ]}
+/>
+
+<Quiz
+  id="02-the-planner-quiz-2"
+  lessonSlug="02-the-planner"
+  lang="en"
+  question="Your DB runs on NVMe SSD but the planner keeps choosing Seq Scans over good indexes. Best first config change?"
+  choices={[
+    { label: "Lower random_page_cost toward 1.1 so index scans aren't over-penalized for random I/O", correct: true },
+    { label: "Add a query hint to force the index", misconception: "Postgres has no query hints; and the real problem is a price constant tuned for spinning disks, not a missing override." },
+    { label: "Increase work_mem", misconception: "work_mem governs sort/hash memory, not the random-vs-sequential cost ratio that's steering the planner away from indexes." },
+    { label: "Disable the planner with SET enable_seqscan = off permanently", misconception: "Turning off seqscan globally is a blunt hammer that breaks legitimately cheap Seq Scans; fix the cost constant instead so the planner decides correctly." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-the-planner-metaphor-1"
+  lessonSlug="02-the-planner"
+  lang="en"
+  setup="Fill in the blank: because Postgres has no query hints, you cannot override the planner's _______; instead you tune its inputs — statistics, indexes, and cost constants — so it reaches the right plan itself."
+  accepted={["output", "decision", "choice", "pick", "plan"]}
+  canonical="output"
+  explanation="A hint overrides the output — the chosen plan — and freezes it against changing data. Postgres deliberately refuses that and only lets you shape the inputs (stats, indexes, config). Correct the inputs and the planner re-derives a good plan as data evolves; that adaptability is exactly what a frozen hint forfeits."
+/>
+
+</Explanation>
+
+<KeyTakeaway>The planner enumerates candidate plans, prices each as estimated rows × per-operation cost constants, and runs the cheapest — choosing Seq vs Index vs Bitmap scans and Nested-Loop vs Hash vs Merge joins by arithmetic, not rules. Postgres ships no hints on purpose, so you tune the inputs: refresh statistics, add/drop indexes, fix config (especially `random_page_cost` on SSD), or rewrite. A Seq Scan on a non-selective filter is correct, not a bug.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-the-planner-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does the planner decide between an Index Scan and a Seq Scan?", a: "It estimates how many rows match the filter (from statistics) and prices each plan: an index scan costs roughly matching_rows x random_page_cost (random I/O to jump to each row), a seq scan costs roughly total_pages x seq_page_cost (cheap sequential reads of the whole table). For a selective filter the index wins; for a non-selective one (say 40% of rows) the seq scan is genuinely cheaper, and choosing it is correct, not a bug." },
+    { q: "Why does Postgres deliberately have no query hints, and what do you tune instead?", a: "A hint freezes a plan decision against data that keeps changing, so a plan that's optimal today becomes catastrophic after the table grows and the planner would otherwise have adapted. Instead you tune the planner's inputs: refresh/raise statistics so estimates are right, add or drop indexes to change the candidate set, fix cost constants (lower random_page_cost on SSD, set effective_cache_size), rewrite the query, or adjust join_collapse_limit." },
+    { q: "Your DB is on NVMe SSD and the planner avoids good indexes — what is the likely cause and one-line fix?", a: "random_page_cost defaults to 4.0, a spinning-disk assumption that tells the planner random index reads cost ~4x a sequential read. On SSD that ratio is wrong, so index scans look artificially expensive and the planner prefers Seq Scans. Fix: ALTER SYSTEM SET random_page_cost = 1.1; SELECT pg_reload_conf(); This corrects a price, not a plan, so the planner re-derives correct choices everywhere." },
+  ]}
+/>
+
+<Recap lang="en">
+The cost-based planner is a pricing engine: from your query it enumerates candidate physical plans — Seq/Index/Bitmap scans, Nested-Loop/Hash/Merge joins, and join orders — assigns each an estimated **cost** (rows × per-operation constants like `seq_page_cost`, `random_page_cost`, `cpu_tuple_cost`), and runs the cheapest. A Seq Scan on a non-selective filter is the *right* answer, not a failure. Because Postgres ships **no query hints** by design — a hint freezes a decision against data that keeps moving — you tune the planner's **inputs** instead: refresh statistics (most bad plans are bad estimates, lesson 03), add or drop indexes to change the candidate set, fix cost constants (lowering `random_page_cost` on SSD is the classic win), rewrite the query, or raise `join_collapse_limit` for many-table joins. The planner owns the pick; you own the prices, the candidates, and the estimates that feed it.
+</Recap>
