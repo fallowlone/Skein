@@ -5,9 +5,170 @@ track: "sql-postgres"
 unit: "05-cte-and-recursion"
 order: 5
 title: "Walking graphs in SQL"
-summary: "Walking graphs in SQL — stub; author to ready."
-estMin: 12
-status: stub
+summary: "Recursive CTEs traverse trees, DAGs, and graphs — org charts, bills of materials, reachability — by accumulating a path array; but path explosion and per-hop joins mean SQL is the wrong tool past a few million edges."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - graph-traversal
+  - path-accumulation
+  - dag-bill-of-materials
+  - reachability
+  - graph-engine-tradeoff
+prereqs:
+  - 04-recursive-ctes
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-with.html
+  - https://www.postgresql.org/docs/current/functions-array.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A product team ships a feature graph: features depend on features, and they need "everything that breaks if we deprecate feature X." It's a reachability query over `edges(src, dst)`, and a recursive CTE nails it in fifteen lines — until the graph grows to a few million edges and one query starts taking ninety seconds and 8 GB of `work_mem`. The SQL was never wrong; it hit the wall every graph-on-a-relational-database eventually hits. Knowing where that wall is — and how to push it back, and when to stop pushing — is the senior skill this lesson is about.
+</Hook>
+
+<Crux>Recursive CTEs walk trees, DAGs, and graphs via a path array; path explosion and per-hop joins cap SQL past a few million edges.</Crux>
+
+<Explanation>
+
+## The three shapes: tree, DAG, graph
+
+The same recursive engine handles three structures of increasing danger, all over `edges(src, dst)` (or `manager_id`, `parent_id`):
+
+- a **tree** — each node has one parent (org chart, `categories`). Traversal always terminates; no cycle risk.
+- a **DAG** — directed, no cycles, but a node can have *many* parents (a bill of materials: a bolt used by ten assemblies). Terminates, but the same node is reached by many paths, so you may visit it repeatedly.
+- a **general graph** — directed with cycles possible (dependency graphs, social follows). Cycles mean you *must* carry cycle protection or the walk never ends, exactly as in lesson 04.
+
+The workhorse pattern for all three is **path accumulation**: carry an array of the nodes visited so far, both to detect cycles and to report the actual route. Here, "all parts inside assembly 1, with the path that reaches each" over a bill of materials:
+
+```sql
+WITH RECURSIVE bom AS (
+  -- anchor: direct children of assembly 1
+  SELECT dst AS part, ARRAY[1, dst] AS path, 1 AS depth
+  FROM edges
+  WHERE src = 1
+
+  UNION ALL
+
+  -- recursive term: descend, appending each node to the path
+  SELECT e.dst, b.path || e.dst, b.depth + 1
+  FROM edges e
+  JOIN bom b ON e.src = b.part
+  WHERE NOT e.dst = ANY(b.path)        -- cycle/repeat guard
+    AND b.depth < 30                   -- depth seatbelt
+)
+SELECT part, path, depth FROM bom ORDER BY depth, part;
+```
+
+<FlowDiagram
+  label="Path accumulation during traversal: starting at assembly 1, each hop appends the new node to a path array. The path serves two jobs at once — it is the cycle guard (skip a node already in the path) and the reported route to each reachable node."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "n1", label: "1", sub: "path [1]" },
+    { id: "n2", label: "2", sub: "path [1,2]" },
+    { id: "n4", label: "4", sub: "path [1,2,4]" },
+    { id: "n5", label: "5", sub: "path [1,2,4,5]" },
+  ]}
+  edges={[
+    { from: "n1", to: "n2" },
+    { from: "n2", to: "n4" },
+    { from: "n4", to: "n5" },
+  ]}
+  caption="The path array is doing double duty: cycle detection (is this node already in path?) and route reporting (how did we get here?). The same column drives both, which is why it's the canonical graph pattern."
+/>
+
+## Reachability, shortest-ish paths, and what SQL can express
+
+This pattern answers the common production questions cleanly. **Reachability** — "is B reachable from A?" — is `EXISTS` over the walk. **Transitive closure** — "all nodes reachable from A" — is `SELECT DISTINCT` over the walk. You can even approximate **shortest path** by carrying `depth` (hop count) and taking the minimum per destination, since the working-table loop expands breadth-first by level. What SQL recursion does *not* give you cheaply is true weighted shortest path (Dijkstra/A*): you can express it, but the engine has no priority queue, so it explores far more paths than a purpose-built algorithm and the cost is brutal on real graphs.
+
+```sql
+-- Fewest-hops distance from node 1 to every reachable node
+WITH RECURSIVE walk AS (
+  SELECT dst, 1 AS hops, ARRAY[1, dst] AS path FROM edges WHERE src = 1
+  UNION ALL
+  SELECT e.dst, w.hops + 1, w.path || e.dst
+  FROM edges e JOIN walk w ON e.src = w.dst
+  WHERE NOT e.dst = ANY(w.path)
+)
+SELECT dst, min(hops) AS shortest_hops
+FROM walk GROUP BY dst ORDER BY dst;
+```
+
+## The wall: path explosion and per-hop joins
+
+Now the senior part — why this gets slow, and the numbers. Two costs compound. First, each iteration is a **join** of the whole working table against `edges`; without an index on `edges(src)`, every hop is a sequential scan, and a 6-hop walk over a 10M-edge table is six full scans. *Always index the join column* (`src`, or `manager_id`/`parent_id`). Second, and worse, is **path explosion**: in a dense graph the number of distinct paths grows combinatorially with depth, so the working table can balloon to far more rows than there are nodes — you're enumerating *routes*, not *nodes*. A graph with a few thousand nodes but high fan-out can produce millions of intermediate path rows, blow past `work_mem` (default 4 MB), spill to disk, and turn a conceptually small traversal into a multi-GB sort.
+
+The mitigations, in order: index the join column; cap depth aggressively (most real questions need 3–6 hops, not unbounded); if you only need reachable *nodes*, deduplicate early with `UNION` (per-pass dedup) or restructure to track visited nodes instead of full paths so the working table stays bounded by node count, not path count. With those, recursive CTEs comfortably handle org charts, category trees, and BOMs up to roughly low-millions of edges with bounded depth.
+
+Past that — millions of edges with deep or unbounded traversal, frequent shortest-path or centrality queries, or graph-shaped *as the primary workload* — you've outgrown the tool. A relational engine joins sets; it has no native adjacency index, no graph-aware operators. Reach for a graph database (Neo4j and its ilk) or Postgres's `pgRouting`/Apache AGE extensions, which add real graph algorithms. The production rule: recursive CTEs are perfect for *occasional* hierarchy and reachability queries over *moderate* graphs that already live in your relational schema; they are the wrong default for a graph-centric product.
+
+<Inset kind="why" lang="en">
+Why does a relational engine struggle with graphs when the data fits fine in a table? Because the cost model is built for set operations, not pointer-chasing. Following one edge is a join — Postgres has to look up matching rows, which is cheap once but happens at every hop for every frontier row, and the planner can't see across iterations to optimize the walk as a whole. A native graph engine stores adjacency as a direct pointer from each node to its neighbors, so a hop is an O(1) dereference, not a relational lookup, and traversal algorithms run in the engine instead of being simulated by a self-joining loop. The data being storable as rows doesn't make the *access pattern* relational.
+</Inset>
+
+<Quiz
+  id="05-graphs-in-sql-quiz-1"
+  lessonSlug="05-graphs-in-sql"
+  lang="en"
+  question="In a graph traversal CTE, the accumulated path array serves two purposes at once. Which two?"
+  choices={[
+    { label: "Cycle detection (skip nodes already on the path) and reporting the route taken to each node", correct: true },
+    { label: "Caching results and parallelizing the recursion", misconception: "The path array does neither; recursive CTEs aren't parallelized and the array isn't a cache — it's the visited set plus the route." },
+    { label: "Sorting the output and limiting depth", misconception: "Depth limiting uses a separate counter; sorting is the final ORDER BY. The path array's jobs are cycle detection and route reporting." },
+    { label: "Storing edge weights and computing shortest path automatically", misconception: "The path holds node ids, not weights; weighted shortest path isn't automatic and is expensive in SQL because there's no priority queue." },
+  ]}
+/>
+
+<Quiz
+  id="05-graphs-in-sql-quiz-2"
+  lessonSlug="05-graphs-in-sql"
+  lang="en"
+  question="A recursive traversal over a dense graph explodes to millions of working-table rows though the graph has only thousands of nodes. What's happening and the first mitigation?"
+  choices={[
+    { label: "Path explosion: it's enumerating routes, not nodes; cap depth and/or track visited nodes instead of full paths so the working table stays bounded by node count", correct: true },
+    { label: "A cycle is looping forever; add cycle protection", misconception: "This isn't an infinite loop — it terminates but enumerates a combinatorial number of distinct paths. If you only need nodes, stop tracking every route." },
+    { label: "Missing primary key on edges; add one", misconception: "A PK doesn't address path explosion; the row blowup comes from counting paths, not from missing keys. Bounding depth and deduping nodes is the fix." },
+    { label: "work_mem is simply too small; raise it to 8 GB", misconception: "Raising work_mem masks the symptom but path count still grows combinatorially; bound depth and track nodes not paths, then memory is no longer the bottleneck." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-graphs-in-sql-metaphor-1"
+  lessonSlug="05-graphs-in-sql"
+  lang="en"
+  setup="Fill in the blank: a native graph engine follows an edge as an O(1) pointer dereference, whereas a recursive CTE follows each edge as a _______ at every hop, which is why deep traversals on large graphs are slow in SQL."
+  accepted={["join", "self-join", "relational join", "table join"]}
+  canonical="join"
+  explanation="A relational engine has no adjacency pointers; each hop is a join of the working table against the edges table. That's cheap once but repeats for every frontier row at every level, and the planner can't optimize across iterations. A graph engine stores neighbors as direct pointers, making a hop a constant-time dereference instead of a relational lookup."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Recursive CTEs traverse trees, DAGs, and graphs by accumulating a path array that doubles as cycle guard and route record, answering reachability, transitive closure, and fewest-hops queries. But each hop is a join and dense graphs cause path explosion, so index the join column, cap depth, and track visited nodes not full paths. Past a few million edges or for graph-centric workloads, use a graph database or pgRouting/AGE instead.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-graphs-in-sql-retrieval"
+  lang="en"
+  questions={[
+    { q: "What two jobs does the path array do in a graph traversal CTE?", a: "Cycle detection — the recursive term skips any edge into a node already in the path (WHERE NOT node = ANY(path)) — and route reporting: the array is the actual sequence of nodes from the start to each reachable node, so you can show or rank by the path taken." },
+    { q: "Why do recursive graph queries get slow, and what are the mitigations?", a: "Two compounding costs: every hop is a join of the working table against edges (so an unindexed edges table means a full scan per hop), and path explosion — in dense graphs the number of distinct paths grows combinatorially with depth, ballooning the working table past work_mem and spilling to disk. Mitigate by indexing the join column (src/manager_id/parent_id), capping depth, and tracking visited nodes instead of full paths when you only need reachable nodes." },
+    { q: "When should you stop using recursive CTEs and reach for a graph engine?", a: "When the graph is large (millions of edges with deep or unbounded traversal), when shortest-path/weighted/centrality queries are frequent, or when the workload is graph-shaped as its primary purpose. A relational engine joins sets and has no adjacency index or graph operators; a graph database (or Postgres's pgRouting / Apache AGE extensions) stores neighbors as direct pointers and runs real graph algorithms. CTEs are right for occasional hierarchy/reachability queries over moderate graphs already in your schema." },
+  ]}
+/>
+
+<Recap lang="en">
+The recursive engine from lesson 04 turns Postgres into a competent — within limits — graph traversal tool over `edges(src, dst)` (or `manager_id`/`parent_id`). It handles three shapes: trees (one parent, always terminate), DAGs like bills of materials (no cycles but many paths to a node), and general graphs (cycles possible, so cycle protection is mandatory). The canonical pattern is **path accumulation** — carry an array of visited nodes that simultaneously guards against cycles (`WHERE NOT node = ANY(path)`) and records the route to each node. With it you answer reachability (`EXISTS`), transitive closure (`SELECT DISTINCT`), and fewest-hops distance (`min(hops)`), since the loop expands breadth-first by level; true weighted shortest path is expressible but expensive because there's no priority queue. The wall is real and has numbers: each hop is a join (so **index the join column** or every hop is a full scan), and **path explosion** in dense graphs grows working-table rows combinatorially, blowing past the 4 MB default `work_mem` and spilling to disk. Mitigate by indexing, capping depth (real questions want 3–6 hops), and tracking visited *nodes* instead of full paths so the set stays bounded by node count. Recursive CTEs comfortably serve occasional hierarchy and reachability queries over moderate graphs that already live relationally; for millions of edges, frequent shortest-path work, or a graph-centric product, switch to a graph database or Postgres's `pgRouting`/Apache AGE. That judgment — push the wall back, then know when to stop pushing — is the unit's senior payoff, and it closes the arc from naming a subquery to walking a graph in pure SQL.
+</Recap>

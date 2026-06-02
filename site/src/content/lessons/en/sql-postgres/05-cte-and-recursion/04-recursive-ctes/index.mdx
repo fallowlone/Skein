@@ -4,10 +4,191 @@ lang: en
 track: "sql-postgres"
 unit: "05-cte-and-recursion"
 order: 4
-title: "Recursive CTEs"
-summary: "Recursive CTEs — stub; author to ready."
-estMin: 12
-status: stub
+title: "Recursive CTEs: anchor, iterate, stop"
+summary: "WITH RECURSIVE is an anchor term UNION a recursive term that re-reads the CTE — Postgres runs it as an iterative working-table loop until the recursive term yields nothing, so termination and cycle protection are on you."
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - with-recursive
+  - anchor-term
+  - recursive-term
+  - working-table-execution
+  - cycle-detection
+prereqs:
+  - 03-cte-materialization
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-with.html
+  - https://www.postgresql.org/docs/current/sql-select.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Someone asks "give me everyone under Ada in the org chart, however deep." You can't write that with joins — the depth is unknown, and SQL's `JOIN` count is fixed at parse time. The honest options used to be a recursive function in the app or a stored procedure with a loop. Then you remember `WITH RECURSIVE`, write twelve lines, and Postgres walks the whole subtree for you. But the first time you run it on a table with a cycle, it doesn't return — it loops until it fills the disk. Recursion in SQL is a real loop, and loops need a brake.
+</Hook>
+
+<Crux>WITH RECURSIVE is an anchor term UNION a recursive term that re-reads the CTE, run as a working-table loop until it yields no new rows.</Crux>
+
+<Explanation>
+
+## Anatomy: anchor UNION recursive term
+
+A recursive CTE has a fixed shape. The keyword is `WITH RECURSIVE`, and the CTE body is two queries combined by `UNION` or `UNION ALL`:
+
+- the **anchor term** — a non-recursive query that produces the starting rows (the base case);
+- the **recursive term** — a query that references the CTE *by its own name*, producing the next rows from the previous ones.
+
+Here is "all reports under Ada, with depth" against `employees(id, manager_id, name)`:
+
+```sql
+WITH RECURSIVE subtree AS (
+  -- anchor: start at Ada
+  SELECT id, manager_id, name, 1 AS depth
+  FROM employees
+  WHERE name = 'Ada'
+
+  UNION ALL
+
+  -- recursive term: one level down each pass
+  SELECT e.id, e.manager_id, e.name, s.depth + 1
+  FROM employees e
+  JOIN subtree s ON e.manager_id = s.id
+)
+SELECT id, name, depth FROM subtree ORDER BY depth, id;
+```
+
+The recursive term joins `employees` to `subtree` — the CTE referencing itself — which is the one self-reference lesson 01 said was legal only here.
+
+## The working-table execution model
+
+Postgres does **not** evaluate this with mathematical recursion or function calls. It runs an iterative loop over a *working table*, and understanding that model is the difference between writing recursive SQL by ritual and debugging it under load:
+
+1. Evaluate the **anchor term**. Put its rows into the result *and* into the **working table**.
+2. Repeat: evaluate the **recursive term**, but with each self-reference to the CTE reading **only the working table** (the rows from the *previous* iteration, not the whole accumulated result). Append the new rows to the result; they become the *new* working table.
+3. **Stop** when an iteration produces **zero** new rows.
+
+<FlowDiagram
+  label="The working-table loop: the anchor seeds iteration zero. Each pass runs the recursive term against only the previous iteration's rows, appends results, and replaces the working table. The loop ends when a pass yields no new rows."
+  perRow={5}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "anchor", label: "Anchor", sub: "depth 1: Ada" },
+    { id: "i1", label: "Pass 1", sub: "Ada's reports" },
+    { id: "i2", label: "Pass 2", sub: "their reports" },
+    { id: "i3", label: "Pass 3", sub: "next level" },
+    { id: "stop", label: "Stop", sub: "0 new rows" },
+  ]}
+  edges={[
+    { from: "anchor", to: "i1" },
+    { from: "i1", to: "i2" },
+    { from: "i2", to: "i3" },
+    { from: "i3", to: "stop" },
+  ]}
+  caption="Each pass only sees the prior pass's output (the working table), not the full result. Termination is implicit: the loop ends the instant a pass produces no new rows."
+/>
+
+That termination rule is the whole game. The loop ends when the recursive term yields nothing — so if it *always* yields something, the loop never ends.
+
+## Termination, cycles, and the brake
+
+In a clean tree (every node has one parent, no loops), recursion terminates naturally: eventually you reach the leaves and the recursive term finds no children. The danger is a **cycle** — a row whose chain of parents eventually points back to itself, common in `edges(src, dst)` graph data or a corrupted `manager_id`. With `UNION ALL` and a cycle, the loop revisits the same rows forever and the query never returns; it spins until it exhausts `work_mem`, spills to disk, and eventually errors or hangs. You need an explicit brake. Three options:
+
+```sql
+-- Option 1 (PG14+): the CYCLE clause does it declaratively.
+WITH RECURSIVE walk AS (
+  SELECT src, dst FROM edges WHERE src = 1
+  UNION ALL
+  SELECT e.src, e.dst FROM edges e JOIN walk w ON e.src = w.dst
+)
+CYCLE dst SET is_cycle USING path        -- stop revisiting a dst already on the path
+SELECT * FROM walk WHERE NOT is_cycle;
+
+-- Option 2 (any version): carry a visited-array and exclude nodes already on the path.
+WITH RECURSIVE walk AS (
+  SELECT src, dst, ARRAY[src] AS path FROM edges WHERE src = 1
+  UNION ALL
+  SELECT e.src, e.dst, w.path || e.src
+  FROM edges e JOIN walk w ON e.src = w.dst
+  WHERE NOT e.src = ANY(w.path)           -- don't re-enter a visited node
+)
+SELECT * FROM walk;
+
+-- Option 3 (a hard cap): carry depth and bound it.
+... WHERE s.depth < 50
+```
+
+`UNION` (not `UNION ALL`) also dedupes each pass against the accumulated result, which stops simple repeats — but it's slower and won't catch all graph cycles, so on real graph data prefer the explicit `CYCLE` clause (Postgres 14+) or a visited-array. A depth cap is the seatbelt you add regardless: even with cycle protection, an unbounded walk over a huge graph can return millions of rows, so bound the depth to something your use case actually needs.
+
+<Inset kind="edgecase" lang="en">
+A subtle gotcha: the recursive term sees only the *previous iteration's* rows, not the whole result so far. That's why you can't reference an aggregate over the entire accumulating CTE inside the recursive term, and why running totals across the recursion need the value carried forward row-by-row (e.g. `s.depth + 1`, or `w.path || e.src`) rather than computed by looking back at everything. If you find yourself wanting to "see all rows collected so far" mid-recursion, you've hit the boundary of the working-table model — restructure to carry the state you need in the row itself.
+</Inset>
+
+<Quiz
+  id="04-recursive-ctes-quiz-1"
+  lessonSlug="04-recursive-ctes"
+  lang="en"
+  question="In WITH RECURSIVE, what does each pass of the recursive term actually read from when it references the CTE by name?"
+  choices={[
+    { label: "Only the rows produced by the previous iteration (the working table), not the whole accumulated result", correct: true },
+    { label: "The entire result accumulated so far, on every pass", misconception: "The self-reference reads only the previous iteration's output — the working table — which is why you carry state (depth, path) forward in the row instead of looking back at everything." },
+    { label: "The original base table, ignoring earlier iterations", misconception: "It reads the working table (prior-pass rows); the base table is joined to that, but the self-reference is to the previous iteration, not the raw table." },
+    { label: "Nothing — the recursive term can't reference the CTE", misconception: "Referencing the CTE by its own name is exactly what makes the term recursive; that self-reference is the engine of the loop." },
+  ]}
+/>
+
+<Quiz
+  id="04-recursive-ctes-quiz-2"
+  lessonSlug="04-recursive-ctes"
+  lang="en"
+  question="A recursive CTE over edges(src, dst) with UNION ALL hangs and never returns on real graph data. Most likely cause and fix?"
+  choices={[
+    { label: "A cycle in the graph makes the recursive term always yield rows; add a CYCLE clause or a visited-array path check", correct: true },
+    { label: "UNION ALL is invalid in recursive CTEs; switch to UNION", misconception: "UNION ALL is valid and usual; UNION dedupes per pass and helps with simple repeats but isn't the principled fix for graph cycles — explicit cycle detection is." },
+    { label: "The anchor term is missing; recursion needs no base case", misconception: "Recursion requires an anchor (base case); if it were missing the query wouldn't run at all, not hang. The hang is from a cycle producing endless rows." },
+    { label: "Postgres can't do recursion on graphs; use the app", misconception: "Postgres handles graph traversal fine with cycle protection; the hang is a missing brake, not a missing capability." },
+  ]}
+/>
+
+<DragOrder
+  id="04-recursive-ctes-drag-1"
+  lessonSlug="04-recursive-ctes"
+  lang="en"
+  prompt="Order how Postgres executes a recursive CTE:"
+  items={[
+    { id: "a", label: "Evaluate the anchor term; put its rows in the result and the working table" },
+    { id: "b", label: "Evaluate the recursive term against only the current working table" },
+    { id: "c", label: "Append the new rows to the result; they become the new working table" },
+    { id: "d", label: "Repeat the recursive term on the refreshed working table" },
+    { id: "e", label: "Stop when an iteration produces zero new rows" },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A recursive CTE is `WITH RECURSIVE name AS (anchor UNION [ALL] recursive-term)`, where the recursive term references the CTE itself. Postgres runs it as a working-table loop: each pass reads only the previous iteration's rows and stops when a pass yields nothing. On graphs you must add a brake — a CYCLE clause (PG14+), a visited-array path check, or a depth cap — or a cycle loops forever.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-recursive-ctes-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two parts of a recursive CTE and how are they combined?", a: "An anchor term (a non-recursive base query producing the starting rows) and a recursive term (a query that references the CTE by its own name to produce the next rows from the previous ones), combined with UNION or UNION ALL. The keyword is WITH RECURSIVE." },
+    { q: "Describe the working-table execution model and the termination rule.", a: "Postgres runs an iterative loop, not function recursion. It evaluates the anchor into the result and a working table, then repeatedly evaluates the recursive term — whose self-reference reads only the working table (previous iteration's rows) — appending new rows and replacing the working table each pass. It stops the instant a pass produces zero new rows." },
+    { q: "Why can a recursive CTE hang, and what are the ways to prevent it?", a: "If the recursive term always yields new rows (a cycle in graph data, or a corrupted parent pointer), the loop never terminates and spins until work_mem spills to disk and it errors or hangs. Prevent it with the CYCLE clause (Postgres 14+), a visited-array path check (WHERE NOT node = ANY(path)), UNION instead of UNION ALL for simple repeats, and/or a hard depth cap as a seatbelt." },
+  ]}
+/>
+
+<Recap lang="en">
+`WITH RECURSIVE` finally lets pure SQL walk structures of unknown depth — org charts, category trees, graphs — that fixed `JOIN`s can't express. Its anatomy is two queries joined by `UNION`/`UNION ALL`: an **anchor term** that seeds the base rows, and a **recursive term** that references the CTE by its own name to derive the next rows from the previous ones. Postgres executes this not as mathematical recursion but as an iterative **working-table loop**: evaluate the anchor into the result and the working table, then repeat the recursive term — each pass reading only the previous iteration's rows — appending and replacing the working table until a pass yields **zero** new rows, which is the implicit termination condition. That rule is also the hazard: on a **cycle**, the recursive term never stops producing rows, so the query loops until it exhausts memory. The brakes are an explicit `CYCLE` clause (Postgres 14+), a carried visited-array with `WHERE NOT node = ANY(path)`, `UNION` to dedupe simple repeats, and a depth cap as a seatbelt you add regardless. Remember the model's boundary: the recursive term sees only the prior pass, never the whole accumulating result, so carry forward any state you need in the row. Next, lesson 05 turns this engine on real graphs — paths, DAGs, and where SQL recursion stops being the right tool.
+</Recap>
