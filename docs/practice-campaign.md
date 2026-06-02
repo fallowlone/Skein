@@ -172,3 +172,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ apis/{01-rest-modeling,02-status-codes-real,03-pagination,04-openapi,05-grpc-protobuf,07-rate-limiting,08-putting-it-together} (7 overview lessons)
 - ✅ apis/06-graphql-n-plus-one (6) — why-graphql-gets-nplus1, dataloader-mechanics, batch-function-contracts, federation-and-lookahead, query-complexity-defences, graphql-api-senior  [apis track COMPLETE + enforced]
 - ✅ caching/{01-layers,02-invalidation,04-etag,05-cache-control,06-swr,07-dogpile,08-putting-it-together} (7 overview lessons)
+- ✅ caching/03-stampede (6) — what-is-stampede, lock-and-single-flight, xfetch-probabilistic, stale-while-revalidate, detection-and-ttl-design, stampede-senior  [caching track COMPLETE + enforced]
