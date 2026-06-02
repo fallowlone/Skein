@@ -4,10 +4,149 @@ lang: en
 track: "sql-postgres"
 unit: "04-window-functions"
 order: 3
-title: "Window frames"
-summary: "Window frames — stub; author to ready."
-estMin: 12
-status: stub
+title: "Window frames: ROWS vs RANGE vs GROUPS"
+summary: "The frame is the slice of rows a window function actually aggregates. The default is RANGE UNBOUNDED PRECEDING AND CURRENT ROW — which includes all peer rows tied on the ORDER BY value, quietly overcounting running totals on ties. ROWS does not."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - window-frame
+  - rows-vs-range
+  - frame-bounds
+  - peer-rows
+  - default-frame-trap
+prereqs:
+  - 02-partition-and-order
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+  - https://www.postgresql.org/docs/current/functions-window.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A finance running-total report reconciles perfectly in staging and is off by thousands in production. The difference: production has two sales on the same `sale_date`. The running total jumps by *both* amounts on the first of the tied rows, then sits flat on the second — every tied day overcounts the early rows. The query used the default frame. Nobody typed `RANGE`, but they got it, and `RANGE` treats same-date rows as peers and pulls them all in at once. This is the most expensive default in window functions.
+</Hook>
+
+<Crux>The frame is the rows a window aggregates; the default RANGE pulls in all ORDER BY peers, so running totals overcount ties — ROWS doesn't.</Crux>
+
+<Explanation>
+
+## The frame is the slice that actually gets aggregated
+
+`PARTITION BY` decides which rows share a window; `ORDER BY` orders them; the **frame** decides which subset of that ordered partition a function aggregates for *each* row. The frame is a moving window-within-the-window. For a running total at row 5, the frame is "rows 1 through 5"; at row 6 it slides to "rows 1 through 6." Frame syntax has three parts: a **mode** (`ROWS` / `RANGE` / `GROUPS`) and two **bounds**.
+
+The bounds you'll use constantly:
+
+- `UNBOUNDED PRECEDING` — the first row of the partition.
+- `CURRENT ROW` — where the calculation currently sits.
+- `n PRECEDING` / `n FOLLOWING` — n positions back or forward.
+- `UNBOUNDED FOLLOWING` — the last row of the partition.
+
+So `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` is the classic running total; `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` is a 3-row trailing window (a moving average); `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` is the whole partition.
+
+<SequenceDiagram
+  label="A running total at the current row. The frame stretches from the first row of the partition (UNBOUNDED PRECEDING) up to and including the current row, then slides forward one row at a time as the calculation advances."
+  hue="var(--d-data)"
+  actors={["Row 1", "Row 2", "Row 3 (CURRENT)"]}
+  messages={[
+    { from: "Row 1", to: "Row 3 (CURRENT)", label: "UNBOUNDED PRECEDING → frame start" },
+    { from: "Row 2", to: "Row 3 (CURRENT)", label: "included in frame" },
+    { from: "Row 3 (CURRENT)", to: "Row 3 (CURRENT)", label: "CURRENT ROW → frame end" },
+  ]}
+  caption="For each current row, the frame reaches back to UNBOUNDED PRECEDING and ends at CURRENT ROW. As the current row advances, the frame's end slides with it — the aggregate accumulates."
+/>
+
+## RANGE vs ROWS: the difference is ties
+
+`ROWS` counts physical rows: `1 PRECEDING` means literally the one row before this one. `RANGE` works on *values* of the `ORDER BY` expression: `CURRENT ROW` in `RANGE` mode does not mean "this one row" — it means "all rows whose `ORDER BY` value equals this row's value," i.e. all **peers**. If three sales share `sale_date = '2026-01-10'`, those three rows are peers, and under `RANGE` they enter and leave the frame together.
+
+For a running `SUM` ordered by `sale_date`, the consequence is exact and damaging: on a tied date, every one of the tied rows gets the **same** running total — the total *including all peers* — instead of accumulating one at a time. The first tied row already shows the full day's contribution; the others repeat it. If your report expects each row to add its own amount in sequence, the tied rows are wrong.
+
+```sql
+-- Default frame == RANGE; tied sale_date rows share one running value (overcounts early rows)
+SELECT sale_date, amount,
+       SUM(amount) OVER (ORDER BY sale_date) AS running_default
+FROM sales;
+
+-- ROWS frame: each physical row adds exactly its own amount, in order
+SELECT sale_date, amount,
+       SUM(amount) OVER (ORDER BY sale_date
+                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_rows
+FROM sales;
+```
+
+## The default frame, and the production rule
+
+When you add `ORDER BY` inside `OVER` and specify **no** frame, Postgres uses `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. That is the SQL-standard default — and it is `RANGE`, not `ROWS`. On data with no ties in the `ORDER BY` column the two are identical, which is exactly why bugs sneak through: it works on a clean dev dataset and breaks the day production has two rows with the same timestamp or date.
+
+The production rule is blunt: **for any running aggregate, write `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` explicitly.** It makes the frame physical (one row at a time), it is also generally faster (Postgres needn't scan ahead to find all peers), and it removes the silent tie behavior. Use `RANGE` only when you genuinely want peers grouped — for example a value-based frame like `RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW`, which `ROWS` cannot express. `GROUPS` is the third mode: its bounds count *peer groups* rather than rows or values — `GROUPS 1 PRECEDING` reaches back one whole tie-group — a rare but precise tool when you want "the previous distinct date's rows, however many."
+
+<Inset kind="edgecase" lang="en">
+A subtle corollary: `RANGE n PRECEDING` is only legal when there is exactly one `ORDER BY` column and it is numeric, date, or interval — because Postgres must compute `value - n` to define the bound. `RANGE 100 PRECEDING` over `amount` means "all rows whose amount is within 100 below the current row's amount." Try `RANGE` with a multi-column `ORDER BY` and a numeric offset and you get an error; `ROWS` has no such restriction because it counts positions, not values. So `ROWS` is both the safer default *and* the more broadly applicable mode. The databases track's execution-plans chapter shows how each frame mode appears as a WindowAgg node and what it costs.
+</Inset>
+
+<Quiz
+  id="03-window-frames-quiz-1"
+  lessonSlug="03-window-frames"
+  lang="en"
+  question="With ORDER BY sale_date and no explicit frame, two sales share sale_date = '2026-01-10'. What running total do those two tied rows show under the default frame?"
+  choices={[
+    { label: "Both show the same total — the running sum including BOTH tied rows — because the default RANGE treats same-date rows as peers", correct: true },
+    { label: "Each adds its own amount one at a time, like ROWS", misconception: "That's ROWS behavior. The default is RANGE, which pulls in all peers tied on sale_date at once, so both tied rows share the same running value." },
+    { label: "The second tied row is excluded from the frame", misconception: "RANGE includes all peers, not excludes them; both tied rows are in the frame and both show the peer-inclusive total." },
+    { label: "It raises an error because of the tie", misconception: "Ties are perfectly valid; the issue is silent overcounting on the early tied rows, not an error." },
+  ]}
+/>
+
+<Quiz
+  id="03-window-frames-quiz-2"
+  lessonSlug="03-window-frames"
+  lang="en"
+  question="Which frame should you write for a correct, one-row-at-a-time running total?"
+  choices={[
+    { label: "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", correct: true },
+    { label: "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", misconception: "This is the default and it groups peers; on tied ORDER BY values it overcounts the early tied rows. Use ROWS for a true sequential running total." },
+    { label: "ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING", misconception: "That sums from the current row to the end — a reverse/remaining total, not a running total from the start." },
+    { label: "GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", misconception: "GROUPS counts peer groups; for a per-row running total you want ROWS so each physical row adds exactly once." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-window-frames-metaphor-1"
+  lessonSlug="03-window-frames"
+  lang="en"
+  setup="Fill in the blank: under the default RANGE frame, rows tied on the ORDER BY value are treated as _______ and enter the frame together, which makes running totals overcount the early tied rows; switching to ROWS counts physical positions instead."
+  accepted={["peers", "peer", "ties", "tied"]}
+  canonical="peers"
+  explanation="RANGE frames operate on ORDER BY values, so equal values are peers that move in and out of the frame as a unit. ROWS frames operate on physical positions, so each row is independent — which is why ROWS gives a correct sequential running total even with ties."
+/>
+
+</Explanation>
+
+<KeyTakeaway>The frame is the subset of the ordered partition a window function aggregates per row. The default frame is `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, and `RANGE` treats rows tied on the `ORDER BY` value as peers that enter the frame together — so running totals overcount on ties. The production rule: write `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` explicitly for any running aggregate; reserve `RANGE` for genuine value-based frames like `INTERVAL '7 days' PRECEDING`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-window-frames-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a window frame, and what are its two parts?", a: "The frame is the slice of the ordered partition that a window function aggregates for the current row — a moving window-within-the-window. It has a mode (ROWS, RANGE, or GROUPS) and two bounds (e.g. UNBOUNDED PRECEDING, CURRENT ROW, n PRECEDING/FOLLOWING, UNBOUNDED FOLLOWING)." },
+    { q: "Why can a running total be wrong under the default frame, and what's the fix?", a: "The default frame is RANGE UNBOUNDED PRECEDING AND CURRENT ROW. In RANGE mode, rows tied on the ORDER BY value are peers and enter the frame together, so all tied rows show the same peer-inclusive running total — overcounting the early ones. The fix is to specify ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW so each physical row adds exactly its own value in sequence." },
+    { q: "When is RANGE actually the right choice over ROWS?", a: "When you want a value-based frame that ROWS cannot express — for example RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW for a time-windowed sum, or when you deliberately want tied peers grouped together. RANGE n PRECEDING requires a single numeric/date/interval ORDER BY column; ROWS has no such restriction." },
+  ]}
+/>
+
+<Recap lang="en">
+The frame is the part of window mechanics that separates people who use window functions from people who trust them in production. After `PARTITION BY` scopes the window and `ORDER BY` sequences it, the frame chooses which subset of those ordered rows each function actually aggregates, via a mode (`ROWS`, `RANGE`, `GROUPS`) and two bounds. The default when you add an inner `ORDER BY` is `RANGE UNBOUNDED PRECEDING AND CURRENT ROW` — and because `RANGE` operates on values, rows tied on the `ORDER BY` column are peers that enter the frame together, so a running total repeats the peer-inclusive value across all tied rows and overcounts the early ones. It passes on tie-free dev data and breaks in production the day two rows share a timestamp. The rule is to write `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` explicitly for running aggregates — it is correct, usually faster, and broadly applicable — and to reach for `RANGE` only for genuine value-based windows like `INTERVAL '7 days' PRECEDING`. With frames understood, the next lesson turns to ranking functions, where tie behavior reappears as the difference between `ROW_NUMBER`, `RANK`, and `DENSE_RANK`.
+</Recap>

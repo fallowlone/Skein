@@ -4,10 +4,149 @@ lang: ru
 track: "sql-postgres"
 unit: "04-window-functions"
 order: 3
-title: "Window frames"
-summary: "Window frames — stub; author to ready."
-estMin: 12
-status: stub
+title: "Фреймы окна: ROWS против RANGE против GROUPS"
+summary: "Фрейм — это срез строк, который оконная функция реально агрегирует. По умолчанию это RANGE UNBOUNDED PRECEDING AND CURRENT ROW — он включает все строки-пиры с тем же значением ORDER BY, тихо переполняя накопительные итоги на ничьих. ROWS — нет."
+estMin: 16
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - window-frame
+  - rows-vs-range
+  - frame-bounds
+  - peer-rows
+  - default-frame-trap
+prereqs:
+  - 02-partition-and-order
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/sql-expressions.html#SYNTAX-WINDOW-FUNCTIONS
+  - https://www.postgresql.org/docs/current/functions-window.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Финансовый отчёт с накопительным итогом идеально сходится в staging и расходится на тысячи в продакшене. Разница: в продакшене есть две продажи в один `sale_date`. Накопительный итог прыгает на *обе* суммы на первой из связанных строк, затем стоит ровно на второй — каждый связанный день переполняет ранние строки. В запросе был фрейм по умолчанию. `RANGE` никто не печатал, но получил его, а `RANGE` считает строки одной даты пирами и втягивает их все разом. Это самый дорогой дефолт в оконных функциях.
+</Hook>
+
+<Crux>Фрейм — это строки, что агрегирует окно; дефолтный RANGE втягивает всех пиров ORDER BY, и накопительные итоги переполняют ничьи — ROWS нет.</Crux>
+
+<Explanation>
+
+## Фрейм — это срез, который реально агрегируется
+
+`PARTITION BY` решает, какие строки делят окно; `ORDER BY` упорядочивает их; **фрейм** решает, какое подмножество этой упорядоченной партиции функция агрегирует для *каждой* строки. Фрейм — это подвижное окно-внутри-окна. Для накопительного итога на строке 5 фрейм — «строки с 1 по 5»; на строке 6 он скользит до «строк с 1 по 6». У синтаксиса фрейма три части: **режим** (`ROWS` / `RANGE` / `GROUPS`) и две **границы**.
+
+Границы, которыми будешь пользоваться постоянно:
+
+- `UNBOUNDED PRECEDING` — первая строка партиции.
+- `CURRENT ROW` — где сейчас идёт вычисление.
+- `n PRECEDING` / `n FOLLOWING` — n позиций назад или вперёд.
+- `UNBOUNDED FOLLOWING` — последняя строка партиции.
+
+Так что `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` — классический накопительный итог; `ROWS BETWEEN 2 PRECEDING AND CURRENT ROW` — трёхстрочное окно назад (скользящее среднее); `ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING` — вся партиция.
+
+<SequenceDiagram
+  label="Накопительный итог на текущей строке. Фрейм тянется от первой строки партиции (UNBOUNDED PRECEDING) до текущей строки включительно, затем скользит вперёд на одну строку по мере продвижения вычисления."
+  hue="var(--d-data)"
+  actors={["Строка 1", "Строка 2", "Строка 3 (CURRENT)"]}
+  messages={[
+    { from: "Строка 1", to: "Строка 3 (CURRENT)", label: "UNBOUNDED PRECEDING → начало фрейма" },
+    { from: "Строка 2", to: "Строка 3 (CURRENT)", label: "входит во фрейм" },
+    { from: "Строка 3 (CURRENT)", to: "Строка 3 (CURRENT)", label: "CURRENT ROW → конец фрейма" },
+  ]}
+  caption="Для каждой текущей строки фрейм тянется назад до UNBOUNDED PRECEDING и кончается на CURRENT ROW. Когда текущая строка продвигается, конец фрейма скользит с ней — агрегат накапливается."
+/>
+
+## RANGE против ROWS: разница в ничьих
+
+`ROWS` считает физические строки: `1 PRECEDING` значит буквально одну строку перед этой. `RANGE` работает на *значениях* выражения `ORDER BY`: `CURRENT ROW` в режиме `RANGE` не значит «эту одну строку» — он значит «все строки, чьё значение `ORDER BY` равно значению этой строки», то есть всех **пиров**. Если три продажи делят `sale_date = '2026-01-10'`, эти три строки — пиры, и под `RANGE` они входят и выходят из фрейма вместе.
+
+Для накопительного `SUM`, упорядоченного по `sale_date`, последствие точное и вредное: на связанной дате каждая из связанных строк получает **одинаковый** накопительный итог — итог *включая всех пиров* — вместо накопления по одной. Первая связанная строка уже показывает полный вклад дня; остальные его повторяют. Если твой отчёт ждёт, что каждая строка добавит свою сумму по порядку, связанные строки неверны.
+
+```sql
+-- Фрейм по умолчанию == RANGE; строки с тем же sale_date делят один накопительный итог (переполняют ранние строки)
+SELECT sale_date, amount,
+       SUM(amount) OVER (ORDER BY sale_date) AS running_default
+FROM sales;
+
+-- Фрейм ROWS: каждая физическая строка добавляет ровно свою сумму, по порядку
+SELECT sale_date, amount,
+       SUM(amount) OVER (ORDER BY sale_date
+                         ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running_rows
+FROM sales;
+```
+
+## Фрейм по умолчанию и продакшен-правило
+
+Когда ты добавляешь `ORDER BY` внутрь `OVER` и **не** задаёшь фрейм, Postgres использует `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. Это дефолт стандарта SQL — и это `RANGE`, а не `ROWS`. На данных без ничьих в колонке `ORDER BY` оба идентичны, и именно поэтому баги проскальзывают: работает на чистом dev-наборе и ломается в день, когда в продакшене две строки с одинаковым timestamp или датой.
+
+Продакшен-правило прямое: **для любого накопительного агрегата пиши `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` явно.** Это делает фрейм физическим (по одной строке за раз), это обычно ещё и быстрее (Postgres не нужно сканировать вперёд в поисках всех пиров) и убирает тихое поведение на ничьих. Используй `RANGE` только когда тебе действительно нужны сгруппированные пиры — например, фрейм на основе значения вроде `RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW`, который `ROWS` выразить не может. `GROUPS` — третий режим: его границы считают *группы пиров*, а не строки или значения — `GROUPS 1 PRECEDING` тянется назад на одну целую группу-ничью — редкий, но точный инструмент, когда нужны «строки предыдущей отдельной даты, сколько бы их ни было».
+
+<Inset kind="edgecase" lang="ru">
+Тонкое следствие: `RANGE n PRECEDING` легален только когда есть ровно одна колонка `ORDER BY` и она числовая, дата или интервал — потому что Postgres должен вычислить `value - n`, чтобы определить границу. `RANGE 100 PRECEDING` по `amount` значит «все строки, чья сумма в пределах 100 ниже суммы текущей строки». Попробуй `RANGE` с многоколоночным `ORDER BY` и числовым смещением — получишь ошибку; у `ROWS` такого ограничения нет, потому что он считает позиции, а не значения. Так что `ROWS` — и более безопасный дефолт, *и* более широко применимый режим. Глава об execution-plans трека `databases` показывает, как каждый режим фрейма проявляется как узел WindowAgg и сколько он стоит.
+</Inset>
+
+<Quiz
+  id="03-window-frames-quiz-1"
+  lessonSlug="03-window-frames"
+  lang="ru"
+  question="При ORDER BY sale_date и без явного фрейма две продажи делят sale_date = '2026-01-10'. Какой накопительный итог покажут эти две связанные строки под фреймом по умолчанию?"
+  choices={[
+    { label: "Обе покажут один и тот же итог — накопительную сумму, включающую ОБЕ связанные строки — потому что дефолтный RANGE считает строки одной даты пирами", correct: true },
+    { label: "Каждая добавит свою сумму по одной, как ROWS", misconception: "Это поведение ROWS. По умолчанию RANGE, который втягивает всех пиров с тем же sale_date разом, поэтому обе связанные строки делят один накопительный итог." },
+    { label: "Вторая связанная строка исключается из фрейма", misconception: "RANGE включает всех пиров, а не исключает их; обе связанные строки во фрейме и обе показывают итог, включающий пиров." },
+    { label: "Поднимется ошибка из-за ничьей", misconception: "Ничьи вполне валидны; проблема в тихом переполнении на ранних связанных строках, а не в ошибке." },
+  ]}
+/>
+
+<Quiz
+  id="03-window-frames-quiz-2"
+  lessonSlug="03-window-frames"
+  lang="ru"
+  question="Какой фрейм писать для корректного накопительного итога по одной строке за раз?"
+  choices={[
+    { label: "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", correct: true },
+    { label: "RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", misconception: "Это дефолт, и он группирует пиров; на связанных значениях ORDER BY он переполняет ранние связанные строки. Для истинного последовательного накопительного итога используй ROWS." },
+    { label: "ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING", misconception: "Это суммирует от текущей строки до конца — обратный/остаточный итог, а не накопительный от начала." },
+    { label: "GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW", misconception: "GROUPS считает группы пиров; для построчного накопительного итога нужен ROWS, чтобы каждая физическая строка добавлялась ровно один раз." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-window-frames-metaphor-1"
+  lessonSlug="03-window-frames"
+  lang="ru"
+  setup="Заполни пропуск: под дефолтным фреймом RANGE строки, связанные по значению ORDER BY, считаются _______ и входят во фрейм вместе, из-за чего накопительные итоги переполняют ранние связанные строки; переключение на ROWS считает физические позиции."
+  accepted={["пирами", "пиры", "пир", "peers"]}
+  canonical="пирами"
+  explanation="Фреймы RANGE работают на значениях ORDER BY, поэтому равные значения — пиры, которые входят и выходят из фрейма как единое целое. Фреймы ROWS работают на физических позициях, поэтому каждая строка независима — и потому ROWS даёт корректный последовательный накопительный итог даже при ничьих."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Фрейм — это подмножество упорядоченной партиции, которое оконная функция агрегирует на строку. Фрейм по умолчанию — `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`, а `RANGE` считает строки, связанные по значению `ORDER BY`, пирами, входящими во фрейм вместе — поэтому накопительные итоги переполняют ничьи. Продакшен-правило: пиши `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` явно для любого накопительного агрегата; оставь `RANGE` для настоящих фреймов на основе значений вроде `INTERVAL '7 days' PRECEDING`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-window-frames-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое фрейм окна и каковы его две части?", a: "Фрейм — это срез упорядоченной партиции, который оконная функция агрегирует для текущей строки — подвижное окно-внутри-окна. У него есть режим (ROWS, RANGE или GROUPS) и две границы (например UNBOUNDED PRECEDING, CURRENT ROW, n PRECEDING/FOLLOWING, UNBOUNDED FOLLOWING)." },
+    { q: "Почему накопительный итог может быть неверным под фреймом по умолчанию и в чём фикс?", a: "Фрейм по умолчанию — RANGE UNBOUNDED PRECEDING AND CURRENT ROW. В режиме RANGE строки, связанные по значению ORDER BY, — пиры и входят во фрейм вместе, поэтому все связанные строки показывают один накопительный итог, включающий пиров — переполняя ранние. Фикс — задать ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW, чтобы каждая физическая строка добавляла ровно своё значение по порядку." },
+    { q: "Когда RANGE действительно правильный выбор вместо ROWS?", a: "Когда нужен фрейм на основе значения, который ROWS выразить не может — например RANGE BETWEEN INTERVAL '7 days' PRECEDING AND CURRENT ROW для суммы по временному окну, или когда ты намеренно хочешь сгруппировать связанных пиров. RANGE n PRECEDING требует одной числовой/дата/интервал колонки ORDER BY; у ROWS такого ограничения нет." },
+  ]}
+/>
+
+<Recap lang="ru">
+Фрейм — это та часть механики окон, что отделяет тех, кто использует оконные функции, от тех, кто доверяет им в продакшене. После того как `PARTITION BY` ограничивает окно, а `ORDER BY` упорядочивает его, фрейм выбирает, какое подмножество этих упорядоченных строк каждая функция реально агрегирует, через режим (`ROWS`, `RANGE`, `GROUPS`) и две границы. По умолчанию, когда добавляешь внутренний `ORDER BY`, это `RANGE UNBOUNDED PRECEDING AND CURRENT ROW` — и поскольку `RANGE` работает на значениях, строки, связанные по колонке `ORDER BY`, — пиры, входящие во фрейм вместе, так что накопительный итог повторяет значение, включающее пиров, на всех связанных строках и переполняет ранние. Это проходит на dev-данных без ничьих и ломается в продакшене в день, когда две строки делят timestamp. Правило — писать `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW` явно для накопительных агрегатов: это корректно, обычно быстрее и широко применимо — а тянуться к `RANGE` лишь для настоящих окон на основе значений вроде `INTERVAL '7 days' PRECEDING`. С понятыми фреймами следующий урок переходит к ранжирующим функциям, где поведение на ничьих возвращается как разница между `ROW_NUMBER`, `RANK` и `DENSE_RANK`.
+</Recap>
