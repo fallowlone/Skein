@@ -158,3 +158,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ math/05-algebra (4) — variables, expressions, equations, inequalities
 - ✅ math/06-functions (3) — what-is-a-function, linear-functions, graphs
 - ✅ math/07-logic (3) — true-and-false, and-or-not, sets
+- ✅ math/08-growth (2) — linear-vs-exponential, logarithms
