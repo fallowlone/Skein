@@ -4,10 +4,206 @@ lang: en
 track: "js-engine"
 unit: "02-values-and-memory"
 order: 2
-title: "SMIs and doubles"
-summary: "SMIs and doubles — stub; author to ready."
-estMin: 12
-status: stub
+title: "Smis, doubles, and HeapNumbers"
+summary: "A Smi is a 31-bit signed integer packed into a 64-bit word — arithmetic in one instruction, no allocation. Step outside the Smi range or use a fraction and the number becomes a heap-allocated HeapNumber holding a double. That transition is V8's classic deopt trigger"
+estMin: 13
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - Smi
+  - HeapNumber
+  - double
+  - unboxed double
+  - Float64Array
+  - Math.fround
+  - Smi-range deopt
+deepensInto:
+  - "03-pointer-tagging"
+spiral:
+  - performance-cliffs
+prereqs:
+  - "01-value-representation"
 sources:
+  - https://v8.dev/blog/react-cliff
   - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A counter loop runs at full speed for hours, then one day a value ticks past two billion and the same loop is suddenly 30% slower — permanently, until the process restarts. Nothing in your code changed. What changed is that your integer stopped being a Smi and became a boxed HeapNumber, and the compiled code that assumed "this is always a small integer" had to bail out. This lesson is about the line that integer crossed.
+</Hook>
+
+<Crux>A Smi is a 31-bit int packed inline (one-instruction math, no allocation); outside that range it becomes a heap HeapNumber.</Crux>
+
+<Explanation>
+
+## The Smi: an integer that costs nothing
+
+Recall from the previous lesson that a value word is 64 bits and the low bit is the tag. For a Smi, the tag bit is 0 and the integer lives in the **upper 32 bits** of the word. That leaves room for a **31-bit signed integer** on 64-bit V8 — a range of roughly ±2³⁰, i.e. about ±1.07 billion. (The bottom 32 bits are zero; this is sometimes described as the value being "shifted left by 32".)
+
+Why does this matter so much? Because a Smi needs **no heap allocation and no dereference**. The number is *in the word*. Adding two Smis is essentially one CPU instruction — the engine can use native integer arithmetic and just keep the tag arithmetic-friendly. No object is created, no memory is touched, no garbage is produced. This is the single fastest representation of a number JavaScript has, and it is why integer-heavy loops can rival C.
+
+```js
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += i;
+// i and sum stay well inside Smi range:
+// every += is integer math on a tagged word, zero allocations.
+```
+
+## The HeapNumber: a box on the heap
+
+The moment a number does *not* fit the Smi mould, V8 must represent it as a full IEEE-754 **double** (64 bits). But a double does not leave room for a tag bit in the same trick. So V8 boxes it: it allocates a **HeapNumber** — a tiny HeapObject whose payload is the 64-bit double — and the value word becomes a *pointer* to that box.
+
+A number becomes a HeapNumber when it is any of:
+
+- **Outside the Smi range** — magnitude beyond roughly ±2³⁰ (e.g. `2 ** 31`, a large timestamp in milliseconds, a big counter).
+- **Not an integer** — anything with a fractional part, like `0.5` or `Math.PI`.
+- **A special double** — `NaN`, `Infinity`, `-0`.
+
+Now reading the number costs what every HeapObject costs: a pointer dereference and a memory load, plus the original allocation cost and the future GC cost of collecting the box. A HeapNumber is not catastrophic for a one-off value, but in a hot loop, allocating one per iteration is a real tax.
+
+<FlowDiagram
+  label="A numeric value is classified: if it is an integer inside the Smi range it stays a tagged Smi in the word; otherwise it is boxed as a heap-allocated HeapNumber holding a 64-bit double, reached through a pointer."
+  hue="var(--accent)"
+  caption="The branch every number falls down. The Smi path is allocation-free; the HeapNumber path costs an allocation now and a GC collection later."
+  nodes={[
+    { id: "num", label: "Number", sub: "value", col: 0, row: 0 },
+    { id: "smi", label: "Smi", sub: "int, in word", col: 1, row: 0 },
+    { id: "hn", label: "HeapNumber", sub: "boxed double", col: 1, row: 1 },
+    { id: "dbl", label: "double", sub: "64-bit IEEE", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "num", to: "smi", label: "int & in range" },
+    { from: "num", to: "hn", label: "frac / overflow" },
+    { from: "hn", to: "dbl", label: "holds" },
+  ]}
+/>
+
+## Unboxed doubles: V8's escape hatch
+
+If every fractional number meant a HeapNumber allocation, numeric arrays would be unusable. V8 avoids this with **unboxed doubles**. When V8 knows a storage location will only ever hold doubles, it stores the raw 64-bit double *directly*, with no box and no pointer:
+
+- A **`PACKED_DOUBLE_ELEMENTS`** array (created when every element is a double) stores raw doubles back-to-back, like a C `double[]`.
+- A **double field** on an object: when a property has only ever held doubles, V8 stores the raw double inline in the object (a MutableHeapNumber / double-field representation), updating it in place instead of re-boxing.
+- A **`Float64Array`** (a typed array) stores raw doubles by definition — there is never a HeapNumber.
+
+The catch with object double-fields: because the storage is the raw double, not a tagged word, the object's hidden class records "this field is a double". If you later store a non-number there, V8 has to migrate the object's shape — another reason to keep field types stable.
+
+## The classic deopt: Smi overflow in a hot loop
+
+Here is the war story. TurboFan watches a hot loop, sees that a variable has always been a Smi, and compiles **specialised integer machine code** with a guard: "assume this stays a Smi." That code is fast precisely because it skips the float path entirely.
+
+Then one value overflows ±2³⁰. The guard fails. V8 **deoptimises**: it throws away the specialised code, falls back to the interpreter (Ignition), and the value becomes a HeapNumber. If the overflow keeps happening, V8 may re-optimise on the double path — but you have paid the deopt, and you are now allocating HeapNumbers.
+
+```js
+// --trace-deopt would show a bailout the first time `acc` overflows Smi range.
+function hash(arr) {
+  let acc = 0;
+  for (let i = 0; i < arr.length; i++) {
+    acc = (acc * 31 + arr[i]);  // acc grows past 2**30 fast -> Smi overflow -> deopt
+  }
+  return acc;
+}
+```
+
+**The fixes, in order of preference:**
+
+- **Bound the integer range.** Keep accumulators within Smi range — e.g. mask with `| 0` / `>>> 0` or take a modulus each step so the value never overflows (`acc = (acc * 31 + arr[i]) | 0` keeps it a 32-bit int; V8 handles `| 0` results efficiently).
+- **Specialise on double from the start.** If the data is genuinely floating-point, store it in a `Float64Array` or seed the array with a double so V8 picks `PACKED_DOUBLE_ELEMENTS` immediately and never assumes Smi.
+- **Use `Math.fround`** when you want 32-bit float semantics, which also signals V8 to specialise on float rather than oscillate between Smi and double.
+
+You can confirm any of this with `node --trace-deopt --trace-opt your.js`, or in `d8` with `%OptimizeFunctionOnNextCall(fn)` + `%GetOptimizationStatus(fn)` under `--allow-natives-syntax`.
+
+<NumbersCard
+  title="Smi vs HeapNumber, by the numbers"
+  data-lesson-visual
+  stats={[
+    { label: "Smi range (64-bit V8)", value: "31-bit signed, about ±2³⁰" },
+    { label: "Smi arithmetic cost", value: "~1 CPU instruction" },
+    { label: "Smi allocation", value: "0 (lives in the word)" },
+    { label: "HeapNumber cost to read", value: "alloc + pointer deref" },
+    { label: "HeapNumber payload", value: "64-bit IEEE-754 double" },
+    { label: "Float64Array element", value: "raw double, never boxed" },
+  ]}
+/>
+
+<Misconception id="mc-all-doubles">
+  <p><strong>"Every JS number is a 64-bit double, so they all cost the same."</strong> The <em>spec</em> says numbers behave as doubles, but V8 stores small integers as Smis — no box, no allocation, one-instruction math. Making a hot integer loop do float work triggers HeapNumber allocations and a needless deopt.</p>
+</Misconception>
+
+<Quiz
+  id="q-smi-range"
+  lessonSlug="02-smis-and-doubles"
+  lang="en"
+  question="Which of these values is stored as a Smi (inline, no allocation) on 64-bit V8?"
+  choices={[
+    { label: "1000 — a small integer well inside the ±2³⁰ Smi range", correct: true },
+    { label: "3.14 — it has a fractional part", misconception: "Any non-integer is a double and must be boxed as a HeapNumber (or stored unboxed in a double field/array). Fractions are never Smis." },
+    { label: "2 ** 31 — about 2.1 billion", misconception: "That is outside the ~±2³⁰ Smi range on 64-bit V8, so it overflows into a HeapNumber holding a double." },
+    { label: "NaN — it's technically a number", misconception: "NaN is a special double value; it cannot be a Smi and is represented as a HeapNumber." },
+  ]}
+/>
+
+<Quiz
+  id="q-deopt-cause"
+  lessonSlug="02-smis-and-doubles"
+  lang="en"
+  question="A TurboFan-compiled loop runs fast for millions of iterations, then deopts once an accumulator passes ~2³⁰. What happened?"
+  choices={[
+    { label: "The loop got too long and V8 gave up", misconception: "Loop length doesn't trigger deopt. The trigger is a runtime assumption being violated, not iteration count." },
+    { label: "TurboFan had specialised on the assumption 'this value is always a Smi'; the overflow violated that guard, forcing a bailout and a HeapNumber", correct: true },
+    { label: "The garbage collector paused and never resumed the fast code", misconception: "GC pauses are separate from deopt. A deopt is caused by a violated type/shape assumption, here the Smi guard." },
+    { label: "V8 ran out of Smi values globally", misconception: "There's no global Smi pool to exhaust; each value is independently a Smi or not based on its magnitude." },
+  ]}
+/>
+
+<DragOrder
+  id="do-deopt-chain"
+  pieceSlug="02-smis-and-doubles"
+  lang="en"
+  prompt="Order the events when a hot integer loop's accumulator finally overflows the Smi range."
+  items={[
+    "TurboFan compiles the loop, specialising on 'accumulator is a Smi'",
+    "Iterations run as one-instruction integer math, no allocation",
+    "The accumulator value exceeds about ±2³⁰",
+    "The Smi guard in the compiled code fails -> deopt back to Ignition",
+    "The value is reboxed as a HeapNumber holding a double",
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+`-0` and `NaN` are doubles, not Smis, so `Object.is(-0, 0)` is `false` and `[-0].includes(-0)` works while reasoning about them as integers does not. Array element kinds care too: an array of integers is `PACKED_SMI_ELEMENTS`; push a single `0.5` and it widens — one-way — to `PACKED_DOUBLE_ELEMENTS`, after which even the integers in it are stored as raw doubles. The widening transition is irreversible for that array.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A Smi is a 31-bit signed integer packed into the word: no allocation, one-instruction math. Stepping outside ±2³⁰, or using a fraction, makes the value a heap-allocated HeapNumber holding a double — and if TurboFan had specialised on Smi, that crossing is a deopt. Bound your integer ranges, or specialise on double up front with Float64Array / Math.fround.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="smis-and-doubles-retrieval"
+  lang="en"
+  questions={[
+    { q: "What exactly is a Smi on 64-bit V8, and why is Smi arithmetic so cheap?", a: "A Smi (Small Integer) is a 31-bit signed integer stored directly in the upper bits of the 64-bit value word, with the low tag bit 0 marking it as a Smi. Its range is roughly ±2³⁰. Because the integer lives inside the word, there is no heap allocation and no dereference: adding two Smis is essentially one native integer instruction, producing no garbage. This is the fastest numeric representation in JS and the reason integer-heavy loops can approach C speed — provided the values stay inside the Smi range." },
+    { q: "When does a number become a HeapNumber, and what does that cost?", a: "A number is boxed as a HeapNumber when it cannot be a Smi: it is outside the ~±2³⁰ range, has a fractional part, or is a special double like NaN, Infinity, or -0. A HeapNumber is a small HeapObject whose payload is the 64-bit IEEE-754 double, and the value word becomes a pointer to it. Costs: the original allocation, a pointer dereference plus memory load on every read, and eventual GC of the box. In a hot loop, allocating one HeapNumber per iteration is a measurable tax — which is why V8 also supports unboxed doubles in Float64Array, PACKED_DOUBLE_ELEMENTS arrays, and object double-fields." },
+    { q: "Why does an integer overflowing the Smi range cause a TurboFan deopt, and how do you avoid it?", a: "TurboFan observes that a value has always been a Smi and emits specialised integer machine code guarded by 'assume this stays a Smi', skipping the float path for speed. When a value overflows ~±2³⁰, the guard fails, V8 deoptimises — discarding the compiled code, falling back to Ignition — and reboxes the value as a HeapNumber. Avoid it by bounding the integer range (e.g. `| 0` / a modulus each step so it stays a 32-bit int), or by specialising on double from the start with a Float64Array or Math.fround so V8 never assumes Smi. Confirm with node --trace-deopt --trace-opt." },
+  ]}
+/>
+
+<Recap lang="en">
+On 64-bit V8 a number is represented in one of two ways. A Smi is a 31-bit signed integer (range about ±2³⁰) packed into the upper bits of the value word with the low tag bit 0; it needs no allocation and no dereference, so Smi arithmetic is roughly one CPU instruction and produces no garbage. Any number that does not fit — outside the Smi range, fractional, or a special value like NaN, Infinity, or -0 — must be a 64-bit IEEE-754 double, which V8 boxes into a heap-allocated HeapNumber reached through a pointer, costing an allocation, a dereference on every read, and later GC. To keep doubles cheap V8 stores them unboxed where it knows the type: Float64Array elements, PACKED_DOUBLE_ELEMENTS arrays, and object double-fields hold raw doubles with no box. The classic production deopt is a hot loop where TurboFan specialised on the Smi assumption and a value overflows ±2³⁰: the guard fails, V8 bails to the interpreter, and the value becomes a HeapNumber. The fixes are to bound integer ranges (mask with `| 0`, take a modulus) so values stay Smis, or to specialise on double from the start with Float64Array or Math.fround — verifiable with --trace-deopt and --trace-opt.
+</Recap>
