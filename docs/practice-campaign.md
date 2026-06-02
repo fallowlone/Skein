@@ -166,3 +166,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ engineering-practice/03-code-review (5) — overview, pr-size-and-latency, giving-and-receiving-review, automate-the-mechanical, anti-patterns-and-scaling
 - ✅ engineering-practice/04-trunk-based (5) — integration-frequency, short-lived-branches-vs-gitflow, feature-flags-dark-launch, the-green-trunk-gate, flag-debt-and-rollout-discipline
 - ✅ engineering-practice/05-feature-flags (1) — overview
+- ✅ engineering-practice/06-postmortems (1) — overview
