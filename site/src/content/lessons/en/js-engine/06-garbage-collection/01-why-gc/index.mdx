@@ -4,10 +4,203 @@ lang: en
 track: "js-engine"
 unit: "06-garbage-collection"
 order: 1
-title: "Why GC"
-summary: "Why GC — stub; author to ready."
+title: "Why a GC, and reachability"
+summary: "You never free memory in JavaScript — you make objects unreachable. V8 uses a tracing GC: from a fixed set of roots it marks everything transitively reachable; the rest is garbage. Tracing vs reference counting, and why liveness is reachability."
 estMin: 12
-status: stub
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - tracing garbage collection
+  - reachability
+  - roots
+  - reference counting
+  - liveness
+  - cycles
+deepensInto:
+  - "06-garbage-collection/02-generational-orinoco"
+spiral:
+  - statefulness
+  - memory
+prereqs:
+  - "02-values-and-memory/04-the-heap"
+  - "performance/04-gc/01-gc-basics"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/free-garbage-collection
+  - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Memory_management
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+In C you write `malloc` then `free`, and forgetting the second leaks; freeing twice corrupts the heap; freeing too early gives you a use-after-free that an attacker turns into code execution. Now add closures that capture variables, objects shared across three callbacks, and a `Map` someone holds onto somewhere. Deciding, by hand, the exact instant each allocation is safe to release is not merely hard — for a language this dynamic it is hopeless. So JavaScript does not ask you to. It asks a different question: can the program still reach this object?
+</Hook>
+
+<Crux>You never free in JS; you make objects unreachable. A tracing GC starts from roots, marks all reachable objects, reclaims the rest.</Crux>
+
+<Explanation>
+
+## Manual memory management cannot survive shared references
+
+The `performance/04-gc/01-gc-basics` lesson frames GC from the ops side; this track takes the engine's view. Start with *why the engine has to do this at all*.
+
+Manual `free()` requires a single, knowable owner for every allocation — the place responsible for releasing it. JavaScript destroys that assumption on purpose. A closure captures a variable and outlives the function that made it. An object is pushed into an array, passed to a callback, and stored on `this`, all at once — three references, no single owner. A `Promise` chain keeps a value alive across ticks of the event loop you cannot see from the call site.
+
+```js
+function makeCounter() {
+  let count = 0;                 // captured by the closure
+  return () => ++count;          // this fn keeps `count` alive
+}
+const next = makeCounter();      // who is allowed to free `count`?
+```
+
+`count` lives exactly as long as `next` does — and `next` might be stored in a global, attached to a DOM node, or dropped on the next line. No human reliably knows when. So the engine answers a mechanically-decidable proxy question instead: **is this object reachable from somewhere the program can still touch?** If not, it can never affect the program's future, so its memory is safe to take back.
+
+## Reachability: roots, then transitive closure
+
+A **tracing** garbage collector models the heap as a directed graph: objects are nodes, references (a property holding another object, an array element, a captured variable) are edges. Collection has two conceptual phases — find what is alive, reclaim everything else.
+
+"Alive" is defined by **reachability from the roots**. The roots are the entry points the running program inherently has access to, that the GC treats as always-live:
+
+- the **call stack** — every local variable and temporary in every active frame, plus values held in CPU registers;
+- the **global object** (`globalThis` / `window`) and its property graph;
+- **handles / persistent handles** from the embedder — the C++ host (Node, Chrome) holds V8 objects through handle scopes; a `Persistent` handle pins an object as a root even with no JS reference to it.
+
+Starting from those roots, the GC follows every edge transitively. Everything it can reach is **live**; everything it cannot is **garbage**. Note the asymmetry: the collector never enumerates dead objects, it enumerates *live* ones and the dead are simply whatever is left over.
+
+<FlowDiagram
+  label="The heap as a graph: roots (call stack, global object, embedder handles) point into a reachable region; an unreachable island of objects that still reference each other is garbage because no root path reaches it."
+  hue="var(--accent)"
+  caption="Reachability. Everything on a path from a root is live (left). The island on the right references itself but no root reaches it — so it is collectible, even though its internal references are intact."
+  nodes={[
+    { id: "root", label: "Roots", sub: "stack / global / handles", col: 0, row: 1 },
+    { id: "a", label: "obj A", sub: "live", col: 1, row: 0 },
+    { id: "b", label: "obj B", sub: "live", col: 2, row: 0 },
+    { id: "c", label: "obj C", sub: "live", col: 1, row: 2 },
+    { id: "x", label: "obj X", sub: "garbage", col: 2, row: 2 },
+    { id: "y", label: "obj Y", sub: "garbage", col: 3, row: 2 },
+  ]}
+  edges={[
+    { from: "root", to: "a", label: "ref" },
+    { from: "a", to: "b", label: "prop" },
+    { from: "root", to: "c", label: "ref" },
+    { from: "x", to: "y", label: "ref" },
+    { from: "y", to: "x", label: "ref" },
+  ]}
+/>
+
+The right-hand island matters: X and Y reference each other, so each has an incoming reference, yet no root reaches either. A tracing GC collects them without a second thought. Hold that example — it is exactly where the older approach breaks.
+
+## Tracing vs reference counting
+
+The other classic strategy is **reference counting**: each object carries a count of how many references point at it; when the count hits zero, free immediately. It is simple, gives prompt reclamation, and spreads cost evenly. CPython uses it as its primary mechanism; Swift's ARC and C++ `shared_ptr` are refcounting.
+
+It has one fatal flaw for a language full of shared, cyclic structures: **it cannot reclaim cycles.** In the island above, X references Y and Y references X — each count stays at 1 forever, so neither is ever freed, even though the program can never touch them again. Cycles are everywhere in real code: a parent node holding children that hold a back-pointer to the parent, a doubly-linked list, a `Promise` capturing a closure that captures the promise.
+
+```js
+let a = {};
+let b = {};
+a.peer = b;
+b.peer = a;     // refcount(a) = 1, refcount(b) = 1
+a = null;
+b = null;       // both still point at each other -> counts never reach 0
+```
+
+Tracing has no such problem: once `a` and `b` are dropped from their roots, no root path reaches the pair, so a trace declares both dead regardless of the cycle. This is *the* reason V8 (and every production JS engine) is tracing, not refcounting. The cost is that a trace is a discrete event with a pause, rather than work amortised per reference — which is the entire subject of the next five lessons.
+
+<NumbersCard
+  title="Tracing vs reference counting"
+  data-lesson-visual
+  stats={[
+    { label: "Reclaims reference cycles", value: "tracing only" },
+    { label: "Prompt (immediate) reclamation", value: "refcounting" },
+    { label: "Cost model (tracing)", value: "batched pause" },
+    { label: "Cost model (refcount)", value: "per-store inc/dec" },
+    { label: "V8 / SpiderMonkey / JSC", value: "tracing" },
+    { label: "CPython primary mechanism", value: "refcount + cycle GC" },
+  ]}
+/>
+
+## Liveness is an over-approximation
+
+There is a precise meaning of "this object will never be used again" — but it is uncomputable; it would require predicting the program's future. So the GC uses **reachable** as a conservative, computable stand-in. Reachability over-approximates liveness: if an object is reachable, the GC keeps it, *whether or not the program will actually use it again.*
+
+That gap is the source of nearly every "memory leak" in a GC'd language. The object is genuinely dead in spirit — you are done with it — but a reference somewhere (a cache entry, a stale listener, a captured variable) keeps it reachable, so the GC correctly, dutifully, keeps it alive. You do not fix that by "freeing"; you fix it by *severing the last reference*. We catalogue exactly how reachability leaks in lesson 05.
+
+<Misconception id="mc-set-null">
+  <p><strong>"Setting a variable to null frees its memory."</strong> It does nothing of the kind directly. It removes <em>one</em> reference. The object is reclaimed only later, by the GC, and only if that was the <em>last</em> reachable path to it. If anything else still points at the object, nulling your variable frees nothing.</p>
+</Misconception>
+
+<Quiz
+  id="q-cycle-collect"
+  lessonSlug="01-why-gc"
+  lang="en"
+  question="Two objects reference each other and nothing else references either. A reference-counting collector and a tracing collector both run. What happens?"
+  choices={[
+    { label: "Refcounting leaks the pair (counts stay at 1); tracing collects both (no root reaches them)", correct: true },
+    { label: "Both collect the pair immediately", misconception: "Refcounting cannot: each object's count is held at 1 by the other, so it never reaches 0. Only tracing collects the cycle." },
+    { label: "Both leak the pair forever", misconception: "Tracing does collect it — reachability from roots, not reference counts, decides liveness, and no root reaches the cycle." },
+    { label: "Tracing leaks it; refcounting collects it", misconception: "Backwards. Cycles are precisely the case refcounting cannot reclaim and tracing handles trivially." },
+  ]}
+/>
+
+<Quiz
+  id="q-roots"
+  lessonSlug="01-why-gc"
+  lang="en"
+  question="A Node C++ addon holds a V8 Persistent handle to an object, but no JavaScript variable references it. Is the object collectible?"
+  choices={[
+    { label: "No — a persistent handle is a root, so the object is reachable and stays live", correct: true },
+    { label: "Yes — no JS reference means no reachability", misconception: "Roots are not only JS variables. Embedder handles (persistent handles) are roots too; the C++ host can keep an object alive with no JS reference." },
+    { label: "Only if the object is in the young generation", misconception: "Generation does not affect reachability. A rooted object is live regardless of which space it lives in." },
+    { label: "Yes — handles are weak by default", misconception: "Persistent handles are strong roots by default; you must explicitly make a handle weak for it not to root the object." },
+  ]}
+/>
+
+<DragOrder
+  id="do-trace-phases"
+  pieceSlug="01-why-gc"
+  lang="en"
+  prompt="Order the conceptual steps a tracing collector takes to decide what to reclaim."
+  items={[
+    "Identify the roots: call stack, global object, embedder handles",
+    "Mark each root-referenced object as reachable",
+    "Follow every reference edge transitively, marking each object reached",
+    "Treat every object NOT marked reachable as garbage and reclaim it",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why not just expose a `free()` and trust the programmer? Because the same expressiveness that makes JavaScript pleasant — first-class functions, closures, objects shared freely — makes single-ownership impossible to track by hand at scale. Languages that keep manual control (C, C++) pay for it with a whole class of bugs (use-after-free, double-free, leaks) that simply cannot exist in a tracing-GC language. The GC trades those bugs for pause-time and a subtler leak: unintended reachability.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A tracing GC defines "alive" as reachable from the roots (stack, globals, embedder handles) and reclaims everything else — which is why it can collect cycles that reference counting cannot. You never free; you drop the last reference and let the next trace notice. Reachability over-approximates true liveness, and that gap is where leaks live.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="why-gc-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the GC roots in V8, and why does the GC start from them?", a: "The roots are the entry points the running program inherently has: the call stack (every local and temporary in every active frame, plus values in CPU registers), the global object and its property graph, and handles/persistent handles held by the embedder (the C++ host — Node, Chrome). The GC treats roots as always-live and traces outward from them because anything the program can still reach must be reachable through one of these; anything not reachable from a root can never influence the program's future and is therefore safe to reclaim." },
+    { q: "Why is V8 a tracing collector instead of using reference counting?", a: "Reference counting cannot reclaim cycles: two objects that reference each other keep each other's count above zero forever, so they leak even when no root reaches them — and cycles are pervasive in real JS (parent/child back-pointers, linked lists, promises capturing closures). A tracing collector decides liveness by reachability from roots, so a cycle with no root path is collected regardless of its internal references. The tradeoff is that tracing reclaims in discrete, pausing events rather than amortising work per reference store." },
+    { q: "What is the difference between 'live' and 'reachable', and why does it matter?", a: "'Live' means the program will actually use the object again — but that is uncomputable, since it would require predicting the future. 'Reachable' (there exists a reference path from a root) is a computable over-approximation: every live object is reachable, but some reachable objects are dead-in-spirit. The GC keeps everything reachable, so a stray reference (a cache entry, an un-removed listener, a captured variable) keeps a logically-dead object alive. That over-approximation is the mechanism behind essentially every memory leak in a garbage-collected language; the fix is severing the last reference, not 'freeing'." },
+  ]}
+/>
+
+<Recap lang="en">
+JavaScript does not let you free memory because shared references and closures make single-ownership impossible to track by hand. Instead V8 runs a tracing garbage collector: it models the heap as a graph and defines "alive" as reachable from a fixed set of roots — the call stack and registers, the global object, and embedder persistent handles. From the roots it marks everything transitively reachable; whatever is left is garbage. This is why tracing reclaims reference cycles that reference counting (which frees an object when its count hits zero) cannot: a mutually-referencing island keeps each count above zero forever, but no root path reaches it, so a trace collects it. Reachability is a conservative over-approximation of true liveness — every leak in a GC'd language is an object that is dead-in-spirit but still reachable through some forgotten reference. You do not free; you drop the last reference and let the next collection notice. The remaining lessons in this unit open up how V8 actually performs that collection cheaply.
+</Recap>

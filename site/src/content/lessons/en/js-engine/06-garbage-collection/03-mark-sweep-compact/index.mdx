@@ -4,10 +4,187 @@ lang: en
 track: "js-engine"
 unit: "06-garbage-collection"
 order: 3
-title: "Mark, sweep, compact"
-summary: "Mark, sweep, compact — stub; author to ready."
-estMin: 12
-status: stub
+title: "Major GC: mark, sweep, compact"
+summary: "Old space is collected by mark-sweep-compact. Marking uses the tri-color abstraction (white/grey/black) and runs incrementally and concurrently to shrink the stop-the-world window; sweeping reclaims white objects into free lists"
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - mark-sweep-compact
+  - tri-color marking
+  - incremental marking
+  - concurrent marking
+  - sweeping / free lists
+  - compaction / evacuation
+deepensInto:
+  - "06-garbage-collection/04-write-barriers"
+spiral:
+  - latency
+  - memory
+prereqs:
+  - "02-generational-orinoco"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/concurrent-marking
+  - https://v8.dev/blog/high-performance-cpp-gc
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The Scavenger is sub-millisecond because young space is tiny. Old space is the opposite: it can be a gigabyte of long-lived objects, and you cannot copy your way out of it the way the Scavenger does — there is no spare gigabyte to copy into. So the major GC takes a different shape, and its pause is the one your users actually feel as a dropped frame or a stalled request. The whole engineering story of the modern major GC is one sentence: do as much of the work as possible *off* the main thread, so the part that must stop the world shrinks toward nothing.
+</Hook>
+
+<Crux>Old space uses mark-sweep-compact: tri-color marking (incremental, concurrent), sweep into free lists, compact fragmented pages.</Crux>
+
+<Explanation>
+
+## Why old space needs a different collector
+
+A copying Scavenger needs a second region the size of the live set to copy into; that is fine for a few megabytes of young objects but impossible for a gigabyte-sized old generation. So old space uses **mark-sweep-compact (MSC)**: find the live objects in place (mark), reclaim the dead in place (sweep), and only occasionally relocate survivors to fight fragmentation (compact). A major GC traces the *entire* reachable graph, not just a small region, which is why its cost is fundamentally larger — and why V8 invests so heavily in hiding that cost.
+
+## Marking: the tri-color abstraction
+
+Marking is graph traversal with a twist that makes it pausable. Every object is conceptually one of three colors (stored as two mark bits):
+
+- **white** — not yet reached (presumed dead);
+- **grey** — reached, but its outgoing references have not been scanned yet (on the work queue / "marking worklist");
+- **black** — reached *and* fully scanned (all its references have been greyed/processed).
+
+The algorithm:
+
+1. Color everything **white**. Color the **roots' direct referents grey** (push them on the worklist).
+2. Pop a **grey** object, scan its references — color each white referent it points to **grey** — then color the object itself **black**.
+3. Repeat until **no grey objects remain.**
+4. Every object still **white** is unreachable → garbage.
+
+The grey set is the frontier of the wavefront sweeping through the graph; when it drains, the trace is complete. The crucial invariant this maintains: **a black object must never point directly to a white object** (the "tri-color invariant"). If that held only for a stop-the-world trace it would be trivial — but V8 does not stop the world to mark, which is where it gets interesting.
+
+<FlowDiagram
+  label="Tri-color marking: roots colour their referents grey; the marker pops a grey object, greys its white referents, and blackens it; when no grey remain, every white object is unreachable garbage."
+  hue="var(--accent)"
+  caption="Tri-color wavefront. Black is done, grey is the frontier on the worklist, white is unproven. The trace ends when grey drains; surviving white = garbage. The black-never-points-to-white invariant is what write barriers (next lesson) protect."
+  nodes={[
+    { id: "root", label: "Roots", sub: "grey referents", col: 0, row: 1 },
+    { id: "blk", label: "black", sub: "scanned", col: 1, row: 0 },
+    { id: "grey", label: "grey", sub: "worklist", col: 2, row: 1 },
+    { id: "wht", label: "white", sub: "unproven", col: 3, row: 1 },
+    { id: "dead", label: "white", sub: "garbage", col: 3, row: 2 },
+  ]}
+  edges={[
+    { from: "root", to: "grey", label: "seed" },
+    { from: "grey", to: "blk", label: "scan -> blacken" },
+    { from: "grey", to: "wht", label: "grey referents" },
+  ]}
+/>
+
+## Incremental and concurrent marking
+
+A naive MSC stops all JavaScript, marks the whole heap, then resumes — a stop-the-world pause of hundreds of milliseconds on a large heap. V8 attacks this on two fronts:
+
+- **Incremental marking** breaks the trace into small steps interleaved with JS execution. The engine marks a little, runs JS, marks a little more — amortising the work so no single pause is long. Steps are scheduled into idle time and during allocation.
+- **Concurrent marking** goes further: background helper threads walk the object graph *while the main thread keeps running JavaScript*. The bulk of the marking work happens off the main thread entirely.
+
+Both create the same hazard: the main thread can mutate the object graph mid-trace — store a pointer that the marker has not seen — and break the tri-color invariant by making a black object point to a white one. The marker would then finish, see that white object as unreached, and wrongly collect a live object. The fix is the **write barrier**, the entire subject of the next lesson: it intercepts pointer stores during marking and re-greys the affected object so the invariant holds. Hold that thread; here, just register that incremental/concurrent marking is *only correct because of write barriers.*
+
+After concurrent marking, a short **final atomic pause** ("finalize") re-scans the roots and any objects the barriers flagged, draining the last grey set. This final pause is single-digit milliseconds even on large heaps — that is the win.
+
+## Sweeping: reclaim white into free lists
+
+Once marking finishes, every white object is dead. **Sweeping** walks the old-space pages and adds the memory occupied by white objects to per-size-class **free lists** — the bookkeeping that lets future old-space allocations find a hole of the right size. Sweeping does *not* move anything; it just records free regions. V8 sweeps **concurrently and lazily**: free lists are rebuilt on background threads, and a page can be swept on demand the first time an allocation needs space from it. Because sweeping touches dead objects (which are not referenced) it is naturally parallelizable and largely off the critical path.
+
+## Compaction: evacuate to defragment
+
+Mark-sweep alone leaves **fragmentation**: live and dead objects are interleaved, so over time old space becomes Swiss cheese — plenty of free bytes, but no contiguous hole big enough for a large allocation. **Compaction** fixes this by **evacuation**: pick the most fragmented pages, copy their live objects to a fresh page packed tightly, and update every pointer that referenced the moved objects. This is the same copy-and-forward machinery as the Scavenger, applied selectively. Compaction is expensive (it moves objects and rewrites pointers), so V8 does it **selectively** — only on pages whose fragmentation justifies it, not the whole heap every cycle.
+
+<NumbersCard
+  title="Major GC anatomy"
+  data-lesson-visual
+  stats={[
+    { label: "Old space size", value: "100s of MB to GBs" },
+    { label: "Pre-incremental STW pause", value: "100s of ms" },
+    { label: "Final marking pause (modern)", value: "single-digit ms" },
+    { label: "Marking colors", value: "white / grey / black" },
+    { label: "Marking runs", value: "incremental + concurrent" },
+    { label: "Sweep / compact", value: "concurrent / selective" },
+  ]}
+/>
+
+<Misconception id="mc-sweep-moves">
+  <p><strong>"Sweeping compacts memory by moving live objects."</strong> No — sweeping moves nothing. It only records space freed by dead (white) objects into free lists. Relocating live objects to defragment is a separate, costlier phase called <em>compaction</em>, run selectively on fragmented pages.</p>
+</Misconception>
+
+<Quiz
+  id="q-white-after-mark"
+  lessonSlug="03-mark-sweep-compact"
+  lang="en"
+  question="Marking has finished and an object is still white. What does that mean and what happens to it?"
+  choices={[
+    { label: "It was never reached from the roots — it is garbage and will be reclaimed by the sweep", correct: true },
+    { label: "It was reached but not yet scanned, so marking must continue", misconception: "That is the grey state. Marking is finished only when no grey remain; a leftover white object is therefore unreached." },
+    { label: "It is alive and will be promoted to a new page", misconception: "Black means fully scanned and alive. White after marking means unreachable; the GC reclaims it." },
+    { label: "It is pinned and cannot be collected", misconception: "Color reflects reachability, not pinning. White after a complete mark is unreachable and collectible." },
+  ]}
+/>
+
+<Quiz
+  id="q-why-final-pause"
+  lessonSlug="03-mark-sweep-compact"
+  lang="en"
+  question="Concurrent marking does most of the work on background threads while JS runs. Why is there still a short stop-the-world final pause?"
+  choices={[
+    { label: "To re-scan the roots and the objects the write barriers flagged during concurrent marking, draining the last grey set consistently", correct: true },
+    { label: "Because background threads cannot mark at all without the main thread stopped", misconception: "They can and do mark concurrently; the final pause exists to reconcile changes the running mutator made, not because concurrent marking is impossible." },
+    { label: "To run the sweep, which must be stop-the-world", misconception: "Sweeping is concurrent and lazy in modern V8; it is not what the final marking pause is for." },
+    { label: "To compact every page in the heap", misconception: "Compaction is selective and separate; the final marking pause is about finishing marking consistently, not whole-heap compaction." },
+  ]}
+/>
+
+<DragOrder
+  id="do-msc"
+  pieceSlug="03-mark-sweep-compact"
+  lang="en"
+  prompt="Order a modern major GC cycle in V8."
+  items={[
+    "Colour the roots' referents grey, everything else white",
+    "Concurrently/incrementally pop grey objects, grey their white referents, blacken them",
+    "Short atomic pause: re-scan roots and barrier-flagged objects, drain the last grey",
+    "Sweep: record white (dead) objects into free lists, concurrently and lazily",
+    "Compact: selectively evacuate live objects off fragmented pages, updating pointers",
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why bother compacting at all instead of just sweeping forever? Because a long-running server allocates and frees objects of many sizes, and free-list allocation cannot always reuse a freed hole — a 200-byte object cannot go into a 64-byte gap. Over days, old space accumulates unusable gaps; resident memory stays high even though live data is small, and large allocations start failing or forcing growth. Selective compaction reclaims that lost contiguity. It is the GC analogue of defragmenting a disk.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The major GC marks with the tri-color abstraction (white unreached, grey on the worklist, black scanned), run incrementally and concurrently so most work is off the main thread and the stop-the-world final pause is single-digit ms. Sweeping records dead (white) objects into free lists without moving anything; selective compaction evacuates live objects off fragmented pages to reclaim contiguity.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="mark-sweep-compact-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the tri-color marking abstraction and what 'marking is done' means.", a: "Every object is white (unreached, presumed dead), grey (reached but its outgoing references not yet scanned — on the marking worklist), or black (reached and fully scanned). The trace starts by greying the roots' referents and whitening everything else, then repeatedly pops a grey object, greys each white object it references, and blackens itself. Marking is done when no grey objects remain — the wavefront has fully swept the reachable graph. Every object still white at that point was never reached and is therefore garbage. The invariant maintained throughout is that a black object never points directly to a white object." },
+    { q: "How does V8 keep major-GC pauses short, and what is the residual stop-the-world cost?", a: "Two techniques. Incremental marking splits the trace into small steps interleaved with JS execution (scheduled into idle time and allocation) so no single pause is long. Concurrent marking runs the graph traversal on background helper threads while the main thread keeps executing JavaScript, moving the bulk of marking off the main thread entirely. Sweeping is also concurrent and lazy. The residual cost is a short atomic 'finalize' pause that re-scans the roots and the objects flagged by write barriers, draining the last grey set consistently — single-digit milliseconds even on a large heap, versus hundreds of ms for a naive stop-the-world MSC." },
+    { q: "What is the difference between sweeping and compaction, and when does V8 compact?", a: "Sweeping reclaims dead (white) objects in place by recording the freed memory into per-size-class free lists; it moves nothing and runs concurrently/lazily. Compaction relocates live objects: it evacuates the survivors off a fragmented page into a tightly-packed fresh page and updates every pointer to the moved objects (the same copy-and-forward as the Scavenger). Compaction is expensive, so V8 does it selectively — only on pages whose fragmentation justifies the cost — to reclaim contiguous space that free-list allocation alone leaves stranded as unusable gaps." },
+  ]}
+/>
+
+<Recap lang="en">
+Old space cannot be copy-collected like young space (there is no spare gigabyte to copy into), so V8 uses mark-sweep-compact. Marking uses the tri-color abstraction: objects are white (unreached), grey (reached but unscanned, on the worklist), or black (reached and fully scanned); the trace greys the roots' referents, repeatedly blackens grey objects while greying their white referents, and finishes when no grey remain — leaving every still-white object as garbage. To keep pauses short V8 marks incrementally (small steps interleaved with JS) and concurrently (background threads mark while JS runs), reducing the stop-the-world portion to a single-digit-millisecond final pause that reconciles mutations via the write barrier and drains the last grey set. Sweeping then records dead objects into free lists without moving anything, concurrently and lazily. Compaction is a separate, selective phase that evacuates live objects off the most fragmented pages and rewrites their pointers to reclaim contiguous space. The correctness of incremental and concurrent marking depends entirely on the write barrier — the subject of the next lesson.
+</Recap>

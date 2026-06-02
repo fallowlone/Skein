@@ -4,10 +4,197 @@ lang: en
 track: "js-engine"
 unit: "06-garbage-collection"
 order: 2
-title: "Generational GC and Orinoco"
-summary: "Generational GC and Orinoco — stub; author to ready."
-estMin: 12
-status: stub
+title: "Generational GC and the Scavenger"
+summary: "Most objects die young, so V8 splits the heap by age. New space is two semi-spaces collected by the Scavenger using Cheney's copying algorithm: copy survivors, flip the spaces, promote two-time survivors to old space. Orinoco makes it parallel."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - generational hypothesis
+  - new space / semi-spaces
+  - Scavenger / minor GC
+  - Cheney's algorithm
+  - promotion
+  - Orinoco
+deepensInto:
+  - "06-garbage-collection/03-mark-sweep-compact"
+spiral:
+  - latency
+  - memory
+prereqs:
+  - "01-why-gc"
+  - "browser/03-v8-internals/05-gc-orinoco"
 sources:
-  - https://v8.dev/docs
+  - https://v8.dev/blog/orinoco-parallel-scavenger
+  - https://v8.dev/blog/trash-talk
+  - https://v8.dev/blog/high-performance-cpp-gc
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Profile a hot request handler and you will find it allocates relentlessly: a parsed body, a few intermediate strings, a response object, dozens of temporaries — and drops every one of them before the next request. If the GC had to scan the whole multi-hundred-megabyte heap each time to reclaim that churn, you would feel it. It does not. It bets that the youngest objects are almost all dead, scans only a tiny region, and copies out the handful of survivors. That bet is the most important design decision in the whole collector.
+</Hook>
+
+<Crux>Most objects die young, so V8 collects a tiny new space often via a copying Scavenger and promotes the rare survivors to old space.</Crux>
+
+<Explanation>
+
+## The generational hypothesis
+
+The `browser/03-v8-internals/05-gc-orinoco` lesson gives the overview; here we open the Scavenger's mechanics.
+
+The empirical foundation of every production GC is the **generational hypothesis**: *most objects die young.* The lifetime distribution of allocations is wildly bimodal — a huge majority are transient (request temporaries, intermediate strings, per-render React elements) and become unreachable within a few milliseconds, while a small minority (caches, the module graph, connection pools) live for the whole process. Almost nothing dies in the middle.
+
+V8 exploits this by splitting the heap by age:
+
+- **New space (young generation)** — where every ordinary object is born. Small: a budget that grows on demand up to roughly 1–8 MB per isolate (tunable via `--max-semi-space-size`). Collected frequently and cheaply by a **minor GC**.
+- **Old space (old generation)** — long-lived survivors. Can be hundreds of MB to gigabytes (`--max-old-space-size`). Collected infrequently by a **major GC** (next lesson).
+
+Because new space is small and almost everything in it is dead by collection time, a minor GC touches very little live data — that is the entire payoff.
+
+## New space is two semi-spaces; allocation is a bump pointer
+
+New space is physically two equal halves called **semi-spaces**: **to-space** (active) and **from-space** (idle). Allocation into to-space is the cheapest operation in the engine — a **bump-pointer allocator**: keep a pointer to the next free byte, hand it out, advance the pointer by the object size. No free-list search, no fragmentation, just an add and a bounds check.
+
+```js
+// Conceptually, every `new`/object literal does:
+//   if (top + size > limit) triggerScavenge();
+//   addr = top;
+//   top += size;          // bump
+//   return addr;
+const point = { x: 1, y: 2 };   // a bump-pointer allocation in to-space
+```
+
+When the bump pointer hits the limit (to-space is full), a **Scavenge** (minor GC) fires.
+
+## The Scavenger: Cheney's copying algorithm
+
+The Scavenger is a **copying collector** running **Cheney's algorithm**. The key inversion versus mark-sweep: it does not look at dead objects at all. It copies out the *live* ones and abandons the rest wholesale.
+
+1. **Flip.** The roles swap: the current to-space becomes from-space, the empty half becomes the new to-space.
+2. **Evacuate roots.** Scan the roots (stack, globals, handles) plus the *remembered set* of old→new pointers (see lesson 04 — old space may reference young objects, and we are not scanning old space). Copy each referenced live young object from from-space into to-space, leaving a **forwarding pointer** in the old slot.
+3. **Cheney scan.** Walk the newly copied objects in to-space breadth-first as a work queue; for each, copy any from-space objects it references (or follow an existing forwarding pointer if already copied), updating the pointer to the new location. This continues until the scan pointer catches the allocation pointer — the queue is empty.
+4. **Reclaim implicitly.** Whatever was not copied is simply left in from-space, which is now declared empty in one stroke. **Dead objects cost nothing to reclaim** — they are never visited.
+
+The work is proportional to the *live* set, not the allocated set. With the generational hypothesis holding, the live set is tiny, so the Scavenge is fast.
+
+<FlowDiagram
+  label="A Scavenge: live young objects are copied from from-space into to-space and the two semi-spaces flip; objects that have already survived one Scavenge are instead promoted into old space; dead objects are abandoned in from-space."
+  hue="var(--accent)"
+  caption="Cheney copying. Survivors move to-space → to-space across the flip; a second-time survivor is promoted to old space. Dead objects are never touched — from-space is reset wholesale."
+  nodes={[
+    { id: "from", label: "from-space", sub: "before", col: 0, row: 0 },
+    { id: "to", label: "to-space", sub: "survivors", col: 1, row: 0 },
+    { id: "old", label: "old space", sub: "promoted", col: 2, row: 0 },
+    { id: "dead", label: "dead", sub: "abandoned", col: 0, row: 1 },
+  ]}
+  edges={[
+    { from: "from", to: "to", label: "copy live" },
+    { from: "from", to: "old", label: "promote (2nd survival)" },
+    { from: "from", to: "dead", label: "left behind" },
+  ]}
+/>
+
+## Promotion: surviving makes you old
+
+An object that survives a Scavenge is not yet trusted to be long-lived; it is copied into to-space and given another chance. If it **survives a second Scavenge**, V8 concludes it is probably long-lived and **promotes** it: copies it into old space instead of back into a semi-space. (V8 also promotes early under "intermediate" generation pressure, and directly allocates very large objects into old/large-object space, but "survive twice → promote" is the model to hold.)
+
+Promotion is why a Scavenge can leave new space nearly empty: transient objects were never copied (dead), and the few real survivors graduated to old space. New space stays small and the next Scavenge stays cheap.
+
+<NumbersCard
+  title="The Scavenger by the numbers"
+  data-lesson-visual
+  stats={[
+    { label: "New space (semi-space) size", value: "~1–8 MB" },
+    { label: "Minor GC (Scavenge) pause", value: "sub-ms to low-ms" },
+    { label: "Promotion threshold", value: "survive ~2 Scavenges" },
+    { label: "Allocation cost", value: "bump pointer (~O(1))" },
+    { label: "Work proportional to", value: "live set, not allocated" },
+    { label: "Parallel scavenger since", value: "V8 6.2 (2017)" },
+  ]}
+/>
+
+## Orinoco: making it parallel
+
+**Orinoco** is the umbrella name for V8's modern GC project — the set of techniques that turn a stop-the-world collector into a mostly-concurrent, parallel, incremental one. For the Scavenger specifically, Orinoco made it **parallel**: multiple helper threads share the copying work via dynamic **work-stealing**, so wall-clock pause time drops even though there is more raw work. Because new space is small, minor pauses land in the sub-millisecond to low-millisecond range — short enough to fit comfortably inside a 16.6 ms animation frame. The heavier concurrency and incrementality apply mostly to the major GC, which is the next two lessons.
+
+<Misconception id="mc-scavenge-scans-dead">
+  <p><strong>"A minor GC scans the whole young heap to free dead objects."</strong> The opposite: the Scavenger copies out only the <em>live</em> objects and abandons from-space wholesale. Dead objects are never visited, so a Scavenge costs in proportion to survivors — which, by the generational hypothesis, are few.</p>
+</Misconception>
+
+<Quiz
+  id="q-work-proportional"
+  lessonSlug="02-generational-orinoco"
+  lang="en"
+  question="A loop allocates 1,000,000 short-lived objects, of which fewer than 100 are still reachable at each Scavenge. Roughly what does the cost of each Scavenge scale with?"
+  choices={[
+    { label: "The ~100 survivors that must be copied — dead objects are never visited", correct: true },
+    { label: "All 1,000,000 allocations, since each must be inspected and freed", misconception: "A copying Scavenger never inspects dead objects. It copies the live set and abandons from-space; the million dead objects cost nothing to reclaim." },
+    { label: "The size of old space, which it must scan for survivors", misconception: "It does not scan old space; old→young pointers are found via the remembered set. Scavenge cost scales with the young live set." },
+    { label: "The number of GC roots only", misconception: "Roots are the starting point, but cost scales with everything transitively copied — the live young set — not just the root count." },
+  ]}
+/>
+
+<Quiz
+  id="q-promotion"
+  lessonSlug="02-generational-orinoco"
+  lang="en"
+  question="An object allocated in new space is still reachable after two Scavenges. Where does it end up, and why?"
+  choices={[
+    { label: "Promoted to old space — surviving twice is V8's heuristic for 'probably long-lived'", correct: true },
+    { label: "It stays in new space forever, copied on every Scavenge", misconception: "Copying a long-lived object on every minor GC would waste work; that is exactly why two-time survivors are promoted out of new space." },
+    { label: "It is freed, because surviving twice means it's stale", misconception: "Surviving means reachable, i.e. live. The GC never frees a reachable object; it promotes proven survivors." },
+    { label: "It moves to the large-object space regardless of size", misconception: "Large-object space is for objects too big for a normal page, decided at allocation by size — not the destination for ordinary promoted survivors." },
+  ]}
+/>
+
+<DragOrder
+  id="do-scavenge"
+  pieceSlug="02-generational-orinoco"
+  lang="en"
+  prompt="Order one Scavenge (minor GC) cycle."
+  items={[
+    "Bump pointer hits the to-space limit; allocation triggers a Scavenge",
+    "Flip: to-space becomes from-space, the empty half becomes the new to-space",
+    "Copy roots' and remembered-set's live young objects into to-space, leaving forwarding pointers",
+    "Cheney scan: walk copied objects, copy what they reference, update pointers",
+    "Promote objects surviving their second Scavenge into old space",
+    "Abandon from-space wholesale — dead objects reclaimed implicitly",
+  ]}
+/>
+
+<Inset kind="edgecase" lang="en">
+There is a real cost hidden in "copying is cheap": a freshly promoted object can carry pointers into now-stale locations, and pointer-heavy survivors make a Scavenge slower than a pure-temporary workload of the same allocation count. The fast path assumes a low survival rate. A workload that allocates and *retains* a large fraction of new objects (building one giant array, say) defeats the generational bet — survivors get copied repeatedly until promoted, and you see more minor GC time than the allocation count alone predicts.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>New space is two semi-spaces collected by a copying Scavenger (Cheney's algorithm): it copies only the live young objects across a flip, abandons the dead wholesale, and promotes two-time survivors to old space. Cost scales with survivors, not allocations — so short-lived garbage is nearly free, and minor pauses stay sub-millisecond. Orinoco makes the Scavenge parallel.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="generational-orinoco-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through one Scavenge (minor GC) cycle in V8.", a: "New space is two equal semi-spaces. Allocation bump-points into to-space; when it fills, a Scavenge fires. The spaces flip (to-space becomes from-space, the empty half becomes the new to-space). V8 evacuates: it scans roots plus the remembered set of old→new pointers and copies each referenced live young object from from-space into to-space, leaving a forwarding pointer in the old slot. Then Cheney's scan walks the copied objects breadth-first, copying anything they reference (or following an existing forwarding pointer) and updating the pointer to the new location, until the scan pointer meets the allocation pointer. Whatever was not copied is dead; from-space is declared empty wholesale. Objects that have now survived two Scavenges are promoted into old space instead of being copied back." },
+    { q: "Why does a copying collector make short-lived garbage essentially free to reclaim?", a: "A copying (Cheney) Scavenger never inspects dead objects. It copies out only the reachable (live) objects and then abandons the entire from-space in one operation, so dead objects cost nothing — they are simply never visited. The work is therefore proportional to the live set, not to the number of allocations. Under the generational hypothesis the young live set is tiny, so allocating and dropping a million temporary objects is cheap: the Scavenge copies only the handful still reachable." },
+    { q: "What is the generational hypothesis and how does V8's heap layout exploit it?", a: "The generational hypothesis is the empirical observation that most objects die young — allocation lifetimes are bimodal, with the vast majority transient and a small minority long-lived. V8 splits the heap into a small new space (~1–8 MB, where objects are born and collected often by the cheap copying Scavenger) and a large old space (collected rarely by mark-sweep-compact). Objects that survive ~two Scavenges are promoted to old space. This means the frequent collection only ever touches a tiny region with almost no survivors, while the expensive whole-heap collection runs infrequently." },
+  ]}
+/>
+
+<Recap lang="en">
+The generational hypothesis — most objects die young — drives V8's two-region heap. New space is small (~1–8 MB) and holds freshly allocated objects; allocation there is a bump pointer, the cheapest operation in the engine. When it fills, a minor GC (Scavenge) runs Cheney's copying algorithm: flip the two semi-spaces, copy live young objects from from-space into to-space (leaving forwarding pointers and following the remembered set for old→young references), breadth-first-scan the copies to evacuate what they reference, then abandon from-space wholesale. Because only live objects are ever copied, dead objects cost nothing and the Scavenge scales with the survivor count — tiny by the hypothesis — keeping minor pauses sub-millisecond. Objects surviving two Scavenges are promoted to the large old space, collected separately and rarely by the major GC. Orinoco, V8's GC project, made the Scavenger parallel via work-stealing across helper threads, dropping wall-clock pause time further. The next lesson opens the major GC that handles old space.
+</Recap>

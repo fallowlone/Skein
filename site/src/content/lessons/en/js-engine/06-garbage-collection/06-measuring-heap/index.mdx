@@ -5,9 +5,190 @@ track: "js-engine"
 unit: "06-garbage-collection"
 order: 6
 title: "Measuring the heap"
-summary: "Measuring the heap — stub; author to ready."
-estMin: 12
-status: stub
+summary: "The tools that turn 'memory keeps climbing' into a named retainer: heap snapshots (shallow vs retained size, dominators, the three-snapshot diff), allocation timelines, process.memoryUsage(), --trace-gc, v8.getHeapStatistics(), --max-old-space-size"
+estMin: 15
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - heap snapshot
+  - shallow vs retained size
+  - dominator tree
+  - three-snapshot diff
+  - process.memoryUsage
+  - trace-gc
+spiral:
+  - observability
+  - performance-cliffs
+prereqs:
+  - "05-memory-leaks"
+  - "performance/04-gc/06-gc-production"
 sources:
-  - https://v8.dev/docs
+  - https://developer.chrome.com/docs/devtools/memory-problems/heap-snapshots
+  - https://nodejs.org/api/v8.html
+  - https://developer.mozilla.org/en-US/docs/Web/API/Performance/measureUserAgentSpecificMemory
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+"Memory keeps climbing" is a feeling. "47,000 retained `Session` objects, each rooted through `app.activeSockets`, holding 12 MB between them" is a bug report you can fix. The distance between those two sentences is entirely tooling: heap snapshots, dominator trees, and a couple of Node flags. The previous lesson said every leak is a retainer path — this one is how you make the engine *show* you that path instead of guessing.
+</Hook>
+
+<Crux>Heap snapshots expose retained size and the dominator tree; the three-snapshot diff finds what grows; Node flags track totals.</Crux>
+
+<Explanation>
+
+## Shallow size vs retained size — the distinction that matters
+
+This lesson is the engine-level companion to `performance/04-gc/06-gc-production` (which covers the ops side — alerting, limits, restarts). Here: how to read the heap directly.
+
+A **heap snapshot** is a full dump of the object graph at one instant — every object, its size, and its references. Two size numbers per object, and confusing them wastes hours:
+
+- **Shallow size** — the memory the object itself occupies (its own fields), excluding what it references. An array's shallow size is tiny even if it holds millions of huge objects.
+- **Retained size** — the memory that would be freed if this object were deleted, i.e. the object *plus everything reachable only through it*. This is the number that tells you the cost of a leak: a small object with a huge retained size is anchoring a big subtree.
+
+You hunt leaks by **retained size**, not shallow size. The leaked `Map` has a trivial shallow size but a retained size of every entry it alone keeps alive.
+
+## The dominator tree
+
+To compute retained size, V8 builds the **dominator tree** of the object graph. Object A **dominates** object B if *every* path from a root to B passes through A — meaning if A is freed, B necessarily becomes unreachable too. An object's retained size is the total shallow size of everything it dominates.
+
+The dominator tree is the leak-hunter's map: walk down from the roots and find the object whose retained size is large and unexpected. Its dominated subtree is exactly what it is keeping alive — and the path from a root to it is the **retainer path** you must cut.
+
+<FlowDiagram
+  label="A dominator tree: the GC root dominates an app object, which dominates a cache Map, which dominates many entries; the Map's retained size is the sum of everything it alone keeps reachable, so deleting it frees the whole dominated subtree."
+  hue="var(--accent)"
+  caption="Dominators. The Map's shallow size is tiny, but it dominates every entry, so its retained size is the whole subtree. Find the small object with a huge retained size — that is your leak's anchor."
+  nodes={[
+    { id: "root", label: "GC root", sub: "dominates all", col: 0, row: 0 },
+    { id: "app", label: "app", sub: "singleton", col: 1, row: 0 },
+    { id: "map", label: "cache Map", sub: "tiny shallow", col: 2, row: 0 },
+    { id: "e1", label: "entries", sub: "huge retained", col: 3, row: 0 },
+  ]}
+  edges={[
+    { from: "root", to: "app", label: "global" },
+    { from: "app", to: "map", label: "field" },
+    { from: "map", to: "e1", label: "dominates" },
+  ]}
+/>
+
+## The three-snapshot technique
+
+A single snapshot shows what is in the heap, but not what is *growing*. The classic leak-finding method is **three snapshots**:
+
+1. Snapshot 1 — establish a baseline after warm-up.
+2. Exercise the suspected operation N times (navigate, run the request, etc.).
+3. Snapshot 2.
+4. Exercise it N more times.
+5. Snapshot 3.
+
+DevTools' "Objects allocated between snapshots" comparison shows objects born after snapshot 1 that are *still alive* at snapshot 3. In a healthy operation those should be near zero (everything transient got collected); a leak shows a count growing linearly with N. Sort the survivors by retained size, open one, and read its retainer path to the root. That sequence — diff, sort by retained, read retainer — is the whole workflow.
+
+## Allocation timeline and sampling
+
+Snapshots are point-in-time; the **allocation timeline** (DevTools) and **allocation sampling** answer "where is the churn coming from?" by attributing allocations to the call stacks that made them, over time. Sampling is low-overhead enough for production-ish use. This is how you find a hot allocation site driving GC pressure (the lesson-02 minor-GC problem), distinct from a retention leak.
+
+## Node and programmatic counters
+
+You don't always have DevTools attached. Numbers you can log:
+
+- **`process.memoryUsage()`** → `{ rss, heapTotal, heapUsed, external, arrayBuffers }`. `heapUsed` = live V8 heap objects; `heapTotal` = committed V8 heap; `rss` = total resident process memory (includes native, stacks, code); `external` / `arrayBuffers` = memory held by C++ objects bound to JS (Buffers, ArrayBuffers). Climbing `heapUsed` ⇒ JS retention leak; climbing `external`/`arrayBuffers` with flat `heapUsed` ⇒ a Buffer/native leak; high `rss` with flat `heapUsed` ⇒ fragmentation.
+- **`v8.getHeapStatistics()`** / `getHeapSpaceStatistics()` — per-space sizes (new vs old vs large-object), `used_heap_size`, `heap_size_limit`. Lets you watch old space specifically.
+- **`--trace-gc`** / **`--trace-gc-verbose`** — log every GC event with heap-before/heap-after and pause time. Plot old-space-after over time: monotonic growth = leak; oscillation around a mean = the GC keeping up.
+- **`--max-old-space-size=<MB>`** — the old-space cap; raising it buys headroom but does not fix a leak (it only delays the OOM and lengthens major-GC pauses). The default is roughly 2 GB on modern 64-bit Node but version-dependent — measure, don't assume.
+- **`v8.writeHeapSnapshot()`** — dump a `.heapsnapshot` from inside the process (e.g. on a signal) to load into DevTools offline. Invaluable in production where you cannot attach a debugger.
+
+In the browser, **`performance.measureUserAgentSpecificMemory()`** gives a cross-origin-isolated, breakdown-by-type estimate of the page's memory — the supported successor to the old non-standard `performance.memory`.
+
+<NumbersCard
+  title="Heap measurement cheat sheet"
+  data-lesson-visual
+  stats={[
+    { label: "Hunt leaks by", value: "retained size, not shallow" },
+    { label: "Retained size from", value: "the dominator tree" },
+    { label: "What is growing?", value: "three-snapshot diff" },
+    { label: "heapUsed climbs", value: "JS retention leak" },
+    { label: "external/arrayBuffers climb", value: "Buffer / native leak" },
+    { label: "rss high, heapUsed flat", value: "fragmentation" },
+  ]}
+/>
+
+<Misconception id="mc-shallow-vs-retained">
+  <p><strong>"Sort the snapshot by shallow size to find the leak."</strong> Shallow size is the object's own bytes only. A leaking <code>Map</code> or array has a tiny shallow size while retaining megabytes through its entries. Sort by <em>retained</em> size to find the small object anchoring a big dominated subtree.</p>
+</Misconception>
+
+<Quiz
+  id="q-retained-size"
+  lessonSlug="06-measuring-heap"
+  lang="en"
+  question="An array has a shallow size of 200 bytes but a retained size of 80 MB. What does that tell you?"
+  choices={[
+    { label: "The array dominates 80 MB of objects reachable only through it — deleting it would free that subtree", correct: true },
+    { label: "The array itself stores 80 MB of data inline", misconception: "That would be its shallow size. 200 bytes shallow means the array's own storage is tiny; the 80 MB is what it retains through its elements." },
+    { label: "The snapshot is corrupted; retained can't exceed shallow", misconception: "Retained size is normally far larger than shallow — it includes the whole dominated subtree, not just the object's own bytes." },
+    { label: "80 MB of the array is garbage waiting to be collected", misconception: "Retained means reachable and alive through this object. It is not garbage; it is exactly what the array is keeping alive." },
+  ]}
+/>
+
+<Quiz
+  id="q-memoryusage"
+  lessonSlug="06-measuring-heap"
+  lang="en"
+  question="process.memoryUsage() shows rss climbing and external climbing, but heapUsed is flat. What is the likely cause?"
+  choices={[
+    { label: "A native/Buffer leak — memory held by C++-backed objects (Buffers, ArrayBuffers), not the JS object heap", correct: true },
+    { label: "A normal JS object retention leak", misconception: "A JS retention leak shows heapUsed climbing. Flat heapUsed with climbing external points at C++-backed memory (Buffers/ArrayBuffers), not the JS heap." },
+    { label: "The GC is running too rarely", misconception: "GC frequency would not produce flat heapUsed with climbing external; that signature is native memory the JS GC does not directly own." },
+    { label: "Old space fragmentation", misconception: "Fragmentation shows high rss with flat heapUsed, but external would not climb. Climbing external specifically indicates Buffer/ArrayBuffer growth." },
+  ]}
+/>
+
+<DragOrder
+  id="do-three-snapshot"
+  pieceSlug="06-measuring-heap"
+  lang="en"
+  prompt="Order the three-snapshot leak-finding workflow in DevTools."
+  items={[
+    "Take snapshot 1 as a baseline after warm-up",
+    "Exercise the suspected operation N times",
+    "Take snapshot 2",
+    "Exercise the operation N more times, then take snapshot 3",
+    "Compare 'objects allocated between 1 and 2 still alive at 3', sort by retained size",
+    "Open a top retainer and read its retainer path to the GC root to find what to cut",
+  ]}
+/>
+
+<Inset kind="practice" lang="en">
+A production-safe routine: register a SIGUSR2 handler that calls <code>v8.writeHeapSnapshot()</code>, and a metrics loop that logs <code>process.memoryUsage()</code> plus <code>v8.getHeapStatistics().used_heap_size</code> every minute. When RSS alerts fire, dump two snapshots a few minutes apart and diff them offline in DevTools. This gets you a retainer path from a live, un-debuggable process without attaching <code>--inspect</code> (which you usually cannot do under load). Pair with <code>--trace-gc</code> redirected to a log so you can correlate the growth with GC behavior after the fact.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Hunt leaks by retained size (the dominator-tree total of what an object alone keeps alive), not shallow size; use the three-snapshot diff to find what is growing and read its retainer path to the root. process.memoryUsage() distinguishes a JS retention leak (heapUsed climbs) from a native/Buffer leak (external climbs) from fragmentation (rss high, heapUsed flat); --trace-gc, v8.getHeapStatistics(), and writeHeapSnapshot() give the same picture without a debugger attached.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="measuring-heap-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the difference between shallow and retained size, and why do you hunt leaks by retained size?", a: "Shallow size is the memory an object occupies for its own fields, excluding everything it references — an array or Map has a small shallow size no matter how much it holds. Retained size is the memory that would be freed if the object were deleted: the object plus everything reachable only through it (its dominated subtree). You hunt by retained size because a leak is usually a small container (a Map, an array, a singleton) with a tiny shallow size but an enormous retained size — it is anchoring a large subtree. Sorting by shallow size hides exactly the objects causing the leak." },
+    { q: "What is the dominator tree and how does it relate to retainer paths?", a: "Object A dominates object B if every path from a GC root to B passes through A, so freeing A necessarily makes B unreachable. The dominator tree organizes the heap by this relation, and an object's retained size is the total shallow size of everything it dominates. It is the leak-hunter's map: find a node with an unexpectedly large retained size, and its dominated subtree is what it keeps alive. The path from a root down to that node is the retainer path from the previous lesson — the chain you must sever (evict, clearInterval, removeEventListener, drop the reference) to let the GC reclaim the subtree." },
+    { q: "How do you tell a JS retention leak, a native/Buffer leak, and fragmentation apart with process.memoryUsage()?", a: "process.memoryUsage() returns rss, heapTotal, heapUsed, external, and arrayBuffers. heapUsed is live V8 JS-heap objects; external/arrayBuffers is memory held by C++-backed objects (Buffers, ArrayBuffers); rss is the whole resident process. Climbing heapUsed (in lockstep with rss) means a JS retention leak — objects accumulating in the object graph. Climbing external/arrayBuffers with flat heapUsed means a native/Buffer leak the JS heap does not directly own. High rss with flat, low heapUsed means the heap is fragmented (objects collected but pages not returned). Each signature points at a different fix: cut a retainer path, free Buffers, or trigger/allow compaction respectively." },
+  ]}
+/>
+
+<Recap lang="en">
+Measuring the heap turns "memory keeps climbing" into a named retainer. A heap snapshot dumps the whole object graph; the number that matters is retained size — the memory freed if an object were deleted, i.e. the object plus its dominated subtree — not shallow size, which is just the object's own bytes. V8 computes retained size from the dominator tree, where A dominates B if every root-to-B path goes through A; the small object with a huge retained size is your leak's anchor, and the path from a root to it is the retainer path to cut. To find what is growing rather than what merely exists, use the three-snapshot technique: baseline, exercise, snapshot, exercise, snapshot, then diff for objects allocated early and still alive late, sorted by retained size. Allocation timelines and sampling attribute churn to call stacks for the distinct minor-GC-pressure problem. Without a debugger, process.memoryUsage() separates a JS retention leak (heapUsed climbs) from a native/Buffer leak (external/arrayBuffers climb) from fragmentation (rss high, heapUsed flat); v8.getHeapStatistics() gives per-space sizes and the heap limit; --trace-gc logs every collection to plot old-space growth; --max-old-space-size caps old space (delaying, not fixing, a leak); and v8.writeHeapSnapshot() plus measureUserAgentSpecificMemory() capture the heap in production and in the browser. Together with the ops practices in performance/04-gc/06-gc-production, these tools close the loop from symptom to severed reference.
+</Recap>
