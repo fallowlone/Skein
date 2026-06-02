@@ -180,3 +180,4 @@ covered, so its practice files become build-enforced (error, not warning).
 - ✅ queues overview units (7) — 02-kafka-partitions, 03-rabbit-exchanges, 04-ordering, 05-outbox, 06-cdc, 07-eventual-ux, 08-putting-it-together [deep unit 01-delivery-guarantees pending]
 - ✅ queues/01-delivery-guarantees (6) — 01-three-guarantees, 02-failure-modes, 03-consumer-dedup, 04-kafka-eos, 05-sqs-dlq, 06-exactly-once-in-production  [queues track COMPLETE + enforced]
 - ✅ security overview units (7) — 01-owasp-modern, 03-jwt-pitfalls, 04-csrf, 05-password-hashing, 06-secrets, 07-supply-chain, 08-putting-it-together [deep unit 02-oauth-oidc pending]
+- ✅ security/02-oauth-oidc (6) — 01-what-is-oauth, 02-auth-code-pkce, 03-id-token-validation, 04-refresh-tokens-and-scopes, 05-sender-constrained-tokens, 06-oauth-production  [security track COMPLETE + enforced]
