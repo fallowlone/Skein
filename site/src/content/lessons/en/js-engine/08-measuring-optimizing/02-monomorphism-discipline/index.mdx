@@ -5,9 +5,196 @@ track: "js-engine"
 unit: "08-measuring-optimizing"
 order: 2
 title: "Monomorphism discipline"
-summary: "Monomorphism discipline — stub; author to ready."
-estMin: 12
-status: stub
+summary: "The actionable checklist that ties the track together: build objects with fields in a fixed order, never delete, keep arrays one element kind, pass consistently-shaped arguments to hot functions, keep numbers in Smi range, and avoid megamorphic dispatch"
+estMin: 14
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - monomorphism
+  - shape transition
+  - element kind
+  - inline cache state
+  - Smi overflow
+  - megamorphic dispatch
+  - dictionary mode
+spiral:
+  - performance-cliffs
+  - discipline
+prereqs:
+  - "01-trace-opt-and-deopt"
 sources:
-  - https://v8.dev/docs
+  - https://mathiasbynens.be/notes/shapes-ics
+  - https://v8.dev/blog/elements-kinds
+  - https://github.com/thlorenz/v8-perf/blob/master/compiler.md
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import NumbersCard from "~/components/layout/NumbersCard.astro";
+import Misconception from "~/components/layout/Misconception.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+Every deopt loop, megamorphic call site, and dictionary-mode object you traced in the last lesson has the same root: the engine made a bet about a shape or a type, and your code changed it under the optimised code's feet. This lesson is the inverse — the small set of habits that keep those bets winning. None of them is a micro-optimisation. They are how you write JavaScript that stays on V8's fast paths by default.
+</Hook>
+
+<Crux>Monomorphism is one discipline: keep every hot object's shape and every value's type stable so V8's speculative bets never break.</Crux>
+
+<Explanation>
+
+## One principle, six rules
+
+V8's optimised code is *speculative*: TurboFan compiles a function assuming the shapes and types it has seen so far keep arriving. Break that assumption and you pay — a deopt, a polymorphic IC, a dictionary-mode fall, a Smi-overflow bail-out. The discipline below is just "do not surprise the optimiser". Each rule maps to a mechanism you have already met in this track ([mono/poly/mega ICs](/learn/js-engine/05-mono-poly-mega), [shape transitions](/learn/js-engine/02-shape-transitions), element kinds, Smi vs HeapNumber); here they become a checklist.
+
+<StackDiagram
+  label="A do-and-don't comparison of the six monomorphism rules: each row pairs the habit that keeps V8 on its fast path with the anti-pattern that breaks the corresponding mechanism."
+  hue="var(--accent)"
+  caption="The six rules, top to bottom. The left half of each note is the discipline; the right half is the anti-pattern and the mechanism it breaks."
+  layers={[
+    { label: "Fixed-order construction", note: "DO: class/factory, all fields up front · DON'T: conditional/late fields → shape divergence" },
+    { label: "Never delete", note: "DO: assign null · DON'T: delete obj.x → dictionary mode (permanent)" },
+    { label: "One element kind per array", note: "DO: keep PACKED_SMI · DON'T: mix Smi/double/object or add holes" },
+    { label: "Consistent argument shapes", note: "DO: same shape/type into hot fn · DON'T: pass varied shapes → polymorphic IC" },
+    { label: "Stay in Smi range", note: "DO: bound ints / typed arrays · DON'T: overflow ±2^31 → HeapNumber deopt" },
+    { label: "Stable dispatch", note: "DO: few stable callees · DON'T: many callees at one site → megamorphic" },
+  ]}
+/>
+
+## Rule 1 — construct with all fields in a fixed order
+
+Build objects so every instance walks the *same* hidden-class transition path: declare all fields in a constructor or factory, in a constant order, with no conditional additions. Two objects with the same fields added in different orders are different shapes; a field added only sometimes creates a second shape. The fix for absent data is a default value, not omission:
+
+```js
+// DON'T — conditional + late fields → many shapes
+function makeRow(r) {
+  const o = {};
+  o.id = r.id;
+  if (r.name) o.name = r.name;     // shape A vs shape B
+  o.score = r.score;
+  if (r.flagged) o.flag = true;    // shape C, D...
+  return o;
+}
+
+// DO — one shape, every time
+function makeRow(r) {
+  return {
+    id: r.id,
+    name: r.name ?? null,
+    score: r.score,
+    flag: r.flagged === true,
+  };
+}
+```
+
+This single rule prevents the most common production regression: a hot access site going megamorphic because objects were built in input-key order. (See [mono/poly/mega ICs](/learn/js-engine/05-mono-poly-mega) for what megamorphic costs.)
+
+## Rule 2 — never `delete`; assign `null`
+
+`delete obj.x` cannot just clear a slot — it forces the object out of its fixed-offset layout into **dictionary mode**, a hashmap-backed representation where every property access takes the slow generic path (~50–100 cycles vs 1) and the object never recovers. The memory you "save" is tiny; the slowdown is permanent. Set the field to `null` instead and the shape stays intact.
+
+## Rule 3 — keep an array one element kind
+
+V8 tracks each array's **element kind** and only widens it (one-way): `PACKED_SMI_ELEMENTS` (fastest) → `PACKED_DOUBLE_ELEMENTS` → `PACKED_ELEMENTS` (any type) → the `HOLEY_*` variants (add a hole-check on every access). Mixing a `1.5` into an array of integers widens it forever; writing past `length` or `new Array(n)` makes it HOLEY. Habits that keep it tight:
+
+- Prefer `[]` + `push` over `new Array(n)` or index-beyond-length (both create HOLEY).
+- Prefer `Array.from({length}, fn)` over `new Array(n).fill()` when you need a sized PACKED array.
+- Do not store mixed types (Smi, double, object) in one hot array; split by kind or use a typed array.
+
+## Rule 4 — feed hot functions consistently-shaped arguments
+
+A function's inline caches key off the shapes and types of its arguments. Call `render(node)` with one node shape and the ICs stay monomorphic; call it with five different shapes and they go megamorphic, and TurboFan cannot specialise. If a hot function must accept variants, split it into shape-specific functions or normalise inputs to one shape *before* the hot loop.
+
+## Rule 5 — keep numbers in Smi range (or go typed)
+
+A small integer (Smi, ±2^31 on 64-bit) lives inline in a pointer slot with arithmetic in one instruction; cross that boundary even once and the value becomes a heap-allocated **HeapNumber**, and a TurboFan loop that assumed Smi deopts with `reason: Smi`. Bound counters and ids inside the Smi range, or commit to doubles from the start with a `Float64Array` so the optimiser specialises on double and never has to bail. (See [Smis and doubles](/learn/js-engine/02-smis-and-doubles) for the Smi/HeapNumber boundary.)
+
+## Rule 6 — keep dispatch stable
+
+A call site that invokes the *same* function (or one of a few stable functions) optimises well. A site that calls many different functions — a giant `switch` dispatching to dozens of handlers, or a method called polymorphically across many subclasses — goes megamorphic and loses inlining. Prefer a small, stable set of callees on hot paths; a `Map` of typed handlers built once beats rebuilding closures per call.
+
+<NumbersCard
+  title="The cost of breaking each rule"
+  data-lesson-visual
+  stats={[
+    { label: "Monomorphic property load", value: "~1 cycle" },
+    { label: "Megamorphic generic load", value: "~10-50x slower" },
+    { label: "Dictionary-mode access (after delete)", value: "~50-100 cycles, permanent" },
+    { label: "Smi arithmetic", value: "1 instruction, no allocation" },
+    { label: "HeapNumber arithmetic", value: "alloc + dereference + deopt risk" },
+    { label: "HOLEY array access", value: "+1 hole-check per access" },
+  ]}
+/>
+
+<Misconception id="mc-defaults-waste">
+  <p><strong>"Always assigning every field (even `null`) wastes memory and is slower than omitting them."</strong> The opposite: one shared hidden class means every instance reuses cached offsets and the access stays monomorphic. The few null slots cost nothing next to the megamorphic lookups conditionals cause.</p>
+</Misconception>
+
+<Quiz
+  id="q-delete-vs-null"
+  lessonSlug="02-monomorphism-discipline"
+  lang="en"
+  question="You want to remove a field from a hot, long-lived object. What do you do?"
+  choices={[
+    { label: "Assign it null — the hidden class is preserved and the object stays in fast-property mode", correct: true },
+    { label: "delete obj.field — it frees the memory immediately", misconception: "delete forces the object into dictionary mode permanently; every access then takes the slow generic path. The memory saving is tiny next to that." },
+    { label: "Set it to undefined, which V8 treats as removed", misconception: "Setting undefined keeps the slot and the shape (fine), but it does not 'remove' the property — and it is not the issue; the rule is just avoid delete." },
+    { label: "Rebuild the object without the field via the spread operator", misconception: "That allocates a new object with a different shape on a hot path — more churn, not less. Assign null and keep the one shape." },
+  ]}
+/>
+
+<Quiz
+  id="q-array-kind"
+  lessonSlug="02-monomorphism-discipline"
+  lang="en"
+  question="A hot numeric array starts as PACKED_SMI. Which single operation degrades it the most durably?"
+  choices={[
+    { label: "Pushing a fractional value like 1.5 (widens to PACKED_DOUBLE) or an object (widens to PACKED_ELEMENTS)", correct: true },
+    { label: "Reading arr[0] a million times", misconception: "Reads never change element kind. Only writes that introduce a wider type or a hole transition the array." },
+    { label: "Calling arr.length", misconception: "Reading length is free and does not affect element kind." },
+    { label: "Iterating with for...of", misconception: "Iteration reads elements; it does not widen the kind. Element kind only widens on writes of a wider type or on hole creation." },
+  ]}
+/>
+
+<DragOrder
+  id="do-divergence-severity"
+  pieceSlug="02-monomorphism-discipline"
+  lang="en"
+  prompt="Order these object habits from most monomorphism-friendly to most destructive."
+  items={[
+    "Object literal with all fields in a fixed order",
+    "Class constructor that assigns every field unconditionally",
+    "Adding some fields conditionally after creation",
+    "delete on a property (forces permanent dictionary mode)",
+  ]}
+/>
+
+<Inset kind="practice" lang="en">
+A practical audit: take one hot factory or constructor and run a build of it under `--trace-ic` (or model it like the sandbox in this unit — count distinct `Object.keys` signatures). If a fixed-schema input yields more than one shape signature, a conditional or late field is leaking a second hidden class. Fix it by initialising every field unconditionally, then re-trace and confirm the access site reports monomorphic.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Monomorphism is one discipline: build objects with all fields in a fixed order (never delete — assign null), keep each array a single element kind, feed hot functions consistently-shaped arguments, keep numbers in Smi range or go typed, and keep dispatch to a few stable callees. Each rule keeps a specific V8 speculation from breaking.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="monomorphism-discipline-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does initialising every field unconditionally (even to null) beat adding fields conditionally?", a: "V8 represents each object as a pointer to a hidden class plus property slots, and the hidden class encodes the exact set and ORDER of fields. Conditional or late field additions send different instances down different branches of the transition tree, producing several distinct hidden classes for what is logically the same record. A hot access site then sees multiple shapes and degrades from monomorphic to polymorphic to megamorphic, where every access falls back to the generic hashtable lookup (10-50x slower). Initialising all fields in one fixed order — in a class constructor or an object literal — makes every instance share one leaf hidden class, so the IC stays monomorphic and TurboFan can bake the property offset into the compiled code. The few null slots are free compared to the megamorphic cost they prevent." },
+    { q: "Walk through the element-kind ladder and the habits that keep an array fast.", a: "Element kinds widen one-way: PACKED_SMI_ELEMENTS (small ints, no holes — fastest) → PACKED_DOUBLE_ELEMENTS → PACKED_ELEMENTS (any type/objects) → the HOLEY_* variants, which add a hole-check on every access. Once widened you cannot narrow back. To stay on the fast kind: create with [] and grow via push (never new Array(n) or assigning past length, both of which create HOLEY); use Array.from({length}, fn) for a sized PACKED array; do not mix Smi, double and object in one hot array (a single 1.5 or object widens it forever); and for numeric-heavy work use a typed array (Float64Array/Int32Array) which bypasses element-kind tracking entirely. The speed gap between PACKED_SMI and a HOLEY mixed array on a tight loop is 2-3x or more." },
+    { q: "What makes a call site megamorphic, and how do you keep dispatch stable?", a: "An inline cache at a call or property-access site records the shapes/functions it sees. Up to one it is monomorphic, up to four polymorphic, and at five or more distinct entries it goes megamorphic — V8 gives up on the per-site cache and uses a global generic stub, losing inlining and specialisation. On hot paths this happens when a function is called with many object shapes, or a dispatch site calls dozens of different functions (a fat switch, a method called across many subclasses). Keep dispatch stable by normalising inputs to one shape before the hot loop, splitting a polymorphic function into shape-specific variants, and keeping a small fixed set of callees (a prebuilt Map of handlers rather than closures rebuilt per call). The goal is that each hot site sees one shape and one (or few) callees." },
+  ]}
+/>
+
+<Recap lang="en">
+Monomorphism discipline is the inverse of every failure in this track: instead of surprising V8's speculative optimiser, you keep its bets winning. Six rules, each tied to a mechanism. Construct objects with all fields in a fixed order via a class or factory so every instance shares one hidden class (the fix for absent data is `null`, not omission). Never `delete` — it forces permanent dictionary mode; assign `null`. Keep each hot array a single element kind (prefer `[]` + `push` and `Array.from` over `new Array(n)`; never mix Smi/double/object or create holes). Feed hot functions consistently-shaped arguments so their ICs stay monomorphic. Keep numeric values inside the Smi range, or commit to doubles via a typed array, to avoid HeapNumber deopts. And keep dispatch to a small stable set of callees so call sites do not go megamorphic. None of these is a micro-trick; together they are how you write JavaScript that stays on the fast path by default.
+</Recap>
