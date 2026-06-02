@@ -4,10 +4,161 @@ lang: en
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 4
-title: "DISTINCT and set operations"
-summary: "DISTINCT and set operations — stub; author to ready."
-estMin: 12
-status: stub
+title: "DISTINCT, DISTINCT ON, and set operations"
+summary: "DISTINCT and UNION dedup by sorting or hashing the whole result — real cost. UNION ALL skips it. And DISTINCT ON is Postgres's idiomatic 'latest row per group'."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - distinct
+  - distinct-on
+  - union-vs-union-all
+  - intersect-except
+  - set-op-rules
+prereqs:
+  - 03-null-and-three-valued-logic
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://www.postgresql.org/docs/current/queries-union.html
+  - https://www.postgresql.org/docs/current/sql-select.html#SQL-DISTINCT
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A reporting endpoint stitched together "active users this week" from two tables with `UNION`. It was fine in staging. In production it ran for 11 seconds and pinned a CPU, because `UNION` silently sorted 9 million combined rows just to remove duplicates that couldn't exist — the two sources were already disjoint. Switching one keyword to `UNION ALL` dropped it to 600 ms. The lesson: deduplication is never free, and most of the time you're paying for it without needing it.
+</Hook>
+
+<Crux>UNION and DISTINCT dedup by sorting or hashing the whole result — real CPU. UNION ALL skips that; use it whenever rows can't collide.</Crux>
+
+<Explanation>
+
+## DISTINCT removes duplicate rows — by sorting or hashing
+
+`SELECT DISTINCT` collapses identical output rows into one. "Identical" means *all* selected columns match. The mechanism matters: to find duplicates, Postgres must either **sort** the result (then adjacent equal rows are obvious) or build a **hash** of every row. Both are O(n) work over the full result set, plus memory; if the set is larger than `work_mem`, the sort or hash **spills to disk**, which is where the latency cliffs come from.
+
+```sql
+-- one row per distinct (country, plan) pair seen in users
+SELECT DISTINCT country, plan FROM users;
+```
+
+So `DISTINCT` is not a free "clean up" — it's a sort-or-hash over everything you selected. If you're reaching for it to paper over duplicate rows that a missing join condition produced, fix the join instead; `DISTINCT` hides the bug and adds cost.
+
+## DISTINCT ON: Postgres's "latest row per group"
+
+A Postgres-specific extension solves a question plain SQL handles clumsily: "give me one whole row per group — specifically the *latest* one." `DISTINCT ON (expr)` keeps the **first** row for each distinct value of `expr`, and "first" is decided by `ORDER BY`. The rule that trips everyone: the **`ORDER BY` must start with the same expression(s) as `DISTINCT ON`**, then add the tiebreaker that picks which row wins.
+
+```sql
+-- latest order per user: one row each, the most recent by created_at
+SELECT DISTINCT ON (user_id) user_id, id, total, created_at
+FROM orders
+ORDER BY user_id, created_at DESC;   -- user_id first (required), then newest wins
+```
+
+This is dramatically cleaner than the portable alternatives (a correlated subquery, or a window-function `ROW_NUMBER()` filtered to `= 1`, which you'll meet in the window-functions unit). For "newest/best row per key", `DISTINCT ON` is the idiomatic Postgres tool.
+
+## UNION vs UNION ALL: the dedup tax
+
+Set operators stack two result sets vertically. The pivotal distinction:
+
+- **UNION** combines both sides **and removes duplicate rows** — which means it sorts or hashes the entire combined result, exactly like `DISTINCT`.
+- **UNION ALL** combines both sides and **keeps everything**, including duplicates. No dedup step, no sort, no hash — it just concatenates the streams.
+
+<SequenceDiagram
+  label="UNION sorts or hashes the entire combined result to remove duplicates, an O(n log n) step that can spill to disk. UNION ALL skips deduplication entirely and concatenates the two streams, so it is strictly cheaper when the inputs cannot collide."
+  hue="var(--d-data)"
+  actors={["Query A", "Set op", "Result"]}
+  messages={[
+    { from: "Query A", to: "Set op", label: "rows A" },
+    { from: "Query A", to: "Set op", label: "rows B" },
+    { from: "Set op", to: "Set op", label: "UNION: sort/hash + dedup" },
+    { from: "Set op", to: "Result", label: "deduped rows" },
+    { from: "Set op", to: "Result", label: "UNION ALL: just concat" },
+  ]}
+  caption="UNION ALL hands the concatenated rows straight through. UNION inserts a sort-or-hash dedup pass over the whole combined set first — the same cost model as DISTINCT, and the same disk-spill risk past work_mem."
+/>
+
+The production rule: **default to `UNION ALL`; use `UNION` only when duplicates are actually possible and you actually want them removed.** When the two inputs are disjoint by construction (different statuses, different date ranges, different tables that can't share a row), `UNION` is pure wasted sorting. The opening incident was precisely this — disjoint sources, a needless dedup of 9 million rows.
+
+## INTERSECT, EXCEPT, and the column rules
+
+Two more set operators, both of which also dedup by default:
+
+- **INTERSECT** returns rows present in *both* sides.
+- **EXCEPT** returns rows in the first side that are *not* in the second (set difference; other dialects call it `MINUS`).
+
+All set operators share strict structural rules: each side must have the **same number of columns**, and corresponding columns must have **compatible types**. The output column names come from the **first** query; the others are ignored for naming. And one NULL nuance that ties back to the previous lesson — for set-operator deduplication, two `NULL`s are treated as **equal** (so `UNION` collapses duplicate NULL rows), which is the opposite of how `=` treats them. That's an intentional special case for grouping/dedup contexts.
+
+<Inset kind="why" lang="en">
+Why does `UNION` dedup but `JOIN` doesn't? Because they answer different questions. A `JOIN` matches rows *across* tables by a condition and can legitimately multiply rows (one order, many items). Set operators stack rows that already share the same shape and ask "what's the combined *set*?" — and a set, by definition, has no duplicates, so `UNION`/`INTERSECT`/`EXCEPT` enforce set semantics with a dedup pass. `UNION ALL` is the escape hatch that says "I want a bag (multiset), not a set — skip the dedup." Choosing it is asserting you don't need set semantics, which is usually true and almost always faster.
+</Inset>
+
+<DragOrder
+  id="04-distinct-and-set-ops-drag-1"
+  lessonSlug="04-distinct-and-set-ops"
+  lang="en"
+  prompt="Order the steps to write a correct 'latest row per user' query with DISTINCT ON:"
+  items={[
+    { id: "a", label: "Decide the group key — the column you want one row per (user_id)" },
+    { id: "b", label: "Write DISTINCT ON (user_id) and list the columns you need" },
+    { id: "c", label: "Start ORDER BY with the same key: ORDER BY user_id" },
+    { id: "d", label: "Append the tiebreaker that picks the winning row: , created_at DESC" },
+    { id: "e", label: "Verify exactly one row per user_id comes back, newest first" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Quiz
+  id="04-distinct-and-set-ops-quiz-1"
+  lessonSlug="04-distinct-and-set-ops"
+  lang="en"
+  question="Two SELECTs are known to produce disjoint rows (no value can appear in both). Which combiner is correct and fastest?"
+  choices={[
+    { label: "UNION ALL — it skips deduplication entirely; with disjoint inputs there are no duplicates to remove anyway", correct: true },
+    { label: "UNION — to be safe in case duplicates appear", misconception: "If the inputs are disjoint, UNION's sort/hash dedup pass finds nothing to remove — it's pure wasted CPU. Use UNION ALL." },
+    { label: "INTERSECT — it merges the two sets", misconception: "INTERSECT returns only rows in BOTH sides; for disjoint inputs that's the empty set, not the combination." },
+    { label: "JOIN — to combine the rows", misconception: "JOIN matches rows across tables by a condition; it does not stack two result sets vertically the way a set operator does." },
+  ]}
+/>
+
+<Quiz
+  id="04-distinct-and-set-ops-quiz-2"
+  lessonSlug="04-distinct-and-set-ops"
+  lang="en"
+  question="What does DISTINCT ON (user_id) ... ORDER BY user_id, created_at DESC return?"
+  choices={[
+    { label: "One row per user_id — the row with the newest created_at, because ORDER BY decides which row 'wins'", correct: true },
+    { label: "All rows, just sorted by user_id then created_at", misconception: "DISTINCT ON keeps only the first row per user_id group; it does not return all rows." },
+    { label: "An error — DISTINCT ON can't be combined with ORDER BY", misconception: "DISTINCT ON REQUIRES the leading ORDER BY expressions to match; the ORDER BY is how it picks the kept row." },
+    { label: "One arbitrary row per user_id, ignoring created_at", misconception: "It's not arbitrary: the ORDER BY tiebreaker (created_at DESC) deterministically selects the newest row per group." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>`DISTINCT` and `UNION`/`INTERSECT`/`EXCEPT` deduplicate by sorting or hashing the whole result — O(n) work that can spill past `work_mem`. Default to `UNION ALL` and only pay for `UNION` when duplicates can actually occur. Use `DISTINCT ON (key)` with a matching `ORDER BY key, tiebreaker` as Postgres's idiomatic "one (latest) row per group". Set operators need matching column counts and compatible types, and treat two NULLs as equal for dedup.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-distinct-and-set-ops-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is UNION more expensive than UNION ALL, and when should each be used?", a: "UNION removes duplicate rows from the combined result, which forces Postgres to sort or hash the entire set (O(n log n) or O(n) plus memory, with a disk spill if it exceeds work_mem). UNION ALL skips that step and just concatenates the inputs. Default to UNION ALL; only use UNION when duplicate rows can genuinely occur across the two inputs and you want them removed. For disjoint inputs, UNION is pure wasted sorting." },
+    { q: "How does DISTINCT ON pick which row to keep, and what's the ORDER BY rule?", a: "DISTINCT ON (expr) keeps the first row encountered for each distinct value of expr, and 'first' is determined by the ORDER BY. The rule is that ORDER BY must begin with the same expression(s) as DISTINCT ON, followed by a tiebreaker that decides which row wins (e.g. ORDER BY user_id, created_at DESC keeps the newest order per user). It's the idiomatic Postgres 'latest/best row per group'." },
+    { q: "State the structural rules for set operators and the NULL nuance.", a: "Every branch of a UNION/INTERSECT/EXCEPT must have the same number of columns with pairwise-compatible types; the result column names come from the first query. By default all three deduplicate (add ALL to skip it, where supported). For dedup purposes, two NULLs are treated as equal — the opposite of NULL = NULL being UNKNOWN — so duplicate NULL rows collapse under UNION/DISTINCT." },
+  ]}
+/>
+
+<Recap lang="en">
+Deduplication is the through-line. `SELECT DISTINCT` collapses identical rows by sorting or hashing the entire result — real CPU and memory, with a disk spill once it passes `work_mem` — so it's not a free cleanup, and using it to mask join-induced duplicates hides a bug. The set operators `UNION`, `INTERSECT`, and `EXCEPT` all dedup the same way; the senior reflex is to default to `UNION ALL` (a plain concatenation, no dedup pass) and reserve `UNION` for the cases where duplicates can actually occur and you want them gone — switching a needless `UNION` to `UNION ALL` can turn an 11-second query into a 600-millisecond one. For "one row per group, specifically the latest", `DISTINCT ON (key)` paired with `ORDER BY key, tiebreaker` is the idiomatic Postgres answer, cleaner than a correlated subquery and a precursor to the window-function patterns in unit 04. Set operators require matching column counts and compatible types, take their names from the first branch, and — uniquely — treat two `NULL`s as equal when deduplicating. Next we close the unit with sorting and pagination, where these dedup costs reappear and where `OFFSET` hides a scaling trap.
+</Recap>

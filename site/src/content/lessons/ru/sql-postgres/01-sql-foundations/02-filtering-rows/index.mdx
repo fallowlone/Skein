@@ -4,10 +4,174 @@ lang: ru
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 2
-title: "Filtering rows with WHERE"
-summary: "Filtering rows with WHERE — stub; author to ready."
-estMin: 12
-status: stub
+title: "Фильтрация строк: WHERE, приоритет операторов и sargability"
+summary: "WHERE решает, какие строки выживут — и, незаметно, сможет ли планировщик использовать индекс. Обёртка колонки в функцию или ведущий wildcard убивают индекс и превращают поиск за 2 мс в полный скан."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - where-predicates
+  - operator-precedence
+  - sargability
+  - like-anchoring
+  - parameterized-queries
+prereqs:
+  - 01-select-mental-model
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/functions-matching.html
+  - https://use-the-index-luke.com/sql/where-clause
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Два запроса для ревьюера выглядят одинаково. `WHERE email = 'a@b.com'` бежит за 2 мс на 20 миллионах пользователей. `WHERE lower(email) = 'a@b.com'` бежит 1.9 секунды на той же таблице — регрессия в 900×, прячущаяся за одним безобидным вызовом функции. Схема в порядке, индекс есть, данные те же. Разница в том, *sargable* ли предикат: устроен ли он так, что планировщик реально может использовать индекс. `WHERE` — не просто фильтр; это контракт, решающий, какие планы вообще доступны.
+</Hook>
+
+<Crux>Предикат WHERE, оборачивающий колонку в функцию или ведущий с wildcard, не sargable — индекс не использовать, и ты получаешь полный скан.</Crux>
+
+<Explanation>
+
+## Приоритет: AND связывает крепче, чем OR
+
+`WHERE` вычисляет булево выражение на строку. Ловушка — в приоритете: `AND` связывает крепче, чем `OR`, ровно как `*` крепче `+`. Поэтому это:
+
+```sql
+SELECT * FROM orders
+WHERE status = 'paid' OR status = 'shipped' AND total > 100;
+```
+
+**не** значит «(paid или shipped) и total больше 100». Это значит `status = 'paid' OR (status = 'shipped' AND total > 100)` — каждый оплаченный заказ возвращается независимо от total, чего почти никогда не имели в виду. Фикс механический и неоспоримый на ревью: **скобки на любой смешанный AND/OR**.
+
+```sql
+SELECT * FROM orders
+WHERE (status = 'paid' OR status = 'shipped') AND total > 100;
+```
+
+`NOT` связывает крепче всех троих. Когда мешаешь все три, безопасная привычка: никогда не доверяй приоритету, всегда группируй скобками. Баг приоритета не падает с ошибкой — он молча возвращает неверные строки, а это худший вид багов.
+
+## Удобные предикаты: BETWEEN, IN, LIKE/ILIKE
+
+- **BETWEEN a AND b** включает оба конца: `total BETWEEN 100 AND 200` — это `total >= 100 AND total <= 200`. Классическая ошибка — `BETWEEN` на timestamp: `created_at BETWEEN '2026-01-01' AND '2026-01-31'` исключает почти весь 31 января, потому что верхняя граница — полночь. Для диапазонов времени предпочитай полуоткрытый интервал: `created_at >= '2026-01-01' AND created_at < '2026-02-01'`.
+- **IN (…)** — аккуратная цепочка `OR`: `status IN ('paid','shipped')`. (`IN` с подзапросом и `NULL` имеет знаменитую ловушку — это следующий урок.)
+- **LIKE** делает сопоставление по шаблону: `%` = любая последовательность символов, `_` = один символ. **ILIKE** — версия без учёта регистра (расширение Postgres).
+
+```sql
+-- users(id, email, display_name, created_at)
+SELECT id, email FROM users
+WHERE email LIKE 'support@%'              -- закреплённый префикс: дружелюбен к индексу
+  AND created_at >= '2026-01-01'
+  AND created_at <  '2026-02-01';         -- полуоткрытый диапазон, без ловушки BETWEEN
+```
+
+## Sargability: слово, объясняющее зазор в 900×
+
+Предикат **sargable** (Search-ARGument-able), если планировщик может использовать его для работы с индексом вместо скана каждой строки. Правило большого пальца: **индексируемая колонка должна стоять голой с одной стороны, сравниваясь с константой.** Как только ты оборачиваешь колонку в функцию или преобразуешь её, B-tree — отсортированный по *сырым* значениям колонки — становится бесполезен, потому что индекс понятия не имеет, как сортируется `lower(email)`.
+
+<FlowDiagram
+  label="Sargable против не-sargable предикатов. Голая индексируемая колонка, сравниваемая с константой, позволяет планировщику сделать index scan. Обёртка колонки в функцию или LIKE с ведущим wildcard заставляют sequential scan по каждой строке."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "p1", label: "email = $1", sub: "sargable" },
+    { id: "p2", label: "email LIKE 'abc%'", sub: "sargable" },
+    { id: "p3", label: "email LIKE '%abc'", sub: "не sargable" },
+    { id: "p4", label: "lower(email)=$1", sub: "не sargable" },
+    { id: "idx", label: "B-tree на email", sub: "сорт по сырому" },
+    { id: "seq", label: "Seq Scan", sub: "каждая строка" },
+  ]}
+  edges={[
+    { from: "p1", to: "idx", label: "юзает" },
+    { from: "p2", to: "idx", label: "юзает" },
+    { from: "p3", to: "seq", label: "форсит" },
+    { from: "p4", to: "seq", label: "форсит" },
+  ]}
+  caption="B-tree отсортирован по сырому значению колонки. Сравни голую колонку с константой — и планировщик обойдёт дерево (O(log n)). Оберни в lower() или начни LIKE с ведущего % — порядок сортировки больше не совпадает с запросом, полный скан."
+/>
+
+Два не-sargable паттерна доминируют в продакшен-инцидентах:
+
+1. **Функция на колонке.** `WHERE lower(email) = 'a@b.com'` не может использовать индекс на `email`, потому что индекс хранит `email`, а не `lower(email)`. Фикс — **выражательный индекс (expression index)**, индексирующий ровно то, что ты запрашиваешь: `CREATE INDEX ON users (lower(email));`. Теперь `lower(email) = …` снова sargable. (Внутренности индексов — B-tree, правило ведущей колонки, выражательные индексы — глубоко преподаёт глава indexes трека `databases`; здесь нужно лишь следствие формы предиката.)
+2. **Ведущий wildcard в LIKE.** `WHERE email LIKE 'abc%'` sargable — префикс `abc` закрепляет непрерывный диапазон в отсортированном B-tree, и Postgres идёт прямо к нему. `WHERE email LIKE '%abc'` — **нет**: нет фиксированного префикса для поиска, так что каждое значение нужно проверить. Поиск с ведущим wildcard на масштабе требует другого инструмента (trigram GIN-индекс или full-text search), а не B-tree.
+
+<Inset kind="mistake" lang="ru">
+Самая коварная не-sargable форма — *неявная* функция. `WHERE created_at::date = '2026-01-15'` кастует колонку на каждой строке, так что индекс на `created_at` обходится стороной. Перепиши как sargable диапазон: `created_at >= '2026-01-15' AND created_at < '2026-01-16'`. Та же логика, но теперь голая колонка сравнивается с константами, и индекс ведёт скан. Всегда подозревай, когда в `WHERE` вокруг колонки что-то навёрнуто.
+</Inset>
+
+## Параметризуй — ради безопасности И ради переиспользования плана
+
+Никогда не собирай значение `WHERE` склейкой пользовательского ввода. `WHERE email = '" + input + "'` — учебниковая дыра SQL-инъекции: ввод `' OR '1'='1` превращает твой фильтр в тавтологию, возвращающую всю таблицу. Фикс — **параметризованные запросы** (bind-параметры / prepared statements): значение едет отдельно от текста SQL, поэтому никогда не может изменить структуру запроса.
+
+```sql
+-- Параметризовано: плейсхолдер $1 привязывается к значению драйвером,
+-- никогда не интерполируется в SQL-строку. Инъекция становится невозможной.
+SELECT id, email FROM users WHERE email = $1;
+```
+
+Параметризация также позволяет Postgres кешировать и переиспользовать распарсенный/спланированный оператор между вызовами, убирая накладные расходы parse и plan на горячих путях. Безопасность и производительность указывают в одну сторону: привязывай, не склеивай.
+
+<Quiz
+  id="02-filtering-rows-quiz-1"
+  lessonSlug="02-filtering-rows"
+  lang="ru"
+  question={"WHERE status = 'paid' OR status = 'shipped' AND total > 100 — какие строки вернутся?"}
+  choices={[
+    { label: "Все 'paid' строки (любой total) плюс 'shipped' строки с total > 100 — AND связывает крепче OR", correct: true },
+    { label: "Только 'paid' или 'shipped' строки, у которых также total > 100", misconception: "Это требует скобок: (status = 'paid' OR status = 'shipped') AND total > 100. Без них AND связывает крепче и ограничивает только ветку 'shipped'." },
+    { label: "Ничего — смешивать AND и OR это синтаксическая ошибка", misconception: "Это валидный SQL; опасность в том, что он разбирается не в то, что ты имел в виду, молча возвращая неверные строки." },
+    { label: "Все строки с total > 100 независимо от status", misconception: "Условие total > 100 применяется только к ветке 'shipped' из-за приоритета, а не к каждой строке." },
+  ]}
+/>
+
+<Quiz
+  id="02-filtering-rows-quiz-2"
+  lessonSlug="02-filtering-rows"
+  lang="ru"
+  question="Есть B-tree индекс на users(email). Какой предикат может использовать его для index scan?"
+  choices={[
+    { label: "email LIKE 'support@%' — фиксированный префикс закрепляет непрерывный диапазон в отсортированном индексе", correct: true },
+    { label: "lower(email) = 'a@b.com'", misconception: "Обёртка колонки в lower() делает её не-sargable; индекс хранит email, а не lower(email). Нужен выражательный индекс на lower(email)." },
+    { label: "email LIKE '%@gmail.com'", misconception: "У ведущего wildcard нет фиксированного префикса для поиска, так что B-tree не использовать — это полный скан. Trigram/full-text индексы решают этот случай." },
+    { label: "email::text || 'x' = 'a@b.comx'", misconception: "Склейка к колонке преобразует её, так что индекс по сырому значению не совпадёт — не sargable." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-filtering-rows-metaphor-1"
+  lessonSlug="02-filtering-rows"
+  lang="ru"
+  setup="Заполни пропуск: предикат, которым планировщик может вести индекс — голая колонка, сравниваемая с константой — называется _______. Обёртка колонки в функцию разрушает это свойство."
+  accepted={["sargable", "sargability", "саргабельный", "sarg-able"]}
+  canonical="sargable"
+  explanation="Sargable = Search-ARGument-able: предикат устроен так, что порядок сортировки индекса совпадает со сравнением, позволяя Postgres искать (seek), а не сканировать. lower(col)=x, col::date=x и LIKE '%x' все ломают sargability, потому что индекс отсортирован по сырому значению колонки, а не по преобразованному."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`WHERE` фильтрует строки, но его *форма* решает, сможет ли планировщик использовать индекс. Ставь скобки на смешанный `AND`/`OR` (AND крепче). Держи индексируемую колонку голой и сравниваемой с константой, чтобы остаться **sargable** — обёртка в `lower()`, каст или ведущий `%` в `LIKE` форсят полный скан (фикс — выражательный индекс или trigram/FTS). Всегда параметризуй значения: это блокирует SQL-инъекцию и включает переиспользование плана.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-filtering-rows-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что значит 'sargable' и какое однострочное правило держит предикат sargable?", a: "Sargable (Search-ARGument-able) значит, что предикат устроен так, что планировщик может использовать индекс для seek, а не scan. Правило: держи индексируемую колонку голой с одной стороны, сравниваемой с константой. Как только оборачиваешь колонку в функцию (lower(col), col::date) или ведёшь LIKE с wildcard (LIKE '%x'), порядок сортировки B-tree больше не совпадает со сравнением, и ты откатываешься к sequential scan." },
+    { q: "Почему WHERE lower(email) = 'a@b.com' игнорирует индекс на email и как это починить?", a: "B-tree на email отсортирован по сырому значению email, но предикат сравнивает lower(email), о котором индекс ничего не знает — поэтому он не может искать и делает полный скан. Фикс: создай выражательный индекс ровно на том, что запрашиваешь, CREATE INDEX ON users (lower(email)); тогда предикат снова станет sargable." },
+    { q: "Дай приоритет NOT, AND, OR и практическое правило их смешивания.", a: "NOT связывает крепче всех, затем AND, затем OR (слабее всех) — как NOT ~ унарный минус, AND ~ умножение, OR ~ сложение. Практическое правило: никогда не полагайся на приоритет при смешивании AND и OR; всегда ставь скобки на нужную группировку, например (a OR b) AND c. Ошибка приоритета не падает, она молча возвращает неверные строки." },
+  ]}
+/>
+
+<Recap lang="ru">
+`WHERE` — это стадия отбора из прошлого урока, и она делает две работы сразу: решает, какие строки выживут, и — через свою *форму* — решает, какие планы планировщик может выбрать. Ставь скобки на любой смешанный `AND`/`OR`, потому что `AND` связывает крепче `OR`, и промах приоритета молча возвращает неверные строки. Используй `BETWEEN`/`IN`/`LIKE`/`ILIKE` ради читаемости, но бери полуоткрытые диапазоны (`>= … < …`) на timestamp, чтобы обойти баг включающей границы `BETWEEN`. Сеньорская идея — **sargability**: держи индексируемую колонку голой и сравниваемой с константой, чтобы B-tree вёл скан; обёртка в `lower()`, каст или ведущий `%` в `LIKE` делают предикат не-sargable и форсят полный скан — чинится выражательным индексом или trigram/full-text индексом (глава indexes трека `databases` копает глубоко). Наконец, всегда параметризуй: привязывай значения вместо склейки, что закрывает дверь SQL-инъекции и даёт Postgres переиспользовать план. Дальше мы возьмём значение, ломающее всю эту интуицию: `NULL`.
+</Recap>

@@ -4,10 +4,195 @@ lang: en
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 1
-title: "The SELECT mental model"
-summary: "The SELECT mental model — stub; author to ready."
-estMin: 12
-status: stub
+title: "The SELECT mental model: logical processing order"
+summary: "You write SELECT … FROM … WHERE …, but Postgres evaluates FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY. That gap explains why an alias works in ORDER BY but not WHERE."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - logical-query-processing
+  - projection-vs-selection
+  - select-alias-scope
+  - clause-evaluation-order
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries.html
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A teammate writes `SELECT price * qty AS revenue FROM orders WHERE revenue > 100;` and gets `ERROR: column "revenue" does not exist`. They swear the alias is right there on the same line. Then they move the exact same `revenue` into `ORDER BY revenue` and it works. Same word, same query, two opposite outcomes. That contradiction is not a Postgres quirk — it's the single most important thing to internalize about how `SELECT` actually evaluates.
+</Hook>
+
+<Crux>You write SELECT first, but it runs almost last: FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT.</Crux>
+
+<Explanation>
+
+## The order you write is not the order it runs
+
+A `SELECT` statement is written in one order and evaluated in a completely different one. The written order is fixed by the grammar — `SELECT` always comes first. But the **logical processing order** (the order the SQL standard says the clauses are conceptually evaluated) puts `SELECT` near the end:
+
+1. **FROM** (and JOINs) — build the working set of rows from the source tables.
+2. **WHERE** — keep only rows where the predicate is `TRUE` (this is *selection*).
+3. **GROUP BY** — collapse the surviving rows into groups.
+4. **HAVING** — keep only groups where the predicate is `TRUE`.
+5. **SELECT** — evaluate the output expressions and assign aliases (this is *projection*).
+6. **DISTINCT** — drop duplicate output rows.
+7. **ORDER BY** — sort the result.
+8. **LIMIT / OFFSET** — slice the sorted result.
+
+<FlowDiagram
+  label="Logical query processing order: FROM builds the rows, WHERE filters them, GROUP BY and HAVING aggregate and filter groups, SELECT projects and names columns, ORDER BY sorts, LIMIT slices. SELECT runs near the end even though you write it first."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "from", label: "FROM", sub: "build rows" },
+    { id: "where", label: "WHERE", sub: "filter rows" },
+    { id: "group", label: "GROUP BY", sub: "make groups" },
+    { id: "having", label: "HAVING", sub: "filter groups" },
+    { id: "select", label: "SELECT", sub: "project + alias" },
+    { id: "distinct", label: "DISTINCT", sub: "dedup" },
+    { id: "order", label: "ORDER BY", sub: "sort" },
+    { id: "limit", label: "LIMIT", sub: "slice" },
+  ]}
+  edges={[
+    { from: "from", to: "where" },
+    { from: "where", to: "group" },
+    { from: "group", to: "having" },
+    { from: "having", to: "select" },
+    { from: "select", to: "distinct" },
+    { from: "distinct", to: "order" },
+    { from: "order", to: "limit" },
+  ]}
+  caption="This is the logical model, not the physical plan — the planner may reorder or fuse steps for speed (see the databases execution-plans chapter). But the visibility rules below follow this order exactly."
+/>
+
+This is a *logical* model: the executor doesn't literally materialize a full set after each step (it streams and the planner reorders for speed — that's the previous lesson's pipeline and the `databases` track's execution-plans chapter). But the **name-resolution rules you can observe** follow this order precisely, and that's what bites people.
+
+## Projection vs selection: two different jobs
+
+Two words from relational algebra clear up most confusion:
+
+- **Selection** = choosing *rows*. That's `WHERE` (and `HAVING` for groups). It answers "which rows survive?"
+- **Projection** = choosing and computing *columns*. That's `SELECT`. It answers "what does each output row look like?"
+
+They're separate stages. `WHERE` runs in step 2 on the raw table columns; `SELECT` runs in step 5 and is the *only* place where output column aliases come into existence.
+
+```sql
+-- orders(id, user_id, price, qty, status, created_at)
+SELECT
+  user_id,
+  price * qty AS revenue          -- 'revenue' is born HERE, in step 5
+FROM orders                       -- step 1
+WHERE status = 'paid'             -- step 2: 'revenue' does not exist yet
+ORDER BY revenue DESC             -- step 7: 'revenue' already exists
+LIMIT 20;                         -- step 8
+```
+
+## Why the alias works in ORDER BY but not WHERE
+
+Now the opening contradiction dissolves. `WHERE` is step 2; the `SELECT` alias `revenue` isn't created until step 5. So referencing it in `WHERE` is a time-travel error — you're naming something that doesn't exist yet. Postgres rejects it with `column "revenue" does not exist`.
+
+`ORDER BY` is step 7 — *after* `SELECT`. By then the alias exists, so `ORDER BY revenue` resolves cleanly. `ORDER BY` is the one clause that can see `SELECT` output names, precisely because it runs after projection.
+
+The fix for the `WHERE` case is to repeat the expression (the engine evaluates it once anyway under a good plan), or wrap the query in a subquery / CTE so the alias materializes in an inner step:
+
+```sql
+-- Option A: repeat the expression in WHERE (it refers to base columns, always legal)
+SELECT user_id, price * qty AS revenue
+FROM orders
+WHERE status = 'paid' AND price * qty > 100;
+
+-- Option B: name it once in an inner query, filter in the outer (alias now visible)
+SELECT * FROM (
+  SELECT user_id, price * qty AS revenue
+  FROM orders WHERE status = 'paid'
+) s
+WHERE s.revenue > 100;
+```
+
+<Inset kind="edgecase" lang="en">
+`GROUP BY` is the in-between case. The SQL standard says `GROUP BY` (step 3) runs before `SELECT` (step 5), so by the standard a `SELECT` alias shouldn't be visible there. Postgres relaxes this as a convenience: `GROUP BY` *can* see a `SELECT` alias (`GROUP BY revenue`), and so can `HAVING`. But `WHERE` never can — it's strictly before grouping. Don't rely on the `GROUP BY`-alias extension in portable SQL; other engines reject it.
+</Inset>
+
+## Column vs expression output, and one production trap
+
+Every item in the `SELECT` list is either a bare column (`user_id`) or a computed expression (`price * qty`, `lower(email)`, `count(*)`). A bare column with no alias keeps its name; an expression with no alias gets an ugly auto-name like `?column?`. Always alias expressions — downstream code, BI tools, and `ORDER BY` all key off that name.
+
+The production trap that follows directly from the processing order: **putting heavy logic in `SELECT` doesn't reduce the rows scanned.** `WHERE` ran first. If your `SELECT` calls an expensive function per row but the `WHERE` is non-selective, you still pay that function for every surviving row. Filtering is the lever for *how many rows*; projection only shapes *what each row shows*. A team once moved a slow regex into `SELECT` thinking it would "run less" — it ran on all 4 million surviving rows exactly as before, because the `WHERE` hadn't changed. Selectivity lives in `WHERE`, not `SELECT`.
+
+<DragOrder
+  id="01-select-mental-model-drag-1"
+  lessonSlug="01-select-mental-model"
+  lang="en"
+  prompt="Order these clauses by their LOGICAL evaluation order (not the order you type them):"
+  items={[
+    { id: "a", label: "FROM — build the row set from source tables" },
+    { id: "b", label: "WHERE — keep rows where the predicate is TRUE" },
+    { id: "c", label: "GROUP BY — collapse rows into groups" },
+    { id: "d", label: "HAVING — keep groups where the predicate is TRUE" },
+    { id: "e", label: "SELECT — compute output columns and assign aliases" },
+    { id: "f", label: "ORDER BY — sort the projected result" },
+    { id: "g", label: "LIMIT — slice the sorted result" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+<Quiz
+  id="01-select-mental-model-quiz-1"
+  lessonSlug="01-select-mental-model"
+  lang="en"
+  question={"Why does SELECT price*qty AS revenue ... WHERE revenue > 100 fail, but ORDER BY revenue works in the same query?"}
+  choices={[
+    { label: "WHERE (step 2) runs before SELECT (step 5) creates the alias, so 'revenue' doesn't exist yet; ORDER BY (step 7) runs after SELECT, so the alias is visible", correct: true },
+    { label: "Aliases only work with aggregate functions, and price*qty isn't an aggregate", misconception: "Aliasing has nothing to do with aggregation; the issue is the clause's position in the logical processing order relative to SELECT." },
+    { label: "WHERE requires fully-qualified names like orders.revenue", misconception: "Qualifying wouldn't help — the alias simply does not exist at WHERE time; it is created in the later SELECT step." },
+    { label: "It's a Postgres bug; the SQL standard allows aliases in WHERE", misconception: "The standard explicitly forbids SELECT aliases in WHERE because WHERE is logically evaluated before the SELECT projection." },
+  ]}
+/>
+
+<Quiz
+  id="01-select-mental-model-quiz-2"
+  lessonSlug="01-select-mental-model"
+  lang="en"
+  question="A query is slow. Moving an expensive per-row function call from WHERE into the SELECT list will…"
+  choices={[
+    { label: "Not reduce work — WHERE runs first, so the function still executes for every surviving row; selectivity must come from WHERE", correct: true },
+    { label: "Make it faster because SELECT runs on fewer rows than WHERE", misconception: "SELECT runs AFTER WHERE on the rows that already survived filtering — it never runs on fewer rows than WHERE." },
+    { label: "Make it faster because expressions in SELECT are cached", misconception: "Postgres does not cache arbitrary per-row SELECT expressions across rows; each surviving row is still computed." },
+    { label: "Halve the row count automatically", misconception: "Projection (SELECT) never removes rows; only selection (WHERE/HAVING) changes the row count." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>You write `SELECT` first but it's evaluated near the end: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT. A `SELECT` alias is born in the SELECT step, so it's invisible to `WHERE` (earlier) but visible to `ORDER BY` (later). Selection (`WHERE`) controls how many rows; projection (`SELECT`) only shapes each row — so put selectivity in `WHERE`, never hope `SELECT` reduces work.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-select-mental-model-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the logical processing order of a SELECT and contrast it with the written order.", a: "Logical (evaluation) order: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT. Written order always starts with SELECT, then FROM, WHERE, etc. The key insight is that SELECT is written first but evaluated almost last, which is why name-visibility rules surprise people." },
+    { q: "Why can a SELECT alias be used in ORDER BY but not in WHERE?", a: "The alias is created during the SELECT (projection) step. WHERE is evaluated earlier (step 2), so the alias doesn't exist yet and Postgres errors with 'column does not exist'. ORDER BY is evaluated after SELECT (step 7), so by then the alias exists and resolves. To filter on the computed value, repeat the expression in WHERE or wrap it in a subquery/CTE." },
+    { q: "Define projection vs selection and why it matters for performance.", a: "Selection = choosing rows (WHERE/HAVING). Projection = choosing/computing columns (SELECT). They are different stages: WHERE runs before SELECT. Performance consequence: only WHERE changes how many rows are processed, so moving an expensive computation into SELECT does not reduce work — it still runs once per surviving row. Selectivity belongs in WHERE." },
+  ]}
+/>
+
+<Recap lang="en">
+A `SELECT` statement is written `SELECT … FROM … WHERE …` but logically evaluated in a different order: **FROM** builds the rows, **WHERE** filters them (selection), **GROUP BY** and **HAVING** aggregate and filter groups, **SELECT** computes columns and assigns aliases (projection), then **DISTINCT**, **ORDER BY**, and **LIMIT** finish. Because the alias is created in the SELECT step, it's invisible to the earlier `WHERE` (use the raw expression or a subquery there) but visible to the later `ORDER BY`. Keep the two jobs straight: selection (`WHERE`) decides *how many* rows, projection (`SELECT`) decides *what each row shows* — so selectivity always lives in `WHERE`. The physical plan can reorder these steps for speed, but the visibility rules never change; the next lesson goes deep on `WHERE` predicates and how they decide what the planner can even do.
+</Recap>

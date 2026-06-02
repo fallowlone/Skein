@@ -4,10 +4,174 @@ lang: en
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 5
-title: "Sorting and limiting"
-summary: "Sorting and limiting — stub; author to ready."
-estMin: 12
-status: stub
+title: "Sorting and limiting: ORDER BY, LIMIT, and keyset pagination"
+summary: "ORDER BY + LIMIT can be answered by an index with no sort. But OFFSET 100000 still reads 100000 rows first — the deep-pagination cliff. Keyset pagination fixes it."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - order-by
+  - nulls-ordering
+  - limit-offset
+  - keyset-pagination
+  - top-n-index
+prereqs:
+  - 04-distinct-and-set-ops
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-limit.html
+  - https://www.postgresql.org/docs/current/queries-order.html
+  - https://use-the-index-luke.com/sql/partial-results/fetch-next-page
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A feed paginated with `ORDER BY created_at DESC LIMIT 20 OFFSET ?`. Page 1 was instant. Page 5,000 — `OFFSET 100000` — took 1.4 seconds, because the database physically read and discarded 100,000 rows just to hand back the next 20. The deeper users scrolled, the slower it got, until infinite scroll quietly broke past page 4,000. The page size never changed; the *offset* did. This is the OFFSET cliff, and the fix — keyset pagination — keeps every page equally fast.
+</Hook>
+
+<Crux>OFFSET 100000 reads and discards 100000 rows first. Keyset pagination seeks straight to the cursor — every page is O(limit).</Crux>
+
+<Explanation>
+
+## ORDER BY: direction, NULLs, collation, expressions
+
+`ORDER BY` sorts the projected result (step 7 from lesson 1, so it can see `SELECT` aliases). The details that bite:
+
+- **Direction and NULL placement.** `ASC` is the default; `DESC` reverses. Independently, `NULLS FIRST` / `NULLS LAST` controls where NULLs land. The default is `NULLS LAST` for `ASC` and `NULLS FIRST` for `DESC` — so flipping to `DESC` moves NULLs to the *top* unless you say otherwise. A "most recent first" list with nullable timestamps can surface all the NULLs before any real row, which is rarely intended; pin it with `ORDER BY created_at DESC NULLS LAST`.
+- **Collation** decides text ordering. Under `C` collation, uppercase sorts before lowercase by byte value (`Z` before `a`); under a locale like `en_US`, sorting is case-insensitive-ish and locale-aware. Collation also affects which `LIKE` predicates an index can serve — a subtlety the `databases` indexes chapter covers.
+- **Expression sort.** You can sort by a computed value: `ORDER BY price * qty DESC`, or `ORDER BY lower(name)`.
+
+```sql
+-- newest first, but keep unknown timestamps at the bottom, not the top
+SELECT id, title, created_at
+FROM events
+ORDER BY created_at DESC NULLS LAST, id DESC
+LIMIT 20;
+```
+
+## Top-N without a sort: when the index does the work
+
+`ORDER BY … LIMIT n` asks for the top *n* rows in some order. The naive execution sorts the entire table then takes the first *n* — O(n log n) over everything. But if an index already stores rows in the requested order, Postgres can **walk the index and stop after n rows** — no sort node at all, O(n) in the limit, not the table size.
+
+The condition: the index's column order and direction must match the `ORDER BY`. An index on `events(created_at)` lets `ORDER BY created_at DESC LIMIT 20` read the last 20 leaf entries and stop. `EXPLAIN` shows this as an `Index Scan` with no `Sort` node above it — the senior tell that your top-N is cheap. (The mechanics of index-ordered scans live in the `databases` indexes and execution-plans chapters; here the takeaway is that `ORDER BY` + `LIMIT` backed by a matching index is the cheapest top-N you can write.)
+
+## The OFFSET cliff
+
+`LIMIT n OFFSET m` returns *n* rows after skipping *m*. The trap is in "skipping": the database has no shortcut to row number *m*. It must **generate the first m rows in order and discard them**, then return the next *n*. `OFFSET 100000 LIMIT 20` does the full work of producing 100,020 ordered rows and throws 100,000 away. Cost grows linearly with the page number, so the last pages of a deep list are catastrophically slow even though every page shows 20 rows.
+
+<FlowDiagram
+  label="OFFSET pagination must produce and discard every row up to the offset before returning the page, so deep pages get linearly slower. Keyset pagination uses a WHERE on the last row's sort key to seek straight to the next page via an index, staying constant-cost regardless of depth."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "off", label: "OFFSET 100000", sub: "page 5000" },
+    { id: "read", label: "read 100020", sub: "in order" },
+    { id: "drop", label: "discard 100000", sub: "wasted I/O" },
+    { id: "ret1", label: "return 20", sub: "slow" },
+    { id: "key", label: "Keyset WHERE", sub: "(ts,id) < cursor" },
+    { id: "seek", label: "index seek", sub: "to cursor" },
+    { id: "scan", label: "read 20", sub: "next leaves" },
+    { id: "ret2", label: "return 20", sub: "fast, any depth" },
+  ]}
+  edges={[
+    { from: "off", to: "read" },
+    { from: "read", to: "drop" },
+    { from: "drop", to: "ret1" },
+    { from: "key", to: "seek" },
+    { from: "seek", to: "scan" },
+    { from: "scan", to: "ret2" },
+  ]}
+  caption="Top row: OFFSET reads everything up to the offset then discards it — work grows with page depth. Bottom row: keyset seeks to the cursor via the index and reads only the page — work is constant whatever the depth."
+/>
+
+## Keyset (seek) pagination: constant cost at any depth
+
+The fix is to stop counting rows to skip and instead **remember where the last page ended** — a cursor made of the sort key. Each request asks for "rows after this cursor", which is a `WHERE` the index can seek on, so the database jumps straight to the spot and reads only the page.
+
+The cursor must include a **unique tiebreaker** (typically the primary key) so the order is total and no row is skipped or duplicated when sort values tie. Postgres supports the clean **row-comparison** form:
+
+```sql
+-- first page
+SELECT id, title, created_at
+FROM events
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+
+-- next page: pass the LAST row's (created_at, id) as the cursor
+SELECT id, title, created_at
+FROM events
+WHERE (created_at, id) < ('2026-03-01 10:00:00+00', 84213)
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+Backed by a **composite index on `(created_at DESC, id DESC)`**, the `WHERE (created_at, id) < (…)` is a single index seek, then 20 sequential leaf reads — O(limit), identical cost for page 2 and page 50,000. The `databases` indexes chapter and the canonical use-the-index-luke.com pagination guide go deeper, but the rule is simple: **for deep or infinite pagination, use keyset, never `OFFSET`.** `OFFSET` is fine only for shallow, bounded page counts (a UI that never goes past page 10).
+
+<Inset kind="mistake" lang="en">
+The subtle keyset bug is forgetting the tiebreaker. If you paginate on `created_at` alone and two rows share a timestamp, the boundary between pages is ambiguous: a row can be shown twice or skipped entirely as the cursor crosses the tie. Always append a unique column (`id`) to both the `ORDER BY` and the cursor comparison, and use the row-comparison form `(created_at, id) < (…)` so the comparison is lexicographic and exact. Mixing sort directions (e.g. `created_at DESC, id ASC`) breaks the single-`<` row-comparison trick — keep the tiebreaker's direction consistent with the row comparison or split it into explicit OR-clauses.
+</Inset>
+
+<Quiz
+  id="05-sorting-and-limiting-quiz-1"
+  lessonSlug="05-sorting-and-limiting"
+  lang="en"
+  question="Why does LIMIT 20 OFFSET 100000 get slower the deeper the page, even though it only returns 20 rows?"
+  choices={[
+    { label: "OFFSET must generate and discard all 100000 preceding rows in order before returning the next 20 — work grows with the offset", correct: true },
+    { label: "LIMIT 20 re-sorts the table 20 times", misconception: "LIMIT doesn't re-sort per row; the cost is OFFSET skipping (producing and discarding) the preceding rows." },
+    { label: "Postgres caps OFFSET at 65535 and retries above it", misconception: "There's no such cap; OFFSET simply does linear work proportional to its value." },
+    { label: "The result set is too large for the network", misconception: "Only 20 rows are returned; the cost is server-side row generation up to the offset, not network transfer." },
+  ]}
+/>
+
+<Quiz
+  id="05-sorting-and-limiting-quiz-2"
+  lessonSlug="05-sorting-and-limiting"
+  lang="en"
+  question="Which keyset query correctly fetches the next page after the last row had (created_at, id) = (T, 84213), sorted newest first?"
+  choices={[
+    { label: "WHERE (created_at, id) < (T, 84213) ORDER BY created_at DESC, id DESC LIMIT 20, with a composite index on (created_at DESC, id DESC)", correct: true },
+    { label: "WHERE created_at < T ORDER BY created_at DESC LIMIT 20", misconception: "Dropping the id tiebreaker makes the boundary ambiguous when timestamps tie — rows can be skipped or duplicated across pages." },
+    { label: "ORDER BY created_at DESC LIMIT 20 OFFSET 84213", misconception: "That's OFFSET pagination again, which has the deep-page cliff; the id is a row id, not an offset." },
+    { label: "WHERE created_at = T AND id < 84213 ORDER BY id DESC LIMIT 20", misconception: "This only returns rows with the exact same timestamp; it never advances past that timestamp to older rows." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-sorting-and-limiting-metaphor-1"
+  lessonSlug="05-sorting-and-limiting"
+  lang="en"
+  setup="Fill in the blank: instead of counting and skipping rows, _______ pagination remembers the last row's sort key as a cursor and seeks straight to the next page via an index — so every page costs the same regardless of depth."
+  accepted={["keyset", "seek", "cursor", "keyset/seek"]}
+  canonical="keyset"
+  explanation="Keyset (a.k.a. seek or cursor) pagination replaces OFFSET m with WHERE (sort_key, id) < last_seen, which an index can seek on directly. The database jumps to the cursor and reads only the page — O(limit) at any depth — unlike OFFSET, which produces and discards every preceding row."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`ORDER BY … LIMIT n` backed by a matching index is the cheapest top-N — the index walk stops after n rows with no sort. But `LIMIT n OFFSET m` must produce and discard all m preceding rows first, so deep pages get linearly slower — the OFFSET cliff. Use **keyset pagination**: `WHERE (created_at, id) < (cursor) ORDER BY created_at DESC, id DESC LIMIT n` over a composite index, which seeks straight to the page at constant cost. Mind `NULLS FIRST/LAST` when you flip to `DESC`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-sorting-and-limiting-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the OFFSET deep-pagination cliff in one sentence and why LIMIT alone doesn't have it.", a: "OFFSET m has no shortcut to the m-th row, so it must generate the first m rows in sort order and discard them before returning the next n — work grows linearly with the offset, making deep pages slow; LIMIT alone (with no offset) backed by an ordered index just reads the first n rows and stops, so it stays cheap." },
+    { q: "Write the keyset-pagination pattern for 'next page, newest first' and state the index it needs.", a: "Order by (created_at DESC, id DESC) with a unique tiebreaker, and fetch the next page with WHERE (created_at, id) < (last_created_at, last_id) ORDER BY created_at DESC, id DESC LIMIT n. It needs a composite index on (created_at DESC, id DESC) so the WHERE row-comparison is a single index seek followed by n leaf reads — O(limit) at any depth. The tiebreaker (id) is mandatory to avoid skipping or duplicating rows when timestamps tie." },
+    { q: "What does flipping ORDER BY to DESC do to NULL placement, and how do you control it?", a: "The default NULL placement is NULLS LAST for ASC and NULLS FIRST for DESC, so changing ASC to DESC moves NULLs to the top of the result, which is usually not what you want for a 'newest first' list with nullable timestamps. Control it explicitly with ORDER BY col DESC NULLS LAST (or NULLS FIRST) so NULL rows land where you intend regardless of direction." },
+  ]}
+/>
+
+<Recap lang="en">
+`ORDER BY` sorts the projected result and exposes three details worth memorizing: `DESC` flips NULL placement (default `NULLS FIRST` for `DESC`), so pin it with `NULLS LAST`; collation decides text order and even which `LIKE` an index can serve; and you can sort by expressions. A top-N query (`ORDER BY … LIMIT n`) is cheapest when an index already stores rows in the requested order — Postgres walks the index and stops after n rows, no sort node. The headline failure is the **OFFSET cliff**: `LIMIT n OFFSET m` must produce and throw away the first m ordered rows, so cost grows linearly with the page number and deep pages crawl. The fix is **keyset (seek) pagination** — replace `OFFSET m` with a `WHERE (created_at, id) < (cursor)` over a composite index `(created_at DESC, id DESC)`, including a unique tiebreaker so no row is skipped or doubled at a tie. Every page then costs O(limit) regardless of depth. Use `OFFSET` only for shallow, bounded paging; for infinite scroll or deep lists, keyset every time. That closes the SQL-foundations unit — you can now write a `SELECT` that filters sargably, handles NULLs safely, dedups deliberately, and paginates at scale; the joins unit builds the multi-table machinery on top of it.
+</Recap>

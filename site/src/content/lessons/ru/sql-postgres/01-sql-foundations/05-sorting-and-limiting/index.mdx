@@ -4,10 +4,174 @@ lang: ru
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 5
-title: "Sorting and limiting"
-summary: "Sorting and limiting — stub; author to ready."
-estMin: 12
-status: stub
+title: "Сортировка и ограничение: ORDER BY, LIMIT и keyset-пагинация"
+summary: "ORDER BY + LIMIT может закрыть индекс без сортировки. Но OFFSET 100000 всё равно сначала читает 100000 строк — обрыв глубокой пагинации. Keyset-пагинация это чинит."
+estMin: 16
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - order-by
+  - nulls-ordering
+  - limit-offset
+  - keyset-pagination
+  - top-n-index
+prereqs:
+  - 04-distinct-and-set-ops
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-limit.html
+  - https://www.postgresql.org/docs/current/queries-order.html
+  - https://use-the-index-luke.com/sql/partial-results/fetch-next-page
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Лента пагинировалась через `ORDER BY created_at DESC LIMIT 20 OFFSET ?`. Страница 1 была мгновенной. Страница 5000 — `OFFSET 100000` — заняла 1.4 секунды, потому что база физически прочитала и выбросила 100 000 строк только чтобы вернуть следующие 20. Чем глубже пользователи скроллили, тем медленнее, пока бесконечный скролл тихо не сломался после страницы 4000. Размер страницы не менялся; менялся *offset*. Это обрыв OFFSET, и фикс — keyset-пагинация — держит каждую страницу одинаково быстрой.
+</Hook>
+
+<Crux>OFFSET 100000 всё равно читает и выбрасывает 100000 строк до возврата. Keyset-пагинация ищет прямо к курсору — каждая страница O(limit).</Crux>
+
+<Explanation>
+
+## ORDER BY: направление, NULL, collation, выражения
+
+`ORDER BY` сортирует спроецированный результат (шаг 7 из урока 1, так что видит алиасы `SELECT`). Детали, которые кусают:
+
+- **Направление и размещение NULL.** `ASC` — по умолчанию; `DESC` разворачивает. Независимо `NULLS FIRST` / `NULLS LAST` управляет, куда падают NULL. По умолчанию `NULLS LAST` для `ASC` и `NULLS FIRST` для `DESC` — так что переход на `DESC` двигает NULL *наверх*, если не сказать иначе. Список «свежайшие первыми» с nullable timestamp может вывести все NULL перед любой реальной строкой, что редко имеется в виду; закрепи через `ORDER BY created_at DESC NULLS LAST`.
+- **Collation** решает порядок текста. Под collation `C` верхний регистр сортируется перед нижним по значению байта (`Z` перед `a`); под локалью вроде `en_US` сортировка более-менее без учёта регистра и locale-aware. Collation также влияет, какие `LIKE`-предикаты может обслужить индекс — тонкость, которую разбирает глава indexes трека `databases`.
+- **Сортировка по выражению.** Можно сортировать по вычисленному значению: `ORDER BY price * qty DESC` или `ORDER BY lower(name)`.
+
+```sql
+-- свежайшие первыми, но держим неизвестные timestamp внизу, а не вверху
+SELECT id, title, created_at
+FROM events
+ORDER BY created_at DESC NULLS LAST, id DESC
+LIMIT 20;
+```
+
+## Top-N без сортировки: когда работу делает индекс
+
+`ORDER BY … LIMIT n` просит верхние *n* строк в некотором порядке. Наивное выполнение сортирует всю таблицу, затем берёт первые *n* — O(n log n) по всему. Но если индекс уже хранит строки в запрошенном порядке, Postgres может **обойти индекс и остановиться после n строк** — вообще без узла сортировки, O(n) в limit, а не в размере таблицы.
+
+Условие: порядок колонок индекса и направление должны совпадать с `ORDER BY`. Индекс на `events(created_at)` позволяет `ORDER BY created_at DESC LIMIT 20` прочитать последние 20 листовых записей и остановиться. `EXPLAIN` показывает это как `Index Scan` без узла `Sort` над ним — сеньорский признак того, что твой top-N дёшев. (Механика index-ordered сканов живёт в главах indexes и execution-plans трека `databases`; здесь вывод в том, что `ORDER BY` + `LIMIT` на совпадающем индексе — самый дешёвый top-N, который можно написать.)
+
+## Обрыв OFFSET
+
+`LIMIT n OFFSET m` возвращает *n* строк после пропуска *m*. Ловушка в «пропуске»: у базы нет короткого пути к строке номер *m*. Она должна **сгенерировать первые m строк по порядку и выбросить их**, затем вернуть следующие *n*. `OFFSET 100000 LIMIT 20` делает полную работу по производству 100 020 упорядоченных строк и выбрасывает 100 000. Цена растёт линейно с номером страницы, так что последние страницы глубокого списка катастрофически медленны, хотя каждая показывает 20 строк.
+
+<FlowDiagram
+  label="OFFSET-пагинация должна произвести и выбросить каждую строку до offset перед возвратом страницы, так что глубокие страницы линейно медленнее. Keyset-пагинация использует WHERE по ключу сортировки последней строки, чтобы искать прямо к следующей странице через индекс, оставаясь постоянной по цене независимо от глубины."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "off", label: "OFFSET 100000", sub: "стр 5000" },
+    { id: "read", label: "читать 100020", sub: "по порядку" },
+    { id: "drop", label: "выбросить 100000", sub: "напрасный I/O" },
+    { id: "ret1", label: "вернуть 20", sub: "медленно" },
+    { id: "key", label: "Keyset WHERE", sub: "(ts,id) < курсор" },
+    { id: "seek", label: "index seek", sub: "к курсору" },
+    { id: "scan", label: "читать 20", sub: "след. листья" },
+    { id: "ret2", label: "вернуть 20", sub: "быстро, любая глубина" },
+  ]}
+  edges={[
+    { from: "off", to: "read" },
+    { from: "read", to: "drop" },
+    { from: "drop", to: "ret1" },
+    { from: "key", to: "seek" },
+    { from: "seek", to: "scan" },
+    { from: "scan", to: "ret2" },
+  ]}
+  caption="Верхний ряд: OFFSET читает всё до offset, затем выбрасывает — работа растёт с глубиной страницы. Нижний ряд: keyset ищет к курсору через индекс и читает только страницу — работа постоянна при любой глубине."
+/>
+
+## Keyset (seek) пагинация: постоянная цена на любой глубине
+
+Фикс — перестать считать строки для пропуска и вместо этого **запомнить, где кончилась последняя страница** — курсор из ключа сортировки. Каждый запрос просит «строки после этого курсора», что является `WHERE`, по которому индекс может искать, так что база прыгает прямо к месту и читает только страницу.
+
+Курсор должен включать **уникальный тайбрейкер** (обычно первичный ключ), чтобы порядок был полным и ни одна строка не пропускалась и не дублировалась при равенстве значений сортировки. Postgres поддерживает чистую форму **сравнения строк (row-comparison)**:
+
+```sql
+-- первая страница
+SELECT id, title, created_at
+FROM events
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+
+-- следующая страница: передай (created_at, id) ПОСЛЕДНЕЙ строки как курсор
+SELECT id, title, created_at
+FROM events
+WHERE (created_at, id) < ('2026-03-01 10:00:00+00', 84213)
+ORDER BY created_at DESC, id DESC
+LIMIT 20;
+```
+
+При **композитном индексе на `(created_at DESC, id DESC)`** `WHERE (created_at, id) < (…)` — это один index seek, затем 20 последовательных чтений листьев — O(limit), одинаковая цена для страницы 2 и страницы 50 000. Глава indexes трека `databases` и каноничный гайд пагинации use-the-index-luke.com копают глубже, но правило простое: **для глубокой или бесконечной пагинации используй keyset, никогда `OFFSET`.** `OFFSET` нормален только для мелкого, ограниченного числа страниц (UI, не уходящий дальше страницы 10).
+
+<Inset kind="mistake" lang="ru">
+Тонкий баг keyset — забыть тайбрейкер. Если пагинируешь по одному `created_at` и две строки делят timestamp, граница между страницами неоднозначна: строка может показаться дважды или пропуститься совсем, когда курсор пересекает равенство. Всегда добавляй уникальную колонку (`id`) и в `ORDER BY`, и в сравнение курсора, и используй форму сравнения строк `(created_at, id) < (…)`, чтобы сравнение было лексикографическим и точным. Смешивание направлений сортировки (например, `created_at DESC, id ASC`) ломает трюк одиночного `<` row-comparison — держи направление тайбрейкера согласованным со сравнением строк или разбей на явные OR-условия.
+</Inset>
+
+<Quiz
+  id="05-sorting-and-limiting-quiz-1"
+  lessonSlug="05-sorting-and-limiting"
+  lang="ru"
+  question="Почему LIMIT 20 OFFSET 100000 становится медленнее чем глубже страница, хотя возвращает лишь 20 строк?"
+  choices={[
+    { label: "OFFSET должен сгенерировать и выбросить все 100000 предшествующих строк по порядку до возврата следующих 20 — работа растёт с offset", correct: true },
+    { label: "LIMIT 20 пересортировывает таблицу 20 раз", misconception: "LIMIT не пересортировывает на строку; цена — в пропуске OFFSET (производстве и выбрасывании) предшествующих строк." },
+    { label: "Postgres ограничивает OFFSET на 65535 и повторяет выше", misconception: "Такого лимита нет; OFFSET просто делает линейную работу пропорционально своему значению." },
+    { label: "Набор результатов слишком велик для сети", misconception: "Возвращается лишь 20 строк; цена — в серверной генерации строк до offset, а не в передаче по сети." },
+  ]}
+/>
+
+<Quiz
+  id="05-sorting-and-limiting-quiz-2"
+  lessonSlug="05-sorting-and-limiting"
+  lang="ru"
+  question="Какой keyset-запрос корректно берёт следующую страницу после того, как у последней строки было (created_at, id) = (T, 84213), сортировка свежайшие первыми?"
+  choices={[
+    { label: "WHERE (created_at, id) < (T, 84213) ORDER BY created_at DESC, id DESC LIMIT 20, с композитным индексом на (created_at DESC, id DESC)", correct: true },
+    { label: "WHERE created_at < T ORDER BY created_at DESC LIMIT 20", misconception: "Без тайбрейкера id граница неоднозначна при равных timestamp — строки могут пропускаться или дублироваться между страницами." },
+    { label: "ORDER BY created_at DESC LIMIT 20 OFFSET 84213", misconception: "Это снова OFFSET-пагинация с обрывом глубокой страницы; id — это id строки, а не offset." },
+    { label: "WHERE created_at = T AND id < 84213 ORDER BY id DESC LIMIT 20", misconception: "Это возвращает только строки с ровно тем же timestamp; оно никогда не продвигается за этот timestamp к более старым строкам." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-sorting-and-limiting-metaphor-1"
+  lessonSlug="05-sorting-and-limiting"
+  lang="ru"
+  setup="Заполни пропуск: вместо счёта и пропуска строк _______ пагинация запоминает ключ сортировки последней строки как курсор и ищет прямо к следующей странице через индекс — так что каждая страница стоит одинаково независимо от глубины."
+  accepted={["keyset", "seek", "cursor", "keyset/seek", "курсорная"]}
+  canonical="keyset"
+  explanation="Keyset (она же seek или cursor) пагинация заменяет OFFSET m на WHERE (sort_key, id) < last_seen, по которому индекс может искать напрямую. База прыгает к курсору и читает только страницу — O(limit) на любой глубине — в отличие от OFFSET, который производит и выбрасывает каждую предшествующую строку."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`ORDER BY … LIMIT n` на совпадающем индексе — самый дешёвый top-N: обход индекса останавливается после n строк без сортировки. Но `LIMIT n OFFSET m` должен сначала произвести и выбросить все m предшествующих строк, так что глубокие страницы линейно медленнее — обрыв OFFSET. Используй **keyset-пагинацию**: `WHERE (created_at, id) < (курсор) ORDER BY created_at DESC, id DESC LIMIT n` по композитному индексу, что ищет прямо к странице с постоянной ценой. Помни `NULLS FIRST/LAST` при переходе на `DESC`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-sorting-and-limiting-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни обрыв глубокой пагинации OFFSET одним предложением и почему у LIMIT в одиночку его нет.", a: "У OFFSET m нет короткого пути к m-й строке, так что он должен сгенерировать первые m строк в порядке сортировки и выбросить их до возврата следующих n — работа растёт линейно с offset, делая глубокие страницы медленными; LIMIT в одиночку (без offset) на упорядоченном индексе просто читает первые n строк и останавливается, оставаясь дешёвым." },
+    { q: "Напиши паттерн keyset-пагинации для «следующая страница, свежайшие первыми» и укажи нужный индекс.", a: "Сортируй по (created_at DESC, id DESC) с уникальным тайбрейкером и бери следующую страницу через WHERE (created_at, id) < (last_created_at, last_id) ORDER BY created_at DESC, id DESC LIMIT n. Нужен композитный индекс на (created_at DESC, id DESC), чтобы row-comparison в WHERE был одним index seek с последующими n чтениями листьев — O(limit) на любой глубине. Тайбрейкер (id) обязателен, чтобы не пропускать и не дублировать строки при равных timestamp." },
+    { q: "Что переход ORDER BY на DESC делает с размещением NULL и как этим управлять?", a: "По умолчанию размещение NULL — NULLS LAST для ASC и NULLS FIRST для DESC, так что смена ASC на DESC двигает NULL наверх результата, что обычно не то, что нужно для списка «свежайшие первыми» с nullable timestamp. Управляй явно через ORDER BY col DESC NULLS LAST (или NULLS FIRST), чтобы NULL-строки падали туда, куда задумано, независимо от направления." },
+  ]}
+/>
+
+<Recap lang="ru">
+`ORDER BY` сортирует спроецированный результат и обнажает три детали, достойные запоминания: `DESC` переворачивает размещение NULL (по умолчанию `NULLS FIRST` для `DESC`), так что закрепляй через `NULLS LAST`; collation решает порядок текста и даже то, какой `LIKE` может обслужить индекс; и можно сортировать по выражениям. Запрос top-N (`ORDER BY … LIMIT n`) дешевле всего, когда индекс уже хранит строки в запрошенном порядке — Postgres обходит индекс и останавливается после n строк, без узла сортировки. Главный режим отказа — **обрыв OFFSET**: `LIMIT n OFFSET m` должен произвести и выбросить первые m упорядоченных строк, так что цена растёт линейно с номером страницы, и глубокие страницы ползут. Фикс — **keyset (seek) пагинация** — замени `OFFSET m` на `WHERE (created_at, id) < (курсор)` по композитному индексу `(created_at DESC, id DESC)`, включая уникальный тайбрейкер, чтобы ни одна строка не пропускалась и не дублировалась при равенстве. Тогда каждая страница стоит O(limit) независимо от глубины. Используй `OFFSET` лишь для мелкой ограниченной пагинации; для бесконечного скролла или глубоких списков — keyset каждый раз. Это закрывает раздел sql-foundations — ты теперь можешь написать `SELECT`, который sargably фильтрует, безопасно работает с NULL, осознанно дедуплицирует и пагинирует на масштабе; раздел joins строит многотабличную машинерию поверх него.
+</Recap>

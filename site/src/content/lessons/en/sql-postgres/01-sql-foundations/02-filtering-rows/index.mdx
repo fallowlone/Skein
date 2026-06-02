@@ -4,10 +4,174 @@ lang: en
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 2
-title: "Filtering rows with WHERE"
-summary: "Filtering rows with WHERE — stub; author to ready."
-estMin: 12
-status: stub
+title: "Filtering rows: WHERE, precedence, and sargability"
+summary: "WHERE decides which rows survive — and, quietly, whether the planner can use an index. Wrapping a column in a function or a leading wildcard kills the index and turns a 2 ms lookup into a full scan."
+estMin: 15
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - where-predicates
+  - operator-precedence
+  - sargability
+  - like-anchoring
+  - parameterized-queries
+prereqs:
+  - 01-select-mental-model
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - https://www.postgresql.org/docs/current/functions-matching.html
+  - https://use-the-index-luke.com/sql/where-clause
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Two queries look identical to a reviewer. `WHERE email = 'a@b.com'` runs in 2 ms on 20 million users. `WHERE lower(email) = 'a@b.com'` runs in 1.9 seconds on the same table — a 900× regression hiding behind one harmless-looking function call. The schema is fine, the index exists, the data is the same. The difference is whether the predicate is *sargable*: shaped so the planner can actually use the index. `WHERE` is not just a filter; it's the contract that decides what plans are even on the table.
+</Hook>
+
+<Crux>Wrap an indexed column in a function, or lead a LIKE with a wildcard, and the predicate stops being sargable — no index, full scan.</Crux>
+
+<Explanation>
+
+## Precedence: AND binds tighter than OR
+
+`WHERE` evaluates a boolean expression per row. The trap is precedence: `AND` binds tighter than `OR`, exactly like `*` binds tighter than `+`. So this:
+
+```sql
+SELECT * FROM orders
+WHERE status = 'paid' OR status = 'shipped' AND total > 100;
+```
+
+does **not** mean "(paid or shipped) and total over 100". It means `status = 'paid' OR (status = 'shipped' AND total > 100)` — every paid order comes back regardless of total, which is almost never what was intended. The fix is mechanical and non-negotiable in review: **parenthesize any mixed AND/OR**.
+
+```sql
+SELECT * FROM orders
+WHERE (status = 'paid' OR status = 'shipped') AND total > 100;
+```
+
+`NOT` binds tightest of the three. When you mix all three, the safe habit is: never trust precedence, always group with parentheses. A misplaced precedence bug doesn't error — it silently returns the wrong rows, which is the worst kind of bug.
+
+## The convenience predicates: BETWEEN, IN, LIKE/ILIKE
+
+- **BETWEEN a AND b** is inclusive on both ends: `total BETWEEN 100 AND 200` is `total >= 100 AND total <= 200`. The classic mistake is using `BETWEEN` on timestamps — `created_at BETWEEN '2026-01-01' AND '2026-01-31'` excludes almost all of Jan 31 because the upper bound is midnight. For time ranges prefer a half-open interval: `created_at >= '2026-01-01' AND created_at < '2026-02-01'`.
+- **IN (…)** is a tidy `OR` chain: `status IN ('paid','shipped')`. (`IN` with a subquery and `NULL` has a famous trap — that's the next lesson.)
+- **LIKE** does pattern matching: `%` = any run of characters, `_` = one character. **ILIKE** is the case-insensitive version (a Postgres extension).
+
+```sql
+-- users(id, email, display_name, created_at)
+SELECT id, email FROM users
+WHERE email LIKE 'support@%'              -- anchored prefix: index-friendly
+  AND created_at >= '2026-01-01'
+  AND created_at <  '2026-02-01';         -- half-open range, no BETWEEN trap
+```
+
+## Sargability: the word that explains the 900× gap
+
+A predicate is **sargable** (Search-ARGument-able) if the planner can use it to drive an index instead of scanning every row. The rule of thumb: **the indexed column must appear bare on one side, compared to a constant.** The moment you wrap the column in a function or transform it, the B-tree — which is sorted on the *raw* column values — becomes useless, because the index has no idea what `lower(email)` sorts like.
+
+<FlowDiagram
+  label="Sargable vs non-sargable predicates. A bare indexed column compared to a constant lets the planner do an index scan. Wrapping the column in a function, or a LIKE with a leading wildcard, forces a sequential scan over every row."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "p1", label: "email = $1", sub: "sargable" },
+    { id: "p2", label: "email LIKE 'abc%'", sub: "sargable" },
+    { id: "p3", label: "email LIKE '%abc'", sub: "NOT sargable" },
+    { id: "p4", label: "lower(email)=$1", sub: "NOT sargable" },
+    { id: "idx", label: "B-tree on email", sub: "sorted by raw value" },
+    { id: "seq", label: "Seq Scan", sub: "every row" },
+  ]}
+  edges={[
+    { from: "p1", to: "idx", label: "uses" },
+    { from: "p2", to: "idx", label: "uses" },
+    { from: "p3", to: "seq", label: "forces" },
+    { from: "p4", to: "seq", label: "forces" },
+  ]}
+  caption="A B-tree is sorted by the raw column value. Compare the bare column to a constant and the planner can walk the tree (O(log n)). Wrap it in lower(), or anchor LIKE with a leading %, and the sort order no longer matches the query — full scan."
+/>
+
+Two non-sargable patterns dominate production incidents:
+
+1. **A function on the column.** `WHERE lower(email) = 'a@b.com'` can't use the index on `email`, because the index stores `email`, not `lower(email)`. The fix is an **expression index** that indexes exactly what you query: `CREATE INDEX ON users (lower(email));`. Now `lower(email) = …` is sargable again. (Index internals — B-trees, leading-column rules, expression indexes — are taught in depth by the `databases` track's indexes chapter; here you only need the predicate-shape consequence.)
+2. **A leading wildcard in LIKE.** `WHERE email LIKE 'abc%'` is sargable — the prefix `abc` pins a contiguous range in the sorted B-tree, so Postgres walks straight to it. `WHERE email LIKE '%abc'` is **not** — there's no fixed prefix to seek on, so every value must be checked. Leading-wildcard search at scale needs a different tool (a trigram GIN index or full-text search), not a B-tree.
+
+<Inset kind="mistake" lang="en">
+The sneakiest non-sargable form is an *implicit* function. `WHERE created_at::date = '2026-01-15'` casts the column on every row, so the index on `created_at` is bypassed. Rewrite as a sargable range: `created_at >= '2026-01-15' AND created_at < '2026-01-16'`. Same logic, but now the bare column is compared to constants and the index drives the scan. Always be suspicious when a column has anything wrapped around it in `WHERE`.
+</Inset>
+
+## Parameterize — for safety AND for plan reuse
+
+Never build a `WHERE` value by string-concatenating user input. `WHERE email = '" + input + "'` is the textbook SQL-injection hole: an input of `' OR '1'='1` turns your filter into a tautology that returns the whole table. The fix is **parameterized queries** (bind parameters / prepared statements): the value travels separately from the SQL text, so it can never change the query's structure.
+
+```sql
+-- Parameterized: the $1 placeholder is bound to the value by the driver,
+-- never interpolated into the SQL string. Injection becomes impossible.
+SELECT id, email FROM users WHERE email = $1;
+```
+
+Parameterization also lets Postgres cache and reuse the parsed/planned statement across calls, which removes parse and plan overhead on hot paths. Safety and performance point the same way: bind, don't concatenate.
+
+<Quiz
+  id="02-filtering-rows-quiz-1"
+  lessonSlug="02-filtering-rows"
+  lang="en"
+  question={"WHERE status = 'paid' OR status = 'shipped' AND total > 100 — which rows come back?"}
+  choices={[
+    { label: "All 'paid' rows (any total), plus 'shipped' rows with total > 100 — AND binds tighter than OR", correct: true },
+    { label: "Only 'paid' or 'shipped' rows that also have total > 100", misconception: "That requires parentheses: (status = 'paid' OR status = 'shipped') AND total > 100. Without them, AND binds tighter and only constrains the 'shipped' branch." },
+    { label: "Nothing — mixing AND and OR is a syntax error", misconception: "It's valid SQL; the danger is that it parses to something other than what you meant, silently returning wrong rows." },
+    { label: "All rows with total > 100 regardless of status", misconception: "The total > 100 condition only applies to the 'shipped' branch due to precedence, not to every row." },
+  ]}
+/>
+
+<Quiz
+  id="02-filtering-rows-quiz-2"
+  lessonSlug="02-filtering-rows"
+  lang="en"
+  question="There's a B-tree index on users(email). Which predicate can use it for an index scan?"
+  choices={[
+    { label: "email LIKE 'support@%' — a fixed prefix pins a contiguous range in the sorted index", correct: true },
+    { label: "lower(email) = 'a@b.com'", misconception: "Wrapping the column in lower() makes it non-sargable; the index stores email, not lower(email). You'd need an expression index on lower(email)." },
+    { label: "email LIKE '%@gmail.com'", misconception: "A leading wildcard has no fixed prefix to seek on, so the B-tree can't be used — it's a full scan. Trigram/full-text indexes handle this case." },
+    { label: "email::text || 'x' = 'a@b.comx'", misconception: "Concatenating onto the column transforms it, so the raw-value index can't match — non-sargable." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-filtering-rows-metaphor-1"
+  lessonSlug="02-filtering-rows"
+  lang="en"
+  setup="Fill in the blank: a predicate the planner can drive an index with — a bare column compared to a constant — is called _______. Wrapping the column in a function destroys this property."
+  accepted={["sargable", "sargability", "search-argument-able", "sarg-able"]}
+  canonical="sargable"
+  explanation="Sargable = Search-ARGument-able: the predicate is shaped so the index's sort order matches the comparison, letting Postgres seek instead of scan. lower(col)=x, col::date=x, and LIKE '%x' all break sargability because the index is sorted on the raw column value, not on the transformed one."
+/>
+
+</Explanation>
+
+<KeyTakeaway>`WHERE` filters rows, but its *shape* decides whether the planner can use an index. Parenthesize mixed `AND`/`OR` (AND binds tighter). Keep the indexed column bare and compared to a constant to stay **sargable** — wrapping it in `lower()`, casting it, or leading a `LIKE` with `%` forces a full scan (fix with an expression index or trigram/FTS). Always parameterize values: it blocks SQL injection and enables plan reuse.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-filtering-rows-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does 'sargable' mean and what's the one-line rule to keep a predicate sargable?", a: "Sargable (Search-ARGument-able) means the predicate is shaped so the planner can use an index to seek rather than scan. The rule: keep the indexed column bare on one side, compared to a constant. The moment you wrap the column in a function (lower(col), col::date) or lead a LIKE with a wildcard (LIKE '%x'), the B-tree's sort order no longer matches the comparison and you fall back to a sequential scan." },
+    { q: "Why does WHERE lower(email) = 'a@b.com' ignore an index on email, and how do you fix it?", a: "The B-tree on email is sorted by the raw email value, but the predicate compares lower(email), which the index knows nothing about — so it can't seek and does a full scan. Fix: create an expression index on exactly what you query, CREATE INDEX ON users (lower(email)); then the predicate becomes sargable again." },
+    { q: "Give the precedence of NOT, AND, OR and the practical rule for mixing them.", a: "NOT binds tightest, then AND, then OR (loosest) — like NOT ~ unary minus, AND ~ multiply, OR ~ add. The practical rule: never rely on precedence when mixing AND and OR; always parenthesize the intended grouping, e.g. (a OR b) AND c. A precedence mistake doesn't error, it silently returns the wrong rows." },
+  ]}
+/>
+
+<Recap lang="en">
+`WHERE` is the selection stage from the previous lesson, and it does two jobs at once: it decides which rows survive, and — through its *shape* — it decides which plans the planner can choose. Parenthesize any mixed `AND`/`OR`, because `AND` binds tighter than `OR` and a precedence slip silently returns wrong rows. Use `BETWEEN`/`IN`/`LIKE`/`ILIKE` for readability, but reach for half-open ranges (`>= … < …`) on timestamps to dodge the inclusive-`BETWEEN` boundary bug. The senior idea is **sargability**: keep the indexed column bare and compared to a constant so the B-tree can drive the scan; wrapping it in `lower()`, casting it, or leading a `LIKE` with `%` makes the predicate non-sargable and forces a full scan — fixed with an expression index or a trigram/full-text index (the `databases` indexes chapter goes deep). Finally, always parameterize: bind values instead of concatenating, which closes the SQL-injection door and lets Postgres reuse the plan. Next we tackle the value that breaks all of this intuition: `NULL`.
+</Recap>
