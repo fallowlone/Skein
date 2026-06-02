@@ -8,6 +8,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "distributed": "DIST", "security": "SEC", "observability": "OBS",
   "deployment": "DEP", "performance": "PERF", "data-engineering": "DATA",
   "ai-llm": "AI", "engineering-practice": "ENG",
+  "sql-postgres": "SQL", "js-engine": "JSE", "typescript": "TS",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
