@@ -4,10 +4,195 @@ lang: ru
 track: "sql-postgres"
 unit: "01-sql-foundations"
 order: 1
-title: "The SELECT mental model"
-summary: "The SELECT mental model — stub; author to ready."
-estMin: 12
-status: stub
+title: "Ментальная модель SELECT: логический порядок обработки"
+summary: "Ты пишешь SELECT … FROM … WHERE …, но Postgres вычисляет FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY. Этот зазор объясняет, почему алиас работает в ORDER BY, но не в WHERE."
+estMin: 14
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - logical-query-processing
+  - projection-vs-selection
+  - select-alias-scope
+  - clause-evaluation-order
+prereqs:
+  - 00-start-here/02-how-postgres-executes-a-query
 sources:
-  - https://www.postgresql.org/docs/current/
+  - https://www.postgresql.org/docs/current/queries.html
+  - https://www.postgresql.org/docs/current/sql-select.html
+  - https://www.postgresql.org/docs/current/queries-table-expressions.html
 ---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Коллега пишет `SELECT price * qty AS revenue FROM orders WHERE revenue > 100;` и получает `ERROR: column "revenue" does not exist`. Он клянётся, что алиас вот же он, на той же строке. Потом переносит тот же `revenue` в `ORDER BY revenue` — и всё работает. Одно слово, один запрос, два противоположных исхода. Это не причуда Postgres — это самое важное, что нужно усвоить о том, как `SELECT` на самом деле вычисляется.
+</Hook>
+
+<Crux>Ты пишешь SELECT первым, но он бежит почти последним: FROM → WHERE → GROUP BY → HAVING → SELECT → ORDER BY → LIMIT.</Crux>
+
+<Explanation>
+
+## Порядок, в котором пишешь — не порядок, в котором выполняется
+
+Оператор `SELECT` пишется в одном порядке, а вычисляется в совершенно другом. Письменный порядок задан грамматикой — `SELECT` всегда идёт первым. Но **логический порядок обработки** (порядок, в котором по стандарту SQL клаузы концептуально вычисляются) ставит `SELECT` ближе к концу:
+
+1. **FROM** (и JOIN) — построить рабочий набор строк из исходных таблиц.
+2. **WHERE** — оставить только строки, где предикат `TRUE` (это *selection*, отбор).
+3. **GROUP BY** — схлопнуть выжившие строки в группы.
+4. **HAVING** — оставить только группы, где предикат `TRUE`.
+5. **SELECT** — вычислить выходные выражения и присвоить алиасы (это *projection*, проекция).
+6. **DISTINCT** — убрать дублирующиеся выходные строки.
+7. **ORDER BY** — отсортировать результат.
+8. **LIMIT / OFFSET** — отрезать кусок отсортированного результата.
+
+<FlowDiagram
+  label="Логический порядок обработки запроса: FROM строит строки, WHERE фильтрует их, GROUP BY и HAVING агрегируют и фильтруют группы, SELECT проецирует и именует колонки, ORDER BY сортирует, LIMIT отрезает. SELECT бежит ближе к концу, хотя пишешь его первым."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "from", label: "FROM", sub: "строки" },
+    { id: "where", label: "WHERE", sub: "фильтр строк" },
+    { id: "group", label: "GROUP BY", sub: "группы" },
+    { id: "having", label: "HAVING", sub: "фильтр групп" },
+    { id: "select", label: "SELECT", sub: "проекция + алиас" },
+    { id: "distinct", label: "DISTINCT", sub: "дедуп" },
+    { id: "order", label: "ORDER BY", sub: "сортировка" },
+    { id: "limit", label: "LIMIT", sub: "отрезать" },
+  ]}
+  edges={[
+    { from: "from", to: "where" },
+    { from: "where", to: "group" },
+    { from: "group", to: "having" },
+    { from: "having", to: "select" },
+    { from: "select", to: "distinct" },
+    { from: "distinct", to: "order" },
+    { from: "order", to: "limit" },
+  ]}
+  caption="Это логическая модель, а не физический план — планировщик может переупорядочить или слить шаги ради скорости (см. главу execution-plans трека databases). Но правила видимости имён ниже следуют этому порядку точно."
+/>
+
+Это *логическая* модель: исполнитель не материализует буквально полный набор после каждого шага (он стримит, а планировщик переупорядочивает ради скорости — это конвейер из прошлого урока и глава execution-plans трека `databases`). Но **правила разрешения имён, которые ты можешь наблюдать**, следуют этому порядку точно, и именно это людей и кусает.
+
+## Проекция против отбора: две разные работы
+
+Два слова из реляционной алгебры снимают бо́льшую часть путаницы:
+
+- **Selection (отбор)** = выбор *строк*. Это `WHERE` (и `HAVING` для групп). Отвечает на «какие строки выживут?».
+- **Projection (проекция)** = выбор и вычисление *колонок*. Это `SELECT`. Отвечает на «как выглядит каждая выходная строка?».
+
+Это отдельные стадии. `WHERE` бежит на шаге 2 на сырых колонках таблицы; `SELECT` бежит на шаге 5 и является *единственным* местом, где рождаются алиасы выходных колонок.
+
+```sql
+-- orders(id, user_id, price, qty, status, created_at)
+SELECT
+  user_id,
+  price * qty AS revenue          -- 'revenue' рождается ЗДЕСЬ, на шаге 5
+FROM orders                       -- шаг 1
+WHERE status = 'paid'             -- шаг 2: 'revenue' ещё не существует
+ORDER BY revenue DESC             -- шаг 7: 'revenue' уже существует
+LIMIT 20;                         -- шаг 8
+```
+
+## Почему алиас работает в ORDER BY, но не в WHERE
+
+Теперь противоречие из вступления растворяется. `WHERE` — это шаг 2; алиас `revenue` из `SELECT` не создаётся до шага 5. Значит, ссылка на него в `WHERE` — это ошибка путешествия во времени: ты именуешь то, чего ещё нет. Postgres отвергает запрос с `column "revenue" does not exist`.
+
+`ORDER BY` — это шаг 7, *после* `SELECT`. К этому моменту алиас уже существует, поэтому `ORDER BY revenue` разрешается чисто. `ORDER BY` — единственная клауза, которая видит имена выхода `SELECT`, именно потому что бежит после проекции.
+
+Фикс для случая с `WHERE` — повторить выражение (под хорошим планом движок всё равно вычислит его один раз) или обернуть запрос в подзапрос / CTE, чтобы алиас материализовался на внутреннем шаге:
+
+```sql
+-- Вариант A: повторить выражение в WHERE (оно ссылается на базовые колонки, всегда легально)
+SELECT user_id, price * qty AS revenue
+FROM orders
+WHERE status = 'paid' AND price * qty > 100;
+
+-- Вариант B: назвать один раз во внутреннем запросе, фильтровать во внешнем (алиас теперь виден)
+SELECT * FROM (
+  SELECT user_id, price * qty AS revenue
+  FROM orders WHERE status = 'paid'
+) s
+WHERE s.revenue > 100;
+```
+
+<Inset kind="edgecase" lang="ru">
+`GROUP BY` — промежуточный случай. Стандарт SQL говорит, что `GROUP BY` (шаг 3) бежит до `SELECT` (шаг 5), так что по стандарту алиас `SELECT` там не должен быть виден. Postgres ослабляет это ради удобства: `GROUP BY` *может* видеть алиас `SELECT` (`GROUP BY revenue`), и `HAVING` тоже. Но `WHERE` — никогда, он строго до группировки. Не полагайся на это расширение `GROUP BY`-алиаса в переносимом SQL; другие движки его отвергают.
+</Inset>
+
+## Колонка против выражения на выходе, и одна продакшен-ловушка
+
+Каждый элемент списка `SELECT` — это либо голая колонка (`user_id`), либо вычисляемое выражение (`price * qty`, `lower(email)`, `count(*)`). Голая колонка без алиаса сохраняет своё имя; выражение без алиаса получает уродливое авто-имя вроде `?column?`. Всегда давай алиас выражениям — нижестоящий код, BI-инструменты и `ORDER BY` ключуются по этому имени.
+
+Продакшен-ловушка, прямо вытекающая из порядка обработки: **перенос тяжёлой логики в `SELECT` не уменьшает число сканируемых строк.** `WHERE` уже отработал. Если твой `SELECT` зовёт дорогую функцию на строку, а `WHERE` неселективен, ты всё равно платишь за эту функцию на каждой выжившей строке. Фильтрация — рычаг для *скольких строк*; проекция лишь формирует *что показывает каждая строка*. Однажды команда перенесла медленный regex в `SELECT`, думая, что он «будет работать меньше» — он отработал на всех 4 миллионах выживших строк ровно как раньше, потому что `WHERE` не изменился. Селективность живёт в `WHERE`, а не в `SELECT`.
+
+<DragOrder
+  id="01-select-mental-model-drag-1"
+  lessonSlug="01-select-mental-model"
+  lang="ru"
+  prompt="Расставь клаузы по их ЛОГИЧЕСКОМУ порядку вычисления (а не по порядку, в котором ты их печатаешь):"
+  items={[
+    { id: "a", label: "FROM — построить набор строк из исходных таблиц" },
+    { id: "b", label: "WHERE — оставить строки, где предикат TRUE" },
+    { id: "c", label: "GROUP BY — схлопнуть строки в группы" },
+    { id: "d", label: "HAVING — оставить группы, где предикат TRUE" },
+    { id: "e", label: "SELECT — вычислить выходные колонки и присвоить алиасы" },
+    { id: "f", label: "ORDER BY — отсортировать спроецированный результат" },
+    { id: "g", label: "LIMIT — отрезать кусок отсортированного результата" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f", "g"]}
+/>
+
+<Quiz
+  id="01-select-mental-model-quiz-1"
+  lessonSlug="01-select-mental-model"
+  lang="ru"
+  question={"Почему SELECT price*qty AS revenue ... WHERE revenue > 100 падает, а ORDER BY revenue в том же запросе работает?"}
+  choices={[
+    { label: "WHERE (шаг 2) бежит до того, как SELECT (шаг 5) создаст алиас, поэтому 'revenue' ещё нет; ORDER BY (шаг 7) бежит после SELECT, поэтому алиас виден", correct: true },
+    { label: "Алиасы работают только с агрегатными функциями, а price*qty не агрегат", misconception: "Алиасинг не связан с агрегацией; дело в позиции клаузы в логическом порядке обработки относительно SELECT." },
+    { label: "WHERE требует полностью квалифицированных имён вроде orders.revenue", misconception: "Квалификация не помогла бы — алиаса просто не существует на момент WHERE; он создаётся в более позднем шаге SELECT." },
+    { label: "Это баг Postgres; стандарт SQL разрешает алиасы в WHERE", misconception: "Стандарт прямо запрещает алиасы SELECT в WHERE, потому что WHERE логически вычисляется до проекции SELECT." },
+  ]}
+/>
+
+<Quiz
+  id="01-select-mental-model-quiz-2"
+  lessonSlug="01-select-mental-model"
+  lang="ru"
+  question="Запрос медленный. Перенос дорогого вызова функции на строку из WHERE в список SELECT…"
+  choices={[
+    { label: "Не уменьшит работу — WHERE бежит первым, так что функция всё равно выполнится на каждой выжившей строке; селективность должна идти из WHERE", correct: true },
+    { label: "Ускорит, потому что SELECT бежит на меньшем числе строк, чем WHERE", misconception: "SELECT бежит ПОСЛЕ WHERE на строках, которые уже выжили фильтрацию — он никогда не бежит на меньшем числе строк, чем WHERE." },
+    { label: "Ускорит, потому что выражения в SELECT кешируются", misconception: "Postgres не кеширует произвольные выражения SELECT между строками; каждая выжившая строка всё равно вычисляется." },
+    { label: "Автоматически вдвое уменьшит число строк", misconception: "Проекция (SELECT) никогда не убирает строки; только отбор (WHERE/HAVING) меняет их число." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Ты пишешь `SELECT` первым, но он вычисляется ближе к концу: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT. Алиас `SELECT` рождается в шаге SELECT, поэтому он невидим для `WHERE` (раньше), но видим для `ORDER BY` (позже). Отбор (`WHERE`) управляет тем, сколько строк; проекция (`SELECT`) лишь формирует каждую строку — так что клади селективность в `WHERE`, не надейся, что `SELECT` уменьшит работу.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-select-mental-model-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Сформулируй логический порядок обработки SELECT и противопоставь его письменному порядку.", a: "Логический (вычислительный) порядок: FROM → WHERE → GROUP BY → HAVING → SELECT → DISTINCT → ORDER BY → LIMIT. Письменный порядок всегда начинается с SELECT, затем FROM, WHERE и т.д. Ключевой инсайт: SELECT пишется первым, но вычисляется почти последним, и поэтому правила видимости имён удивляют людей." },
+    { q: "Почему алиас SELECT можно использовать в ORDER BY, но не в WHERE?", a: "Алиас создаётся на шаге SELECT (проекция). WHERE вычисляется раньше (шаг 2), так что алиаса ещё нет, и Postgres падает с 'column does not exist'. ORDER BY вычисляется после SELECT (шаг 7), и к этому моменту алиас существует и разрешается. Чтобы фильтровать по вычисленному значению, повтори выражение в WHERE или оберни в подзапрос/CTE." },
+    { q: "Определи проекцию против отбора и почему это важно для производительности.", a: "Selection (отбор) = выбор строк (WHERE/HAVING). Projection (проекция) = выбор/вычисление колонок (SELECT). Это разные стадии: WHERE бежит до SELECT. Следствие для производительности: только WHERE меняет, сколько строк обрабатывается, так что перенос дорогого вычисления в SELECT не уменьшает работу — оно всё равно бежит раз на каждую выжившую строку. Селективность принадлежит WHERE." },
+  ]}
+/>
+
+<Recap lang="ru">
+Оператор `SELECT` пишется как `SELECT … FROM … WHERE …`, но логически вычисляется в другом порядке: **FROM** строит строки, **WHERE** фильтрует их (отбор), **GROUP BY** и **HAVING** агрегируют и фильтруют группы, **SELECT** вычисляет колонки и присваивает алиасы (проекция), затем **DISTINCT**, **ORDER BY** и **LIMIT** завершают. Поскольку алиас создаётся на шаге SELECT, он невидим для более раннего `WHERE` (там используй сырое выражение или подзапрос), но видим для более позднего `ORDER BY`. Держи две работы раздельно: отбор (`WHERE`) решает, *сколько* строк, проекция (`SELECT`) решает, *что показывает каждая строка* — поэтому селективность всегда живёт в `WHERE`. Физический план может переупорядочить эти шаги ради скорости, но правила видимости не меняются никогда; следующий урок глубоко копает предикаты `WHERE` и то, как они решают, что планировщик вообще может сделать.
+</Recap>
