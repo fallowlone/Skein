@@ -15,8 +15,8 @@ const ProjectSchema = z.object({
   difficulty: z.enum(["starter", "intermediate", "advanced"]),
   estDays: z.number().int().positive(),
   skills: z.array(z.string()).min(1),
-  stack: z.array(z.string()).optional(),
-  resources: z.array(z.object({ label: z.string(), url: z.string().url() })).optional(),
+  stack: z.array(z.string()).min(1).optional(),
+  resources: z.array(z.object({ label: z.string(), url: z.string().url() })).min(1).optional(),
   milestones: z.array(BiText).min(2),
   seniorStretch: z.array(BiText).min(1),
   brief: BiText.optional(),
@@ -59,8 +59,11 @@ describe("projects schema", () => {
   test("rejects a BiText missing ru", () => {
     expect(() => ProjectSchema.parse({ ...valid, title: { en: "only en" } })).toThrow();
   });
-  test("accepts the new category/stack/brief fields", () => {
-    expect(() => ProjectSchema.parse({ ...valid, category: "frontend", stack: ["preact"], brief: bi })).not.toThrow();
+  test("rejects a resources entry with a non-URL string", () => {
+    expect(() => ProjectSchema.parse({ ...valid, resources: [{ label: "MDN", url: "not a url" }] })).toThrow();
+  });
+  test("accepts a valid resources entry", () => {
+    expect(() => ProjectSchema.parse({ ...valid, resources: [{ label: "MDN", url: "https://developer.mozilla.org" }] })).not.toThrow();
   });
   test("requires category", () => {
     const { category, ...noCat } = valid as any;
