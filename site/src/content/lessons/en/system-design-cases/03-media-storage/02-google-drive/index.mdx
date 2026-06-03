@@ -4,35 +4,177 @@ lang: en
 track: "system-design-cases"
 unit: "03-media-storage"
 order: 2
-title: "Design Google Drive"
-summary: "Design Google Drive — to be authored."
-estMin: 16
-status: stub
+title: "Design Google Drive / Dropbox"
+summary: "Design a file-sync service: split files into content-hashed chunks for dedup and delta sync, separate the metadata DB from the blob store, sync changes to every device with versioning and conflict resolution, and push notifications so clients pull only what changed."
+estMin: 36
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - file-sync
+  - chunking-dedup
+  - metadata-vs-blob
+  - delta-sync
+  - conflict-resolution
+  - change-notification
+prereqs:
+  - system-design/07-storage-choices/02-blob-and-object
+  - system-design/04-data-distribution/02-sharding-and-partitioning
 sources:
+  - https://dropbox.tech/infrastructure/streaming-file-synchronization
+  - https://www.usenix.org/system/files/conference/atc14/atc14-paper-li_zhenhua.pdf
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+You edit one paragraph in a 200 MB design document. The naive sync client notices the file's modified-time changed, so it re-uploads all 200 MB — then your laptop, your phone, and your desktop each download all 200 MB back. A one-line edit cost you 800 MB of transfer and a minute of waiting. Now imagine two devices edit the file while one was offline: the client that syncs last silently overwrites the other's work, and the user loses an afternoon. A file-sync service lives or dies on two questions it must answer well: when something changes, how little data can I move, and when two people change the same thing, how do I avoid eating someone's work? The answers — chunk the file and move only the chunks that differ, and never blindly overwrite — drive an architecture where the file's *bytes* and the file's *story* (its metadata and version history) are stored and synced as two completely different things.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Files become content-hashed chunks (dedup + delta sync) in a blob store; a versioned metadata DB tracks them; devices pull only changes.</Crux>
 
 <Explanation>
 
-## Design Google Drive
+## Requirements
 
-Body to be authored.
+**Functional** — a user stores files and folders; edits on one device appear on all their other devices and any shared collaborators; files have version history (restore an old version); folders can be shared with specific people at specific permission levels (view/edit). The hard functional requirement hiding in "appear on all devices" is **sync**: a change must propagate quickly and correctly, even across offline edits.
+
+**Non-functional** — sync must be **fast and bandwidth-efficient** (a tiny edit must not move the whole file), **reliable** (never lose or corrupt a user's data — durability is sacred), and **consistent enough** that two devices converge on the same state without silently dropping edits. Reads (downloads, browsing) dominate but writes (edits) are frequent and must be cheap. Storage cost matters because users keep everything and duplicate files everywhere.
+
+The two non-functional facts that shape everything: **move the minimum bytes** (→ chunking and delta sync) and **never lose an edit** (→ versioning and conflict resolution, not overwrite).
+
+## Estimation
+
+```
+Users:      ~500M registered, ~100M daily active
+Files:      avg user ~50 GB stored; billions of files total
+Edits:      DAU × a handful of file changes/day → ~1e8 users × ~5 = ~5e8 edits/day
+            ÷ ~1e5 s ≈ ~5,000 edits/sec average, ~15K peak
+Chunk:      fixed ~4 MB chunks → a 200 MB file ≈ 50 chunks
+            an edit touches 1–2 chunks, so delta sync moves ~8 MB not 200 MB
+Dedup:      same file shared/copied by many users stores one physical copy
+            → cross-user dedup can cut stored bytes by a large factor for common files
+Metadata:   per file: id, name, parent, version, chunk list, perms → a few KB
+            billions of files × few KB → terabytes of metadata (sharded relational/KV)
+```
+
+The estimate makes the split obvious: blob bytes are petabytes (object storage, deduplicated), metadata is terabytes (a sharded transactional store). And delta sync turns a 200 MB re-upload into an 8 MB chunk transfer — a 25× bandwidth win on every edit. These numbers *are* the justification for chunking and the metadata/blob split.
+
+## High-level design
+
+A file is modelled as **metadata** (name, folder, version, an ordered list of chunk hashes, permissions) plus a set of **chunks** (the actual bytes, content-addressed). The metadata lives in a sharded transactional database; the chunks live in an object/blob store, keyed by their content hash. A **sync service** plus a **notification service** keep devices up to date.
+
+<FlowDiagram
+  label="Sync write path: the client diffs the changed file locally into chunks, uploads only chunks whose content hash is new to the block/blob store, then commits a new file version (the updated chunk list) to the metadata service; the notification service tells other devices a change exists, and they pull only the metadata diff plus the new chunks."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "client", label: "client A", sub: "diff → chunks" },
+    { id: "blob", label: "block store", sub: "upload NEW chunks" },
+    { id: "meta", label: "metadata svc", sub: "commit version" },
+    { id: "db", label: "metadata DB", sub: "chunk list + perms" },
+    { id: "notify", label: "notification svc", sub: "change event" },
+    { id: "clientB", label: "client B", sub: "pull diff" },
+    { id: "pull", label: "block store", sub: "fetch new chunks only" },
+  ]}
+  edges={[
+    { from: "client", to: "blob", label: "new chunks" },
+    { from: "client", to: "meta", label: "commit" },
+    { from: "meta", to: "db", label: "new version" },
+    { from: "meta", to: "notify", label: "changed" },
+    { from: "notify", to: "clientB", label: "ping" },
+    { from: "clientB", to: "meta", label: "what changed?" },
+    { from: "clientB", to: "pull", label: "missing chunks" },
+  ]}
+  caption="The metadata commit is the source of truth and the moment a change becomes visible; chunks are uploaded first (so the version always points at chunks that exist). Other devices learn of the change via the notification service, then pull only the metadata diff and the chunks they lack — delta sync end to end."
+/>
+
+The ordering matters: **upload chunks first, then commit the new version**. If you committed metadata first, a version could reference chunks that aren't in the store yet, and a reader would get a dangling pointer. Chunks-then-metadata means the metadata always points at bytes that exist — chunks are immutable and content-addressed, so re-uploading the same chunk is a harmless no-op.
+
+## Deep dive: chunking, content-addressing, and dedup
+
+The core idea is **content-addressed chunks**: split each file into chunks and key each chunk by the hash of its contents (e.g. SHA-256). This single idea buys three things at once. **Dedup**: two identical chunks hash the same, so they are stored once — across versions, across files, even across users (the same shared PDF stored by a thousand people is one physical chunk). **Delta sync**: to sync a change, the client re-chunks the file, compares chunk hashes to the previous version, and uploads only the chunks whose hashes are new — a one-paragraph edit touches one chunk, so you move ~4 MB instead of 200 MB. **Integrity**: the hash *is* the address, so a corrupted chunk is detectable (its bytes no longer match its hash).
+
+Fixed-size chunking (every 4 MB) is simple but brittle: insert one byte at the start of a file and every subsequent chunk boundary shifts, so every chunk hash changes and dedup collapses. **Content-defined chunking** (rolling-hash boundaries, à la rsync/Rabin) places boundaries based on content, so an insertion only changes the one chunk it lands in — the rest stay aligned and dedup survives. The tradeoff is variable chunk sizes and more CPU; many systems use fixed chunks for simplicity and accept that inserts re-sync more than strictly necessary.
+
+<Inset kind="why" lang="en">
+Why store the *bytes* and the *metadata* in two different systems instead of one? Because they have opposite access patterns and requirements. Metadata is small, must be queried and transactionally updated (rename, move, share, version-commit), and benefits from indexes and ACID — a relational/transactional store's home turf. Chunks are large, immutable, write-once-read-many, never queried by content, and need cheap durable bulk storage with high throughput — an object store's home turf. Forcing both into one system means either a database choking on petabytes of blobs (slow, expensive, can't index them anyway) or an object store pretending to be a transactional metadata index (it isn't). The split lets each scale and be consistent on its own terms, and it's why "metadata DB + blob store" recurs in every media design in this unit.
+</Inset>
+
+## Deep dive: conflict resolution and notifications
+
+Two devices edit the same file; one was offline. When both sync, the metadata service sees two new versions branching from the same parent version. **The cardinal rule is: never silently overwrite.** A last-writer-wins overwrite is the bug from the hook — it eats someone's work. Instead, detect the divergence (the incoming version's parent is no longer the current head) and resolve it: for files Drive/Dropbox keep both as **conflicted copies** (`report (Anna's conflicted copy).docx`) so a human decides; for structured collaborative documents, operational transforms or CRDTs can merge edits automatically. The version chain (each version records its parent) is what makes conflicts *detectable* in the first place — without it you can't tell an overwrite from a legitimate sequential edit.
+
+Propagation uses a **notification service**, not polling. Each client holds a long-lived connection (long-poll or WebSocket); when a file the client cares about changes, the service pushes a lightweight "something changed" signal, and the client then *pulls* the metadata diff and any missing chunks. Notification is cheap and fan-out-friendly (just a ping); the actual data transfer is the delta-sync pull the client drives. This keeps the notification path fast and stateless-ish while the heavy lifting stays on the efficient delta path.
+
+<Inset kind="mistake" lang="en">
+A subtle, expensive mistake: making clients **poll** the metadata service ("any changes since version N?") on a short interval to feel responsive. With 100M devices polling every few seconds, you generate a constant tidal wave of mostly-empty responses — the server spends its capacity answering "nothing changed" billions of times. The fix is to invert it: clients hold a long-poll/WebSocket connection and the server *pushes* when (and only when) a relevant change happens. Push turns N idle devices into N cheap idle connections instead of N×(1/interval) wasted requests per second. Poll for low device counts, push at scale — and at Drive scale you have no choice but push.
+</Inset>
+
+<Quiz
+  id="03-google-drive-quiz-1"
+  lessonSlug="02-google-drive"
+  lang="en"
+  question="A user edits one paragraph in a 200 MB document. How does an efficient sync service propagate this, and why?"
+  choices={[
+    { label: "Re-chunk the file, compare chunk hashes to the previous version, and upload only the 1–2 chunks that changed (~4–8 MB); other devices pull only those chunks via a notification. Content-addressed chunking enables this delta sync and cross-version dedup.", correct: true },
+    { label: "Re-upload the whole 200 MB file because its modified-time changed, then have each device download it.", misconception: "That's the naive design the hook rejects: a one-line edit costs hundreds of MB per device. Chunking + content-hash comparison moves only the changed chunks (~4–8 MB), the whole point of delta sync." },
+    { label: "Store a diff patch in the metadata database and let clients apply it.", misconception: "Patches don't belong in the metadata DB (it holds small structured data, not byte diffs), and you'd reinvent chunking poorly. Content-addressed chunks give dedup, delta sync, and integrity in one mechanism; upload only the new-hash chunks." },
+    { label: "Compress the file before upload so 200 MB becomes smaller.", misconception: "Compression shrinks the transfer somewhat but you still move the whole file for a one-line change. Delta sync via chunk-hash comparison moves only the changed chunk — orders of magnitude less than compressing-and-re-sending everything." },
+  ]}
+/>
+
+<Quiz
+  id="03-google-drive-quiz-2"
+  lessonSlug="02-google-drive"
+  lang="en"
+  question="Two devices edit the same file; one was offline. Both now sync to the server. What must the design do?"
+  choices={[
+    { label: "Detect that the second sync's parent version is no longer the current head (a branch), and resolve without data loss — keep both as a conflicted copy (or merge via OT/CRDT for collaborative docs). The version chain makes the conflict detectable.", correct: true },
+    { label: "Last-writer-wins: keep whichever sync arrived second and discard the other.", misconception: "That's exactly the bug from the hook — it silently eats a user's work. The cardinal rule is never blindly overwrite; detect the divergence via the version chain and preserve both edits." },
+    { label: "Lock the file on first edit so the second device can't change it.", misconception: "Pessimistic locking breaks offline editing (the whole point) and creates stuck locks when a device goes away. Sync services allow concurrent edits and resolve conflicts after the fact via the version chain, not locks." },
+    { label: "Merge the raw bytes of both versions automatically.", misconception: "Blind byte-merging corrupts most file formats. For opaque files you keep a conflicted copy for a human; only structured collaborative docs can be auto-merged with OT/CRDT. Either way the version chain is what tells you a conflict exists." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-google-drive-metaphor-1"
+  lessonSlug="02-google-drive"
+  lang="en"
+  setup="Each chunk is keyed by the hash of its own bytes, so two identical chunks — across versions, files, or even different users — are stored only once. This single-physical-copy property is called _______."
+  accepted={["deduplication", "dedup", "de-duplication", "dedupe", "content dedup"]}
+  canonical="deduplication"
+  explanation="Content-addressed chunking gives deduplication for free: the hash is the storage key, so identical bytes collide to one stored chunk. The same mechanism also powers delta sync (upload only chunks with new hashes) and integrity checks (a chunk whose bytes don't match its hash is corrupt). One idea, three wins."
+/>
+
+## Bottlenecks & tradeoffs
+
+The dominant resource saved is **bandwidth** (delta sync) and **storage** (dedup); both come from content-addressed chunking, which costs client-side CPU to hash and chunk. **Fixed vs content-defined chunking** trades simplicity for insert-resilient dedup. **Conflict policy** trades automatic-merge convenience (OT/CRDT, complex, format-specific) against conflicted-copy safety (simple, never wrong, but punts to the human). **Push vs poll** trades a small amount of connection state for a massive reduction in wasted requests at scale. The deepest tradeoff is **consistency of metadata**: the metadata commit is the linearization point — it must be transactional (a version commit either fully happens or doesn't), even though chunk uploads are eventually-consistent best-effort. Get the metadata layer's consistency right and the blob layer can be loose; reverse them and you corrupt data. As with every design in this unit, the metadata service is where you spend your consistency budget and the blob store is where you spend your bytes.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A file = metadata (versioned chunk list, transactional DB) + content-addressed chunks (blob store). Chunking gives dedup + delta sync. Upload chunks, then commit; never overwrite — detect branches via the version chain.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-google-drive-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does content-addressed chunking buy you, and why split metadata from blobs?", a: "Splitting a file into chunks keyed by their content hash gives three things at once: deduplication (identical chunks across versions/files/users are stored once), delta sync (re-chunk, compare hashes, upload only chunks with new hashes — a one-paragraph edit moves ~4 MB not 200 MB), and integrity (the hash is the address, so corruption is detectable). Metadata and blobs go in separate systems because they have opposite needs: metadata is small, queried, transactionally updated (rename/move/share/version) — a transactional DB's job; chunks are large, immutable, write-once-read-many, needing cheap durable bulk storage — an object store's job." },
+    { q: "How are conflicting edits detected and resolved without losing data?", a: "Each version records its parent, forming a version chain. When a device syncs, the server checks whether the new version's parent is still the current head; if not, the edits branched (a conflict) — typically because one device was offline. The cardinal rule is never silently overwrite (last-writer-wins eats work). For opaque files, keep both as a conflicted copy and let a human decide; for structured collaborative documents, merge automatically via operational transforms or CRDTs. Without the version chain you can't distinguish a conflict from a normal sequential edit." },
+    { q: "Why push change notifications instead of polling, and what's the commit ordering?", a: "At 100M devices, short-interval polling floods the server with mostly-empty 'anything new?' requests — billions of wasted responses/sec. Instead each client holds a long-poll/WebSocket connection and the server pushes a lightweight signal only when a relevant change happens; the client then pulls the metadata diff and missing chunks (the actual transfer stays on the delta-sync path). Commit ordering: upload chunks first, then commit the new version, so the metadata never references chunks that don't exist yet — chunks are immutable and content-addressed, so re-uploading one is a harmless no-op." },
+  ]}
+/>
+
+<Recap lang="en">
+A file-sync service is built around two questions: move the fewest bytes on a change, and never lose an edit. The answer to the first is **content-addressed chunking** — split each file into chunks keyed by their content hash, which simultaneously gives **dedup** (identical chunks stored once, across versions, files, and users), **delta sync** (upload only chunks whose hashes are new, turning a 200 MB re-upload into a ~4 MB chunk transfer), and **integrity** (the hash is the address). That forces the central structural split: a file is **metadata** (name, folder, version, ordered chunk-hash list, permissions) in a **transactional, sharded DB**, plus **chunks** (immutable bytes) in a **blob/object store** — two systems because their access patterns are opposite. The answer to the second question is the **version chain** plus a **never-overwrite** rule: each version records its parent, so a divergent sync (parent no longer the head) is detectable as a conflict and resolved by keeping a **conflicted copy** (or auto-merging collaborative docs via OT/CRDT) rather than silently clobbering work. Changes propagate by **push** (long-poll/WebSocket notification → client pulls the diff), never short-interval polling, which would drown the server at device scale. And the **commit ordering** — chunks first, then version — keeps metadata pointing only at bytes that exist. As across this whole unit: the metadata service holds your consistency, the blob store holds your bytes.
+</Recap>

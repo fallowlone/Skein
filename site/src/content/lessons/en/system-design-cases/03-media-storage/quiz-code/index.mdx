@@ -4,19 +4,151 @@ lang: en
 track: "system-design-cases"
 unit: "03-media-storage"
 order: 7
-title: "03-media-storage: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Media & storage: code and config reading"
+summary: "Read real upload handlers, storage configs, sync logic, and counters, then pick the senior fix: a direct-to-object-store upload, an erasure-coding overhead calc, a delta-sync chunk comparison, and an eventually-consistent view counter."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - control-vs-data-path
+  - erasure-coding
+  - delta-sync
+  - eventual-consistency
+  - chunking-dedup
+  - object-storage
+prereqs:
+  - system-design-cases/03-media-storage/01-youtube
+  - system-design-cases/03-media-storage/02-google-drive
+  - system-design-cases/03-media-storage/03-object-storage
 sources:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/DataDurability.html
+  - https://dropbox.tech/infrastructure/streaming-file-synchronization
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 03-media-storage unit. STUB.</Hook>
+<Hook>
+Media bugs hide in the handler and the config: a request that buffers gigabytes, a replication factor, a chunk comparison, a synchronous counter. Read each snippet, find the design flaw, and pick the change a senior engineer would commit.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the handler/config, spot the data-path or consistency flaw, and pick the fix that respects the structure: bytes off the app path.</Crux>
+
+<Explanation>
+
+Practise the design-review loop: locate where bytes touch the app path, where redundancy is mis-chosen, where sync moves too much, and where a counter is dangerously synchronous.
+
+## Snippet 1 — the upload handler
+
+```python
+@app.post("/upload")
+def upload(req):
+    data = req.body.read()          # the whole video, in memory
+    db.execute("INSERT INTO videos (id, blob) VALUES (?, ?)", req.id, data)
+    return {"ok": True}
+```
+
+<Quiz
+  id="03-media-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What's wrong with this upload handler, and what's the fix?"
+  choices={[
+    { label: "It buffers the whole (multi-GB) video in app memory and writes it as a DB blob — bytes on the data path and in the database. Fix: return a presigned URL so the client uploads directly to object storage; store only a metadata row referencing the object key.", correct: true },
+    { label: "It's missing input validation; add a schema check and it's fine.", misconception: "Validation doesn't fix the core flaw: a multi-GB video is buffered in memory and stored as a DB blob. Bytes must go directly to object storage via a presigned URL; the DB holds only a small metadata reference." },
+    { label: "It should use an async framework so the read doesn't block.", misconception: "Async I/O doesn't change that gigabytes are passing through the app and into the database. The structural fix is direct-to-object-store upload (presigned URL) with a metadata-only DB row — keep bytes off the app path entirely." },
+    { label: "It needs a transaction around the INSERT.", misconception: "A transaction doesn't address storing a multi-GB blob in the database or buffering it in memory. Move bytes to object storage via a presigned URL and store only the key in the DB." },
+  ]}
+/>
+
+## Snippet 2 — the storage config
+
+```yaml
+# object store durability config
+redundancy: replication
+replication_factor: 3      # 3 full copies of every object
+# workload: exabytes of cold archival video, rarely read
+```
+
+<Quiz
+  id="03-media-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="For exabytes of cold, rarely-read archival video, what does this config cost, and what's the better scheme?"
+  choices={[
+    { label: "3× replication is 200% storage overhead — ruinous at exabyte scale. Switch cold data to erasure coding (e.g. 10+4): ~1.4× overhead, tolerates 4 simultaneous losses, still hits ~11 nines. The reconstruction cost is fine because the data is rarely read.", correct: true },
+    { label: "It's optimal — 3 copies is the standard for durability, leave it.", misconception: "For cold data, 3× (200% overhead) is wasteful. Erasure coding (10+4) gives ~40% overhead AND better fault tolerance (4 losses vs 2). Replication's storage cost is the problem at exabyte scale; switch cold data to erasure coding." },
+    { label: "Lower replication_factor to 2 to save cost.", misconception: "RF=2 tolerates only 1 loss and still costs 100% overhead — worse durability for still-high cost. Erasure coding (10+4) is the right answer: ~40% overhead and 4-loss tolerance, ideal for rarely-read cold data." },
+    { label: "Add checksums and keep a single copy.", misconception: "A single copy can't survive a disk failure (checksums only detect corruption). You need redundancy across failure domains; for cold data that's erasure coding (10+4) at ~1.4× overhead, not one copy." },
+  ]}
+/>
+
+## Snippet 3 — the sync diff
+
+```python
+def sync_changes(local_file, remote_version):
+    local_chunks  = [sha256(c) for c in chunk(local_file)]
+    remote_chunks = remote_version.chunk_hashes
+    to_upload = [h for h in local_chunks if h not in set(remote_chunks)]
+    upload(to_upload)            # then commit a new version listing local_chunks
+```
+
+<Quiz
+  id="03-media-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="A user appends a paragraph to a 200 MB file (~50 chunks). Roughly what does this upload, and what does it demonstrate?"
+  choices={[
+    { label: "Only the 1–2 chunks whose content hash is new (~4–8 MB), not the whole file — delta sync. Identical chunks across versions/files are skipped (their hash already exists), which is also how cross-version dedup falls out of the same comparison.", correct: true },
+    { label: "All ~50 chunks, because appending shifts the file and changes every hash.", misconception: "Appending to the END only changes the last chunk(s); earlier chunks keep their hashes and are skipped. (Inserting at the START would shift fixed boundaries — that's why content-defined chunking exists.) An append uploads ~1–2 chunks, demonstrating delta sync." },
+    { label: "Nothing, because the file already exists remotely.", misconception: "The file changed, so its new chunk(s) have new hashes not in remote_chunks and must upload. The point is that ONLY those new-hash chunks upload (~4–8 MB), not the whole 200 MB — delta sync." },
+    { label: "The whole 200 MB, since you must re-upload to commit a new version.", misconception: "Committing a new version only records the chunk-hash list; the bytes uploaded are just the chunks with new hashes (~4–8 MB). Unchanged chunks already exist remotely and are skipped — that's the delta-sync win." },
+  ]}
+/>
+
+## Snippet 4 — the view counter
+
+```python
+def record_view(video_id):
+    db.execute(
+      "UPDATE videos SET views = views + 1 WHERE id = ?", video_id
+    )                            # one synchronous UPDATE per view
+# a viral video draws ~200,000 views/second
+```
+
+<Quiz
+  id="03-media-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="At ~200,000 views/second on a viral video, what does this counter do, and what's the right design?"
+  choices={[
+    { label: "Every view contends on one hot row, serializing on its lock — write throughput collapses and playback stalls behind lock waits. Make it eventually consistent: log view events to a stream, aggregate asynchronously, refresh the count periodically.", correct: true },
+    { label: "It's fine if the videos table has an index on id.", misconception: "An index speeds lookups but doesn't help a single hot row — every UPDATE serializes on that row's lock regardless. 200K/sec to one row is a contention disaster; the fix is async aggregation, not an index." },
+    { label: "Wrap it in a transaction with SERIALIZABLE isolation for correctness.", misconception: "Stronger isolation makes contention worse, not better — it adds more locking on the already-hot row. The count is exactly where eventual consistency is safe: log events and aggregate asynchronously." },
+    { label: "Add a read replica so the count display doesn't block writes.", misconception: "The problem is write contention on one row, not read load; a replica serves reads but the hot-row write storm remains. Decouple with an event stream and periodic aggregation." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Media decisions are visible in code: bytes leave the app path (presigned URL, not a DB blob), redundancy matches the profile (erasure-code cold), sync moves only new-hash chunks, a viral counter is eventually consistent.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-media-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "How do you spot a bytes-on-the-data-path bug in an upload handler, and the fix?", a: "Look for the handler reading the full request body into memory and/or writing it to the database (a BLOB column). Both put multi-GB bytes on the app's data path and into a store that shouldn't hold them. The fix is to keep the API on the control path: hand the client a presigned URL so it uploads bytes directly to object storage (multipart for huge objects), and store only a small metadata row referencing the object key. The DB and app memory never touch the media bytes." },
+    { q: "Given a 3× replication config for cold data and a synchronous per-view counter, what do you change and why?", a: "Replication at 3× is 200% storage overhead — ruinous for exabytes of cold, rarely-read data; switch it to erasure coding (e.g. 10+4) for ~1.4× overhead, 4-loss tolerance, and ~11 nines, since the higher reconstruction cost is fine when reads are rare (but keep replication for small hot objects). The synchronous per-view UPDATE creates one hot row that serializes on its lock — at 200K views/sec write throughput collapses; make it eventually consistent by logging view events to a stream and aggregating asynchronously, refreshing the displayed count periodically. Match redundancy to the data profile, and never synchronously increment a viral counter." },
+  ]}
+/>
+
+<Recap lang="en">
+Every media decision in this unit shows up in code you can read. The **upload handler** that reads the whole body and writes a DB blob is the bytes-on-the-data-path bug — fix it with a **presigned URL** so the client uploads directly to object storage and the DB holds only a metadata reference. The **3× replication config** for cold archival data wastes 200% overhead — switch cold data to **erasure coding** (10+4 ≈ 1.4×, 4-loss tolerance) while keeping replication for small hot objects. The **sync diff** that compares chunk hashes uploads only the new-hash chunks (~4–8 MB for a one-paragraph append), the essence of **delta sync** and where cross-version **dedup** falls out free. And the **synchronous per-view UPDATE** is a hot row that collapses under viral load — make the count **eventually consistent** by logging events and aggregating asynchronously. The senior habit is the same across all four: find where bytes or consistency are being handled wrong, and pick the fix that respects the structure rather than papering over it.
+</Recap>

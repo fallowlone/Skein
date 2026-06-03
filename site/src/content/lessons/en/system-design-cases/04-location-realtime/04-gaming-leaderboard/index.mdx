@@ -5,34 +5,172 @@ track: "system-design-cases"
 unit: "04-location-realtime"
 order: 4
 title: "Design a realtime leaderboard"
-summary: "Design a realtime leaderboard — to be authored."
-estMin: 16
-status: stub
+summary: "Design a realtime leaderboard: back it with a Redis sorted set (ZSET) for O(log n) score updates and top-k reads, answer 'my rank among millions' via ZRANK, break ties deterministically, and shard by score range when one node can't hold the whole board."
+estMin: 32
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - sorted-set
+  - top-k
+  - rank-query
+  - score-sharding
+  - tie-breaking
+  - redis-zset
+prereqs:
+  - 04-data-distribution/02-sharding-and-partitioning
+  - 05-caching-at-scale/01-caching-strategies
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://redis.io/docs/latest/develop/data-types/sorted-sets/
+  - https://redis.io/docs/latest/commands/zadd/
+  - https://redis.io/docs/latest/commands/zrank/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A leaderboard looks like a `SELECT ... ORDER BY score DESC LIMIT 10` and nothing more. Then the product asks the question that breaks the naive design: "show each player their own rank — they're position 4,172,338 out of twelve million, and update it live as they play." Computing one player's rank with SQL means counting every player with a higher score, an `O(n)` scan, for every one of millions of players, on every score change. The board is also write-hot: each match end mutates scores, and each mutation can shuffle ranks. The whole problem is finding a data structure where insert, top-k, and "what's my rank" are all cheap at the same time — and a relational table is not it.
 
-<Crux>STUB.</Crux>
+</Hook>
+
+<Crux>A leaderboard needs inserts, top-k, AND rank-of-one at once — a sorted set (Redis ZSET) gives all three in O(log n); an ORDER BY cannot.</Crux>
 
 <Explanation>
 
-## Design a realtime leaderboard
+## Requirements
 
-Body to be authored.
+- **Functional**: update a player's score; read the top-k (top 10/100); read any single player's current rank and score; often read a small window around a player ("you and the 5 above and below").
+- **Non-functional**: write-hot (scores change constantly during play) and read-hot (everyone checks standings). Low latency for both updates and rank queries. Strong-ish freshness — a rank should reflect recent scores within seconds. The board can be large: tens of millions of entries.
+
+The defining requirement is the *combination*. Top-k alone is easy (keep a heap). Rank-of-one alone is easy-ish (a counter). Needing both, plus fast updates, plus "the window around me", on a board of millions, is what rules out the obvious table and points at an ordered, rank-aware structure.
+
+## Estimation
+
+Say a game with 50M monthly players, 5M concurrent at peak, and a score update roughly every 10 seconds of active play — call it `5×10^6 / 10 = 5×10^5` updates/sec at peak, plus heavy read traffic as players watch standings. The board itself is small in bytes: 50M entries of `(player_id, score)` is on the order of a couple of GB — it fits in memory on a single beefy node, which is exactly why an in-memory sorted set is the natural home. The pressure is not storage; it is doing `O(log n)` work half a million times a second and answering rank queries without scanning.
+
+## High-level design
+
+A score event flows to a leaderboard service that updates a **sorted set** in Redis; reads (top-k, my-rank, window) hit the same structure. A durable store of record (a database) keeps the authoritative score history; the ZSET is the fast index rebuilt from it if lost.
+
+<FlowDiagram
+  label="A match-end score event goes to a leaderboard service, which writes the authoritative record to a durable database and updates a Redis sorted set that serves as the fast ranking index; read paths for top-k, a player's own rank, and the window around a player all query the sorted set, with the database able to rebuild it after a failure."
+  perRow={4}
+  hue="var(--d-backend)"
+  nodes={[
+    { id: "match", label: "score event", sub: "match end" },
+    { id: "svc", label: "leaderboard svc", sub: "update + read" },
+    { id: "db", label: "durable DB", sub: "source of truth" },
+    { id: "zset", label: "Redis ZSET", sub: "skip list, O(log n)" },
+    { id: "topk", label: "top-k read", sub: "ZREVRANGE 0 9" },
+    { id: "rank", label: "my-rank read", sub: "ZREVRANK" },
+    { id: "window", label: "window read", sub: "rank +/- 5" },
+  ]}
+  edges={[
+    { from: "match", to: "svc" },
+    { from: "svc", to: "db", label: "persist" },
+    { from: "svc", to: "zset", label: "ZADD" },
+    { from: "zset", to: "topk" },
+    { from: "zset", to: "rank" },
+    { from: "zset", to: "window" },
+    { from: "db", to: "zset", label: "rebuild" },
+  ]}
+  caption="The ZSET is the ranking engine; the database is the source of truth. All three read shapes — top-k, my-rank, and the window around me — are single sorted-set operations, none of them a scan."
+/>
+
+The deep dives are why the sorted set wins, how it answers "my rank among millions", and what to do when the board outgrows one node.
+
+## Deep dive
+
+### The sorted set (ZSET) and why it wins
+
+A Redis sorted set stores members each with a numeric score, kept ordered by score, implemented as a **skip list** alongside a hash map. The skip list gives ordered traversal and rank in `O(log n)`; the hash gives `O(1)` score lookup by member. This combination is exactly the leaderboard's wish list:
+
+- **Update**: `ZADD board <score> <player>` inserts or repositions in `O(log n)`.
+- **Top-k**: `ZREVRANGE board 0 9 WITHSCORES` returns the top 10 in `O(log n + k)`.
+- **My rank**: `ZREVRANK board <player>` returns the player's 0-based position in `O(log n)` — *without* scanning the others.
+- **Window around me**: get the rank, then `ZREVRANGE board r-5 r+5` for the neighbors.
+
+The relational alternative answers top-k fine with an index, but "my rank" becomes `SELECT COUNT(*) WHERE score > mine` — an `O(n)` count per query, devastating when millions of players each poll their own rank. The ZSET keeps rank information in the structure itself, so it never has to count.
+
+<Inset kind="why" lang="en">
+Why can a skip list give rank in O(log n) when a plain sorted list would need O(n) to count positions? Because each skip-list node stores a **span** — the number of bottom-level elements each forward pointer jumps over. To find a member's rank, you walk down the express lanes toward it and sum the spans of the pointers you follow; the total is its position. No counting of individual elements, just adding a handful of precomputed jump-widths along an O(log n) path. That span bookkeeping is updated incrementally on each insert/delete, so you pay a little extra on writes to make rank reads cheap — the same precompute-for-read bargain as the Maps lesson, in miniature. It is why ZRANK is genuinely O(log n), not a disguised scan.
+</Inset>
+
+### Top-k and "my rank among millions"
+
+The two reads have very different cost profiles, and conflating them is a classic mistake. **Top-k is shared**: there is one top-10 for the whole board, so you compute it once and cache it for everyone, refreshing on a short interval — millions of viewers, one computation. **My-rank is personal**: every player has a different one, so it cannot be cached globally; it must be computed per request. The saving grace is that `ZREVRANK` is `O(log n)`, so even per-request it is cheap — and the window-around-me read reuses the same rank. So the architecture caches the global top-k aggressively and serves personal ranks live off the ZSET, rather than trying to precompute every player's rank (which would be `O(n)` to maintain and pointless, since most are never viewed).
+
+<Inset kind="edgecase" lang="en">
+Ties are not a detail; they decide who sees themselves above whom. If two players have the same score, the ZSET orders them **lexicographically by member name**, which is arbitrary from the game's point of view and can make rank feel unstable. The standard fix is to make the score itself a tiebreaker by encoding a secondary key into it: combine the points with an inverse timestamp (earlier achiever ranks higher) into one composite numeric score — for example score in the high bits and `(maxTime − achievedAt)` in the low bits. Now equal-point players get a deterministic, meaningful order and no two entries truly tie. Decide the tiebreak rule up front; retrofitting it means recomputing every score.
+</Inset>
+
+### Sharding when one board is too big
+
+A single ZSET on one node has limits: memory, and the single-threaded throughput of one Redis instance against `5×10^5` writes/sec. When you outgrow it, you **shard by score range** — node A holds scores 0–1000, node B 1001–2000, and so on. Top-k then reads only the highest-range shard (or merges the tops of a few). Updates route to the shard owning the new score (and remove from the old shard on a score change that crosses a boundary). The hard part is **global rank**: a player's true rank is their rank within their shard *plus the total count of everyone in all higher-scoring shards*. You keep per-shard cardinalities (cheap counters) so global rank is "my in-shard rank + sum of higher shards' sizes" — an `O(shards)` addition, not a scan. This is the same coarse-then-fine and boundary-handling instinct as the rest of the unit, now expressed as range partitioning of a score axis.
+
+## Bottlenecks & tradeoffs
+
+The first tradeoff is **memory vs durability**: the ZSET lives in RAM for speed, so it must be backed by a durable source of truth and rebuilt on restart — treat the sorted set as a fast index, never the system of record. The second is **write contention**: at hundreds of thousands of updates/sec a single instance is the bottleneck, which is why score-range sharding (or splitting into time-windowed boards — daily/weekly/all-time — each its own smaller ZSET) is the scaling path. The third is **the freshness vs cost of the personal rank under churn**: when scores change constantly, a player's exact rank is a moving target, and recomputing it on every single update for every viewer is wasteful — so you compute rank on read (cheap via ZREVRANK) and accept that it is a near-real-time snapshot, not a continuously pushed value, unless the product truly needs live streaming of one's own rank.
+
+<Quiz
+  id="04-gaming-leaderboard-quiz-1"
+  lessonSlug="04-gaming-leaderboard"
+  lang="en"
+  question="A leaderboard stores scores in a SQL table with an index on score. Top-10 is fast, but showing each of 12M players their own live rank is killing the database. What's the root cause and the fix?"
+  choices={[
+    { label: "'My rank' is SELECT COUNT(*) WHERE score > mine — an O(n) count per player per query. Use a sorted set (Redis ZSET): ZREVRANK returns a player's rank in O(log n) because rank is held in the structure (skip-list spans), so it never scans.", correct: true },
+    { label: "The score index is fragmented; rebuild it and add more read replicas.", misconception: "An index makes top-k fast but can't make COUNT(*) WHERE score > mine cheap — it's still O(n) per rank query, and replicas just spread an expensive query. The structural fix is a ZSET whose ZREVRANK is O(log n)." },
+    { label: "Cache every player's rank and refresh it periodically.", misconception: "Maintaining a precomputed rank for all 12M players is O(n) to update on each score change and mostly wasted (most ranks are never viewed). A ZSET computes any rank in O(log n) on read — no global rank cache needed." },
+    { label: "Switch to a NoSQL document store for faster writes.", misconception: "A document store doesn't give ordered rank queries either — you'd still scan to count higher scores. The right tool is an ordered, rank-aware structure: a sorted set with O(log n) ZREVRANK." },
+  ]}
+/>
+
+<Quiz
+  id="04-gaming-leaderboard-quiz-2"
+  lessonSlug="04-gaming-leaderboard"
+  lang="en"
+  question="Your single-node ZSET can't keep up with 500K updates/sec and the board no longer fits comfortably in one instance. You shard by score range across nodes. How do you still answer a player's GLOBAL rank?"
+  choices={[
+    { label: "Global rank = the player's rank within their own shard PLUS the total count of players in all higher-scoring shards. Keep per-shard cardinality counters so it's an O(shards) sum, not a scan.", correct: true },
+    { label: "Query every shard for all players above the score and count them.", misconception: "That's an O(n) scan across shards — exactly what you sharded to avoid. Instead use the player's in-shard ZREVRANK plus the cheap per-shard size counters of higher shards: an O(shards) addition." },
+    { label: "Global rank can't be computed once you shard; only top-k works.", misconception: "It can: in-shard rank (O(log n)) plus the summed sizes of higher-scoring shards (O(shards) from counters). Sharding by score range keeps both top-k and global rank tractable." },
+    { label: "Replicate the full board to one node just to answer rank.", misconception: "That recreates the single-node bottleneck you sharded away (memory + write throughput). The sharded answer is in-shard rank plus the counts of higher shards from maintained cardinality counters." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-gaming-leaderboard-metaphor-1"
+  lessonSlug="04-gaming-leaderboard"
+  lang="en"
+  setup="A Redis sorted set is backed by a _______, whose nodes store a span (how many elements each forward pointer jumps over); summing the spans along the O(log n) search path yields a member's rank without counting elements one by one — which is why ZREVRANK is cheap."
+  accepted={["skip list", "skip-list", "skiplist"]}
+  canonical="skip list"
+  explanation="The ZSET pairs a hash map (O(1) score lookup by member) with a skip list (ordered traversal and rank). The skip list's per-node spans let you compute rank by adding a few precomputed jump-widths along an O(log n) path — the structural reason a sorted set answers 'my rank among millions' without an O(n) count."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A relational ORDER BY makes 'my rank' an O(n) count. A sorted set (Redis ZSET, a skip list) gives update, top-k, and ZREVRANK in O(log n). Cache the top-k, serve ranks live, break ties by composite score, shard by score.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-gaming-leaderboard-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a sorted set beat a relational table for a leaderboard, and what operations does it give?", a: "The leaderboard needs cheap update, top-k, AND rank-of-one simultaneously. A SQL table with a score index does top-k fine but 'my rank' becomes SELECT COUNT(*) WHERE score > mine — an O(n) count per player per query, fatal when millions poll their own rank. A Redis ZSET (a skip list + hash map) keeps rank in the structure: ZADD inserts/repositions in O(log n); ZREVRANGE 0 9 reads top-k in O(log n + k); ZREVRANK returns a player's rank in O(log n) WITHOUT scanning; and a window around a player is rank then ZREVRANGE r-5 r+5. The skip list's per-node spans (precomputed jump-widths) are why rank is O(log n), not a disguised scan." },
+    { q: "How do you handle top-k vs my-rank, and how do you break ties?", a: "Top-k is shared — one top-10 for the whole board — so compute it once and cache it for all viewers, refreshing on a short interval. My-rank is personal — every player differs — so it can't be cached globally and is computed per request, but ZREVRANK is O(log n) so it's cheap; the window-around-me reuses that rank. Don't precompute every player's rank (O(n) to maintain, mostly never viewed). Ties: equal scores order lexicographically by member name (arbitrary), so encode a tiebreaker into the score itself — e.g. points in the high bits and an inverse timestamp (earlier achiever wins) in the low bits — giving a deterministic, meaningful order and no true ties. Decide the rule up front." },
+    { q: "How do you shard a leaderboard, compute global rank across shards, and what are the key tradeoffs?", a: "When one node can't hold the board or handle the write rate, shard by SCORE RANGE (node A: 0–1000, B: 1001–2000, …). Top-k reads only the highest range (or merges a few tops); updates route to the owning shard and move across boundaries on score change. Global rank = the player's in-shard rank PLUS the summed sizes of all higher-scoring shards, using cheap per-shard cardinality counters — an O(shards) addition, not a scan. Tradeoffs: memory vs durability (the ZSET is a fast in-RAM index backed by a durable source of truth and rebuilt on restart, never the system of record); write contention (range sharding or time-windowed boards — daily/weekly/all-time — as the scaling path); and freshness vs cost (compute personal rank on read and accept a near-real-time snapshot rather than streaming every player's rank on every update)." },
+  ]}
+/>
+
+<Recap lang="en">
+A realtime leaderboard's hard requirement is the **combination**: cheap **update**, **top-k**, and **rank-of-one** at the same time, on a board of millions. A relational table makes "my rank" an `O(n)` count (`COUNT(*) WHERE score > mine`) per player — fatal under polling. A **sorted set** (Redis ZSET: a **skip list** with per-node **spans**, plus a hash map) gives `ZADD`, `ZREVRANGE`, and `ZREVRANK` all in `O(log n)`, computing rank by summing precomputed jump-widths instead of counting. **Top-k is shared** (compute once, cache for all); **my-rank is personal** (computed live per request, cheap via `ZREVRANK`); don't precompute everyone's rank. **Ties** are resolved by encoding a tiebreaker (points plus an inverse timestamp) into a composite score so order is deterministic. When one node is too small or too slow, **shard by score range**: top-k reads the highest range, and **global rank** is the in-shard rank plus the summed sizes of higher shards from cheap counters — `O(shards)`, not a scan. The standing tradeoffs are **memory vs durability** (the ZSET is a fast index over a durable source of truth), **write contention** (range or time-windowed sharding), and computing the **personal rank on read** as a near-real-time snapshot.
+</Recap>

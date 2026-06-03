@@ -5,34 +5,174 @@ track: "system-design-cases"
 unit: "04-location-realtime"
 order: 1
 title: "Design a proximity service"
-summary: "Design a proximity service — to be authored."
-estMin: 16
-status: stub
+summary: "Design a find-nearby service (Yelp-style): index the world with geohash, quadtree, or S2/H3, query by cell instead of scanning, handle the cell-boundary problem, and cache the read-heavy answers per cell while ranking the survivors."
+estMin: 34
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - geospatial-index
+  - geohash
+  - quadtree
+  - s2-h3
+  - cell-boundary
+  - cache-by-cell
+prereqs:
+  - 08-building-blocks/04-geohashing
+  - 04-data-distribution/02-sharding-and-partitioning
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://s2geometry.io/
+  - https://h3geo.org/docs/highlights/indexing/
+  - https://www.postgresql.org/docs/current/gist.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+"Show me coffee shops within 2 km" sounds like one line of SQL, and that is exactly the trap. The naive query computes the distance from the user to every one of ten million businesses, sorts them, and returns the closest — a full table scan on every keystroke of a typeahead, multiplied by a hundred thousand concurrent users. The first version a team ships often does precisely this, runs fine on a laptop with a thousand rows, and melts in production. The whole craft of a proximity service is turning "compare against everything" into "look in a handful of pre-computed buckets", and then dealing with the awkward truth that the nearest shop is sometimes in the bucket next door.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Don't scan every point. Index locations into cells, query only nearby cells, then handle the points that fall just across a cell boundary.</Crux>
 
 <Explanation>
 
-## Design a proximity service
+## Requirements
 
-Body to be authored.
+Pin down the shape before the storage. A find-nearby service like Yelp or a store locator has a tight set of functional needs and a very particular load profile.
+
+- **Functional**: given a user's latitude/longitude and a radius (or a "k nearest" count), return matching places, ranked. Filters apply on top (category, open-now, rating). Places change slowly; a coffee shop's coordinates are essentially static.
+- **Non-functional**: read-heavy by a wide margin — searches vastly outnumber edits. Low latency for typeahead (tens of milliseconds). Eventual freshness on the place data is fine; a newly added restaurant appearing a minute late is acceptable. High availability matters more than strong consistency here.
+
+The decisive observation is the read/write asymmetry. Locations are written rarely and read constantly, which means we can afford to build a heavy index once and amortize it across millions of queries — the opposite of the next lesson's write-heavy live-location problem.
+
+## Estimation
+
+Suppose 100M places worldwide and 200M searches per day. Average search QPS is `2×10^8 / ~10^5 s ≈ 2,000`, and we provision for a peak of `~10,000` (lunchtime and evening spikes). Each search must not touch 100M rows; it must touch the few hundred candidates inside the relevant cells. Place data is small — say 1 KB per record, so ~100 GB total, comfortably indexable and largely cacheable. The hot working set is "popular city centers", a fraction of the whole, which is why caching by location pays off so well.
+
+## High-level design
+
+The pipeline is the same regardless of which spatial index you pick: convert the user's point and radius into a set of cell identifiers, fetch candidate places from those cells, compute exact distances and filters on that small set, then rank and return.
+
+<FlowDiagram
+  label="A search request flows from the client to an API gateway, which asks a geo-index service to convert the point-and-radius into a set of covering cell IDs; those cells are looked up (cache first, then the indexed store) to fetch candidates, which are then distance-filtered and ranked before the response returns."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "client", label: "client", sub: "lat/lng + radius" },
+    { id: "gw", label: "API gateway", sub: "auth, rate-limit" },
+    { id: "geo", label: "geo-index svc", sub: "point → cell IDs" },
+    { id: "cache", label: "cache by cell", sub: "hot city centers" },
+    { id: "store", label: "indexed store", sub: "places per cell" },
+    { id: "rank", label: "distance + rank", sub: "filter candidates" },
+    { id: "resp", label: "response", sub: "k nearest" },
+  ]}
+  edges={[
+    { from: "client", to: "gw" },
+    { from: "gw", to: "geo", label: "query" },
+    { from: "geo", to: "cache", label: "cell IDs" },
+    { from: "cache", to: "store", label: "miss" },
+    { from: "store", to: "rank", label: "candidates" },
+    { from: "cache", to: "rank", label: "hit" },
+    { from: "rank", to: "resp" },
+  ]}
+  caption="The cell conversion shrinks the problem: instead of scanning 100M places, the service fetches only the few hundred candidates in the covering cells, then does exact math on that small set."
+/>
+
+The geo-index service is the heart of it. Everything downstream operates on the small candidate set its cell lookup produces, which is why choosing the index well is the design's central decision.
+
+## Deep dive
+
+### Choosing the spatial index
+
+There are three families worth knowing, and the right answer depends on your access pattern.
+
+**Geohash** interleaves the bits of latitude and longitude into a single string, where each added character refines the location into a smaller rectangle. Its great virtue is that nearby points usually share a prefix, so a `LIKE 'u4pruyd%'` prefix scan on an ordinary B-tree finds neighbors — no special index type required. Its great flaw is that the prefix property is only *usually* true: two points a meter apart can straddle a boundary and share no prefix at all (the classic example sits near the equator and prime meridian). Geohash cells are also non-uniform in real-world area because longitude degrees shrink toward the poles.
+
+**Quadtree** recursively splits space into four quadrants, subdividing a cell only when it holds more than some threshold of points. This adapts to density: dense Manhattan gets deep, fine cells; the empty ocean gets one shallow cell. That adaptivity is the win for skewed data, but the tree is a stateful in-memory structure you must build, balance, and rebuild as data shifts — more operational weight than a string prefix.
+
+**S2** (Google) projects the sphere onto a cube and uses a Hilbert space-filling curve to give every cell a 64-bit ID; **H3** (Uber) tiles the globe with hexagons. Both fix geohash's worst problems: cells are far closer to equal-area, and IDs at different resolutions nest cleanly. H3's hexagons have a uniquely useful property — every neighbor is equidistant (a hexagon has six edge-neighbors, all the same distance away), which makes "expand the search ring" operations clean. These are the production choice at scale; the cost is a library dependency and a steeper learning curve.
+
+<Inset kind="why" lang="en">
+Why do hexagons beat squares for proximity? A square grid has two kinds of neighbor — the four that share an edge and the four that share only a corner — and the corner neighbors are 1.41× farther away than the edge ones. So "the cells around me" is an ambiguous, lopsided set. A hexagonal grid has exactly six neighbors, all sharing an edge, all the same distance to their centers. When you grow a search outward ring by ring (H3 calls it `kRing`), each ring is a clean, uniform annulus, and the count of cells per ring grows predictably (`6k`). That uniformity is why ride-hailing and logistics, where you constantly ask "what's near this point and how do I expand the net", standardized on hexagons.
+</Inset>
+
+### The cell-boundary problem
+
+Here is the failure that bites every first implementation. You convert the user's point to its cell, fetch the places in that cell, rank them, and return — and you miss the nearest coffee shop because it sits three meters away, just across the cell line, in the adjacent cell you never queried. A point's cell tells you roughly where it is, but the true nearest neighbor can live in any of the surrounding cells.
+
+The fix is to **query the cell and its neighbors**, not the cell alone. With a square grid you fetch the cell plus its eight surrounding cells (the 3×3 block); with H3 you fetch the center cell plus its `kRing` of neighbors for whatever `k` covers your radius. You then compute exact great-circle distances on the union of candidates and keep only those genuinely inside the radius. The cell index is a *coarse filter* that cheaply discards the 99.99% of places that are nowhere near; the precise distance math is the *fine filter* on what survives. Forgetting the coarse-then-fine split, and trusting a single cell, is the canonical proximity bug.
+
+<Inset kind="edgecase" lang="en">
+A subtle second-order version of the boundary problem: the right cell *resolution* depends on the query radius. If your cells are 1 km across but the user asks for places within 5 km, querying one ring of neighbors isn't enough — you need cells out to the radius, which can be a large block. Conversely, if cells are tiny relative to the radius you fetch a huge number of them. Production systems either pick a resolution matched to the typical radius, or use the index's variable resolution: S2 and H3 let a single query assemble a "covering" — the minimal set of cells, possibly at mixed resolutions, that blankets the search disk — so the candidate fetch scales with the search area, not with a fixed cell size.
+</Inset>
+
+## Bottlenecks & tradeoffs
+
+The first bottleneck is **the database, not the index math** — and caching by cell is the lever. Because the workload is read-heavy and locations change slowly, the candidate list for a given cell is stable for minutes. Cache keyed by `(cell_id, filters)` and a popular downtown cell serves thousands of searches from memory between refreshes. This is why the read/write asymmetry from the requirements section is the whole game: you pay the index cost once and reap cache hits forever.
+
+The second is **density skew**. A fixed-resolution grid wastes effort in the ocean and overflows in Times Square, where one cell might hold ten thousand places. Quadtrees and the variable resolution of S2/H3 exist precisely to keep the candidate count per query roughly bounded regardless of where the user stands.
+
+The third is **ranking versus distance**. Returning the geometrically nearest places is rarely what a product wants; Yelp ranks by a blend of distance, rating, popularity, and sponsorship. So the cell lookup produces candidates, but the final order is a scoring step — and that scoring is what you cache and tune, separately from the geometry. Keep the two concerns apart: the spatial index answers "which places are plausibly nearby", and a ranking service answers "in what order should I show them".
+
+<Quiz
+  id="01-proximity-service-quiz-1"
+  lessonSlug="01-proximity-service"
+  lang="en"
+  question="A find-nearby service converts the user's location to a single geohash cell, fetches the places in that one cell, ranks them, and returns. Users report that an obviously close shop is sometimes missing. What is wrong?"
+  choices={[
+    { label: "The nearest place can sit just across a cell boundary in an adjacent cell that was never queried. Fetch the cell AND its surrounding neighbors (the 3×3 block, or an H3 kRing), then filter by exact distance.", correct: true },
+    { label: "The geohash function is buggy and assigns the shop to the wrong cell.", misconception: "The hash is fine; the shop is correctly in its own cell. The bug is querying only ONE cell — a point near a boundary has its true nearest neighbor in an adjacent cell, so you must query the neighbors too." },
+    { label: "The database index is missing, so the query times out before reaching that row.", misconception: "A timeout would drop many results, not silently omit one nearby shop. The symptom is the boundary problem: a single-cell query cannot see places just over the line in neighboring cells." },
+    { label: "The cache is stale and hasn't picked up the new shop.", misconception: "Staleness would also miss far-away places; the symptom is specifically a CLOSE shop near a cell edge being absent. That's the boundary problem — query the surrounding cells, not just one." },
+  ]}
+/>
+
+<Quiz
+  id="01-proximity-service-quiz-2"
+  lessonSlug="01-proximity-service"
+  lang="en"
+  question="Your proximity service runs on a fixed-resolution square grid. City-center cells overflow with tens of thousands of places while ocean cells are nearly empty, and tail latency is terrible for dense queries. What's the best structural fix?"
+  choices={[
+    { label: "Use a density-adaptive index — a quadtree, or the variable resolution of S2/H3 — so dense areas subdivide into finer cells and sparse areas stay coarse, keeping the candidate count per query roughly bounded.", correct: true },
+    { label: "Add more database replicas so dense-city queries spread across them.", misconception: "Replicas raise read throughput but each dense query still scans tens of thousands of candidates in one cell — the per-query cost is unchanged. The structural fix is adapting cell resolution to density so the candidate count stays bounded." },
+    { label: "Lower the grid resolution everywhere so there are fewer cells to manage.", misconception: "Coarser cells make the dense-city overflow WORSE — each cell now holds even more places. You need finer cells where it's dense, which is exactly what a quadtree or S2/H3 variable resolution provides." },
+    { label: "Cache every cell permanently so the database is never hit.", misconception: "Caching helps read load but doesn't shrink a 10,000-candidate dense cell — you still rank all of them per query, and places do change. The fix is adaptive resolution to bound the candidate count, with caching on top." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-proximity-service-metaphor-1"
+  lessonSlug="01-proximity-service"
+  lang="en"
+  setup="A spatial index works as a coarse filter that cheaply discards almost all points, after which exact great-circle _______ is computed only on the small candidate set the cells return — coarse to narrow, then precise to rank."
+  accepted={["distance", "distances", "distance math", "distance calculation"]}
+  canonical="distance"
+  explanation="The cell index is a cheap coarse filter: it eliminates the 99.99% of places nowhere near the user by bucket, leaving a few hundred candidates. Exact distance is the expensive fine filter, run only on that small surviving set — which is why a single cheap index lookup makes an otherwise O(N) problem tractable."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Never scan every point. Index places (geohash, quadtree, S2/H3); query nearby cells as a coarse filter, then exact distance on survivors. Query a cell's neighbors too, or you miss boundary places. Cache by cell.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-proximity-service-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare geohash, quadtree, and S2/H3 as proximity indexes.", a: "Geohash interleaves lat/lng bits into a string so nearby points usually share a prefix — searchable on a plain B-tree, but the prefix property breaks at boundaries and cells are non-uniform in area. A quadtree recursively splits space into four, subdividing only dense cells, so it adapts to skew — but it's a stateful in-memory tree you build and rebalance. S2 (cube + Hilbert curve, 64-bit IDs) and H3 (hexagons) give near-equal-area, cleanly nesting cells; H3's hexagons have six equidistant neighbors, making ring-expansion clean. S2/H3 are the production choice at scale; the cost is a library dependency." },
+    { q: "What is the cell-boundary problem and how do you solve it?", a: "A point's true nearest neighbor can sit just across a cell line in an adjacent cell. If you query only the point's own cell, you miss it. The fix is coarse-then-fine: query the cell AND its surrounding neighbors (a 3×3 block on a square grid, or an H3 kRing sized to the radius), treat the cell index as a coarse filter, then compute exact great-circle distances on the union and keep only points genuinely inside the radius. The resolution must also match the query radius — a 5 km radius on 1 km cells needs many rings, which is why S2/H3 'coverings' assemble cells to fit the search disk." },
+    { q: "Why is caching by cell so effective for a proximity service, and what are the other bottlenecks?", a: "The workload is read-heavy and locations change slowly, so the candidate list for a cell is stable for minutes — cache by (cell_id, filters) and a popular downtown cell serves thousands of searches from memory. The other bottlenecks: density skew (a fixed grid overflows in Times Square and wastes the ocean → use quadtree or S2/H3 variable resolution to bound candidates per query), and ranking vs distance (products rank by a blend of distance, rating, popularity, sponsorship, so keep the spatial 'which are nearby' separate from the scoring 'in what order')." },
+  ]}
+/>
+
+<Recap lang="en">
+A proximity service is the art of not scanning every point. The workload is **read-heavy and slow-changing**, so you build a heavy spatial index once and amortize it over millions of queries. The index choice is the central decision: **geohash** (bit-interleaved string, B-tree-friendly, but boundary-fragile and non-uniform), **quadtree** (density-adaptive but a stateful tree to maintain), or **S2/H3** (near-equal-area, cleanly nesting cells; H3's hexagons give six equidistant neighbors for clean ring expansion — the production choice). Every query is **coarse-then-fine**: the cell lookup cheaply discards almost everything, then exact great-circle distance ranks the survivors. The canonical bug is the **cell-boundary problem** — querying only the user's cell misses the nearest place across the line, so always fetch the surrounding neighbors, sized to the radius. The bottlenecks are the database (beaten by **caching per cell**, which the read-heavy profile makes pay off), **density skew** (bounded by adaptive resolution), and **ranking** (a separate scoring step layered on top of the geometry).
+</Recap>

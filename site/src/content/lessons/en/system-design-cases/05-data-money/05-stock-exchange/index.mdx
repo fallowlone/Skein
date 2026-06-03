@@ -5,34 +5,191 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 5
 title: "Design a stock exchange"
-summary: "Design a stock exchange — to be authored."
-estMin: 16
-status: stub
+summary: "Design a matching engine: the order book, price-time priority matching, a single sequencer for total order, low-latency in-memory design, durability via an event log, deterministic replay, and market-data fan-out to participants."
+estMin: 38
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - matching-engine
+  - order-book
+  - price-time-priority
+  - sequencer
+  - determinism
+  - event-log-durability
+prereqs:
+  - system-design/06-async-messaging/01-message-queues
+  - system-design/04-data-distribution/01-replication
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://martinfowler.com/articles/lmax.html
+  - https://web.archive.org/web/20220630/https://www.nasdaqtrader.com/content/technicalsupport/specifications/dataproducts/moldudp64.pdf
+  - https://en.wikipedia.org/wiki/Order_matching_system
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+Two traders submit a buy order for the same stock at the same price within a microsecond of each other; only one resting sell order remains. Who gets the fill? On a fair exchange the answer must be unambiguous, identical on every replica, and reproducible months later in a regulatory audit — because the loser will dispute it, and "the database happened to commit them in this order" is not an answer a regulator accepts. This is the surprising truth about a stock exchange: the hardest requirement is not throughput or even raw speed, it's **determinism** — every order must be processed in one canonical sequence, and the same inputs must always produce the exact same trades, on every machine, forever. That single requirement reshapes the entire architecture away from the distributed-database playbook the rest of this unit used.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A matching engine runs one ordered order stream through a single in-memory book, deterministically — every replay yields identical trades.</Crux>
 
 <Explanation>
 
-## Design a stock exchange
+## Requirements
 
-Body to be authored.
+A stock exchange matches buy and sell orders for instruments and publishes the results. The constraints are unusual and they invert the usual scaling instincts.
+
+**Functional.** Accept orders (instrument, side, price, quantity, type — limit/market). Maintain an **order book** per instrument: resting buy orders (bids) and sell orders (asks). **Match** incoming orders against the book by a fair rule. Execute trades, update positions, and **publish market data** (the book and the trade feed) to all participants. Support cancels and amends.
+
+**Non-functional.** **Fairness and determinism** above all: a single canonical order of events, identical results on every replica, reproducible for audit years later. **Ultra-low latency**: matching in microseconds, because participants compete on speed. **Durability**: no acknowledged order may be lost, even through a crash. **High throughput** in bursts (millions of messages/sec at the open). Fairness is the constraint that dominates the design — it forces a single sequence, which forces a single-threaded core, which inverts everything.
+
+The defining inversion: the rest of this unit fought to *distribute* state for scale. An exchange does the opposite — it deliberately funnels everything through **one** sequencer and **one** matching thread, because only a single total order can be fair and deterministic. Speed comes from making that single path absurdly fast, not from parallelism.
+
+## Estimation
+
+```
+instruments       = ~10,000 symbols
+peak messages     = ~1,000,000–10,000,000 orders+cancels/sec (market open burst)
+match latency     = target < 10 microseconds per order (in-memory)
+order book        = thousands of price levels × orders per level, all in RAM
+event log         = every message, appended, fsync'd, replicated → durability + audit
+fan-out           = market data to thousands of subscribers, multicast
+```
+
+The numbers explain the architecture. The whole working set — order books for all instruments — **fits in RAM** (it's millions of small records, not terabytes), so the matching engine is an in-memory program; touching disk in the hot path would blow the microsecond budget by orders of magnitude. The peak is bursty and brutal (the open), so the path must be lean. And every message is logged durably for both crash recovery and audit — but the log write is arranged so it never stalls the match (more below). This is why an exchange looks nothing like a sharded web backend: it's a fast single-threaded core fed by a sequencer and backed by a log.
+
+## High-level design
+
+<FlowDiagram
+  label="Orders from gateways converge on a single sequencer that stamps each with a global sequence number and appends it to a durable, replicated event log; the sequenced stream feeds one single-threaded matching engine holding the in-memory order book, which emits trades and book updates that are fanned out as market data to all participants."
+  perRow={3}
+  hue="var(--d-frontend)"
+  nodes={[
+    { id: "gw", label: "gateways", sub: "order entry" },
+    { id: "seq", label: "sequencer", sub: "global order #" },
+    { id: "log", label: "event log", sub: "durable + replicated" },
+    { id: "match", label: "matching engine", sub: "single-threaded" },
+    { id: "book", label: "order book", sub: "in-memory" },
+    { id: "trades", label: "trades", sub: "fills + book delta" },
+    { id: "md", label: "market data", sub: "multicast fan-out" },
+    { id: "replica", label: "replicas", sub: "replay log" },
+  ]}
+  edges={[
+    { from: "gw", to: "seq", label: "submit" },
+    { from: "seq", to: "log", label: "append" },
+    { from: "seq", to: "match", label: "sequenced" },
+    { from: "match", to: "book", label: "apply" },
+    { from: "match", to: "trades", label: "emit" },
+    { from: "trades", to: "md", label: "publish" },
+    { from: "log", to: "replica", label: "replay" },
+  ]}
+  caption="Everything funnels through one sequencer that imposes a single global order and persists it to a replicated log; one single-threaded matching engine consumes that order and runs the in-memory book deterministically. Replicas reach the identical state by replaying the same log — determinism is what makes recovery and audit exact."
+/>
+
+The pattern (the LMAX architecture is the famous public example): a **sequencer** assigns every message a global sequence number, defining the one true order; that ordered stream is written to a **durable, replicated event log**; a **single-threaded matching engine** consumes the stream in order against an **in-memory order book** and deterministically produces trades; the results fan out as **market data**. Recovery and replicas are trivial *because* of determinism — replay the log from the start (or a snapshot) and you reach the exact same book.
+
+## Deep dive
+
+### Price-time priority and the order book
+
+The matching rule must be fair and total, leaving no ambiguity about who fills first. The standard is **price-time priority**: orders are ranked first by **price** (a buyer offering more, or a seller asking less, has priority), and among orders at the *same* price, by **time** (first to arrive, first to fill — FIFO). This answers the hook precisely: the two same-price buys are ordered by their sequence numbers, and the earlier one fills.
+
+The **order book** is the data structure that makes this fast: for each instrument, bids and asks are kept sorted by price (often as a map from price level to a FIFO queue of orders at that level). Matching an incoming order walks the opposite side from the best price inward, filling against resting orders until the incoming order is exhausted or no price crosses:
+
+```
+ASKS (sellers)        BIDS (buyers)
+101.00  × 50          100.50  × 30   ← best bid
+100.75  × 20          100.25  × 40
+                      100.00  × 100
+
+incoming: BUY 60 @ market
+  → fill 20 @ 100.75, then 40 @ 101.00 (walk up the asks)  ⇒ two trades, book updated
+```
+
+Each level is FIFO so time priority holds; the best price is O(1) to find and matching is O(orders touched). The book is pure in-memory state mutated by the single matching thread, which is why it can run in microseconds.
+
+<Inset kind="why" lang="en">
+Why a *single* thread for the matching core, when every other system in this unit reached for concurrency to go faster? Because fairness requires a single total order of events, and the moment two threads can match against the same book concurrently you have a race: their relative ordering becomes nondeterministic, two replicas can disagree, and "who filled first" depends on lock scheduling — destroying both fairness and reproducibility. A single thread processing a sequenced stream has *no* concurrency to reason about: events apply one at a time in sequence-number order, the same way on every machine and every replay. The counterintuitive payoff is that the single thread is also *faster* for this workload — no locks, no cache-line contention, no coordination overhead, and the whole book in L2/L3 cache. You don't parallelize the match; you make the one thread blazing fast and parallelize everything *around* it (gateways, market-data fan-out, risk checks).
+</Inset>
+
+### Determinism and durability via the event log
+
+Determinism is the property that the *same sequence of input messages always yields the same trades and the same final book* — no wall-clock reads, no random numbers, no thread-scheduling dependence inside the match. This is what makes the event log so powerful: because the engine is deterministic, the log of sequenced input messages *is* the system. You don't need to log the resulting state; you log the inputs, and any replica replaying them rebuilds the identical book.
+
+That gives durability and recovery cheaply: append each sequenced message to a log that is **fsync'd and replicated** before (or concurrently with) matching, so a crash loses nothing acknowledged; on restart, replay the log (from a periodic **snapshot** to bound replay time) to reconstruct the exact in-memory state. The replication is also the **failover** mechanism — hot replicas consume the same log and stand ready to take over at the same sequence number. Audit is the same machinery: the immutable, ordered log is a perfect record, and a regulator's question ("why did this trade happen?") is answered by replaying to that sequence number.
+
+<Inset kind="mistake" lang="en">
+A subtle, fatal mistake is sneaking **nondeterminism** into the matching core — and it's easy to do without noticing. Reading the system clock to timestamp a trade *inside* the match, generating an ID with a random source, iterating a hash map whose order isn't stable, or branching on something that differs between machines all break the invariant that the same inputs produce the same outputs. The instant the core is nondeterministic, replicas diverge, replay no longer reconstructs the real state, and the audit trail becomes a lie. The discipline: the matching thread consumes only the sequenced inputs and pure functions of them; anything time- or randomness-derived must be *captured as an input* (the sequencer stamps the time and assigns IDs, so they're part of the logged message) rather than generated inside the deterministic core. Determinism isn't a nice-to-have here; it's the load-bearing property the whole durability/recovery/audit story rests on.
+</Inset>
+
+### Market-data fan-out
+
+Once the engine matches, the results — trades and incremental book updates — must reach **every participant fairly and fast**. This is a high fan-out broadcast (thousands of subscribers, each wanting the feed with minimal latency). Exchanges typically use **multicast**: the engine publishes each update once and the network duplicates it to all subscribers, so fan-out cost doesn't grow with subscriber count and everyone receives it at nearly the same instant (fairness again — you can't give one subscriber a head start). The feed is itself a **sequenced stream** (gap-fill protocols let a subscriber that missed a packet request a replay), and many exchanges publish tiered feeds (full depth-of-book vs top-of-book) to manage bandwidth. The fan-out is parallelized and kept off the matching thread — the engine emits, a separate publishing path distributes.
+
+## Bottlenecks & tradeoffs
+
+The defining stance is **determinism and fairness over parallelism**: the matching core is single-threaded *on purpose*, so its throughput ceiling is one fast thread — you scale by making that thread faster (cache-resident book, no allocation in the hot path, mechanical sympathy) and by partitioning *across instruments* (independent books can run on separate engines), never by parallelizing one book. **Durability vs latency** is the central tension: the log write must happen before you acknowledge an order, yet an fsync is slow relative to a microsecond match — resolved by batching log writes, writing to fast storage, and overlapping replication so the durable write doesn't serialize behind each match. **In-memory means bounded by RAM and recovery time**: the book fits in memory, but replay-from-log must be bounded by periodic snapshots or restart takes too long. And **fan-out fairness** constrains the network: multicast keeps it equal and scalable, but demands gap-recovery protocols and careful capacity so no subscriber is systematically advantaged. Throughout, the exchange accepts a single-threaded ceiling and elaborate durability plumbing as the price of the one thing it cannot compromise — a fair, deterministic, auditable order of trades.
+
+<Quiz
+  id="05-stock-exchange-quiz-1"
+  lessonSlug="05-stock-exchange"
+  lang="en"
+  question="Two buy orders for the same stock at the same price arrive a microsecond apart, and only one resting sell remains. What decides who fills, and why must the core be single-threaded to honour it?"
+  choices={[
+    { label: "Price-time priority: same price, so the earlier order (lower sequence number from the single sequencer) fills first. The matching core is single-threaded so events apply one at a time in sequence order — no race over 'who filled first', and every replica/replay agrees, which is what fairness and audit require.", correct: true },
+    { label: "Whichever transaction the database commits first wins; add more matching threads to speed it up.", misconception: "That's exactly the nondeterminism an exchange forbids — 'whoever commits first' depends on scheduling and differs per replica, so it's neither fair nor auditable. Multiple matching threads create the race. The core is deliberately single-threaded over a sequenced stream so order is total and reproducible." },
+    { label: "A random tiebreak, to be impartial.", misconception: "Randomness breaks determinism: replicas and replays would disagree, and you couldn't reproduce a trade for audit. Fairness here means a deterministic rule — price-time priority by sequence number — not a coin flip. Any randomness must be captured as a logged input, never generated in the core." },
+    { label: "Largest order fills first to maximize liquidity.", misconception: "Standard fairness is price-time priority, not size priority — at equal price, the earlier-sequenced order fills first (FIFO). Prioritizing by size would be a different, non-standard rule and still must be deterministic via the sequencer, not decided ad hoc." },
+  ]}
+/>
+
+<Quiz
+  id="05-stock-exchange-quiz-2"
+  lessonSlug="05-stock-exchange"
+  lang="en"
+  question="An engineer timestamps each trade by reading the system clock inside the matching loop and generates trade IDs from a random source. Why is this a serious bug in an exchange?"
+  choices={[
+    { label: "It injects nondeterminism into the core: the same input sequence no longer yields the same trades on every replica or replay, so replicas diverge, log-replay can't reconstruct the real state, and the audit trail is invalid. The sequencer must stamp time and assign IDs as inputs, so they're part of the logged message.", correct: true },
+    { label: "No problem — clocks and random IDs are normal; just sync the clocks with NTP.", misconception: "Even perfectly synced clocks read different values at the instant each replica processes the message, and random IDs differ per machine — both break determinism. The fix isn't tighter clocks; it's moving time/ID generation to the sequencer so they become deterministic logged inputs." },
+    { label: "It's only slow; cache the clock read to fix performance.", misconception: "The problem is correctness, not speed: a nondeterministic core makes replay and replicas diverge from reality, destroying recovery and audit. Caching the clock doesn't restore determinism. Time and IDs must be captured as inputs by the sequencer, not generated in the core." },
+    { label: "Random IDs collide; switch to a UUID.", misconception: "Collisions aren't the core issue — even collision-free random IDs are nondeterministic, differing across replicas and replays. The matching core must consume only sequenced inputs and pure functions of them; IDs and timestamps belong to the sequencer's logged input, not the engine." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-stock-exchange-metaphor-1"
+  lessonSlug="05-stock-exchange"
+  lang="en"
+  setup="Because the matching engine is _______, the same sequence of input messages always produces the same trades and the same final book — which is why the event log of inputs alone is enough to recover state, run hot replicas, and answer an auditor years later."
+  accepted={["deterministic", "determinism", "deterministic (pure)", "fully deterministic"]}
+  canonical="deterministic"
+  explanation="A deterministic core (no clock reads, no randomness, no thread-scheduling dependence inside the match — those are captured as inputs by the sequencer) guarantees identical outputs for identical inputs. That property makes the logged input stream the source of truth: replay it to rebuild the exact book, keep replicas in lockstep, and reproduce any trade for audit."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>An exchange inverts distribute-for-scale: one sequencer imposes a total order, one single-threaded engine matches an in-memory book by price-time priority, and a deterministic core makes the log enough for recovery.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-stock-exchange-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does an exchange use a single sequencer and a single-threaded matching core instead of distributing for scale?", a: "Fairness and auditability require ONE canonical total order of events, identical on every replica and reproducible for audit. A sequencer stamps each message with a global sequence number to define that order; a single-threaded matching engine then applies events one at a time, so there's no concurrency race over 'who filled first' and every replica/replay agrees. It's also faster for this workload — no locks, no cache-line contention, the whole book in cache. You scale by making the one thread fast and partitioning across instruments (independent books), never by parallelizing one book." },
+    { q: "Explain price-time priority and the order book structure.", a: "Price-time priority ranks orders first by price (best price has priority — higher bid or lower ask) and, at equal price, by time (FIFO — earlier sequence number fills first), which deterministically resolves ties like the hook's two same-price buys. The order book holds, per instrument, bids and asks sorted by price (a price-level map to a FIFO queue at each level), all in RAM. Matching walks the opposite side from the best price inward, filling against resting orders until the incoming order is exhausted or no price crosses — O(1) to find the best price, O(orders touched) to match, in microseconds because it's pure in-memory state mutated by the single thread." },
+    { q: "How do determinism and the event log give durability, recovery, and audit?", a: "Because the core is deterministic (same inputs → same trades, with time/IDs captured as inputs by the sequencer, not generated in the core), the log of sequenced INPUT messages IS the system — you log inputs, not state. Append each message to an fsync'd, replicated log before acknowledging, so a crash loses nothing; on restart replay from a periodic snapshot to rebuild the exact book. Hot replicas consume the same log for failover at the same sequence number. Audit is the same machinery: the immutable ordered log answers 'why did this trade happen?' by replay to that sequence number. Sneaking nondeterminism (clock reads, randomness, unstable iteration) into the core breaks all of this." },
+  ]}
+/>
+
+<Recap lang="en">
+A stock exchange **inverts the distribute-for-scale instinct** of the rest of this unit, because its hardest requirement is **fairness and determinism**: every order must be processed in one canonical sequence, and identical inputs must always produce identical trades — on every replica and in an audit years later. So everything funnels through a single **sequencer** that imposes a global order and persists it to a **durable, replicated event log**, feeding **one single-threaded matching engine** that runs an **in-memory order book** by **price-time priority** (best price first, FIFO at equal price — the hook's tie resolved by sequence number). The single thread isn't a limitation to apologize for; it's the only way to get a fair total order, and it's *faster* for this workload (no locks, book in cache). Because the core is **deterministic**, the logged input stream is the source of truth: replay rebuilds the exact book, hot replicas stand ready at the same sequence number, and any trade is reproducible for audit — which is why sneaking a clock read or randomness into the match is a fatal bug. **Market data** fans out by multicast off the hot path so all participants receive it fairly and at scale. The tradeoffs all flow from the one non-negotiable: a single-threaded ceiling (scale the thread and partition across instruments, never parallelize one book), durability-vs-latency in the log write (batch and overlap replication), bounded recovery via snapshots, and multicast fairness with gap-recovery — the elaborate machinery an exchange accepts to guarantee a fair, deterministic, auditable order of trades.
+</Recap>

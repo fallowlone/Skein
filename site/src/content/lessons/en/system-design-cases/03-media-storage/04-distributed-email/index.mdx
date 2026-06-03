@@ -4,35 +4,177 @@ lang: en
 track: "system-design-cases"
 unit: "03-media-storage"
 order: 4
-title: "Design a distributed email service"
-summary: "Design a distributed email service — to be authored."
-estMin: 16
-status: stub
+title: "Design Gmail-scale email"
+summary: "Design distributed email: SMTP ingest with spam filtering, mailboxes sharded per user, attachments deduplicated in object storage, a per-user inverted index for search, labels as a many-to-many overlay (not folders), and IMAP-style incremental sync via a per-mailbox change log."
+estMin: 35
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - smtp-ingest
+  - mailbox-sharding
+  - search-index
+  - labels-not-folders
+  - attachments-object-store
+  - incremental-sync
+prereqs:
+  - system-design/07-storage-choices/02-blob-and-object
+  - system-design/04-data-distribution/02-sharding-and-partitioning
 sources:
+  - https://datatracker.ietf.org/doc/html/rfc5321
+  - https://datatracker.ietf.org/doc/html/rfc9051
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+"Email is solved, it's just SMTP" — until you have to build it for a billion users and notice every assumption breaking. A newsletter goes out to 50 million subscribers: do you really store 50 million identical copies of the same 2 MB PDF attachment? A user searches "invoice from acme march" across 200,000 messages and wants results in 50 ms — are you going to scan their whole mailbox? Their phone, laptop, and webmail must all show the same read/unread state and the same labels instantly — how do they stay in sync without each re-downloading everything? And 90% of incoming mail is spam you must reject before it ever costs you storage. Email looks like a CRUD app and is actually a fan-out problem, a search problem, a dedup problem, and a sync problem stacked together — and the design that handles a thousand mailboxes collapses at a billion unless you shard per user, deduplicate the bytes, index for search, and sync by change-log rather than by copy.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Email shards mailboxes per user, dedups attachments into object storage, indexes search per user, labels as an overlay, syncs by change log.</Crux>
 
 <Explanation>
 
-## Design a distributed email service
+## Requirements
 
-Body to be authored.
+**Functional** — receive mail via SMTP and deliver it to the right mailbox; send mail; read/list messages; full-text **search** across a mailbox; organize with **labels** (a message can have many); handle **attachments**; keep multiple clients (web, phone, desktop) in **sync** including read/unread, starred, label state. Spam must be filtered. IMAP/JMAP-style protocols for clients.
+
+**Non-functional** — **durability** (losing mail is unacceptable), **per-user scale** (a mailbox can hold hundreds of thousands of messages; the system holds a billion mailboxes), **search latency** (sub-100 ms over a huge mailbox), **sync efficiency** (clients must not re-fetch everything), and **abuse resistance** (spam is the majority of inbound volume and must be cheap to reject). Reads (opening, listing, searching) vastly outnumber sends.
+
+The shaping facts: data partitions cleanly **per user** (your mail is independent of mine), **attachments are huge and often duplicated**, **search needs an index not a scan**, and **sync must be incremental**.
+
+## Estimation
+
+```
+Users:      ~1B mailboxes
+Inbound:    ~100s of billions of messages/day; ~90% spam (rejected at ingest)
+            legit ~1e10/day ÷ ~1e5 s ≈ ~1e5 messages/sec delivered, peak higher
+Mailbox:    avg tens of thousands of messages; power users 100K+
+Message:    headers + body ~ tens of KB; attachments KB–tens of MB (the bulk of bytes)
+Storage:    1B users × ~15 GB ≈ ~1e19 bytes (~10s of EB) — attachments dominate
+Dedup:      one viral attachment sent to millions → store ONE physical blob, ref-count it
+Search:     inverted index per mailbox; sub-100 ms requires index, never a scan
+Sync:       per-mailbox monotonic change counter → clients fetch only changes since X
+```
+
+The numbers force four decisions immediately: shard by user (the only natural partition key), put attachments in deduplicated object storage (or you store the same newsletter PDF millions of times), build a per-mailbox inverted index (a scan of 200K messages can't hit 50 ms), and sync by a change log (re-listing a 200K-message mailbox on every device is absurd).
+
+## High-level design
+
+Inbound mail hits **SMTP servers** behind the MX records; a **spam/filter** stage rejects or quarantines the majority before storage; accepted messages are written to the recipient's **mailbox shard** (metadata + body), with **attachments split off to deduplicated object storage** and the message storing only a reference. An **indexer** adds the message to the user's **search index**. Clients read and sync through an **API/IMAP layer** that uses a **per-mailbox change log** to serve only deltas.
+
+<FlowDiagram
+  label="Inbound delivery: an SMTP server receives the message and runs spam filtering, dropping the ~90% that is spam before it costs storage; an accepted message has its attachments extracted and stored (deduplicated) in object storage, its body and metadata written to the recipient's mailbox shard, and the message fed to the per-user search indexer; the mailbox's change log is bumped so clients can sync the delta."
+  perRow={4}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "sender", label: "sender MTA", sub: "SMTP in" },
+    { id: "smtp", label: "SMTP server", sub: "MX endpoint" },
+    { id: "spam", label: "spam filter", sub: "reject ~90%" },
+    { id: "attach", label: "object store", sub: "dedup attachment" },
+    { id: "mbox", label: "mailbox shard", sub: "body + metadata" },
+    { id: "index", label: "search indexer", sub: "per-user inverted idx" },
+    { id: "log", label: "change log", sub: "bump counter" },
+    { id: "client", label: "clients", sub: "sync delta" },
+  ]}
+  edges={[
+    { from: "sender", to: "smtp", label: "deliver" },
+    { from: "smtp", to: "spam", label: "screen" },
+    { from: "spam", to: "attach", label: "extract" },
+    { from: "spam", to: "mbox", label: "store msg" },
+    { from: "mbox", to: "index", label: "index it" },
+    { from: "mbox", to: "log", label: "record change" },
+    { from: "log", to: "client", label: "since X?" },
+  ]}
+  caption="Spam is rejected first (don't pay storage for it). A stored message references its deduplicated attachment in object storage rather than embedding it, is added to the per-user search index, and bumps the mailbox change counter — so every client syncs only what changed since its last counter, not the whole mailbox."
+/>
+
+The partition key is the **user**: each mailbox is independent, so you shard the message store, the index, and the change log all by user ID. This is the cleanest possible sharding because there are no cross-user joins in the common path — your inbox never needs mine — which is why email scales horizontally so well once you commit to per-user partitioning.
+
+## Deep dive: attachments, dedup, and search
+
+A message is two very different things glued together: a small structured part (headers, recipients, body text, label set) and potentially large **attachments**. Store them separately — the message body and metadata in the mailbox shard, the attachment bytes in **object storage, content-addressed and deduplicated** (the same idea as the Drive lesson). A 2 MB PDF newsletter sent to 50 million people is *one* physical blob with 50 million references, not 50 million copies — without dedup, attachments would dominate and bankrupt storage. The message simply holds a pointer (the content hash) plus a ref-count so the blob is deleted only when the last referencing message is gone.
+
+**Search** cannot be a scan. A mailbox of 200,000 messages queried for "invoice acme march" must answer in tens of milliseconds, so you build a **per-user inverted index**: a map from each term to the list of message IDs containing it, so a query intersects a few short posting lists instead of reading every message. The index is sharded by user (like everything else), updated asynchronously by the indexer as mail arrives. Per-user indexing keeps each index small and the query local to one user's shard — you never search across users, so the index never needs to be global.
+
+<Inset kind="why" lang="en">
+Why model **labels** as a many-to-many overlay instead of classic folders, and why does it matter at scale? A folder is a *location*: a message lives in exactly one place, so "move to folder" physically relocates it and a message can't be in two folders at once. Gmail's insight is that organization is really *tagging*: one message can be `Work` and `Receipts` and `Important` simultaneously, and `Inbox`/`Archive` are just labels too (archiving removes the `Inbox` label, it doesn't move bytes). So you model it as a many-to-many relation — a message has a *set* of label IDs — rather than a parent-folder pointer. This matters because (1) it avoids ever moving the message's bytes when you reorganize (you mutate a small label set), (2) listing "everything labeled Work" is an index lookup, not a directory walk, and (3) it composes with search trivially (a label is just another indexed term). The folder model forces single-location semantics that real email organization doesn't fit; labels are the data model that matches the domain.
+</Inset>
+
+## Deep dive: incremental sync and spam
+
+Three devices show one mailbox; none may re-download 200,000 messages to refresh. The mechanism is a **per-mailbox change log with a monotonic counter** (Gmail's HISTORYID, IMAP's MODSEQ/CONDSTORE, JMAP's state string). Every mutation — new message, read/unread flip, label change, delete — increments the mailbox's counter and is recorded. A client remembers the last counter it saw and asks "give me everything since counter X"; the server returns just that delta. So opening your phone after your laptop marked ten emails read fetches *ten changes*, not the whole mailbox. This is the same push-then-pull-delta shape as the Drive lesson: the change log makes sync O(changes), not O(mailbox size), which is the only thing that works at hundreds of thousands of messages per user.
+
+**Spam** is filtered at **ingest, before storage**, for a blunt economic reason: ~90% of inbound is spam, and storing-then-filtering would mean paying to durably store, index, and replicate ten times more mail than you keep. The SMTP stage applies cheap rejects first (reputation/DNSBL on the sending IP, SPF/DKIM/DMARC authentication failures, rate limits) and then content classification (ML models over headers and body), rejecting outright or routing to a Spam label. Reject early and cheap; the goal is to never spend durable storage on mail you'll throw away.
+
+<Inset kind="mistake" lang="en">
+A scaling mistake that seems harmless at first: implementing the **sent-to-many** case as a write to every recipient's mailbox of a *full copy* including the attachment bytes. For a newsletter to 50M users that's 50M × 2 MB = 100 TB written for one send — and you've stored the same PDF 50 million times. The fix has two parts: deduplicate the attachment (one blob, ref-counted, 50M pointers) so the bytes are stored once, and recognize that fan-out delivery still writes 50M small *message rows* (each mailbox genuinely receives the message) but those rows are tiny without the embedded bytes. The error is conflating "deliver to 50M inboxes" (unavoidable small writes, the fan-out) with "store 50M copies of the attachment" (avoidable, via dedup). Separate the heavy bytes from the light delivery and the send becomes affordable.
+</Inset>
+
+<Quiz
+  id="03-distributed-email-quiz-1"
+  lessonSlug="04-distributed-email"
+  lang="en"
+  question="A 2 MB PDF attachment is emailed to 50 million subscribers. How should attachment storage be designed?"
+  choices={[
+    { label: "Store the attachment once as a content-addressed, deduplicated blob in object storage with a reference count; each of the 50M delivered messages holds only a pointer (the content hash), not the bytes. Delivery still writes 50M tiny message rows, but the 2 MB is stored once.", correct: true },
+    { label: "Store a full copy of the 2 MB attachment in each of the 50M mailboxes so reads are local.", misconception: "That's 100 TB for one send and 50M copies of identical bytes — the exact mistake to avoid. Deduplicate: one ref-counted blob in object storage, 50M pointers. The bytes are stored once; only tiny message rows fan out." },
+    { label: "Keep the attachment only in the sender's mailbox and have recipients fetch it from there.", misconception: "That couples every recipient's read to the sender's mailbox availability and breaks if the sender deletes it — recipients own their copy logically. A deduplicated, ref-counted blob in shared object storage gives one physical copy that all references safely point to." },
+    { label: "Inline the attachment as base64 in each message body row in the mailbox shard.", misconception: "Base64 inflates bytes ~33% and stuffs huge blobs into the message-metadata store, the anti-pattern of mixing bytes with structured data. Attachments belong in deduplicated object storage; the message row holds a content-hash reference." },
+  ]}
+/>
+
+<Quiz
+  id="03-distributed-email-quiz-2"
+  lessonSlug="04-distributed-email"
+  lang="en"
+  question="A user's phone, laptop, and webmail must show the same mailbox state without each re-downloading 200,000 messages. What's the mechanism?"
+  choices={[
+    { label: "A per-mailbox monotonic change log (e.g. a HISTORYID / MODSEQ / JMAP state). Each mutation bumps the counter and is recorded; a client asks 'give me changes since counter X' and gets only the delta — sync is O(changes), not O(mailbox size).", correct: true },
+    { label: "Each client re-lists the full mailbox on open and diffs it locally.", misconception: "Re-listing 200K messages per device per refresh is exactly what we must avoid — it's O(mailbox size) every time. A per-mailbox change log lets each client fetch only mutations since the counter it last saw, O(changes)." },
+    { label: "Lock the mailbox so only one device can view it at a time.", misconception: "Email is inherently multi-device and read-mostly; locking would make it unusable. The solution is incremental sync via a monotonic change counter, letting all devices converge by fetching deltas, not exclusive access." },
+    { label: "Poll the server every second for the entire message list.", misconception: "Per-second full-list polling multiplies the O(mailbox size) cost and floods the server. Use the change log: clients fetch only the delta since their last counter, and the server can push a notification that there is something to sync." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-distributed-email-metaphor-1"
+  lessonSlug="04-distributed-email"
+  lang="en"
+  setup="Because your inbox never needs to join against mine, the message store, the search index, and the change log are all partitioned by the same key. That natural partition key is the _______."
+  accepted={["user", "user id", "userid", "user-id", "mailbox owner", "the user"]}
+  canonical="user"
+  explanation="The user is the clean partition key for email: mailboxes are independent with no cross-user joins on the common path, so sharding the message store, per-user inverted index, and change log all by user ID scales horizontally with no hot cross-shard queries. It's why email partitions so much more cleanly than, say, a social graph."
+/>
+
+## Bottlenecks & tradeoffs
+
+The byte cost is dominated by **attachments**, controlled by **dedup** (one ref-counted blob, not N copies) — the central storage tradeoff. **Search** trades index storage and async indexing latency for sub-100 ms queries; the alternative (scanning) doesn't scale, so the index is non-negotiable. **Sync** trades a small per-mailbox change log for O(changes) refresh instead of O(mailbox) re-listing. **Spam** trades some false-positive risk for the economics of rejecting 90% of volume before storage — reject early, reject cheap. The **labels-as-overlay** model trades the familiar single-location folder mental model for a many-to-many tag set that never moves bytes and composes with search. And the foundational decision — **partition everything by user** — is what makes all of this scale, because email's data has no cross-user coupling on the hot path. As with every design in this unit: the heavy bytes (attachments) go to deduplicated object storage, and the structured state (messages, labels, index, change log) lives in per-user sharded stores where its consistency is cheap to maintain.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Partition everything by user. Reject spam at SMTP ingest. Dedup attachments in object storage; messages hold a pointer. Search is a per-user inverted index, not a scan. Labels are an overlay. Sync by change log.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-distributed-email-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why partition email by user, and how are attachments and search handled?", a: "The user is the natural partition key because mailboxes are independent with no cross-user joins on the common path — your inbox never needs mine — so the message store, search index, and change log all shard by user ID and scale horizontally with no hot cross-shard queries. Attachments are split from the message and stored content-addressed and deduplicated in object storage (a 2 MB PDF to 50M users is one ref-counted blob with 50M pointers, not 50M copies); the message row holds only the content-hash reference. Search is a per-user inverted index (term → message-ID posting lists) so a query over 200K messages intersects short lists in tens of ms instead of scanning — never a scan, and never global." },
+    { q: "Why are labels a many-to-many overlay instead of folders?", a: "A folder is a single location: a message lives in one place, so reorganizing moves bytes and a message can't be in two folders. Real email organization is tagging — one message can be Work AND Receipts AND Important, and Inbox/Archive are just labels (archiving drops the Inbox label, moving nothing). So model it as a many-to-many relation: a message has a set of label IDs. Benefits: reorganizing mutates a tiny label set instead of moving the message; 'everything labeled Work' is an index lookup not a directory walk; and labels compose with search as just another indexed term. Folders force single-location semantics the domain doesn't fit." },
+    { q: "How does incremental sync work and why filter spam at ingest?", a: "Each mailbox has a monotonic change-log counter (Gmail HISTORYID, IMAP MODSEQ, JMAP state); every mutation — new message, read flag, label change, delete — bumps it and is recorded. A client remembers its last counter and asks 'give me changes since X', getting only the delta, so syncing across phone/laptop/webmail is O(changes) not O(200K messages). Spam (~90% of inbound) is filtered at the SMTP ingest stage BEFORE storage — cheap rejects first (IP reputation/DNSBL, SPF/DKIM/DMARC failures, rate limits) then content classification — because storing-then-filtering would mean durably storing, indexing, and replicating ~10× the mail you keep. Reject early and cheap." },
+  ]}
+/>
+
+<Recap lang="en">
+"Email is just SMTP" hides four stacked problems that only appear at a billion users. The foundational move is to **partition everything by user** — message store, search index, and change log all shard by user ID, because mailboxes are independent with no cross-user joins on the hot path, the cleanest sharding in this unit. Inbound mail is screened by a **spam filter at SMTP ingest, before storage** (~90% of volume rejected with cheap IP/auth checks then content classification), so you never pay durable storage for mail you discard. Accepted messages split into a small structured part (headers, body, label set) stored in the mailbox shard and large **attachments stored content-addressed and deduplicated in object storage** — a newsletter PDF to 50M users is one ref-counted blob with 50M pointers, not 50M copies; the fan-out writes only tiny message rows. **Search** is served by a per-user **inverted index** (term → posting lists), never a scan, so a 200K-message mailbox answers in tens of milliseconds. **Labels** are modelled as a many-to-many overlay rather than folders, so reorganizing mutates a tiny tag set instead of moving bytes and composes with search. And clients stay consistent via **incremental sync over a per-mailbox monotonic change log** (HISTORYID/MODSEQ/JMAP state) — fetch only changes since your last counter, O(changes) not O(mailbox). As across the unit, the heavy bytes go to deduplicated object storage while the per-user structured state carries the consistency.
+</Recap>

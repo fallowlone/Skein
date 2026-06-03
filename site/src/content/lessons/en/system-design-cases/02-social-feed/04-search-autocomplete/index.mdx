@@ -5,34 +5,185 @@ track: "system-design-cases"
 unit: "02-social-feed"
 order: 4
 title: "Design search autocomplete"
-summary: "Design search autocomplete — to be authored."
-estMin: 16
-status: stub
+summary: "Design typeahead with a sub-100ms budget: a trie of prefixes, precomputed top-k completions per node, an offline aggregation pipeline that ranks queries by frequency, edge caching, and why suggestions are served from precomputed structures, never queried live per keystroke."
+estMin: 28
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - trie-prefix-tree
+  - top-k-per-prefix
+  - aggregation-pipeline
+  - ranking
+  - latency-budget
+  - edge-caching
+prereqs:
+  - system-design/05-caching-at-scale/01-caching-strategies
+  - system-design/03-traffic/03-cdn
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://en.wikipedia.org/wiki/Trie
+  - https://redis.io/docs/latest/develop/data-types/sorted-sets/
+  - https://web.dev/articles/rail
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team built search autocomplete the obvious way: on each keystroke, fire a query that scanned the search log for the top matching past queries and returned them. In a demo with a small dataset it was snappy. In production it was a disaster — every character a user typed launched a fresh aggregation over billions of log rows, so "restaurant" was ten separate heavy queries, the search cluster buckled under the keystroke storm, and suggestions arrived 600 ms late, well after the user had finished typing and hit enter. The feature that was supposed to feel telepathic instead felt broken. The lesson they missed: autocomplete has a brutal latency budget (suggestions must beat the user's next keystroke, under ~100 ms) and enormous read volume, so you can never compute suggestions live — you serve them from a structure precomputed offline. This lesson designs that structure and the pipeline that feeds it.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Autocomplete serves precomputed top-k from a prefix trie under a ~100 ms budget; ranking is computed offline, never live per keystroke.</Crux>
 
 <Explanation>
 
-## Design search autocomplete
+## Requirements
 
-Body to be authored.
+**Functional:** as a user types a prefix, return the top few (say 5–10) most relevant complete queries that start with that prefix, ranked by popularity (and possibly personalization/recency). Update suggestions to reflect trending queries over time. Handle typos loosely (often a stretch goal) and filter unsafe/banned suggestions.
+
+**Non-functional:** the latency budget is the headline constraint — a suggestion must appear faster than the user types the next character, so the **end-to-end budget is roughly 100 ms**, and since that includes a network round trip, the server has only tens of milliseconds. Read volume is huge: every keystroke of every search is a request, so requests vastly outnumber actual searches (typing "weather" is 7 requests for 1 search). Freshness is **eventually consistent** — suggestions reflecting yesterday's trends, or lagging a new viral term by minutes, is acceptable; nothing is wrong if a brand-new query is not yet suggestable.
+
+The defining tension is the latency budget against the data size: you are ranking the top completions out of billions of historical queries, in under 100 ms, on every keystroke. That is only possible if the ranking is already done — precomputed — before the request arrives.
+
+## Estimation
+
+Take 5 billion searches/day. Each search is ~6 characters typed, and each character (after a tiny debounce) is a request, so request volume is several-x the search volume: on the order of **10^10+ autocomplete requests/day**, roughly **hundreds of thousands of requests/second**, peaking higher. That read volume alone says: precompute and cache aggressively; nothing per-request can touch the raw logs.
+
+Data: the distinct query vocabulary is large but the trie of *prefixes worth suggesting* is bounded — you only store the popular queries (the long tail of one-off queries is never suggested), so the trie holds millions of nodes, not billions. With top-k completions cached at each node, the whole serving structure fits in memory (single-digit to tens of GB), which is what makes tens-of-milliseconds serving possible. The napkin's verdict: **serving = in-memory precomputed top-k; ranking = a separate offline batch job over the logs.**
+
+## High-level design
+
+Two decoupled paths: an offline pipeline that builds the ranked trie, and an online path that serves from it.
+
+<FlowDiagram
+  label="Offline, an aggregation pipeline reads the search logs, counts and ranks queries by frequency over a time window, and builds a trie whose every prefix node stores its precomputed top-k completions; online, a typeahead service walks the trie to the typed prefix and returns that node's cached top-k, fronted by an edge cache."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "logs", label: "search logs", sub: "raw queries" },
+    { id: "agg", label: "aggregation", sub: "count + rank (batch)" },
+    { id: "build", label: "trie builder", sub: "top-k per node" },
+    { id: "trie", label: "served trie", sub: "in-memory, replicated" },
+    { id: "edge", label: "edge cache / CDN", sub: "popular prefixes" },
+    { id: "svc", label: "typeahead service", sub: "walk to prefix" },
+    { id: "client", label: "client", sub: "debounced keystrokes" },
+  ]}
+  edges={[
+    { from: "logs", to: "agg", label: "ingest" },
+    { from: "agg", to: "build", label: "ranked queries" },
+    { from: "build", to: "trie", label: "publish snapshot" },
+    { from: "client", to: "edge", label: "prefix" },
+    { from: "edge", to: "svc", label: "miss" },
+    { from: "svc", to: "trie", label: "lookup top-k" },
+    { from: "trie", to: "client", label: "suggestions" },
+  ]}
+  caption="The write path (offline batch) and read path (online serving) are fully decoupled. Ranking happens once per build cycle over the logs; serving is a trie walk to a precomputed top-k list, fronted by an edge cache so popular prefixes never even reach the service."
+/>
+
+- **Offline pipeline:** ingest search logs, aggregate query frequencies over a window, rank, and build a trie where each prefix node carries its top-k completions. Publish the new trie as an immutable snapshot.
+- **Served trie:** the published snapshot, held in memory and replicated across serving nodes for read throughput.
+- **Typeahead service:** on a request, walk the trie to the prefix node and return its cached top-k. No ranking, no log access — just a lookup.
+- **Edge cache/CDN:** popular prefixes ("a", "th", "wea") are cached at the edge so the most common requests are served without touching the service at all.
+
+## Deep dive
+
+### The trie and top-k per prefix
+
+A **trie** (prefix tree) stores strings by their characters along a path from the root: the prefix "te" is the node reached by following the edge `t` then `e`, and all completions starting with "te" live in the subtree below it. The naive use of a trie is "walk to the prefix node, then traverse the whole subtree to find the best completions" — but that subtree can be enormous, and traversing it per keystroke blows the latency budget. The senior move is to **precompute and store the top-k completions at every node**: the "te" node directly holds `["tesla", "tennis", "temperature", ...]` already ranked. Now serving is O(length of prefix) to walk down plus O(1) to read the cached list — no subtree traversal at all.
+
+This precomputation is the entire trick. It trades build-time work and some memory (k strings per node) for constant-time serving, which is exactly the right trade when reads outnumber writes by orders of magnitude and the latency budget is tiny. The k completions per node are typically stored as a small ranked list (or a Redis sorted set per prefix), so a lookup is a single fast read.
+
+<Inset kind="why" lang="en">
+Why store top-k at every node instead of just walking the subtree on demand, or storing the full ranked list once at the root? Because of the asymmetry between reads and the budget. A subtree under a short prefix like "a" can contain millions of queries; traversing and ranking them in under tens of milliseconds, hundreds of thousands of times per second, is impossible. Storing top-k at the node makes the read O(1) regardless of how huge the subtree is — the expensive ranking already happened offline. The memory cost is bounded: k is small (5–10), and you only keep nodes for prefixes of popular queries, so it is k strings times millions of nodes, not billions. This is the same precompute-on-write-to-make-reads-cheap pattern as the news feed's fan-out-on-write — pay once at build time, serve cheaply on the flood of reads. The trie just makes the "which precomputed answer" lookup itself O(prefix length).
+</Inset>
+
+### The data collection and aggregation pipeline
+
+Suggestions are only as good as the ranking, and the ranking comes from an **offline aggregation pipeline**, fully separate from serving. It reads the raw search logs, counts how often each query was issued over a rolling window (e.g. the last day/week, often time-decayed so recent searches weigh more), filters out rare/one-off queries and banned terms, and emits a ranked list of `query, score`. The trie builder then inserts those queries and, for each node, records the top-k of its subtree.
+
+Critically, this runs on a **schedule** (continuously or every few minutes/hours), not on the request path. The output is published as a new **immutable snapshot** that serving nodes load atomically — you never mutate the live trie in place under read traffic (that risks inconsistency and locking). Because building over billions of rows is heavy, it is a batch/streaming job (MapReduce-style aggregation or a stream processor with windowed counts), and its cadence sets the freshness: a tighter cadence surfaces trends faster at higher compute cost. This is why autocomplete can be eventually consistent — the snapshot is minutes-stale by design, and that is fine.
+
+<Inset kind="mistake" lang="en">
+The defining mistake is the hook's: computing suggestions **live per keystroke** by querying the logs or the database on each request. It seems natural ("just search for matching queries"), but it fails on two axes at once. First, latency: aggregating or scanning to rank, per request, cannot fit a tens-of-milliseconds server budget over a large dataset. Second, load: every keystroke is a request, so a single user typing one word fires a half-dozen heavy queries, and at scale that is a keystroke storm that melts the search cluster. The fix is the architectural split: **ranking is offline and periodic, serving is an O(1) read of a precomputed structure**. A related, subtler mistake is mutating the served trie in place as new data arrives — instead, build a fresh immutable snapshot offline and swap it in atomically, so reads never contend with writes and a half-built index is never served. If you find yourself touching the logs on the read path, you have already lost the latency budget.
+</Inset>
+
+### Latency budget and edge caching
+
+The ~100 ms end-to-end budget is the spec, and it is spent deliberately. The **client** debounces keystrokes (waits a few tens of ms for typing to pause) so it does not fire a request per character at machine speed, and it can prefetch/cache locally. The **network** round trip eats a big chunk, leaving the **server** only tens of ms — which the precomputed trie lookup easily meets. To shrink the network and server cost further, popular prefixes are served from an **edge cache/CDN**: the suggestions for "a", "th", "new" are identical for most users and change slowly, so caching them at the edge (with a short TTL matching the snapshot cadence) serves the highest-volume requests close to the user without a round trip to the origin, and shields the service from the bulk of read traffic. Personalized suggestions (mixing a user's own history) are the exception that bypasses the shared edge cache, layered on top of the popular base — and kept cheap because per-user history is small.
+
+The budget logic is the through-line: every design choice (precompute, cache top-k at nodes, immutable snapshots, edge caching, debounce) exists to keep the read path far under 100 ms while absorbing a flood of requests, by ensuring no request ever does real ranking work.
+
+<Quiz
+  id="04-search-autocomplete-quiz-1"
+  lessonSlug="04-search-autocomplete"
+  lang="en"
+  question="Your autocomplete queries the search logs on each keystroke to rank matching queries. It is 600 ms slow and the search cluster is overloaded. What is the architectural fix?"
+  choices={[
+    { label: "Split ranking from serving: an offline pipeline aggregates and ranks queries periodically and builds a trie with precomputed top-k completions at each node; the request path just walks to the prefix and returns the cached top-k — an O(1) read, no log access. Front it with an edge cache for popular prefixes.", correct: true },
+    { label: "Add read replicas so the per-keystroke aggregation queries spread across more nodes.", misconception: "More replicas still run a heavy aggregation per keystroke — you are scaling the wrong thing. The latency comes from ranking on the read path over a large dataset; no amount of replicas makes that fit tens of ms. You must precompute the ranking offline and serve an O(1) lookup." },
+    { label: "Cache each full query's results, so repeated full searches are fast.", misconception: "Autocomplete is about prefixes, not full queries — caching full-query results does nothing for partial-prefix keystrokes, which are the actual requests. The structure you need is a trie of prefixes with precomputed top-k per node, built offline." },
+    { label: "Debounce harder on the client so fewer keystrokes hit the server.", misconception: "Debouncing helps load a little but does not fix the core problem — even one request still triggers a live aggregation that blows the budget. You need to stop ranking on the read path entirely: precompute top-k offline and serve it as an O(1) trie lookup." },
+  ]}
+/>
+
+<Quiz
+  id="04-search-autocomplete-quiz-2"
+  lessonSlug="04-search-autocomplete"
+  lang="en"
+  question="In your trie, each lookup walks to the prefix node and then traverses the entire subtree to rank completions on the fly. Short prefixes like 'a' time out. What is the fix?"
+  choices={[
+    { label: "Precompute and store the top-k completions at every node during the offline build. A lookup then walks to the prefix (O(prefix length)) and reads the cached top-k (O(1)) — no subtree traversal, so even the huge subtree under 'a' is a constant-time read.", correct: true },
+    { label: "Limit the subtree traversal to the first N nodes you encounter.", misconception: "Traversing only N arbitrary nodes returns wrong (not top-ranked) suggestions — the best completions might be anywhere in the subtree. The correct fix is to precompute the actual top-k at each node offline, so the read returns the right answer in O(1) without any traversal." },
+    { label: "Switch the trie to a hash map of full queries.", misconception: "A hash map of full queries cannot answer prefix lookups efficiently (you would scan all keys to find those starting with 'a'). The trie is the right structure for prefixes; the missing piece is precomputed top-k at each node, not abandoning the trie." },
+    { label: "Add more CPU to the serving nodes so the traversal finishes in time.", misconception: "The subtree under 'a' can hold millions of queries; no realistic CPU ranks that per request within tens of ms, hundreds of thousands of times per second. The traversal must not happen on the read path at all — precompute top-k per node offline." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-search-autocomplete-metaphor-1"
+  lessonSlug="04-search-autocomplete"
+  lang="en"
+  setup="To serve suggestions within the ~100 ms budget, the top-k completions are stored at every node of the trie ahead of time by an offline pipeline, so a request is just a walk to the prefix plus a constant-time read — the ranking is _______, never computed live on the read path per keystroke."
+  accepted={["precomputed", "precompute", "computed offline", "computed in advance", "precomputed offline"]}
+  canonical="precomputed (offline)"
+  explanation="The ranking is precomputed offline by the aggregation pipeline and stored as top-k per trie node, so serving is an O(1) read with no log access. Computing suggestions live per keystroke (the hook) blows the tens-of-milliseconds server budget and floods the cluster — the architectural split between offline ranking and online serving is the whole design."
+/>
+
+## Bottlenecks & tradeoffs
+
+The binding constraint is the **latency budget under enormous read volume**, and every choice serves it. Key tradeoffs:
+
+- **Precompute vs compute-live.** Precomputing top-k per node trades build-time compute and memory for O(1) reads — mandatory at this read:write ratio and budget. Computing live (the hook) is simpler to build but cannot meet the budget or the load.
+- **Freshness vs cost.** A tighter snapshot cadence surfaces trends faster but costs more compute; autocomplete tolerates minutes of staleness (eventual consistency), so you pick a cadence, not real-time.
+- **Memory vs answer quality.** Storing top-k at every node and keeping the trie in memory costs RAM; you bound it by only indexing popular queries (dropping the never-suggested long tail) and keeping k small.
+- **Shared edge cache vs personalization.** Popular-prefix suggestions are identical across users and cache beautifully at the edge; personalization bypasses that shared cache, so you layer a small personalized set on top of the cached popular base rather than personalizing everything.
+- **Immutable snapshot vs in-place update.** Publishing an immutable snapshot avoids read/write contention and never serves a half-built index, at the cost of full rebuilds; this is why the live trie is swapped, not mutated.
+
+The deepest principle is the same as the feed: **do the expensive work once, offline, on the write/build side, so the read path is a trivial lookup.** Autocomplete is a read-optimized system whose entire architecture is organized around never doing ranking work while a user is waiting.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Autocomplete is read-optimized under a ~100 ms budget: an offline pipeline ranks logged queries into a trie with precomputed top-k per node. Serving is a trie walk plus an O(1) cached read, behind an edge cache.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-search-autocomplete-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can autocomplete never compute suggestions live per keystroke, and what is the architectural split?", a: "Two reasons: the latency budget (~100 ms end-to-end, only tens of ms for the server) cannot fit an aggregation/scan to rank over billions of log rows; and read volume is enormous (every keystroke is a request, so typing one word is a half-dozen requests), so live ranking per request is a keystroke storm that melts the cluster (the hook). The split: ranking is done offline and periodically by an aggregation pipeline, and serving is an O(1) read of a precomputed structure. No request ever touches the raw logs or does real ranking work." },
+    { q: "How does a trie with precomputed top-k per node serve suggestions in constant time?", a: "A trie stores strings by character along a path from the root, so the prefix 'te' is one node and all its completions are in the subtree below. Naively you would traverse that subtree to rank completions, but it can be millions of nodes — too slow. Instead, the offline build stores the top-k completions (say 5–10, as a ranked list or Redis sorted set) directly at every node. Serving is then O(prefix length) to walk down plus O(1) to read the cached top-k — no subtree traversal, so even the giant subtree under 'a' is a constant-time read. The expensive ranking already happened at build time." },
+    { q: "What does the offline aggregation pipeline do, and why publish an immutable snapshot?", a: "It reads the raw search logs, counts each query's frequency over a rolling (often time-decayed) window, filters rare/one-off and banned queries, and emits a ranked list; the trie builder then inserts them and records top-k per node. It runs on a schedule (every few minutes/hours), not on the request path. The result is published as an immutable snapshot that serving nodes load atomically — you never mutate the live trie in place, which would cause read/write contention and risk serving a half-built index. The build cadence sets freshness, which is why autocomplete is acceptably eventually consistent." },
+    { q: "How is the ~100 ms budget spent, and what does edge caching add?", a: "The client debounces keystrokes (waits a few tens of ms for a typing pause) so it does not fire per character at machine speed; the network round trip eats a large share, leaving the server only tens of ms, which the precomputed trie lookup easily meets. Edge caching/CDN serves popular prefixes ('a', 'th', 'new') — identical for most users and slow-changing — close to the user with a short TTL matching the snapshot cadence, so the highest-volume requests skip the origin round trip and the service is shielded from the bulk of read traffic. Personalized suggestions bypass the shared edge cache and are layered on top of the popular base." },
+  ]}
+/>
+
+<Recap lang="en">
+Search autocomplete is a **read-optimized** system defined by a brutal **latency budget** (~100 ms end-to-end, tens of ms for the server) under enormous read volume (every keystroke is a request). That makes the hook's approach — **computing suggestions live per keystroke** by scanning the logs — fatal on both latency and load. The architecture splits the two concerns: an **offline aggregation pipeline** reads the search logs, counts and ranks queries over a rolling (often time-decayed) window, filters rare and banned terms, and a **trie builder** stores the **top-k completions precomputed at every prefix node**, published as an **immutable snapshot** that serving nodes swap in atomically. Serving is then trivial: walk the **trie** to the typed prefix (O(prefix length)) and return its cached top-k (O(1)) — no subtree traversal, no log access. An **edge cache/CDN** fronts the highest-volume popular prefixes so most requests never reach the service, and the **client debounces** keystrokes; personalization layers a small per-user set over the cached popular base. **Freshness is eventually consistent** by design — the snapshot is minutes-stale, which is fine. The unifying principle, shared with the news feed, is **do the expensive ranking once, offline, on the build side, so the read path is a constant-time lookup** — never make a user wait while you rank billions of rows.
+</Recap>

@@ -4,35 +4,227 @@ lang: en
 track: "system-design-cases"
 unit: "01-foundational"
 order: 1
-title: "Design a key-value store"
-summary: "Design a key-value store — to be authored."
-estMin: 16
-status: stub
+title: "Design a distributed key-value store"
+summary: "A Dynamo-style key-value store: a hash ring for partitioning, sloppy quorums (R+W>N) for tunable consistency, vector clocks vs last-write-wins for conflicts, and gossip for membership. Availability bought with eventual consistency."
+estMin: 32
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - consistent-hashing
+  - quorum
+  - vector-clocks
+  - gossip-protocol
+  - hinted-handoff
+  - read-repair
+prereqs:
+  - 04-data-distribution/03-consistent-hashing
+  - 04-data-distribution/01-replication
 sources:
+  - https://www.allthingsdistributed.com/files/amazon-dynamo-sosdp2007.pdf
   - https://github.com/donnemartin/system-design-primer
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A shopping-cart service ran on a single relational primary with a hot standby. Black Friday traffic doubled hour over hour, and at the peak the primary's failover took ninety seconds — during which every "add to cart" returned an error and customers simply left. The postmortem was blunt: the business would rather show a slightly stale cart than no cart at all, and a design with a single write master could never promise that. The rebuild threw out the relational model entirely. What they needed was a store with no master, where any node can take a write, where losing a machine costs nothing visible, and where the only thing sacrificed is that two replicas might briefly disagree. That store is the Dynamo shape, and it is built from three ideas — a hash ring, a quorum, and a way to reconcile conflicts — stacked on top of each other.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A Dynamo-style KV store trades consistency for always-on writes: a hash ring partitions keys, R+W>N tunes reads, versions fix conflicts.</Crux>
 
 <Explanation>
 
-## Design a key-value store
+## Requirements
 
-Body to be authored.
+The product is deliberately narrow: store and retrieve a value by an opaque key, at scale, without downtime. Pinning that down separates what the design must do from what it is allowed to give up.
 
+**Functional**
+
+- `get(key)` returns the value (or values, if replicas disagree) for a key.
+- `put(key, value, context)` writes a value; `context` carries version metadata the client got from a prior read.
+- Values are opaque blobs up to a small cap (Dynamo used `< 1 MB`); the store never interprets them.
+- No queries, no joins, no secondary indexes, no transactions across keys. One key at a time.
+
+**Non-functional** — these are the design, not garnish:
+
+- **Always writable.** A `put` must succeed even during failures and network partitions. This is the requirement that forces every later decision.
+- **Incremental scale.** Add one node at a time; the cluster rebalances without a maintenance window.
+- **Symmetric, decentralised.** No master, no special node whose loss stops the system. Every node runs the same code.
+- **Tunable.** Different callers want different points on the latency/durability/consistency curve from the *same* store.
+
+The decisive trade is **availability over consistency** (the A and C of CAP). Because the store must accept writes during a partition, it cannot also guarantee every reader sees the latest write — so it embraces **eventual consistency** and pushes conflict resolution to read time.
+
+## Estimation
+
+Numbers decide the shape. Assume a session/cart store:
+
+- **100M daily active users**, each touching their cart ~20 times/day → `2 × 10^9` operations/day. Divide by ~`10^5` s/day → **~20,000 ops/sec average**, and at a 5× peak, **~100,000 ops/sec**.
+- The mix is read-heavy but write-real: say a 4:1 read:write ratio → **~80K reads/sec, ~20K writes/sec** at peak.
+- **Value size** ~5 KB average. Hot working set: 100M active carts × 5 KB = **~500 GB** of live data — fits in the aggregate RAM of a modest cluster, so most reads can be memory-served.
+- With **N = 3** replication, raw stored bytes triple to ~1.5 TB before overhead; trivial on disk, the point of the number is that no single node holds it all.
+- At 100K ops/sec, a single node serving ~10K ops/sec means roughly **10–20 nodes** at peak with headroom — small enough to reason about, large enough that a node will fail every week.
+
+The last figure is the real driver: at this node count, **a node down is a Tuesday**, not an incident. The design must treat node failure as the normal case.
+
+## High-level design
+
+A client (or a smart client library) hashes the key onto a **consistent-hashing ring**, lands on a coordinator node, which replicates to the next `N − 1` nodes clockwise and applies a quorum. There is no separate routing tier — any node can coordinate any request, and membership is learned by **gossip**.
+
+<FlowDiagram
+  label="A put request hashes the key onto the ring to find a coordinator, which writes to N replicas (the key's preference list) and acknowledges once W of them confirm; a get fans out to the same N and returns once R reply."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "client", label: "client", sub: "put(key, val)" },
+    { id: "coord", label: "coordinator", sub: "hash → ring" },
+    { id: "plist", label: "preference list", sub: "N nodes clockwise" },
+    { id: "n1", label: "replica 1", sub: "write + ack" },
+    { id: "n2", label: "replica 2", sub: "write + ack" },
+    { id: "n3", label: "replica 3", sub: "write + ack" },
+    { id: "wquorum", label: "W acks", sub: "→ success to client" },
+  ]}
+  edges={[
+    { from: "client", to: "coord", label: "route" },
+    { from: "coord", to: "plist", label: "fan out" },
+    { from: "plist", to: "n1" },
+    { from: "plist", to: "n2" },
+    { from: "plist", to: "n3" },
+    { from: "n1", to: "wquorum" },
+    { from: "n2", to: "wquorum" },
+    { from: "n3", to: "wquorum" },
+  ]}
+  caption="The write path: hash to the ring, replicate to the N-node preference list, and acknowledge after W confirmations. The read path is the mirror image — fan out to the same N, return after R replies, reconcile versions on the way back."
+/>
+
+The three building blocks, in order:
+
+1. **Partitioning** — consistent hashing spreads keys across nodes and rebalances cheaply when one joins or leaves.
+2. **Replication + quorum** — each key lives on `N` nodes; `R` and `W` tune how many must respond.
+3. **Versioning** — because writes can land on different replicas during a partition, the store keeps multiple versions and reconciles them.
+
+## Deep dive
+
+### Partitioning with a hash ring
+
+Each key is hashed onto a ring; its `N` replicas are the next `N` *distinct physical* nodes walking clockwise — the key's **preference list**. Virtual nodes (each physical node placed at ~150 ring points) keep the arcs balanced and spread a dead node's load across many successors instead of crushing one neighbour. The payoff is operational: adding a node moves only ~`1/N` of the keys, so capacity grows one box at a time with no global reshuffle. (The consistent-hashing prerequisite covers the ring mechanics; here it is the substrate the rest sits on.)
+
+### Replication and the quorum knob
+
+Every write goes to all `N` replicas, but the coordinator returns success after only `W` of them acknowledge; every read polls `N` and returns after `R` reply. The single inequality that governs correctness is:
+
+```
+R + W > N   →   the read set and write set must overlap
+
+N = 3 examples:
+  W=3, R=1  → durable, fast reads, slow/fragile writes
+  W=1, R=3  → fast writes, slow reads, write survives if any node is up
+  W=2, R=2  → balanced; the common default
+```
+
+When `R + W > N`, any read quorum and any write quorum share at least one node, so a read is guaranteed to see at least one copy of the most recent acknowledged write. Lower the sum below `N + 1` and you trade that guarantee for latency — sometimes the right call for a cache-like workload.
+
+<Inset kind="why" lang="en">
+Why does `R + W > N` guarantee a read sees the latest write? Pure counting. A write touches `W` of the `N` nodes; a read touches `R` of them. Two sets drawn from `N` elements must intersect when their sizes sum to more than `N` (pigeonhole) — there is no way to pick `R` nodes that all avoid the `W` that hold the new value. So the read set always contains at least one node carrying the freshest acknowledged write; versioning then tells the reader which of the returned values is newest. Drop the sum to `R + W = N` and the sets can be disjoint, so a read can miss a just-written value — the "I wrote it but can't read it back" surprise.
+</Inset>
+
+The catch is the word *acknowledged*. During a partition the coordinator may not reach the "real" `N` nodes, so it writes to the first `N` healthy nodes it *can* reach — a **sloppy quorum** — and tags the displaced writes with a **hint** so they get handed back when the rightful node returns (**hinted handoff**). This is how the store stays writable through failures: it never blocks waiting for a specific node, it just writes somewhere durable and reconciles later.
+
+### Versioning: vector clocks vs last-write-wins
+
+Sloppy quorums and concurrent writes mean two replicas can legitimately hold *different* values for one key, with no global clock to order them. The store needs to know whether one version descends from the other (keep the newer) or whether they are genuinely concurrent (a conflict). Two strategies:
+
+- **Last-write-wins (LWW):** attach a timestamp; the highest wins. Dead simple, but it **silently drops** the loser — and with clock skew across nodes, "highest timestamp" can be the *wrong* write. Fine for caches; dangerous for carts.
+- **Vector clocks:** each value carries a vector of `(node, counter)` pairs. Comparing two vectors tells you if one *happened-before* the other (keep the descendant) or if they are **concurrent** (neither dominates) — in which case both are returned to the client to merge. Dynamo's canonical example: two concurrent adds to a cart produce divergent vectors, and the merge is a set union, so no item is lost.
+
+The cost of vector clocks is that the application must know how to merge — the store hands back "here are two siblings, you decide." For a shopping cart the merge is obvious (union the items); for a counter it is not, which is exactly why purpose-built CRDTs exist. The design choice is therefore *semantic*: LWW where losing a write is acceptable, vector clocks where it is not.
+
+<FlowDiagram
+  label="Two clients read the same cart, each adds a different item during a network partition, and write to different replicas; the replicas hold concurrent versions that vector clocks flag as a conflict, and a later read returns both siblings for the application to merge by union."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "read", label: "both read", sub: "cart = {A}" },
+    { id: "split", label: "partition", sub: "no clock order" },
+    { id: "c1", label: "client 1", sub: "+B → {A,B}" },
+    { id: "c2", label: "client 2", sub: "+C → {A,C}" },
+    { id: "vc", label: "vector clocks", sub: "concurrent → conflict" },
+    { id: "merge", label: "read returns 2", sub: "app unions → {A,B,C}" },
+  ]}
+  edges={[
+    { from: "read", to: "split" },
+    { from: "split", to: "c1" },
+    { from: "split", to: "c2" },
+    { from: "c1", to: "vc" },
+    { from: "c2", to: "vc" },
+    { from: "vc", to: "merge", label: "siblings" },
+  ]}
+  caption="Conflict resolution by vector clock: concurrent writes during a partition are not ordered, so neither is dropped — both siblings are surfaced and the application reconciles. Last-write-wins would silently discard one of the two added items."
+/>
+
+### Anti-entropy: gossip, read-repair, Merkle trees
+
+The store has no master to track membership, so nodes run a **gossip protocol**: each periodically picks a random peer and exchanges its view of who is alive, which node owns which arc, and failure suspicions. Within seconds the whole cluster converges on the same map — no coordinator, no single point of failure for membership itself.
+
+Replicas still drift (a hint never delivered, a node down during a write), so two repair mechanisms run continuously. **Read-repair**: when a read's `R` replies disagree, the coordinator pushes the freshest version back to the stale replicas on the response path — repair piggybacks on normal traffic. **Merkle-tree anti-entropy**: replicas of the same key range periodically compare hash trees of their data; only the branches whose hashes differ are exchanged, so two replicas can detect and heal divergence while transferring almost nothing when they already agree.
+
+<Inset kind="edgecase" lang="en">
+What about a key that is read constantly but written rarely — and one node in its preference list missed the last write and never gets read-repaired because reads happen to hit the other two? Read-repair only fires when a divergent replica is actually *in* the `R` it polled, so a quietly-stale node can sit wrong indefinitely if traffic routes around it. This is precisely the gap Merkle-tree anti-entropy closes: it runs independent of read traffic, comparing whole key ranges on a timer, so even a replica that no read ever touches is eventually reconciled. The two mechanisms are complementary — read-repair is cheap and immediate for hot keys; anti-entropy is the slower safety net for cold ones.
+</Inset>
+
+<Quiz
+  id="01-key-value-store-quiz-1"
+  lessonSlug="01-key-value-store"
+  lang="en"
+  question="A KV store runs N=3 with W=1, R=1 for speed. A client writes a value, then immediately reads the same key and gets the OLD value. What's the cause, and which setting guarantees the read sees the write?"
+  choices={[
+    { label: "R + W = 2 ≤ N = 3, so the read and write sets can be disjoint — the read can hit two nodes that never got the new write. Set R + W > N (e.g. W=2, R=2) so the sets must overlap.", correct: true },
+    { label: "The write was lost; raise the replication factor N.", misconception: "The write wasn't lost — W=1 means one replica has it. The problem is the read polled R=1 nodes that don't include that replica. Raising N alone doesn't help; you need R + W > N so the read set overlaps the write set." },
+    { label: "Clock skew reordered the operations; sync the clocks.", misconception: "No clock is involved in quorum overlap. With R + W ≤ N the read set and write set can be disjoint by pure counting, so the read misses the new value regardless of clocks. The fix is R + W > N." },
+    { label: "Nothing is wrong — eventual consistency means reads are always stale.", misconception: "Eventual consistency permits staleness but doesn't mandate it. With R + W > N you get read-your-write on a strict quorum. The stale read here is specifically because R + W = 2 ≤ N = 3 allows disjoint sets." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-key-value-store-metaphor-1"
+  lessonSlug="01-key-value-store"
+  lang="en"
+  setup="When two replicas hold concurrent values written during a partition, _______ (a vector of per-node counters) lets the store decide whether one version descends from the other or they truly conflict — returning both siblings to the application to merge instead of silently dropping one as last-write-wins would."
+  accepted={["vector clocks", "vector clock", "a vector clock", "vectorclocks", "version vectors"]}
+  canonical="vector clocks"
+  explanation="Vector clocks carry (node, counter) pairs so comparing two versions reveals a happened-before relationship (keep the descendant) or concurrency (a conflict). Concurrent versions are returned as siblings for the app to reconcile — e.g. a cart merge is a set union — whereas last-write-wins would discard the loser and lose data under clock skew."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **Hot keys.** Consistent hashing balances the *keyspace*, not *load* — one celebrity key (a viral cart, a global config row) routes all its traffic to the same `N` nodes regardless of vnodes. Mitigations: client-side caching of hot keys, splitting a hot key into shards, or bounded-load hashing for request routing. The ring does not save you from a single white-hot key.
+- **The merge burden.** Vector clocks push reconciliation to the client; get it wrong (or default to LWW for convenience) and you silently lose data. Vectors can also grow unbounded with many coordinating nodes, so real systems prune old entries — which can, rarely, lose causal information.
+- **Read amplification under low R.** `R = 1` is fast but maximises staleness and the read-repair workload; `R = N` is consistent but turns one logical read into `N` network calls, and a single slow replica drags the tail (tail-at-scale). The `R`/`W` knob is per-operation precisely because no single setting fits every call.
+- **Eventual consistency is a contract, not a bug — but it leaks.** "Read your own write" is not guaranteed unless you route a client's reads through the same coordinator or use `R + W > N` with a strict (non-sloppy) quorum. Teams that assume read-after-write get burned; the honest design states the staleness window and lets the application opt into stronger settings where it matters.
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A Dynamo-style KV store stacks three ideas: a hash ring partitions keys, a quorum (R+W>N) trades latency for consistency, versioning reconciles concurrent writes. Always-on writes cost eventual consistency.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-key-value-store-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the central trade a Dynamo-style KV store makes, and which requirement forces it?", a: "It trades strong consistency for availability (the A over C of CAP). The forcing requirement is 'always writable, even during a partition' — a put must succeed when nodes are unreachable. Since CAP says a partitioned system can't be both consistent and available, the store accepts eventual consistency and resolves conflicts at read time. This is why there's no master: any node can take a write, so losing a machine costs nothing visible." },
+    { q: "State the quorum inequality and explain why it works.", a: "R + W > N, where N is the replica count, W is writes that must ack, and R is reads that must reply. It works by pigeonhole: a write touches W of N nodes and a read touches R of N; if R + W > N the two sets must intersect, so a read always includes at least one node holding the latest acknowledged write. Versioning then identifies which returned value is newest. Common N=3 settings: W=2,R=2 (balanced), W=1,R=3 (fast writes), W=3,R=1 (durable writes, fast reads). Sloppy quorums relax this during failures by writing to any N healthy nodes with hinted handoff." },
+    { q: "When do you use vector clocks vs last-write-wins, and what mechanisms heal replica drift?", a: "Vector clocks (per-value (node, counter) vectors) detect whether one version happened-before another or they're concurrent; concurrent versions are returned as siblings for the app to merge (e.g. union a cart) — use them when losing a write is unacceptable. Last-write-wins picks the highest timestamp and silently drops the loser — simple, fine for caches, dangerous under clock skew. Drift is healed by read-repair (push the freshest version to stale replicas on the read path — immediate, only for keys actually read) and Merkle-tree anti-entropy (replicas compare hash trees on a timer and exchange only differing branches — the safety net for cold keys). Membership itself is tracked by gossip, so there's no master." },
+  ]}
+/>
+
+<Recap lang="en">
+A distributed key-value store is the Dynamo shape: it exists because some workloads (the hook's shopping cart) would rather serve slightly stale data than refuse a write during a failure, so it picks **availability over consistency** and accepts **eventual consistency** as the price. The estimate — tens of thousands of ops/sec on ~10–20 nodes — makes node failure the normal case, which rules out any master. Three ideas stack: a **consistent-hashing ring** partitions keys and rebalances one node at a time (each key's `N` replicas are its preference list); a **quorum** with `R + W > N` guarantees a read overlaps the latest write, with `R`/`W` as a per-operation latency-vs-consistency knob, relaxed to a **sloppy quorum + hinted handoff** so writes never block on a specific node; and **versioning** (vector clocks to surface concurrent siblings for the app to merge, or last-write-wins where dropping a loser is acceptable) reconciles the divergence that no-master writes create. **Gossip** tracks membership with no coordinator, and **read-repair plus Merkle-tree anti-entropy** continuously heal drift. The bottlenecks are real — a single hot key defeats the ring, the merge burden lands on the application, and low `R` maximises staleness — so the honest design states its staleness window and lets each call dial the consistency it actually needs.
+</Recap>

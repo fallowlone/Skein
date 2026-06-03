@@ -5,34 +5,202 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 4
 title: "Design a digital wallet"
-summary: "Design a digital wallet — to be authored."
-estMin: 16
-status: stub
+summary: "Design a digital wallet: balance correctness under concurrency, transfers as ACID vs distributed transactions, idempotency, the lost-update problem and how to avoid it, sharded balances, an event-sourced ledger, and the consistency the money demands."
+estMin: 36
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - balance-correctness
+  - lost-update
+  - concurrency-control
+  - event-sourcing
+  - sharded-balances
+  - distributed-transaction
+prereqs:
+  - system-design/04-data-distribution/04-cap-and-pacelc
+  - system-design/04-data-distribution/01-replication
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://www.postgresql.org/docs/current/transaction-iso.html
+  - https://martinfowler.com/eaaDev/EventSourcing.html
+  - https://learn.microsoft.com/en-us/azure/architecture/reference-architectures/event-sourcing
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A user had $100 in their wallet. Two requests hit at the same millisecond: a $70 purchase and a $60 purchase. Both backend workers read the balance — each saw $100 — both checked "is $100 enough?", both said yes, both subtracted and wrote back. The wallet ended at $40 (whichever write landed last), the user spent $130 they didn't have, and the company silently lost $30. Nothing crashed. No error was logged. This is the **lost-update problem**: two transactions read the same value, each computes a new value from the stale read, and one overwrites the other. For a like counter it's a rounding error nobody notices; for a wallet balance it's money created from nothing, and it is the single defining hazard of wallet design.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A wallet's job is balance correctness under concurrency: never let two reads of one balance both win; make the balance a fold over a ledger.</Crux>
 
 <Explanation>
 
-## Design a digital wallet
+## Requirements
 
-Body to be authored.
+A digital wallet holds a balance and lets users top up, spend, and transfer to other wallets. The numbers are small but the correctness bar is absolute.
+
+**Functional.** Show a balance. Credit (top-up) and debit (spend) a wallet. Transfer between two wallets atomically — debit one, credit the other, never one without the other. Reject a debit that would overdraw (unless overdraft is explicitly allowed). Produce a full transaction history. Be idempotent: a retried transfer must not move money twice.
+
+**Non-functional.** **Balance correctness is non-negotiable** — the balance must always equal the sum of the wallet's movements, with no lost updates and no money created or destroyed. Transfers must be **atomic** (both legs or neither). Operations must be **idempotent** under retries. The system must scale to millions of wallets, which forces **sharding** — and that's where transfers across shards get hard.
+
+The throughput is modest (a wallet isn't a high-QPS feed), so, exactly as with payments, the difficulty is *correctness under concurrency*, not raw scale. The lost-update problem from the hook is the enemy the entire design exists to defeat.
+
+## Estimation
+
+```
+wallets           = 100,000,000 wallets
+transactions      = 50,000,000 transfers/day
+avg QPS           = 5×10^7 / 86,400        ≈ 580 transfers/sec  (modest)
+peak QPS          = ~5× avg                ≈ 3,000 transfers/sec
+ledger entries    = 2 per transfer (debit + credit) → ~10^8 immutable rows/day
+hot wallets       = a few merchant wallets may take a huge share of writes
+```
+
+The aggregate QPS (~hundreds to a few thousand transfers/sec) is small for a database. Two things actually shape the design. First, **per-wallet write contention** — most wallets are quiet, but a popular merchant or payout wallet can become a write hot spot, and *that* single wallet's serialization is the real bottleneck, not the total. Second, **the ledger grows forever** (~10^8 entries/day, append-only, kept for years), so balances are derived from the ledger and you need a way to read a current balance without re-summing all history — a snapshot or materialized balance.
+
+## High-level design
+
+<FlowDiagram
+  label="A transfer request with an idempotency key is deduplicated, then applied to the ledger as a single atomic unit that debits the sender's balance and credits the receiver's; balances are materialized from the append-only event log, and wallets are sharded by wallet id so most transfers are single-shard while cross-shard transfers use a saga."
+  perRow={3}
+  hue="var(--d-backend)"
+  nodes={[
+    { id: "req", label: "transfer", sub: "idempotency key" },
+    { id: "dedup", label: "dedup", sub: "key → result" },
+    { id: "tx", label: "atomic apply", sub: "debit + credit" },
+    { id: "ledger", label: "event ledger", sub: "append-only" },
+    { id: "bal", label: "balances", sub: "materialized" },
+    { id: "shard", label: "shard router", sub: "by wallet id" },
+    { id: "saga", label: "cross-shard saga", sub: "two-phase / compensate" },
+    { id: "read", label: "balance read", sub: "snapshot + tail" },
+  ]}
+  edges={[
+    { from: "req", to: "dedup", label: "check" },
+    { from: "dedup", to: "tx", label: "first time" },
+    { from: "tx", to: "ledger", label: "append" },
+    { from: "ledger", to: "bal", label: "fold" },
+    { from: "tx", to: "shard", label: "route" },
+    { from: "shard", to: "saga", label: "if 2 shards" },
+    { from: "bal", to: "read", label: "serve" },
+  ]}
+  caption="The balance is never a standalone mutable number — it is folded from an append-only event ledger, so it can always be recomputed and verified. A transfer is one atomic ledger append (debit + credit); when the two wallets live on different shards, a saga coordinates the two local commits with a compensation."
+/>
+
+The spine is **event sourcing**: the source of truth is an append-only log of balance-changing *events* (credited, debited, transferred), and the current balance is a **fold** over that log — never a field you mutate in place. Idempotency dedups retries; a transfer is a single atomic application (two ledger entries); balances are materialized for fast reads; and **sharding by wallet id** keeps most transfers single-shard while a **saga** handles the cross-shard minority.
+
+## Deep dive
+
+### The lost-update problem and concurrency control
+
+The hook is the canonical concurrency bug, and it has three standard fixes — you must know all three and when to use each.
+
+**Pessimistic locking (`SELECT … FOR UPDATE`).** The transaction locks the wallet row before reading, so the second transfer *blocks* until the first commits, then reads the *fresh* balance ($30, not $100) and correctly rejects the overdraft. Simple and exactly correct; the cost is that concurrent operations on the same wallet serialize, so a hot wallet becomes a queue.
+
+**Optimistic concurrency (version/CAS).** Read the balance and its version, compute the new balance, then write *only if the version is unchanged* (`UPDATE … WHERE id=? AND version=?`). If someone else wrote first, the version moved, your update affects zero rows, and you retry with the fresh value. Great when contention is *rare* (most wallets); wasteful when it's high (retries storm on a hot wallet).
+
+**Atomic conditional write.** Push the whole check-and-decrement into one statement the database executes atomically: `UPDATE wallets SET balance = balance - 70 WHERE id = ? AND balance >= 70`. No read-modify-write race exists because the DB evaluates the condition and the update as one operation; zero rows affected means insufficient funds. This is the cleanest single-wallet debit.
+
+```
+LOST UPDATE (the bug):
+  T1 read 100 ─┐                    ┌─ T2 read 100
+  T1 check ok  │  (both saw 100)    │  T2 check ok
+  T1 write 30 ─┘                    └─ T2 write 40   ← overwrites; balance = 40, $130 spent
+
+FIXED (atomic conditional):
+  T1: UPDATE … balance = balance-70 WHERE balance >= 70  → 1 row, balance = 30
+  T2: UPDATE … balance = balance-60 WHERE balance >= 60  → 0 rows (30 < 60) → rejected
+```
+
+<Inset kind="why" lang="en">
+Why does the atomic conditional write defeat the lost update when the naive code can't? Because the bug is a *time gap* between reading the balance and writing the new one — in that gap another transaction reads the same stale value, and both compute from $100. The naive code makes the decision in the application, on a value that can go stale before the write lands. The atomic statement closes the gap: the database evaluates `balance >= 70` and performs `balance = balance - 70` as one indivisible operation under the row's lock, so no other transaction can interleave between the check and the decrement. There is no stale read to compute from, because the read, the check, and the write are the same atomic step. This is the general lesson: don't decide in the app on a value you then write back; make the database decide-and-write in one shot, or hold a lock across the gap.
+</Inset>
+
+### Atomic transfers and the cross-shard problem
+
+A transfer is two movements — debit sender, credit receiver — that must be **all-or-nothing**. If both wallets live on the **same shard/database**, this is trivial: wrap both in one local ACID transaction; either both commit or both roll back. This is why you shard by wallet id and try to keep related wallets together — most transfers stay single-shard and get true ACID atomicity for free.
+
+The hard case is a **cross-shard transfer**: sender on shard A, receiver on shard B, no single transaction spans both. You cannot just debit A and then credit B — if the credit fails after the debit commits, money vanished. The options:
+
+- **Saga with compensation** (lesson on event-driven): debit A (local commit) → credit B (local commit); if crediting B fails, run the compensation that credits A back. Between the two steps the system is briefly inconsistent (money "in flight"), modeled explicitly as a pending state.
+- **Two-phase commit (2PC)**: a coordinator prepares both shards, then commits both — strong atomicity, but it blocks if the coordinator dies mid-commit and couples availability to all participants.
+
+Most wallets choose the saga (available, eventually consistent, with an explicit in-flight state) over 2PC (consistent but blocking), and lean on the ledger plus reconciliation to detect and heal any stuck transfer.
+
+### Event sourcing: the balance as a fold over events
+
+Storing the balance as a mutable number is the original sin (it's *what enables* the lost update and erases history). Event sourcing inverts it: **the events are the truth, the balance is derived.** Every change is an immutable event appended to the log; the current balance is computed by folding the events:
+
+```
+events:  +100 (topup)  −70 (purchase)  +20 (refund)
+balance = fold(0, events) = 0 + 100 − 70 + 20 = 50
+```
+
+This buys three things a mutable balance can't. **Auditability**: the complete history is the storage, so you can always explain a balance and replay it. **Correctness checks**: the balance is verifiable (re-fold and compare), so corruption is detectable. **Temporal queries**: "what was the balance last Tuesday?" is a fold up to that point. The practical cost is that folding all of history on every read is too slow, so you keep a **snapshot** (a materialized balance at a checkpoint) and fold only the events since — fast reads, full history retained.
+
+## Bottlenecks & tradeoffs
+
+The defining bottleneck is **per-wallet write serialization**: a single hot wallet (a big merchant) is a contention point no amount of sharding fixes, because you can't split one wallet's balance updates without losing the single-row atomicity that prevents lost updates — mitigations are batching its updates or splitting it into sub-accounts that reconcile. **Locking strategy is a contention trade**: pessimistic locks are simple and safe but serialize hot wallets; optimistic/CAS is great under low contention but storms with retries under high; pick by the wallet's contention profile. **Cross-shard transfers trade atomicity for availability**: single-shard is true ACID, cross-shard is a saga with a brief in-flight inconsistency and reconciliation to heal stragglers. And **event sourcing trades read simplicity for write integrity**: reads need snapshots-plus-tail to stay fast and storage grows forever, but in return the balance is always a verifiable, auditable consequence of the log — a trade money systems make every time.
+
+<Quiz
+  id="04-digital-wallet-quiz-1"
+  lessonSlug="04-digital-wallet"
+  lang="en"
+  question="Two concurrent debits ($70 and $60) both read a $100 balance, both pass their check, both write back — and the wallet overdraws. What is this, and which single-statement fix prevents it?"
+  choices={[
+    { label: "The lost-update problem: a time gap between read and write lets both transactions compute from the same stale $100. Fix with an atomic conditional write — UPDATE … SET balance = balance - 70 WHERE balance >= 70 — so the check and decrement are one indivisible operation; the second sees 30 and affects zero rows.", correct: true },
+    { label: "A deadlock; add a retry loop and it resolves itself.", misconception: "Nothing is deadlocked — both transactions succeed, which is the problem. It's a lost update from a read-modify-write race. A retry loop doesn't help if both still read a stale value first; you need an atomic conditional write (or a lock) to close the read-write gap." },
+    { label: "A replication lag issue; read from the primary to fix it.", misconception: "It happens on a single primary with no replicas involved — two concurrent transactions reading the same row before either writes. The fix is concurrency control (atomic conditional write or SELECT FOR UPDATE), not where you read from." },
+    { label: "Eventual consistency; switch to a strongly consistent store.", misconception: "Even a strongly consistent store loses the update if the app reads, decides, and writes with a gap in between. The fix is to make the decide-and-write atomic at the DB (conditional UPDATE) or hold a row lock — not merely to change the consistency model." },
+  ]}
+/>
+
+<Quiz
+  id="04-digital-wallet-quiz-2"
+  lessonSlug="04-digital-wallet"
+  lang="en"
+  question="A transfer moves money from a wallet on shard A to a wallet on shard B. No single transaction spans both shards. What's the correct way to keep it atomic, and what's the cost?"
+  choices={[
+    { label: "A saga: debit A (local commit), then credit B (local commit); if crediting B fails, run a compensation that credits A back. The cost is a brief in-flight window where the system is inconsistent (modeled as a pending state), healed by reconciliation if a step gets stuck.", correct: true },
+    { label: "Just debit A and credit B with two independent writes; they'll converge.", misconception: "If the credit to B fails after the debit to A commits, money has vanished with nothing to converge. You need a saga with a compensating action (credit A back) and an explicit pending state — not two fire-and-forget writes." },
+    { label: "Put both wallets in one distributed transaction with no coordination needed.", misconception: "There IS no single transaction across two shards — that's the whole problem. You either use a saga (available, eventually consistent) or 2PC with a coordinator (atomic but blocking if the coordinator dies). It isn't free." },
+    { label: "Move both wallets to the same shard at transfer time.", misconception: "Re-sharding a wallet mid-transfer is far more expensive and disruptive than coordinating the transfer; you can't relocate hot data per request. Same-shard ACID is the goal for COMMON pairs, but cross-shard transfers are handled by a saga, not live migration." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-digital-wallet-metaphor-1"
+  lessonSlug="04-digital-wallet"
+  lang="en"
+  setup="In an event-sourced wallet the balance is never stored as a mutable number; it is a _______ over the append-only log of events — so it can always be recomputed and verified, and the history that explains it is never lost."
+  accepted={["fold", "fold (reduction)", "reduction", "sum", "fold over the events"]}
+  canonical="fold"
+  explanation="The events (credited, debited, transferred) are the source of truth, and the balance is a fold/reduction over them (0 + 100 − 70 + 20 = 50). Because it's derived, it's verifiable (re-fold and compare), auditable (full history retained), and temporal (fold up to any point). A snapshot plus the tail of recent events keeps reads fast without re-folding all history."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A wallet's job is balance correctness under concurrency. Defeat the lost update with an atomic conditional write, a lock, or CAS; make transfers atomic (single-shard ACID, cross-shard saga); event-source the balance.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-digital-wallet-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the lost-update problem and what are the three ways to prevent it?", a: "Two transactions read the same balance, each computes a new value from the stale read, and one overwrites the other — so an overdraw or money creation happens with no error (the hook: $100, two debits both pass, balance ends wrong). Three fixes: (1) pessimistic lock (SELECT … FOR UPDATE) — the second op blocks and reads the fresh value, simple but serializes hot wallets; (2) optimistic/CAS — write only if a version is unchanged, retry on conflict, great under low contention, storms under high; (3) atomic conditional write — UPDATE … SET balance = balance - X WHERE balance >= X, which closes the read-write gap by making check-and-decrement one indivisible DB operation. All three remove the stale-read-then-write gap." },
+    { q: "How do you keep a transfer atomic, single-shard vs cross-shard?", a: "A transfer is debit-sender + credit-receiver, all-or-nothing. Same shard: wrap both in one local ACID transaction — trivial true atomicity, which is why you shard by wallet id and keep related wallets together so most transfers stay single-shard. Cross-shard (no single transaction spans both): use a saga — debit A (local commit), credit B (local commit), and a compensation that credits A back if B fails, with a brief explicit in-flight/pending state; or 2PC with a coordinator (atomic but blocks if the coordinator dies). Most wallets pick the saga for availability and rely on the ledger plus reconciliation to heal stuck transfers." },
+    { q: "Why event-source the balance instead of storing a mutable number?", a: "A mutable balance is what ENABLES the lost update and erases history. Event sourcing makes the append-only log of events the truth and derives the balance as a fold over it (0 + 100 − 70 + 20 = 50). That buys auditability (full history is the storage, every balance is explainable and replayable), correctness checks (re-fold and compare to detect corruption), and temporal queries (fold up to any past point). The cost is that folding all history per read is slow, so you keep a snapshot (materialized balance at a checkpoint) and fold only the events since — fast reads, full history retained." },
+  ]}
+/>
+
+<Recap lang="en">
+A digital wallet is a **correctness-under-concurrency** problem, not a scale problem: the throughput is modest, but the **lost-update** bug from the hook — two debits both reading the same balance and one overwriting the other — creates money from nothing with no error logged, and defeating it is the whole job. Three tools close the stale-read-then-write gap: a **pessimistic lock** (simple, serializes hot wallets), **optimistic/CAS** (great under low contention, storms under high), and the cleanest single-wallet debit, an **atomic conditional write** (`UPDATE … balance = balance - X WHERE balance >= X`) that makes check-and-decrement one indivisible operation. Transfers must be **atomic**: same-shard transfers get true ACID in one local transaction (so you shard by wallet id to keep most transfers single-shard), while **cross-shard** transfers use a **saga** with compensation and a brief in-flight state rather than blocking 2PC. Underneath, the balance is **event-sourced** — an append-only ledger of events with the balance as a verifiable, auditable **fold**, kept fast with snapshots-plus-tail. The standing tradeoffs are per-wallet write serialization on hot merchant wallets (the bottleneck sharding can't fix), locking strategy by contention profile, atomicity-vs-availability across shards, and read-simplicity-vs-write-integrity in event sourcing — every one resolved in favour of the balance always being a provable consequence of the log.
+</Recap>

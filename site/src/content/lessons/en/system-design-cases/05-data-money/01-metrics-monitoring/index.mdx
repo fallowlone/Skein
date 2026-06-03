@@ -5,34 +5,202 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 1
 title: "Design a metrics & alerting system"
-summary: "Design a metrics & alerting system — to be authored."
-estMin: 16
-status: stub
+summary: "Design a metrics and alerting platform: time-series ingest at scale, push vs pull collection, downsampling and retention tiers, the cardinality explosion that kills the database, alert-rule evaluation, and dashboards that stay cheap at read time."
+estMin: 34
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - time-series
+  - pull-vs-push
+  - cardinality
+  - downsampling
+  - alerting-rules
+  - retention-tiers
+prereqs:
+  - system-design/07-storage-choices/03-time-series-and-search
+  - system-design/06-async-messaging/02-pub-sub
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://prometheus.io/docs/practices/instrumentation/
+  - https://prometheus.io/docs/prometheus/latest/storage/
+  - https://www.robustperception.io/cardinality-is-key/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An on-call engineer added one innocent label to a metric — `user_id` — so they could break down request latency per customer. The deploy shipped on a Friday. By Sunday the monitoring cluster was out of memory, every dashboard timed out, and the team was flying blind during the one weekend they most needed eyes on the system. They had not added more traffic; they had multiplied the number of distinct time series by a million. A single high-cardinality label turned a healthy metrics database into a memory bomb. The lesson is that a metrics system is not a logging system with graphs on top — it is a specialized time-series store whose entire design is shaped by one number: how many unique series it must hold in memory at once.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A metrics platform is a time-series DB whose binding constraint is series cardinality: keep the active series set small enough for RAM.</Crux>
 
 <Explanation>
 
-## Design a metrics & alerting system
+## Requirements
 
-Body to be authored.
+A metrics and alerting platform answers one operational question continuously: *is the system healthy right now, and if not, who do we wake up?* That splits into functional and non-functional needs.
+
+**Functional.** Collect numeric measurements (counters, gauges, histograms) from thousands of services and hosts. Store them as **time series** — a stream of `(timestamp, value)` points identified by a metric name plus a set of key/value **labels** (`http_requests_total{service="checkout", status="500", region="eu"}`). Let engineers query them with an expressive language (rate, aggregation, percentile estimation). Evaluate **alert rules** continuously and fire to a notifier (PagerDuty, Slack). Render **dashboards** that re-query the data on every refresh.
+
+**Non-functional.** Ingest must be cheap per point because there are *enormous* numbers of points. Queries over recent data must be fast (dashboards refresh every 15–30 s; an SLO breach must be visible in seconds). The system must stay up *especially when the monitored system is failing* — monitoring that dies in an incident is worse than useless. And retention is tiered: raw resolution for days, coarse rollups for years.
+
+The dominant design force, threaded through everything below, is **cardinality** — the count of distinct label-set combinations. It, not raw request volume, decides whether the system survives.
+
+## Estimation
+
+Size it before drawing boxes. Suppose 5,000 hosts, each exporting ~1,000 metrics, scraped every 15 seconds.
+
+```
+active series      = 5,000 hosts × 1,000 metrics            = 5,000,000 series
+ingest rate        = 5,000,000 series ÷ 15 s                ≈ 333,000 samples/sec
+samples per day    = 333,000 × 86,400                        ≈ 2.9 × 10^10 samples/day
+on disk (raw)      = ~2.9 × 10^10 × ~1.5 bytes (compressed)  ≈ 43 GB/day
+in-memory index    = ~5,000,000 series × ~few hundred bytes  ≈ a few GB of label index
+```
+
+Two numbers matter. **Samples per second** (~333K/s) sets the write path — comfortable for a single well-tuned node, trivially shardable beyond. **Active series** (5M) sets the *memory* footprint, because the database keeps an in-memory index from labels to series plus the most recent chunk of each series. Now imagine adding a `user_id` label with a million values: 5M series becomes 5 *billion*, the index no longer fits in RAM, and the box dies — exactly the hook. Compressed storage (Gorilla-style delta-of-delta timestamps and XOR'd float values, ~1.5 bytes/sample versus 16 raw) is what makes the disk number tolerable; nothing makes unbounded cardinality tolerable.
+
+## High-level design
+
+<FlowDiagram
+  label="Metrics flow from instrumented targets through a scraper or push gateway into a time-series database, which serves both the query engine behind dashboards and a rule evaluator that fires alerts; a compactor downsamples old data into a long-term store."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "targets", label: "targets", sub: "exporters /metrics" },
+    { id: "scrape", label: "scraper", sub: "pull every 15 s" },
+    { id: "tsdb", label: "TSDB", sub: "active series in RAM" },
+    { id: "rules", label: "rule eval", sub: "alert + record" },
+    { id: "query", label: "query engine", sub: "dashboards" },
+    { id: "alertmgr", label: "alert manager", sub: "dedup, route, page" },
+    { id: "compact", label: "compactor", sub: "downsample" },
+    { id: "longterm", label: "long-term store", sub: "object storage" },
+  ]}
+  edges={[
+    { from: "targets", to: "scrape", label: "expose" },
+    { from: "scrape", to: "tsdb", label: "write" },
+    { from: "tsdb", to: "rules", label: "evaluate" },
+    { from: "tsdb", to: "query", label: "read" },
+    { from: "rules", to: "alertmgr", label: "fire" },
+    { from: "tsdb", to: "compact", label: "block" },
+    { from: "compact", to: "longterm", label: "roll up" },
+  ]}
+  caption="The TSDB sits at the centre: writes from the scraper, reads from dashboards and the rule evaluator, and a background compactor that rolls recent high-resolution blocks into downsampled long-term storage. Alerts are evaluated against the same store that serves graphs, so a query that's too expensive to run also makes alerting late."
+/>
+
+The shape is a **collection** path (get samples in), a **storage** core (the TSDB), and two **read** paths that share it: ad-hoc queries for dashboards, and a scheduled **rule evaluator** that runs the same query language to compute alerts and pre-aggregated "recording rules." A separate **alert manager** deduplicates, groups, and routes firing alerts so one bad deploy doesn't page twelve people twelve times. Old data is compacted and **downsampled** into cheap object storage for long retention.
+
+## Deep dive
+
+### Pull vs push collection
+
+There are two ways to get samples into the system, and the choice ripples through the whole design.
+
+**Pull** (Prometheus): the server holds a list of targets and scrapes each one's `/metrics` HTTP endpoint on a schedule. The server controls the sampling rate, a failed scrape is *itself a signal* (the target is up/down metric comes free), and service discovery (from Kubernetes, Consul) keeps the target list current. The cost: the server must reach every target on the network, and short-lived jobs that vanish between scrapes need a **push gateway** as a workaround.
+
+**Push** (StatsD, OpenTelemetry, InfluxDB line protocol): clients send samples to a collector. This suits ephemeral jobs, serverless, and clients behind NAT that the server can't reach. The cost: the server can't tell "no data because healthy and idle" from "no data because the sender died," you need a separate liveness signal, and a misbehaving client can flood you — backpressure and rate-limiting move to the ingest tier.
+
+Neither is universally right. Pull dominates infrastructure monitoring (stable, discoverable targets); push dominates application events and serverless. Many large platforms run both: pull for the fleet, a push gateway for batch jobs.
+
+<Inset kind="why" lang="en">
+Why does pull make failure detection easier? Because the absence of a successful scrape is information the *server* observes directly. With pull, the server knows it tried to reach target X at 14:00:15 and got a connection refused, so it records `up{instance="X"} = 0` — an alert can fire on that with no cooperation from the dead target. With push, silence is ambiguous: the server sees no samples from X, but it cannot distinguish "X is healthy and had nothing to report" from "X crashed" from "the network between X and the collector broke." You end up adding heartbeat metrics and dead-man's-switch alerts to reconstruct what pull gives you for free. That's why infrastructure monitoring leans pull: the thing you most want to detect — a host going dark — is exactly the case push handles worst.
+</Inset>
+
+### Cardinality: the explosion that kills the database
+
+This is the single most important operational fact about metrics systems, and it's the hook. A time series is uniquely identified by its full label set, so the number of series is the **product** of the cardinalities of every label:
+
+```
+series for one metric = ∏ (distinct values of each label)
+
+http_requests_total{service, status, region}
+  service: 50  ×  status: 8  ×  region: 5   = 2,000 series   ✅ fine
+
+add label user_id (1,000,000 distinct):
+  50 × 8 × 5 × 1,000,000              = 2,000,000,000 series ❌ database dies
+```
+
+Every series carries fixed overhead: an entry in the inverted label index, an open chunk in memory for incoming samples, file handles. The active-series count, not the sample rate, is what blows the memory budget — and it grows *multiplicatively* with each unbounded label. The rules that keep it bounded are non-negotiable senior practice: **never put unbounded-cardinality values in labels** (user IDs, email addresses, full URLs with query strings, request IDs, timestamps). Those belong in logs or traces, which are built to be searched by high-cardinality keys; metrics are built to be *aggregated* over bounded label sets. When you genuinely need per-customer latency, you either bucket customers into a bounded tier label, or you answer that question from traces/logs, not from the metrics TSDB.
+
+<Inset kind="mistake" lang="en">
+The seductive mistake is treating a metric label like a log field. Logs and traces are indexed for high-cardinality lookup — "show me every event for request `abc-123`" — and they're stored cheaply because each event lives once. A metric label is different: it doesn't add a field to an event, it *forks a whole new time series* that the database must track for its entire lifetime, with index and memory overhead per series. So `path="/user/12345/orders"` doesn't add one dimension; it spawns a fresh series for every distinct path, forever. The fix is to normalize before it becomes a label — `path="/user/:id/orders"` (the route template, bounded) — and push the raw, high-cardinality value into logs. The rule of thumb: if you can't enumerate a label's possible values on a whiteboard, it does not belong in a metric.
+</Inset>
+
+### Downsampling and retention tiers
+
+Nobody needs 15-second resolution for a graph spanning a year — and storing it is wasteful and slow to query. So a **compactor** runs in the background, merging recent high-resolution blocks and computing **downsampled** rollups: 5-minute aggregates, then 1-hour aggregates, each retained longer. A typical tiered policy:
+
+```
+raw (15 s)    → kept 15 days   (incident debugging, recent dashboards)
+5-min rollup  → kept 90 days   (capacity trends, weekly reviews)
+1-hour rollup → kept 2 years   (year-over-year planning)
+```
+
+Downsampling can't just keep the average — for each window you store multiple aggregates (min, max, sum, count) so a query can still compute a meaningful rate or approximate percentile over the coarse data. Old blocks live in **object storage** (S3/GCS), not on the hot node's disk; the query engine reads them on demand and caches results. This is the kappa-style split between a small, fast, in-memory hot tier and a large, cheap, cold tier — and it's why a "show me last year" query is slower but possible, while a "show me last 30 minutes" query is instant.
+
+## Bottlenecks & tradeoffs
+
+The binding constraint is **memory for active series**, and almost every tradeoff is about defending it. Cardinality is the failure mode; relabeling/dropping at ingest and hard per-target series limits are the defenses. **Resolution vs cost** is a knob: scrape every 15 s and you see fast spikes but pay 4× the storage of a 60 s scrape — most teams scrape fast and downsample early. **Alerting freshness vs query cost** is a hidden coupling: alert rules run the same query engine as dashboards, so a heavy recording rule or an expensive dashboard query competes for the same CPU — a slow query path makes alerts *late*, which is how a monitoring system fails silently during the incident it should be catching. Mature systems pre-compute hot aggregates with **recording rules** (cheap reads at alert time) and isolate the alerting path from ad-hoc dashboard load. Finally, the system must be **more available than what it watches**: run it separately (its own cluster, its own region), keep its dependencies minimal, and make sure that when everything else is on fire, the thing watching the fire is still standing.
+
+<Quiz
+  id="01-metrics-monitoring-quiz-1"
+  lessonSlug="01-metrics-monitoring"
+  lang="en"
+  question="An engineer adds a label `request_id` (a unique UUID per request) to a metric to 'make debugging easier.' What happens, and what's the correct place for that data?"
+  choices={[
+    { label: "Series count explodes — each unique request_id forks a brand-new time series the TSDB must index and hold in memory, so cardinality grows without bound and the box runs out of RAM. Per-request identifiers belong in logs/traces, which are built for high-cardinality lookup; metrics are for bounded-label aggregation.", correct: true },
+    { label: "Nothing bad — it just adds one more column to each sample, costing a few bytes per point.", misconception: "A label is not a column on an event; it forks an entirely new time series with its own index entry and in-memory chunk. A unique-per-request label means one series per request — unbounded cardinality, the classic OOM. It is not 'a few bytes.'" },
+    { label: "Ingest rate (samples/sec) doubles, so you just need a faster write path.", misconception: "The sample RATE barely changes; what explodes is the ACTIVE SERIES count, which sets the memory/index footprint, not the write throughput. Faster ingest doesn't help — you've blown the cardinality budget." },
+    { label: "Queries get slower but storage is fine because old series compact away.", misconception: "Compaction doesn't rescue you: each unique series is tracked live with index and memory overhead while active, and a unique-per-request label makes effectively infinite series. The fix is to not make it a label at all — put it in logs/traces." },
+  ]}
+/>
+
+<Quiz
+  id="01-metrics-monitoring-quiz-2"
+  lessonSlug="01-metrics-monitoring"
+  lang="en"
+  question="You're monitoring a fleet of stable, service-discoverable hosts and most want to detect a host going dark. Pull or push collection, and why?"
+  choices={[
+    { label: "Pull: the server scrapes each target on a schedule, so a failed scrape is itself a signal (up = 0) — host-down is detected directly with no cooperation from the dead host. Stable, discoverable targets are exactly pull's sweet spot.", correct: true },
+    { label: "Push: clients send samples to a collector, which is simpler and detects failures faster.", misconception: "Push makes the case you most care about — a host going dark — the HARDEST: silence is ambiguous (idle? dead? network broke?). You'd need heartbeats and dead-man's-switch alerts to recover what pull gives free. Push suits ephemeral/serverless jobs, not a stable discoverable fleet." },
+    { label: "Push, because pull can't reach hosts behind a load balancer.", misconception: "These are discoverable fleet hosts the server can reach; pull's service discovery keeps the target list current. The deciding factor here is failure detection, and pull observes a failed scrape directly as up=0. Push is the answer for NAT'd/ephemeral clients, not this case." },
+    { label: "It doesn't matter; both detect host-down identically.", misconception: "They don't. Pull records up=0 on a failed scrape — a direct down signal. Push sees only an absence of samples, which it can't distinguish from a healthy idle host. For host-down detection, pull is strictly better." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-metrics-monitoring-metaphor-1"
+  lessonSlug="01-metrics-monitoring"
+  lang="en"
+  setup="The number of time series for a metric is the _______ of the distinct values of each of its labels — which is why adding one unbounded label (like user_id) doesn't add a little, it multiplies the series count toward infinity and exhausts the database's memory."
+  accepted={["product", "multiplication", "cartesian product", "multiplicative product"]}
+  canonical="product"
+  explanation="Each unique label-set combination is a separate series, so total series = the product of every label's cardinality. Bounded labels (status: 8, region: 5) multiply to a manageable number; one unbounded label (user_id: 1,000,000) multiplies the whole thing into the billions — the cardinality explosion that kills the TSDB."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A metrics platform's binding constraint is active-series cardinality (the product of label cardinalities), not sample rate. Keep labels bounded, prefer pull, downsample into tiered retention, isolate the alert path.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-metrics-monitoring-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is cardinality, not sample rate, the thing that kills a metrics database?", a: "A time series is identified by its full label set, so the number of series is the PRODUCT of every label's distinct-value count. Each series carries fixed overhead — an inverted-index entry, an in-memory open chunk, file handles — so the active-series count sets the memory footprint. Adding one unbounded label (user_id, request_id, raw URL) multiplies series toward billions and exhausts RAM, while the sample RATE barely moves. The defense: never put unbounded values in labels; normalize to bounded forms (route templates, tiers) and push high-cardinality detail into logs/traces." },
+    { q: "Compare pull and push collection and say when each wins.", a: "Pull (Prometheus): server scrapes targets' /metrics on a schedule, controls sampling rate, gets failure detection for free (a failed scrape → up=0), and uses service discovery to track targets — best for stable, discoverable infrastructure. Push (StatsD/OTel): clients send to a collector — best for ephemeral/serverless jobs and clients behind NAT the server can't reach. Push's weakness is ambiguous silence (idle vs dead vs network broke), so it needs heartbeats. Large platforms often run both: pull for the fleet, a push gateway for batch jobs." },
+    { q: "How do downsampling and tiered retention keep the system affordable and fast?", a: "A background compactor merges recent high-resolution blocks and computes coarser rollups (5-min, then 1-hour), each kept longer: raw 15s for ~15 days, 5-min for ~90 days, 1-hour for ~2 years. For each window it stores min/max/sum/count (not just the average) so coarse data can still answer rate/percentile queries. Old blocks live in cheap object storage read on demand, while a small hot in-memory tier serves recent queries instantly — a fast/cheap split where 'last 30 min' is instant and 'last year' is slower but possible." },
+  ]}
+/>
+
+<Recap lang="en">
+A metrics and alerting platform is a **specialized time-series database**, not a logging system with graphs — and its entire design bends around one number, the count of **active series**, which equals the **product** of every label's cardinality. Estimation makes that concrete: ~5M series at ~333K samples/sec is comfortable for write throughput but sets a multi-GB memory budget that one unbounded label (the hook's `user_id`) blows into the billions. The architecture is a **collection** path (**pull** for stable discoverable fleets, which detects host-down for free; **push** for ephemeral/serverless behind NAT), a TSDB core holding the hot series in RAM with Gorilla-style compression, and two read paths — dashboards and a **rule evaluator** — that share it. Old data is **downsampled** by a compactor into **tiered retention** (raw 15s → 5-min → 1-hour) in cheap object storage. The bottleneck is always **memory for active series**, defended by bounded labels and ingest-time dropping; the subtle trap is that alerting runs the same query engine as dashboards, so an expensive query makes alerts late — which is why mature systems pre-aggregate with recording rules, isolate the alert path, and run monitoring more reliably than the thing it watches.
+</Recap>

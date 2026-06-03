@@ -5,34 +5,197 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 6
 title: "Design a hotel reservation system"
-summary: "Design a hotel reservation system — to be authored."
-estMin: 16
-status: stub
+summary: "Design hotel booking: the double-booking problem, inventory as a counter per room-type per night, reservation holds with expiry, concurrency control, deliberate overbooking, availability search, and payment integration on the booking path."
+estMin: 36
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - double-booking
+  - inventory-counter
+  - reservation-holds
+  - concurrency-control
+  - overbooking
+  - availability-search
+prereqs:
+  - system-design/04-data-distribution/04-cap-and-pacelc
+  - system-design/04-data-distribution/02-sharding-and-partitioning
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://www.postgresql.org/docs/current/explicit-locking.html
+  - https://aws.amazon.com/builders-library/avoiding-overload-in-distributed-systems-by-putting-the-smaller-service-in-control/
+  - https://martinfowler.com/articles/patterns-of-distributed-systems/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+The hotel had one deluxe suite left for New Year's Eve. Two guests, in different cities, clicked "Book" within the same second. Both apps queried availability — both saw "1 available" — both showed a confirmation page, both charged a card, both emailed a confirmation. On December 31st, two families arrived for one room. The night manager comped a competitor's hotel, refunded both guests' anger with a free stay, and the brand took a reputational hit that no SLA dashboard ever showed. This is the **double-booking problem**, and it is the same lost-update race as the wallet — two reads of "1 available", both decrementing — but with a twist that makes hotels their own case: inventory is *per room-type per night*, a booking spans a *range* of nights, and the business will sometimes *deliberately* sell the room twice. Getting "available?" and "reserve" to be one atomic decision, across a date range, is the whole problem.
 
-<Crux>STUB.</Crux>
+</Hook>
+
+<Crux>Hotel booking is the double-booking race over per-night inventory: make check-and-reserve atomic across the range. Overbooking is policy.</Crux>
 
 <Explanation>
 
-## Design a hotel reservation system
+## Requirements
 
-Body to be authored.
+A reservation system lets guests search for available rooms over a date range and book them, without ever promising the same room to two guests who both show up.
+
+**Functional.** Search availability for a hotel, room type, and date range. Reserve a room for a date range. **Hold** inventory while the guest enters payment, releasing it if they abandon. Confirm on payment, cancel and release on request. Show a guest their bookings. Let hotels manage inventory and prices.
+
+**Non-functional.** **No double-booking** of physical inventory (the core invariant), yet **high availability** for search and booking (a booking site that's down loses revenue every second). **Read-heavy**: searches vastly outnumber bookings, so the read path must be fast and cacheable while the write path must be strictly correct. Support **deliberate overbooking** as a business lever (sell slightly more than capacity to offset no-shows). Integrate **payment** on the booking path with the idempotency discipline of earlier lessons.
+
+The defining shape: this is a **read-heavy** system with a **small, correctness-critical write**. Search can be eventually consistent and served from caches/replicas; the reserve operation must be strongly consistent and atomic — and uniquely, it operates on inventory that is split by night and by room type.
+
+## Estimation
+
+```
+hotels            = ~1,000,000 listings worldwide
+searches          = ~10,000 searches/sec (read-heavy, the dominant load)
+bookings          = ~100 bookings/sec average, ~1,000/sec at peak (tiny vs search)
+read:write ratio  = ~100:1 (searches vs bookings)
+inventory rows    = room_types × nights → counter per (room_type, date)
+hold TTL          = ~10–15 minutes while the guest pays
+```
+
+The numbers say two clear things. **Search dominates** (~100:1 reads to writes), so the architecture is read-optimized — availability is served from caches and read replicas, denormalized for fast date-range queries, and can tolerate slight staleness. **Bookings are few but must be exactly correct** — at ~100–1,000/sec the write path isn't a throughput problem; it's a *correctness* problem on a hot resource (a popular hotel on a popular date). Inventory is naturally modeled as a **counter (or row) per room-type per night**, because a stay from the 3rd to the 6th consumes the 3rd, 4th, and 5th independently — and that per-night granularity is what makes the booking write interesting.
+
+## High-level design
+
+<FlowDiagram
+  label="Search hits a read-optimized availability service backed by caches and replicas; booking goes through a strongly consistent reservation service that atomically checks and decrements per-night inventory, places a short-lived hold, then integrates payment and confirms, with an expiry job releasing abandoned holds back to inventory."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "search", label: "search", sub: "read-heavy" },
+    { id: "avail", label: "availability svc", sub: "cache + replicas" },
+    { id: "reserve", label: "reservation svc", sub: "strongly consistent" },
+    { id: "inv", label: "inventory", sub: "counter per night" },
+    { id: "hold", label: "hold", sub: "TTL ~15 min" },
+    { id: "pay", label: "payment", sub: "idempotent" },
+    { id: "confirm", label: "confirm", sub: "booking record" },
+    { id: "expiry", label: "expiry job", sub: "release holds" },
+  ]}
+  edges={[
+    { from: "search", to: "avail", label: "query" },
+    { from: "avail", to: "reserve", label: "select room" },
+    { from: "reserve", to: "inv", label: "atomic check+dec" },
+    { from: "reserve", to: "hold", label: "place" },
+    { from: "hold", to: "pay", label: "charge" },
+    { from: "pay", to: "confirm", label: "on success" },
+    { from: "expiry", to: "inv", label: "return abandoned" },
+  ]}
+  caption="Two paths with different consistency needs: a read-optimized availability service (caches/replicas, slightly stale is fine) and a strongly consistent reservation service whose atomic check-and-decrement over the date range is the only thing standing between you and a double-booking. A hold reserves inventory during checkout; an expiry job returns abandoned holds."
+/>
+
+The split is the key insight: a **read-optimized availability path** (caches, read replicas, denormalized inventory) absorbs the ~10K searches/sec and may be slightly stale, and a **strongly consistent reservation path** that does the atomic check-and-decrement. A **hold** reserves the room while the guest pays; an **expiry job** returns abandoned holds. **Payment** sits on the confirm step with idempotency keys. The double-booking is prevented entirely in the reservation service.
+
+## Deep dive
+
+### The double-booking problem across a date range
+
+The hook is the lost-update race again, but with per-night inventory and a date range. The naive flow — `read availability; if available, write reservation` — has the same fatal gap: two requests read "1 available" before either writes. The fix is the same principle (make check-and-reserve atomic) but applied per night across the requested range.
+
+The clean model: an **inventory counter per (room_type, date)**, and a reservation for nights N1..N2 must atomically decrement *every* night in the range, succeeding only if *all* of them have availability:
+
+```
+inventory(deluxe, 2025-12-31) = 1
+
+Naive (BROKEN):
+  A: read 1 → ok          B: read 1 → ok
+  A: write reservation    B: write reservation   → both booked, count went 1 → -1
+
+Atomic (per night, all-or-nothing in one transaction):
+  UPDATE inventory SET booked = booked + 1
+    WHERE (room_type, date) IN (Dec31)  AND booked < total       -- conditional
+  → A succeeds (booked 0→1); B's same UPDATE matches 0 rows (booked = total) → rejected
+```
+
+Two implementation routes, both valid: a **single ACID transaction** that decrements all the per-night rows with a conditional check (or `SELECT … FOR UPDATE` to lock them), committing only if every night succeeds; or an **atomic conditional update** per night inside one transaction. The all-or-nothing across the range matters: a 3-night stay must not book nights 1 and 2 then fail on night 3, leaving a useless partial reservation. Because all nights for one room type sit together, you keep this on a single shard (shard by hotel) so it stays a local transaction — the same single-shard-ACID trick as the wallet.
+
+<Inset kind="why" lang="en">
+Why model inventory as a per-night counter rather than tracking individual physical rooms (room 412 vs room 415)? Because guests almost never book a *specific* room — they book a *room type* for a *range of nights*, and the hotel assigns the physical room at check-in. Tracking specific rooms forces you to solve an interval-scheduling/assignment problem on every search ("is there *some* room free for this whole range?"), which is far more expensive and contention-prone than incrementing a counter. With a counter per (room_type, night), availability is a trivial comparison (`booked < total`) and a booking is a conditional increment on each night in the range — fast, cache-friendly for reads, and atomic for writes. You only resolve down to a physical room number at check-in, when the assignment is a local, offline decision with no concurrency pressure. Modeling the *fungible* unit (a room-type-night) instead of the *physical* unit is what makes both the read and write paths tractable.
+</Inset>
+
+### Reservation holds and expiry
+
+A booking isn't instantaneous — the guest needs minutes to enter payment details. If you only decrement inventory *after* payment, two guests can both pass the availability check and race to pay; if you decrement *before* and the guest abandons, the room is locked forever. The answer is a **hold**: at the start of checkout, atomically reserve the inventory (decrement the counter) and create a hold with a **short TTL** (10–15 minutes). The hold makes the room genuinely unavailable to everyone else *during checkout*, so the double-booking window is closed even before payment completes.
+
+If the guest pays in time, the hold converts to a confirmed booking. If they abandon, an **expiry mechanism** returns the inventory: either a background **expiry job** sweeps expired holds and re-increments the counter, or holds carry an expiry timestamp and availability queries ignore expired ones (lazy expiry). This is the same TTL-and-release pattern as a distributed lock or a cache entry — reserve optimistically, bound the reservation in time, and reclaim it automatically so an abandoned checkout can't permanently strand inventory.
+
+### Overbooking as deliberate policy
+
+Here is the twist that separates hotels from the strict no-double-spend of the wallet: hotels **overbook on purpose**. Historically, a predictable fraction of guests no-show or cancel late, so selling *exactly* to capacity leaves rooms empty and revenue lost. So the business deliberately sells, say, 102 rooms against 100 physical rooms, betting that ~2 won't arrive. This is not a bug to engineer away — it's a **policy** the system must support: the inventory cap becomes `total × overbook_factor` (or `total + overbook_buffer`) rather than the physical count, tuned per hotel/date from historical no-show rates.
+
+The engineering consequence is twofold. First, the *invariant changes*: "never exceed physical capacity" becomes "never exceed the *configured* overbooking limit" — the atomic check-and-decrement compares against the policy limit, not the raw room count. Second, you need a **walk/compensation path** for the rare case where overbooking bites (more guests arrive than rooms): rebook them at a comparable hotel, comp the difference. The senior point is recognizing that *correctness here is defined by business policy, not physics* — the system's job is to enforce whatever limit the policy sets, exactly and atomically, while overbooking deliberately sets that limit above the physical count.
+
+<Inset kind="mistake" lang="en">
+A revealing mistake is treating availability *search* and the booking *guarantee* as the same consistency level — usually by trying to make search strongly consistent so "the number you saw is the number you get." That's both unnecessary and harmful: search is ~100× the traffic, so forcing it through the strongly consistent write path destroys scalability, and it *still* can't guarantee the room is yours, because someone can book in the gap between your search and your click. The correct model accepts that search is *advisory and slightly stale* (served from caches/replicas) and puts the real guarantee at the atomic check-and-reserve. The UI reflects this: "rooms are limited" and a final atomic confirm, not a promise that a search result is a reservation. Conflating the read estimate with the write guarantee is how teams both over-engineer the read path and still ship double-bookings.
+</Inset>
+
+## Bottlenecks & tradeoffs
+
+The architecture is a deliberate **consistency split**: the read-heavy availability path trades strict freshness for scale (caches/replicas, eventually consistent, ~100× the traffic), while the reservation path trades nothing on correctness (strongly consistent, atomic check-and-decrement). The **hot-inventory contention** is the real bottleneck — a popular hotel on a peak date is a single contended counter, exactly like the wallet's hot account; you keep it single-shard for local-transaction atomicity and accept that one hot row serializes, mitigating with short holds (so contention windows are brief) and, where the business allows, the slack that overbooking provides. **Holds trade conversion for protection**: too short and guests lose rooms mid-checkout, too long and abandoned holds starve inventory — tune the TTL. **Overbooking trades guest experience for revenue**, a tuned bet on no-show rates with a walk-path cost when it's wrong. And **sharding by hotel** keeps each booking a single-shard transaction at the cost of cross-hotel queries (search) needing a separate, denormalized read model — which is exactly why search and reserve are different systems.
+
+<Quiz
+  id="06-hotel-reservation-quiz-1"
+  lessonSlug="06-hotel-reservation"
+  lang="en"
+  question="Two guests book the last deluxe suite for the same night within a second; both saw '1 available' and both got confirmations. What is this, and what's the correct fix for a multi-night booking?"
+  choices={[
+    { label: "The double-booking problem — a lost-update race where both read availability before either writes. Fix by making check-and-reserve one atomic operation: a single transaction that conditionally decrements the inventory counter for every night in the range (all-or-nothing), so the second booking matches zero rows and is rejected.", correct: true },
+    { label: "A caching bug; disable the availability cache so everyone sees the true count.", misconception: "The cache isn't the cause — even with a perfectly fresh read, two requests can read '1' before either writes (the read-write gap). The fix is an atomic conditional decrement at reserve time, not removing the cache. Search is allowed to be slightly stale; the guarantee lives at the atomic write." },
+    { label: "Decrement inventory for each night with independent updates, no transaction needed.", misconception: "Per-night updates must be ALL-OR-NOTHING in one transaction; independent updates can book nights 1–2 then fail on night 3, leaving a broken partial reservation. And without atomicity per night you still have the lost-update race. Wrap the range in one atomic, conditional transaction." },
+    { label: "Make availability search strongly consistent so the number you see is guaranteed.", misconception: "Search is ~100× the traffic; forcing it strongly consistent destroys scalability and STILL can't guarantee the room (someone books between your search and click). The guarantee belongs at the atomic check-and-reserve; search stays advisory and slightly stale." },
+  ]}
+/>
+
+<Quiz
+  id="06-hotel-reservation-quiz-2"
+  lessonSlug="06-hotel-reservation"
+  lang="en"
+  question="Your reservation service enforces 'never exceed physical room count,' but the business wants to oversell to offset no-shows. How should the system treat overbooking?"
+  choices={[
+    { label: "As a deliberate policy, not a bug: the atomic check-and-decrement compares against a configured limit (total × overbook_factor), tuned per hotel/date from no-show rates — and you add a walk/compensation path for the rare case more guests arrive than rooms. Correctness is defined by the policy limit, enforced exactly.", correct: true },
+    { label: "Forbid it — overbooking is always a correctness bug to engineer away.", misconception: "Overbooking is an intentional revenue lever: a predictable fraction no-show, so selling exactly to capacity leaves rooms empty. The system must SUPPORT it by enforcing a configured limit above the physical count, plus a walk path — not prevent it." },
+    { label: "Allow unlimited bookings and sort it out at check-in.", misconception: "Overbooking is a TUNED, bounded bet (e.g. total + a small buffer from historical no-shows), not unlimited selling. The atomic check still enforces a hard limit — just one set above physical capacity by policy — with a compensation path for the rare overflow." },
+    { label: "Drop the atomic check entirely, since overbooking means the count doesn't matter.", misconception: "The atomic check matters MORE, not less — it now enforces the policy limit (total × factor) exactly and atomically. Without it you'd oversell unboundedly. Overbooking raises the limit; it doesn't remove the need for correct, atomic enforcement of that limit." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-hotel-reservation-metaphor-1"
+  lessonSlug="06-hotel-reservation"
+  lang="en"
+  setup="To close the double-booking window while a guest enters payment, the system places a short-lived _______ on the inventory — making the room unavailable to everyone else during checkout — and an expiry mechanism returns it automatically if the guest abandons, so an unfinished booking can't strand the room forever."
+  accepted={["hold", "reservation hold", "temporary hold", "lock", "hold (lock)"]}
+  canonical="hold"
+  explanation="A hold atomically reserves the inventory at the start of checkout with a short TTL (10–15 min), genuinely blocking other guests during payment so the double-booking window is closed even before payment completes. If the guest pays, the hold becomes a confirmed booking; if they abandon, an expiry job (or lazy expiry) re-increments the counter — the same reserve-with-TTL-and-reclaim pattern as a distributed lock or cache entry."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Make check-and-reserve atomic and all-or-nothing across the date range (single-shard by hotel), use short-lived holds for checkout, serve read-heavy search from caches, and treat overbooking as a policy limit.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="06-hotel-reservation-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the double-booking problem and how do you fix it for a multi-night stay?", a: "It's the lost-update race over inventory: two requests both read 'available' before either writes, so the same room is sold twice (the hook). The fix is to make check-and-reserve one atomic operation, applied per night across the range: model inventory as a counter per (room_type, date), and in a single transaction conditionally decrement EVERY night in the requested range all-or-nothing (e.g. UPDATE … booked = booked + 1 WHERE booked < total, for each night), committing only if all nights succeed. The second booking then matches zero rows and is rejected. Keep it single-shard (shard by hotel) so all the nights are in one local ACID transaction, and never let a 3-night stay book 2 nights then fail on the 3rd." },
+    { q: "Why use reservation holds with expiry, and what pattern is it?", a: "Booking isn't instant — the guest needs minutes to pay. Decrementing only after payment lets two guests race to pay; decrementing before with no release locks an abandoned room forever. A hold solves both: at checkout start, atomically reserve the inventory and create a hold with a short TTL (10–15 min), making the room unavailable to others during payment, so the double-booking window closes before payment completes. On payment it converts to a confirmed booking; on abandonment an expiry job re-increments the counter (or availability ignores expired holds — lazy expiry). It's the reserve-optimistically, bound-in-time, reclaim-automatically pattern of a distributed lock or cache TTL." },
+    { q: "How should the system treat overbooking, and what changes because of it?", a: "As deliberate business policy, not a bug: a predictable fraction of guests no-show, so hotels sell slightly above capacity (e.g. total × overbook_factor) tuned per hotel/date from historical no-show rates. Two consequences: the invariant changes from 'never exceed physical capacity' to 'never exceed the CONFIGURED limit', so the atomic check-and-decrement compares against the policy limit, not the room count; and you need a walk/compensation path (rebook at a comparable hotel, comp the difference) for the rare case more guests arrive than rooms. The senior insight: correctness here is defined by business policy, and the system enforces whatever limit the policy sets — exactly and atomically." },
+  ]}
+/>
+
+<Recap lang="en">
+Hotel reservation is the **double-booking race** — the wallet's lost update again — but over inventory that is **per room-type per night**, where a stay spans a *range* and the business sometimes oversells on purpose. The architecture is a deliberate **consistency split**: a read-optimized **availability** path (caches/replicas, ~100× the traffic, slightly stale is fine and *advisory only*) and a strongly consistent **reservation** path whose **atomic, all-or-nothing check-and-decrement across every night** in the range is the only thing preventing a double-booking — kept single-shard by hotel so it's one local ACID transaction. Inventory is modeled as a **counter per (room_type, night)** rather than physical rooms, because guests book a fungible room-type-range and the physical room is assigned at check-in, which makes both reads (a trivial `booked < total`) and writes (a conditional increment) tractable. A short-lived **hold** with a TTL closes the double-booking window during checkout, and an **expiry** job/lazy check reclaims abandoned holds — the reserve-with-TTL-and-release pattern. The twist is **overbooking**: a tuned policy that sets the limit *above* physical capacity to offset no-shows, so the invariant becomes "never exceed the configured limit" (enforced just as atomically) with a walk-path for the rare overflow. The standing tradeoffs — consistency split for scale, hot-inventory contention on peak dates, hold TTL balancing conversion vs protection, and overbooking trading guest experience for revenue — all resolve around one rule: search may estimate, but the atomic check-and-reserve is the only guarantee.
+</Recap>
