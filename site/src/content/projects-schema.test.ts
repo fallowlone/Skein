@@ -11,11 +11,15 @@ const ProjectSchema = z.object({
   pitch: BiText,
   deliverable: BiText,
   tracks: z.array(Track).min(1),
+  category: z.enum(["frontend", "backend", "fullstack", "infra"]),
   difficulty: z.enum(["starter", "intermediate", "advanced"]),
   estDays: z.number().int().positive(),
   skills: z.array(z.string()).min(1),
+  stack: z.array(z.string()).optional(),
+  resources: z.array(z.object({ label: z.string(), url: z.string().url() })).optional(),
   milestones: z.array(BiText).min(2),
   seniorStretch: z.array(BiText).min(1),
+  brief: BiText.optional(),
 });
 
 const bi = { en: "x", ru: "х" };
@@ -23,6 +27,9 @@ const valid = {
   slug: "query-plan-visualizer",
   title: bi, pitch: bi, deliverable: bi,
   tracks: ["databases"],
+  category: "backend",
+  stack: ["node"],
+  brief: bi,
   difficulty: "intermediate",
   estDays: 4,
   skills: ["explain", "indexes"],
@@ -51,5 +58,19 @@ describe("projects schema", () => {
   });
   test("rejects a BiText missing ru", () => {
     expect(() => ProjectSchema.parse({ ...valid, title: { en: "only en" } })).toThrow();
+  });
+  test("accepts the new category/stack/brief fields", () => {
+    expect(() => ProjectSchema.parse({ ...valid, category: "frontend", stack: ["preact"], brief: bi })).not.toThrow();
+  });
+  test("requires category", () => {
+    const { category, ...noCat } = valid as any;
+    expect(() => ProjectSchema.parse(noCat)).toThrow();
+  });
+  test("rejects an unknown category", () => {
+    expect(() => ProjectSchema.parse({ ...valid, category: "mobile" })).toThrow();
+  });
+  test("allows omitting optional stack/brief", () => {
+    const { stack, brief, ...lean } = valid as any;
+    expect(() => ProjectSchema.parse(lean)).not.toThrow();
   });
 });
