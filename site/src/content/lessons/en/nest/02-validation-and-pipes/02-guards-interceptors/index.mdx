@@ -1,13 +1,261 @@
 ---
-slug: "02-guards-interceptors"
+concepts:
+- request-lifecycle
+- guards-canactivate
+- interceptors-rxjs
+- exception-filters
+- reflector-metadata
+- binding-scope
+deepensInto: []
+estMin: 17
 lang: en
-track: "nest"
-unit: "02-validation-and-pipes"
+lessonType: topic
+level: senior
 order: 2
-title: "Guards, interceptors and exception filters"
-summary: "Guards, interceptors and exception filters — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-guards-interceptors
 sources:
-  - https://docs.nestjs.com/
+- https://docs.nestjs.com/guards
+- https://docs.nestjs.com/interceptors
+- https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/faq/request-lifecycle
+spiral: []
+status: ready
+summary: Nest's request lifecycle is fixed — middleware, guard, interceptor (pre),
+  pipe, handler, interceptor (post), filter. Put auth in a guard, validation in a
+  pipe, logging/transform in an interceptor, error shape in a filter.
+title: 'Guards, interceptors and exception filters'
+track: nest
+unit: 02-validation-and-pipes
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A reviewer asks one question on your PR: "why is the role check inside the controller?" The handler opens with `if (req.user.role !== 'admin') throw new ForbiddenException()`, then validates the body by hand, then logs the duration with a `Date.now()` at the top and bottom, then formats every error into the same JSON shape. It works. It is also four cross-cutting concerns smeared into business logic, copy-pasted across nineteen handlers — and the day someone forgets the role line on handler twenty, it ships. Nest already has a slot for each of these. The reviewer is not asking you to move code; they are asking whether you know the request lifecycle.
+</Hook>
+
+<Crux>Nest's lifecycle is fixed: middleware → guard → interceptor → pipe → handler → interceptor → filter. Each concern has one correct slot.</Crux>
+
+<Explanation>
+
+## The lifecycle is the whole lesson
+
+Every HTTP request in Nest walks the same ordered gauntlet before and after your handler runs. Knowing the order is not trivia — it tells you where each concern *can* sit and, just as importantly, what it *can see* when it runs.
+
+The sequence: **middleware → guards → interceptors (pre) → pipes → handler → interceptors (post) → exception filters** (on a throw). A guard runs after middleware but before any interceptor or pipe. Pipes run after guards have already decided the request may proceed — so by the time a pipe transforms the body, authorization is settled. Interceptors are the only stage that runs *twice*: once on the way in (before the handler) and once on the way out (wrapping the response). And exception filters sit off to the side, catching anything thrown anywhere downstream.
+
+Two subtleties separate seniors from the docs-skimmers. First, **interceptors resolve outbound first-in-last-out**: inbound they run global → controller → route, but the response unwinds route → controller → global, like nested function returns. Second, **the filter is a catch-all sink** — a pipe that throws, a guard that throws, a handler that throws, even an interceptor's stream that errors all land in the same filter. That is why error *formatting* belongs there and nowhere else.
+
+<SequenceDiagram
+  label="The Nest HTTP request lifecycle in order: an incoming request passes through middleware, then a guard decides whether it may proceed, then the interceptor's pre-handler logic runs, then a pipe validates and transforms the input, then the route handler executes, then the interceptor's post-handler logic shapes the response on the return path; if anything throws, control jumps to the exception filter which formats the error response."
+  hue="var(--d-systems)"
+  actors={["Request", "Pipeline", "Handler"]}
+  messages={[
+    { from: "Request", to: "Pipeline", label: "1. middleware (req/res, next)" },
+    { from: "Pipeline", to: "Pipeline", label: "2. guard: canActivate -> bool" },
+    { from: "Pipeline", to: "Pipeline", label: "3. interceptor PRE (before)" },
+    { from: "Pipeline", to: "Pipeline", label: "4. pipe: validate + transform" },
+    { from: "Pipeline", to: "Handler", label: "5. handler runs" },
+    { from: "Handler", to: "Pipeline", label: "6. interceptor POST (map/tap)" },
+    { from: "Pipeline", to: "Request", label: "7. response (or filter on throw)" },
+  ]}
+  caption="Guards decide go/no-go before pipes ever run; interceptors wrap the handler on both sides; any throw at any stage jumps to the exception filter. The interceptor return path unwinds route -> controller -> global."
+/>
+
+## Guards: a yes/no decision, read from metadata
+
+A guard implements `CanActivate`. It returns a boolean (or a Promise/Observable of one) — `true` lets the request through, `false` (or a thrown exception) stops it. This is the home of **authentication and authorization**. The guard receives an `ExecutionContext`, a superset of `ArgumentsHost` that also knows *which handler and controller* are about to run — which is exactly what you need to read route-level metadata.
+
+The canonical pattern is a `@Roles()` decorator that stamps metadata onto a handler, plus a `RolesGuard` that reads it back via the `Reflector`:
+
+```ts
+import { Injectable, CanActivate, ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from './roles.decorator';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const required = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (!required) return true; // no @Roles() on this route -> open
+    const { user } = context.switchToHttp().getRequest();
+    return required.some((role) => user?.roles?.includes(role));
+  }
+}
+```
+
+`getAllAndOverride` reads the metadata from the handler first and falls back to the controller, so a route-level `@Roles('admin')` overrides a controller default. Throw `ForbiddenException` instead of returning `false` if you want a 403 with a message rather than a bare denial.
+
+## Interceptors: wrap the handler, on both sides
+
+An interceptor's `intercept(context, next)` runs code **before** the handler, then calls `next.handle()` — which returns an **RxJS `Observable`** of the eventual response — and can run code **after** by piping operators onto that stream. This dual position makes interceptors the right tool for anything that brackets the call: logging and timing, caching, response shaping, and timeouts.
+
+```ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map, tap } from 'rxjs/operators';
+
+@Injectable()
+export class TransformInterceptor implements NestInterceptor {
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const start = Date.now();
+    return next.handle().pipe(
+      tap(() => console.log(`took ${Date.now() - start}ms`)), // side-effect, no change to data
+      map((data) => ({ data })),                              // reshape every response
+    );
+  }
+}
+```
+
+`tap` is for side-effects that do not touch the payload (logging, metrics); `map` transforms the response body — here wrapping every handler's return in `{ data: ... }` so the whole API speaks one envelope. Because `next.handle()` is lazy, the pre-handler code runs synchronously when `intercept` is called, but nothing after `next.handle()` runs until the handler resolves. An interceptor can also short-circuit (return its own Observable without calling `next.handle()`, e.g. serving a cache hit) or catch downstream errors with the `catchError` operator.
+
+## Exception filters: shape the error, once
+
+When anything in the chain throws, Nest's built-in exception layer catches it and produces a response — `HttpException` and its subclasses map to their status code, anything else becomes a 500. A custom `@Catch()` filter lets you own that response shape globally instead of formatting errors by hand in every handler.
+
+```ts
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException } from '@nestjs/common';
+
+@Catch(HttpException)
+export class HttpErrorFilter implements ExceptionFilter {
+  catch(exception: HttpException, host: ArgumentsHost) {
+    const res = host.switchToHttp().getResponse();
+    const status = exception.getStatus();
+    res.status(status).json({
+      statusCode: status,
+      message: exception.getResponse(),
+      timestamp: new Date().toISOString(),
+    });
+  }
+}
+```
+
+`@Catch(HttpException)` narrows the filter to a type; `@Catch()` with no argument catches everything. Because the filter is the single sink for every throw in the pipeline, error formatting lives here and only here — a guard, pipe, or handler just throws the right exception and trusts the filter to render it.
+
+## Where does each concern go?
+
+This is the senior judgment the whole lesson builds to. The mistake in the hook was not bad code — it was four concerns living in the wrong slot. Match the concern to the lifecycle stage:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Stage</th>
+        <th class="border border-border px-3 py-2 text-left">Job</th>
+        <th class="border border-border px-3 py-2 text-left">When it runs</th>
+        <th class="border border-border px-3 py-2 text-left">Can block the request?</th>
+        <th class="border border-border px-3 py-2 text-left">Sees the response?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Guard</strong></td>
+        <td class="border border-border px-3 py-2">Authn / authz (yes/no)</td>
+        <td class="border border-border px-3 py-2">After middleware, before interceptor + pipe</td>
+        <td class="border border-border px-3 py-2">Yes — false / throw stops it</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Pipe</strong></td>
+        <td class="border border-border px-3 py-2">Validate + transform input</td>
+        <td class="border border-border px-3 py-2">After guard, just before handler</td>
+        <td class="border border-border px-3 py-2">Yes — throws on invalid input</td>
+        <td class="border border-border px-3 py-2">No</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Interceptor</strong></td>
+        <td class="border border-border px-3 py-2">Logging, caching, transform, timeout</td>
+        <td class="border border-border px-3 py-2">Before AND after the handler</td>
+        <td class="border border-border px-3 py-2">Yes — can skip next.handle()</td>
+        <td class="border border-border px-3 py-2">Yes — maps the stream</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Filter</strong></td>
+        <td class="border border-border px-3 py-2">Shape the error response</td>
+        <td class="border border-border px-3 py-2">Only when something throws</td>
+        <td class="border border-border px-3 py-2">N/A — handles a throw</td>
+        <td class="border border-border px-3 py-2">Sees the error, not the success body</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Each of the four can be bound at three scopes: **method** (`@UseGuards()` on a handler), **controller** (the same decorator on the class), or **global** (`app.useGlobalGuards()` in bootstrap, or a provider token for DI-friendly globals). The rule of thumb: bind broad and override narrow — a global filter for the default error shape, a global `ValidationPipe`, an auth guard at controller level, and a `@Roles()` guard plus per-route metadata where the granular decision lives.
+
+<Inset kind="why" lang="en">
+Why a guard and not middleware for auth? Middleware runs first and is framework-agnostic Express/Fastify code — it has no access to Nest's `ExecutionContext`, so it cannot see which handler or controller is the target and cannot read route metadata like `@Roles()`. A guard runs one step later, with the full execution context, which is exactly why authorization that depends on the route belongs in a guard. Middleware is for concerns that do not need to know the destination: raw body parsing, request IDs, CORS.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-02-guards-interceptors-tradeoff-1"
+  lessonSlug="02-guards-interceptors"
+  lang="en"
+  prompt="You need to enforce that only users with the 'admin' role can call an endpoint, and return a clean 403 otherwise. Which lifecycle component owns this?"
+  options={[
+    { name: "A guard (CanActivate) that reads @Roles() metadata via Reflector and returns true / throws ForbiddenException", summary: "Authz is a guard.", correct: true, justification: "Authorization is a yes/no decision about whether the request may proceed, which is the exact contract of CanActivate. The guard runs after middleware and before pipes/interceptors, so the role check settles before any input is even validated, and it reads route metadata through the ExecutionContext + Reflector — the canonical @Roles() + RolesGuard pattern. Throwing ForbiddenException gives the clean 403 (rendered by your filter). This is the textbook senior answer." },
+    { name: "An interceptor that checks the role before calling next.handle()", summary: "Wrong tool.", justification: "Interceptors can technically inspect the request and short-circuit, but their purpose is to wrap the handler for logging, caching, and response shaping — not to make access decisions. Using one for authz hides a security gate in a tool nobody reads for security, and it runs after guards anyway. Authz has a dedicated stage; use it." },
+    { name: "A pipe that validates the user's role as if it were input", summary: "Pipes validate data.", justification: "Pipes validate and transform the incoming payload, not the caller's identity. The role isn't request input — it's an authorization fact about req.user. Forcing authz into a pipe abuses its contract and runs it after the guard stage that exists precisely for this." },
+    { name: "An if-check at the top of the controller handler, throwing ForbiddenException", summary: "The hook's bug.", justification: "This is exactly the smell the lesson opens with: a cross-cutting concern smeared into business logic, copy-pasted per handler, one forgotten line away from a security hole. It also can't be reused or bound globally. Lift it into a guard." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-guards-interceptors-quiz-1"
+  lessonSlug="02-guards-interceptors"
+  lang="en"
+  question="In the Nest request lifecycle, when does a guard run relative to pipes and interceptors?"
+  choices={[
+    { label: "After middleware, but before both interceptors and pipes — so authorization is settled before any input is validated", correct: true },
+    { label: "After pipes, so it can validate the parsed body before deciding access", misconception: "Pipes run after guards, not before. A guard decides go/no-go first; only then does a pipe transform input. The guard never sees a validated body — that is by design, because authz should not depend on payload validity." },
+    { label: "After the handler, on the response path", misconception: "That is the interceptor's post-handler position, not a guard's. Guards are an inbound-only gate: they run once, before the handler, and never touch the response." },
+    { label: "Inside the exception filter, only when something throws", misconception: "Filters run only on a throw and are a separate stage. A guard runs on every request as part of the normal inbound chain, before interceptors and pipes." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-guards-interceptors-quiz-2"
+  lessonSlug="02-guards-interceptors"
+  lang="en"
+  question="You want to wrap every response in { data: ... } and log how long each handler took. Which component, and how?"
+  choices={[
+    { label: "An interceptor: pipe next.handle() through tap (for the timing side-effect) and map (to reshape the payload)", correct: true },
+    { label: "An exception filter, because it sees every response", misconception: "Filters only run when something throws — they never see a successful response body. Response shaping on the happy path belongs to an interceptor's map operator." },
+    { label: "A pipe, mapping the return value of the handler", misconception: "Pipes operate on inbound input before the handler and cannot see or transform the handler's output. The outbound transform is an interceptor's job via map on the returned Observable." },
+    { label: "A guard, returning the wrapped object", misconception: "A guard returns a boolean to allow or deny — it cannot transform the response. Use an interceptor, which is the only stage that runs after the handler and can map the response stream." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>One slot per concern: authz → guard (CanActivate + Reflector), validation → pipe, logging/transform/timeout → interceptor (RxJS around next.handle()), error shape → filter (@Catch). Bind broad, override narrow.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-guards-interceptors-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the Nest request lifecycle order, and explain what is special about where interceptors and exception filters sit.", a: "The order is: middleware -> guards -> interceptors (pre-handler) -> pipes -> handler -> interceptors (post-handler) -> exception filters on a throw. A guard runs after middleware but before any interceptor or pipe, so authorization is decided before input is ever validated. Pipes run last before the handler, transforming and validating the input. Interceptors are special because they are the only stage that runs twice — once before the handler and once after, by piping operators onto the Observable that next.handle() returns; and their outbound path unwinds first-in-last-out (route -> controller -> global), the reverse of the inbound order. Exception filters are special because they are an off-to-the-side catch-all sink: anything thrown at any stage — a guard, a pipe, the handler, or even an interceptor's stream erroring — lands in the same filter, which is exactly why error formatting belongs there and nowhere else." },
+    { q: "Map each of authentication/authorization, input validation, request logging, and error formatting to its correct lifecycle component, and name the binding scopes.", a: "Authn/authz -> a guard implementing CanActivate: it returns a boolean (or throws), reads route metadata like @Roles() through the ExecutionContext and Reflector, and runs before pipes so the access decision is settled first. Input validation -> a pipe (e.g. ValidationPipe), which transforms and validates the payload just before the handler. Request logging (and caching, response transform, timeout) -> an interceptor, which brackets next.handle() with tap for side-effects and map for reshaping the response. Error formatting -> an exception filter with @Catch(), the single sink that renders every thrown exception into a consistent shape. All four bind at three scopes: method (decorator on the handler), controller (decorator on the class), or global (useGlobalX in bootstrap, or a provider token for a DI-aware global). The pattern is bind broad and override narrow." },
+  ]}
+/>
+
+<Recap lang="en">
+Guards, interceptors, pipes, and exception filters are Nest's cross-cutting-concern layer, and the request lifecycle pins each one to a fixed slot: middleware, then a guard, then the interceptor's pre-handler code, then a pipe, then the handler, then the interceptor's post-handler code, with an exception filter catching any throw along the way. A guard implements CanActivate, returns a boolean or throws, and reads route metadata via the ExecutionContext and Reflector — making it the home of authentication and authorization, settled before any input is validated. An interceptor wraps the handler on both sides: it pipes the Observable from next.handle() through RxJS operators like tap (side-effects such as logging or timing) and map (response shaping), and can short-circuit or catch downstream errors. A pipe validates and transforms input just before the handler. An exception filter, declared with @Catch(), is the single sink for every throw, so error formatting lives there alone. The senior judgment is the placement: authz is a guard, validation is a pipe, logging/transform/timeout is an interceptor, error shape is a filter — each bindable at method, controller, or global scope, where you bind broad and override narrow.
+</Recap>
