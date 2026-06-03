@@ -26,7 +26,8 @@ export type Track =
   | "performance" | "data-engineering" | "ai-llm" | "engineering-practice"
   | "sql-postgres" | "js-engine" | "typescript"
   | "system-design" | "system-design-cases"
-  | "aws" | "python" | "ci-cd";
+  | "aws" | "python" | "ci-cd"
+  | "node" | "nest";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -37,6 +38,7 @@ export const TRACKS: Track[] = [
   "sql-postgres", "js-engine", "typescript",
   "system-design", "system-design-cases",
   "aws", "python", "ci-cd",
+  "node", "nest",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";
