@@ -28,12 +28,14 @@ export const TRACK_BAND: Record<Track, Band> = {
   "distributed":        "middle",
   "observability":      "middle",
   "security":           "middle",
+  "system-design":      "middle",
   // advanced — the orbit
   "ai-llm":             "advanced",
   "data-engineering":   "advanced",
   "deployment":         "advanced",
   "performance":        "advanced",
   "engineering-practice": "advanced",
+  "system-design-cases":  "advanced",
 };
 
 export function bandOf(slug: Track): Band {
