@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { render } from "preact-render-to-string";
 import PracticeSection from "./PracticeSection";
+import { difficultyRank, orderTasks } from "./PracticeSection";
 import type { PracticeTaskData } from "~/content.config";
 
 const predict: PracticeTaskData = {
@@ -39,5 +40,17 @@ describe("PracticeSection", () => {
     } as unknown as PracticeTaskData;
     const html = render(<PracticeSection lang="en" lessonKey="a/b/c" tasks={[sandbox]} />);
     expect(html).toContain('data-practice-task="s1"');
+  });
+});
+
+describe("practice ordering", () => {
+  test("difficultyRank orders recall<apply<stretch", () => {
+    expect(difficultyRank("recall")).toBeLessThan(difficultyRank("apply"));
+    expect(difficultyRank("apply")).toBeLessThan(difficultyRank("stretch"));
+  });
+  test("orderTasks sorts by difficulty, stable within a tier", () => {
+    const t = (id: string, difficulty: string) => ({ id, difficulty }) as any;
+    const out = orderTasks([t("a","stretch"), t("b","recall"), t("c","apply"), t("d","recall")]);
+    expect(out.map((x) => x.id)).toEqual(["b","d","c","a"]);
   });
 });
