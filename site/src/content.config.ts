@@ -184,11 +184,15 @@ const ProjectSchema = z.object({
   pitch: BiText,
   deliverable: BiText,
   tracks: z.array(Track).min(1),
+  category: z.enum(["frontend", "backend", "fullstack", "infra"]),
   difficulty: z.enum(["starter", "intermediate", "advanced"]),
   estDays: z.number().int().positive(),
   skills: z.array(z.string()).min(1),
+  stack: z.array(z.string()).optional(),
+  resources: z.array(z.object({ label: z.string(), url: z.string().url() })).optional(),
   milestones: z.array(BiText).min(2),
   seniorStretch: z.array(BiText).min(1),
+  brief: BiText.optional(),
 });
 
 const projects = defineCollection({
