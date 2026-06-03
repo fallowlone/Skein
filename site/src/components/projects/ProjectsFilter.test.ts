@@ -15,4 +15,12 @@ describe("filterProjects", () => {
   test("combines category and difficulty", () => {
     expect(filterProjects(all, "all", "intermediate", "backend").map((x) => x.slug)).toEqual(["b"]);
   });
+  test("filters by track", () => {
+    const mixed = [p("a", "frontend"), { ...p("b", "backend"), tracks: ["backend"] }];
+    expect(filterProjects(mixed, "backend", "all", "all").map((x) => x.slug)).toEqual(["b"]);
+  });
+  test("combines track and category", () => {
+    const mixed = [p("a", "frontend"), { ...p("b", "backend"), tracks: ["backend"] }];
+    expect(filterProjects(mixed, "frontend", "all", "backend")).toHaveLength(0);
+  });
 });
