@@ -12,6 +12,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "system-design": "SD", "system-design-cases": "SDC",
   "aws": "AWS", "python": "PY",
   "ci-cd": "CICD",
+  "node": "NODE", "nest": "NEST",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
