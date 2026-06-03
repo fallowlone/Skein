@@ -1,13 +1,201 @@
 ---
-slug: "02-streams-and-backpressure"
+concepts:
+- streams
+- readable-writable-transform
+- backpressure
+- highwatermark-drain
+- pipeline-vs-pipe
+- streaming-vs-buffering
+deepensInto: []
+estMin: 17
 lang: en
-track: "node"
-unit: "02-async-and-streams"
+lessonType: topic
+level: senior
 order: 2
-title: "Streams, pipes and backpressure"
-summary: "Streams, pipes and backpressure — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-streams-and-backpressure
 sources:
-  - https://nodejs.org/docs/latest/api/
+- https://nodejs.org/api/stream.html
+- https://nodejs.org/en/learn/modules/backpressuring-in-streams
+spiral: []
+status: ready
+summary: 'Streams move data chunk-by-chunk so a 4GB file never lands in RAM. When a
+  fast producer outruns a slow consumer, backpressure — write() returning false until
+  drain — is the brake. Wire it with pipeline(), never a manual pipe.'
+title: 'Streams, pipes and backpressure'
+track: node
+unit: 02-async-and-streams
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The service had run fine for a year. Then a customer uploaded a 6GB export and the pod died with an OOMKilled, taking three other tenants on the same node with it. The handler looked innocent: read the upload, gzip it, write it to object storage — a tidy `for await` loop that read a chunk and called `upload.write(chunk)`. Under a slow S3 connection, every chunk that couldn't be flushed piled up in the writable's internal buffer. The loop never paused because nobody checked what `write()` returned. RSS climbed from 200MB to 4GB in ninety seconds. The code wasn't slow — it was unbounded.
+</Hook>
+
+<Crux>Backpressure is a stream's brake: `write()` returns false past `highWaterMark`, so a fast producer pauses until the slow consumer drains.</Crux>
+
+<Explanation>
+
+## Why streams exist: bytes you never hold all at once
+
+A stream is an abstraction for data that arrives or departs over time, processed in small **chunks** instead of materialised whole in memory. The win is bounded memory: piping a 4GB file through gzip to disk holds only a few chunks at a time — kilobytes, not gigabytes — so a 4GB job and a 4TB job have nearly the same memory footprint. The second win is latency to first byte: a streaming HTTP response can start sending the head of a result while its tail is still being computed, instead of buffering the whole body before the first byte leaves.
+
+Node models four stream types. A **Readable** is a source you pull from (a file read, an HTTP request body, a socket). A **Writable** is a sink you push to (a file write, an HTTP response, a socket). A **Duplex** is both, with independent read and write sides (a TCP socket). A **Transform** is a Duplex whose output is a function of its input — gzip, a cipher, a CSV parser, a `JSON.parse` per line. Transforms are how you do a *streaming map*: data flows in one side, modified data flows out the other, and you never hold the full dataset.
+
+Readables have two reading modes. In **paused** mode you explicitly call `read()` to pull the next chunk. In **flowing** mode chunks are pushed at you via `'data'` events as fast as they arrive — convenient, but if you can't keep up there's no built-in brake, which is exactly how you lose data or blow memory. Attaching a `'data'` handler or calling `pipe()` switches a stream to flowing. There's also **object mode**: instead of `Buffer`/`string` chunks, the stream carries arbitrary JS objects (one parsed record per chunk), which is what makes Transform-based record pipelines ergonomic.
+
+## The problem: a fast producer, a slow consumer
+
+The OOM in the hook is the canonical stream failure. A producer (the file read, fast — local disk) feeds a consumer (the S3 upload, slow — network). When you call `writable.write(chunk)`, Node copies the chunk into the writable's **internal buffer** and tries to flush it to the underlying resource. If the resource can't keep up, the buffer grows. Nothing stops it growing — `write()` always accepts the chunk and returns. If your producer ignores the return value and keeps writing, the buffer grows without bound until the process runs out of heap.
+
+```js
+// BUG: ignores backpressure. The buffer grows unbounded under a slow sink.
+import { createReadStream, createWriteStream } from "node:fs";
+
+async function copyNaive(src, dst) {
+  const read = createReadStream(src);
+  const write = createWriteStream(dst);
+  for await (const chunk of read) {
+    write.write(chunk); // return value discarded — no brake
+  }
+  write.end();
+}
+```
+
+The `for await` pulls chunks from the fast source as fast as it can and shovels them into a writable that may be far slower. Memory is now whatever the difference in speed times the duration is — i.e. unbounded.
+
+## Backpressure: the brake built into write()
+
+Node gives the producer a signal. **`writable.write(chunk)` returns `false`** once the amount buffered exceeds the stream's **`highWaterMark`** (the default is 16KB for byte streams, 16 objects in object mode). `false` does not mean the write failed — the chunk is still accepted — it means *stop sending; the buffer is full enough.* A correct producer, on seeing `false`, pauses and waits for the writable to emit the **`'drain'`** event, which fires once the buffer has been flushed below the high-water mark. Then it resumes. That loop — write until `false`, wait for `'drain'`, repeat — is backpressure, and it caps memory at roughly the `highWaterMark`.
+
+You almost never write that loop by hand. `readable.pipe(writable)` wires it for you: it reads, writes, and when `write()` returns `false` it calls `readable.pause()`, then resumes on `'drain'`. The producer and consumer stay coupled, and memory stays bounded — no matter the size of the source.
+
+```js
+// CORRECT: pipeline() wires backpressure AND error propagation AND cleanup.
+import { pipeline } from "node:stream/promises";
+import { createReadStream, createWriteStream } from "node:fs";
+import { createGzip } from "node:zlib";
+
+async function gzipFile(src, dst) {
+  await pipeline(
+    createReadStream(src),   // Readable  (fast)
+    createGzip(),            // Transform (streaming map)
+    createWriteStream(dst),  // Writable  (slow)
+  );
+  // resolves only when the last byte is flushed; rejects if ANY stage errors
+}
+```
+
+<Inset kind="why" lang="en">
+Why `pipeline()` and not `.pipe().pipe()`? Manual `pipe()` propagates data and backpressure but **not errors**, and it does **not** clean up. If `createGzip()` throws mid-stream, the readable is never destroyed — its file descriptor leaks, and the error surfaces as an unhandled `'error'` event that can crash the process. `stream.pipeline()` (and `pipeline` from `node:stream/promises`) was added precisely to fix this: it forwards errors from any stage to the callback/promise, and it destroys every stream in the chain on failure or completion, releasing file descriptors and sockets. The senior rule is blunt: **use `pipeline()`, never a chain of manual `.pipe()`.** Manual pipe is a resource leak waiting for its first error.
+</Inset>
+
+## Where it bites in production
+
+Anywhere a fast side meets a slow side. A **reverse proxy** piping an upstream response to a client on a slow mobile link: without backpressure the proxy buffers the whole upstream body in RAM per connection, and a few thousand slow clients OOM the box. **Large file uploads** straight to object storage, like the hook. **CSV/NDJSON pipelines** that parse millions of rows: a Transform in object mode keeps memory flat regardless of row count, where a `JSON.parse(fs.readFileSync(...))` would load the entire file. **Server-sent events and log tailing**: the client is the slow consumer and backpressure stops the server from queueing megabytes per subscriber.
+
+Modern Node also speaks **Web Streams** (`ReadableStream`/`WritableStream`, the WHATWG API used by `fetch` and the browser). They have the same backpressure semantics expressed differently — a `ReadableStream` won't pull from its source until the consumer asks — and `stream.Readable.fromWeb()` / `.toWeb()` bridge the two worlds when you're gluing `fetch()` bodies to Node sinks.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Load all in memory (read whole, then process)</th>
+        <th class="border border-border px-3 py-2 text-left">Stream chunk-by-chunk (with backpressure)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Peak memory</td>
+        <td class="border border-border px-3 py-2">Scales with input size — a 4GB file needs ~4GB+ RAM</td>
+        <td class="border border-border px-3 py-2">Bounded by <code>highWaterMark</code> — a few chunks (~tens of KB) regardless of size</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Latency to first byte</td>
+        <td class="border border-border px-3 py-2">High — nothing emits until the whole input is read</td>
+        <td class="border border-border px-3 py-2">Low — output starts as soon as the first chunk is transformed</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Failure mode</td>
+        <td class="border border-border px-3 py-2">OOMKilled / GC death on large or adversarial input</td>
+        <td class="border border-border px-3 py-2">Flat RSS; throughput simply tracks the slowest stage</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="02-streams-and-backpressure-quiz-1"
+  lessonSlug="02-streams-and-backpressure"
+  lang="en"
+  question="writable.write(chunk) returns false. What does that mean, and what should a correct producer do?"
+  choices={[
+    { label: "The chunk was still accepted, but the internal buffer passed highWaterMark — stop writing and wait for the 'drain' event before sending more", correct: true },
+    { label: "The write failed and the chunk was dropped — retry write(chunk) immediately", misconception: "false does not mean failure or a dropped chunk. The chunk is buffered and accepted; false is purely a 'slow down' signal. Retrying in a tight loop ignores backpressure and grows the buffer faster." },
+    { label: "The stream is closed — call write.end() and stop", misconception: "A closed/ended stream throws or emits 'error', it does not return false from write. false is the normal backpressure signal on a live, healthy stream; the right response is to pause until 'drain'." },
+    { label: "Nothing actionable — write() always returns false on the first call, you can ignore it", misconception: "write() returns true while the buffer is below highWaterMark and false once it exceeds it. Ignoring false is exactly the bug that lets a fast producer overflow a slow consumer's buffer and OOM the process." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="02-streams-and-backpressure-tradeoff-1"
+  lessonSlug="02-streams-and-backpressure"
+  lang="en"
+  prompt="You must copy a Readable through a gzip Transform to a Writable in a long-lived server. Pick the wiring."
+  options={[
+    { name: "stream.pipeline(read, gzip, write) (or pipeline from node:stream/promises)", summary: "Backpressure + errors + cleanup.", correct: true, justification: "The standard senior choice. pipeline() wires backpressure across every stage, propagates an error from ANY stage to a single callback/promise, and destroys every stream in the chain on completion or failure — so file descriptors and sockets are released and a mid-stream gzip error can't leak a fd or crash via an unhandled 'error'. It's the one call that gets memory safety and resource safety together." },
+    { name: "read.pipe(gzip).pipe(write) — manual chained pipe", summary: "Backpressure, but leaks on error.", justification: "It does propagate data and backpressure, so memory stays bounded on the happy path — which is why it looks fine in dev. But .pipe() does NOT forward errors or clean up: if gzip throws, the readable is never destroyed (fd leak) and the error surfaces as an unhandled 'error' event that can crash the process. In a long-lived server those leaks accumulate. This is the anti-pattern pipeline() exists to replace." },
+    { name: "for await (const c of read) write.write(c) with the return value ignored", summary: "No brake at all.", justification: "This is the OOM bug. The loop pulls from the fast source as fast as it can and never checks write()'s return value, so under a slow sink the writable's internal buffer grows without bound until the heap is exhausted. To make a manual loop correct you'd have to honour false and await 'drain' — at which point you've reimplemented pipeline() badly." },
+    { name: "read whole input with fs.readFileSync, gzipSync, then writeFileSync", summary: "Simple, but unbounded memory.", justification: "Synchronous and simple, but it loads the entire input into RAM, scales memory with file size, blocks the event loop for the whole operation, and emits nothing until done (no streaming, high latency to first byte). Fine for a tiny known-small file; a memory and availability hazard for arbitrary user input." },
+  ]}
+/>
+
+When you do write a `Transform` yourself, override `_transform(chunk, encoding, callback)` to push transformed output and call `callback()` when done with that chunk — the framework handles buffering and backpressure on both sides for you, including honouring your output's `highWaterMark`. Tuning `highWaterMark` upward trades memory for fewer drain round-trips (useful for high-throughput byte streams); tuning it down caps memory harder. Most code should leave it at the default.
+
+</Explanation>
+
+<FlowDiagram
+  label="Backpressure loop: a fast producer writes into a writable's bounded buffer; when the buffer passes highWaterMark, write returns false and the producer pauses until the drain event"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "prod", label: "Producer", sub: "Readable" },
+    { id: "buf", label: "Buffer", sub: "highWaterMark" },
+    { id: "cons", label: "Consumer", sub: "Writable (slow)" },
+  ]}
+  edges={[
+    { from: "prod", to: "buf", label: "write(chunk)" },
+    { from: "buf", to: "cons", label: "flush" },
+    { from: "buf", to: "prod", label: "false → pause / drain → resume" },
+  ]}
+  caption="write() copies a chunk into the bounded internal buffer and tries to flush it to the slow consumer. Once buffered bytes pass highWaterMark, write() returns false; the producer pauses and resumes only on 'drain'. pipe()/pipeline() automate exactly this loop, so memory stays capped near highWaterMark no matter the input size."
+/>
+
+<KeyTakeaway>Streams process data in bounded chunks. Backpressure: `write()` returns false past `highWaterMark` — pause until drain. Use `pipeline()` not manual `pipe()`: it propagates errors and cleans up. Ignoring it OOMs the process.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-streams-and-backpressure-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the backpressure mechanism: what does writable.write() return, when, and what must the producer do?", a: "writable.write(chunk) copies the chunk into the writable's internal buffer and tries to flush it to the underlying resource. It returns true while the amount buffered is below the stream's highWaterMark (16KB by default for byte streams, 16 objects in object mode) and false once the buffer exceeds it. false does NOT mean the write failed — the chunk is still accepted and buffered — it means 'the buffer is full enough, stop sending.' A correct producer, on seeing false, stops calling write() and waits for the writable to emit the 'drain' event, which fires when the buffer has been flushed back below the high-water mark; then it resumes. That write-until-false / wait-for-drain / resume loop caps memory at roughly the highWaterMark regardless of how much data flows through. readable.pipe(writable) and stream.pipeline() implement this loop for you: on write()===false they pause the readable and resume it on 'drain'. The bug is a producer (e.g. a for-await loop) that ignores write()'s return value: under a slow consumer the buffer grows without bound and the process OOMs." },
+    { q: "Why prefer pipeline() over a chain of manual .pipe() calls?", a: "Both pipe() and pipeline() propagate data and backpressure, so on the happy path both keep memory bounded — which is why a manual .pipe().pipe() chain looks correct in development. The difference is failure handling. Manual .pipe() does NOT forward errors and does NOT clean up: if a middle stage (say a gzip Transform) emits 'error', the upstream readable is never destroyed, so its file descriptor or socket leaks, and the error surfaces as an unhandled 'error' event that can crash the process. stream.pipeline(...streams, cb) — and the promise form from node:stream/promises — was added to fix exactly this: it forwards an error from ANY stage to a single callback/promise rejection, and it destroys every stream in the chain on both completion and failure, releasing all the underlying resources. In a long-lived server, leaked fds from un-cleaned pipes accumulate until you hit EMFILE. So the senior rule is: wire multi-stage streams with pipeline(), never a hand-rolled pipe chain." },
+  ]}
+/>
+
+<Recap lang="en">
+A stream processes data in small chunks over time instead of materialising it whole, which keeps memory bounded and lowers latency to first byte. Node has four kinds — Readable (source), Writable (sink), Duplex (both), and Transform (a streaming map like gzip or a CSV parser) — and Readables read in flowing or paused mode, with object mode for record-by-record pipelines. The danger is a fast producer feeding a slow consumer: write() always accepts the chunk into the writable's internal buffer, so a producer that ignores the return value grows that buffer without bound and OOMs the process — the classic large-upload or proxy failure. Backpressure is the built-in brake: write() returns false once the buffer passes highWaterMark, and a correct producer pauses until the 'drain' event before sending more, capping memory near the high-water mark. You rarely hand-roll that loop — pipe() automates it, but the senior choice is stream.pipeline(), because unlike manual pipe it propagates errors from any stage and destroys every stream on completion or failure, so a mid-stream error can't leak file descriptors or crash via an unhandled 'error'. Wherever a fast side meets a slow side — proxies, uploads, CSV/NDJSON, SSE — stream it through pipeline() and let backpressure hold the line.
+</Recap>
