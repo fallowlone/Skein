@@ -1,13 +1,233 @@
 ---
-slug: "03-secrets-and-environments"
+concepts:
+- ci-secrets
+- secret-masking
+- forked-pr-secrets
+- environments-protection
+- oidc-token-exchange
+- credential-security
+deepensInto: []
+estMin: 16
 lang: en
-track: "ci-cd"
-unit: "01-pipelines"
+lessonType: topic
+level: middle
 order: 3
-title: "Secrets, environments and OIDC"
-summary: "Secrets, environments and OIDC — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 03-secrets-and-environments
 sources:
-  - https://docs.github.com/en/actions
+- https://docs.github.com/en/actions/security-guides/using-secrets-in-github-actions
+- https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+- https://docs.github.com/en/actions/deployment/targeting-different-environments/managing-environments-for-deployment
+- https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/
+spiral: []
+status: ready
+summary: 'CI credentials live as masked secrets, scoped by environment with protection
+  rules. Forks get no secrets by default — and OIDC retires long-lived cloud keys for
+  a short-lived signed token the cloud exchanges for temporary credentials.'
+title: 'Secrets, environments and OIDC'
+track: ci-cd
+unit: 01-pipelines
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A contributor opens a friendly-looking pull request from their fork: it adds a test that prints a couple of environment variables "for debugging." If your deploy keys had flowed into that build, the PR's logs would now contain your production AWS credentials — exfiltrated to a fork you do not control, in a job triggered by a stranger. GitHub blocks exactly this by withholding secrets from fork-triggered workflows. The teams that get burned are the ones who reach for `pull_request_target` to "make secrets work on PRs" without understanding what they just re-enabled.
+</Hook>
+
+<Crux>Credentials are masked secrets scoped per environment; forks get none by default, and OIDC swaps stored cloud keys for a short token.</Crux>
+
+<Explanation>
+
+## Secrets: encrypted, masked, and referenced by name
+
+A secret is an encrypted value GitHub stores and injects into a job at runtime. You never paste a credential into the YAML; you reference it as `${{ secrets.NAME }}`, and GitHub decrypts it into that one step's environment. Secrets exist at three scopes that nest from broad to narrow: **organization** secrets (shared across repos, owner-controlled), **repository** secrets, and **environment** secrets (only available when a job targets that specific environment). Narrower scope means smaller blast radius — a production database password belongs on the `production` environment, not loose at the repo level where every workflow can read it.
+
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}   # decrypted into this step only
+        run: npm publish
+```
+
+GitHub automatically **masks** registered secret values in logs: if a secret's literal text appears in output, it is replaced with `***`. This is a safety net, not a guarantee. Masking matches the exact string, so a secret that gets base64-encoded, URL-escaped, or split across lines sails straight through unredacted. The rule that follows is absolute: **never `echo` a secret, never pass one as a CLI argument that gets logged, and never trust masking to save a `set -x` debug session.** Treat a secret the way you treat a live wire.
+
+<Inset kind="why" lang="en">
+Masking is string-matching on stdout/stderr, so any transformation defeats it. `echo $TOKEN` is masked; `echo $TOKEN | base64` is not — the encoded form never matched the registered value. The same gap explains why a secret accidentally written to an artifact, a coredump, or an error message that interpolates it can leak in plaintext. Mask is the last line of defense; the first is not putting the secret anywhere it can be observed.
+</Inset>
+
+## The fork footgun: why PRs from forks get no secrets
+
+Here is the security boundary that defines safe CI. When a workflow is triggered by a `pull_request` from a forked repository, **GitHub does not pass your secrets to the runner** (the lone exception is a read-scoped `GITHUB_TOKEN`). The reason is direct: a fork PR runs *attacker-authored code* — any stranger can propose a diff that adds a malicious step. If that step could read `${{ secrets.* }}`, opening a PR would be enough to steal every credential in the repo. Withholding secrets makes fork CI safe to run automatically: the build can compile and test, but it cannot touch anything that grants real-world power.
+
+The footgun is the "fix." A maintainer notices that deploy or coverage-upload steps fail on fork PRs (no secrets) and switches the trigger to `pull_request_target`. That event runs in the context of the **base** repository — so it *does* get secrets and a write-scoped token. But it still checks out and can execute the PR's untrusted code. You have re-opened the exact hole the default closed, now with write access. GitHub's own security team named this class "pwn requests." If you must enrich a fork PR with privileged work, split it: run untrusted code in the unprivileged `pull_request` job, and do the privileged step in a separate `pull_request_target` (or `workflow_run`) job that never checks out or runs the fork's code.
+
+## Environments: named targets with guardrails
+
+An **environment** is a named deploy target — `staging`, `production` — that you attach to a job with `environment: production`. Environments do two jobs at once: they scope secrets (a job only sees an environment's secrets when it targets that environment) and they enforce **protection rules** before the job is allowed to start:
+
+- **Required reviewers** — the job pauses until a named human approves the deployment.
+- **Wait timer** — a forced delay (e.g. 10 minutes) before deploy, a window to abort a bad release.
+- **Deployment branch restrictions** — only `main` (or a tag pattern) may deploy to `production`, so a feature branch cannot ship.
+
+```yaml
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: production        # gates: reviewers, wait timer, branch rule
+    steps:
+      - run: ./deploy.sh
+        env:
+          API_KEY: ${{ secrets.API_KEY }}   # production-scoped secret
+```
+
+This is how you make "anyone can merge, not anyone can ship to prod" a mechanical fact rather than a policy people remember to follow.
+
+## OIDC: stop storing cloud keys at all
+
+The senior upgrade is to delete the long-lived cloud credentials from your secrets entirely. A static `AWS_SECRET_ACCESS_KEY` sitting in your repo secrets is a permanent liability: it can leak, it must be rotated, and a single key often has broad blast radius. **OpenID Connect (OIDC)** replaces it with a short-lived, signed token. You configure your cloud provider once to *trust* GitHub's OIDC issuer for specific workflows; then every job mints a fresh token, hands it to the cloud, and the cloud exchanges it for temporary credentials scoped to a role — valid only for that job, then gone. Nothing long-lived is stored, so nothing long-lived can leak, and there is nothing to rotate.
+
+The workflow asks for the token by requesting the `id-token: write` permission:
+
+```yaml
+permissions:
+  id-token: write     # allow the job to request an OIDC token
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/gha-deploy
+          aws-region: us-east-1        # no AWS keys stored anywhere
+      - run: aws s3 sync ./dist s3://my-bucket
+```
+
+The cloud-side trust policy is what makes this safe: it pins the token's `iss` (GitHub's issuer) and its `sub` claim to your specific repo, branch, or environment (e.g. `repo:acme/app:ref:refs/heads/main`). A fork or a different repo cannot assume the role, because their token's subject will not match. The exchange itself:
+
+<SequenceDiagram
+  label="OIDC token exchange between a GitHub Actions workflow, GitHub's OIDC provider, and the cloud provider issuing short-lived credentials"
+  hue="var(--d-systems)"
+  actors={["Workflow", "GitHub OIDC", "Cloud (AWS)"]}
+  messages={[
+    { from: "Workflow", to: "GitHub OIDC", label: "request id-token (job claims)" },
+    { from: "GitHub OIDC", to: "Workflow", label: "signed JWT (iss, sub, aud)" },
+    { from: "Workflow", to: "Cloud (AWS)", label: "AssumeRoleWithWebIdentity(JWT)" },
+    { from: "Cloud (AWS)", to: "GitHub OIDC", label: "fetch public keys, verify sig + claims" },
+    { from: "Cloud (AWS)", to: "Workflow", label: "short-lived creds (~1h, role-scoped)" },
+  ]}
+  caption="GitHub signs a per-job token asserting who the job is; the cloud verifies the signature and trust conditions, then issues temporary role-scoped credentials. No static key is ever stored or transmitted."
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Static secret (AWS key in repo secrets)</th>
+        <th class="border border-border px-3 py-2 text-left">OIDC token exchange</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">What is stored</td>
+        <td class="border border-border px-3 py-2">Long-lived key + secret, encrypted in GitHub</td>
+        <td class="border border-border px-3 py-2">Nothing — only a cloud-side trust policy</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Lifetime</td>
+        <td class="border border-border px-3 py-2">Until someone rotates it (often: never)</td>
+        <td class="border border-border px-3 py-2">Minted per job, expires in ~1 hour</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Rotation</td>
+        <td class="border border-border px-3 py-2">Manual, error-prone, easy to forget</td>
+        <td class="border border-border px-3 py-2">None — every job gets a fresh token</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Blast radius if leaked</td>
+        <td class="border border-border px-3 py-2">Full, until noticed and revoked</td>
+        <td class="border border-border px-3 py-2">Minutes; bound to one job's claims</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Setup cost</td>
+        <td class="border border-border px-3 py-2">Paste a key — trivial, then permanent debt</td>
+        <td class="border border-border px-3 py-2">One-time IAM/identity-provider config</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="ci-cd-secrets-quiz-1"
+  lessonSlug="03-secrets-and-environments"
+  lang="en"
+  question="A contributor's fork PR adds a step that does `echo $AWS_SECRET_ACCESS_KEY | base64`. The workflow uses the default `pull_request` trigger. What happens?"
+  choices={[
+    { label: "Nothing leaks — fork-triggered pull_request workflows are not given the repo's secrets, so AWS_SECRET_ACCESS_KEY is empty in that job", correct: true },
+    { label: "The key leaks but is masked, so it shows as *** in the logs", misconception: "Masking is exact-string matching and base64 defeats it anyway — but more fundamentally, the secret was never passed to a fork pull_request job in the first place, so there is nothing to leak here." },
+    { label: "The key leaks because all triggers receive all secrets", misconception: "Secrets are withheld from workflows triggered by a forked repository's pull_request (except a read-scoped GITHUB_TOKEN). That is the boundary that makes running fork CI safe by default." },
+    { label: "The job fails to start because secrets are required", misconception: "The job runs fine; the secret reference simply resolves to an empty string. Steps that need the secret will fail, but the workflow is not blocked from starting." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-secrets-quiz-2"
+  lessonSlug="03-secrets-and-environments"
+  lang="en"
+  question="Why is configuring OIDC safer than storing a long-lived AWS key as a secret?"
+  choices={[
+    { label: "Nothing long-lived is stored: the job mints a short-lived signed token the cloud exchanges for temporary, role-scoped credentials that expire after the job", correct: true },
+    { label: "OIDC encrypts the AWS key more strongly than GitHub secrets do", misconception: "OIDC does not store or encrypt an AWS key at all — there is no static key. It eliminates the stored credential rather than protecting it better." },
+    { label: "OIDC tokens never expire, so you never have to re-auth", misconception: "It is the opposite: the value of OIDC is that the issued credentials are short-lived and expire quickly, shrinking the window in which a leaked token is useful." },
+    { label: "OIDC makes secrets available to fork PRs safely", misconception: "OIDC is about cloud auth, not fork access; requesting id-token: write does not hand fork PRs your cloud role, which is still gated by the cloud-side sub-claim trust policy." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="ci-cd-secrets-tradeoff-1"
+  lessonSlug="03-secrets-and-environments"
+  lang="en"
+  prompt="Your deploy job needs AWS credentials to push to production. Pick the approach a senior engineer ships."
+  options={[
+    { name: "OIDC: id-token: write + a cloud trust policy pinned to repo/branch/environment, exchanged for short-lived role creds", summary: "No stored key.", correct: true, justification: "This is the modern default. Nothing long-lived is stored, so nothing long-lived can leak; credentials are minted per job and expire in about an hour; rotation disappears as a chore; and the cloud-side sub-claim trust binds the role to your exact repo, branch, or environment so a fork or other repo cannot assume it. The cost is a one-time identity-provider/IAM setup, which buys you a permanently smaller attack surface." },
+    { name: "Long-lived AWS key stored as an environment secret on production, with required reviewers", summary: "Static key, gated.", justification: "A real improvement over a loose repo secret — environment scoping plus required reviewers limits who can trigger a prod deploy and which jobs see the key. But the key is still long-lived: it can leak via a mis-masked log or an artifact, it must be rotated, and a leak grants full access until revoked. Acceptable when the cloud or registry has no OIDC support; otherwise OIDC strictly dominates." },
+    { name: "Long-lived AWS key as a plain repository secret, used by any workflow", summary: "Loose static key.", justification: "Every workflow in the repo can read it, so the blast radius is the whole repo and the key outlives any single deploy. No environment gating means a feature branch or a hastily-merged workflow can use it. This is the configuration audits flag — use environment scoping at minimum, OIDC ideally." },
+    { name: "Hardcode the key in the workflow YAML so it always works", summary: "Inline credential.", justification: "Never. The key lands in git history in plaintext, is visible to anyone with read access, travels to every fork and clone, and cannot be masked because it is not a registered secret. This is the single worst option and is exactly what the secrets store exists to prevent." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Scope secrets to environments; never `echo` one — masking is weak. Fork PRs get no secrets by default; do not "fix" that with `pull_request_target`. Prefer OIDC: no stored cloud key, just a short-lived token.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-secrets-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why do fork pull-request workflows get no secrets by default, and why is switching to pull_request_target a footgun?", a: "A pull_request from a fork runs code authored by an outside contributor — anyone can propose a diff that adds a step reading the secrets context. If secrets flowed into that job, simply opening a PR would let a stranger exfiltrate every credential in the repo (and base64 or any transform defeats log masking). So GitHub withholds all secrets from fork-triggered pull_request runs, passing only a read-scoped GITHUB_TOKEN; the build can compile and test but cannot touch anything powerful. The footgun is reaching for pull_request_target to make deploy/coverage steps work on fork PRs: that event runs in the BASE repo's context, so it gets secrets and a write-scoped token — yet it still checks out and can run the PR's untrusted code. You have re-opened the exact hole the default closed, now with write access (GitHub calls this class 'pwn requests'). The safe pattern is to run untrusted fork code in the unprivileged pull_request job and do any privileged work in a separate pull_request_target or workflow_run job that never checks out or executes the fork's code." },
+    { q: "Walk through the OIDC token exchange and explain what makes it safer than a stored cloud key.", a: "First you configure a one-time trust relationship on the cloud side: an identity provider that trusts GitHub's OIDC issuer, and a role whose trust policy pins the token's sub claim to your specific repo/branch/environment (e.g. repo:acme/app:ref:refs/heads/main). At runtime the job requests permissions: id-token: write; GitHub's OIDC provider mints a short-lived signed JWT asserting the job's identity (iss, sub, aud claims). The workflow presents that JWT to the cloud (e.g. AWS AssumeRoleWithWebIdentity); the cloud fetches GitHub's public keys, verifies the signature and that the claims match its trust policy, and returns temporary, role-scoped credentials valid only for the job (about an hour). It is safer because nothing long-lived is ever stored or transmitted: there is no static key to leak from secrets, nothing to rotate, the credentials expire fast so a captured token is useful only briefly, and the sub-claim binding means a fork or different repo cannot assume the role even if it requests a token." },
+  ]}
+/>
+
+<Recap lang="en">
+Secrets are encrypted values GitHub injects at runtime and you reference as `${{ secrets.NAME }}`, scoped organization-wide, per-repo, or — best — per-environment to shrink blast radius. GitHub masks registered secrets in logs, but masking is exact-string matching that any encoding or split defeats, so you never echo a secret or trust the net. The defining boundary: workflows triggered by a fork's pull_request receive no secrets (only a read-scoped GITHUB_TOKEN), because they run untrusted code; the classic mistake is switching to pull_request_target to "restore" secrets, which re-grants them plus write access to attacker-authored code — the pwn-request hole. Environments add protection rules — required reviewers, wait timers, and deployment-branch restrictions — that gate which jobs and which branches may ship to production. The senior move is OIDC: instead of storing a long-lived cloud key, the job requests id-token: write, GitHub signs a short-lived token, and the cloud exchanges it for temporary role-scoped credentials bound by a sub-claim trust policy — no stored key, nothing to rotate, and a tiny window if anything is ever captured.
+</Recap>
