@@ -39,6 +39,7 @@ export const TRACK_BAND: Record<Track, Band> = {
   // new tracks
   "python":               "surface",
   "aws":                  "advanced",
+  "ci-cd":                "advanced",
 };
 
 export function bandOf(slug: Track): Band {
