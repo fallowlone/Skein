@@ -11,6 +11,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "sql-postgres": "SQL", "js-engine": "JSE", "typescript": "TS",
   "system-design": "SD", "system-design-cases": "SDC",
   "aws": "AWS", "python": "PY",
+  "ci-cd": "CICD",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
