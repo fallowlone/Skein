@@ -1,13 +1,243 @@
 ---
-slug: "01-services-and-ingress"
+concepts:
+- service-clusterip
+- selector-to-endpoints
+- service-types
+- headless-service
+- ingress-routing
+- empty-endpoints-failure
+deepensInto: []
+estMin: 17
 lang: ru
-track: "deployment"
-unit: "10-k8s-deep"
+lessonType: topic
+level: middle
 order: 1
-title: "Services and ingress"
-summary: "Services and ingress — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 01-services-and-ingress
 sources:
-  - https://kubernetes.io/docs/home/
+- https://kubernetes.io/docs/concepts/services-networking/service/
+- https://kubernetes.io/docs/concepts/services-networking/ingress/
+spiral: []
+status: ready
+summary: 'Pod-ы эфемерны и меняют IP, поэтому до них ходят через Service: стабильный
+  виртуальный IP, балансирующий по pod-ам с подходящим label selector, а Ingress —
+  общий HTTP-роутер впереди. Несовпадение selector — ноль endpoint-ов.'
+title: 'Service и Ingress'
+track: deployment
+unit: 10-k8s-deep
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Раскатка зелёная. Pod-ы в статусе `Running`, Deployment рапортует, что все реплики готовы, — и всё же каждый запрос к приложению висит и отваливается по таймауту. `kubectl get endpoints api` печатает одну леденящую строку: `api   <none>`. Service указывает в пустоту. Кто-то переименовал label у pod-а с `app: api` на `app: api-svc` и не тронул selector у Service — поэтому Service не находит ни одного pod-а, строит пустой список endpoint-ов и тихо съедает трафик. С pod-ами всё хорошо. Сломана проводка между ними и Service.
+</Hook>
+
+<Crux>Service — стабильный виртуальный IP, балансирующий по pod-ам с подходящим label selector; Ingress — общий HTTP-роутер впереди.</Crux>
+
+<Explanation>
+
+## Почему нельзя обращаться к pod-у напрямую
+
+Pod — самая дешёвая и одноразовая вещь в Kubernetes. Планировщик убивает его, перепланирует, масштабирует вверх и вниз, по своей прихоти переносит на другой узел — и каждый раз, возвращаясь, он получает **новый IP из сети pod-ов**. Нет стабильного адреса, который можно зашить, нет DNS-имени, переживающего раскатку, нет гарантии, что IP, который ты разрезолвил секунду назад, всё ещё принадлежит живому pod-у. Звонить напрямую на IP pod-а — баг, ждущий следующего перепланирования.
+
+**Service** — это фикс. Это API-объект, дающий набору pod-ов одну стабильную идентичность: виртуальный IP (ClusterIP) и DNS-имя (`<service>.<namespace>.svc.cluster.local`), которые живут всё время существования Service, независимо от того, какие pod-ы стоят за ним прямо сейчас. Клиенты ходят на Service; Service балансирует каждое соединение по здоровым pod-ам. Pod-ы под ним сменяются; адрес впереди не двигается.
+
+## Механизм selector → endpoints
+
+Связь между Service и его pod-ами — это **label-ы, а не IP**. Service объявляет `selector` — набор ключей/значений label-ов, — и Kubernetes непрерывно следит за pod-ами, которые (а) совпадают по каждому label из selector и (б) **Ready** (проходят свой readiness-probe). Для каждого такого pod-а он записывает его IP и порт в **EndpointSlice** (современную, шардированную замену старого единого объекта Endpoints). Этот EndpointSlice *и есть* список целей балансировки; kube-proxy на каждом узле программирует data plane (правила iptables или IPVS) по нему.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api            # должен точно совпадать с label-ами pod-ов
+  ports:
+    - name: http
+      port: 80          # виртуальный порт Service
+      targetPort: 8080  # порт контейнера в pod-е
+```
+
+Из этого следуют две вещи. Во-первых, сопоставление динамическое: масштабируешь Deployment вверх — и новые Ready-pod-ы добавляются в slice за мгновения; pod, проваливший readiness-probe, удаляется, и трафик перестаёт на него идти без всякого удаления вручную. Во-вторых — и это провал, который кусает всех — **если selector не находит ни одного Ready-pod-а, EndpointSlice пуст, и Service маршрутизирует в никуда.** У него всё ещё есть ClusterIP, он всё ещё резолвится в DNS, всё ещё принимает соединения — а потом отказывает или отваливается по таймауту, потому что нет бэкенда, куда форвардить.
+
+<Inset kind="why" lang="ru">
+«Ready» здесь делает реальную работу. Pod может быть `Running`, но не `Ready` — он попадает в EndpointSlice только когда его readiness-probe проходит. Это намеренно: во время rolling update новые pod-ы держат вне Service, пока они реально не смогут обслуживать, а старые вынимают из slice до завершения. Ошибись с readiness-probe — и отгрузишь Service, у которого pod-ы запущены, но endpoint-ов ноль: та же чёрная дыра, причина тоньше.
+</Inset>
+
+## Типы Service: как далеко дотягивается адрес
+
+У каждого Service есть тип, решающий, кто до него дотянется. Они стакаются: каждый строится на предыдущем.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Тип</th>
+        <th class="border border-border px-3 py-2 text-left">Область</th>
+        <th class="border border-border px-3 py-2 text-left">Внешний?</th>
+        <th class="border border-border px-3 py-2 text-left">Цена</th>
+        <th class="border border-border px-3 py-2 text-left">Когда использовать</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>ClusterIP</code> (по умолчанию)</td>
+        <td class="border border-border px-3 py-2">Только внутренний виртуальный IP</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Бесплатно</td>
+        <td class="border border-border px-3 py-2">Service-to-service внутри кластера</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>NodePort</code></td>
+        <td class="border border-border px-3 py-2">Порт (30000–32767) на каждом узле</td>
+        <td class="border border-border px-3 py-2">Да, грубо</td>
+        <td class="border border-border px-3 py-2">Бесплатно</td>
+        <td class="border border-border px-3 py-2">Базовый внешний доступ, dev, за своим LB</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>LoadBalancer</code></td>
+        <td class="border border-border px-3 py-2">Поднимает облачный балансировщик</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Один платный LB на Service</td>
+        <td class="border border-border px-3 py-2">Единая L4-точка входа для одного Service</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">headless (<code>clusterIP: None</code>)</td>
+        <td class="border border-border px-3 py-2">DNS возвращает IP pod-ов, без виртуального IP</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Бесплатно</td>
+        <td class="border border-border px-3 py-2">StatefulSet, адресация по pod-у, клиентская балансировка</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Ingress (не тип Service)</td>
+        <td class="border border-border px-3 py-2">L7 HTTP(S)-роутер над многими Service</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Один LB на все маршруты</td>
+        <td class="border border-border px-3 py-2">Host/path-маршрутизация + TLS на весь кластер</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+**ClusterIP** — это дефолт и рабочая лошадка: так твой API ходит к базе, к кэшу — всё по DNS-имени, всё внутри. **NodePort** открывает один и тот же порт на *каждом* узле и форвардит его на Service; это грубая ручка, чтобы завести трафик внутрь, полезная в dev или когда ты ставишь впереди свой балансировщик, но сырой URL `node-ip:31000` пользователям не отдашь. **LoadBalancer** просит облачного провайдера поднять настоящий внешний балансировщик, указывающий на Service, — чисто, но ты платишь за и обслуживаешь один LB на Service, что быстро становится дорого и громоздко. **headless** вообще отказывается от виртуального IP: DNS возвращает индивидуальные IP pod-ов — ровно то, что нужно StatefulSet (база, брокер), чтобы клиенты могли адресовать конкретную реплику.
+
+## Ingress: одна парадная дверь для многих Service
+
+Если LoadBalancer даёт один облачный LB на Service, то десять публичных сервисов стоят десяти балансировщиков — и при этом у тебя по-прежнему нет HTTP-осознанной маршрутизации. **Ingress** решает и то, и другое. Это L7 (HTTP/HTTPS) роутер, который стоит впереди твоих ClusterIP-Service и раскидывает запросы по **host и path** на нужный Service, централизованно терминирует **TLS** и делает всё это за *одним* общим балансировщиком. Одна точка входа, много бэкендов, гораздо дешевле, чем LB на сервис.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: site
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api      # маршрутизирует /api -> Service api
+                port:
+                  number: 80
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web      # всё остальное -> Service web
+                port:
+                  number: 80
+```
+
+Ключевой подвох: **объект Ingress — это лишь правила. Сам по себе он ничего не делает.** Ты обязан запустить **ingress-контроллер** — nginx, Traefik, HAProxy, провайдерский, — который реально следит за объектами Ingress и превращает их в работающий обратный прокси. Нет контроллера — нет маршрутизации; YAML применяется чисто, а трафик всё равно идёт в никуда. Поле `ingressClassName` говорит Kubernetes, какой контроллер владеет этим Ingress.
+
+<TradeoffMatrix
+  id="01-services-and-ingress-tradeoff-1"
+  lessonSlug="01-services-and-ingress"
+  lang="ru"
+  prompt="У тебя восемь публичных HTTP-сервисов, которым нужны host/path-маршрутизация и TLS. Как их выставить?"
+  options={[
+    { name: "Один Ingress (с ingress-контроллером), маршрутизирующий host/path на восемь ClusterIP-Service за одним LB", summary: "Общая L7 парадная дверь.", correct: true, justification: "Это стандартный паттерн. Восемь сервисов остаются дешёвыми внутренними ClusterIP-Service; один ingress-контроллер за одним облачным балансировщиком терминирует TLS один раз и маршрутизирует по host и path на каждый. Ты платишь за один LB вместо восьми, получаешь HTTP-осознанную маршрутизацию (path, rewrite, заголовки) и управляешь сертификатами в одном месте. Единственное требование — чтобы ingress-контроллер реально работал и применял правила." },
+    { name: "Восемь LoadBalancer-Service, по одному на сервис", summary: "По LB на каждый.", justification: "Работает, но это дорогой и громоздкий вариант: восемь облачных балансировщиков платить и обслуживать, восемь внешних IP — и при этом никакой маршрутизации на уровне HTTP — LoadBalancer работает на L4, поэтому не умеет маршрутизировать по path или host или терминировать TLS по маршрутам. Береги LoadBalancer для одного-двух случаев, которым реально нужна выделенная L4-точка входа." },
+    { name: "Восемь NodePort-Service напрямую пользователям", summary: "Сырые node-порты.", justification: "NodePort открывает высокий порт (30000-32767) на каждом узле; отдавать пользователям URL node-ip:31234 хрупко, уродливо и не маршрутизируется через нормальный домен без чего-то впереди. NodePort — строительный блок для dev или для своего внешнего LB, а не публичный ответ для восьми сервисов." },
+    { name: "По одному ClusterIP-Service на приложение и сказать клиентам звонить на ClusterIP", summary: "Только внутренние IP.", justification: "ClusterIP по определению внутренний — это виртуальный IP, достижимый изнутри кластера, без маршрута из публичного интернета. Внешние пользователи вообще не могут достучаться до ClusterIP, так что это не выставляет ничего." },
+  ]}
+/>
+
+## Классический провал: ноль endpoint-ов
+
+Вернись к хуку. Сетевой баг Kubernetes №1 — это **Service, чей selector не совпадает с label-ами его pod-ов.** При apply ничего не падает — Service это валидный YAML, получает ClusterIP, резолвится в DNS. Но его selector не находит ни одного Ready-pod-а, поэтому EndpointSlice пуст, и каждое соединение отказывается или отваливается по таймауту. Тот же симптом пустых endpoint-ов даёт и pod, который совпал по label-ам, но не Ready (провальный или слишком строгий readiness-probe), или `targetPort`, не совпадающий с реальным портом контейнера.
+
+Диагностика всегда одна и та же команда: `kubectl get endpoints <svc>` (или `kubectl get endpointslices`). Если там `<none>` или нет адресов — Service ни с кем не говорит: перестань отлаживать приложение и иди проверь, что `selector` у Service ровно равен label-ам pod-ов и что pod-ы Ready.
+
+<Quiz
+  id="01-services-and-ingress-quiz-1"
+  lessonSlug="01-services-and-ingress"
+  lang="ru"
+  question="У Service есть ClusterIP и он резолвится в DNS, но каждый запрос отваливается по таймауту. kubectl get endpoints показывает <none>. Pod-ы Running. Самая вероятная причина?"
+  choices={[
+    { label: "selector у Service не совпадает с label-ами pod-ов (или pod-ы не Ready), поэтому EndpointSlice пуст и Service форвардит в никуда", correct: true },
+    { label: "ClusterIP неверный и его надо задать вручную", misconception: "ClusterIP почти никогда не задают руками — Kubernetes назначает его, а то, что Service резолвится в DNS, доказывает, что с IP всё хорошо. Пустые endpoint-ы — проблема selector/label или готовности, а не адресации." },
+    { label: "До ClusterIP нельзя дотянуться изнутри кластера; нужен NodePort", misconception: "ClusterIP — как раз внутренний тип, до него по замыслу дотягиваются другие pod-ы. Таймаут здесь — пустой список бэкендов, а не тип Service." },
+    { label: "Ты забыл установить ingress-контроллер", misconception: "ingress-контроллер важен только для объектов Ingress. Здесь Service с пустыми endpoint-ами — Ingress ни при чём, а фикс — привести selector в соответствие с label-ами pod-ов." },
+  ]}
+/>
+
+<FlowDiagram
+  label="Как трафик доходит до pod-ов в Kubernetes: внешний запрос входит через Ingress, который маршрутизирует по host и path на ClusterIP-Service, а тот балансирует по EndpointSlice из Ready-pod-ов, построенному из label selector."
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "client", label: "Клиент", sub: "app.example.com" },
+    { id: "ingress", label: "Ingress", sub: "host/path + TLS" },
+    { id: "svc", label: "Service", sub: "ClusterIP" },
+    { id: "ep", label: "EndpointSlice", sub: "IP Ready-pod-ов" },
+    { id: "pod1", label: "Pod", sub: "app: api" },
+    { id: "pod2", label: "Pod", sub: "app: api" },
+    { id: "pod3", label: "Pod", sub: "app: api" },
+  ]}
+  edges={[
+    { from: "client", to: "ingress", label: "HTTPS" },
+    { from: "ingress", to: "svc", label: "маршрут /api" },
+    { from: "svc", to: "ep", label: "совпал selector" },
+    { from: "ep", to: "pod1", label: "баланс" },
+    { from: "ep", to: "pod2", label: "баланс" },
+    { from: "ep", to: "pod3", label: "баланс" },
+  ]}
+  caption="Ingress — L7 парадная дверь; Service — стабильный виртуальный IP; EndpointSlice — живой список Ready-pod-ов из selector. Сломай совпадение selector с label — и EndpointSlice опустеет: Service всё ещё резолвится, но маршрутизирует в никуда."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Ходи до эфемерных pod-ов через Service: виртуальный IP, балансирующий по EndpointSlice из Ready-pod-ов с подходящим `selector`. ClusterIP внутренний, LoadBalancer наружу; Ingress — один общий L7-роутер. selector ≠ label-ы — ноль endpoint-ов.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-services-and-ingress-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройди по механизму selector → endpoints: как Service решает, по каким pod-ам балансировать, и из-за чего список endpoint-ов пустеет?", a: "Service не хранит IP pod-ов напрямую — он объявляет label selector, набор label-ов ключ/значение. Kubernetes непрерывно следит за каждым pod-ом и для тех, что совпадают по всем label-ам selector И при этом Ready (проходят readiness-probe), записывает IP pod-а и target-порт в EndpointSlice (шардированного преемника старого объекта Endpoints). Этот EndpointSlice — список целей балансировки: kube-proxy на каждом узле программирует правила iptables или IPVS по нему, так что соединение с ClusterIP Service форвардится на один из Ready-pod-ов. Поскольку слежение непрерывно, масштабирование вверх добавляет новые Ready-pod-ы в slice за мгновения, а pod, проваливший readiness-probe, удаляется автоматически. Список пустеет тремя классическими способами: selector не находит ни одного pod-а (label переименовали на pod-ах или на Service), совпавшие pod-ы Running, но никогда не становятся Ready (сломанный или слишком строгий readiness-probe), или targetPort указывает на порт, который контейнер не слушает. В каждом случае у Service всё ещё есть ClusterIP и он всё ещё резолвится в DNS, но с пустым EndpointSlice он форвардит в никуда — соединения отказываются или отваливаются по таймауту. Однострочная диагностика — kubectl get endpoints <svc>: <none> значит, что Service ни с одним pod-ом не связан." },
+    { q: "Зачем использовать Ingress вместо отдельного LoadBalancer на каждый сервис, и что должно работать, чтобы Ingress реально заработал?", a: "LoadBalancer-Service поднимает один облачный балансировщик на Service и работает на L4 — поэтому десять публичных сервисов означают десять платных балансировщиков, десять внешних IP и при этом никакой HTTP-осознанной маршрутизации или TLS по маршрутам. Ingress — это L7 (HTTP/HTTPS) роутер, который стоит впереди многих внутренних ClusterIP-Service за одним общим балансировщиком: он раскидывает по host и path на нужный Service, централизованно терминирует TLS и позволяет управлять сертификатами и правилами маршрутизации в одном объекте. Одна точка входа, много бэкендов, гораздо дешевле. Критическая оговорка: объект Ingress — это лишь набор правил, сам по себе он ничего не делает. Ты обязан запустить ingress-контроллер (nginx, Traefik, HAProxy или провайдерский), который следит за объектами Ingress и превращает их в работающий обратный прокси; поле ingressClassName выбирает, какой контроллер владеет Ingress. Без установленного контроллера Ingress применяется как валидный YAML, но ни один прокси его не применяет, поэтому трафик всё равно идёт в никуда." },
+  ]}
+/>
+
+<Recap lang="ru">
+Pod-ы эфемерны и получают новый IP при каждом перепланировании, поэтому ты никогда не обращаешься к ним напрямую — ставишь впереди Service. Service — это API-объект со стабильным ClusterIP и DNS-именем, который балансирует по набору pod-ов, выбранных через label selector: Kubernetes записывает IP pod-ов, совпавших по selector И при этом Ready, в EndpointSlice, а kube-proxy маршрутизирует трафик Service по этому живому списку. Тип управляет охватом: ClusterIP — только внутренний service-to-service, NodePort открывает порт на каждом узле для грубого внешнего доступа, LoadBalancer поднимает один платный облачный LB на Service, а headless-Service отбрасывает виртуальный IP, чтобы DNS возвращал IP pod-ов напрямую для StatefulSet. Поскольку LB-на-сервис дорог и не даёт HTTP-маршрутизации, впереди ставят Ingress как единую L7 парадную дверь: он маршрутизирует по host и path на многие ClusterIP-Service и централизованно терминирует TLS за одним общим балансировщиком — но это лишь правила, и нужен работающий ingress-контроллер (nginx, Traefik), чтобы их применять. Провал, кусающий сильнее всего, — самый простой: если selector у Service не совпадает с label-ами pod-ов (или pod-ы не Ready), EndpointSlice пуст, Service всё ещё резолвится, но маршрутизирует в никуда, и запросы тихо отваливаются по таймауту — поэтому первое, что нужно проверить, всегда `kubectl get endpoints`.
+</Recap>

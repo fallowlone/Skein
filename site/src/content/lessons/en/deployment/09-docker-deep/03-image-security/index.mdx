@@ -1,13 +1,219 @@
 ---
-slug: "03-image-security"
+concepts:
+- attack-surface
+- minimal-base-images
+- non-root-user
+- digest-pinning
+- vulnerability-scanning
+- image-security
+deepensInto: []
+estMin: 17
 lang: en
-track: "deployment"
-unit: "09-docker-deep"
+lessonType: topic
+level: senior
 order: 3
-title: "Image security and scanning"
-summary: "Image security and scanning — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 03-image-security
 sources:
-  - https://docs.docker.com/
+- https://docs.docker.com/develop/security-best-practices/
+- https://docs.docker.com/scout/
+spiral: []
+status: ready
+summary: 'An image ships its whole filesystem as attack surface: minimise the base,
+  drop to non-root, pin by digest, and scan in CI and over time — because a base
+  CVE that was clean at build can turn critical while it sits in prod.'
+title: 'Image security and scanning'
+track: deployment
+unit: 09-docker-deep
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The pentest report lands with one line in red: remote code execution, CVSS 9.8, in a TLS library nobody on the team has ever imported. It came in with the base image — `node:18`, pulled clean eleven months ago, scanned green at build, deployed, and never looked at again. The CVE was published four months after the build. The image never changed; the threat landscape did. Nothing in the pipeline was watching the already-shipped image, so a critical flaw sat in production for a third of a year with a green checkmark next to it.
+</Hook>
+
+<Crux>An image's filesystem is attack surface — minimise the base, run non-root, pin by digest, and rescan over time, not just at build.</Crux>
+
+<Explanation>
+
+## Attack surface is what you ship
+
+Every byte in your image is something an attacker can use once they are inside the container. A full `node:18` or `python:3.12` base is a complete Debian or Ubuntu userland: a shell, `apt`, `curl`, `bash`, dozens of system libraries, a package manager — hundreds of packages, each a row in a CVE database. You did not ask for any of it; it came with the convenience of `FROM node:18`. The first and largest lever in image security is therefore not a scanner or a policy — it is **carrying less**.
+
+Three moves shrink the surface. **Slim** variants (`node:22-slim`) strip the base OS down to roughly what the runtime needs. **Distroless** images (`gcr.io/distroless/*`) go further: only your app plus its direct runtime libraries — no shell, no package manager, no `apt`. **Multi-stage builds** ensure the compilers, dev dependencies, and `apt` caches used to build the artifact never reach the final stage at all. The payoff is direct: fewer installed packages means fewer CVEs to triage, a smaller image to pull and store, and far less for an attacker who lands a shell — because on distroless there is no shell to land in.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:22 AS builder
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Distroless final stage: app + runtime libs only, no shell, no apt
+FROM gcr.io/distroless/nodejs22-debian12
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+# Distroless ships a nonroot user; do not run as root
+USER nonroot
+CMD ["dist/server.js"]
+```
+
+The three base choices trade attack surface against convenience:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Base</th>
+        <th class="border border-border px-3 py-2 text-left">Typical size</th>
+        <th class="border border-border px-3 py-2 text-left">Packages / CVE surface</th>
+        <th class="border border-border px-3 py-2 text-left">Shell + pkg manager?</th>
+        <th class="border border-border px-3 py-2 text-left">Debuggability</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>node:22</code> (full)</td>
+        <td class="border border-border px-3 py-2">~1.1GB</td>
+        <td class="border border-border px-3 py-2">Hundreds — large</td>
+        <td class="border border-border px-3 py-2">Yes (bash, apt)</td>
+        <td class="border border-border px-3 py-2">Easy — full userland</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>node:22-slim</code></td>
+        <td class="border border-border px-3 py-2">~250MB</td>
+        <td class="border border-border px-3 py-2">Dozens — moderate</td>
+        <td class="border border-border px-3 py-2">Yes (smaller set)</td>
+        <td class="border border-border px-3 py-2">Workable — has a shell</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>distroless/nodejs22</code></td>
+        <td class="border border-border px-3 py-2">~120MB</td>
+        <td class="border border-border px-3 py-2">App + runtime only — minimal</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Hard — logs + ephemeral debug containers</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Run as non-root, and pin what you run
+
+By default a container process runs as **root** inside its namespace. That root is somewhat constrained, but it is still the wrong default: if an attacker breaks into the process — through an app bug, a dependency RCE, a misconfigured mount — they inherit root, and root plus a kernel bug or a careless `--privileged` flag or a writable host bind mount is a path to escalation off the container. Docker's own guidance is blunt: *if a service can run without privileges, use `USER` to change to a non-root user.* Add an explicit unprivileged user and switch to it before `CMD`. Pair it with a **read-only root filesystem** (`--read-only`, with a `tmpfs` for the few paths that genuinely need writes) so a compromised process cannot drop a binary or rewrite your app on disk.
+
+```dockerfile
+# Create and switch to an unprivileged user before CMD
+RUN addgroup --system app && adduser --system --ingroup app app
+USER app
+# At run time, lock the root filesystem read-only:
+#   docker run --read-only --tmpfs /tmp myimage
+```
+
+The second discipline is **pinning by digest, not tag**. A tag like `node:22` is a moving pointer — the publisher can, and does, repoint it to a new image whenever they rebuild. That means `FROM node:22` is not reproducible: two builds a week apart can pull two different base images, and `:latest` is the worst of all, silently sliding under you. A **digest** (`node:22@sha256:...`) is the immutable content hash of one exact image; pin to it and every build, every machine, every CI run gets byte-identical bytes — and you have a fixed target to scan and to audit. The cost is that you must deliberately bump the digest to get upstream patches, which is exactly why scanning over time (below) matters.
+
+<Inset kind="why" lang="en">
+"Pin the digest" and "get security patches" seem to fight: an immutable digest never receives the upstream fix. They don't, if you separate the two jobs. The digest gives you a **known, reproducible** input — you always know precisely what is in prod. Continuous rescanning gives you the **signal to move** — when a CVE lands in your pinned digest, the scanner flags it and you bump to a new, patched digest deliberately, through a PR and CI, instead of a tag silently mutating under you. Dependabot/Renovate automate the bump. You get reproducibility and patching, just not by accident.
+</Inset>
+
+## Scanning: at build, and forever after
+
+A scanner (Docker Scout, Trivy, Grype) builds a **software bill of materials** — the SBOM, a complete inventory of every OS package and language dependency in the image, with versions — and matches that inventory against a continuously updated vulnerability database to pinpoint CVEs in your layers and packages. Wire it into CI as a **gate**: fail the build on new critical/high findings so a vulnerable image never ships. The SBOM is also your provenance and audit record — when the next big CVE drops, you answer "are we affected?" by querying SBOMs, not by guessing.
+
+```bash
+# Inventory + vulnerability summary (Docker Scout)
+docker scout quickview my-app:1.4.0
+docker scout cves my-app:1.4.0
+
+# Generate an SBOM for audit / provenance
+docker scout sbom my-app:1.4.0
+
+# Equivalent with Trivy, gating CI on critical/high
+trivy image --severity CRITICAL,HIGH --exit-code 1 my-app:1.4.0
+```
+
+The senior failure mode is treating the build-time scan as the whole job. **A green scan is a snapshot, not a guarantee.** New CVEs are disclosed daily against packages that are already inside your shipped image; an image clean at build can be critical a month later with zero code changes — exactly the hook. So scanning must run **on a schedule against deployed images**, not only in the build that produced them, and the alert must route to whoever can ship the patched digest. Rescan registry images nightly; treat "no one re-scanned" as the real vulnerability.
+
+<TradeoffMatrix
+  id="03-image-security-tradeoff-1"
+  lessonSlug="03-image-security"
+  lang="en"
+  prompt="A compiled service must ship hardened to production with the smallest defensible attack surface. Pick the final-stage base."
+  options={[
+    { name: "Distroless (gcr.io/distroless/*): app + runtime libs only, no shell, no package manager, ships a nonroot user", summary: "Minimal surface.", correct: true, justification: "Fewest installed packages means the fewest CVEs to triage and the least for an attacker who lands in the container — there is no shell to exec, no apt to pull tools, and a nonroot user is the default. This is the standard senior choice for a compiled or self-contained app shipped via multi-stage. The cost you accept is debuggability: no shell means you lean on logs and ephemeral debug/sidecar containers, and you must COPY every runtime dependency in explicitly." },
+    { name: "Slim base (debian-slim / *-slim) running as a non-root USER", summary: "Small, has a shell.", justification: "A solid middle ground: far fewer packages than the full base, and you can still add a non-root USER and a read-only filesystem. It keeps a shell and package manager, which helps debugging but is more attack surface and more CVEs than distroless. A reasonable pick when you genuinely need a shell or to install a runtime tool, not the most-hardened option." },
+    { name: "The full builder base (node:22, python:3.12) reused as the runtime, running as root", summary: "One stage, root.", justification: "The anti-pattern. You ship compilers, dev dependencies, apt caches, a shell, and a package manager into production — hundreds of MB of attack surface that never serves a request — and you run it all as root. Use the full base only as the builder stage, then COPY artifacts into a hardened, non-root final stage." },
+    { name: "Pin :latest of a minimal base so you always get the newest patched image", summary: "Always fresh.", justification: "A moving tag is not reproducible and not auditable: two builds pull different bytes, you can't pin a scan target, and a bad upstream push lands silently in prod. 'Newest' is not the same as 'reviewed.' Pin a digest and bump it deliberately through CI with continuous rescanning; don't outsource your supply-chain integrity to a tag." },
+  ]}
+/>
+
+<Quiz
+  id="03-image-security-quiz-1"
+  lessonSlug="03-image-security"
+  lang="en"
+  question="An image scanned green at build is found a month later with a critical CVE, with no code or image changes in between. What happened, and what prevents it?"
+  choices={[
+    { label: "A new CVE was disclosed against a package already in the shipped image; a green build scan is a point-in-time snapshot, so you must rescan deployed images on a schedule, not only at build", correct: true },
+    { label: "The build scan was misconfigured and missed the CVE", misconception: "The scan was correct at the time — the CVE did not exist yet. The gap is temporal: vulnerabilities are disclosed continuously against already-shipped packages, so a one-time scan can't catch what's published later." },
+    { label: "The image must have been silently rebuilt with a new base", misconception: "The premise is no changes. An immutable image's contents are fixed; what changed is the outside world's knowledge — a new CVE against the same bytes. That's why continuous rescanning, not rebuild detection, is the fix." },
+    { label: "Distroless bases don't get scanned correctly", misconception: "Distroless reduces how many packages can carry CVEs, but it doesn't make scanning unnecessary or wrong. Any base needs rescanning over time; distroless just gives the scanner less to find." },
+  ]}
+/>
+
+<Quiz
+  id="03-image-security-quiz-2"
+  lessonSlug="03-image-security"
+  lang="en"
+  question="Why prefer FROM node:22@sha256:... over FROM node:22 for a production base image?"
+  choices={[
+    { label: "A tag is a mutable pointer the publisher can repoint, so builds aren't reproducible; a digest is the immutable content hash, giving byte-identical builds and a fixed target to scan and audit", correct: true },
+    { label: "A digest pulls faster than a tag", misconception: "Pull speed is about layer caching and size, not tag vs digest. The reason to pin a digest is integrity and reproducibility — you get the exact same bytes every time, not a faster pull." },
+    { label: "Digests automatically receive security patches", misconception: "It's the opposite: a digest is frozen and never receives upstream fixes on its own. You get patches by deliberately bumping to a new digest — which is why continuous scanning tells you when to bump." },
+    { label: "Tags can't be scanned by Docker Scout or Trivy", misconception: "Scanners happily scan tagged images. The problem with a tag isn't scannability — it's that the bytes behind it can change between builds, so you can't pin a known, reproducible, auditable target." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="Image security hardening from the base image at the bottom up to continuous scanning at the top, each layer removing or watching attack surface"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "Scan over time", note: "CI gate + nightly rescan of deployed images" },
+    { label: "Run non-root + read-only FS", note: "USER app; --read-only --tmpfs /tmp" },
+    { label: "Pin by digest", note: "FROM base@sha256:… not :tag / :latest" },
+    { label: "Multi-stage", note: "drop compilers + dev deps from final stage" },
+    { label: "Minimal base", note: "distroless / slim — fewer packages, fewer CVEs" },
+  ]}
+  caption="Defence stacks bottom-up: start by carrying less (minimal base, multi-stage), then make what you carry immutable (digest) and unprivileged (non-root, read-only), then never stop watching it (scan in CI and on a schedule)."
+/>
+
+<KeyTakeaway>Attack surface is everything you ship: minimise the base (distroless/slim + multi-stage), run non-root, pin by digest, and scan with an SBOM in CI and on a schedule — a base CVE clean at build can turn critical in prod.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-image-security-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does minimising the base image (slim/distroless + multi-stage) improve security, not just size?", a: "Every package in an image is potential attack surface: each one is code that can carry a CVE, and each binary or library is a tool an attacker can use once they have a foothold in the container. A full node:18 or python:3.12 base is an entire Linux userland — a shell, apt, curl, dozens of system libraries — hundreds of packages you never asked for but now have to triage in every scan and defend at runtime. Slim variants strip the OS down toward what the runtime needs; distroless goes further and ships only your app plus its direct runtime libraries, with no shell and no package manager at all; multi-stage builds keep the compilers, dev dependencies, and apt caches used during build out of the final image entirely. The security payoff is concrete: fewer installed packages means fewer CVEs to triage, and an attacker who lands code execution on distroless finds no shell to exec, no package manager to pull tools, and almost nothing pre-installed to pivot with. Carrying less is the largest single lever in image hardening, ahead of any scanner or policy." },
+    { q: "Walk through how a base-image CVE can sit in production for months with a green checkmark, and the practices that prevent it.", a: "A scan at build time is a point-in-time snapshot: it matches the image's SBOM against the vulnerability database as it exists that day. New CVEs are disclosed continuously against packages that are already inside your shipped image, so an image that scanned green at build can become critical a month later with zero code or image changes — the bytes are identical, but the world's knowledge of them changed. If nothing in the pipeline rescans already-deployed images, that critical flaw sits in prod next to a green build checkmark until someone external (a pentest, an incident) finds it. The fixes are layered: pin the base by digest so you know exactly which immutable image is running and have a fixed target to scan and audit; generate and keep SBOMs so you can answer 'are we affected?' by query instead of guesswork; gate CI on new critical/high findings so a vulnerable image never ships in the first place; and — the part teams skip — run the scanner on a schedule against deployed/registry images, routing alerts to whoever can bump to a patched digest. Treat 'no one re-scanned' as the actual vulnerability." },
+  ]}
+/>
+
+<Recap lang="en">
+An image ships its entire filesystem as attack surface, so the first and biggest security lever is carrying less: choose a minimal base (slim, or distroless with no shell or package manager) and use multi-stage builds so compilers and dev dependencies never reach the final image, which directly shrinks how many CVEs you must triage and how much an intruder can pivot with. Then harden what remains — add an explicit non-root `USER` before `CMD` so a compromised process doesn't inherit root, and lock the root filesystem read-only with a `tmpfs` for the few writable paths. Pin the base by digest (`@sha256:…`) rather than a mutable tag so builds are reproducible, auditable, and present a fixed target, accepting that you then bump the digest deliberately to take patches. Finally, scan with a tool that builds an SBOM and matches it against a CVE database — gate CI on critical/high to keep vulnerable images from shipping, but also rescan deployed images on a schedule, because a base CVE that was clean at build can turn critical while the unchanged image sits in production, and the real vulnerability is no one ever looking again.
+</Recap>
