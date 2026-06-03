@@ -1,13 +1,246 @@
 ---
-slug: "02-deploy-a-container"
+concepts:
+- ecr-push
+- ecs-fargate
+- app-runner
+- execution-vs-task-role
+- alb-health-checks
+- image-architecture
+- SAA-C03:Design High-Performing Architectures
+deepensInto: []
+estMin: 18
 lang: en
-track: "aws"
-unit: "02-compute-and-deploy"
+lessonType: topic
+level: middle
 order: 2
-title: "Deploy a container end to end"
-summary: "Deploy a container end to end — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-deploy-a-container
 sources:
-  - https://docs.aws.amazon.com/
+- https://docs.aws.amazon.com/AmazonECR/latest/userguide/getting-started-cli.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_execution_IAM_role.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/service-load-balancing.html
+- https://docs.aws.amazon.com/apprunner/latest/dg/service-source-image.html
+spiral: []
+status: ready
+summary: Build the image, push it to ECR, then run it — either an ECS/Fargate service behind an ALB or a managed App Runner service. The senior details are the two roles, the health check, and the arm64/amd64 trap.
+title: Deploy a container end to end
+track: aws
+unit: 02-compute-and-deploy
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The image builds on your laptop, runs locally, and you push it. Minutes later the ECS service is stuck: desired count 1, running count 0, tasks flapping with `exec format error`. The image is fine — it is just the wrong CPU. You built it on an Apple Silicon Mac (arm64) and the Fargate task is amd64. Nothing in `docker push` warns you; the mismatch only surfaces when the container tries to run. End-to-end deploy is exactly this: every hop — build, push, run, route traffic — is a place the happy path quietly breaks.
+</Hook>
+
+<Crux>Deploying a container is four hops: build the image, push to ECR, run it as a service, and route traffic via a health-checked balancer.</Crux>
+
+<Explanation>
+
+## Build the image and push it to ECR
+
+ECR (Elastic Container Registry) is AWS's private Docker registry. Before you can `docker push`, you authenticate: `aws ecr get-login-password` mints a short-lived token that you pipe into `docker login`. Then you tag the local image with the registry's fully-qualified name and push.
+
+```bash
+# 1. Authenticate Docker to your private ECR registry (token is valid ~12h)
+aws ecr get-login-password --region eu-central-1 \
+  | docker login --username AWS \
+      --password-stdin 123456789012.dkr.ecr.eu-central-1.amazonaws.com
+
+# 2. Build for the architecture the runtime expects — this is the trap.
+#    On an Apple Silicon Mac, --platform is mandatory or you ship arm64 to amd64 Fargate.
+docker build --platform linux/amd64 -t myapp:1.0 .
+
+# 3. Tag with the full ECR repo URI, then push
+docker tag myapp:1.0 123456789012.dkr.ecr.eu-central-1.amazonaws.com/myapp:1.0
+docker push   123456789012.dkr.ecr.eu-central-1.amazonaws.com/myapp:1.0
+```
+
+Two things bite people here. First, the **repository must already exist** — `aws ecr create-repository --repository-name myapp` — `push` does not create it. Second, the **architecture**: an image is built for a specific CPU, and `docker push` happily uploads an arm64 image to a repo that an amd64 task will pull. The failure is deferred to runtime as `exec format error`. Build with an explicit `--platform`, or use `docker buildx` to produce a multi-arch manifest, and pick a Fargate `runtimePlatform` (`X86_64` or `ARM64`) that matches.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Hop</th>
+        <th class="border border-border px-3 py-2 text-left">Command / object</th>
+        <th class="border border-border px-3 py-2 text-left">Silent failure if you skip it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Authenticate</td>
+        <td class="border border-border px-3 py-2"><code>ecr get-login-password | docker login</code></td>
+        <td class="border border-border px-3 py-2"><code>no basic auth credentials</code> on push</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Build</td>
+        <td class="border border-border px-3 py-2"><code>docker build --platform linux/amd64</code></td>
+        <td class="border border-border px-3 py-2">arm64 image → <code>exec format error</code> at run</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Repo exists</td>
+        <td class="border border-border px-3 py-2"><code>ecr create-repository</code></td>
+        <td class="border border-border px-3 py-2"><code>name unknown</code> / repository does not exist</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Push</td>
+        <td class="border border-border px-3 py-2"><code>docker tag &amp;&amp; docker push &lt;uri&gt;</code></td>
+        <td class="border border-border px-3 py-2">pushing the bare tag, not the registry URI</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Route A — ECS on Fargate behind an ALB
+
+Fargate runs your container without you managing servers, but you assemble several objects yourself. The **task definition** is the blueprint: which image, how much CPU/memory, which port, what roles, where logs go.
+
+```json
+{
+  "family": "myapp",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "512",
+  "memory": "1024",
+  "runtimePlatform": { "cpuArchitecture": "X86_64", "operatingSystemFamily": "LINUX" },
+  "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+  "taskRoleArn":      "arn:aws:iam::123456789012:role/myappTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "myapp",
+      "image": "123456789012.dkr.ecr.eu-central-1.amazonaws.com/myapp:1.0",
+      "portMappings": [ { "containerPort": 8080, "protocol": "tcp" } ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/myapp",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "myapp"
+        }
+      }
+    }
+  ]
+}
+```
+
+The **two roles are the most-confused part of ECS**, and they are not interchangeable:
+
+- **Execution role** (`executionRoleArn`) — used by the ECS *agent* at launch, before your code runs, to pull the image from ECR and write logs to CloudWatch. The AWS-managed `AmazonECSTaskExecutionRolePolicy` covers exactly this. If it is missing, the task never starts: you see `CannotPullContainerError` or no log group.
+- **Task role** (`taskRoleArn`) — the identity *your application code* assumes at runtime. This is what your SDK calls use to read an S3 bucket, a DynamoDB table, or a secret. Scope it least-privilege to the few actions the app actually needs; it has nothing to do with pulling the image.
+
+Then a **service** keeps N copies running and ties them to a load balancer:
+
+```bash
+aws ecs create-service \
+  --cluster prod \
+  --service-name myapp \
+  --task-definition myapp \
+  --desired-count 2 \
+  --launch-type FARGATE \
+  --network-configuration 'awsvpcConfiguration={
+      subnets=[subnet-aaa,subnet-bbb],
+      securityGroups=[sg-app],
+      assignPublicIp=DISABLED }' \
+  --load-balancers 'targetGroupArn=arn:...:targetgroup/myapp/abc,
+      containerName=myapp,containerPort=8080'
+```
+
+Spread the subnets across **two Availability Zones** so an AZ outage does not take you fully down. An **Application Load Balancer** sits in front with a **target group** whose **health check** probes a path (e.g. `GET /healthz`). The ALB only sends traffic to targets that pass, and rolling deploys lean on this: ECS starts new-version tasks, waits for them to pass the health check, registers them, then drains and stops old tasks. A health check that is too strict, too fast, or points at a path your app does not serve will make every deploy roll back — the new tasks "fail," ECS keeps the old ones, and you wonder why your change never shipped.
+
+<SequenceDiagram
+  label="The container deploy pipeline: build the image, push it to ECR, create the ECS service, and serve traffic through the load balancer once the task passes its health check."
+  hue="var(--d-systems)"
+  actors={["Dev", "ECR", "ECS", "ALB"]}
+  messages={[
+    { from: "Dev", to: "ECR", label: "docker push myapp:1.0 (amd64)" },
+    { from: "Dev", to: "ECS", label: "register task def + create service" },
+    { from: "ECS", to: "ECR", label: "exec role pulls image" },
+    { from: "ECS", to: "ECS", label: "task starts, listens :8080" },
+    { from: "ALB", to: "ECS", label: "GET /healthz → 200" },
+    { from: "ALB", to: "ECS", label: "register target, route traffic" },
+  ]}
+  caption="Time flows top to bottom. The execution role pulls from ECR before your code runs; the ALB only routes once the health check passes — which is also how a rolling deploy decides a new version is healthy."
+/>
+
+## Route B — App Runner: the managed shortcut
+
+If you do not need the control of ECS, **App Runner** collapses most of route A into one service. You point it at the ECR image and it provisions the load balancer, TLS certificate, autoscaling, and a public HTTPS URL for you — no task definition JSON, no target group, no subnets to wire.
+
+```bash
+aws apprunner create-service \
+  --service-name myapp \
+  --source-configuration '{
+    "ImageRepository": {
+      "ImageIdentifier": "123456789012.dkr.ecr.eu-central-1.amazonaws.com/myapp:1.0",
+      "ImageRepositoryType": "ECR",
+      "ImageConfiguration": { "Port": "8080" }
+    },
+    "AutoDeploymentsEnabled": true,
+    "AuthenticationConfiguration": {
+      "AccessRoleArn": "arn:aws:iam::123456789012:role/AppRunnerECRAccessRole"
+    }
+  }' \
+  --health-check-configuration '{ "Protocol": "HTTP", "Path": "/healthz" }'
+```
+
+App Runner still has the same two-identity idea: an **access role** to pull from ECR (the equivalent of the execution role) and an optional **instance role** for your app's own AWS calls (the task role). It still runs a health check. And it still cares about architecture — App Runner runs the image as-is, so an arm64 image will not start. The trade is control for convenience: you give up fine-grained networking, custom load-balancer rules, and per-task placement, and you get a working HTTPS service in one call. Reach for ECS/Fargate when you need VPC integration, sidecars, or precise scaling; reach for App Runner when you just want a container on the internet.
+
+<Inset kind="why" lang="en">
+Why does the *execution* role pull the image and not the *task* role? Because the pull happens before your container exists — the ECS agent (AWS infrastructure) needs ECR and CloudWatch permission to even start the task. The task role is assumed *inside* the running container by your code via the SDK. Conflating them is the classic ECS bug: people put S3 permissions on the execution role (so the agent could read S3, but the app cannot) and wonder why their code gets `AccessDenied` while the task starts fine.
+</Inset>
+
+<Quiz
+  id="02-deploy-a-container-quiz-1"
+  lessonSlug="02-deploy-a-container"
+  lang="en"
+  question="An ECS/Fargate task crashes immediately with 'exec format error' and never serves a request. Most likely cause?"
+  choices={[
+    { label: "The image was built for arm64 (e.g. on an Apple Silicon Mac) but the task's runtimePlatform is X86_64 — build with --platform linux/amd64 or set the matching architecture", correct: true },
+    { label: "The execution role is missing ECR pull permission", misconception: "A missing execution role gives CannotPullContainerError at pull time — the task never gets an image. 'exec format error' means the image was pulled fine but its binaries are the wrong CPU architecture." },
+    { label: "The ALB health check path is wrong", misconception: "A bad health check makes a running task fail its probe and get drained — but the container still starts and serves. 'exec format error' is the kernel refusing to run a wrong-architecture binary, before any HTTP." },
+    { label: "desired-count is set to 0", misconception: "Desired count 0 means no tasks launch at all — you would see nothing running, not a task crashing with exec format error." },
+  ]}
+/>
+
+<Quiz
+  id="02-deploy-a-container-quiz-2"
+  lessonSlug="02-deploy-a-container"
+  lang="en"
+  question="Your container starts fine, but its code gets AccessDenied calling s3:GetObject. The task definition has both roles. Where do the S3 permissions belong?"
+  choices={[
+    { label: "On the task role (taskRoleArn) — that is the identity your application code assumes at runtime for its own AWS API calls", correct: true },
+    { label: "On the execution role (executionRoleArn)", misconception: "The execution role is used by the ECS agent to pull the image and write logs before your code runs — not by your code. Putting app permissions there is the classic mix-up: the agent can read S3, but your container cannot." },
+    { label: "On the ALB's security group", misconception: "Security groups control network reachability (ports/CIDRs), not IAM permissions. s3:GetObject is an IAM authorization decision, governed by the role your code assumes." },
+    { label: "Nowhere — Fargate grants S3 by default", misconception: "Fargate grants nothing by default; least privilege means the task role starts empty. You must explicitly attach an s3:GetObject policy scoped to the bucket." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Deploy = build (right architecture) → `ecr get-login-password` + tag + push → run it. On Fargate the execution role pulls the image and the task role is your app's runtime identity; an ALB health check gates traffic and rolling deploys. App Runner does all of that for you in one call but trades away control.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-deploy-a-container-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full path from a local Docker image to live traffic on ECS/Fargate behind an ALB.", a: "First make sure the ECR repository exists (aws ecr create-repository). Authenticate Docker to ECR with aws ecr get-login-password piped into docker login — the token is short-lived. Build the image for the architecture the task will run (docker build --platform linux/amd64 for X86_64 Fargate, or buildx for a multi-arch manifest), tag it with the full registry URI (account.dkr.ecr.region.amazonaws.com/repo:tag), and docker push. Then register a task definition: image, cpu/memory, the container port, runtimePlatform, an execution role (so the ECS agent can pull from ECR and write logs to CloudWatch via the awslogs driver), a task role (your app's runtime identity, least-privilege), and a log configuration. Create a service with a desired count, subnets spread across two AZs, a security group, and a link to an ALB target group. The ALB health-checks a path like /healthz; once a task passes, the ALB registers it and routes traffic. Rolling deploys reuse this: new tasks must pass the health check before old ones drain." },
+    { q: "Explain the execution role vs the task role, and the arm64/amd64 trap — why each one fails silently until runtime.", a: "The execution role is assumed by the ECS agent (AWS infrastructure) at launch, before your code runs, to pull the image from ECR and ship logs to CloudWatch; the AWS-managed AmazonECSTaskExecutionRolePolicy covers it. The task role is assumed by your application code inside the running container, via the SDK, for the app's own AWS calls (S3, DynamoDB, Secrets Manager) — scope it least-privilege. They are not interchangeable: app permissions on the execution role leave the agent able to read S3 while your code still gets AccessDenied. The arm64/amd64 trap is that an image is compiled for a specific CPU, and docker push will upload an arm64 image (common when you build on an Apple Silicon Mac) to a repo an X86_64 task pulls. Nothing warns you at build or push time; the kernel refuses the wrong-architecture binary only when the task launches, surfacing as exec format error. Fix it by building with an explicit --platform or a multi-arch manifest and matching the Fargate runtimePlatform." },
+  ]}
+/>
+
+<Recap lang="en">
+A container deploy on AWS is four hops, and each hop hides a quiet failure. You build the image — for the right CPU, because docker push will ship an arm64 image to an amd64 task and you only learn at runtime via exec format error. You push to ECR after creating the repo and authenticating with ecr get-login-password into docker login, tagging with the full registry URI. Then you run it. On ECS/Fargate you assemble a task definition (image, cpu/memory, port, runtimePlatform, log config to CloudWatch via the awslogs driver) with two distinct roles — the execution role the ECS agent uses to pull the image and write logs, and the least-privilege task role your code assumes for its own AWS calls — then a service with a desired count, subnets across two AZs, a security group, and an ALB target group whose health check gates traffic and drives rolling deploys. App Runner collapses the load balancer, TLS, autoscaling, and public URL into one create-service call pointed at the ECR image; it keeps the same access-role/instance-role split and still cares about architecture. The recurring lesson: build for the right arch, separate the two roles, and get the health check right — those three are where end-to-end deploys break.
+</Recap>
