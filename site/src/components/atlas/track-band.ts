@@ -40,6 +40,8 @@ export const TRACK_BAND: Record<Track, Band> = {
   "python":               "surface",
   "aws":                  "advanced",
   "ci-cd":                "advanced",
+  "node":                 "surface",
+  "nest":                 "surface",
 };
 
 export function bandOf(slug: Track): Band {
