@@ -4,35 +4,175 @@ lang: en
 track: "system-design-cases"
 unit: "03-media-storage"
 order: 3
-title: "Design an S3-like object store"
-summary: "Design an S3-like object store — to be authored."
-estMin: 16
-status: stub
+title: "Design an object store (S3-like)"
+summary: "Design S3: a flat key→bytes namespace where the metadata service maps keys to data locations and the data plane stores bytes durably. Erasure coding buys eleven nines of durability at ~1.5× overhead instead of 3× replication, and multipart upload makes huge objects reliable."
+estMin: 35
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - flat-namespace
+  - durability-eleven-nines
+  - erasure-coding
+  - replication
+  - metadata-service
+  - multipart-upload
+prereqs:
+  - system-design/07-storage-choices/02-blob-and-object
+  - system-design/04-data-distribution/01-replication
 sources:
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/DataDurability.html
+  - https://www.usenix.org/system/files/login/articles/login_winter17_07_xia.pdf
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+The previous two lessons leaned on "put the bytes in object storage" as if it were a primitive. It isn't — it's a distributed system with one of the most demanding requirements in the field: **eleven nines of durability** (99.999999999%), which means that if you store ten million objects you expect to lose roughly one of them every ten thousand years. No single disk gets anywhere near that; disks fail constantly, by the thousands, at fleet scale. So the design question is brutal and specific: how do you take commodity drives that each fail in a few years and compose them into a system where data is, for practical purposes, never lost — without paying to store every byte three times? And how do you let a user PUT a 5 TB object over a flaky connection without restarting from zero when the network blips at 90%? The answers are erasure coding and multipart upload, and they sit on top of a deceptively simple-looking flat namespace that hides an enormous amount of machinery.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A flat key→bytes namespace: metadata maps keys to locations; a data plane stores bytes via erasure coding — 11 nines at ~1.5×, not 3×.</Crux>
 
 <Explanation>
 
-## Design an S3-like object store
+## Requirements
 
-Body to be authored.
+**Functional** — store an object (opaque bytes) under a key in a bucket; GET it back by key; DELETE it; list keys in a bucket (often by prefix). That's nearly the whole API: `PUT(bucket, key, bytes)`, `GET(bucket, key)`, `DELETE`, `LIST(prefix)`. No partial updates — objects are immutable, you replace the whole thing. Multipart upload for large objects. This minimalism is deliberate: a narrow interface is what lets the implementation scale.
+
+**Non-functional** — the headline is **durability**: ~11 nines, because customers build their entire businesses on "we will not lose your data." Then **availability** (highly available reads/writes), **scalability** (exabytes, trillions of objects, no practical limit), and **cost** (it's bulk storage — every 1× of storage overhead is a fortune at exabyte scale, so paying 3× to replicate everything is painful). Latency is secondary — object storage is throughput-and-durability-oriented, not a low-latency database.
+
+Durability at ~11 nines with minimal storage overhead is the requirement that produces the entire interesting design: it's why erasure coding exists in the answer at all.
+
+## Estimation
+
+```
+Scale:      trillions of objects, exabytes of data, no fixed ceiling
+Object size: bimodal — many tiny objects (KB) + many huge ones (GB–TB)
+Durability:  ~11 nines (99.999999999%) → ~1 object lost per 1e7 stored per ~1e4 years
+Disk reality: a single disk's annual failure rate ~1–4%; at fleet scale thousands fail/day
+             → durability MUST come from redundancy across disks/racks/datacenters
+Overhead:    3× replication = 200% extra storage; erasure coding (e.g. 10+4) ≈ 40% extra
+             at exabyte scale, 1.5× vs 3× is the difference between viable and bankrupt
+Metadata:    key → {bucket, size, location/shard map, version, checksum} ≈ hundreds of bytes
+             trillions of keys → petabytes of metadata in its own sharded store
+```
+
+The cost line is the whole argument for erasure coding: at this scale you cannot afford 3× replication for cold/large data, so you trade some CPU and reconstruction latency for ~1.5× storage that still hits 11 nines. And the metadata is itself a large distributed database — the index that maps keys to where the bytes live.
+
+## High-level design
+
+Split into a **metadata service** (key → location, the index) and a **data plane** (the actual byte storage across many storage nodes), behind an API/load-balancer tier. A PUT writes bytes to the data plane (durably, via erasure coding or replication) and records the key→location mapping in metadata; a GET looks up the location in metadata and streams the bytes from the data nodes.
+
+<FlowDiagram
+  label="PUT path: the client sends bytes through the API tier; the data plane splits the object into data shards, computes parity shards via erasure coding, and writes all shards across independent storage nodes in different racks/zones; only after enough shards are durably written does the metadata service record the key and its shard locations, making the object readable."
+  perRow={4}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "client", label: "client", sub: "PUT key, bytes" },
+    { id: "api", label: "API tier", sub: "auth + route" },
+    { id: "ec", label: "data plane", sub: "split + parity" },
+    { id: "n1", label: "storage nodes", sub: "data shards" },
+    { id: "n2", label: "storage nodes", sub: "parity shards" },
+    { id: "meta", label: "metadata svc", sub: "key → shard map" },
+    { id: "ack", label: "client", sub: "200 OK" },
+  ]}
+  edges={[
+    { from: "client", to: "api", label: "PUT" },
+    { from: "api", to: "ec", label: "stream bytes" },
+    { from: "ec", to: "n1", label: "write data" },
+    { from: "ec", to: "n2", label: "write parity" },
+    { from: "ec", to: "meta", label: "record locations" },
+    { from: "meta", to: "ack", label: "durable → ack" },
+  ]}
+  caption="Bytes are encoded into data + parity shards spread across independent failure domains (racks, zones); the metadata service records the key→shard mapping only after the write is durable. A GET reverses it: look up the shard map, read enough shards, reconstruct. The flat key space hides this entirely."
+/>
+
+The user sees a **flat namespace**: a key like `photos/2024/cat.jpg` is *one opaque string*, not a path through directories. The slashes are convention for `LIST` prefix queries, but there are no real folders — which is exactly why the namespace scales to trillions of keys: there is no directory tree to traverse or rebalance, just a giant sorted key→location index that can be partitioned by key range or hash across the metadata store.
+
+## Deep dive: durability via erasure coding
+
+To survive disk and machine failures, you must store redundancy. The obvious way is **replication**: keep N full copies (typically 3), on different racks and datacenters; lose two copies and the third still serves. It's simple and gives fast reads, but it costs 200% extra storage — at exabyte scale, ruinous.
+
+**Erasure coding** gets the same or better durability far cheaper. Split an object into `k` data shards, compute `m` parity shards (Reed-Solomon math), and store all `k+m` shards on independent nodes. The guarantee: you can reconstruct the original from *any* `k` of the `k+m` shards, so you tolerate losing up to `m` shards. A common scheme is `k=10, m=4`: 14 shards, survive any 4 failures, at only `14/10 = 1.4×` storage overhead — versus `3×` for triple replication, for *better* fault tolerance (4 simultaneous losses vs 2). Spread the shards across racks, zones, and datacenters and you get the eleven-nines durability the requirement demands, because the probability of losing more than `m` shards before repair completes is astronomically small.
+
+<Inset kind="why" lang="en">
+Why doesn't everyone just use erasure coding for everything if it's so much cheaper? Because it trades storage for **CPU and read complexity**, and that trade is bad for small, hot objects. A replicated object can be read from any single copy with one cheap request; an erasure-coded object requires gathering `k` shards from `k` different nodes and running a reconstruction computation — more I/O fan-out and CPU per read, and worse tail latency. For a tiny, frequently-read object, the per-read overhead dwarfs the storage saving. So real systems tier it: **replicate small and hot data** (cheap reads, modest storage cost because the objects are small) and **erasure-code large and cold data** (huge storage savings where reads are rare and the object is big enough to amortize the fan-out). Matching the redundancy scheme to the object's size and access frequency is the senior decision; "always erasure code" and "always replicate" are both wrong.
+</Inset>
+
+## Deep dive: metadata service, consistency, and multipart upload
+
+The **metadata service** is the index: it maps each key to its bucket, size, version, checksum, and the locations of its shards (which nodes hold which shard). It's a large distributed database in its own right — trillions of keys, partitioned by key hash or range — and it is the part that needs *consistency*. When a PUT completes, the metadata commit is the moment the object becomes readable, and it must be atomic: an object is either fully indexed (all shards recorded) or not visible at all, never half-written. Modern S3 offers **strong read-after-write consistency**, meaning a GET immediately after a successful PUT always returns the new object — achieved by making the metadata update the linearization point and not acknowledging the PUT until it's durably recorded.
+
+**Multipart upload** solves the 5 TB-over-a-flaky-link problem. The client splits a large object into parts, uploads each part independently (in parallel, and retryable on its own), and finally issues a "complete" call listing the parts; the service stitches them into one object. If part 37 fails at 90%, you retry *only part 37*, not the whole 5 TB. Parts can upload concurrently for throughput, and the object isn't visible until "complete" assembles it — so multipart gives you reliability (per-part retry), throughput (parallelism), and atomicity (all-or-nothing completion) for huge objects, which a single monolithic PUT can't.
+
+<Inset kind="mistake" lang="en">
+A classic misread is treating the object store like a filesystem: assuming `LIST photos/` is a cheap directory listing, or that renaming `a/` to `b/` is an atomic metadata flip. Neither is true. There are **no directories** — the namespace is flat, and `LIST` with a prefix is a *range scan over the key index*, which is fine for moderate prefixes but pathological if you cram billions of keys under one prefix (a hot partition in the metadata store). "Renaming a folder" means copying every object to new keys and deleting the old ones — O(number of objects), not O(1). And listing is eventually consistent in some systems even where GET is strong. Design your key naming to spread load across the index (avoid sequential/monotonic prefixes that all hit one partition), and never assume filesystem semantics under the flat-namespace hood.
+</Inset>
+
+<Quiz
+  id="03-object-storage-quiz-1"
+  lessonSlug="03-object-storage"
+  lang="en"
+  question="You must hit ~11 nines of durability for exabytes of large, cold objects at minimum storage cost. Replication or erasure coding, and why?"
+  choices={[
+    { label: "Erasure coding (e.g. 10+4): split into 10 data + 4 parity shards across independent nodes, reconstruct from any 10, tolerate 4 losses — ~1.4× overhead vs 3× replication, with better fault tolerance. The storage saving is decisive at exabyte scale.", correct: true },
+    { label: "Triple replication, because 3 copies is the only way to reach 11 nines.", misconception: "3× isn't the only way and it's the expensive way (200% overhead). Erasure coding (10+4) hits 11 nines at ~40% overhead and tolerates MORE simultaneous failures (4 vs 2). For large cold data, replication's storage cost is ruinous at exabyte scale." },
+    { label: "Single copy with frequent checksums to detect corruption.", misconception: "Checksums detect corruption but can't recover from a failed disk — one drive death loses the only copy. You need redundancy (erasure-coded shards or replicas) across independent failure domains to survive failures, not just detect them." },
+    { label: "RAID within a single machine.", misconception: "RAID protects against disk failure within one box but not against the box, rack, or datacenter failing — and 11 nines requires redundancy across independent failure domains. Erasure-code shards across racks/zones/datacenters, not disks in one chassis." },
+  ]}
+/>
+
+<Quiz
+  id="03-object-storage-quiz-2"
+  lessonSlug="03-object-storage"
+  lang="en"
+  question="A client uploads a 5 TB object over a connection that occasionally drops. The naive single PUT keeps failing near the end. What's the right mechanism?"
+  choices={[
+    { label: "Multipart upload: split into parts uploaded independently and in parallel, each retryable on its own; a final 'complete' call stitches them, and the object becomes visible atomically only then. A dropped part is retried alone, not the whole 5 TB.", correct: true },
+    { label: "Increase the request timeout so the single PUT has time to finish.", misconception: "A longer timeout doesn't help a connection that drops — you still restart 5 TB from zero on each failure. Multipart splits the upload so only the failed part retries, giving reliability and parallelism a monolithic PUT can't." },
+    { label: "Compress the object client-side so it fits in one PUT.", misconception: "Compression may shrink it but a multi-TB object is still too large to upload reliably as one request over a flaky link. The mechanism is multipart upload (per-part retry + parallel + atomic complete), independent of compression." },
+    { label: "Stream it into a database BLOB so the DB handles resumption.", misconception: "Object bytes don't belong in a database (it's the anti-pattern from earlier lessons), and DBs don't provide resumable multi-TB uploads. The object store's own multipart upload is the answer: independent retryable parts plus an atomic complete." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-object-storage-metaphor-1"
+  lessonSlug="03-object-storage"
+  lang="en"
+  setup="A key like photos/2024/cat.jpg is one opaque string, not a path through real directories — the slashes are just convention for prefix LIST queries. Because there is no directory tree to traverse, this design is called a _______ namespace."
+  accepted={["flat", "flat namespace", "a flat"]}
+  canonical="flat"
+  explanation="The flat namespace is what lets an object store scale to trillions of keys: there's no directory tree to walk or rebalance, just a giant sorted key→location index partitioned across the metadata store. The trap is treating it like a filesystem — LIST prefix is a range scan, and 'renaming a folder' means copying every object, not an O(1) flip."
+/>
+
+## Bottlenecks & tradeoffs
+
+The defining tradeoff is **redundancy scheme vs object profile**: replicate small/hot (cheap reads, small storage hit) and erasure-code large/cold (huge storage savings, costlier reconstruction reads) — getting this wrong wastes either money (over-replicating cold data) or latency (erasure-coding hot tiny objects). The **metadata service is the consistency bottleneck and the hot spot**: it must be a scalable, strongly-consistent index, and poorly-chosen keys (monotonic prefixes) create hot partitions. **Repair throughput** matters more than it looks: durability assumes failed shards are rebuilt *before* enough others fail, so background re-replication/re-encoding must outpace the failure rate — eleven nines is a statement about the race between failure and repair. And the **flat namespace** is a feature, not a limitation: by refusing filesystem semantics it sidesteps the directory-tree scaling problems, at the cost of expensive prefix operations you must design your keys around. As throughout this unit, the bytes live in the durable data plane and the consistency lives in the metadata index.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A flat key→bytes namespace: metadata (key→shards) + data plane (durable bytes). Erasure coding (10+4) hits 11 nines at ~1.4× vs 3×; replicate hot/small, code cold/large. Durability races failure vs repair.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-object-storage-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the flat namespace and what's the architectural split behind it?", a: "The user sees a flat key→bytes namespace: a key like photos/2024/cat.jpg is one opaque string, not a path through real directories — slashes are convention for LIST prefix queries. Behind it: a metadata service (a large distributed, strongly-consistent index mapping each key to bucket/size/version/checksum and its shard locations) and a data plane (storage nodes holding the actual bytes). A PUT writes bytes durably to the data plane then records the mapping in metadata; a GET looks up the location and streams the bytes. No directory tree means it scales to trillions of keys." },
+    { q: "How does erasure coding give 11 nines cheaper than replication, and when do you still replicate?", a: "Erasure coding splits an object into k data shards, computes m parity shards (Reed-Solomon), and stores all k+m on independent nodes across racks/zones; you reconstruct from any k, so you tolerate m losses. E.g. 10+4: 14 shards, survive 4 failures, at ~1.4× storage vs 3× for triple replication — better fault tolerance, far less overhead, which is decisive at exabyte scale. But erasure coding costs CPU and read fan-out (gather k shards + reconstruct), bad for small hot objects, so you replicate small/hot data (cheap single-copy reads) and erasure-code large/cold data (storage savings where reads are rare)." },
+    { q: "Why multipart upload, and where does consistency live?", a: "Multipart upload splits a huge object into parts uploaded independently, in parallel, each retryable alone; a final 'complete' call stitches them and the object becomes visible atomically only then — so a dropped part is retried without restarting the whole multi-TB upload, giving reliability + throughput + atomicity. Consistency lives in the metadata service: the metadata commit is the linearization point, so an object is either fully indexed or invisible (never half-written), and S3's strong read-after-write consistency comes from not acking a PUT until the metadata is durably recorded. Durability itself is a race: background repair must rebuild failed shards faster than new failures accumulate." },
+  ]}
+/>
+
+<Recap lang="en">
+"Put it in object storage" is itself a hard distributed system. The interface is a deliberately minimal **flat key→bytes namespace** (PUT/GET/DELETE/LIST-by-prefix, immutable objects) — a key is one opaque string, not a directory path, which is precisely why it scales to trillions of keys with no tree to rebalance. The architecture splits into a **metadata service** (a large, strongly-consistent index mapping keys to shard locations — where consistency and the read-after-write guarantee live) and a **data plane** (storage nodes holding the bytes durably). The headline requirement, **~11 nines of durability** on commodity disks that fail by the thousands, is met by spreading redundancy across independent failure domains — and the cost line forces **erasure coding** (split into k data + m parity shards, reconstruct from any k, e.g. 10+4 for 4-failure tolerance at ~1.4× overhead) over **3× replication** for large cold data, while still **replicating small hot objects** whose reconstruction fan-out would hurt. **Multipart upload** makes 5 TB uploads reliable via independent, parallel, retryable parts assembled by an atomic complete. The deepest insight: eleven nines is a statement about the **race between failure and repair** — background re-encoding must outrun the failure rate. And, as everywhere in this unit, the bytes live in the durable data plane while consistency lives in the metadata index.
+</Recap>

@@ -4,19 +4,152 @@ lang: en
 track: "system-design-cases"
 unit: "04-location-realtime"
 order: 7
-title: "04-location-realtime: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Location & realtime: reading the code and config"
+summary: "Read real geo-query code, a pub/sub routing config, a routing-engine setup, and Redis sorted-set commands, then do the reasoning: spot the single-cell bug, the broadcast blow-up, the re-contraction trap, and the O(n) rank query."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - spatial-index
+  - cell-boundary
+  - pub-sub-by-region
+  - contraction-hierarchies
+  - redis-zset
+  - rank-query
+prereqs:
+  - 04-location-realtime/01-proximity-service
+  - 04-location-realtime/02-nearby-friends
+  - 04-location-realtime/03-google-maps
+  - 04-location-realtime/04-gaming-leaderboard
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://redis.io/docs/latest/commands/zrevrank/
+  - https://redis.io/docs/latest/develop/interact/pubsub/
+  - https://h3geo.org/docs/highlights/indexing/
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 04-location-realtime unit. STUB.</Hook>
+<Hook>
+The bugs in these systems live in the code, not the prose: a query that reads one cell, a publish that goes to everyone, a routing setup that re-preprocesses on every traffic tick, a rank query that scans. Read each snippet, run it in your head, and pick the answer a senior engineer would commit to.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the snippet, spot the structural mistake — single cell, broadcast, re-contraction, O(n) rank — and pick the fix that fits.</Crux>
+
+<Explanation>
+
+Practise the design-review loop: locate the access pattern in the code, match it to the right structure, and choose the change the architecture actually supports.
+
+## Snippet 1 — the proximity query
+
+```python
+def nearby(lat, lng, radius_m):
+    cell = h3.geo_to_h3(lat, lng, res=9)         # the user's own cell
+    candidates = store.get_by_cell(cell)         # only this one cell
+    return [p for p in candidates
+            if haversine(lat, lng, p.lat, p.lng) <= radius_m]
+```
+
+<Quiz
+  id="04-location-realtime-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What's the bug in nearby(), and how do you fix it?"
+  choices={[
+    { label: "It reads only the user's own cell, so a place just across a cell boundary is missed. Fetch the cell plus its kRing of neighbors (sized to radius_m), union the candidates, then apply the haversine filter.", correct: true },
+    { label: "The haversine filter is unnecessary; the cell already guarantees the radius.", misconception: "A cell is a coarse bucket, not a circle — it contains places outside the radius and excludes ones just over its edge. You need BOTH the neighbor query (so nothing close is missed) and the exact-distance filter." },
+    { label: "Resolution 9 is too fine; lower it to res=5 to capture more places.", misconception: "Coarsening the cell crudely grabs far-away places and still misses the boundary case asymmetrically. The correct fix is to query neighbor cells (kRing) at a resolution matched to the radius, then filter by exact distance." },
+    { label: "haversine should be replaced with a SQL ORDER BY distance.", misconception: "The distance math is fine; the structural bug is reading a single cell. ORDER BY distance over all rows is the O(n) scan the cell index exists to avoid." },
+  ]}
+/>
+
+## Snippet 2 — the location publisher
+
+```python
+def on_ping(user_id, lat, lng):
+    store.set(user_id, (lat, lng), ttl=30)
+    for conn in all_connections:          # every connected client
+        conn.send({"user": user_id, "lat": lat, "lng": lng})
+```
+
+<Quiz
+  id="04-location-realtime-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="At 2M pings/second this loop melts the cluster. What's the structural fix?"
+  choices={[
+    { label: "Stop broadcasting to all connections (a quadratic blow-up). Publish the ping to its region cell's pub/sub channel; gateways subscribe only to cells where they hold users, and the subscriber edge filters to friends in range.", correct: true },
+    { label: "Move the loop to a background thread so it doesn't block ingest.", misconception: "A background thread still sends to every connection — the total work is the same quadratic blow-up, just off the ingest thread. The fix is to NOT send to everyone: route by region channel and filter at the edge." },
+    { label: "Batch the sends and flush every 100 ms.", misconception: "Batching reduces syscalls but still delivers each ping to every connection — the recipient set is the problem, not the flush cadence. Publish per region cell so only nearby subscribers receive it." },
+    { label: "Increase the TTL so fewer writes happen.", misconception: "TTL governs expiry, not who receives a ping. The melt is the all-connections fan-out; fix it with region-keyed pub/sub plus an edge friendship/range filter." },
+  ]}
+/>
+
+## Snippet 3 — the routing engine setup
+
+```python
+def update_traffic(edge_id, new_travel_time):
+    graph.set_weight(edge_id, new_travel_time)
+    graph.build_contraction_hierarchy()   # runs on every traffic update
+    return graph
+# called ~thousands of times per second from the probe stream
+```
+
+<Quiz
+  id="04-location-realtime-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Why is this catastrophic, and what's the right architecture?"
+  choices={[
+    { label: "Rebuilding the contraction hierarchy takes hours on a continental graph, so doing it per traffic update is impossible. Separate slow-changing structure (preprocess rarely) from fast-changing weights (apply live as an overlay), so traffic re-weights edges without a re-contraction.", correct: true },
+    { label: "Just cache the built hierarchy so the rebuild is fast the second time.", misconception: "A cache doesn't help when the weights change every call — each update invalidates the cached hierarchy. You must decouple structure from weights so live traffic overlays without rebuilding." },
+    { label: "Drop contraction hierarchies and use plain Dijkstra so weights are always current.", misconception: "That sacrifices the speed you need at planetary QPS. Keep the preprocessing but partition it by rate of change: structure preprocessed rarely, weights overlaid live." },
+    { label: "Run the rebuild on a bigger machine so it finishes in time.", misconception: "No machine contracts a continental graph in the milliseconds between traffic ticks. The architectural fix is separating structure from weights, not faster hardware." },
+  ]}
+/>
+
+## Snippet 4 — the rank query
+
+```sql
+-- a player's rank on the leaderboard
+SELECT COUNT(*) + 1 AS rank
+FROM scores
+WHERE score > (SELECT score FROM scores WHERE player_id = :id);
+-- called per player, millions polling their own rank
+```
+
+<Quiz
+  id="04-location-realtime-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Why does this query scale badly, and what replaces it?"
+  choices={[
+    { label: "COUNT(*) WHERE score > mine is an O(n) count per call, so millions polling their rank scan the table repeatedly. Use a Redis sorted set: ZREVRANK player gives the rank in O(log n) because rank is held in the skip-list spans.", correct: true },
+    { label: "Add an index on score and the query becomes O(1).", misconception: "An index helps locate rows but COUNT(*) over all higher scores is still O(n) work per query. A ZSET's ZREVRANK is genuinely O(log n) — it sums precomputed spans instead of counting rows." },
+    { label: "Wrap it in a materialized view refreshed nightly.", misconception: "A nightly view makes rank stale (scores change live) and is O(n) to refresh for all players, most never viewed. ZREVRANK computes any rank fresh in O(log n) on read." },
+    { label: "Denormalize a 'rank' column updated on each write.", misconception: "Updating a stored rank on a score change can shift the rank of everyone below — O(n) per write. A sorted set keeps rank implicit in its structure, so reads are O(log n) and writes are O(log n)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The mistakes are structural: a single-cell read (query neighbors), a broadcast to all connections (publish by region), a per-tick re-contraction (split structure from weights), an O(n) rank count (use a sorted set).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-location-realtime-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "Two code smells that signal a proximity or fan-out bug, and their fixes?", a: "(1) A geo query that reads only the user's own cell — it misses places just across a boundary; fix by fetching the cell plus its neighbor ring (kRing/3×3) sized to the radius, then filtering by exact distance. (2) A location handler that sends each ping to all connections — a quadratic broadcast that melts at scale; fix by publishing to the ping's region-cell channel so only subscribers tracking that cell receive it, with the friend-and-range filter at the subscriber edge." },
+    { q: "Why is re-running contraction on every traffic update wrong, and why is a SQL rank query slow — what replaces each?", a: "Contraction on a continental graph takes hours, so per-update rebuilds are impossible — separate slow-changing structure (preprocess rarely) from fast-changing weights (live overlay), letting traffic re-weight edges without re-contraction. A SQL rank is COUNT(*) WHERE score > mine, O(n) per call, crushing under millions of pollers — replace with a Redis sorted set whose ZREVRANK is O(log n), summing skip-list spans rather than counting rows. Both are the same lesson: match the structure to the access pattern instead of recomputing on the hot path." },
+  ]}
+/>
+
+<Recap lang="en">
+Every failure in this unit is **visible in the code and structural**, not a tuning detail. A proximity query that reads **one cell** misses the place across the boundary — query the **neighbor ring** and filter by exact distance. A location handler that sends each ping to **all connections** is a quadratic broadcast — **publish by region cell** and filter at the subscriber edge. A routing engine that **rebuilds the contraction hierarchy** on every traffic tick is impossible at continental scale — **separate structure from weights** so traffic overlays live. And a SQL rank query (`COUNT(*) WHERE score > mine`) is an **O(n) scan** per poller — replace it with a **sorted set** whose `ZREVRANK` is `O(log n)`. The senior habit is the same each time: read the access pattern off the code, then choose the data structure or routing that fits it — never the version that hides an `O(n)` or a re-computation on the hot path.
+</Recap>

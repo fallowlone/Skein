@@ -5,34 +5,200 @@ track: "system-design-cases"
 unit: "02-social-feed"
 order: 3
 title: "Design a chat system"
-summary: "Design a chat system — to be authored."
-estMin: 16
-status: stub
+summary: "Design WhatsApp/Messenger: persistent WebSocket connections vs long-poll, a connection registry for routing, message delivery with per-conversation ordering and the three delivery ticks (sent/delivered/read), presence at scale, offline queues, group fan-out, and message storage."
+estMin: 34
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - websocket-connections
+  - connection-registry
+  - message-ordering
+  - delivery-receipts
+  - presence
+  - group-fanout
+prereqs:
+  - system-design/06-async-messaging/01-message-queues
+  - system-design/04-data-distribution/02-sharding-and-partitioning
+  - system-design/05-caching-at-scale/03-distributed-cache
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://www.rfc-editor.org/rfc/rfc6455
+  - https://developer.mozilla.org/en-US/docs/Web/API/WebSockets_API
+  - https://www.whatsapp.com/security/WhatsApp-Security-Whitepaper.pdf
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team built a chat MVP on plain HTTP polling: every client asked "any new messages?" every two seconds. It demoed fine. At a few hundred thousand users it collapsed — not from message volume, which was tiny, but from the relentless empty polls. Ninety-eight percent of requests returned "nothing new", yet each one cost a full TCP/TLS handshake, an auth check, and a database query. The servers were pinned at 90% CPU serving *nothing*. The team's first reaction was to poll less often, which made the app feel laggy without fixing the load. The real problem was architectural: chat is a system where the server must **push** to the client the instant a message arrives, and a request/response model fundamentally cannot do that without wasteful polling. This lesson designs the push-based system underneath WhatsApp-style chat — connections, routing, ordering, receipts, presence, and storage.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Chat is server-push: clients hold a persistent WebSocket, a connection registry routes to their gateway, messages ordered per conversation.</Crux>
 
 <Explanation>
 
-## Design a chat system
+## Requirements
 
-Body to be authored.
+**Functional:** one-to-one and group messaging; messages delivered in near-real-time when the recipient is online and queued for delivery when offline. **Delivery receipts** — sent, delivered, read (the familiar ticks). **Presence** — online/last-seen/typing. **Ordering** — messages in a conversation appear in a consistent order for all participants. Message history is persisted and syncs across a user's devices.
+
+**Non-functional:** low latency (a message should land in well under a second when both parties are online). **Reliable delivery** — a sent message is never lost, even across disconnects, crashes, and offline recipients; this implies at-least-once delivery plus dedup. Huge **connection** count — hundreds of millions of devices each holding a long-lived connection, which is a fundamentally different scaling problem from request/response (you scale by *concurrent connections*, not RPS). Eventual consistency is fine for presence and read receipts; ordering within a conversation must be consistent.
+
+The defining property: the server must initiate delivery (push), so the architecture is built around **persistent connections and routing a message to whichever server currently holds the recipient's connection** — the opposite of stateless HTTP.
+
+## Estimation
+
+500M daily active users, most keeping the app connected, means on the order of **hundreds of millions of concurrent long-lived connections**. A single server can hold tens to low-hundreds of thousands of idle WebSockets (memory and file descriptors per connection are the limit, not CPU), so you need **thousands of connection-gateway servers** just to terminate connections. Message volume: if each user sends ~40 messages/day, that is 2×10^10 messages/day, about **250,000 messages/second average**, multi-x at peak. Each message is small (hundreds of bytes), so storage is dominated by count, not size: ~20 billion messages/day at a few hundred bytes is several TB/day, demanding a write-optimized, horizontally-sharded message store with retention policy.
+
+The napkin's verdict: the scaling axis is **concurrent connections**, which forces a dedicated, stateful connection tier separate from the stateless business logic — and a way to find which gateway holds a given user.
+
+## High-level design
+
+The system splits into a stateful connection tier and a stateless routing/storage core.
+
+<FlowDiagram
+  label="A sender's WebSocket reaches a connection gateway, which hands the message to a stateless chat service; the service persists it, looks up the recipient's gateway in a connection registry, forwards the message there, and that gateway pushes it down the recipient's socket — while offline recipients get the message queued for later sync."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "sender", label: "sender", sub: "WebSocket" },
+    { id: "gw1", label: "gateway A", sub: "holds sender conn" },
+    { id: "svc", label: "chat service", sub: "stateless" },
+    { id: "store", label: "message store", sub: "persist + seq" },
+    { id: "reg", label: "connection registry", sub: "user → gateway" },
+    { id: "gw2", label: "gateway B", sub: "holds recipient conn" },
+    { id: "recv", label: "recipient", sub: "WebSocket" },
+    { id: "oq", label: "offline queue", sub: "if disconnected" },
+  ]}
+  edges={[
+    { from: "sender", to: "gw1", label: "send" },
+    { from: "gw1", to: "svc", label: "forward" },
+    { from: "svc", to: "store", label: "persist + assign seq" },
+    { from: "svc", to: "reg", label: "lookup recipient" },
+    { from: "reg", to: "gw2", label: "route" },
+    { from: "gw2", to: "recv", label: "push" },
+    { from: "svc", to: "oq", label: "if offline" },
+  ]}
+  caption="The connection registry is the heart: it maps each online user to the gateway holding their socket, so a stateless chat service can route a message to the one server that can push it. Offline recipients fall through to a queue and sync on reconnect."
+/>
+
+- **Connection gateways** terminate the persistent WebSocket connections. They are stateful (they hold sockets) and exist only to receive from and push to clients.
+- **Chat service** is stateless: it persists the message (assigning a per-conversation sequence number), looks up the recipient in the registry, and forwards for delivery.
+- **Connection registry** maps `user/device, gateway` so any chat service instance can find where to send a message. It is updated on connect/disconnect.
+- **Message store** is the durable history, sharded by conversation, ordered by sequence number.
+- **Offline queue** holds messages for disconnected users until they reconnect and sync.
+
+## Deep dive
+
+### WebSockets vs long-poll, and the connection tier
+
+HTTP is request/response: the client must ask before the server can answer. For chat that means polling, and the hook shows why polling fails — empty polls dominate and each carries full request overhead. The fixes, in order of quality:
+
+- **Long-polling:** the client makes a request that the server *holds open* until there is a message (or a timeout), then responds; the client immediately re-requests. This eliminates empty-poll spam but still pays a new request per message and is awkward for server-push bursts. It is the fallback for environments without WebSockets.
+- **WebSocket:** a single TCP connection, upgraded from HTTP once, that stays open for **bidirectional** messaging with tiny per-message framing overhead. The server can push the instant a message arrives. This is the primary transport for modern chat.
+
+Because connections are long-lived and stateful, the connection tier is its own thing: you scale it by adding gateways, and a gateway crashing drops its connections (clients reconnect, ideally to a different gateway, with backoff and jitter to avoid a reconnect thundering herd). The registry must update on every connect/disconnect, which is why it is a fast, in-memory store (Redis-style) and not a relational table — connection churn is constant.
+
+<Inset kind="why" lang="en">
+Why separate the stateful connection gateways from the stateless chat logic instead of doing everything in one process? Because the two have opposite scaling and failure properties. The connection tier scales by *concurrent connections* and is memory/fd-bound; it holds long-lived state (the open sockets) and must survive deploys gracefully (you do not want a routine deploy to drop 100k sockets). The chat logic scales by *message throughput*, is CPU-bound, is stateless, and you redeploy it freely. Fusing them means every business-logic deploy disconnects everyone, and you cannot scale the two axes independently. The registry is the seam that lets them be separate: gateways own sockets and register them, the stateless service looks up the registry to route — so you can deploy logic without touching connections, and add connection capacity without touching logic.
+</Inset>
+
+### Message delivery, ordering, and the three ticks
+
+**Reliable delivery** is at-least-once with dedup. The sender's client assigns a client-side message id; the server persists the message before acking the sender (so a crash after ack never loses it), and the recipient dedups on the message id (so a re-delivery after a reconnect does not duplicate). This gives the user effectively-once.
+
+**Ordering** is per-conversation, not global — there is no meaningful global order across all of WhatsApp, only "within this chat, in what order did messages happen". The clean way is to **assign a monotonic sequence number per conversation** when the message is persisted, and have clients render by sequence. Because all messages of one conversation are routed through and stored on the same shard (sharded by conversation id), a single sequence authority per conversation gives a total order without global coordination. Clients reconcile out-of-order arrivals (network reordering, retries) using the sequence number.
+
+**The three ticks** are three delivery states that flow back to the sender as separate events:
+- **Sent** — the server has persisted the message (one tick).
+- **Delivered** — the recipient's device received it, i.e. it was pushed down their socket and acked by the client (two ticks).
+- **Read** — the recipient opened the conversation (two blue ticks).
+
+Each is an acknowledgment traveling the reverse path. Delivered and read receipts are themselves small messages routed back to the sender (and can be batched/eventual — nobody needs a read receipt in 10 ms).
+
+<Inset kind="mistake" lang="en">
+A classic correctness bug is acking the sender *before* the message is durably stored — "optimistically" replying "sent" the moment the gateway receives it, then persisting asynchronously. It feels faster, but if the server crashes between the ack and the write, the message is gone while the sender's UI shows a confident single tick. The message is silently lost, which is the one thing a chat system must never do. The rule: **persist before you ack**. The sender's "sent" tick must mean "the server has it durably", not "the server saw it". The same discipline applies to the recipient side: the "delivered" receipt must mean the client durably received and acked it, so that a recipient crash mid-delivery re-delivers on reconnect (dedup makes that safe) rather than dropping the message. Ordering bugs have the same root — assign the sequence number at persist time, the single point where the message becomes real, not at receive time on a gateway that might be one of several racing.
+</Inset>
+
+### Presence, offline delivery, and group chat
+
+**Presence** (online / last-seen / typing) is high-churn, low-value-per-update state, and treating it like messages would swamp the system. It lives in a fast in-memory store keyed by user, updated by gateway connect/disconnect and heartbeats, and read on demand. The scaling trap is **presence fan-out**: naively pushing "X came online" to all of X's contacts means a popular user's connect event fans out to thousands of pushes. So presence is usually **pulled** (a client fetches the presence of the contacts currently visible on screen) or pushed only to a bounded interested set, and it is explicitly **eventual** — a slightly stale "last seen" is acceptable, an undelivered message is not.
+
+**Offline delivery:** if the registry shows the recipient has no live connection, the message is persisted (it always is) and flagged for the offline queue. On reconnect, the client syncs everything since its last-acked sequence number per conversation — the sequence number doubles as the sync cursor. This is why persistence is unconditional: online delivery is an optimization on top of a store-and-sync foundation, not a replacement for it.
+
+**Group chat** is fan-out again. A message to a 500-member group must reach up to 500 recipients. Small groups fan out on write (push to each member's delivery path); very large groups/broadcast channels lean toward fan-out-on-read or a hybrid, exactly like the news feed — the same power-law logic. Each member's delivery still flows through the registry to their gateway (or to their offline queue), and each maintains their own read position in the conversation.
+
+<Quiz
+  id="03-chat-system-quiz-1"
+  lessonSlug="03-chat-system"
+  lang="en"
+  question="Your chat backend is pinned at 90% CPU with a few hundred thousand users, but message volume is tiny and 98% of requests return 'nothing new'. What is the architectural fix?"
+  choices={[
+    { label: "Replace polling with persistent WebSocket connections so the server pushes a message the instant it arrives — no empty polls. This needs a stateful connection-gateway tier plus a registry mapping each online user to the gateway holding their socket, so a stateless service can route to it.", correct: true },
+    { label: "Increase the poll interval to every 10 seconds to cut request volume.", misconception: "That trades load for latency: messages now lag up to 10s and the app feels broken, while empty polls still dominate. Polling is the wrong model for server-initiated delivery. Switch to WebSockets so the server pushes; do not tune the interval of a fundamentally wasteful loop." },
+    { label: "Add a read replica so the 'nothing new' queries hit the replica.", misconception: "The cost is the request overhead (handshake, auth, a query) times millions of empty polls, not replica load specifically. Offloading the query does not remove the per-request tax of polling. The fix is to stop polling and push over a persistent connection." },
+    { label: "Cache the 'no new messages' response at a CDN.", misconception: "The response is per-user and changes the instant a message arrives, so it is uncacheable in any useful way, and a CDN cannot push to the client anyway. Chat needs server push via WebSockets, not response caching." },
+  ]}
+/>
+
+<Quiz
+  id="03-chat-system-quiz-2"
+  lessonSlug="03-chat-system"
+  lang="en"
+  question="Two users on different gateways message rapidly; messages sometimes render out of order, and after a reconnect one message is duplicated. How do you get consistent ordering and no duplicates?"
+  choices={[
+    { label: "Route each conversation to one shard that assigns a monotonic per-conversation sequence number at persist time; clients render by that sequence (reconciling network reordering) and dedup on the message id, so a re-delivery after reconnect collapses to one.", correct: true },
+    { label: "Use a single global sequence number across all conversations so order is always total.", misconception: "A global sequence is needless global coordination and a bottleneck at 250k msg/s — and meaningless, since order only matters within a conversation. Assign the sequence per conversation on its shard; that gives a total order where it is needed without global serialization." },
+    { label: "Have each client timestamp messages with its local clock and sort by timestamp.", misconception: "Client clocks are skewed and unsynchronized, so timestamp sort reorders messages and breaks under clock drift. Ordering must come from a server-assigned per-conversation sequence at persist time, not client wall-clocks. (Dedup still needs a message id.)" },
+    { label: "Acknowledge faster so messages cannot arrive out of order.", misconception: "Speed does not impose order — network reordering and retries happen regardless. You need a per-conversation sequence number to define the order and a message id to dedup retries; faster acks address neither." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-chat-system-metaphor-1"
+  lessonSlug="03-chat-system"
+  lang="en"
+  setup="To route a message to an online recipient, a stateless chat service looks the recipient up in the _______ — the fast, in-memory map from each connected user/device to the connection gateway currently holding their socket — then forwards the message to that gateway, which pushes it down the socket."
+  accepted={["connection registry", "registry", "connection-registry", "session registry"]}
+  canonical="connection registry"
+  explanation="The connection registry maps each online user/device to the gateway holding their live socket, updated on every connect/disconnect. It is the seam that lets the stateless chat service route a push to the one server that can deliver it — and lets the connection tier and the logic tier scale and deploy independently."
+/>
+
+## Bottlenecks & tradeoffs
+
+The binding constraint is **concurrent connections**, not request rate — chat scales on a different axis from typical web services, which is why it needs a dedicated stateful gateway tier. Key tradeoffs:
+
+- **WebSocket vs long-poll vs polling.** WebSocket gives true bidirectional push at minimal per-message cost but needs sticky, stateful connections and graceful reconnect handling; long-poll is the compatibility fallback; plain polling is wasteful and wrong for push (the hook).
+- **Per-conversation ordering vs global ordering.** Per-conversation sequence gives a total order where it matters with no global coordination; insisting on a global order buys nothing and bottlenecks everything.
+- **At-least-once + dedup vs exactly-once.** Reliable delivery across reconnects means at-least-once plus a message id for dedup (persist before ack); true exactly-once over an unreliable network is unattainable.
+- **Presence: push vs pull, and eventual.** Presence is high-churn and low-stakes, so it is eventual and usually pulled for visible contacts; pushing every presence change fans out catastrophically for popular users.
+- **Group fan-out: write vs read.** Small groups fan out on write; huge groups/channels use read-side or hybrid fan-out — the same power-law tradeoff as the feed.
+
+The deepest principle: **persistence is unconditional and online delivery is an optimization on top of store-and-sync.** Persist before you ack; use the per-conversation sequence number as both the order and the sync cursor; and never let the "fast path" (push) become a way to lose a message the "slow path" (store, then sync on reconnect) would have kept.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Chat is server-push: clients hold WebSockets to stateful gateways, a connection registry maps each user to their gateway so a stateless service routes, and messages are persisted-before-ack and ordered per conversation.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-chat-system-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does chat need WebSockets and a separate connection tier rather than HTTP polling?", a: "Chat requires the server to deliver the instant a message arrives — server-initiated push — which request/response cannot do without polling, and polling drowns the servers in empty 'nothing new' requests each carrying full handshake/auth/query cost (the hook). WebSockets keep one upgraded TCP connection open for bidirectional push at tiny per-message cost. Because those connections are long-lived and stateful (memory/fd-bound, scaled by concurrent connections), they live in a dedicated gateway tier separate from the stateless, CPU-bound, freely-redeployable chat logic — so you can deploy logic without dropping sockets and scale each axis independently. The connection registry is the seam between them." },
+    { q: "How are reliable delivery and consistent ordering achieved, and what is the persist-before-ack rule?", a: "Delivery is at-least-once with dedup: the sender assigns a client message id, the server persists the message BEFORE acking the sender (so a crash after ack never loses it), and the recipient dedups on the message id (so reconnect re-delivery does not duplicate) — effectively-once for the user. Ordering is per-conversation: a monotonic sequence number is assigned at persist time on the conversation's shard, and clients render by sequence, reconciling network reordering. The persist-before-ack rule means the 'sent' tick means 'durably stored', not 'server saw it' — acking before the write risks silently losing a message on a crash." },
+    { q: "What are the three ticks and how does each travel?", a: "Sent (one tick) = the server has persisted the message. Delivered (two ticks) = the recipient's device received it (pushed down their socket and acked by the client). Read (two blue ticks) = the recipient opened the conversation. Each is an acknowledgment flowing back along the reverse route to the sender; delivered/read receipts are themselves small messages routed back through the registry, and can be batched and eventual since nobody needs a read receipt in milliseconds." },
+    { q: "How are presence and offline delivery handled at scale, and why is persistence unconditional?", a: "Presence (online/last-seen/typing) is high-churn and low-stakes, so it lives in a fast in-memory store, is explicitly eventual, and is pulled for the contacts currently on screen (or pushed to a bounded set) — naively pushing every presence change fans out catastrophically for popular users. Offline delivery: the message is ALWAYS persisted; if the registry shows no live connection it is flagged for the offline queue, and on reconnect the client syncs everything since its last-acked per-conversation sequence number (the sequence doubles as the sync cursor). Persistence is unconditional because online push is just an optimization on top of a store-and-sync foundation — the slow path must never lose what the fast path skipped." },
+  ]}
+/>
+
+<Recap lang="en">
+A chat system is fundamentally **server-push**, which is why polling fails (the hook: empty polls pin the CPU while delivering nothing) and why the architecture centers on **persistent WebSocket connections**. Those connections are long-lived and stateful, so they live in a dedicated **connection-gateway tier** scaled by *concurrent connections*, separate from the stateless, CPU-bound chat logic; the **connection registry** (a fast in-memory map from user/device to gateway) is the seam that lets a stateless service route a message to the one server that can push it, and lets the two tiers scale and deploy independently. Delivery is **at-least-once with dedup** on a client message id, and the cardinal rule is **persist before you ack** — the "sent" tick must mean durably stored. **Ordering** is per-conversation via a monotonic **sequence number** assigned at persist time on the conversation's shard, which also doubles as the **offline sync cursor**. The **three ticks** (sent/delivered/read) are acknowledgments flowing back to the sender. **Presence** is eventual, high-churn, and pulled rather than fanned out; **offline delivery** rests on unconditional persistence plus reconnect-and-sync; and **group chat** fans out write-side for small groups and read-side/hybrid for huge ones — the same power-law logic as the news feed. The unifying idea: online push is an optimization layered over a durable store-and-sync core, never a substitute for it.
+</Recap>

@@ -5,34 +5,206 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 3
 title: "Design a payment system"
-summary: "Design a payment system — to be authored."
-estMin: 16
-status: stub
+summary: "Design a payment system: idempotency keys against the double-charge problem, a double-entry ledger as the source of truth, reconciliation against the PSP, saga orchestration for the distributed transaction, and an immutable audit trail."
+estMin: 38
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - idempotency-keys
+  - double-entry-ledger
+  - reconciliation
+  - saga
+  - psp-integration
+  - audit-trail
+prereqs:
+  - system-design/06-async-messaging/01-message-queues
+  - system-design/06-async-messaging/03-event-driven
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.stripe.com/api/idempotent_requests
+  - https://stripe.com/blog/online-migrations
+  - https://martinfowler.com/eaaDev/AccountingNarrative.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A customer tapped "Pay" once. Their card was charged twice. Here is the sequence: the app sent the charge request, the payment provider processed it successfully — and then the response timed out on the way back. The app, seeing no response, did the "obvious" thing and retried. The provider, having no way to know this was the same intended payment, processed a second charge. The customer saw two line items, opened a chargeback, and the company ate the dispute fee on top of the refund. The bug was not a crash or a race deep in the database; it was the most ordinary thing on the internet — a retried request over an unreliable network — meeting a system that had no way to recognize "I have seen this exact payment before." Everything in payment-system design orbits that one question.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A payment system makes retries safe to repeat (idempotency keys) and money impossible to create or lose (an immutable double-entry ledger).</Crux>
 
 <Explanation>
 
-## Design a payment system
+## Requirements
 
-Body to be authored.
+A payment system moves money from a payer to a payee through external processors, and it must do so *correctly* under the harshest conditions: unreliable networks, partial failures, and adversaries.
+
+**Functional.** Accept a payment request (amount, currency, payer, payee, method). Charge the payer via a **Payment Service Provider** (PSP — Stripe, Adyen, a card network). Record the result. Support refunds and reversals. Produce statements and an audit trail. **Reconcile** the system's own records against the PSP's settlement reports daily.
+
+**Non-functional.** **Correctness over availability** — when in doubt, a payment system *stops* rather than risk charging twice or losing money; a missed payment is recoverable, a double charge is a dispute and a lost customer. Every state change must be **durable and auditable** (regulators and disputes demand a complete history). Operations must be **idempotent** because retries are guaranteed, not hypothetical. And the books must always **balance** — total debits equal total credits, no exceptions.
+
+The defining property: money is a *conserved quantity*. You can't lose a write the way you can lose a "like." So the whole design is about making operations safe to repeat and making every movement a balanced, permanent fact.
+
+## Estimation
+
+Payments are not a high-QPS problem; they are a high-*correctness*, high-*durability* problem.
+
+```
+volume            = 10,000,000 payments/day
+avg QPS           = 10^7 / 86,400         ≈ 116 payments/sec  (modest!)
+peak QPS          = ~3–10× avg            ≈ 1,000 payments/sec (Black Friday)
+ledger entries    = 2+ per payment (double-entry) → ~2×10^7 immutable rows/day
+retention         = years (regulatory) — append-only, never deleted
+PSP latency       = ~300 ms–2 s per charge (external, the slow part)
+```
+
+The numbers say something important: ~100–1,000 payments/sec is *trivial* throughput for any modern database — you do not need exotic sharding for the QPS. What you need is **durability, exactness, and auditability** at that modest rate. The dominant cost is not scale; it's the engineering to never double-charge, never lose a write, and always be able to prove what happened. The slowest component is the external PSP call (hundreds of ms to seconds), which is why the flow is asynchronous and state-machine driven rather than one blocking request.
+
+## High-level design
+
+<FlowDiagram
+  label="A payment request carrying an idempotency key hits the payment service, which checks an idempotency store to deduplicate retries, records a pending entry in the ledger, calls the external PSP, then writes the balanced double-entry result and emits events; a separate reconciliation job compares the ledger against the PSP's settlement report."
+  perRow={3}
+  hue="var(--d-backend)"
+  nodes={[
+    { id: "client", label: "client", sub: "idempotency key" },
+    { id: "svc", label: "payment svc", sub: "state machine" },
+    { id: "idem", label: "idempotency store", sub: "key → result" },
+    { id: "ledger", label: "ledger", sub: "double-entry" },
+    { id: "psp", label: "PSP", sub: "Stripe / network" },
+    { id: "events", label: "event bus", sub: "paid / failed" },
+    { id: "recon", label: "reconciliation", sub: "daily batch" },
+    { id: "settle", label: "PSP settlement", sub: "report" },
+  ]}
+  edges={[
+    { from: "client", to: "svc", label: "charge" },
+    { from: "svc", to: "idem", label: "dedup" },
+    { from: "svc", to: "ledger", label: "pending" },
+    { from: "svc", to: "psp", label: "call" },
+    { from: "psp", to: "ledger", label: "settle" },
+    { from: "ledger", to: "events", label: "emit" },
+    { from: "ledger", to: "recon", label: "compare" },
+    { from: "settle", to: "recon", label: "vs report" },
+  ]}
+  caption="The idempotency store deduplicates retries before any money moves; the ledger records every movement as a balanced double-entry fact; reconciliation independently audits the ledger against the PSP's settlement report. The PSP call is the slow, fallible, external step the whole state machine is built to survive."
+/>
+
+The core is a **state machine per payment** (created → pending → succeeded/failed → refunded), driven asynchronously because the PSP call is slow and can fail in ambiguous ways. Three pieces do the heavy lifting: an **idempotency store** that turns "did I already do this?" into a fast lookup, a **double-entry ledger** that is the system's source of truth for money, and a **reconciliation** job that catches any drift between what the system thinks happened and what the PSP actually settled.
+
+## Deep dive
+
+### Idempotency keys and the double-charge problem
+
+The hook's bug has a precise fix. The client generates a unique **idempotency key** for each *intended* payment (not each HTTP request — the same logical payment keeps its key across retries) and sends it with the charge. The server, before doing anything, checks an idempotency store:
+
+```
+on charge(idempotency_key, amount, ...):
+  existing = store.get(idempotency_key)
+  if existing:
+      return existing.result        # retry → return the SAME outcome, no new charge
+  result = process_payment(...)      # first time → actually charge
+  store.put(idempotency_key, result) # atomically, with the charge
+  return result
+```
+
+Now the retry from the hook finds the key already present and returns the *original* result instead of charging again. Two subtleties make this real rather than hand-wavy. First, the check-and-store must be **atomic with the charge** — a unique constraint on the key plus a transaction, so two concurrent retries can't both pass the "not seen" check (the loser hits the constraint and reads the winner's result). Second, the key must be tied to the request parameters: reusing a key with a *different* amount is a client bug the server should reject, not silently treat as the same payment. Stripe's API works exactly this way — you pass an `Idempotency-Key` header and a retry returns the saved response.
+
+<Inset kind="why" lang="en">
+Why must the idempotency key be generated by the *client*, before the request is sent, rather than by the server? Because the entire problem is the *ambiguous timeout*: the client sent a charge and got no response. It cannot tell whether the server never received it, received it and crashed before charging, charged but the response was lost, or is still working. In every one of those cases the *safe* action is to retry with the *same key* — and only a key the client minted before the first attempt is stable across all of them. A server-generated key is useless here: if the response was lost, the client never learned the key, so its retry would carry a new key and look like a fresh payment. The client owning the key is what makes "retry safely" possible, which is why idempotent APIs put the key in the client's hands.
+</Inset>
+
+### The double-entry ledger: money as conserved facts
+
+A naive design stores a balance as a mutable number and updates it (`balance = balance - 100`). That is how money gets lost: a crash mid-update, a race, a bug, and the number is simply wrong with no way to know what it *should* be. Payment systems instead use a **double-entry ledger**, the 500-year-old accounting model: every movement of money is recorded as *two* entries that must sum to zero — a **debit** from one account and an equal **credit** to another.
+
+```
+Payment of $100 from customer to merchant (minus $3 fee):
+
+  account              debit    credit
+  ----------------------------------------
+  customer_funds                  100.00     ← money leaves customer
+  merchant_payable      97.00                ← merchant is owed
+  platform_fee           3.00                ← platform earns fee
+  ----------------------------------------
+  totals               100.00    100.00      ✅ balanced
+```
+
+Two properties make this the source of truth. **Entries are immutable and append-only** — you never edit a row; a correction is a *new* compensating entry, so the full history is preserved (an audit trail for free). **Every transaction balances** — debits equal credits, so money is conserved by construction; a balance is *derived* by summing entries, not stored as a mutable field, which means it can always be recomputed and verified. If something is wrong, the imbalance is detectable. This is why "what is the balance?" becomes a query over an immutable log rather than a field you pray is correct.
+
+<Inset kind="mistake" lang="en">
+The classic mistake is storing balances as mutable columns and treating the PSP's success response as the end of the story. Two failures follow. First, a mutable balance has no audit trail and no way to detect corruption — when the number is wrong, you can't reconstruct what it should be, because you overwrote the history. Second, treating "PSP returned success" as truth ignores that the *response can be lost*: the charge succeeded but you recorded nothing, or you recorded a failure for a charge that actually went through. The ledger plus reconciliation fixes both: every movement is an immutable balanced entry (corruption is detectable, history is intact), and a daily reconciliation against the PSP's settlement report catches the cases where your record and the PSP's reality diverged. Never trust a single response as the final word on money; trust the reconciled ledger.
+</Inset>
+
+### Saga and reconciliation: the distributed transaction problem
+
+A payment spans systems you cannot wrap in one ACID transaction — your ledger, the external PSP, maybe a wallet or inventory service. There is no global commit across an HTTP boundary to a third party. So you use a **saga**: model the payment as a sequence of local steps, each with a **compensating action** that undoes it. Reserve funds → call PSP → on success commit the ledger entries; on failure, run the compensation (release the reservation, void the pending entry). If a step's outcome is *ambiguous* (the PSP call timed out), the saga doesn't guess — it queries the PSP for the payment's actual status (using the idempotency key) and only then advances or compensates.
+
+The final safety net is **reconciliation**. Once a day, the PSP sends a settlement report: every transaction it actually processed and the money it moved. A batch job compares it line by line against the ledger. Matches confirm correctness; mismatches (a charge the PSP has but the ledger doesn't, or vice versa) are flagged for investigation and a compensating entry. This is the layer that catches the residue — lost responses, ambiguous timeouts the saga resolved wrong, PSP-side adjustments. It is *why* a payment system can be both highly available and provably correct: the fast path can occasionally be uncertain, because a slow, exhaustive reconciliation is the final arbiter of truth.
+
+## Bottlenecks & tradeoffs
+
+The defining stance is **correctness over availability**: when an operation's outcome is ambiguous, the system holds (marks pending, queries the PSP, waits for reconciliation) rather than risk a double charge or a lost payment. **Idempotency-store contention** can bottleneck the hot path — the dedup lookup and atomic write are on every payment — so it must be fast and consistent (a strongly consistent store, keys TTL'd after settlement). **Ledger write throughput** is rarely the limit at payment QPS, but the *append-only, immutable* discipline trades storage growth and query cost (balances are summed, often with periodic snapshots/materialized balances to avoid re-summing all history) for auditability — a trade payments always make. **PSP coupling** is a real risk: the external processor is slow, can fail, and may be down — so the integration is async, retried, and ideally abstracted behind an interface so you can route to a backup PSP. And **PCI/compliance** pushes you to never store raw card numbers — you tokenize via the PSP, keeping the sensitive data out of your systems entirely.
+
+<Quiz
+  id="03-payment-system-quiz-1"
+  lessonSlug="03-payment-system"
+  lang="en"
+  question="A client sends a charge, the PSP succeeds, but the response is lost; the client retries. Which design actually prevents the double charge, and why must the key come from the client?"
+  choices={[
+    { label: "A client-generated idempotency key sent with both attempts: the server's atomic check-and-store finds the key on the retry and returns the original result instead of charging again. The client must mint the key before the first attempt because, after an ambiguous timeout, only a pre-existing stable key is carried by the retry.", correct: true },
+    { label: "A server-generated transaction ID returned in the response, reused on retry.", misconception: "If the response was LOST, the client never received the server's ID, so its retry can't reuse it — it would look like a brand-new payment. The key must be minted by the client before the first attempt, precisely because the failure mode is a lost/ambiguous response." },
+    { label: "Wrap the whole charge in a database transaction so it's atomic.", misconception: "A local DB transaction can't span the external PSP call, and it doesn't help when the RESPONSE is lost after the PSP already charged. The retry is a fresh request; without an idempotency key the server can't recognize it as the same payment." },
+    { label: "Have the client not retry on timeout, to be safe.", misconception: "Not retrying risks the opposite failure — a real payment the client now thinks failed (it may have succeeded or not; the timeout is ambiguous). The correct answer is to retry SAFELY with an idempotency key, so a duplicate is recognized and a genuinely-missed charge still completes." },
+  ]}
+/>
+
+<Quiz
+  id="03-payment-system-quiz-2"
+  lessonSlug="03-payment-system"
+  lang="en"
+  question="Why do payment systems use an append-only double-entry ledger instead of storing each account's balance as a mutable number you update on each payment?"
+  choices={[
+    { label: "Every movement is two balanced entries (debit = credit) that are immutable and append-only, so money is conserved by construction, the balance is a verifiable sum over history rather than a field that can silently corrupt, and the full audit trail is preserved — a correction is a new compensating entry, never an edit.", correct: true },
+    { label: "Mutable balances are fine; the ledger is just a legacy accounting convention with no technical benefit.", misconception: "It's a deliberate correctness model: immutability gives an audit trail and detectable corruption, and the debit=credit invariant conserves money by construction. A mutable balance can be silently wrong with no way to reconstruct what it should be — exactly what money systems can't tolerate." },
+    { label: "Append-only logs are faster to write than updating a single row.", misconception: "Write speed isn't the reason — payment QPS is modest. The reason is correctness and auditability: immutable balanced entries make money conserved, corruption detectable, and history complete. The balance is derived by summing, often with snapshots to keep queries cheap." },
+    { label: "It lets you delete bad transactions cleanly.", misconception: "The opposite: you NEVER delete or edit a ledger entry — that would destroy the audit trail. A mistake is fixed by appending a compensating entry, leaving the full history intact, which is the whole point of append-only." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-payment-system-metaphor-1"
+  lessonSlug="03-payment-system"
+  lang="en"
+  setup="In a double-entry ledger, every payment is recorded as two entries — a debit and an equal credit — that must sum to zero, so money is _______ by construction: it can move between accounts but can never be created or destroyed, and any imbalance is immediately detectable."
+  accepted={["conserved", "balanced", "conservation", "preserved"]}
+  canonical="conserved"
+  explanation="Because each transaction's debits equal its credits, the total across all accounts is invariant — money is conserved, exactly like a physical conserved quantity. A balance is then a verifiable sum over immutable entries, not a mutable field that can silently go wrong, and any violation of debit=credit reveals a bug immediately."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Retries never double-charge and money is never lost: client idempotency keys, an append-only double-entry ledger, a saga with compensations, and daily PSP reconciliation as final arbiter — correctness over availability.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-payment-system-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does an idempotency key solve the double-charge problem, and why must the client generate it?", a: "The client mints a unique key per INTENDED payment and sends it with every attempt (including retries). The server does an atomic check-and-store: if the key exists, return the saved result (no new charge); otherwise process and store the result transactionally. A retry after a lost response finds the key and returns the original outcome instead of charging twice. The key must come from the client because the failure is an ambiguous timeout — the client can't tell if the charge happened — and only a key minted before the first attempt is carried unchanged by the retry; a server-generated key would be lost with the lost response, making the retry look fresh." },
+    { q: "What is a double-entry ledger and what two properties make it the source of truth for money?", a: "Every movement is recorded as two entries summing to zero — a debit from one account and an equal credit to another (e.g. customer credited 100, merchant_payable debited 97, platform_fee debited 3). Property one: entries are immutable and append-only — corrections are new compensating entries, so the full audit trail is preserved and corruption is detectable. Property two: every transaction balances (debits = credits), so money is conserved by construction and a balance is a verifiable sum over history, not a mutable field that can silently go wrong. 'What's the balance?' becomes a query over an immutable log." },
+    { q: "Why a saga and reconciliation rather than one transaction, and what's the overall stance?", a: "A payment spans your ledger and an external PSP that can't be wrapped in one ACID transaction, so you use a saga: local steps each with a compensating action (release reservation, void pending entry), and on an ambiguous PSP timeout you QUERY the PSP for the real status rather than guess. Reconciliation is the final net: a daily batch compares the ledger line-by-line against the PSP's settlement report, flagging any divergence for a compensating entry. The stance is correctness over availability — when an outcome is ambiguous the system holds rather than risk a double charge, because a slow exhaustive reconciliation is the final arbiter of truth." },
+  ]}
+/>
+
+<Recap lang="en">
+A payment system orbits one question — *have I seen this exact payment before?* — because money is a **conserved quantity** and the most ordinary thing on the internet, a retried request after an ambiguous timeout, is the hook's double charge. The fix is a **client-minted idempotency key** with an **atomic check-and-store**: a retry finds the key and returns the original result instead of charging again, and the client must own the key because only a key created before the first attempt survives a lost response. Money itself lives in an **append-only double-entry ledger** where every movement is two balanced entries (debit = credit): immutable so the audit trail is intact and corruption is detectable, balanced so money is conserved by construction and a balance is a verifiable sum, never a mutable field that silently corrupts. Because a payment spans your ledger and an external **PSP** that can't share one ACID transaction, you orchestrate it as a **saga** with compensating actions and resolve ambiguous timeouts by querying the PSP — and a daily **reconciliation** against the PSP's settlement report is the final arbiter that catches lost responses and drift. Throughout, the QPS is modest but the bar is brutal: the system chooses **correctness over availability**, tokenizes card data for PCI, and treats the reconciled ledger — not any single response — as the truth about money.
+</Recap>

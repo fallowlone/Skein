@@ -5,34 +5,165 @@ track: "system-design-cases"
 unit: "04-location-realtime"
 order: 2
 title: "Design nearby friends"
-summary: "Design nearby friends — to be authored."
-estMin: 16
-status: stub
+summary: "Design real-time nearby-friends: ingest a flood of location pings (write-heavy), route updates through region-keyed pub/sub to subscribers over WebSockets, fan out only to people who care, and make privacy and TTL first-class so stale or unwanted locations expire."
+estMin: 36
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - location-ingestion
+  - pub-sub-by-region
+  - websockets
+  - fan-out
+  - privacy-ttl
+  - write-heavy
+prereqs:
+  - 08-building-blocks/04-geohashing
+  - 04-data-distribution/02-sharding-and-partitioning
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://redis.io/docs/latest/develop/interact/pubsub/
+  - https://datatracker.ietf.org/doc/html/rfc6455
+  - https://h3geo.org/docs/highlights/indexing/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+The previous lesson's coffee shops never move. Your friends do — constantly, all at once, all over the map. Flip the read-heavy proximity problem on its head and it becomes a write firehose: every phone pings its location every few seconds, and for each ping you must figure out, in real time, which of that user's friends are close enough to care and push the update to their screens. The naive design — write each ping to a database, then have every client poll "where is everyone?" every second — collapses twice over: the writes saturate the database, and the polls multiply into a thundering herd. The interesting engineering is in *not* delivering most updates: a location ping should reach only the handful of people for whom it actually changed something.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Nearby-friends is write-heavy: route the ping flood by region via pub/sub, push to nearby friends over open connections — never broadcast.</Crux>
 
 <Explanation>
 
-## Design nearby friends
+## Requirements
 
-Body to be authored.
+- **Functional**: a user shares their location; friends within some radius (say 5 km) see that user appear and watch them move in near-real-time. When a friend leaves the radius, they disappear. Sharing is opt-in and revocable.
+- **Non-functional**: write-heavy — a ping every few seconds per active user. Low end-to-end latency (a couple of seconds, not minutes). Updates need not be durable; a dropped ping is replaced by the next one in seconds. Privacy is a hard requirement, not a feature: locations must expire and must never leak to non-friends.
+
+The defining inversion from the proximity lesson: there, data was static and reads dominated. Here, data is in constant motion and *writes* dominate, while the "query" (who is near whom) must be answered continuously rather than on demand.
+
+## Estimation
+
+Say 100M users, 10M active and sharing at any moment, each pinging every 5 seconds. That is `10^7 / 5 = 2×10^6` location writes per second — a firehose no single relational primary survives. Note what we do *not* need: durability or history. A location is interesting for seconds, then worthless. That single fact — ephemeral, high-volume, low-value-per-item — points straight at an in-memory, expiring store rather than a disk-backed database. The read side is bounded differently: each ping must fan out only to that user's online friends within range, which for a typical social graph is single digits, not millions.
+
+## High-level design
+
+Phones do not poll; they hold a **persistent connection** (a WebSocket) to a gateway, so the server can push updates the instant they happen. An incoming ping is written to a fast ephemeral store keyed by **region cell**, then published to a **per-region pub/sub channel**; subscribers interested in that region receive it and the gateway pushes it down the relevant sockets.
+
+<FlowDiagram
+  label="A phone sends a location ping over its WebSocket to a connection gateway, which writes the position into an in-memory store keyed by region cell with a short TTL and publishes the update to that region's pub/sub channel; subscribers for the region receive it and the gateway pushes the update down the sockets of friends who are nearby and online."
+  perRow={4}
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "phone", label: "phone", sub: "ping / 5s" },
+    { id: "ws", label: "WS gateway", sub: "persistent conn" },
+    { id: "geo", label: "geo router", sub: "point to region" },
+    { id: "store", label: "in-mem store", sub: "cell + TTL" },
+    { id: "pub", label: "pub/sub by region", sub: "one topic / cell" },
+    { id: "fan", label: "fan-out filter", sub: "only nearby friends" },
+    { id: "friends", label: "friends' phones", sub: "live update" },
+  ]}
+  edges={[
+    { from: "phone", to: "ws" },
+    { from: "ws", to: "geo", label: "ping" },
+    { from: "geo", to: "store", label: "write" },
+    { from: "geo", to: "pub", label: "publish" },
+    { from: "pub", to: "fan", label: "region msg" },
+    { from: "fan", to: "friends", label: "push" },
+  ]}
+  caption="The region acts as the routing key: a ping is published once to its cell's channel, and only subscribers tracking that cell — the gateways holding nearby friends' sockets — ever see it. Most users never touch the message at all."
+/>
+
+The two deep mechanisms are the persistent-connection layer that makes push possible, and the region-keyed pub/sub that keeps the fan-out from exploding.
+
+## Deep dive
+
+### WebSockets and the connection layer
+
+Real-time push needs the server to send without the client asking, which rules out request/response polling. A **WebSocket** upgrades a normal HTTP connection into a full-duplex channel that stays open, so the gateway can stream updates down it with no per-message handshake. The architectural consequence is that the system is now **stateful at the edge**: 10M sharing users means 10M open connections, each pinned to a specific gateway process that knows which user and which sockets it holds. You scale this horizontally — many gateway nodes, a connection-aware load balancer, and a registry mapping `user → gateway` so a message for a user can be routed to the node holding their socket.
+
+<Inset kind="why" lang="en">
+Why not just poll every second? Two reasons, both about the asymmetry of cost. First, polling pays a full HTTP request/response (and often a TLS resumption) for every check, even when nothing changed — and the overwhelming majority of polls return "no change", so you burn CPU and bandwidth manufacturing non-answers. Second, polling fixes your latency to the poll interval: a 1-second poll means up to 1 second of staleness even when an update was ready instantly, and shortening the interval to cut staleness multiplies the load. A persistent connection inverts both: the server sends exactly when there is news, the client pays connection cost once, and latency drops to network transit. The price is server-side state — millions of open sockets to manage — which is the trade you accept for real-time push.
+</Inset>
+
+### Region-keyed pub/sub and the fan-out problem
+
+The expensive mistake is broadcasting. If every ping went to every connection, 2M writes/sec times millions of connections is a quadratic blow-up that no cluster survives. The fix is to make **location the routing key**. Divide the world into region cells (the geohash/H3 idea from lesson 01, reused here for routing rather than search). Each ping is published to exactly one channel — its current region cell. A gateway subscribes only to the cells where it holds users who are sharing or watching. So a ping in downtown Berlin is delivered only to subscribers of Berlin-center cells, never to anyone in Tokyo.
+
+This converts an all-to-all broadcast into a **localized fan-out**: the number of recipients for a ping is bounded by "online friends currently near that location", which is small. As a user moves across a cell boundary, their client (or the gateway) re-subscribes to the new cell and unsubscribes from the old one — the same boundary awareness as lesson 01, now applied to a moving subscription rather than a static query. Redis pub/sub, a Kafka topic-per-region, or a dedicated message fabric all implement the same shape.
+
+<Inset kind="mistake" lang="en">
+A tempting but wrong optimization is to fan out on *write*: when a ping arrives, look up the user's friends, check each one's last-known location, and push directly to the nearby ones. It seems to skip the pub/sub layer. It fails at scale because it does the expensive graph + geo join on the hottest path (2M times/sec), couples the ingest service to the social graph and presence, and re-does that work for every single ping even when nobody moved meaningfully. Region-keyed pub/sub decouples the firehose from the friend-matching: ingest just publishes to a cell, and the relatively cheap "is this publisher my friend, and still in range" filter runs at the *subscriber* edge, on a stream that has already been narrowed to one region. Push the filtering to where the data is already small.
+</Inset>
+
+### Privacy and TTL
+
+Privacy cannot be a layer you add later; it shapes the data model. Every stored location carries a **TTL** (time-to-live) of a few seconds to a minute, so a phone that goes dark — app closed, battery dead, sharing revoked — simply ages out of the store with no explicit delete. This gives "last seen a moment ago" semantics for free and guarantees stale locations do not linger as a privacy hazard. On top of TTL, three rules: sharing is **opt-in and per-relationship** (I may share with Alice but not Bob); the **fan-out filter enforces friendship** so a region subscriber never receives a non-friend's coordinates (region channels carry pings, but the edge drops any whose publisher is not an authorized friend of the recipient); and the server stores **coarse precision** where the product allows, since "within this neighborhood" leaks far less than exact GPS.
+
+## Bottlenecks & tradeoffs
+
+The headline bottleneck is **connection state**, not throughput of any single message. Millions of long-lived sockets are memory and file-descriptor heavy, survive deploys awkwardly (a rolling restart drops every connection unless you drain gracefully), and demand a routing registry that itself must scale. The headline tradeoff is **freshness vs cost**: pinging every second feels live but quadruples write load over every-five-seconds for marginal benefit, so adaptive ping rates (slower when stationary, faster when moving) buy most of the realtime feel for a fraction of the writes. And the deepest tradeoff is the one the whole design rests on — we deliberately **drop durability and history** to make the volume survivable; if the product later wants "where was my friend an hour ago", that is a separate, durable, batch-written store, never the live path.
+
+<Quiz
+  id="02-nearby-friends-quiz-1"
+  lessonSlug="02-nearby-friends"
+  lang="en"
+  question="A nearby-friends design ingests 2M location pings/second. The team writes each ping to the primary SQL database and has clients poll 'where are my friends?' once per second. It falls over immediately. What are the two structural fixes?"
+  choices={[
+    { label: "Replace the durable DB with an in-memory, TTL-expiring store keyed by region (locations are ephemeral, not durable), and replace polling with persistent WebSocket connections so the server pushes updates instead of clients asking.", correct: true },
+    { label: "Add read replicas to the SQL primary and shorten the poll interval to 200 ms for fresher data.", misconception: "Replicas don't help the WRITE firehose (2M writes/sec hit the primary), and a shorter poll interval multiplies the herd of polls. The fixes are an ephemeral store for the writes and push (WebSockets) instead of polling." },
+    { label: "Batch the writes into the database every 10 seconds and cache the friend list aggressively.", misconception: "Batching delays freshness and still persists ephemeral data that's worthless in seconds; caching the friend list doesn't solve push. Use an in-memory TTL store and WebSocket push — durability isn't needed here." },
+    { label: "Shard the SQL database by user ID so writes spread across shards.", misconception: "Sharding spreads write load but still pays disk durability for data that lives seconds, and clients still poll. The right model is ephemeral in-memory storage with TTL plus server push over persistent connections." },
+  ]}
+/>
+
+<Quiz
+  id="02-nearby-friends-quiz-2"
+  lessonSlug="02-nearby-friends"
+  lang="en"
+  question="To deliver a location ping to the right people, an engineer proposes: on each ping, load the publisher's friend list, fetch each friend's location, and push directly to the nearby ones. Why is region-keyed pub/sub preferred at 2M pings/sec?"
+  choices={[
+    { label: "Fan-out-on-write does the graph + geo join on the hottest path for every ping, even when nobody moved meaningfully. Publishing to a region channel decouples ingest from matching; the cheap 'friend and in-range' filter runs at the subscriber edge on a stream already narrowed to one region.", correct: true },
+    { label: "Pub/sub is faster than database lookups, so it's always the better choice.", misconception: "It's not about raw speed of one lookup; it's about WHERE the work happens. Fan-out-on-write repeats an expensive graph+geo join 2M times/sec on the ingest path. Region pub/sub moves the matching to the subscriber edge, on an already-localized stream." },
+    { label: "Region pub/sub guarantees exactly-once delivery, which fan-out-on-write can't.", misconception: "Neither approach guarantees exactly-once, and it's irrelevant — a dropped ping is replaced in seconds. The real reason is decoupling the firehose from the friend-matching so the expensive join isn't on the hottest path." },
+    { label: "Fan-out-on-write requires WebSockets while pub/sub does not.", misconception: "Both still push over WebSockets at the edge. The distinction is that region pub/sub publishes once per cell and filters cheaply at the subscriber, instead of doing a full graph+geo join per ping on ingest." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-nearby-friends-metaphor-1"
+  lessonSlug="02-nearby-friends"
+  lang="en"
+  setup="Stored locations carry a short _______ so that a phone which goes dark — app closed, sharing revoked — simply ages out of the store with no explicit delete, giving 'last seen a moment ago' semantics and ensuring stale positions never linger as a privacy hazard."
+  accepted={["ttl", "time-to-live", "time to live", "expiry", "expiration"]}
+  canonical="TTL"
+  explanation="A TTL (time-to-live) makes every location self-expiring: it vanishes automatically seconds after the last ping, so a closed app or revoked share leaves nothing behind. This turns privacy and 'last seen' into a property of the storage model rather than a cleanup job you must remember to run."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Nearby-friends inverts proximity: writes dominate. Don't persist or poll — push over WebSockets from a TTL store, routed by region cell to nearby friends. Privacy is structural: opt-in, an edge filter, TTL expiry.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-nearby-friends-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is nearby-friends write-heavy, and what storage and delivery model does that force?", a: "Every active sharing phone pings every few seconds, so 10M sharers ≈ 2M location writes/second — a firehose no relational primary survives. But the data is ephemeral, high-volume, and worthless within seconds, so it needs no durability or history. That points to an in-memory, TTL-expiring store keyed by region rather than a disk-backed DB. For delivery, clients hold persistent WebSocket connections so the server pushes the instant there's news, instead of polling (which pays full request/response per check, fixes latency to the interval, and creates a thundering herd)." },
+    { q: "How does region-keyed pub/sub solve the fan-out problem?", a: "Broadcasting every ping to every connection is a quadratic blow-up. Instead, make location the routing key: divide the world into region cells and publish each ping to exactly one channel — its current cell. A gateway subscribes only to cells where it holds sharing/watching users, so a Berlin ping never reaches Tokyo. This converts all-to-all into a localized fan-out bounded by 'online friends near that spot' (small). When a user crosses a cell boundary, the subscription re-points to the new cell. Crucially, the cheap 'is this a friend, still in range' filter runs at the subscriber edge — never as a graph+geo join on the 2M/sec ingest path (fan-out-on-write)." },
+    { q: "How is privacy made structural, and what are the main bottlenecks and tradeoffs?", a: "Privacy shapes the data model: every location has a short TTL (auto-expires, giving free 'last seen' and no stale-data hazard), sharing is opt-in per relationship, the edge filter enforces friendship so a region subscriber never receives a non-friend's coordinates, and the server can store coarse precision. Bottlenecks: connection state — millions of long-lived sockets are memory/FD heavy, survive deploys badly without graceful draining, and need a user→gateway routing registry. Tradeoffs: freshness vs cost (adaptive ping rates — slower when stationary — cut writes hugely), and deliberately dropping durability/history to survive the volume (any 'where was my friend an hour ago' is a separate batch store, never the live path)." },
+  ]}
+/>
+
+<Recap lang="en">
+Nearby-friends is the **inverse of proximity search**: locations move constantly and **writes dominate** (about 2M pings/sec for 10M sharers), but each location is **ephemeral** — no durability or history needed. That forces an **in-memory, TTL-expiring store** instead of a database, and **WebSocket push** instead of polling, so the server sends the instant there is news at the cost of millions of stateful edge connections. The fan-out is tamed by making **location the routing key**: each ping is published to exactly one **region-cell channel**, gateways subscribe only to cells where they hold users, and the cheap "friend and in-range" filter runs at the **subscriber edge** — never as a graph+geo join on the ingest firehose (the fan-out-on-write trap). **Privacy is structural**: TTL auto-expiry, opt-in per relationship, a friendship filter at the edge, and coarse precision where allowed. The bottleneck is **connection state**, not message throughput; the key tradeoffs are **freshness vs cost** (adaptive ping rates) and the deliberate sacrifice of **durability and history** to make the volume survivable.
+</Recap>

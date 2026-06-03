@@ -5,34 +5,192 @@ track: "system-design-cases"
 unit: "02-social-feed"
 order: 2
 title: "Design a news feed"
-summary: "Design a news feed — to be authored."
-estMin: 16
-status: stub
+summary: "Design a news feed: fan-out-on-write vs fan-out-on-read, the celebrity problem and the hybrid that fixes it, ranking, the feed cache, cursor pagination, and how timelines are actually stored — the canonical read-heavy social system."
+estMin: 32
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - fan-out-on-write
+  - fan-out-on-read
+  - hybrid-fanout
+  - feed-ranking
+  - feed-cache
+  - cursor-pagination
+prereqs:
+  - system-design/05-caching-at-scale/03-distributed-cache
+  - system-design/06-async-messaging/02-pub-sub
+  - system-design/04-data-distribution/02-sharding-and-partitioning
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://engineering.fb.com/2014/06/12/core-infra/tao-the-power-of-the-graph/
+  - https://redis.io/glossary/feeds/
+  - https://aws.amazon.com/builders-library/avoiding-fallback-in-distributed-systems/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A social app launched feed-on-write: every post was eagerly copied into all of the author's followers' feed lists, so reading a feed was a single fast lookup. It worked beautifully — until a celebrity with 30 million followers posted. That one write turned into 30 million feed insertions, the write fan-out service fell hours behind, and for a while half the platform's celebrities' posts simply didn't appear in anyone's feed. The engineers' instinct was to "make the fan-out faster". The real answer was that no single fan-out strategy works for both a user with 200 followers and a user with 30 million — and the fix was not speed but a hybrid that uses one strategy for normal users and the opposite strategy for celebrities. This lesson is about that decision, and the storage, ranking, and caching that surround it.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A feed trades write cost for read cost: fan-out-on-write precomputes feeds, fan-out-on-read assembles on read; celebrities force a hybrid.</Crux>
 
 <Explanation>
 
-## Design a news feed
+## Requirements
 
-Body to be authored.
+**Functional:** a user posts content; their followers see it in a feed. A user opens their feed and gets a ranked, paginated list of recent posts from accounts they follow. Support infinite scroll. Posts can be liked/commented (which feeds back into ranking). The follow graph is asymmetric (you follow accounts that may not follow you).
+
+**Non-functional:** the system is **massively read-heavy** — feed reads dwarf posts by orders of magnitude, so the design optimizes the read path above all. Feed load must feel instant (tens of milliseconds for the first page). New posts should appear "soon" (seconds to a minute is fine — eventual consistency is acceptable here; nobody's bank balance is wrong if a post shows up 20 seconds late). It must handle the **power-law follower distribution**: most accounts have few followers, a tiny number have tens of millions, and that long tail is the entire design problem.
+
+The defining tension: do you do the expensive work when a post is **written** (and make reads cheap) or when a feed is **read** (and make writes cheap)? That single choice is the heart of feed design.
+
+## Estimation
+
+300M daily active users, each opening their feed ~10 times/day, gives 3×10^9 feed reads/day, about **35,000 feed reads/second average**, peaking several times higher. Posts are far rarer — say each user posts ~twice/day, so ~7,000 posts/second. The read:write ratio is roughly **100:1**, which is the single most important number: it justifies precomputing feeds (do work once on write, serve it cheaply on the 100 reads).
+
+Now the fan-out cost. Average followers might be a few hundred, so an average post fans out to a few hundred feed writes — fine. But a celebrity post with 30M followers, under pure fan-out-on-write, is 30M writes for one post. If even a handful of celebrities post in the same minute, that is hundreds of millions of writes hammering the feed store — the hook's outage. The napkin says: fan-out-on-write is cheap on average and catastrophic at the tail, so the tail needs different handling.
+
+## High-level design
+
+The two strategies are mirror images; the production system runs both.
+
+<FlowDiagram
+  label="On the write path, a post from a normal author fans out into each follower's precomputed feed cache; on the read path, a feed request merges those precomputed entries with freshly pulled posts from any celebrities the user follows, ranks the merged set, and returns a page."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "post", label: "new post", sub: "write path" },
+    { id: "fanout", label: "fan-out worker", sub: "normal authors" },
+    { id: "feedcache", label: "feed cache", sub: "per-user list" },
+    { id: "read", label: "feed request", sub: "read path" },
+    { id: "pull", label: "pull celebrities", sub: "fan-out-on-read" },
+    { id: "merge", label: "merge + rank", sub: "precomputed + pulled" },
+    { id: "page", label: "ranked page", sub: "cursor paginated" },
+  ]}
+  edges={[
+    { from: "post", to: "fanout", label: "if normal" },
+    { from: "fanout", to: "feedcache", label: "push to followers" },
+    { from: "read", to: "feedcache", label: "read precomputed" },
+    { from: "read", to: "pull", label: "for followed VIPs" },
+    { from: "feedcache", to: "merge", label: "precomputed" },
+    { from: "pull", to: "merge", label: "live" },
+    { from: "merge", to: "page", label: "rank + slice" },
+  ]}
+  caption="The hybrid: normal authors are pushed into follower feed caches on write (cheap reads), celebrities are pulled at read time (no 30M-write storm), and the read path merges and ranks the two sources before paginating."
+/>
+
+- **Fan-out-on-write (push):** when a post is created, immediately insert its id into the precomputed feed of every follower. Reads are then a trivial cache lookup. Cost: write amplification proportional to follower count.
+- **Fan-out-on-read (pull):** store posts only once (by author); when a user reads their feed, query the recent posts of everyone they follow and merge. Writes are trivial. Cost: every read does a scatter-gather across many authors — expensive, and repeated on every refresh.
+- **Hybrid:** push for normal authors (cheap, common), pull for celebrities (avoids the write storm), merge at read time.
+
+## Deep dive
+
+### Fan-out-on-write vs fan-out-on-read
+
+This is the core tradeoff, and it is the read:write ratio made concrete. With a 100:1 read:write ratio, doing work on write and amortizing it over 100 reads is usually the win — which is why push is the default. The precomputed feed is just a per-user list of post ids (a Redis sorted set, scored by time or rank); a read is "fetch the top N ids, hydrate the posts" — milliseconds.
+
+Pull is the opposite bet. It is write-cheap (one copy of each post) but read-expensive: assembling a feed means querying the recent timeline of every followed account and merging them, on every single refresh, with no amortization. For a user following 1,000 accounts, that is a 1,000-way scatter-gather per feed load. Pull wins only when writes vastly outnumber reads or when followers rarely read — the opposite of a feed.
+
+So why not push always? Because of the tail.
+
+### The celebrity problem and the hybrid
+
+Push breaks for high-follower accounts. A 30M-follower post is 30M writes; the "hot key" of celebrities means a few accounts generate a disproportionate share of all fan-out work, and a burst of celebrity posts is the write storm from the hook. The elegant fix is to **invert the strategy for the few accounts that break the common one**: do not fan out celebrity posts on write at all. Instead, store them once, and at **read time**, for each celebrity a user follows, pull that celebrity's recent posts and merge them into the (mostly precomputed) feed.
+
+This works because the asymmetry runs both ways: celebrities are few (so the per-read pull is a handful of extra lookups, not thousands), and they are followed by many (so push would have been catastrophic). A threshold (say, accounts over ~100k–1M followers) classifies an author as push or pull. The read path becomes: read the precomputed feed, pull recent posts from followed celebrities, merge, rank, slice. The merge is cheap because celebrities-followed-per-user is small.
+
+<Inset kind="why" lang="en">
+Why does the hybrid actually solve it instead of just moving the cost around? Because it matches each strategy to the side of the power law where it is cheap. Push is cheap when follower count is small (most authors) and you amortize over many reads — so use it there. Pull is cheap when the *number of such authors a reader follows* is small (you follow few celebrities) — so use it there. The accounts that make push expensive (huge follower count) are exactly the accounts that are *rare per reader*, so pulling them at read time costs each reader only a few extra lookups. The hybrid is not a compromise that is mediocre at both; it is two optimal strategies applied to the two regimes of the distribution where each is genuinely cheap. The only added complexity is the merge and the threshold that routes an author to push or pull.
+</Inset>
+
+### Ranking, feed cache, and pagination
+
+**Ranking.** A modern feed is not strictly reverse-chronological; it is ranked by predicted engagement (recency, affinity to the author, content type, predicted like/comment probability). The pragmatic design keeps a **candidate-generation then ranking** split: fan-out/pull produces a candidate set of recent post ids (cheap), and a ranking stage scores them (more expensive, applied to the small candidate set, not the whole graph). Ranking can run at read time over the candidates or be partially precomputed; either way it operates on a bounded candidate list, never the whole timeline.
+
+**Feed cache.** The precomputed feed lives in an in-memory store (Redis sorted set per user) holding the top few hundred post ids — not full posts. You cap the list (you do not store a user's entire history in cache; old entries fall off), and on a cache miss or for inactive users you can lazily rebuild from the authors' timelines. Storing ids, not bodies, keeps the cache small and lets the same post object be hydrated once and shared. The hot-key risk (a viral post) is handled by caching the post body itself behind a CDN/edge cache so the hydration of a popular post does not stampede the post store.
+
+**Pagination.** Never offset-paginate a feed. Offset pagination (`LIMIT 20 OFFSET 10000`) gets slower as you scroll and skips or duplicates items when new posts arrive between requests. Use **cursor (keyset) pagination**: the client sends the score/id of the last item it saw, and the server returns items after that cursor. It is O(1) regardless of depth and stable under inserts — the right primitive for infinite scroll over a constantly-growing list.
+
+<Inset kind="mistake" lang="en">
+A subtle but expensive mistake is treating "the feed" as a single consistent materialized list and trying to keep it perfectly in sync — re-fanning-out on every edit, deletion, privacy change, or unfollow. At feed scale this is ruinous: a user unfollowing someone, or deleting a post, would trigger another N-write operation. The senior approach is to keep the precomputed feed *approximate and id-based*, and resolve correctness at hydration/read time: when you hydrate a post id, you check current visibility (deleted? blocked? private now?) and drop it if it no longer qualifies, rather than scrubbing it from millions of precomputed lists. The feed cache is a fast candidate index, not the source of truth; the source of truth is the posts and the graph, and the feed is allowed to be eventually consistent and slightly stale. Fighting that turns every mutation into a fan-out storm.
+</Inset>
+
+### Timeline storage
+
+Two things are stored separately. **Posts** (the source of truth) live in a durable store sharded by author id — author timelines are written once and read by the pull path and by hydration. **Feeds** (the derived, per-consumer view) live in the feed cache, sharded by consumer/user id, holding ranked post ids with a cap and TTL. Keeping these distinct is what lets the same post be referenced by millions of feeds without copying its body, lets the feed be rebuilt from posts on demand, and lets you shard the write-heavy author timelines and the read-heavy consumer feeds on different keys for their different access patterns.
+
+<Quiz
+  id="02-news-feed-quiz-1"
+  lessonSlug="02-news-feed"
+  lang="en"
+  question="Your feed is 100:1 read-heavy. Pure fan-out-on-write gives instant reads but a celebrity's 30M-follower post causes a write storm that stalls everyone's feed. What is the standard fix?"
+  choices={[
+    { label: "A hybrid: push (fan-out-on-write) for normal authors so reads stay a cheap cache lookup, but pull (fan-out-on-read) for celebrities — store their posts once and merge them into the feed at read time, avoiding the 30M-write storm. A follower-count threshold routes each author.", correct: true },
+    { label: "Switch entirely to fan-out-on-read so writes are always cheap.", misconception: "Pure pull makes every feed load a scatter-gather across all followed accounts on every refresh, with no amortization over the 100 reads — disastrous for a read-heavy feed. You keep push for the common case and use pull only for the few celebrities, where it is cheap." },
+    { label: "Make fan-out-on-write faster with more workers and a bigger feed store.", misconception: "More workers still means 30M writes per celebrity post; you are scaling the wrong axis. The problem is the strategy at the tail, not throughput. The fix is to NOT fan out celebrity posts on write at all — pull them at read time." },
+    { label: "Cap celebrities' follower counts so no post exceeds the fan-out budget.", misconception: "You cannot dictate the social graph's shape; the power-law tail is inherent. The design must handle 30M-follower accounts, and the way to handle them is to pull (read-time merge) rather than push for those accounts." },
+  ]}
+/>
+
+<Quiz
+  id="02-news-feed-quiz-2"
+  lessonSlug="02-news-feed"
+  lang="en"
+  question="A feed uses LIMIT 20 OFFSET n for infinite scroll. Deep scrolls get slow and users report posts appearing twice or being skipped. What is the cause and fix?"
+  choices={[
+    { label: "Offset pagination scans and discards n rows (slower the deeper you go) and shifts when new posts arrive between requests, causing skips/dupes. Use cursor (keyset) pagination: pass the last item's score/id and return items after it — O(1) depth and stable under inserts.", correct: true },
+    { label: "The database needs an index on the offset column.", misconception: "There is no 'offset column' to index; OFFSET n inherently scans and throws away n rows, so it gets slower with depth regardless of indexing, and it still shifts under concurrent inserts. The structural fix is cursor pagination, not an index." },
+    { label: "Cache each page so repeated offsets are fast.", misconception: "Caching pages does not fix the skip/duplicate problem (the underlying list shifts when posts are inserted) and the feed is personalized and constantly changing, so page caches churn. Cursor pagination addresses both the cost and the correctness." },
+    { label: "Lower the page size so OFFSET stays small.", misconception: "A smaller page size does not help — OFFSET n still skips n rows however you slice it, and deep scroll accumulates a large n. And it still skips/dupes under inserts. Switch to a cursor that anchors on the last seen item." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-news-feed-metaphor-1"
+  lessonSlug="02-news-feed"
+  lang="en"
+  setup="Because a feed is roughly 100:1 read-heavy, the default strategy does the expensive work once when a post is _______ and amortizes it over the many reads — precomputing each follower's feed so a read is just a cache lookup; only celebrities, where this would explode, are handled the opposite way (pulled at read time)."
+  accepted={["written", "write", "on write", "created", "posted"]}
+  canonical="written"
+  explanation="Fan-out-on-write does the work when a post is written, precomputing every follower's feed so reads are cheap cache lookups — the right bet at a 100:1 read:write ratio. The exception is celebrities: pushing their post to tens of millions of feeds is a write storm, so those are pulled at read time and merged, giving the hybrid."
+/>
+
+## Bottlenecks & tradeoffs
+
+The dominant force is the **power-law follower distribution**: it is why no single strategy works and why the hybrid exists. The key tradeoffs:
+
+- **Write cost vs read cost.** Push pays on write to make reads cheap (right for read-heavy); pull pays on read to make writes cheap (right only when reads are rare). The read:write ratio decides the default, and the follower distribution decides the exceptions.
+- **Freshness vs cost.** The feed is **eventually consistent** — a post appearing seconds late is fine, and accepting that staleness is what lets you precompute, cache, and avoid re-fanning-out on every mutation. Demanding strict freshness would force pull (expensive reads) or constant re-fan-out (expensive writes).
+- **Storage duplication vs assembly cost.** Push duplicates a post id into many feeds (storage + write amplification) to make reads O(1); pull stores once but pays assembly per read. Storing ids (not bodies) bounds the duplication cost.
+- **Ranking quality vs read latency.** Heavier ranking improves engagement but costs read-time compute; the candidate-generation/ranking split bounds that cost by ranking only a small candidate set, not the whole graph.
+
+The deepest insight: the feed cache is a **derived, approximate, eventually-consistent index**, not the source of truth. Treat it as authoritative and every edit becomes a fan-out storm; treat it as a fast candidate list resolved against the real posts at hydration, and the system stays cheap and correct.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A feed is read-heavy, so push precomputes per-follower feeds for cheap reads — except celebrities, whose fan-out forces pull on read: the hybrid. Store post ids in a capped feed cache; paginate by cursor.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-news-feed-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast fan-out-on-write and fan-out-on-read, and say which is the default and why.", a: "Fan-out-on-write (push) inserts a new post's id into every follower's precomputed feed at write time, so reads are a trivial cache lookup but writes amplify by follower count. Fan-out-on-read (pull) stores each post once by author and assembles the feed at read time by querying every followed account and merging, so writes are trivial but every read is an unamortized scatter-gather. Push is the default because a feed is ~100:1 read-heavy: doing the work once on write and amortizing over ~100 reads beats redoing a scatter-gather on every refresh." },
+    { q: "What is the celebrity problem and how does the hybrid solve it without just moving cost?", a: "Under pure push, a celebrity's post fans out to tens of millions of feed writes — a write storm that stalls fan-out for everyone (the hook). The hybrid pulls celebrity posts at read time instead of pushing them: store them once, and for each celebrity a user follows, fetch their recent posts and merge into the (precomputed) feed. It works because the power law cuts both ways — celebrities make push expensive (huge follower count) but are rare per reader (you follow few), so pulling them costs each reader only a few extra lookups. Each strategy is applied to the regime where it is genuinely cheap, not a mediocre middle." },
+    { q: "Why store post ids in the feed cache (not bodies), and why cursor pagination?", a: "Storing ids (in a Redis sorted set per user, capped, scored by time/rank) keeps the per-user feed small, lets the same post body be hydrated once and shared across millions of feeds, and lets the feed be rebuilt from author timelines on a miss. Hydration also resolves correctness (deleted/blocked/now-private posts are dropped), so the cache stays an approximate index, not the source of truth. Cursor (keyset) pagination passes the last seen item's score/id and returns items after it: O(1) regardless of scroll depth and stable when new posts arrive — unlike OFFSET, which scans n rows (slower deep) and skips/dupes under inserts." },
+    { q: "Why is eventual consistency acceptable for a feed, and what does treating the feed as the source of truth cost?", a: "A post appearing seconds-to-a-minute late harms nothing — no correctness invariant is violated — so eventual consistency is acceptable, and accepting it is exactly what lets you precompute, cache, and avoid re-fanning-out on every mutation. If you instead treat the precomputed feed as authoritative and keep it perfectly synced, every edit, delete, unfollow, or privacy change triggers another N-write fan-out — ruinous at scale. The senior approach keeps the feed approximate and id-based and resolves visibility at hydration time." },
+  ]}
+/>
+
+<Recap lang="en">
+A news feed is the canonical **read-heavy** social system (~100:1 reads:writes), so the default is **fan-out-on-write (push)**: when a post is created, insert its id into every follower's **precomputed feed cache** so a read is a cheap O(1) cache lookup, amortizing the write work over the many reads. **Fan-out-on-read (pull)** is the mirror — store each post once, assemble at read time — cheap on writes but an unamortized scatter-gather on every read, so it is the wrong default. The breaker is the **power-law follower distribution**: a celebrity's post under push is a tens-of-millions write storm (the hook), so the production system runs a **hybrid** — push for normal authors, pull for celebrities, merged and ranked at read time. The hybrid is not a compromise; it applies each strategy to the regime where it is genuinely cheap. Around this sit **ranking** (candidate generation then scoring a bounded set, never the whole graph), the **feed cache** (post ids not bodies, capped, rebuildable), **cursor pagination** (O(1) depth, stable under inserts — never OFFSET), and **split timeline storage** (posts sharded by author, feeds by consumer). The unifying idea: the feed is a derived, **eventually-consistent, approximate index** resolved against the real posts at hydration — treat it as the source of truth and every mutation becomes a fan-out storm.
+</Recap>

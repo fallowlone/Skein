@@ -4,19 +4,154 @@ lang: en
 track: "system-design-cases"
 unit: "02-social-feed"
 order: 7
-title: "02-social-feed: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Social-feed cases: reading config and code"
+summary: "Read real config and code from the four cases, then pick the senior fix: a retry loop missing dedup, an offset-paginated feed, a chat handler that acks before persisting, and an autocomplete that ranks on the read path."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - idempotency-dedup
+  - cursor-pagination
+  - message-ordering
+  - latency-budget
+  - retry-dlq
+  - top-k-per-prefix
+prereqs:
+  - system-design-cases/02-social-feed/01-notification-system
+  - system-design-cases/02-social-feed/02-news-feed
+  - system-design-cases/02-social-feed/03-chat-system
+  - system-design-cases/02-social-feed/04-search-autocomplete
 sources:
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://redis.io/docs/latest/develop/data-types/sorted-sets/
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 02-social-feed unit. STUB.</Hook>
+<Hook>
+The bugs in social systems hide in a few lines: a retry without a dedup check, an OFFSET in a feed query, an ack before a write, a database call on the read path. Read each snippet, trace what happens at scale, and pick the change a senior engineer would commit.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the snippet, find the missing seam — dedup, cursor, persist-before-ack, precompute — and pick the fix the failure mode demands.</Crux>
+
+<Explanation>
+
+Practise the design-review loop: locate the load-bearing line, reason about what it does under millions of events, and choose the fix that addresses the failure mode rather than papering over it.
+
+## Snippet 1 — the notification retry loop
+
+```python
+def deliver(msg):
+    for attempt in range(5):
+        try:
+            provider.send(msg)          # may time out / 429
+            return
+        except Retryable:
+            sleep(2 ** attempt)         # exponential backoff
+    dead_letter.put(msg)
+```
+
+<Quiz
+  id="02-social-feed-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This has bounded retries, backoff, and a DLQ. After a provider outage recovers, users still get duplicate pushes. What is missing?"
+  choices={[
+    { label: "A dedup guard: check an idempotency key (event+recipient+channel) in a fast store before provider.send, and skip if seen. Retries are at-least-once, so without it a re-flushed backlog duplicates at the device.", correct: true },
+    { label: "Add jitter to the backoff and the duplicates stop.", misconception: "Jitter spreads retries to avoid a thundering herd on the recovered provider — worth adding — but it does not stop duplicates. A retried or re-flushed message still sends twice without an idempotency check before send." },
+    { label: "Raise the retry cap above 5.", misconception: "More retries cause MORE duplicates, not fewer. The duplicate comes from re-sending without a dedup guard; the cap controls when you give up to the DLQ, not whether a resend duplicates." },
+    { label: "Catch all exceptions, not just Retryable.", misconception: "Retrying permanent errors (invalid token, hard bounce) wastes sends and trips abuse limits — you should retry FEWER error types, not more. And it still does not address duplicates, which need an idempotency key." },
+  ]}
+/>
+
+## Snippet 2 — the feed query
+
+```sql
+SELECT post_id FROM feed
+WHERE user_id = :uid
+ORDER BY created_at DESC
+LIMIT 20 OFFSET :n;     -- n grows as the user scrolls
+```
+
+<Quiz
+  id="02-social-feed-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Deep scrolls get slow and users report posts appearing twice or being skipped. What is the cause and fix?"
+  choices={[
+    { label: "Offset pagination scans and discards n rows (slower the deeper you scroll) and shifts when new posts arrive between requests, causing skips/dupes. Use cursor (keyset) pagination: pass the last item's score/id and return items after it — O(1) depth, stable under inserts.", correct: true },
+    { label: "Add an index on created_at.", misconception: "An index helps the sort but OFFSET n still scans and throws away n rows, so it slows with depth regardless, and it still shifts under concurrent inserts. The structural fix is a cursor, not an index." },
+    { label: "Cache each page by its offset.", misconception: "The underlying list shifts when posts are inserted, so cached pages still skip/dupe, and a personalized feed churns the cache. Cursor pagination fixes both cost and correctness." },
+    { label: "Reduce LIMIT to 10 so OFFSET stays small.", misconception: "OFFSET n still skips n rows however you slice it, and deep scroll accumulates a large n; it still skips/dupes under inserts. Anchor on the last seen item with a cursor." },
+  ]}
+/>
+
+## Snippet 3 — the chat send handler
+
+```python
+def on_message(ws, msg):
+    ack(ws, msg.client_id)              # tell sender: delivered ✓
+    seq = persist(msg)                  # assign sequence, store
+    route_to_recipient(msg, seq)
+```
+
+<Quiz
+  id="02-social-feed-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What is the correctness bug, and how should the handler be reordered?"
+  choices={[
+    { label: "It acks before persisting: a crash between ack and persist loses the message while the sender's UI shows a confident tick. Persist (and assign the sequence) first, then ack — the 'sent' tick must mean durably stored.", correct: true },
+    { label: "It should ack after route_to_recipient returns delivery confirmation.", misconception: "The 'sent' tick means the server durably has the message, not that the recipient received it (that is the separate 'delivered' tick). Persist-then-ack is the fix; coupling ack to recipient delivery conflates two different ticks." },
+    { label: "Nothing is wrong; acking first makes the UI feel faster.", misconception: "That speed is exactly the trap: if the process crashes after the optimistic ack and before persist, the message is silently lost — the one thing chat must never do. Persist before you ack." },
+    { label: "It needs a lock around persist to prevent races.", misconception: "The bug is ordering, not concurrency: ack happens before the durable write. Persisting first fixes it; a lock does not address the lost-message-on-crash window between ack and persist." },
+  ]}
+/>
+
+## Snippet 4 — the autocomplete endpoint
+
+```python
+def suggest(prefix):
+    rows = db.query(
+      "SELECT q FROM search_log WHERE q LIKE %s GROUP BY q ORDER BY count(*) DESC LIMIT 10",
+      prefix + "%")            # runs on every keystroke
+    return [r.q for r in rows]
+```
+
+<Quiz
+  id="02-social-feed-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This ranks matching queries live on every keystroke. It is 600 ms slow and overloads the cluster. What is the fix?"
+  choices={[
+    { label: "Move ranking offline: a periodic pipeline aggregates the log into a trie with precomputed top-k per node; suggest() then walks to the prefix and returns the cached top-k (O(1), no log access), behind an edge cache for popular prefixes.", correct: true },
+    { label: "Add an index on the q column.", misconception: "An index speeds the LIKE scan but you still run a GROUP BY / ORDER BY aggregation per keystroke over a huge log — too slow for tens of ms, hundreds of thousands of times a second. The ranking must not be on the read path at all." },
+    { label: "Cache the result per full prefix string in Redis.", misconception: "A naive per-prefix cache still misses constantly on the long tail and is stale without a refresh pipeline; the structured answer is a precomputed trie with top-k per node, refreshed by an offline build." },
+    { label: "Limit the query to the last day of logs.", misconception: "A smaller window is still a live aggregation on every keystroke — faster, but still on the read path and still a keystroke storm. Precompute the ranking offline and serve an O(1) trie lookup." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Each bug is a missing seam: dedup before send, a cursor instead of OFFSET, persist before ack, and precompute-offline instead of ranking on the read path. Read the load-bearing line and fix the failure mode.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-social-feed-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a retry loop with backoff and a DLQ still duplicate, and why is OFFSET wrong for a feed?", a: "Retries are at-least-once by design, so a re-flushed or retried message sends twice unless an idempotency key (event+recipient+channel) is checked in a fast store before the send — backoff and the DLQ control when and how you retry, not whether a resend duplicates. OFFSET n scans and discards n rows so it slows as the user scrolls, and the list shifts when new posts arrive between requests, causing skipped or duplicated items; cursor (keyset) pagination passes the last seen score/id and returns items after it, which is O(1) at any depth and stable under inserts." },
+    { q: "Why must a chat handler persist before it acks, and why can't autocomplete rank on the read path?", a: "If the handler acks 'sent' before durably persisting, a crash in that window loses the message while the sender sees a confident tick — silent loss, which chat must never do; persist (and assign the per-conversation sequence) first, then ack, so the tick means durably stored. Autocomplete cannot rank live because the ~100 ms budget (tens of ms server-side) cannot fit an aggregation over billions of log rows, and every keystroke is a request, so live ranking is a keystroke storm; the ranking is precomputed offline into a trie with top-k per node and served as an O(1) read." },
+  ]}
+/>
+
+<Recap lang="en">
+The four snippets each hide a one-line failure. The **notification** retry loop has backoff and a DLQ but no **idempotency key**, so a re-flushed backlog duplicates — retries are at-least-once, dedup must guard the send. The **feed** query uses **OFFSET**, which scans n rows (slow at depth) and shifts under inserts (skips/dupes); the fix is **cursor pagination**. The **chat** handler **acks before persisting**, so a crash loses the message under a confident tick; persist (and assign the sequence) first, then ack. The **autocomplete** endpoint ranks **live per keystroke** over the log, which cannot meet the budget or the load; precompute **top-k per trie node** offline and serve an O(1) read. The senior habit: find the load-bearing line, reason about it at scale, and apply the fix the failure mode demands.
+</Recap>

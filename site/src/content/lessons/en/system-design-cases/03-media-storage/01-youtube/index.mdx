@@ -5,34 +5,182 @@ track: "system-design-cases"
 unit: "03-media-storage"
 order: 1
 title: "Design YouTube"
-summary: "Design YouTube — to be authored."
-estMin: 16
-status: stub
+summary: "Design YouTube: a write path that ingests and transcodes one upload into many renditions, and a read path that serves billions of views from a CDN. The bytes never touch the app servers, the metadata DB never holds a video, and view counts are eventually consistent on purpose."
+estMin: 34
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - upload-pipeline
+  - transcoding
+  - adaptive-bitrate
+  - cdn-delivery
+  - object-storage
+  - read-heavy-fanout
+prereqs:
+  - system-design/07-storage-choices/02-blob-and-object
+  - system-design/03-traffic/03-cdn
 sources:
+  - https://netflixtechblog.com/high-quality-video-encoding-at-scale-d159db052746
+  - https://developer.mozilla.org/en-US/docs/Web/Media/Guides/Streaming/HLS
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A new engineer is asked "design YouTube" and starts drawing an upload form that POSTs the video to a web server, which stores it in a database row. Two follow-up questions sink it. First: a 4K upload is 20 GB — your app server is now holding a 20 GB request in memory and your Postgres row has a 20 GB blob. Second: when this video gets ten million views, every viewer is on a different network, a different device, a different bandwidth — are you really going to stream the same 20 GB file to a user on a phone over 3G? The real design splits in two halves that barely talk to each other: a heavy, slow, asynchronous write path that turns one upload into dozens of files, and a blindingly fast read path that serves those files from machines close to the viewer. Get that split right and the rest is detail; get it wrong and no amount of database tuning saves you.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A write path transcodes one upload into many renditions in object storage; a read path streams them from a CDN. Bytes skip the app servers.</Crux>
 
 <Explanation>
 
-## Design YouTube
+## Requirements
 
-Body to be authored.
+A senior interview answer starts by pinning scope, because "design YouTube" hides three different systems (video, comments, recommendations) and you should declare which you are building.
+
+**Functional** — a creator uploads a video; the system stores it durably, transcodes it into multiple resolutions, and makes it watchable. A viewer searches or browses, opens a watch page, and streams the video smoothly on any device and bandwidth. Secondary: view counts, likes, comments. Out of scope for this lesson: recommendations and monetization (their own systems).
+
+**Non-functional** — this is the part that shapes the architecture. The workload is **massively read-heavy**: one upload is watched thousands to millions of times, so reads outnumber writes by something like 100:1 to 1000:1. Uploads can be **slow and asynchronous** (a creator tolerates "processing, check back later"); playback must be **fast and smooth** (buffering is the cardinal sin). Storage must be **cheap and durable** because the catalogue only grows. And playback must adapt to a phone on cellular and a TV on fibre from the *same* source video.
+
+Those four facts — read-heavy, async-write, cheap-durable-storage, adaptive-playback — are the whole design. Everything below is their consequence.
+
+## Estimation
+
+Numbers tell you which component breaks first. Assume 2 billion users, of whom we serve order-of-magnitude figures; round everything to one significant figure (the inputs are guesses).
+
+```
+Uploads:    ~1 hour of video uploaded per second globally (industry-scale figure)
+            → say 500 hours/minute → ~30,000 hours/hour
+Watch:      ~1 billion hours watched per day
+            → 1e9 h/day ÷ ~1e5 s/day ≈ 10,000 hours-of-video started per second
+Read:write: views (~5e9/day) vs uploads (~1e6/day) → ~1000:1 read-heavy
+Storage:    one source video → ~5 renditions (240p…4K) + thumbnails
+            a 10-min 1080p video ≈ 0.5 GB source; all renditions ≈ 1 GB
+            millions of new videos/day → petabytes/day of new stored bytes
+Egress:     this is the real bill. ~1e9 watch-hours/day at ~3 Mbps average
+            ≈ exabytes/month of CDN egress — bandwidth, not storage, dominates cost
+```
+
+The estimate already rejects two designs: you cannot serve egress at this scale from your own data centre (you need a CDN, and likely your own edge fleet), and you cannot put video bytes in the database (petabytes/day into Postgres is absurd — bytes go to object storage). The metadata is tiny by comparison: a video record is a few kilobytes, so billions of videos fit comfortably in a sharded relational store.
+
+## High-level design
+
+The system cleaves into the **write path** (upload → transcode → store) and the **read path** (watch → CDN → stream), joined only by the object store and the metadata DB.
+
+<FlowDiagram
+  label="Upload write path: the client uploads chunks straight to object storage via a presigned URL; the API writes only a metadata row and enqueues a transcoding job; workers fan the source out into multiple renditions and an adaptive-bitrate manifest, then mark the video ready."
+  perRow={4}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "client", label: "creator", sub: "uploads source" },
+    { id: "api", label: "upload API", sub: "presigned URL + row" },
+    { id: "raw", label: "object store", sub: "raw upload" },
+    { id: "queue", label: "transcode queue", sub: "async job" },
+    { id: "workers", label: "transcode workers", sub: "fan-out per rendition" },
+    { id: "renditions", label: "object store", sub: "240p…4K + manifest" },
+    { id: "meta", label: "metadata DB", sub: "status: ready" },
+    { id: "cdn", label: "CDN origin", sub: "pull on first view" },
+  ]}
+  edges={[
+    { from: "client", to: "raw", label: "bytes (presigned)" },
+    { from: "client", to: "api", label: "init" },
+    { from: "api", to: "meta", label: "row: uploading" },
+    { from: "api", to: "queue", label: "enqueue" },
+    { from: "queue", to: "workers", label: "pull" },
+    { from: "workers", to: "renditions", label: "write" },
+    { from: "workers", to: "meta", label: "ready" },
+    { from: "renditions", to: "cdn", label: "origin pull" },
+  ]}
+  caption="The bytes go client → object store directly (presigned URL); the app server only touches the metadata row and the queue. Transcoding is async fan-out: one source becomes many renditions plus a manifest. The read path (not shown) is just viewer → CDN → object store on a miss."
+/>
+
+The shape to internalise: **the API server is on the control path, never the data path**. It hands out a presigned URL so the client uploads bytes *directly* to object storage; it writes a small metadata row; it drops a job on a queue. It never proxies the video. Symmetrically, on read, the viewer fetches the manifest and segments from the CDN, which pulls from object storage on a miss — the app server is not in that loop either. This is the single most important decision, and it is the one the naive design gets wrong.
+
+## Deep dive: transcoding fan-out
+
+A raw upload is one file in one codec at one resolution. It is useless for playback to a heterogeneous audience, so the transcoding pipeline turns it into a *ladder* of renditions: the same content at 240p, 360p, 480p, 720p, 1080p, 4K, each at an appropriate bitrate, often in more than one codec (H.264 for compatibility, VP9/AV1 for efficiency). Each rendition is itself chopped into short **segments** (2–10 seconds), and a **manifest** (HLS `.m3u8` or DASH `.mpd`) lists, for every rendition, the URLs of its segments.
+
+Transcoding is CPU-heavy and embarrassingly parallel, which is the key to doing it fast. Instead of transcoding the whole video serially, split the source into chunks, transcode chunks in parallel across a worker fleet, then stitch. Netflix and YouTube both describe pipelines built on this fan-out-then-merge shape; it is what lets a long upload finish in minutes, not hours, and what makes "processing…" an acceptable async state rather than a blocking wait.
+
+<Inset kind="why" lang="en">
+Why transcode into a *ladder* at all instead of serving the source? Because the viewer's bandwidth is not yours to control and changes second to second — a phone on a train drops from LTE to 3G mid-video. **Adaptive bitrate streaming** (ABR) exists for exactly this: the player downloads the manifest, then for each short segment picks the highest rendition its *current* measured bandwidth can sustain, stepping down to 360p when the network dips and back up to 1080p when it recovers. Because every rendition is cut on the same segment boundaries, the player can switch rendition between segments seamlessly. If you served one fixed file, a viewer either buffers (file too big for their pipe) or watches mush (file too small for their screen). The ladder is what makes one upload watchable by everyone.
+</Inset>
+
+## Deep dive: read path, CDN, and view counts
+
+Playback is a read-heavy fan-out problem, and the answer is layered caching with a CDN at the edge. The watch page loads metadata from the (cached) metadata service, then the player requests the manifest and pulls segments from the CDN node nearest the viewer. The first viewer in a region triggers an **origin pull** (CDN fetches the segment from object storage and caches it); every subsequent viewer in that region is served from edge cache. Because popular videos are watched by millions, the CDN hit rate for hot content approaches 100%, and the object store sees only the long tail and cache fills — which is exactly how you serve exabytes of egress without melting the origin.
+
+**View counts** look trivial and are a classic trap. A viral video can attract hundreds of thousands of views per second; if each view is a synchronous `UPDATE videos SET views = views + 1` you have created a single hot row that every viewer contends on — a write-throughput disaster. The senior move is to make view counts **eventually consistent**: log view events to a stream, aggregate them asynchronously (batch or stream-process), and update the displayed count periodically. Nobody cares whether a video shows 1,000,000 or 1,000,200 views; they care that playback is instant. Trading exact-count freshness for write scalability is the right call, and recognising *which* numbers can be approximate is a senior instinct.
+
+<Inset kind="mistake" lang="en">
+A tempting but wrong optimization: "cache the whole video file in the app tier / in Redis so reads are fast." Video objects are gigabytes; your cache tier holds at most the hot *working set* of small objects, and you would blow its memory on a handful of videos while evicting everything useful. Worse, it puts the bytes back on the app path you worked so hard to keep them off. The correct caching layer for large media is the **CDN**, which is purpose-built to cache large byte ranges close to users and serve them over HTTP range requests — not your in-memory cache, which is for metadata, view counts, and small hot objects. Match the cache to the object size: CDN for segments, Redis for the kilobyte-sized metadata row.
+</Inset>
+
+<Quiz
+  id="03-youtube-quiz-1"
+  lessonSlug="01-youtube"
+  lang="en"
+  question="In the upload design, how should the gigabytes of video reach storage, and why?"
+  choices={[
+    { label: "The client uploads bytes directly to object storage via a presigned URL; the API server only writes a metadata row and enqueues a transcode job. This keeps multi-GB transfers off the app tier and off the database.", correct: true },
+    { label: "POST the video to the API server, which streams it into a BLOB column in the metadata database.", misconception: "A multi-GB BLOB per upload makes the relational DB the bottleneck and storage cost explode; databases are for small metadata, not media bytes. Bytes belong in object storage, uploaded directly via a presigned URL." },
+    { label: "Buffer the whole upload in the API server's memory, transcode it inline, then write renditions to disk.", misconception: "Holding a 20 GB upload in app memory and transcoding inline blocks the request thread and doesn't scale. Bytes go straight to object storage; transcoding is an async job pulled by a worker fleet." },
+    { label: "Send the video over a WebSocket to the API so it can show a live progress bar.", misconception: "The transport is beside the point; the problem is putting bytes on the app path at all. Direct-to-object-store upload (presigned URL) keeps the API on the control path, and progress can be reported from the client's own upload." },
+  ]}
+/>
+
+<Quiz
+  id="03-youtube-quiz-2"
+  lessonSlug="01-youtube"
+  lang="en"
+  question="A video goes viral at ~200,000 views/second. The watch count is stored as a single row updated synchronously per view. What breaks, and what's the fix?"
+  choices={[
+    { label: "Every view contends on one hot row, so write throughput collapses and playback requests stall behind lock waits. Make the count eventually consistent: log view events to a stream, aggregate asynchronously, and refresh the displayed number periodically.", correct: true },
+    { label: "Nothing — relational databases handle 200K writes/sec to one row fine with an index.", misconception: "An index doesn't help a single hot row; every UPDATE serializes on the same row's lock. 200K/sec to one row is a contention disaster regardless of indexing. The fix is async aggregation, not tuning." },
+    { label: "Shard the videos table by region so the row is split across shards.", misconception: "A single video's count is one logical value; sharding the table doesn't split that one row's contention. The fix is to stop updating synchronously per view — log events and aggregate them asynchronously." },
+    { label: "Add a read replica so the count reads don't block the writes.", misconception: "The problem is write contention on one row, not read load; replicas serve reads but the hot-row write storm remains. Decouple the count with an event stream and periodic aggregation." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-youtube-metaphor-1"
+  lessonSlug="01-youtube"
+  lang="en"
+  setup="Because the viewer's bandwidth changes mid-video, the player downloads a manifest and, per short segment, picks the highest rendition its current bandwidth can sustain — stepping down on a dip and back up on recovery. This technique is called _______ streaming."
+  accepted={["adaptive bitrate", "adaptive-bitrate", "abr", "adaptive bitrate (abr)", "adaptive"]}
+  canonical="adaptive bitrate"
+  explanation="Adaptive bitrate (ABR, via HLS or DASH) is why one upload is transcoded into a ladder of renditions cut on identical segment boundaries: the player switches rendition between segments to match the network, avoiding both buffering (file too big) and mush (file too small). It's the consequence of the adaptive-playback requirement."
+/>
+
+## Bottlenecks & tradeoffs
+
+The dominant cost is **egress bandwidth**, not storage — serving exabytes/month means CDN economics drive the whole system, and very large players build their own edge caches inside ISPs to cut transit costs. The dominant *latency* risk is buffering, mitigated by ABR plus aggressive edge caching of segments. The key tradeoffs: **transcode everything up front** (more storage and compute per upload, but instant playback at any rendition) versus **transcode on demand** (cheaper storage, but a cold rendition stalls the first viewer) — most large platforms pre-transcode popular formats and lazily generate rare ones. And **storage vs compute for the ladder**: more renditions and codecs (AV1) mean better compression and device coverage but multiply the transcode bill. Finally, accept **eventual consistency** wherever a human can't tell the difference — view counts, like totals, recommendation signals — and spend your consistency budget only where it matters (a creator must see their own upload appear).
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Write: bytes go client→object store via presigned URL; one source transcodes into a rendition ladder + manifest. Read: viewer→CDN. The API is control-path only; view counts are eventually consistent; egress dominates.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-youtube-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must video bytes bypass the app servers and the database, and how do they reach storage?", a: "A single upload can be tens of GB and a video is watched millions of times, so putting bytes on the app path (proxying through API servers) or in the database (BLOB rows) makes both the bottleneck and explodes cost. Instead the client uploads directly to object storage via a presigned URL; the API only writes a small metadata row and enqueues a transcode job. On read, the viewer fetches segments from the CDN, which pulls from object storage on a miss. The app server stays on the control path, never the data path." },
+    { q: "What does transcoding produce, and why a ladder of renditions plus a manifest?", a: "Transcoding turns one source into a ladder of renditions (240p…4K, multiple bitrates/codecs), each chopped into short 2–10s segments, with a manifest (HLS .m3u8 / DASH .mpd) listing each rendition's segment URLs. This enables adaptive bitrate streaming: the player picks, per segment, the highest rendition its current bandwidth sustains, switching seamlessly because segments share boundaries. It's done as parallel fan-out (split source → transcode chunks across a worker fleet → stitch) so a long video finishes in minutes." },
+    { q: "Why are view counts eventually consistent, and what's the read-path cost driver?", a: "A viral video draws hundreds of thousands of views/sec; a synchronous per-view UPDATE creates one hot row that serializes on its lock — a write disaster. So views are logged to a stream and aggregated asynchronously, refreshing the count periodically; nobody notices 1,000,000 vs 1,000,200. On the read path the CDN serves hot segments from edge cache (hit rate near 100% for popular videos), so the cost driver is egress bandwidth — exabytes/month — not storage, which is why big players build edge caches inside ISPs." },
+  ]}
+/>
+
+<Recap lang="en">
+"Design YouTube" is really two systems joined by an object store and a tiny metadata DB. The **write path** is heavy and asynchronous: the client uploads bytes *directly* to object storage via a presigned URL, the API writes only a small metadata row and enqueues a job, and a worker fleet **transcodes** the source — fanning it out into a **ladder of renditions** (240p…4K, multiple codecs) cut into short segments with an HLS/DASH **manifest**, done as parallel chunk transcode-then-stitch so a long video finishes in minutes. The **read path** is fast: the viewer pulls the manifest and segments from a **CDN** near them, which origin-pulls from object storage only on a miss, giving near-100% edge hit rates for popular content. Two senior moves carry the design: keep the **app server on the control path, never the data path** (bytes never touch it or the database), and make **view counts eventually consistent** (log events, aggregate async) because a hot synchronous counter would melt under viral load. The non-functional facts — read-heavy ~1000:1, async-writable, cheap-durable storage, adaptive playback — are not footnotes; they *are* the architecture, and **egress bandwidth**, not storage, is the bill that dominates everything.
+</Recap>

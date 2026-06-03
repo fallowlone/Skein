@@ -23,6 +23,22 @@ async function walk(dir) {
   return out;
 }
 
+// The build's text-budget lint measures the length of the rendered INNER HTML
+// (entities encoded: > -> &gt; (+3), < -> &lt; (+3), & -> &amp; (+4); and
+// markdown emphasis/code become <strong>/<em>/<code> tags that ADD characters).
+// Mimic that so a local pass means a build pass.
+function renderedLen(s) {
+  let t = s.replace(/\s+/g, " ").trim();
+  // 1) encode entities on the raw text (matches MDX text nodes)
+  t = t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 2) markdown markers -> real tags (inserted after encoding, so not re-encoded)
+  t = t.replace(/\[([^\]]+)\]\(([^)]*)\)/g, '<a href="$2">$1</a>');
+  t = t.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/`([^`]+)`/g, "<code>$1</code>");
+  t = t.replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+  return t.length;
+}
+
 function tagText(src, tag) {
   const m = src.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
   return m ? m[1].trim() : null;
@@ -46,7 +62,7 @@ for (const lang of ["en", "ru"]) {
       for (const [tag, bud] of Object.entries(BUDGETS)) {
         const t = tagText(src, tag);
         if (t == null) errs.push(`missing <${tag}>`);
-        else if (t.length > bud) errs.push(`${tag} ${t.length}>${bud}`);
+        else { const n = renderedLen(t); if (n > bud) errs.push(`${tag} ${n}>${bud}`); }
       }
 
       const sources = src.match(/^sources:\s*\n((?:\s*-\s*\S+\n?)+)/m);

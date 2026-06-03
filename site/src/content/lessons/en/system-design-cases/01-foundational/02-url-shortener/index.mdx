@@ -5,34 +5,201 @@ track: "system-design-cases"
 unit: "01-foundational"
 order: 2
 title: "Design a URL shortener"
-summary: "Design a URL shortener — to be authored."
-estMin: 16
-status: stub
+summary: "Design TinyURL: a read-heavy 100:1 system where the whole game is the redirect path. Compare counter+base62, hashing, and a key-generation service for short codes; cache aggressively; serve a 301/302 in single-digit milliseconds."
+estMin: 28
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - base62-encoding
+  - key-generation-service
+  - read-heavy-caching
+  - cache-aside
+  - 301-vs-302
+  - capacity-estimation
+prereqs:
+  - 08-building-blocks/02-unique-id-generation
 sources:
   - https://github.com/donnemartin/system-design-primer
+  - https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/301
+  - https://www.cloudflare.com/learning/cdn/glossary/what-is-caching/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An engineer once dismissed "design a URL shortener" as a five-minute toy: a table mapping a short code to a long URL, what's to design? Then the interviewer asked the question that breaks the toy: "It's the link in a Super Bowl ad. Three hundred million people see it, and a third of them tap within the same two minutes. What happens?" The toy table, fronted by one database, melts — every tap is a read, and a single relational primary tops out in the low thousands of reads per second. The real insight the toy hides is that a shortener is not a writing problem; it is a **read** problem with a write problem bolted on the side. You create a code once and serve the redirect a hundred thousand times, so almost every design decision is about making one specific operation — *look up a short code and redirect* — absurdly fast and impossible to knock over.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A URL shortener is ~100:1 read-heavy: the whole design is making the redirect fast and unkillable via code generation, a KV store, a cache.</Crux>
 
 <Explanation>
 
-## Design a URL shortener
+## Requirements
 
-Body to be authored.
+**Functional**
 
+- `shorten(longURL) → shortURL` — return a short code, ideally 7 characters or fewer.
+- `GET /{code}` — redirect the browser to the original long URL.
+- **Custom aliases**: a caller may request a specific code (`/sale`) if it's free.
+- **Expiry**: links may have a TTL; expired codes 404.
+- Basic **analytics**: click counts, ideally without slowing the redirect.
+
+**Non-functional**
+
+- **Redirect latency is the SLO.** A redirect should resolve in single-digit milliseconds — it sits in front of someone else's page load.
+- **Availability over consistency on reads.** A redirect must work even if the write path is degraded; a brand-new link being unreachable for a second is tolerable, a popular link 404-ing is not.
+- **Uniqueness.** No two long URLs may collide onto the same code in a way that misroutes a user.
+- **Scale.** Billions of total links, with reads vastly outnumbering writes.
+
+The defining property is the **read:write ratio**. Estimate it and the architecture writes itself.
+
+## Estimation
+
+- Assume **100M new URLs/month**. That's `10^8 / (30 × 10^5 s)` ≈ **~40 writes/sec average**, ~120/sec at a 3× peak. Writes are trivial.
+- At a **100:1 read:write ratio**, that's **~4,000 reads/sec average**, **~12,000/sec peak**. Reads are the system.
+- **Storage:** 100M/month × 12 months × 5 years = **~6 billion URLs**. At ~500 bytes per row (long URL + code + metadata) → **~3 TB**. Large but ordinary; it does *not* fit in one node's RAM, so the working set must be cached, not the whole dataset.
+- **Key space:** with base62 (`a–z A–Z 0–9`), `62^7` ≈ **3.5 trillion** codes. Seven characters comfortably covers billions of links for decades — so 7 is the target length.
+- **Cache sizing (the 80/20 rule):** if 20% of links drive 80% of reads, caching the hot 20% — say the busiest few hundred million codes at ~500 bytes — is tens to low-hundreds of GB, fitting in a small Redis cluster's RAM and serving the overwhelming majority of redirects from memory.
+
+The takeaway numbers: **writes are nothing, reads are everything, and a cache absorbs the reads.** Now the only real decision is how to mint the short code.
+
+## High-level design
+
+A write hits an app server that generates a code and stores the `code → longURL` mapping in a key-value store. A read (`GET /{code}`) checks a cache first; on a hit it returns a redirect immediately, on a miss it reads the store, populates the cache, and redirects.
+
+<FlowDiagram
+  label="A redirect request hits the app tier, which looks up the code in a cache; on a hit it returns a 301/302 immediately, and on a miss it reads the key-value store, populates the cache, then redirects — so the steady state serves almost every redirect from memory."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "browser", label: "browser", sub: "GET /{code}" },
+    { id: "app", label: "app server", sub: "lookup code" },
+    { id: "cache", label: "cache", sub: "Redis, hot 20%" },
+    { id: "hit", label: "cache hit", sub: "→ 301/302" },
+    { id: "store", label: "KV store", sub: "miss → read" },
+    { id: "fill", label: "fill cache", sub: "then redirect" },
+  ]}
+  edges={[
+    { from: "browser", to: "app", label: "request" },
+    { from: "app", to: "cache", label: "check" },
+    { from: "cache", to: "hit", label: "found" },
+    { from: "cache", to: "store", label: "miss" },
+    { from: "store", to: "fill" },
+    { from: "fill", to: "hit" },
+  ]}
+  caption="The redirect path is cache-aside: check Redis, serve on hit, fall through to the KV store and backfill on miss. Because reads are ~100x writes and follow an 80/20 distribution, steady-state hit rate is high and the database is barely touched on the read path."
+/>
+
+## Deep dive
+
+### Minting the short code
+
+This is the one genuinely interesting decision, and there are three contenders.
+
+**(1) Hash the long URL** — `base62(md5(longURL))[:7]`. Tempting because identical URLs naturally dedupe, but `62^7` worth of codes drawn from a hash *will* collide as you scale (the birthday paradox bites far earlier than the keyspace size suggests). Each collision needs a database check and a re-hash/salt, adding a read to every write — and it can't honour custom aliases. Workable, but the collision-handling tax grows with the table.
+
+**(2) Counter + base62** — keep a global monotonic counter, and the short code is the counter value encoded in base62. No collisions *ever* (every value is unique by construction), no read-before-write, and codes are short while the count is small. The problem is the counter is a global serialization point: one central counter is a bottleneck and a SPOF. The fix is a **range-allocation** scheme — a coordinator hands each app server a block of IDs (say one million) to spend locally, so servers only coordinate once per block, not per write. (This is exactly the unique-ID-generation prerequisite applied to a friendly, short, base62 alphabet.)
+
+**(3) Key-generation service (KGS)** — a standalone service pre-generates random unique 7-char codes *offline* and stores them in a "keys DB" with two tables: available and used. App servers grab a batch of keys, hand them out, and mark them used. Because keys are minted ahead of time and uniqueness is checked once at generation, the write path never collides and never blocks — it just consumes a pre-vetted key. The cost is the KGS itself (must avoid handing the same key twice, must be replicated so it isn't a SPOF), but it gives non-sequential, unguessable codes *and* clean custom-alias support.
+
+<Inset kind="why" lang="en">
+Why prefer a counter or KGS over hashing, when hashing seems simpler? Because hashing pays a tax on every single write forever: a hash that fits in 7 base62 chars is far smaller than the hash's full output, so you truncate, and truncation collides — meaning every write must read the table to check, and on a hit, salt and retry. As the table grows toward billions of rows the collision rate climbs, so the *average* number of database round-trips per write creeps up. A counter sidesteps this entirely (uniqueness is structural, zero reads) and a KGS moves the uniqueness check to a one-time offline step. The deeper principle: in a write-once/read-many system you should never pay a recurring cost on the read or write path to solve a problem you can solve once at generation time.
+</Inset>
+
+A subtle leak: a pure counter makes codes **sequential and guessable** — anyone can enumerate `/1, /2, /3` and scrape every link, a privacy problem for private shares. Base62-encoding the counter still preserves order. If unguessability matters, either use the KGS (random keys) or run the counter through an invertible scramble (e.g. a Feistel/multiplicative permutation) before encoding, so consecutive IDs map to scattered codes.
+
+### The redirect path and caching
+
+The redirect is the hot path, so it is **cache-aside** over a key-value store: check the cache, serve on a hit, and on a miss read the store, backfill the cache, and redirect. With an 80/20 access pattern the steady-state hit rate is very high, so the database sees a trickle of cold-link reads while the cache absorbs the flood. The store itself is a key-value lookup (`code → longURL`), which is why a partitioned KV store or a sharded relational table keyed on `code` both work — there are no joins to preserve.
+
+<FlowDiagram
+  label="A key-generation service mints random unique codes offline into an available pool; app servers claim a batch, hand codes out on writes, and never collide because uniqueness was checked once at generation rather than on every write."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "kgs", label: "KGS (offline)", sub: "mint random 7-char" },
+    { id: "avail", label: "available pool", sub: "pre-vetted unique" },
+    { id: "batch", label: "app grabs batch", sub: "marks used" },
+    { id: "write", label: "shorten()", sub: "consume a key" },
+    { id: "store", label: "store mapping", sub: "code → longURL" },
+    { id: "noclash", label: "no collision", sub: "no read-before-write" },
+  ]}
+  edges={[
+    { from: "kgs", to: "avail", label: "generate" },
+    { from: "avail", to: "batch", label: "claim" },
+    { from: "batch", to: "write" },
+    { from: "write", to: "store" },
+    { from: "store", to: "noclash" },
+  ]}
+  caption="A key-generation service shifts uniqueness to a one-time offline step: the write path just consumes a pre-minted key, so it never collides and never reads the table first — and the keys are random, so codes aren't guessable like a raw counter's."
+/>
+
+### 301 vs 302 — the redirect status that decides everything
+
+The HTTP status code on the redirect is a genuine design lever, not a detail:
+
+- **301 (Permanent):** browsers and proxies *cache* the mapping, so subsequent visits to the short link skip your server entirely and go straight to the long URL. This slashes your read load — but it also means **you stop seeing those clicks** (broken analytics) and you can never change where the link points.
+- **302 (Found / temporary):** the browser does *not* cache the mapping, so every visit comes back through your server. You keep full analytics and retain the ability to repoint or expire a link — at the cost of serving every single click.
+
+The choice is a direct trade: **301 for load, 302 for control.** A shortener that monetises click analytics uses 302 and eats the read traffic (which is exactly why the cache matters so much); a pure redirector that just wants minimal infrastructure can use 301 and let browsers cache.
+
+<Inset kind="mistake" lang="en">
+A common mistake is shipping 301 because it "reduces load," then discovering the analytics dashboard is empty and a mistyped destination is now permanently cached in millions of browsers with no way to fix it. The lesson: pick the status from the *product*, not from a load chart. If clicks are the product (most commercial shorteners), 302 is mandatory and you size the cache and read tier to absorb every click. If the link is a static permalink with no analytics and no need to ever repoint, 301 is fine and free load reduction. Choosing 301 by default for "performance" quietly forecloses two features you probably needed.
+</Inset>
+
+<Quiz
+  id="02-url-shortener-quiz-1"
+  lessonSlug="02-url-shortener"
+  lang="en"
+  question="Your shortener serves ~12,000 redirects/sec at peak but only ~40 new links/sec. A new engineer proposes scaling the write path with more app servers and a beefier counter. What's the misread?"
+  choices={[
+    { label: "The system is ~100:1 read-heavy — writes (~40/sec) are trivial and the redirect read path (~12K/sec) is the bottleneck. Effort belongs in caching and read scaling (cache-aside over a KV store), not the write path.", correct: true },
+    { label: "Correct call — more write capacity always raises total throughput.", misconception: "Writes are ~40/sec; no amount of write capacity helps a system whose load is ~12K/sec of reads. Scaling the path that isn't the bottleneck wastes effort. Cache and scale the redirect read path instead." },
+    { label: "The counter is the bottleneck regardless of read/write split.", misconception: "A global counter can bottleneck WRITES, but writes are only ~40/sec here — far below any counter limit (and range allocation removes even that). The actual load is reads; that's where the design must focus." },
+    { label: "Redirects don't count as load because they're cached in the browser.", misconception: "Only 301s are browser-cached, and most shorteners use 302 to keep analytics — so every one of the ~12K/sec redirects hits your server. Reads are precisely the load you must engineer for." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-url-shortener-metaphor-1"
+  lessonSlug="02-url-shortener"
+  lang="en"
+  setup="To avoid paying a uniqueness-check cost on every write, a key-generation service mints random unique codes _______ (ahead of time), so the write path simply consumes a pre-vetted key instead of hashing and checking the table for collisions on each request."
+  accepted={["offline", "ahead of time", "in advance", "beforehand", "pre-generated", "pregenerated", "asynchronously"]}
+  canonical="offline"
+  explanation="The KGS pre-generates random unique 7-char codes offline into an available pool. Because uniqueness is established once at generation, the write path never collides and never reads the table first — the principle that a write-once/read-many system shouldn't pay a recurring per-write cost for a problem solvable once up front."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **Counter as a bottleneck/SPOF.** A single global counter serializes every write and dies with its node. Range allocation (hand out blocks) removes the per-write coordination, at the cost of non-contiguous IDs if a server crashes mid-block (those IDs are simply burned — fine, the keyspace is enormous).
+- **Cache stampede on a hot new link.** When that Super Bowl link is created, it isn't cached yet, so the first burst all misses and hammers the store simultaneously. Mitigate with request coalescing (single-flight: one miss fetches, the rest wait) or by pre-warming known-hot links.
+- **Analytics on the hot path.** Counting clicks synchronously on each redirect adds a write to your read path — the worst place to add work. Decouple it: emit the click to a message queue and aggregate asynchronously, so the redirect stays a pure cache read and analytics lag by seconds, which is fine.
+- **Custom-alias contention & abuse.** Custom aliases need a uniqueness check (a real read-before-write, but only for that path), and the whole service is a spammer's dream (shortening malware links) — so a real shortener needs URL scanning/blocklists and rate limits, which are availability-affecting concerns the toy version ignores.
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A URL shortener is ~100:1 read-heavy, so the design is the redirect path: mint codes with a counter+base62 or a key-generation service (not collision-prone hashing), then cache hard. 302 keeps analytics; 301 cuts load.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-url-shortener-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is the read:write ratio the defining property, and what does the estimate imply?", a: "A link is written once and read many times — typically ~100:1. At ~100M new URLs/month you get only ~40 writes/sec (trivial), but ~4,000 reads/sec average and ~12K/sec peak — so the whole architecture is about the redirect path, not the write path. Storage of ~6 billion links over 5 years (~3 TB) is too big for one node's RAM, so you cache the hot working set rather than the whole dataset. With an 80/20 access pattern, caching the busy 20% serves nearly all redirects from memory and leaves the database barely touched on reads." },
+    { q: "Compare the three short-code schemes and say when to use each.", a: "(1) Hash the URL: dedupes identical URLs but truncating to 7 base62 chars collides (birthday paradox), forcing a read-before-write and re-salt on every write — the tax grows with table size, and no custom aliases. (2) Counter + base62: unique by construction (zero reads, no collisions) but a global counter is a bottleneck/SPOF — fix with range allocation (hand each server a block of IDs); downside is codes are sequential/guessable unless scrambled. (3) Key-generation service: pre-mints random unique 7-char codes offline so the write path just consumes a pre-vetted key — no collisions, unguessable codes, clean custom aliases, at the cost of running and replicating the KGS. Prefer counter or KGS over hashing because write-once/read-many systems shouldn't pay a recurring per-write cost for uniqueness." },
+    { q: "What is the 301-vs-302 trade and where does analytics belong?", a: "301 (permanent) lets browsers/proxies cache the mapping, so repeat visits skip your server — big load reduction, but you lose click analytics and can never repoint or expire the link. 302 (temporary) routes every visit back through your server, preserving analytics and the ability to change/expire links, at the cost of serving every click (which is why the cache matters). Pick from the product: 302 if clicks are the product. Either way, don't count clicks synchronously on the redirect — emit the event to a message queue and aggregate asynchronously so the redirect stays a pure cache read." },
+  ]}
+/>
+
+<Recap lang="en">
+A URL shortener looks trivial and is the opposite: its defining property is a **~100:1 read:write ratio**, so the entire design optimises one operation — *look up a short code and redirect* — to single-digit milliseconds and makes it impossible to knock over. The estimate confirms it: ~40 writes/sec is nothing, ~12K reads/sec at peak is everything, and ~3 TB over five years means you **cache the hot 20%** rather than the whole dataset. The one real decision is minting the code: **hashing** the URL collides on truncation and taxes every write; a **counter + base62** is unique by construction but is a global bottleneck (fix with range allocation) and produces guessable sequential codes; a **key-generation service** pre-mints random unique codes offline so the write path never collides and aliases stay clean. The redirect path is **cache-aside** over a key-value store, and the **301-vs-302** choice is a real lever — 301 caches in browsers to cut load but kills analytics and locks the destination, 302 keeps both at the cost of serving every click. Push **analytics off the hot path** onto a queue, coalesce the stampede on a freshly-created hot link, and rate-limit the abuse the toy version never imagined.
+</Recap>

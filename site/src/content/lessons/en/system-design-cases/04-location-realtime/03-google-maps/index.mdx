@@ -5,34 +5,161 @@ track: "system-design-cases"
 unit: "04-location-realtime"
 order: 3
 title: "Design Google Maps"
-summary: "Design Google Maps — to be authored."
-estMin: 16
-status: stub
+summary: "Design Maps: serve map tiles from a CDN, route over a road graph with Dijkstra/A* and contraction hierarchies, compute ETA from live traffic ingestion, and geocode addresses — anchored on partitioning a continent-sized road graph so routing stays fast."
+estMin: 38
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - map-tiles-cdn
+  - routing-graph
+  - contraction-hierarchies
+  - eta-traffic
+  - geocoding
+  - graph-partitioning
+prereqs:
+  - 08-building-blocks/04-geohashing
+  - 04-data-distribution/02-sharding-and-partitioning
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://developers.google.com/maps/documentation/javascript/coordinates
+  - https://www.microsoft.com/en-us/research/publication/customizable-route-planning/
+  - https://www.openstreetmap.org/about
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+Ask for directions across a country and a textbook says "run Dijkstra". Try it on a real road graph — tens of millions of intersections, hundreds of millions of road segments — and a single query explores half the continent before it finds the destination, taking seconds per request when you need milliseconds at planetary QPS. Maps is really three hard systems wearing one app: a tile service that paints the world, a routing engine that answers "fastest path" faster than brute force allows, and a traffic pipeline that keeps the answer honest as roads jam. The unifying trick across all three is precomputation: do the continent-scale work once, offline, so each live query touches only a sliver of it.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Maps serves tiles from a CDN and routes via a preprocessed graph (contraction hierarchies), not Dijkstra; traffic re-weights edges.</Crux>
 
 <Explanation>
 
-## Design Google Maps
+## Requirements
 
-Body to be authored.
+- **Functional**: render the map (pan/zoom), find the fastest route between two points, show an ETA that reflects current traffic, and turn an address into coordinates (geocoding) and back.
+- **Non-functional**: very read-heavy and globally distributed; tiles and routes are requested everywhere at once. Tiles are near-static and must be fast (served from the edge). Routing must be low-latency despite a graph far too large to search naively. ETAs must track reality, so traffic ingestion is a continuous, high-volume stream.
+
+The through-line is that almost nothing can be computed from scratch per request at this scale. The base map changes rarely, the road graph changes slowly, and traffic changes fast but is shared across all users on a road — so the design is dominated by what you precompute and where you cache it.
+
+## Estimation
+
+The map is a pyramid of **tiles**: at zoom level `z` the world is a `2^z × 2^z` grid of 256-pixel images. That is 1 tile at z0, 4 at z1, and roughly `4^z` at level z — so the full pyramid to z20 is hundreds of billions of tiles, terabytes to petabytes of mostly-static imagery. They are written once (per map refresh) and read billions of times: a textbook CDN workload. Routing is the opposite extreme — small data (a country's road graph fits in memory, single-digit GB) but expensive computation, where a naive search visits millions of nodes. So the two halves of Maps stress completely different resources: tiles stress storage and edge bandwidth, routing stresses CPU and clever algorithms.
+
+## High-level design
+
+Tiles flow from object storage through a CDN to the client. A route request goes to a routing service holding the preprocessed road graph; it consults the latest traffic weights and returns a path. Geocoding is its own service translating text to coordinates.
+
+<FlowDiagram
+  label="A Maps client fetches static tiles from a CDN backed by object storage, and separately sends a route request to a routing service that searches a road graph preprocessed with contraction hierarchies; the routing service reads current edge weights from a traffic store fed by a continuous ingestion pipeline of GPS probes, and returns a path with an ETA."
+  perRow={4}
+  hue="var(--d-network)"
+  nodes={[
+    { id: "client", label: "client", sub: "pan / route / search" },
+    { id: "cdn", label: "CDN", sub: "static tiles" },
+    { id: "tiles", label: "tile storage", sub: "precomputed pyramid" },
+    { id: "route", label: "routing svc", sub: "preprocessed graph" },
+    { id: "traffic", label: "traffic store", sub: "live edge weights" },
+    { id: "ingest", label: "ingestion", sub: "GPS probes stream" },
+    { id: "geo", label: "geocoding svc", sub: "text to coords" },
+  ]}
+  edges={[
+    { from: "client", to: "cdn", label: "tile req" },
+    { from: "cdn", to: "tiles", label: "miss" },
+    { from: "client", to: "route", label: "route req" },
+    { from: "traffic", to: "route", label: "weights" },
+    { from: "ingest", to: "traffic", label: "aggregate" },
+    { from: "client", to: "geo", label: "search" },
+  ]}
+  caption="Two unrelated workloads share one app: tiles are a static-content CDN problem; routing is a CPU/algorithm problem on a small but awkward graph. Traffic ingestion continuously re-weights the routing graph's edges."
+/>
+
+The deep dives that matter are how routing escapes brute-force search, and how traffic re-weights the graph without invalidating the precomputation.
+
+## Deep dive
+
+### Tiles and the CDN
+
+A tile is addressed by `(z, x, y)` — zoom level and grid coordinates — so the client computes exactly which tiles its viewport needs and requests them by name. Because a tile's content is identical for every user and changes only on a map refresh, it is the ideal CDN object: precompute the pyramid into object storage, front it with a CDN, and serve from the edge POP nearest the user. Cache keys are immutable per map version, so invalidation is rare and a version bump rotates everything cleanly. Vector tiles (geometry plus styling, rendered on the client) push this further: smaller payloads, restyleable without re-rendering server-side, and crisp at any zoom. The point is that the entire base-map experience is a **static-content distribution** problem, fully separate from the dynamic routing engine.
+
+### Routing: why plain Dijkstra loses
+
+Dijkstra and A* are correct but explore too much. Dijkstra fans out in all directions until it reaches the target; on a continental graph that is millions of node expansions per query. A* with a straight-line heuristic helps but still explores a wide cone. At Maps' QPS, neither is affordable. The production answer is **preprocessing**: spend hours offline transforming the graph so that online queries are cheap.
+
+**Contraction hierarchies (CH)** are the canonical technique. Rank every node by importance, then "contract" them from least to most important: removing a node, add **shortcut edges** between its neighbors that preserve shortest-path distances. After contraction, a query runs a bidirectional search that only ever moves *upward* in the hierarchy — from the source up to important highway-like nodes, and from the target up to meet it. Long routes ride a handful of high-level shortcuts (think: get onto the motorway, stay on it, exit near the destination) instead of crawling through every local street. The result is queries that touch thousands of nodes instead of millions — orders of magnitude faster, while still returning the exact shortest path.
+
+<Inset kind="why" lang="en">
+Why does contracting nodes into shortcuts make queries faster without changing the answer? Because most of a long trip is spent on a few major roads, and a query repeatedly re-derives that obvious fact. A shortcut edge bakes in "the cheapest way from this on-ramp to that off-ramp is already known to cost X" so the search never re-explores the streets between them. The hierarchy guarantees a property: for any shortest path there exists an equivalent path that first only goes "up" in importance and then only "down", so a search that refuses to descend until the two frontiers meet can ignore the vast low-level interior. You trade preprocessing time and extra shortcut edges (more memory) for query speed — exactly the precomputation bargain that runs through all of Maps. CH is also why a road closure is awkward: it can invalidate shortcuts, so traffic that changes edge weights needs a scheme that does not force a full recontraction.
+</Inset>
+
+### Traffic, ETA, and re-weighting
+
+A route is only as good as its edge weights, and real travel time depends on live traffic. Maps ingests a continuous stream of anonymized **GPS probes** from phones in motion, aggregates speed per road segment, and updates each edge's current travel-time weight. ETA is then the sum of (possibly traffic-adjusted) edge times along the chosen path, often refined by a model that accounts for time-of-day patterns and historical curves, not just the instantaneous snapshot. The architectural tension is that pure contraction hierarchies bake edge weights *into* the shortcuts, so changing weights for traffic would demand re-running the expensive contraction. Production systems separate the slow-changing graph **structure** (preprocessed rarely) from the fast-changing **weights** (updated continuously), using techniques in the customizable-route-planning family that let live traffic re-weight edges without rebuilding the whole hierarchy. The lesson: partition your precomputation along its rate of change.
+
+## Bottlenecks & tradeoffs
+
+The first hard problem is **graph partitioning**. A continental road graph does not shard cleanly: split it into regions and the routes that cross a boundary need careful stitching at the cut edges (boundary nodes), and a bad partition puts hot, frequently-crossed highways on a seam. Good partitions cut along natural low-traffic boundaries to minimize cross-shard routes — the same "minimize what crosses the boundary" instinct as cell design in the proximity lesson, now applied to a graph cut. The second is the **precompute-vs-freshness tension**: heavier preprocessing makes queries faster but makes updates (a new road, a closure, a traffic spike) harder to fold in, which is why structure and weights are kept on separate update cadences. The third is the **two-workload split**: tiles want a fat global CDN and almost no compute; routing wants beefy CPU near the graph and almost no bandwidth — so you scale and even locate them independently rather than as one tier.
+
+<Quiz
+  id="03-google-maps-quiz-1"
+  lessonSlug="03-google-maps"
+  lang="en"
+  question="A team builds continental routing with plain Dijkstra. It's correct but each query takes seconds because it expands millions of nodes. What preprocessing makes queries touch only thousands of nodes while still returning the exact shortest path?"
+  choices={[
+    { label: "Contraction hierarchies: rank nodes by importance and contract them, adding shortcut edges that preserve distances, so a bidirectional query only moves upward through the hierarchy and rides a few high-level shortcuts instead of crawling every street.", correct: true },
+    { label: "Cache the result of every possible (source, destination) pair so queries become lookups.", misconception: "There are ~N² pairs on a graph of tens of millions of nodes — astronomically too many to precompute or store. Contraction hierarchies preprocess the GRAPH (shortcuts), not every pair, so any query is fast without an impossible cache." },
+    { label: "Add more CPU and run Dijkstra in parallel from both ends.", misconception: "Bidirectional search helps a little, but plain Dijkstra still expands a huge frontier. The order-of-magnitude win comes from preprocessing the graph into a hierarchy with shortcuts, not from raw compute." },
+    { label: "Lower the graph resolution by dropping minor roads.", misconception: "Dropping roads changes the answer (you'd miss valid routes) and still leaves a large graph. Contraction hierarchies keep correctness by adding distance-preserving shortcuts, not by deleting edges." },
+  ]}
+/>
+
+<Quiz
+  id="03-google-maps-quiz-2"
+  lessonSlug="03-google-maps"
+  lang="en"
+  question="Maps uses contraction hierarchies, which bake edge weights into shortcuts. Now you must update travel times every minute from live traffic. What's the right architecture?"
+  choices={[
+    { label: "Separate the slow-changing graph structure from the fast-changing edge weights: preprocess structure rarely, and apply live traffic as a weight overlay (customizable-route-planning style) so you re-weight edges without re-running the full contraction each minute.", correct: true },
+    { label: "Re-run the full contraction-hierarchy preprocessing every minute with the new weights.", misconception: "Contraction takes hours on a continental graph — you can't redo it per minute. The fix is to decouple structure (rarely preprocessed) from weights (updated continuously) so traffic re-weights edges without a full rebuild." },
+    { label: "Stop using contraction hierarchies and go back to Dijkstra so weights are always current.", misconception: "That throws away the speed you need at planetary QPS. You keep the preprocessing but partition it by rate of change: structure stays preprocessed, weights overlay live — so you get both speed and fresh traffic." },
+    { label: "Ignore live traffic and use only historical time-of-day averages.", misconception: "Historical curves help but can't catch an accident or a sudden jam, so ETAs drift from reality. The architecture must fold LIVE probes into edge weights — by separating weights from structure, not by dropping live data." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-google-maps-metaphor-1"
+  lessonSlug="03-google-maps"
+  lang="en"
+  setup="The unifying technique across tiles, routing, and ETA is _______: do the continent-scale work once, offline — bake the tile pyramid, contract the road graph into shortcuts — so each live request touches only a small slice of the result rather than recomputing from scratch."
+  accepted={["precomputation", "precompute", "pre-computation", "preprocessing", "pre-processing"]}
+  canonical="precomputation"
+  explanation="Tiles are precomputed into a pyramid served from a CDN; the road graph is preprocessed into a contraction hierarchy of shortcuts. In both cases heavy work is done offline so the online query is cheap — the central bargain of Maps, paid for in storage and preprocessing time and in the difficulty of folding fast changes (traffic, closures) back in."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Maps is three systems: tiles (a CDN pyramid), routing (contraction-hierarchy shortcuts so queries touch thousands of nodes, not millions), and ETA. Keep structure separate from traffic weights to skip a re-contraction.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-google-maps-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why are map tiles a CDN problem, and how are they addressed and cached?", a: "The map is a pyramid: at zoom z the world is a 2^z × 2^z grid of 256-pixel tiles, ~4^z tiles per level, so the full pyramid is hundreds of billions of mostly-static images. Each tile is addressed by (z, x, y), is identical for every user, and changes only on a map refresh — so the client requests exactly the tiles its viewport needs by name, and you precompute the pyramid into object storage, front it with a CDN, and serve from the edge POP nearest the user. Cache keys are immutable per map version, so a version bump rotates everything cleanly. Vector tiles (geometry + styling, client-rendered) shrink payloads and restyle without server re-render. The whole base map is static-content distribution, fully separate from routing." },
+    { q: "Why does plain Dijkstra fail for continental routing, and how do contraction hierarchies fix it?", a: "Dijkstra fans out in all directions and expands millions of nodes per query on a continental graph; A* helps but still explores a wide cone — neither is affordable at Maps' QPS. Contraction hierarchies preprocess the graph offline: rank nodes by importance and contract them least-to-most, adding shortcut edges between a removed node's neighbors that preserve shortest-path distances. A query then runs a bidirectional search that only moves UPWARD in the hierarchy, riding a few high-level shortcuts (get on the motorway, stay, exit) instead of crawling every street. It touches thousands of nodes instead of millions, still returns the exact shortest path, and trades preprocessing time + extra shortcut memory for query speed." },
+    { q: "How does live traffic feed ETA without forcing a full re-contraction, and what's the partitioning challenge?", a: "Maps ingests a continuous stream of anonymized GPS probes, aggregates speed per road segment, and updates each edge's travel-time weight; ETA sums the (traffic-adjusted) edge times along the path, often refined by time-of-day/historical models. Because pure contraction bakes weights into shortcuts, changing weights would demand re-contracting (hours) — so production separates slow-changing STRUCTURE (preprocessed rarely) from fast-changing WEIGHTS (overlaid live, customizable-route-planning style). Partitioning challenge: a road graph doesn't shard cleanly — split into regions and cross-boundary routes must be stitched at boundary nodes, and a bad cut puts hot highways on a seam, so good partitions cut along natural low-traffic boundaries to minimize cross-shard routes." },
+  ]}
+/>
+
+<Recap lang="en">
+Maps is **three systems in one app**, unified by **precomputation**. **Tiles** are a static-content CDN problem: the world is a pyramid of `(z, x, y)`-addressed 256-pixel images, precomputed into object storage and served from the edge, with immutable per-version cache keys. **Routing** cannot use plain Dijkstra at planetary scale — it expands millions of nodes — so the graph is preprocessed into **contraction hierarchies**: nodes ranked by importance and contracted with distance-preserving **shortcut edges**, letting a bidirectional query move only upward and touch thousands of nodes while still returning the exact shortest path. **Traffic** is a continuous GPS-probe stream that re-weights edges for **ETA**, and because contraction bakes weights into shortcuts, the design **separates slow-changing structure from fast-changing weights** so live traffic does not force a re-contraction. The recurring hard problems are **graph partitioning** (cut along natural low-traffic boundaries to minimize cross-shard routes), the **precompute-vs-freshness tension** (heavier preprocessing means harder updates), and the **two-workload split** (tiles want a CDN; routing wants CPU) scaled independently.
+</Recap>

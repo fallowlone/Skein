@@ -5,34 +5,190 @@ track: "system-design-cases"
 unit: "01-foundational"
 order: 4
 title: "Design a distributed message queue"
-summary: "Design a distributed message queue — to be authored."
-estMin: 16
-status: stub
+summary: "Design a Kafka-like log: topics split into partitions for parallelism, replicated via an ISR for durability, consumer offsets for replay, and the delivery-semantics trade — at-most-once, at-least-once, exactly-once — that every async system must pick."
+estMin: 32
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - partitioned-log
+  - in-sync-replicas
+  - consumer-offsets
+  - delivery-semantics
+  - consumer-groups
+  - log-retention
+prereqs:
+  - 04-data-distribution/01-replication
 sources:
+  - https://kafka.apache.org/documentation/
   - https://github.com/donnemartin/system-design-primer
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A payments team wired their services together with a traditional message broker that *deleted* each message once a consumer acknowledged it. It worked until the day a downstream fraud-scoring service shipped a bug, silently mis-scored an hour of transactions, and the team realised the original messages were gone — consumed, acked, deleted. There was no way to replay the hour through the fixed code, because the queue had treated messages as mail to be delivered once and discarded. The rebuild changed one assumption: messages are not mail, they are a **durable, append-only log** that consumers read at their own position and that the broker keeps for days regardless of who has read it. That single change — from "delete on delivery" to "retain and let consumers track their own offset" — is the difference between a classic queue and the Kafka-shaped log, and it makes replay, multiple independent consumers, and enormous throughput all fall out of the same structure.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A Kafka-like queue is a partitioned, replicated, append-only log: partitions give parallelism, an ISR gives durability, offsets give replay.</Crux>
 
 <Explanation>
 
-## Design a distributed message queue
+## Requirements
 
-Body to be authored.
+**Functional**
 
+- **Produce**: append a message to a named **topic**.
+- **Consume**: read messages from a topic, in order, starting from a chosen position.
+- **Multiple independent consumers**: several different systems read the same topic without interfering (the fraud scorer, the ledger, the analytics pipeline all read the payment stream).
+- **Replay**: a consumer can rewind and re-read past messages (the hook's missing feature).
+- **Retention**: messages are kept for a configured window (time or size), not deleted on delivery.
+
+**Non-functional**
+
+- **High throughput.** Millions of messages/sec — this is a firehose, not a mailbox.
+- **Durability.** An acknowledged message must survive broker crashes; losing a payment event is unacceptable.
+- **Horizontal scale.** Add brokers to add capacity; no single broker is a ceiling.
+- **Ordering guarantee** — at least within a partition.
+- **Tunable delivery semantics.** Different consumers tolerate different failure modes (a metrics pipeline can drop a message; a ledger cannot).
+
+The animating idea is that **the queue is a log, not a mailbox**: append-only, retained, and read by position. Everything else is how to make that log fast, durable, and parallel.
+
+## Estimation
+
+- Target **1 million messages/sec** at peak, average message **1 KB** → **~1 GB/sec** of write throughput. This is the headline number and it rules out any single-broker design.
+- **Retention** of 7 days: `1 GB/s × 86,400 s × 7` ≈ **~600 TB** of log on disk (before replication). With replication factor 3, **~1.8 PB**. The log lives on disk, not RAM — so sequential disk I/O performance is the whole ballgame.
+- **Per-partition throughput** caps at maybe ~10 MB/sec for ordered, replicated writes, so 1 GB/sec needs on the order of **~100+ partitions** spread across brokers — partition count is how you buy throughput.
+- **Consumers:** if reads are mostly sequential from the tail of the log, the OS page cache serves recent messages from RAM, so a healthy cluster does almost no random disk reads — the access pattern is what makes the numbers work.
+
+The key insight from the numbers: **sequential append to disk plus partitioning is what turns a "slow" disk into a 1 GB/sec firehose**, because sequential disk throughput rivals memory bandwidth while random I/O would be ~1000× slower.
+
+## High-level design
+
+A **topic** is split into **partitions**; each partition is an ordered, append-only log living on a **leader broker** and replicated to **follower brokers**. **Producers** append to partitions (keyed or round-robin). **Consumers** in a **consumer group** divide the partitions among themselves and track an **offset** per partition.
+
+<FlowDiagram
+  label="Producers append messages to a topic's partitions, each partition is an ordered log replicated from a leader broker to followers, and a consumer group divides the partitions among its members, with each consumer committing an offset that marks how far it has read."
+  perRow={4}
+  hue="var(--d-backend)"
+  nodes={[
+    { id: "prod", label: "producers", sub: "append to topic" },
+    { id: "part", label: "partitions", sub: "ordered logs" },
+    { id: "leader", label: "partition leader", sub: "takes writes" },
+    { id: "isr", label: "ISR followers", sub: "replicate" },
+    { id: "group", label: "consumer group", sub: "splits partitions" },
+    { id: "c1", label: "consumer A", sub: "partitions 0,1" },
+    { id: "c2", label: "consumer B", sub: "partitions 2,3" },
+    { id: "offset", label: "commit offset", sub: "read position" },
+  ]}
+  edges={[
+    { from: "prod", to: "part", label: "key → partition" },
+    { from: "part", to: "leader" },
+    { from: "leader", to: "isr", label: "replicate" },
+    { from: "leader", to: "group", label: "fetch" },
+    { from: "group", to: "c1" },
+    { from: "group", to: "c2" },
+    { from: "c1", to: "offset" },
+    { from: "c2", to: "offset" },
+  ]}
+  caption="The log shape: a topic is partitioned for parallelism, each partition is a replicated ordered log with one leader, and a consumer group splits the partitions across its members. Consumers commit offsets, so the broker never deletes on delivery — replay and multiple groups come for free."
+/>
+
+## Deep dive
+
+### Partitions: the unit of parallelism and ordering
+
+A topic is divided into partitions, and the partition is the atom of the whole system. Three things follow from it:
+
+- **Parallelism.** Different partitions live on different brokers and are written/read independently, so throughput scales with partition count — this is how you get from one broker's limit to 1 GB/sec.
+- **Ordering is per-partition, not per-topic.** Messages within a partition are strictly ordered by offset; across partitions there is *no* global order. So if you need ordered processing of a user's events, you must route all of that user's messages to the *same* partition — done by hashing a **partition key** (e.g. `user_id`). No key → round-robin → maximum spread but no ordering guarantee.
+- **Consumer parallelism is capped by partitions.** Within a consumer group, each partition is consumed by exactly one consumer, so you can have at most as many active consumers as partitions. Partition count is therefore both your throughput knob and your max consumer parallelism — chosen up front and awkward to change later.
+
+<Inset kind="why" lang="en">
+Why is ordering only guaranteed *within* a partition, and why does that force the partition-key decision? Because partitions are independent logs on different machines with no shared clock or coordinator — imposing a total order across them would require global coordination on every message, which is exactly the bottleneck partitioning exists to avoid. So the system offers the strongest order it can give cheaply: a strict per-partition offset order. The consequence lands on the producer: to keep a related sequence ordered (a single account's debits and credits, a single device's telemetry), you hash a stable key so all those messages land in one partition and are read in order by one consumer. Pick the wrong key — or none — and related events scatter across partitions and can be processed out of order, which for a ledger is a correctness bug, not a performance one. The key choice is where ordering semantics actually live.
+</Inset>
+
+### Replication and the ISR
+
+Each partition has one **leader** (takes all reads and writes) and several **followers** that replicate the leader's log. Durability hinges on the **in-sync replica (ISR)** set: the followers that are currently caught up with the leader. A write is considered **committed** only once all ISR members have it, and `acks` controls how strict the producer is:
+
+- `acks=0` — fire-and-forget; fastest, can lose data.
+- `acks=1` — leader-only ack; loses data if the leader dies before followers replicate.
+- `acks=all` — every ISR member must have the message before it's acknowledged; survives leader failure with no loss, as long as the ISR isn't empty.
+
+When the leader dies, a new leader is elected **from the ISR**, so it already has every committed message — no committed write is lost. The tunable `min.insync.replicas` sets how many replicas must be in-sync for an `acks=all` write to succeed; set it to 2 (with replication factor 3) and you survive one broker failure while still rejecting writes if durability would be compromised.
+
+<Inset kind="edgecase" lang="en">
+What happens if every follower falls behind and the ISR shrinks to just the leader, then the leader dies? You face the **unclean-leader-election** dilemma: either refuse to elect any leader (the partition goes *offline* — unavailable but never serving lost data), or allow an out-of-sync follower to become leader (the partition comes back *available* but silently drops every message the dead leader had that the new leader lacks). This is the CAP trade made concrete at the partition level: `unclean.leader.election.enable=false` chooses consistency/durability (stay down rather than lose data), `true` chooses availability (come back, accept data loss). A payments log sets it false; a metrics firehose might set it true. There is no third option — when the only in-sync copy is gone, you cannot have both a live partition and a complete log.
+</Inset>
+
+### Offsets, consumer groups, and delivery semantics
+
+Because the broker retains the log and never deletes on delivery, each consumer simply tracks an **offset** — the position of the next message to read — and commits it periodically. This is the engine behind three features:
+
+- **Replay**: reset the offset backwards and re-read (the hook's fix — replay the fixed code over old messages).
+- **Multiple consumer groups**: each group has its own offsets, so the fraud scorer, ledger, and analytics each read the full stream independently at their own pace.
+- **Failure recovery**: a crashed consumer resumes from its last committed offset.
+
+But *when* you commit the offset relative to *when* you process the message defines the **delivery semantics** — the single most important correctness decision in any async system:
+
+- **At-most-once**: commit the offset *before* processing. If the consumer crashes mid-process, the message is skipped on restart — possible loss, no duplicates. (Acceptable for metrics.)
+- **At-least-once**: commit the offset *after* processing. If the consumer crashes after processing but before committing, the message is re-read and reprocessed — possible duplicates, no loss. (The common default.)
+- **Exactly-once**: no duplicates *and* no loss. Genuinely hard — it requires either idempotent processing (the consumer dedupes by message ID so reprocessing is harmless) or a transaction that atomically commits the offset *and* the side effect together. Kafka offers transactional producers/consumers for this, but most systems achieve "effectively once" with at-least-once delivery plus an idempotent consumer.
+
+<FlowDiagram
+  label="The delivery-semantics fork hinges on offset-commit timing: committing before processing risks loss (at-most-once), committing after risks duplicates on a crash (at-least-once), and only an idempotent consumer or an atomic offset-plus-side-effect transaction yields exactly-once."
+  perRow={3}
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "msg", label: "read message", sub: "at offset N" },
+    { id: "before", label: "commit BEFORE", sub: "→ at-most-once" },
+    { id: "loss", label: "crash → skip", sub: "possible loss" },
+    { id: "after", label: "commit AFTER", sub: "→ at-least-once" },
+    { id: "dup", label: "crash → re-read", sub: "possible dupes" },
+    { id: "once", label: "idempotent / txn", sub: "→ exactly-once" },
+  ]}
+  edges={[
+    { from: "msg", to: "before", label: "option 1" },
+    { from: "before", to: "loss" },
+    { from: "msg", to: "after", label: "option 2" },
+    { from: "after", to: "dup" },
+    { from: "dup", to: "once", label: "dedupe" },
+  ]}
+  caption="Delivery semantics are decided by when you commit the offset, not by a broker flag. Commit before processing → at-most-once (loss); after → at-least-once (duplicates on retry); exactly-once needs an idempotent consumer or an atomic offset-plus-effect transaction. Most real systems pick at-least-once and make the consumer idempotent."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **Partition count is a one-way-ish decision.** Too few and you cap throughput and consumer parallelism; too many and you pay coordination, file-handle, and rebalance overhead. Increasing partitions later breaks key-based ordering (a key may hash to a new partition), so you size generously up front.
+- **Hot partition / skewed key.** A bad partition key (e.g. keying by a country where one country dominates) sends most traffic to one partition and one consumer — the partitioned log's version of a hot shard, and the whole cluster can't help.
+- **At-least-once means consumers must be idempotent.** The common default delivers duplicates on retry, so every consumer that has side effects (charge a card, send an email) must dedupe by message ID — a requirement teams forget until they double-charge someone.
+- **Rebalance storms.** When a consumer joins or leaves a group, partitions are reassigned and consumption pauses; frequent membership churn (flapping consumers, long GC pauses) causes repeated rebalances that stall the group — so consumer liveness tuning is operationally important.
+- **Retention vs cost.** Long retention enables replay but costs petabytes; the window is a direct money-vs-recoverability trade, and "infinite retention for replay" is a real bill.
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A Kafka-like queue is a partitioned, replicated, append-only log. Partitions give parallelism and ordering; the ISR with acks=all gives durability; offsets give replay. Usually: at-least-once plus an idempotent consumer.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-distributed-message-queue-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is the queue a log rather than a mailbox, and what does that unlock?", a: "A classic broker deletes a message once a consumer acks it; a Kafka-like queue is an append-only log retained for a configured window regardless of who has read it, with each consumer tracking its own offset (read position). That one change unlocks replay (rewind the offset and re-read fixed code over old messages — the hook's missing feature), multiple independent consumer groups (each with its own offsets, all reading the full stream), and crash recovery (resume from the last committed offset). Sequential append to disk plus partitioning is also what turns disk into a ~1 GB/sec firehose, since sequential disk throughput rivals memory while random I/O is ~1000x slower." },
+    { q: "What does a partition give you, and why is ordering only per-partition?", a: "A partition is the unit of parallelism (different partitions live on different brokers, so throughput scales with partition count), the unit of ordering (strict offset order within a partition, no global order across them), and the cap on consumer parallelism (each partition is read by exactly one consumer in a group, so max consumers = partition count). Ordering is per-partition because partitions are independent logs on different machines; a global total order would need per-message coordination, the exact bottleneck partitioning avoids. So to keep related events ordered you hash a stable partition key (e.g. user_id) so they all land in one partition — the key choice is where ordering semantics live." },
+    { q: "How do the ISR and offset-commit timing each determine a guarantee?", a: "Durability: each partition has a leader and follower replicas; the in-sync replicas (ISR) are the followers caught up with the leader. With acks=all a write commits only once all ISR members have it, and a new leader is elected from the ISR, so no committed write is lost (min.insync.replicas tunes how many must be in-sync). If the ISR shrinks to just a dying leader, unclean-leader-election forces a CAP choice: stay offline (no loss) or elect a stale follower (available, lossy). Delivery semantics: commit the offset before processing → at-most-once (loss on crash); after → at-least-once (duplicates on retry); exactly-once needs an idempotent consumer or an atomic offset-plus-side-effect transaction. Most systems pick at-least-once + idempotent consumer." },
+  ]}
+/>
+
+<Recap lang="en">
+A distributed message queue of the Kafka shape rests on one reframing from the hook: **the queue is a log, not a mailbox** — append-only, retained for a window, and read by a consumer-tracked **offset** rather than deleted on delivery. That unlocks **replay**, **multiple independent consumer groups**, and crash recovery from the same structure. The estimate (1 GB/sec, ~600 TB over 7 days) forces the architecture: **sequential disk append plus partitioning** turns slow disk into a firehose, and **partitions** are the atom — they give parallelism (throughput scales with count), **per-partition ordering** (which is why a stable **partition key** decides where ordering semantics live), and the cap on consumer parallelism. Durability comes from **replication and the ISR**: with `acks=all` a write commits only when all in-sync replicas have it and a new leader is elected from the ISR, so no committed write is lost — and the **unclean-leader-election** dilemma is CAP made concrete (stay offline, or come back lossy). The hardest decision is **delivery semantics**, set by *when* you commit the offset: at-most-once (loss), at-least-once (duplicates), or exactly-once (idempotent consumer or atomic transaction) — and the pragmatic answer almost everywhere is **at-least-once plus an idempotent consumer**. The traps are the partition count you can't easily change, the hot partition a bad key creates, rebalance storms, and the petabyte bill that long retention buys.
+</Recap>

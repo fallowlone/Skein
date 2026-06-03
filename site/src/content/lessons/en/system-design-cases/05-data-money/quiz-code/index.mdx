@@ -4,19 +4,156 @@ lang: en
 track: "system-design-cases"
 unit: "05-data-money"
 order: 9
-title: "05-data-money: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Data & money: code and config reading"
+summary: "Read real code and config from the data-and-money cases, then pick the senior fix: a metric label, an idempotent charge, a lost-update wallet debit, and an atomic multi-night reservation."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - cardinality
+  - idempotency
+  - lost-update
+  - double-booking
+  - concurrency-control
+  - double-entry-ledger
+prereqs:
+  - system-design-cases/05-data-money/01-metrics-monitoring
+  - system-design-cases/05-data-money/03-payment-system
+  - system-design-cases/05-data-money/04-digital-wallet
+  - system-design-cases/05-data-money/06-hotel-reservation
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.stripe.com/api/idempotent_requests
+  - https://www.postgresql.org/docs/current/transaction-iso.html
+  - https://www.robustperception.io/cardinality-is-key/
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 05-data-money unit. STUB.</Hook>
+<Hook>
+Money bugs live in the code, not the prose: a label on a metric, a non-atomic read-then-write, a charge with no idempotency key, a per-night decrement outside a transaction. Read each snippet, trace the failure, and pick the fix a senior engineer would commit.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the snippet, find the hazard — cardinality, lost update, missing idempotency, partial reservation — and pick the fix that closes it.</Crux>
+
+<Explanation>
+
+Practise the loop you run in a design review on money or correctness-critical data: spot the hazard in the code, name it, and choose the change the mechanism actually requires.
+
+## Snippet 1 — the metric label
+
+```python
+# request handler instrumentation
+REQUESTS = Counter("http_requests_total", labels=["route", "status", "user_id"])
+
+def handle(req):
+    REQUESTS.labels(route=req.route, status=resp.status, user_id=req.user_id).inc()
+```
+
+<Quiz
+  id="05-data-money-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What's wrong with this instrumentation, and what's the fix?"
+  choices={[
+    { label: "`user_id` is an unbounded-cardinality label: it forks a new time series per user, so series count = route × status × user_id explodes and the TSDB OOMs. Drop user_id from the label set; keep it in logs/traces. Series cardinality, not request rate, is the constraint.", correct: true },
+    { label: "Nothing wrong — more labels just give richer breakdowns.", misconception: "A label per user forks a series per user; series count is the PRODUCT of label cardinalities, so user_id (millions of values) multiplies it into the millions and exhausts the TSDB's memory/index. Rich per-user breakdowns belong in logs/traces, not metric labels." },
+    { label: "The counter should be a gauge.", misconception: "Counter vs gauge is the wrong axis — a request count is correctly a counter. The bug is the unbounded user_id label exploding cardinality; the metric type is fine." },
+    { label: "Add more labels so each series is smaller.", misconception: "More labels MULTIPLY the series count (it's a product), making cardinality worse, not better. The fix is to REMOVE the unbounded label (user_id), not add more." },
+  ]}
+/>
+
+## Snippet 2 — the charge call
+
+```python
+def checkout(order):
+    # client retries this call on timeout
+    resp = psp.charge(amount=order.total, source=order.card)
+    ledger.record(order.id, resp)
+    return resp
+```
+
+<Quiz
+  id="05-data-money-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="A client retries checkout() after a timeout. What happens, and what's the fix?"
+  choices={[
+    { label: "Double charge: the PSP may have succeeded before the timeout, and the retry calls psp.charge again with no way to recognize it as the same payment. Fix by passing a client-minted idempotency key to psp.charge (and an atomic check-and-store), so the retry returns the original result instead of charging twice.", correct: true },
+    { label: "No problem — the PSP deduplicates identical charges automatically.", misconception: "PSPs deduplicate by IDEMPOTENCY KEY, not by inspecting amount/card (two legitimate identical-amount charges are valid). Without a client-supplied key, the retry is a fresh charge. You must pass an idempotency key the client minted before the first attempt." },
+    { label: "Wrap it in a database transaction.", misconception: "A local transaction can't span the external psp.charge call, and it doesn't prevent a second charge when the first response was lost. The fix is an idempotency key, not a DB transaction." },
+    { label: "Add a try/except and don't retry.", misconception: "Swallowing the error risks a genuinely-missed payment (the timeout is ambiguous — it may have succeeded or not). Retry SAFELY with an idempotency key so duplicates are recognized and missed charges still complete." },
+  ]}
+/>
+
+## Snippet 3 — the wallet debit
+
+```python
+def debit(wallet_id, amount):
+    bal = db.query("SELECT balance FROM wallets WHERE id = ?", wallet_id)
+    if bal >= amount:
+        db.execute("UPDATE wallets SET balance = ? WHERE id = ?", bal - amount, wallet_id)
+        return "ok"
+    return "insufficient"
+```
+
+<Quiz
+  id="05-data-money-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Two concurrent debits hit the same wallet. What's the bug, and the single-statement fix?"
+  choices={[
+    { label: "Lost update: both read `bal` before either writes, both pass the check, both write back, and the wallet overdraws. Fix with one atomic conditional UPDATE: `UPDATE wallets SET balance = balance - ? WHERE id = ? AND balance >= ?` — zero rows affected means insufficient funds, with no read-write gap.", correct: true },
+    { label: "It's fine because each statement is atomic on its own.", misconception: "Each statement is atomic, but the READ and the WRITE are separate, leaving a gap where another debit reads the same stale balance. Two concurrent debits both pass the check — the classic lost update. Collapse it into one conditional UPDATE." },
+    { label: "Add an index on wallets.id.", misconception: "An index speeds lookups but does nothing about the read-modify-write race. The fix is concurrency control: an atomic conditional UPDATE (or SELECT … FOR UPDATE), so check-and-decrement is indivisible." },
+    { label: "Cache the balance to make reads faster.", misconception: "Caching makes staleness WORSE and still leaves the gap between read and write. The fix is to make the decrement conditional and atomic at the DB, not to add a cache." },
+  ]}
+/>
+
+## Snippet 4 — the multi-night reservation
+
+```python
+def reserve(room_type, nights):  # nights = [Dec31, Jan1, Jan2]
+    for night in nights:
+        db.execute(
+          "UPDATE inventory SET booked = booked + 1 "
+          "WHERE room_type = ? AND date = ? AND booked < total",
+          room_type, night)
+    return "reserved"   # each night updated independently, no transaction
+```
+
+<Quiz
+  id="05-data-money-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="The per-night UPDATE is conditional (good), but the loop has no transaction. What can go wrong, and the fix?"
+  choices={[
+    { label: "Partial reservation: Dec31 and Jan1 can book, then Jan2 fails (full), leaving a useless 2-of-3-night hold and inconsistent inventory. Wrap all nights in ONE transaction and only commit if every night's conditional UPDATE affected a row; otherwise roll back the whole range.", correct: true },
+    { label: "Nothing — each conditional UPDATE already prevents overbooking per night.", misconception: "Per-night atomicity prevents overbooking ONE night, but without a transaction across the range, a 3-night stay can book 2 nights then fail on the 3rd, leaving a broken partial reservation. The whole range must be all-or-nothing." },
+    { label: "Add a retry around the loop.", misconception: "Retrying re-runs nights that already booked, double-decrementing inventory. The fix is a single transaction over all nights with a rollback if any night fails — not a retry over partial writes." },
+    { label: "Book each night in a separate transaction for better concurrency.", misconception: "Separate transactions are exactly the bug — they allow a partial reservation (some nights booked, one failed). The range must commit atomically as one transaction, all-or-nothing." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Money bugs are in the code: an unbounded metric label, a charge with no idempotency key, a read-then-write debit, a per-night loop with no transaction. Each fix: make the operation bounded or atomic.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-data-money-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "How do you read a wallet-debit or reservation snippet for the lost-update / partial-write hazard?", a: "Look for a READ followed by a separate WRITE that depends on it, or a loop of writes with no enclosing transaction. A debit that does SELECT balance then UPDATE balance = bal - amount has a read-write gap — two concurrent debits both pass the check and overdraw (lost update); fix with one atomic conditional UPDATE (… SET balance = balance - ? WHERE balance >= ?). A multi-night reservation that updates each night independently can book some nights then fail on another (partial reservation); fix by wrapping the whole range in one transaction that commits only if every night's conditional UPDATE affected a row. The rule: make check-and-act one atomic, all-or-nothing operation." },
+    { q: "How do you spot the idempotency and cardinality hazards in code?", a: "Cardinality: scan metric label sets for unbounded values — user_id, request_id, email, raw URL/path, timestamps. Any of those forks a series per distinct value (series = product of label cardinalities), so it OOMs the TSDB; drop it from labels and put it in logs/traces. Idempotency: any external charge/transfer call that a client retries needs a client-minted idempotency key passed in, with an atomic check-and-store, so a retry after a lost response returns the original result instead of charging twice — a bare psp.charge(amount, card) with no key is a double-charge waiting to happen." },
+  ]}
+/>
+
+<Recap lang="en">
+Every data-and-money bug is readable straight off the code. An unbounded **metric label** (user_id) forks a series per value and OOMs the TSDB — series cardinality, not request rate, is the constraint, so drop it from labels. A **charge** the client retries with no **idempotency key** double-charges when the first response is lost — pass a client-minted key with an atomic check-and-store. A **wallet debit** that reads the balance then writes it back has a read-write gap that two concurrent debits exploit (the **lost update**) — collapse it into one atomic conditional UPDATE. And a **multi-night reservation** that decrements each night outside a transaction can leave a **partial reservation** — wrap the whole range in one all-or-nothing transaction. The senior habit is the same across all four: find the hazard, name it, and make the operation bounded (cardinality) or atomic (idempotency, lost update, partial write) — the fix the mechanism requires, not the one that hides it.
+</Recap>

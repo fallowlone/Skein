@@ -5,34 +5,207 @@ track: "system-design-cases"
 unit: "02-social-feed"
 order: 1
 title: "Design a notification system"
-summary: "Design a notification system — to be authored."
-estMin: 16
-status: stub
+summary: "Design push, SMS, and email notifications: fan-out from one event to millions of devices, provider integration (APNs/FCM), per-channel rate limiting, dedup, user preferences, retries with a dead-letter queue, and delivery tracking — the parts forgotten until the dup-push storm."
+estMin: 30
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - fan-out
+  - provider-integration
+  - rate-limiting
+  - idempotency-dedup
+  - retry-dlq
+  - delivery-tracking
+prereqs:
+  - system-design/06-async-messaging/01-message-queues
+  - system-design/05-caching-at-scale/01-caching-strategies
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://developer.apple.com/documentation/usernotifications/setting_up_a_remote_notification_server
+  - https://firebase.google.com/docs/cloud-messaging/concept-options
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A growth team shipped a "your friend just joined" push. A retry bug in their queue consumer re-delivered every message that failed an APNs handshake, and APNs had been timing out for ninety seconds. When it recovered, the backlog flushed: users got the same push four, five, nine times. App-store reviews cratered overnight, Apple throttled the app's APNs connection for abuse, and the on-call engineer discovered there was no way to tell which sends had actually reached a phone — the system logged "enqueued", not "delivered". None of this was a notification-content problem. It was the absence of the boring machinery: idempotent sends, a bounded retry policy, a dead-letter queue, and delivery tracking. This lesson designs that machinery.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A notification system is a fan-out pipeline: one event becomes many channel sends, deduped, rate-limited, retried with a DLQ, and tracked.</Crux>
 
 <Explanation>
 
-## Design a notification system
+## Requirements
 
-Body to be authored.
+Pin down the scope before drawing boxes — the requirements decide the architecture.
+
+**Functional:** accept an event ("user X was mentioned"), resolve it to recipients, render per-channel content, and deliver across **push** (mobile + web), **SMS**, and **email**. Honour per-user **preferences** (which channels, which categories, quiet hours). Support transactional sends (password reset — must arrive, low volume) and bulk sends (marketing campaign — high volume, best-effort). Expose **delivery status** to product surfaces and analytics.
+
+**Non-functional:** transactional notifications target seconds of end-to-end latency; bulk can take minutes. **At-least-once delivery with dedup** — losing a password reset is unacceptable, but a duplicate is also unacceptable to the user, so we need both a retry path and an idempotency guard. The system must absorb spikes (a viral post mentioning a celebrity fans out to millions) without dropping events or melting the providers. And it must be **observable**: for any send, answer "what happened and when".
+
+The single hardest constraint hiding in that list: third-party providers (APNs, FCM, an SMS aggregator, an email provider) are unreliable, rate-limited, and outside your control. The design is mostly about insulating yourself from them.
+
+## Estimation
+
+Sizing tells us where the pressure is. Take 100M users, each receiving ~10 notifications/day across channels: 10^9 notifications/day. Divide by ~10^5 seconds/day, giving **~10,000 notifications/second average**, and traffic is bursty (a product launch or a celebrity event spikes it), so provision for a **~5x peak, roughly 50,000/sec**.
+
+Split by channel: push dominates (~70%), email ~20%, SMS ~10% (SMS costs real money per message, so it is gated). A celebrity with 50M followers posting once is a single event that fans out to 50M sends — that one event, if processed naively in the request path, is a self-inflicted outage. Storage: delivery records at ~200 bytes each, times 10^9/day, times a 30-day retention window, lands around **6 TB** of hot status data, which forces a time-series or wide-column store, not a single relational table.
+
+The takeaway from the napkin: the fan-out amplification (one event into millions of sends) and the per-second peak both say **the send must be asynchronous and queue-buffered** — never synchronous in the API that accepted the event.
+
+## High-level design
+
+The pipeline has five stages, each a buffering seam against the next stage's failure.
+
+<FlowDiagram
+  label="An event enters the API, is persisted and enqueued, then a fan-out worker expands it into per-recipient per-channel sends; each channel has its own queue and worker pool that talks to an external provider, and every attempt writes a delivery-status record."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "evt", label: "event API", sub: "validate + persist" },
+    { id: "topic", label: "event queue", sub: "buffer + decouple" },
+    { id: "fanout", label: "fan-out worker", sub: "expand recipients" },
+    { id: "pref", label: "preference + dedup", sub: "filter + idempotency" },
+    { id: "chq", label: "per-channel queues", sub: "push / SMS / email" },
+    { id: "send", label: "channel workers", sub: "APNs / FCM / SMS / SMTP" },
+    { id: "prov", label: "providers", sub: "external, flaky" },
+    { id: "dlq", label: "DLQ", sub: "poison + exhausted" },
+    { id: "track", label: "delivery store", sub: "status + webhooks" },
+  ]}
+  edges={[
+    { from: "evt", to: "topic", label: "enqueue" },
+    { from: "topic", to: "fanout", label: "consume" },
+    { from: "fanout", to: "pref", label: "per recipient" },
+    { from: "pref", to: "chq", label: "routed" },
+    { from: "chq", to: "send", label: "consume" },
+    { from: "send", to: "prov", label: "deliver" },
+    { from: "send", to: "dlq", label: "give up" },
+    { from: "send", to: "track", label: "record" },
+    { from: "prov", to: "track", label: "receipt webhook" },
+  ]}
+  caption="One event in, many sends out. Each arrow is a queue boundary so a slow provider backs up its own channel queue instead of stalling the whole pipeline — and a failed send branches to the DLQ, never silently vanishes."
+/>
+
+1. **Event API** validates and persists the event, then enqueues it and returns immediately. The caller never waits for delivery.
+2. **Event queue** decouples producers (any service that emits events) from the notification pipeline.
+3. **Fan-out worker** resolves the event to recipients and explodes it into per-recipient work. This is where the celebrity problem lives.
+4. **Preference + dedup filter** drops channels the user disabled, respects quiet hours, and stamps each send with an idempotency key so duplicates collapse.
+5. **Per-channel queues + workers** each own one provider relationship, with their own rate limits, retry policy, and DLQ. A push outage backs up the push queue without touching email.
+
+## Deep dive
+
+### Fan-out and the celebrity problem
+
+Fan-out is the step that turns one event into N sends, and N can be 50M. Doing it inline in the event API would hold a request open for minutes and exhaust connections — so fan-out is its own asynchronous stage. The worker reads the event, looks up the recipient set (followers, a topic's subscribers, an explicit list), and writes one message per recipient into the channel queues. For huge recipient sets it must **paginate and checkpoint**: process the follower list in batches of, say, 10,000, committing progress so a worker crash resumes instead of restarting (and re-sending the first million).
+
+There are two fan-out shapes, mirroring the news-feed lesson. **Fan-out on write** (push the send eagerly to every recipient now) is right for notifications because the action *is* the delivery — there is no "read later". But for a celebrity event you blend in **topic-based delivery**: rather than materialize 50M individual rows, push to FCM/APNs **topics** (a single publish that the provider fans out to all devices subscribed to that topic), reserving per-recipient sends for personalized or preference-sensitive notifications. The hybrid keeps the common case cheap and the personalized case correct.
+
+<Inset kind="why" lang="en">
+Why not just loop over recipients in the event API and call the provider directly? Three reasons compound. First, latency: the API would block for the entire fan-out, so the producer's request times out. Second, failure blast radius: a provider hiccup mid-loop leaves you half-sent with no record of where you stopped — re-running double-sends the first half. Third, backpressure: a synchronous loop has nowhere to absorb a spike, so a celebrity event saturates your provider connections and starves transactional sends (the password reset queues behind a million marketing pushes). The queue between fan-out and the channel workers is what lets a million-recipient event drain at a sustainable rate while a password reset, on its own higher-priority queue, jumps ahead.
+</Inset>
+
+### Provider integration: APNs, FCM, SMS, email
+
+Each channel wraps an external provider with very different semantics, and the channel worker's job is to normalize them.
+
+- **Push.** Apple's APNs and Google's FCM are token-based: the device registers and hands your backend a **device token** that you store and must keep fresh. Tokens expire or become invalid (app uninstalled, token rotated); the provider tells you via the response, and you must **prune dead tokens** or you will waste sends and trip abuse limits. APNs uses long-lived HTTP/2 connections — you reuse them, you do not reconnect per send. FCM offers topics for broadcast.
+- **SMS** goes through an aggregator (Twilio, Sinch, and similar), costs cents per message, is rate-limited per sender number, and delivery confirmation arrives **asynchronously via webhook** ("delivered", "failed", "undelivered") — so the worker cannot know the outcome at send time; it records "submitted" and updates on the receipt.
+- **Email** goes through an SMTP relay or API provider; bounces and complaints also arrive via webhook, and you must honour them (a hard bounce means stop sending to that address, or your sender reputation tanks and everything lands in spam).
+
+The unifying design: a **channel adapter interface** (send, parse-response, classify-error) so the worker logic — rate limit, retry, record — is identical across channels, and only the adapter knows the provider's quirks. Errors classify into **retryable** (timeout, 429, 5xx) and **permanent** (invalid token, hard bounce, unsubscribed) — permanent errors must *not* be retried; they go straight to cleanup.
+
+### Rate limiting, dedup, retries, and the DLQ
+
+Four pieces of machinery keep the pipeline honest under stress.
+
+**Rate limiting** is per-provider and per-recipient. Per-provider: respect APNs/FCM/aggregator quotas (a token bucket on each channel worker) so you do not get throttled or banned — the hook's app got its APNs connection throttled for hammering it. Per-recipient: cap how many notifications a single user gets in a window (no "you have 200 new likes" as 200 separate pushes — collapse them).
+
+**Dedup / idempotency.** Every send carries an **idempotency key** (event id + recipient id + channel). Before sending, the worker checks a fast store (Redis with a TTL) for that key; if present, skip. This is what would have saved the hook: even with the retry storm, each unique send fires once. At-least-once delivery plus an idempotency guard gives you **effectively-once** as the user experiences it.
+
+**Retries with backoff and jitter.** Retryable failures retry with **exponential backoff and jitter** — not a tight loop (which becomes a DDoS on a recovering provider) and not fixed delays (which synchronize all clients into a thundering herd). Cap the attempts (say 5).
+
+**Dead-letter queue.** When retries exhaust, or a message is malformed (poison message), it goes to a **DLQ** instead of being retried forever or dropped silently. The DLQ is inspected by on-call, alerted on, and is the difference between "we lost notifications and do not know it" and "47 sends failed permanently, here they are". The hook had no DLQ — failures looped.
+
+<Inset kind="mistake" lang="en">
+The classic notification outage is the **retry storm** the hook describes: a provider blips, sends fail, the consumer retries aggressively (no backoff, no cap), and when the provider recovers the entire backlog flushes at once — re-delivering duplicates *and* hammering the just-recovered provider into throttling you again. The fix is three things together, and missing any one reopens the hole: (1) exponential backoff **with jitter** so retries spread out instead of synchronizing; (2) a **bounded** attempt count feeding a DLQ so nothing retries forever; and (3) an **idempotency key** checked before send so even legitimately-retried messages do not duplicate at the device. Teams often add retries and stop there — retries without dedup turn every provider hiccup into a duplicate storm.
+</Inset>
+
+### Delivery tracking
+
+"Enqueued" is not "delivered". Each send writes a status record keyed by send id, transitioning through **queued, submitted, delivered/failed**, with the terminal state often arriving later via the provider's **receipt webhook** (SMS/email) or known immediately (push, mostly). Because volume is enormous and the access pattern is "write once, read by recent time window / by recipient", store status in a wide-column or time-series store with TTL, not a single hot relational table. This is what lets on-call answer "did the password reset actually arrive?" — and what powers product analytics (open rates, channel effectiveness) and the per-user rate limiter (it reads recent send history).
+
+<Quiz
+  id="01-notification-system-quiz-1"
+  lessonSlug="01-notification-system"
+  lang="en"
+  question="After a provider outage recovers, your users receive the same push 5–9 times. Retries are already in place. What is the missing piece, and why do retries alone make it worse?"
+  choices={[
+    { label: "An idempotency key (event+recipient+channel) checked in a fast store before each send. Retries are at-least-once by design, so without a dedup guard every retried-or-re-flushed message duplicates at the device — retries amplify the problem rather than cause it.", correct: true },
+    { label: "Switch from at-least-once to exactly-once delivery end to end so retries never duplicate.", misconception: "Exactly-once across an external provider you do not control is not achievable — the provider can deliver and fail to ack. The realistic design is at-least-once delivery plus an idempotency key, which gives the user effectively-once. That dedup guard, not a delivery-semantics change, is the fix." },
+    { label: "Remove retries entirely so a message is only ever sent once.", misconception: "Then any transient provider blip silently drops a password reset — the opposite failure. You keep retries (with backoff and a cap) AND add an idempotency check so retried messages collapse to one delivery." },
+    { label: "Add more channel workers so the backlog drains faster after recovery.", misconception: "Draining faster just delivers the duplicates faster. The duplicates come from re-sending without a dedup guard; throughput does not address it. Add an idempotency key checked before send." },
+  ]}
+/>
+
+<Quiz
+  id="01-notification-system-quiz-2"
+  lessonSlug="01-notification-system"
+  lang="en"
+  question="A celebrity with 40M followers triggers one notification event. How should fan-out be handled so it neither stalls the API nor starves transactional sends?"
+  choices={[
+    { label: "Fan-out is its own async stage: the API enqueues the event and returns; a fan-out worker paginates the follower set with checkpointing into channel queues, uses provider topics for broadcast, and transactional sends ride a separate higher-priority queue so they jump ahead.", correct: true },
+    { label: "Loop over all 40M followers inside the event API and call the provider for each.", misconception: "That holds the request open for minutes, exhausts connections, double-sends on any mid-loop failure (no checkpoint), and saturates the provider so password resets queue behind 40M pushes. Fan-out must be async, checkpointed, and on a separate queue from transactional sends." },
+    { label: "Drop the event if the recipient set is over a threshold to protect the system.", misconception: "Silently dropping notifications is a correctness failure, not protection. The system absorbs large fan-outs by buffering them in a queue that drains at a sustainable rate (and using provider topics for broadcast), not by discarding events." },
+    { label: "Send all 40M synchronously but on a background thread in the API process.", misconception: "A background thread in the API process has no durability (a deploy or crash loses in-flight work and the checkpoint), no backpressure, and competes with request handling. The work belongs in a durable queue consumed by dedicated, checkpointing workers." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-notification-system-metaphor-1"
+  lessonSlug="01-notification-system"
+  lang="en"
+  setup="When retries exhaust their bounded attempt count or a message is malformed, it is routed to a _______ — a holding queue that on-call inspects and alerts on, so failed sends are visible and recoverable instead of being retried forever or dropped silently."
+  accepted={["dlq", "dead-letter queue", "dead letter queue", "deadletter queue", "dead-letter"]}
+  canonical="dead-letter queue (DLQ)"
+  explanation="Exhausted retries and poison messages go to the dead-letter queue (DLQ). It is the seam between 'we lost notifications and do not know' and 'these N sends failed permanently, here they are' — bounded retries feed it, and on-call drains it. Without a DLQ, failures either loop forever (the retry storm) or vanish."
+/>
+
+## Bottlenecks & tradeoffs
+
+The binding constraint is **the providers**, not your compute — they are rate-limited, flaky, and bill per message (SMS especially), so the whole design exists to insulate against them. Key tradeoffs:
+
+- **At-least-once + dedup vs exactly-once.** Exactly-once across an external provider is unattainable (it may deliver then fail to ack). You choose at-least-once delivery and pay for an idempotency store; the cost is a Redis lookup per send, the payoff is no duplicate storms.
+- **Per-channel queues vs one queue.** Separate queues isolate a slow provider to its own channel (push outage does not block email) and let each channel tune rate/retry independently — at the cost of more moving parts. Worth it: failure isolation is the point.
+- **Push-on-write vs topic broadcast.** Per-recipient sends give per-user preference/personalization but cost N writes; provider topics give cheap broadcast but no per-user logic. The hybrid (topics for broadcast, per-recipient for personalized) is the standard answer.
+- **Status retention vs cost.** Full delivery tracking at this volume is terabytes; you cap retention (for example 30 days hot, archive or drop after) and store in a write-optimized, TTL'd store rather than a relational table that would buckle.
+
+The deepest tradeoff is **priority**: a transactional password reset and a bulk marketing blast share infrastructure but must not share fate. Separate priority lanes (queues) so the urgent, low-volume, must-arrive traffic is never stuck behind the bulk, best-effort flood.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A notification system is an async fan-out pipeline that insulates you from flaky providers: enqueue, fan out, dedup with an idempotency key, retry with backoff+jitter into a DLQ, and track delivery to the device.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-notification-system-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the five pipeline stages and what each buffers against.", a: "Event API (validate + persist + enqueue, returns immediately so the caller never waits) then event queue (decouples producers from the pipeline) then fan-out worker (resolves recipients, paginates with checkpointing, uses provider topics for celebrity broadcast) then preference + dedup filter (drops disabled channels/quiet hours, stamps an idempotency key) then per-channel queues + workers (each owns one provider with its own rate limit, retry policy, and DLQ). Each arrow is a queue boundary so a slow provider backs up only its own stage instead of stalling the pipeline." },
+    { q: "Why is at-least-once + an idempotency key the right delivery model, not exactly-once?", a: "Exactly-once across an external provider you do not control is unachievable — the provider can deliver and then fail to acknowledge, so you cannot distinguish 'sent' from 'lost'. So you retry (at-least-once) to never drop a password reset, and add an idempotency key (event id + recipient id + channel) checked in a fast TTL store before each send so any retried or re-flushed message collapses to one delivery. The user experiences effectively-once. Retries without this guard turn every provider hiccup into a duplicate storm." },
+    { q: "How does the retry storm happen and what three things together prevent it?", a: "A provider blips, sends fail, the consumer retries aggressively (no backoff, no cap); when the provider recovers the whole backlog flushes at once — duplicating messages AND re-throttling the recovered provider. Prevention needs all three: (1) exponential backoff with jitter so retries spread instead of synchronizing into a thundering herd; (2) a bounded attempt count feeding a DLQ so nothing retries forever and failures stay visible; (3) an idempotency key checked before send so retried messages do not duplicate at the device. Missing any one reopens the hole." },
+    { q: "How do you keep a 40M-follower celebrity event from taking the system down?", a: "Make fan-out an async stage, not inline in the API. The fan-out worker paginates the recipient set in batches with checkpointing (resume on crash instead of re-sending the first million), uses provider topics (APNs/FCM) for broadcast so one publish fans out at the provider instead of materializing 40M rows, and routes everything through channel queues that drain at a sustainable rate. Crucially, transactional sends ride a separate higher-priority queue so a password reset jumps ahead of the marketing flood." },
+  ]}
+/>
+
+<Recap lang="en">
+A notification system is an **asynchronous fan-out pipeline** whose real job is insulating you from third-party providers (APNs, FCM, SMS aggregators, email) that are flaky, rate-limited, and bill per message. The event API validates, persists, and **enqueues** — never delivers inline — and a **fan-out worker** explodes one event into per-recipient sends, paginating with **checkpointing** for huge recipient sets and using provider **topics** for celebrity broadcast (the hybrid). A **preference + dedup filter** drops disabled channels and stamps an **idempotency key**; **per-channel queues** isolate a slow provider to its own lane. Each channel worker wraps a provider behind a common adapter, classifies errors into retryable vs permanent, **rate-limits** per provider and per recipient, **retries with backoff + jitter** up to a cap, and sends exhausted or poison messages to a **DLQ** — the three pieces (jitter, bounded retries, idempotency) that together prevent the **retry storm** from the hook. Finally, **delivery tracking** records each send's lifecycle (queued, submitted, delivered/failed, terminal state often via webhook) in a write-optimized, TTL'd store, so on-call can answer "did it arrive?" and the per-user rate limiter can read recent history. The deepest decision is **priority lanes**: transactional must-arrive traffic must never share fate with the bulk best-effort flood.
+</Recap>

@@ -5,34 +5,202 @@ track: "system-design-cases"
 unit: "01-foundational"
 order: 3
 title: "Design a web crawler"
-summary: "Design a web crawler — to be authored."
-estMin: 16
-status: stub
+summary: "Design a distributed web crawler: a polite URL frontier, robots.txt and per-host rate limits, dedup with bloom filters plus content hashing, DNS at scale, freshness-driven recrawl, and the traps that make a naive crawler loop forever."
+estMin: 30
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - url-frontier
+  - politeness
+  - bloom-filter-dedup
+  - content-hashing
+  - crawl-traps
+  - recrawl-freshness
+prereqs:
+  - 08-building-blocks/03-bloom-filters
 sources:
   - https://github.com/donnemartin/system-design-primer
+  - https://www.rfc-editor.org/rfc/rfc9309.html
+  - https://developers.google.com/search/docs/crawling-indexing/googlebot
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team built a crawler over a weekend: a queue of URLs, a worker that fetches a page, extracts links, and pushes them back on the queue. It ran beautifully for an hour, then two things happened at once. First, a small e-commerce site emailed them furiously — their crawler had sent forty requests per second to a single underpowered server and effectively DDoS'd it off the internet. Second, the crawler's own queue had ballooned to fifty million URLs and was still growing, because it had wandered into a calendar widget with a "next month" link that generated a fresh, never-ending URL every click — and the crawler, having no memory of where it had been, followed every one. The weekend crawler had discovered the two truths a real crawler is built around: **the web is hostile to politeness and full of infinite loops**, and a crawler is mostly a machine for *not* re-fetching, *not* hammering hosts, and *not* falling into traps.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A web crawler is a politeness-and-dedup engine: a frontier schedules by host so it never hammers a server; a bloom filter blocks re-crawls.</Crux>
 
 <Explanation>
 
-## Design a web crawler
+## Requirements
 
-Body to be authored.
+**Functional**
 
+- Start from a **seed set** of URLs and discover the reachable web by following links.
+- **Fetch** each page, extract links, and hand the content to downstream consumers (indexer, archiver).
+- **Respect `robots.txt`** and crawl-delay directives — non-negotiable.
+- **Deduplicate**: never re-fetch a URL needlessly, and detect when two URLs return the *same* content.
+- **Recrawl** for freshness: revisit pages so the index doesn't go stale.
+
+**Non-functional**
+
+- **Politeness is a hard constraint, not a nicety.** Never overload a single host; a crawler that DDoSes sites gets blocked and is a bad citizen.
+- **Massive scale.** Billions of pages, so the design is distributed across many machines from day one.
+- **Robustness.** The web is adversarial — malformed HTML, redirect loops, infinite URL spaces, slow servers, spider traps. The crawler must survive all of it without stalling or looping.
+- **Extensible.** New content types and downstream consumers plug in without a rewrite.
+
+The two constraints that dominate the design are **politeness** (how to be fast in aggregate while gentle per host) and **dedup** (how to not drown in the same content twice).
+
+## Estimation
+
+- Target **1 billion pages/month**. That's `10^9 / (30 × 10^5 s)` ≈ **~400 pages/sec** sustained — but the real number is higher because most fetch time is *waiting* on the network, so concurrency, not CPU, sets the rate.
+- **Average page** ~100 KB of HTML → `10^9 × 100 KB` = **~100 TB/month** of raw fetched content, before dedup. Storage and bandwidth, not compute, dominate.
+- **URL bookkeeping:** to crawl a billion pages you must *remember* tens of billions of seen URLs to avoid re-fetching. At ~100 bytes/URL, an exact `seen` set of 10 billion URLs is **~1 TB of RAM** — too expensive to keep exactly in memory, which is the whole motivation for a **bloom filter** (a few bits per URL instead of 100 bytes).
+- **DNS:** every fetch needs a hostname resolved; at ~400 pages/sec with no caching, DNS becomes a synchronous bottleneck — so a local resolver/cache is mandatory, not optional.
+
+The bookkeeping number is the design driver: **you cannot afford to remember every URL exactly**, so dedup is probabilistic, and that single fact shapes the architecture.
+
+## High-level design
+
+A **URL frontier** holds URLs to crawl, ordered for politeness and priority. Workers pull from the frontier, resolve DNS, fetch the page (after a `robots.txt` check), test the content for duplication, store it, extract new links, filter them against the `seen` set, and feed the survivors back into the frontier.
+
+<FlowDiagram
+  label="Workers pull URLs from a politeness-ordered frontier, resolve DNS from a cache, fetch the page subject to robots rules, hash the content to drop duplicates, store it, extract links, filter them through a bloom filter of seen URLs, and feed the new ones back into the frontier."
+  perRow={4}
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "frontier", label: "URL frontier", sub: "politeness order" },
+    { id: "dns", label: "DNS cache", sub: "resolve host" },
+    { id: "fetch", label: "fetcher", sub: "robots-checked" },
+    { id: "dup", label: "content hash", sub: "drop dupes" },
+    { id: "store", label: "store page", sub: "→ indexer" },
+    { id: "extract", label: "extract links", sub: "parse HTML" },
+    { id: "seen", label: "bloom filter", sub: "seen? skip" },
+    { id: "back", label: "enqueue new", sub: "→ frontier" },
+  ]}
+  edges={[
+    { from: "frontier", to: "dns", label: "next URL" },
+    { from: "dns", to: "fetch" },
+    { from: "fetch", to: "dup" },
+    { from: "dup", to: "store", label: "new content" },
+    { from: "store", to: "extract" },
+    { from: "extract", to: "seen", label: "candidate URLs" },
+    { from: "seen", to: "back", label: "unseen" },
+    { from: "back", to: "frontier" },
+  ]}
+  caption="The crawl loop: frontier → DNS → fetch → dedup content → store → extract links → filter against seen → re-enqueue. The frontier enforces politeness on the way out; the bloom filter and content hash enforce dedup on the way back in. Everything else is plumbing."
+/>
+
+## Deep dive
+
+### The URL frontier and politeness
+
+The frontier is not a simple FIFO queue — it is the politeness engine, and getting it wrong is what DDoSes a site. A real frontier (the Mercator design) is **two-stage**:
+
+- **Front queues — priority.** Incoming URLs are sorted into queues by priority (importance, freshness need), so high-value pages are crawled sooner. A prioritizer picks which front queue to pull from.
+- **Back queues — politeness.** Each back queue is mapped to **exactly one host**, and a router guarantees no two back queues serve the same host. A worker is assigned a back queue and a **timestamp of when it may next hit that host**; it sleeps until the host's crawl-delay (from `robots.txt`, or a default) has elapsed. This is what enforces "at most one request to host X every N seconds" regardless of how many URLs from that host are waiting.
+
+So the frontier simultaneously says *crawl important things first* (front queues) and *never hammer one host* (back queues) — two goals that a single queue cannot serve. Politeness is per **host**, not per IP or per crawler, because one slow server behind one hostname is what you must protect.
+
+<Inset kind="why" lang="en">
+Why separate front (priority) and back (politeness) queues instead of one priority queue? Because the two goals fight. If you pull strictly by priority, you'll happily fire ten high-priority URLs that all happen to be on the *same* host back-to-back — overloading it. If you pull strictly round-robin by host for fairness, you lose the ability to crawl important pages first. The two-stage frontier resolves the tension: front queues decide *what* matters, back queues (one host each, with a next-allowed timestamp) decide *when* it's polite to fetch. A URL's journey is "priority in the front, host-rate-limit in the back," and only a URL that clears both gets fetched — which is why a billion-page crawler can be aggressive in aggregate yet gentle on every individual server.
+</Inset>
+
+### Dedup: bloom filter for URLs, content hash for pages
+
+There are two distinct dedup problems, and they need two different tools.
+
+**Have I seen this URL?** With tens of billions of URLs, an exact in-memory set is ~1 TB — unaffordable. A **bloom filter** answers "have I seen this URL?" in a few bits per URL with no false negatives (if it says *not seen*, it's definitely new) and a tunable false-positive rate (it may occasionally say *seen* when it wasn't, harmlessly skipping a genuinely new URL). For a crawler this asymmetry is perfect: the cost of a false positive is one un-crawled page out of billions; the cost of an exact set is a terabyte of RAM. (The bloom-filter prerequisite covers the bit-array mechanics; here it's the memory trick that makes web-scale dedup possible.)
+
+**Have I seen this content?** Two different URLs often return identical bytes — `http` vs `https`, `?utm=...` tracking params, mirror sites, printer-friendly pages. URL dedup can't catch these because the URLs differ. So you also hash the *content* (e.g. an MD5/SHA of the normalized body, or a SimHash for near-duplicates) and skip storing a page whose content hash you've already seen. URL dedup stops you re-*fetching*; content dedup stops you re-*storing* and re-*indexing* the same text reachable by many paths.
+
+<FlowDiagram
+  label="A candidate URL is first checked against the bloom filter to skip already-seen links cheaply; pages that are fetched then have their body hashed, and a page whose content hash was seen before is dropped so the same text reachable via different URLs is stored only once."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "url", label: "candidate URL", sub: "from extractor" },
+    { id: "bloom", label: "URL bloom filter", sub: "seen? skip" },
+    { id: "fetched", label: "fetch (if new)", sub: "get body" },
+    { id: "chash", label: "content hash", sub: "hash body" },
+    { id: "seenc", label: "hash seen?", sub: "drop duplicate" },
+    { id: "keep", label: "store once", sub: "→ index" },
+  ]}
+  edges={[
+    { from: "url", to: "bloom", label: "check" },
+    { from: "bloom", to: "fetched", label: "unseen" },
+    { from: "fetched", to: "chash" },
+    { from: "chash", to: "seenc" },
+    { from: "seenc", to: "keep", label: "new content" },
+  ]}
+  caption="Two dedup layers: the URL bloom filter cheaply skips links already crawled (avoids re-fetching), and the content hash drops pages whose bytes were already stored (avoids re-indexing the same text under http/https, tracking params, or mirrors). They catch different duplicates."
+/>
+
+### Traps, freshness, and recrawl
+
+**Traps** are the calendar widget from the hook: pages that generate infinite, ever-changing URLs (session IDs in the path, `?page=1,2,3…` to infinity, deep dynamic facets). A naive crawler treats each as new and loops forever. Defences: cap crawl **depth** per host, cap **URLs per host**, detect URL patterns that explode, and lean on content hashing (the trap's pages are often near-identical, so the content-hash check culls them even when the URLs differ). `robots.txt` `Disallow` rules also fence off many trap-prone paths.
+
+**Freshness** is the opposite problem: the web changes, so a crawl is never "done." Pages must be **recrawled**, but not uniformly — a news homepage changes hourly, an archived PDF changes never. So recrawl priority is driven by an **estimated change rate** per page: track how often a page's content hash actually changed across past crawls, and schedule the volatile pages often and the static ones rarely. This makes the frontier a *continuous* system (URLs are re-added on a freshness schedule), not a one-shot drain.
+
+<Inset kind="edgecase" lang="en">
+What about a page that legitimately changes its bytes on every fetch but isn't a trap — a homepage with a rotating "quote of the day," a server-rendered timestamp, an ad slot? Pure content hashing flags every fetch as "new content," so you store and re-index near-identical pages forever and your change-rate estimate screams "this page is hyper-volatile, recrawl constantly." The fix is to hash a *normalized* version: strip volatile regions (timestamps, ad blocks, CSRF tokens) or use a near-duplicate hash like SimHash that ignores small diffs, so two pages that differ only in a rotating quote land on the same (or close) hash. Without normalization, the very mechanism meant to *reduce* work (content dedup + change-rate recrawl) inverts into a treadmill that maximizes it.
+</Inset>
+
+<Quiz
+  id="03-web-crawler-quiz-1"
+  lessonSlug="03-web-crawler"
+  lang="en"
+  question="Your crawler's seen-URL set would need ~1 TB of RAM to store exactly, so you replace it with a bloom filter. What new behavior must you accept, and why is it acceptable for a crawler?"
+  choices={[
+    { label: "Occasional false positives — the filter may say 'seen' for a genuinely new URL, so that page is skipped. It's acceptable because there are no false negatives (it never re-fetches by mistake in a way that loses correctness), and skipping a handful of pages out of billions is a fine trade for ~100x less memory.", correct: true },
+    { label: "Occasional false negatives — it may re-fetch a page you already crawled.", misconception: "Bloom filters have no false negatives: if it says 'not seen,' the URL is definitely new. The error is the other direction — a false positive can mark a NEW URL as seen and skip it. That asymmetry is exactly why it suits a crawler." },
+    { label: "You must accept losing the ability to ever delete a URL from the set.", misconception: "Standard bloom filters indeed don't support deletion, but that's not the behavior this trade is about for dedup — and counting bloom filters can delete. The accepted cost here is false positives (rarely skipping a new URL) in exchange for tiny memory." },
+    { label: "Nothing changes; bloom filters are exact, just compressed.", misconception: "Bloom filters are probabilistic, not exact compression. They trade a tunable false-positive rate for huge memory savings — the whole point. You must accept occasionally skipping a new URL, which is fine at web scale." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-web-crawler-metaphor-1"
+  lessonSlug="03-web-crawler"
+  lang="en"
+  setup="The frontier's _______ queues each map to exactly one host with a next-allowed timestamp, which is what enforces politeness — at most one request to a given server per crawl-delay — while separate priority queues decide which pages matter most."
+  accepted={["back", "back-queue", "back queue", "host", "host back"]}
+  canonical="back"
+  explanation="The two-stage (Mercator) frontier splits priority from politeness: front queues order by importance, while back queues are mapped one-per-host with a next-allowed timestamp so a worker waits out the crawl-delay before hitting that host again. A single queue can't serve both goals, which is why hammering happens when you collapse them."
+/>
+
+## Bottlenecks & tradeoffs
+
+- **Frontier scale & balance.** With billions of URLs the frontier doesn't fit on one machine; it's partitioned (often by host hash) across nodes — but then one giant host (a huge site) can overload its partition while others idle. Balancing host-to-partition assignment is a real operational problem.
+- **DNS as a hidden bottleneck.** Synchronous DNS at hundreds of lookups/sec stalls fetchers; a local caching resolver is mandatory, and even then a flood of new hosts can saturate it.
+- **Politeness vs throughput.** Strict per-host rate limits cap how fast you can crawl any single large site — so total throughput comes from crawling *many hosts in parallel*, not any one fast. A crawler stuck behind a few mega-hosts underperforms even with spare capacity.
+- **Dedup false positives & content normalization.** The bloom filter occasionally drops a real new URL (tune the size for an acceptable rate); content hashing without normalization treats rotating-content pages as endlessly new, inverting dedup into wasted work — both are correctness-vs-cost knobs, not free wins.
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A crawler is dominated by politeness (a two-stage frontier, one host per back queue with a crawl-delay) and dedup (a bloom filter for URLs, content hashing for duplicate text). Traps and freshness make it continuous.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-web-crawler-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is the URL frontier two-stage, and what does each stage enforce?", a: "Priority and politeness are conflicting goals a single queue can't serve. The front queues order URLs by priority/importance so high-value pages crawl first. The back queues are mapped one-per-host, each with a next-allowed timestamp; a worker waits out the host's crawl-delay before fetching again, so a host is never hit more than once per delay regardless of how many of its URLs are queued. A URL must clear both — priority in front, host rate-limit in back — which lets a billion-page crawler be aggressive in aggregate but gentle on every individual server. Politeness is per host, not per crawler." },
+    { q: "Why use a bloom filter for URL dedup, and why also hash content?", a: "Remembering tens of billions of seen URLs exactly is ~1 TB of RAM. A bloom filter stores a few bits per URL with no false negatives (says 'not seen' → definitely new) and a tunable false-positive rate (may rarely skip a genuinely new URL), which is a great trade: one missed page in billions vs a terabyte of RAM. But URL dedup can't catch the same content reachable via different URLs (http vs https, tracking params, mirrors), so you also hash the page body and skip storing a content hash you've seen — URL dedup avoids re-fetching, content dedup avoids re-indexing the same text." },
+    { q: "What are crawl traps and how does the design handle freshness without looping forever?", a: "Traps are pages that generate infinite, ever-changing URLs (calendars, session IDs, ?page=N to infinity); a naive crawler follows them forever. Defences: cap depth and URL count per host, detect exploding URL patterns, respect robots Disallow, and lean on content hashing since trap pages are often near-identical. Freshness is the inverse: the web changes, so pages are recrawled on a schedule driven by each page's estimated change rate (how often its content hash actually changed before) — volatile pages often, static pages rarely. That makes the frontier continuous. Content hashing must be done on a normalized body, or rotating content (timestamps, ads) looks endlessly new and the recrawl scheduler treadmills." },
+  ]}
+/>
+
+<Recap lang="en">
+A web crawler is not a queue with a fetcher — it is a **politeness-and-dedup engine** built around two facts: the web is hostile to politeness and full of infinite loops. The estimate names the design driver — remembering tens of billions of seen URLs exactly is ~1 TB of RAM, which is unaffordable, so dedup must be probabilistic. The **two-stage URL frontier** resolves the priority-vs-politeness conflict: front queues crawl important pages first, back queues map one-per-host with a next-allowed timestamp so no server is ever hammered. **Dedup runs in two layers**: a **bloom filter** answers "seen this URL?" in a few bits each (no false negatives, a tunable false-positive rate — a missed page in billions beats a terabyte of RAM) to avoid re-fetching, and a **content hash** drops the same bytes reached via http/https, tracking params, or mirrors to avoid re-indexing. **Traps** (calendars, infinite pagination) are fenced off with depth/URL caps, pattern detection, robots rules, and content hashing; **freshness** turns the crawler into a continuous system that recrawls each page on its estimated change rate. The traps in the design itself — DNS as a hidden bottleneck, per-host limits capping single-site throughput, and content hashing that treadmills on un-normalized rotating content — are why a real crawler is a robustness-first machine, not a weekend script.
+</Recap>

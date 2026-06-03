@@ -5,34 +5,192 @@ track: "system-design-cases"
 unit: "05-data-money"
 order: 2
 title: "Design ad-click aggregation"
-summary: "Design ad-click aggregation — to be authored."
-estMin: 16
-status: stub
+summary: "Design a system that counts ad clicks for billing: stream processing with Kafka and Flink, exactly-once via idempotency, windowed aggregation, late events and watermarks, deduplication, and a batch reconciliation layer that corrects the fast path."
+estMin: 36
+status: ready
 lessonType: topic
-level: middle
-concepts: []
-prereqs: []
+level: senior
+concepts:
+  - stream-processing
+  - windowed-aggregation
+  - watermarks
+  - exactly-once
+  - deduplication
+  - lambda-kappa
+prereqs:
+  - system-design/06-async-messaging/01-message-queues
+  - system-design/06-async-messaging/03-event-driven
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
+  - https://martinfowler.com/bliki/LambdaArchitecture.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An advertiser opened a dispute: the platform's dashboard said their campaign got 1.2 million clicks last month, but their own landing-page analytics counted 1.0 million. Two hundred thousand clicks — at a few cents each — were being billed for nothing. The engineering team dug in and found three culprits braided together: a network retry that sent some click events twice, a stream processor that double-counted after a crash-and-replay, and a batch of clicks that arrived hours late from users on flaky mobile connections and got dropped from the window they belonged to. None of these is exotic. They are the *default* behaviour of a naive streaming pipeline, and they are exactly why ad-click aggregation — counting events for money — is one of the hardest "just count things" problems in the field.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Counting clicks for billing is correctness in disguise: dedup retries, window by event time, then let batch audit the fast path.</Crux>
 
 <Explanation>
 
-## Design ad-click aggregation
+## Requirements
 
-Body to be authored.
+The system ingests a firehose of ad-click events and produces aggregated counts — clicks per ad, per minute, per region — that feed real-time dashboards *and* the billing system. Because the output is money, the bar is far higher than for analytics.
+
+**Functional.** Accept click events (`ad_id`, `user_id`, `timestamp`, `click_id`, region). Aggregate them into time windows (per-minute, per-hour counts). Serve fast queries ("clicks in the last 5 minutes") for the advertiser dashboard, and produce an authoritative daily total for billing. Filter fraud and invalid clicks. Let advertisers slice by dimensions (ad, campaign, geo).
+
+**Non-functional.** **Correctness is paramount** — every billable click counted exactly once, no more, no less, because over-counting overbills (disputes, refunds, legal risk) and under-counting loses revenue. High **throughput**: a large network sees hundreds of thousands of clicks per second at peak. Low **latency** for the dashboard (seconds-fresh), but billing can tolerate hours of latency in exchange for being *right*. The system must **survive failures** without corrupting counts.
+
+The tension that shapes everything: a click is an *event in time*, the network delivers events out of order and sometimes twice, and processors crash mid-flight. Getting an exact count out of that mess is the whole job.
+
+## Estimation
+
+```
+peak clicks       = 1,000,000 clicks/sec (large ad network at peak)
+event size        = ~100 bytes per click event
+peak ingest       = 10^6 × 100 bytes      = 100 MB/sec into the log
+clicks per day    = ~1,000,000 × 86,400 (avg ~1/3 of peak) ≈ 3 × 10^10/day
+raw retention     = 3 × 10^10 × 100 B     ≈ 3 TB/day raw events
+aggregated output = ad_count × windows    ≪ raw (counts are tiny vs events)
+```
+
+Two observations drive the design. First, **raw event volume is huge** (100 MB/s, multi-TB/day) but **aggregated output is tiny** — the system's job is to collapse a firehose into small counts, so the expensive part is the streaming compute, not the result storage. Second, you must **keep the raw events** (in the log / cold storage) even after aggregating, because that raw record is what the batch reconciliation layer re-reads to correct the fast path and what you show an advertiser in a dispute. The aggregates are derived; the events are the source of truth.
+
+## High-level design
+
+<FlowDiagram
+  label="Click events land in a partitioned durable log, a stream processor consumes them to produce low-latency windowed counts into a serving store for dashboards, while a parallel batch job re-reads the same raw events from cold storage to compute authoritative billing totals that reconcile against the fast path."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "ingest", label: "click ingest", sub: "API + dedup id" },
+    { id: "log", label: "durable log", sub: "Kafka, partitioned" },
+    { id: "stream", label: "stream proc", sub: "Flink windows" },
+    { id: "serving", label: "serving store", sub: "fast counts" },
+    { id: "dash", label: "dashboard", sub: "seconds-fresh" },
+    { id: "cold", label: "cold storage", sub: "raw events" },
+    { id: "batch", label: "batch recon", sub: "authoritative" },
+    { id: "billing", label: "billing", sub: "daily total" },
+  ]}
+  edges={[
+    { from: "ingest", to: "log", label: "append" },
+    { from: "log", to: "stream", label: "consume" },
+    { from: "stream", to: "serving", label: "windowed" },
+    { from: "serving", to: "dash", label: "query" },
+    { from: "log", to: "cold", label: "archive" },
+    { from: "cold", to: "batch", label: "re-read" },
+    { from: "batch", to: "billing", label: "correct" },
+  ]}
+  caption="Two layers over one source of truth: a fast streaming path gives seconds-fresh dashboard counts, and a slow batch path re-reads the raw events to compute the authoritative billing total and reconcile away the fast path's small errors. The durable log is what makes both replayable and exact."
+/>
+
+This is the **lambda architecture** in its classic form: a **speed layer** (streaming) for low-latency-but-approximate dashboard counts, and a **batch layer** that re-reads the immutable raw events to compute *correct* totals and reconcile against the speed layer. The durable, partitioned log (Kafka) is the linchpin — it's the replayable source of truth that both layers consume, and replayability is what lets the batch layer recompute exactly and the stream layer recover after a crash. A modern alternative, **kappa**, drops the separate batch code and runs *everything* through the stream engine, reprocessing by replaying the log when correction is needed.
+
+## Deep dive
+
+### Windowing and watermarks: handling event time
+
+A click happens at a moment — its **event time**, stamped on the device. But it *arrives* at the server later — **processing time** — and the gap is wildly variable: a user on subway Wi-Fi might emit a click whose event arrives 40 minutes later. If you aggregate by *processing* time ("count whatever showed up this minute"), late clicks land in the wrong minute and your per-minute billing is wrong. So you aggregate by **event time**, grouping clicks into windows by *when they happened*, not when they arrived.
+
+That raises the closing problem: a window for 14:05:00–14:05:59 can't stay open forever waiting for stragglers, but closing it instantly drops the late ones. The mechanism is a **watermark** — the engine's assertion "I believe I have now seen all events up to event-time T." When the watermark passes a window's end, the window closes and emits its count. The watermark is deliberately lagged behind the latest event time (say by a few minutes) to absorb normal lateness, trading latency for completeness.
+
+```
+window [14:05:00, 14:06:00)
+  click A  event-time 14:05:10  arrives 14:05:12   ✅ in window
+  click B  event-time 14:05:40  arrives 14:05:43   ✅ in window
+  watermark reaches 14:06:00+lag → window CLOSES, emits count = 2
+  click C  event-time 14:05:55  arrives 14:09:30   ⚠️ LATE — window already closed
+```
+
+<Inset kind="why" lang="en">
+Why not just wait longer before closing every window, so nothing is ever late? Because the watermark lag is a direct latency tax on *every* result, paid to catch a *rare* straggler. If 99.9% of clicks arrive within 10 seconds but 0.1% take 30 minutes, setting the watermark lag to 30 minutes makes every dashboard number 30 minutes stale to rescue one click in a thousand. The senior move is to size the watermark for the *common* case (say a minute or two), accept that truly late events miss their window, and handle them with a separate mechanism — an allowed-lateness side output or, better, the batch reconciliation layer that re-reads everything with no time pressure. You don't make the fast path slow to be correct; you make the fast path fast and let a slow path fix it.
+</Inset>
+
+### Exactly-once, idempotency, and dedup
+
+"Exactly-once" is the headline guarantee, and it's the subtlest. The network and the pipeline both create duplicates: a client times out and **retries** the same click (so the event arrives twice with the same `click_id`); a stream processor crashes after counting an event but before committing its offset, then **replays** it. Naively, both inflate the count — the hook's over-billing.
+
+The fix has two halves, for the two sources of duplication:
+
+- **Source dedup by idempotency key.** Every click carries a unique `click_id` generated at the edge. The aggregator dedups on it — within a window, a `click_id` already seen is dropped. This kills client/network retries. (Dedup state is itself bounded by the window: you only need to remember IDs for the window still open.)
+- **End-to-end exactly-once *processing*.** This is *not* "the event is delivered once" (impossible over an unreliable network); it's "the *effect* on the result is applied once." Modern stream engines achieve it by binding the *output commit* and the *input offset advance* into one atomic, replayable unit — Flink does this with periodic checkpoints (a consistent snapshot of all operator state plus the consumed offsets), and a transactional sink (Kafka transactions, or an idempotent write keyed by window) so that on recovery the engine rewinds to the last checkpoint and re-emits without double-applying.
+
+The mental model: exactly-once is **at-least-once delivery plus idempotent/transactional application**. You can't stop duplicates arriving; you make duplicate *application* impossible.
+
+<Inset kind="mistake" lang="en">
+The classic mistake is believing a vendor's "exactly-once" flag means messages are physically delivered exactly once — and then putting a non-idempotent side effect (charge a card, send an email, increment a raw external counter) directly in the stream operator. When the job recovers from a checkpoint and replays, that side effect fires again, because exactly-once only covers state *inside* the engine's checkpoint/transaction boundary. The card charge is outside it. The fix is to keep external side effects idempotent in their own right (idempotency keys on the charge) or to push them past the boundary into a transactional sink the engine controls. Treat "exactly-once" as a property of the engine's *internal state and its committed output*, never as a promise about arbitrary effects you trigger mid-stream.
+</Inset>
+
+### Reconciliation: the batch layer audits the stream
+
+The streaming layer is fast but approximate: it may have closed a window before a late click arrived, or briefly double-counted across a crash recovery edge. So a **batch reconciliation** job runs (hourly/daily) over the *complete* set of raw events in cold storage — no watermark pressure, every late click now present — and computes the authoritative total. It compares against the streaming total and corrects the billing figure. This is the safety net the hook's team was missing: the dashboard can be a little wrong and self-heal within minutes, but the *money* number comes from a batch job that has seen everything. The pattern generalizes: **let the fast path be eventually-consistent and the slow path be the source of truth for anything billable.**
+
+## Bottlenecks & tradeoffs
+
+The core tradeoff is **latency vs completeness**, embodied in the watermark: a longer lag catches more late events but staleness rises, so you tune it for the common case and let batch handle the tail. **Hot partitions** bite at the log layer — if you partition by `ad_id` and one viral ad gets 30% of clicks, that partition's consumer is overwhelmed; you add a salt/sub-key to spread a hot key across partitions, then re-aggregate. **State size** is the stream engine's constraint: per-window dedup sets and aggregation state must fit in managed state (RocksDB-backed, checkpointed) — bound it by closing windows promptly and expiring dedup keys. **Lambda's cost** is maintaining two codebases (stream + batch) that must agree, which is exactly why kappa (one engine, replay for correction) is attractive — at the price of a heavier streaming system and long replay times. And underneath it all, **exactly-once has a throughput cost**: checkpoints and transactions add coordination, so a system that can tolerate rare double-counts (pure analytics) often runs at-least-once for speed — but billing cannot, so here you pay the tax.
+
+<Quiz
+  id="02-ad-click-aggregation-quiz-1"
+  lessonSlug="02-ad-click-aggregation"
+  lang="en"
+  question="A click event arrives 30 minutes after it happened because the user was on a flaky connection. Your per-minute windows aggregate by event time with a 2-minute watermark lag. What happens to this click, and what's the correct way to still bill it?"
+  choices={[
+    { label: "Its event-time window closed ~28 minutes ago (watermark long since passed), so the streaming layer drops it as late — but the batch reconciliation layer re-reads all raw events with no time pressure and includes it in the authoritative billing total.", correct: true },
+    { label: "It lands in the current minute's window, so it's counted — just in the wrong minute, which is fine for billing.", misconception: "It's aggregated by EVENT time, not processing time, precisely so it doesn't land in the wrong minute. Its real window closed long ago, so the stream drops it. Putting it in 'now' would corrupt per-minute counts. The batch layer is what recovers it correctly." },
+    { label: "Just set the watermark lag to 30+ minutes so no click is ever late.", misconception: "That taxes EVERY result with 30 minutes of staleness to rescue a rare straggler — the whole point of sizing the watermark for the common case. You keep the fast path fast and let the batch layer (no time pressure) catch the tail." },
+    { label: "Exactly-once guarantees it's counted, so there's nothing to do.", misconception: "Exactly-once is about not double-APPLYING events the engine sees; it says nothing about a late event the window already excluded. Lateness is a windowing/watermark concern, recovered by batch reconciliation, not by the exactly-once mechanism." },
+  ]}
+/>
+
+<Quiz
+  id="02-ad-click-aggregation-quiz-2"
+  lessonSlug="02-ad-click-aggregation"
+  lang="en"
+  question="Your stream job is configured 'exactly-once,' yet you put a `chargeAdvertiser()` HTTP call directly inside the aggregation operator. After a crash, the job recovers from its last checkpoint and replays — and some advertisers get charged twice. Why?"
+  choices={[
+    { label: "Exactly-once only covers state and output INSIDE the engine's checkpoint/transaction boundary; an external HTTP charge is outside it, so replay after recovery re-fires it. Make the charge idempotent (idempotency key) or move it behind a transactional sink the engine controls.", correct: true },
+    { label: "The exactly-once flag was misconfigured; turning it on properly would stop the double charge.", misconception: "No flag makes an arbitrary external side effect transactional with the engine's state. Exactly-once covers the engine's internal state/committed output, not your HTTP call mid-operator. You must make the charge itself idempotent or push it past the sink boundary." },
+    { label: "The network delivered the charge request twice; add retries with backoff.", misconception: "The duplicate comes from the engine REPLAYING from a checkpoint after recovery, not from network retry. Retries would make it worse. The fix is idempotency on the charge or a transactional sink — making duplicate APPLICATION impossible." },
+    { label: "Checkpoints are too frequent; making them rarer avoids the replay.", misconception: "Replay-on-recovery is how exactly-once works — it always rewinds to the last checkpoint. Rarer checkpoints just mean more replay. The real issue is a non-idempotent side effect outside the boundary; fix the side effect, not the checkpoint interval." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-ad-click-aggregation-metaphor-1"
+  lessonSlug="02-ad-click-aggregation"
+  lang="en"
+  setup="Practical exactly-once is really at-least-once delivery plus _______ application: you cannot stop duplicate events from arriving over an unreliable network, so instead you make applying the same event twice have no extra effect — via a dedup key or a transactional commit bound to the input offset."
+  accepted={["idempotent", "idempotency", "idempotent (or transactional)", "idempotent/transactional"]}
+  canonical="idempotent"
+  explanation="You can't guarantee an event is delivered exactly once over an unreliable network, so exactly-once is engineered as at-least-once delivery + idempotent/transactional application: dedup retries by click_id, and bind output commit to input offset so a replayed event doesn't double-count. Duplicates arrive; duplicate effects don't."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Ad-click aggregation is correctness disguised as counting: window by event time with watermarks, get exactly-once as at-least-once + idempotent application (dedup by click_id), reconcile in batch for the real total.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-ad-click-aggregation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why aggregate by event time, and what role does the watermark play?", a: "A click happens at its event time (stamped on the device) but arrives later, with a wildly variable gap (subway Wi-Fi can delay an event 40 minutes). Aggregating by PROCESSING time would put late clicks in the wrong minute and corrupt per-minute billing, so you group by event time — when it happened. A watermark is the engine's assertion 'I've now seen all events up to event-time T'; when it passes a window's end, the window closes and emits. The lag is sized for the common case (a minute or two) to trade a little latency for completeness; truly late events miss the window and are recovered by the batch layer." },
+    { q: "What does 'exactly-once' actually mean here, and how is it achieved?", a: "It means each event's EFFECT on the result is applied once — NOT that the network delivers it once (impossible). It's engineered as at-least-once delivery + idempotent/transactional application. Two halves: (1) source dedup by idempotency key (unique click_id, dropped if seen within the open window) kills client/network retries; (2) end-to-end exactly-once processing binds the output commit and the input offset advance into one atomic checkpointed unit (Flink checkpoints + a transactional/idempotent sink) so a crash-replay re-emits without double-applying. Critically, it only covers state/output inside the engine's boundary — external side effects (charging a card) must be made idempotent themselves." },
+    { q: "What is the batch reconciliation layer for, and how does it relate to lambda/kappa?", a: "The streaming (speed) layer is fast but approximate — it may close a window before a late click arrives or briefly double-count across a crash edge. A batch job runs hourly/daily over the COMPLETE raw events in cold storage, with no watermark pressure, computes the authoritative total, and corrects the billing figure — the fast path self-heals, the money number comes from the layer that saw everything. This is the lambda architecture (speed + batch over one replayable log). Kappa drops the separate batch code and reprocesses by replaying the log through the same stream engine — simpler code, at the cost of heavier streaming and long replays." },
+  ]}
+/>
+
+<Recap lang="en">
+Counting ad clicks for billing is a **correctness problem disguised as a counting problem**, because the network delivers events **out of order, late, and sometimes twice**, and processors crash mid-flight — the hook's braided over-billing. The architecture is **lambda over a durable, replayable log**: a streaming **speed layer** gives seconds-fresh dashboard counts, and a **batch layer** re-reads the immutable raw events to compute the authoritative billing total and reconcile away the fast path's small errors (kappa is the one-engine, replay-to-correct alternative). The fast path aggregates by **event time** so late clicks don't land in the wrong minute, closing windows on a **watermark** whose lag is sized for the common case — accepting that rare stragglers miss the window and are recovered by batch. **Exactly-once** is engineered as **at-least-once delivery plus idempotent/transactional application**: dedup retries by `click_id`, bind output commit to input offset via checkpoints and a transactional sink — but it only covers state inside the engine, so external side effects must be made idempotent themselves. The standing tradeoffs are latency vs completeness (the watermark), hot partitions on viral ads (salt the key), bounded stream state (close windows, expire dedup keys), and the exactly-once throughput tax you pay because, unlike analytics, billing cannot tolerate a single double-count.
+</Recap>
