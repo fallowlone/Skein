@@ -4,19 +4,154 @@ lang: en
 track: "system-design"
 unit: "07-storage-choices"
 order: 6
-title: "07-storage-choices: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Storage choices: code and config reading"
+summary: "Read real schema, config, and code, then make the call: a blob-in-DB anti-pattern, a LIKE-vs-inverted-index query, a best-effort dual write, and a presigned-URL upload path. Pick the change a senior engineer would commit to."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - metadata-bytes-split
+  - inverted-index
+  - dual-write-consistency
+  - presigned-urls
+  - access-pattern-design
+  - acid-vs-base
+prereqs:
+  - 07-storage-choices/01-sql-vs-nosql
+  - 07-storage-choices/02-blob-and-object
+  - 07-storage-choices/03-time-series-and-search
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html
+  - https://www.elastic.co/guide/en/elasticsearch/reference/current/documents-indices.html
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-modeling-nosql-B.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 07-storage-choices unit. STUB.</Hook>
+<Hook>
+Storage bugs live in the schema and the code, not the prose: a column type, a query with a leading wildcard, two writes with no shared transaction, a byte stream routed through the wrong tier. Read each snippet, reason about where the data and the guarantees actually are, and pick the fix a senior engineer would commit to.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the schema or code, find where the bytes live and what consistency holds, and choose the change that respects the store's guarantees.</Crux>
+
+<Explanation>
+
+Practise the loop you run in a design or schema review: locate the data and the guarantee in the code, then choose the change the store's properties actually support.
+
+## Snippet 1 — the schema
+
+```sql
+CREATE TABLE attachments (
+  id          uuid PRIMARY KEY,
+  owner_id    uuid NOT NULL,
+  filename    text NOT NULL,
+  content     bytea NOT NULL,   -- the raw file bytes, up to 25 MB
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+```
+
+<Quiz
+  id="07-storage-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This table stores 25 MB files in the `content` BYTEA column. What's the senior correction?"
+  choices={[
+    { label: "Drop `content`; store the bytes in object storage under a key and replace the column with `object_key text`. The table keeps only small queryable metadata; bytes are served via presigned URLs.", correct: true },
+    { label: "Keep it — one transaction for row + bytes is the clean design.", misconception: "That single benefit is dwarfed by ballooning backups, a poisoned buffer cache, WAL bloat, and pool starvation when 25 MB rows churn. Move bytes to object storage and keep a key column." },
+    { label: "Compress the BYTEA column to save space.", misconception: "Compression shrinks bytes a little but leaves every structural problem (backups, cache, WAL, pool) intact. The fix is removing the bytes from the DB, not squeezing them." },
+    { label: "Add an index on `content` to speed file reads.", misconception: "You don't index 25 MB blobs, and an index wouldn't address the backup/cache/WAL costs. The correction is metadata in the DB, bytes in object storage." },
+  ]}
+/>
+
+## Snippet 2 — the search query
+
+```sql
+-- product search, 3,000,000 rows, B-tree index on title
+SELECT * FROM products
+WHERE title LIKE '%' || :term || '%'
+ORDER BY created_at DESC;
+```
+
+<Quiz
+  id="07-storage-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This query times out under load on 3M rows despite the B-tree index on `title`. Why, and what's the fix?"
+  choices={[
+    { label: "The leading wildcard means no prefix to seek, so the B-tree is useless and the planner full-scans all 3M rows. Use an inverted index (a search engine, or Postgres tsvector/GIN): term → posting list, no scan, plus stemming and relevance.", correct: true },
+    { label: "The ORDER BY is slow; add an index on created_at.", misconception: "The bottleneck is the LIKE full scan, not the sort. Even sorted, you've already read every row. An inverted index removes the scan; a created_at index alone won't." },
+    { label: "Raise work_mem and it'll use the title index.", misconception: "No amount of memory makes a B-tree usable for a leading-wildcard LIKE — there's no prefix to seek on. The structural fix is an inverted index mapping terms to documents." },
+    { label: "Switch SELECT * to SELECT id to make it fast.", misconception: "Narrowing columns trims transfer but the query still scans 3M rows to substring-match. The fix is the access pattern itself: an inverted index, not LIKE." },
+  ]}
+/>
+
+## Snippet 3 — the write path
+
+```js
+async function publishPost(post) {
+  await db.insert("posts", post);          // source of truth
+  await search.index("posts", post);       // make it searchable
+  return post;                              // no shared transaction
+}
+```
+
+<Quiz
+  id="07-storage-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What is the latent bug here, and the robust fix?"
+  choices={[
+    { label: "A dual write across two systems with no shared transaction: a crash or a failed search.index after a successful db.insert silently diverges them. Derive the index from the DB commit via a transactional outbox or CDC.", correct: true },
+    { label: "Nothing — awaiting both in order guarantees consistency.", misconception: "Ordering doesn't help: if the process crashes after db.insert but before search.index, or the index call throws, the post exists but isn't searchable, with no record of the loss. There's no transaction across the two systems." },
+    { label: "Wrap both calls in db.transaction(...).", misconception: "A DB transaction can't span the database and the search engine — they're separate systems with no shared commit. You need an outbox row committed atomically with the post, or CDC off the WAL." },
+    { label: "Add a try/catch that logs the index failure and continues.", misconception: "That's the best-effort anti-pattern — it makes the silent divergence worse by hiding failures. Derive the index from the commit log so committing the data guarantees indexing." },
+  ]}
+/>
+
+## Snippet 4 — the upload endpoint
+
+```js
+// upload handler running on the stateless app tier
+app.post("/upload", async (req, res) => {
+  const buf = await readEntireBody(req);     // buffers the whole file in app memory
+  await objectStore.put(key(req), buf);      // app proxies every byte to S3
+  res.json({ ok: true });
+});
+```
+
+<Quiz
+  id="07-storage-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Uploads of large files OOM the app servers and saturate their egress. What's the fix that keeps the app tier stateless and bandwidth-free?"
+  choices={[
+    { label: "Don't proxy bytes: have the app authorize, write a metadata row, and return a short-lived presigned PUT URL; the client uploads directly to the object store, so no byte touches the app server.", correct: true },
+    { label: "Stream the body in chunks instead of buffering it all.", misconception: "Streaming avoids the OOM but the app still proxies every byte, saturating egress and burning a connection per upload. Presigned URLs remove the app from the byte path entirely." },
+    { label: "Add more app instances behind the load balancer.", misconception: "Scaling the proxy just multiplies the bandwidth bill and connection pressure; the app is still on the byte path. The fix is to take it off the path with a presigned URL." },
+    { label: "Store the uploads in the database instead of S3.", misconception: "That reintroduces every blob-in-DB failure (backups, buffer cache, WAL, pool). The fix is a direct-to-object-store upload via a presigned URL, with metadata in the DB." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Storage decisions are readable in schema and code: bytes belong in object storage (not BYTEA), a leading-wildcard LIKE needs an inverted index, two unlinked writes need an outbox or CDC, uploads need presigned URLs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-storage-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "Two stores must stay in sync after a write. Why does awaiting both calls in order not make it consistent, and what does?", a: "Because they're two systems with no shared transaction: if the process crashes between the calls, or the second write throws, the first store committed and the second didn't — silent, unrecoverable divergence with no record of which writes were lost. Ordering and retries don't survive a crash, and no DB transaction spans both systems. The fix is to make one store authoritative and derive the other from its commit: a transactional outbox (an 'index this' row committed atomically with the data, pushed by a relay) or CDC (tail the WAL/binlog and stream committed changes). The single commit becomes the event that guarantees the second store updates, and that store is an eventually-consistent derived projection." },
+    { q: "Why is a presigned-URL upload the fix for an app tier that OOMs and saturates egress on large uploads?", a: "Buffering or even streaming the body through the app server puts it on the byte path — it burns memory, a connection, and egress bandwidth for every upload, and adding instances just multiplies that cost. A presigned URL takes the app off the byte path: the app only authorizes the request, writes a small metadata row, and returns a short-lived signed PUT URL scoped to one object key; the client then uploads the bytes directly to the object store. The app tier stays stateless and bandwidth-free, and the same pattern in reverse (presigned GET) serves downloads." },
+  ]}
+/>
+
+<Recap lang="en">
+Every storage decision in this unit is readable straight off the schema and code. A **BYTEA/BLOB column for large files** is the blob-in-DB anti-pattern — drop it, store bytes in object storage under a key, keep only small metadata. A **leading-wildcard `LIKE`** can't use a B-tree and full-scans the table; the fix is an **inverted index** (a search engine or Postgres `tsvector`/GIN). **Two writes to two systems with no shared transaction** silently diverge on any crash or failure — derive the second store from the DB commit via a **transactional outbox** or **CDC**, never best-effort. And an **upload handler that buffers or proxies bytes** OOMs and saturates the app tier — take the app off the byte path with a **presigned URL** so the client uploads directly to the store. The senior habit is to find where the bytes and the guarantees actually live, and choose the change that respects the store's properties rather than papering over the cost.
+</Recap>

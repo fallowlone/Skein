@@ -5,34 +5,178 @@ track: "system-design"
 unit: "04-data-distribution"
 order: 3
 title: "Consistent hashing"
-summary: "Consistent hashing — to be authored."
-estMin: 16
-status: stub
+summary: "hash(key) mod N remaps almost every key when N changes — a reshard from hell. Consistent hashing places nodes and keys on a ring so adding or removing one node moves only ~1/N of the keys, with virtual nodes for balance."
+estMin: 19
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - consistent-hashing
+  - hash-ring
+  - virtual-nodes
+  - rebalancing
+  - bounded-load
+  - cache-distribution
+prereqs:
+  - 04-data-distribution/02-sharding-and-partitioning
 sources:
+  - https://www.allthingsdistributed.com/files/amazon-dynamo-sosdp2007.pdf
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team ran a healthy 10-node Memcached fleet, routing each key with `hash(key) mod 10`. Traffic grew, so they added two nodes and changed the modulus to 12. The deploy went out clean — and the database fell over thirty seconds later. The cache hit rate had collapsed from 95% to nearly zero, because changing the divisor from 10 to 12 remapped *almost every key* to a different node. Every lookup missed, every miss hit the database, and a routine capacity bump became an outage. The mistake wasn't adding nodes; it was using a routing function where adding one node invalidates the whole cache. Consistent hashing is the fix: a way to add or remove a node and disturb only a small slice of the keys.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Consistent hashing maps nodes and keys onto a ring; adding or removing a node moves only ~1/N of keys, not nearly all as hash mod N does.</Crux>
 
 <Explanation>
 
-## Consistent hashing
+## The rehash-everything problem
 
-Body to be authored.
+The previous lesson named this in passing; here is why it's so violent. With `shard = hash(key) mod N`, the assignment of a key depends on `N` — the number of nodes. Change `N` and you change the divisor for *every* key at once. Going from `mod 10` to `mod 12` doesn't just reassign the keys that "should" move to the new nodes; it reshuffles nearly the entire keyspace, because `hash(key) mod 10` and `hash(key) mod 12` disagree for the vast majority of keys.
+
+```
+key "user:42" → hash = …739
+  mod 10 = 9   → node 9
+  mod 12 = 7   → node 7   ← moved, and so did almost everyone else
+```
+
+For a sharded database this means a near-total data migration. For a cache it's worse and faster: every key now hashes to the wrong node, so every lookup misses, and the full read load slams the backing store — the hook's outage. The root cause is that the routing function has `N` baked into it, so capacity changes are global, not local.
+
+## The hash ring
+
+Consistent hashing breaks that coupling by hashing **nodes and keys into the same space** and arranging that space as a **ring** (a circle of hash values, say `0` to `2^32 − 1`, wrapping around).
+
+- Hash each **node** (by its name/IP) to a point on the ring.
+- Hash each **key** to a point on the ring.
+- A key belongs to the **first node found by walking clockwise** from the key's position.
+
+```
+        node A
+      ·──────·                 walk clockwise from a key
+   ·            ·              to the next node on the ring:
+  ·   k1→A       node B        k1 → A,  k2 → B,  k3 → C
+  ·              ·
+   ·   k3→C   k2→·
+      ·──────·
+        node C
+```
+
+Now add a node D. It lands somewhere on the ring and takes over only the keys in the arc *between its predecessor and itself* — the keys that used to walk clockwise past that arc to the next node. Every other key still walks to the same node it did before. Removing a node is the mirror image: only that node's keys move, to the next node clockwise. **A membership change disturbs roughly `1/N` of the keys, not all of them** — that single property is the whole point, and it turns "add a node" from a global reshuffle into a local handoff.
+
+<FlowDiagram
+  label="A key is hashed onto the ring, then assigned by walking clockwise to the first node encountered; when a new node D joins, only the keys in the arc immediately before D move to it, while every other key keeps its existing node."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "key", label: "key", sub: "hash → ring pos" },
+    { id: "walk", label: "walk clockwise", sub: "to next node" },
+    { id: "owner", label: "owner node", sub: "first found" },
+    { id: "join", label: "node D joins", sub: "lands on ring" },
+    { id: "arc", label: "arc before D", sub: "only these keys" },
+    { id: "move", label: "move ~1/N", sub: "rest unchanged" },
+  ]}
+  edges={[
+    { from: "key", to: "walk", label: "hash" },
+    { from: "walk", to: "owner", label: "assign" },
+    { from: "join", to: "arc", label: "claims" },
+    { from: "arc", to: "move", label: "handoff" },
+  ]}
+  caption="Routing is 'hash the key, walk clockwise to the first node'. Because each node owns a contiguous arc, joining/leaving touches only one arc — so a capacity change moves ~1/N of keys instead of nearly all, the property mod-N lacks."
+/>
+
+## Virtual nodes for balance
+
+Plain consistent hashing has a flaw: with only a handful of node points scattered randomly on the ring, the arcs between them are *uneven*. One node might own a 40% arc and another 5%, so load is lopsided — and when a node dies, its entire arc dumps onto the single next node clockwise, which can then tip over (a cascading failure).
+
+The fix is **virtual nodes** (vnodes): instead of placing each physical node once, place it at many points on the ring (say 100–200 each, via `hash(node + "#0")`, `hash(node + "#1")`, …). Now each physical node owns many small arcs scattered around the ring. Two benefits fall out:
+
+- **Balance**: many random small arcs average out, so each physical node ends up with a near-equal share of the keyspace (the law of large numbers).
+- **Smooth failure**: when a node dies, its many small arcs are inherited by *many different* successors, spreading the orphaned load across the cluster instead of dumping it all on one neighbour.
+
+Vnodes also let you weight heterogeneous hardware: give a bigger box more virtual points so it owns proportionally more of the ring. This is how Dynamo-style systems and Cassandra distribute data; the number of vnodes per node is a real tuning knob (too few → imbalance, too many → a bigger ring to manage).
+
+<Inset kind="why" lang="en">
+Why does the ring need *virtual* nodes at all — isn't "hash the node onto the ring" enough? Because a small number of random points are badly distributed. With, say, 5 nodes hashed once each onto a 32-bit ring, you are placing 5 random points on a circle; the gaps between them follow a skewed distribution, so it's entirely likely one node owns several times the arc of another. The imbalance shrinks as you add points, so giving each physical node ~150 virtual points turns 5 random placements into 750, and the largest-to-smallest arc ratio tightens dramatically. The deeper reason is the same statistics behind hashing for even load in the previous lesson: uniformity is an *asymptotic* property of many samples, not a guarantee of a few — vnodes buy you the "many samples" cheaply.
+</Inset>
+
+## Bounded-load, and where it's used
+
+Consistent hashing balances the *keyspace*, but the previous lesson's lesson still bites: even arcs don't mean even *load* if one key is a celebrity. A refinement, **consistent hashing with bounded loads** (the approach Google described and that backs some load balancers), adds a cap: each node may hold at most `c × average` load; if a key would land on a node already at its cap, it spills clockwise to the next node with room. This keeps any single node from being overwhelmed by a hot arc while preserving the "move only a little on membership change" property — a direct answer to the hot-shard problem for request routing.
+
+Where you'll meet consistent hashing in practice:
+
+- **Distributed caches** (Memcached/Redis client-side sharding) — so adding a cache node doesn't blow the hit rate, the hook's exact fix.
+- **Dynamo-style key-value stores** (DynamoDB, Cassandra, Riak) — to place partitions on nodes and rebalance cheaply when the cluster grows or a node fails. (Dynamo combines this ring with the quorum replication of lesson 01.)
+- **Load balancers** — to map a request (often by a session or client key) to a consistent backend, so sticky routing survives backend pool changes.
+
+<Inset kind="mistake" lang="en">
+A classic mistake is reaching for consistent hashing when plain hashing would do — and paying its complexity for nothing. If your node set is *fixed* (a static, rarely-changing shard count) and load is even, `hash(key) mod N` is simpler, has no ring to manage, and is perfectly fine; you only need consistent hashing when membership changes at runtime (autoscaling caches, a growing key-value cluster, nodes that fail and rejoin). The inverse mistake is using consistent hashing but with too few virtual nodes, then being surprised by lopsided load and brutal cascades on failure — the very problems vnodes exist to prevent. Match the tool to the volatility of your node set, and if you use the ring, give it enough virtual nodes to actually balance.
+</Inset>
+
+<Quiz
+  id="04-consistent-hashing-quiz-1"
+  lessonSlug="03-consistent-hashing"
+  lang="en"
+  question="A cache fleet routes keys with hash(key) mod N. You add one node (N: 20 → 21) and the hit rate collapses to near zero. What happened, and what routing scheme prevents it?"
+  choices={[
+    { label: "Changing N remaps almost every key to a different node, so every lookup now misses. Consistent hashing (a ring where keys walk clockwise to the next node) makes adding a node move only ~1/N of keys, preserving the rest of the cache.", correct: true },
+    { label: "The new node started empty, so only its share of keys miss until it warms up.", misconception: "If only the new node's share missed, the hit rate would barely dip. With mod-N, changing the divisor moves NEARLY ALL keys at once, so essentially every lookup misses — that's why the hit rate collapses, not just dips." },
+    { label: "The hash function became non-uniform after adding a node.", misconception: "The hash function is unchanged and still uniform; the problem is that mod-N folds N into the routing, so a new N reassigns the whole keyspace. Consistent hashing decouples routing from N." },
+    { label: "Replication lag invalidated the caches.", misconception: "There's no replication here — it's cache key routing. The collapse is from mod-N remapping every key on the N change. The fix is consistent hashing, not a replication tweak." },
+  ]}
+/>
+
+<Quiz
+  id="04-consistent-hashing-quiz-2"
+  lessonSlug="03-consistent-hashing"
+  lang="en"
+  question="You implement a hash ring with each physical node placed at exactly one point. Load is badly skewed, and when one node dies its successor gets crushed. What's the fix?"
+  choices={[
+    { label: "Use virtual nodes: place each physical node at many points (e.g. ~150) on the ring. Many small arcs balance load via the law of large numbers, and a dead node's arcs are inherited by many successors instead of dumping all on one.", correct: true },
+    { label: "Switch back to hash(key) mod N for even distribution.", misconception: "Mod-N is even only while N is fixed, and it reintroduces the rehash-everything problem on membership change — the reason you used a ring. Keep the ring; add virtual nodes to fix the balance and the cascade." },
+    { label: "Add more physical nodes until the arcs happen to even out.", misconception: "A few more single-point nodes are still a few random points — likely still skewed, and a death still dumps a whole arc on one successor. Virtual nodes give you many points per node, which is what actually balances and spreads failure load." },
+    { label: "Increase replication so the load is shared.", misconception: "Replication copies data for reads/durability but doesn't fix a skewed ring or a single successor inheriting a dead node's whole arc. The structural fix is virtual nodes spreading each node across many small arcs." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-consistent-hashing-metaphor-1"
+  lessonSlug="03-consistent-hashing"
+  lang="en"
+  setup="On a hash ring, a key is assigned to the first node found by walking _______ from the key's position — which is why a new node only steals the keys in the single arc immediately before it, leaving every other key on its current node."
+  accepted={["clockwise", "clock-wise", "clockwise around the ring", "to the next node clockwise"]}
+  canonical="clockwise"
+  explanation="Routing is 'hash the key onto the ring, then walk clockwise to the first node'. Because each node owns the contiguous arc ending at its point, inserting a node only reassigns that one arc's keys — the source of the ~1/N movement that makes the ring far gentler than mod-N on membership changes."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>hash(key) mod N remaps nearly every key when N changes — fatal for caches. Consistent hashing rings nodes and keys, routing clockwise, so adding one moves only ~1/N. Virtual nodes balance the arcs and spread failure.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-consistent-hashing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does hash(key) mod N remap nearly everything when N changes, and what does that cost?", a: "Because N (the node count) is baked into the routing function, so changing N changes the divisor for every key at once — hash(key) mod 10 and mod 12 disagree for the vast majority of keys, not just the ones that 'should' move. For a sharded DB that's a near-total data migration; for a cache it's worse and faster — every key now hashes to the wrong node, every lookup misses, and the full read load hits the backing store, turning a routine capacity bump into an outage." },
+    { q: "Describe the hash ring and why adding a node moves only ~1/N of keys.", a: "Hash both nodes and keys into the same space arranged as a ring (e.g. 0..2^32−1, wrapping). A key is owned by the first node found walking clockwise from the key's position, so each node owns a contiguous arc. When a node joins, it lands on the ring and claims only the keys in the arc immediately before it (the ones that used to walk past to the next node); everything else is unchanged. A leave is the mirror image — only that node's keys move to the next node clockwise. So a membership change touches one arc, ~1/N of keys, instead of the whole keyspace." },
+    { q: "What problems do virtual nodes solve, and what is bounded-load consistent hashing?", a: "Placing each physical node at a single ring point gives few random points, so arcs are uneven (skewed load) and a node's death dumps its whole arc on one successor (cascade). Virtual nodes place each physical node at many points (~150), so many small arcs balance load (law of large numbers) and a dead node's arcs are inherited by many successors — and they let you weight bigger hardware with more points. Bounded-load adds a cap: each node holds at most c×average load, and a key landing on a full node spills clockwise to the next node with room — keeping a hot arc from overwhelming any single node while preserving the ~1/N movement property." },
+  ]}
+/>
+
+<Recap lang="en">
+The previous lesson's `hash(key) mod N` has `N` baked into routing, so changing the node count remaps **nearly every key** at once — a near-total data move for a sharded DB, and an instant cache wipeout (the hook's outage) where every lookup misses and the backing store falls over. **Consistent hashing** decouples routing from `N`: hash nodes and keys onto the same **ring**, and assign each key to the first node found **walking clockwise**. Because each node owns a contiguous arc, adding or removing a node touches only one arc — **~1/N of keys move**, not all of them. **Virtual nodes** (each physical node placed at ~150 ring points) fix two flaws of the naive ring: they balance load via many small arcs, and they spread a dead node's load across many successors instead of crushing one neighbour — while also letting you weight uneven hardware. **Bounded-load** consistent hashing caps each node at `c×average` and spills overflow clockwise, taming hot arcs. You'll meet the ring in **distributed caches** (so scaling doesn't blow the hit rate), **Dynamo-style stores** (combined with lesson 01's quorum replication), and **load balancers** — and you reach for it only when membership changes at runtime; for a fixed node set, plain `mod N` is simpler and fine.
+</Recap>

@@ -5,34 +5,167 @@ track: "system-design"
 unit: "07-storage-choices"
 order: 2
 title: "Blob & object storage"
-summary: "Blob & object storage — to be authored."
-estMin: 16
-status: stub
+summary: "Object storage (S3) keeps bytes by key behind HTTP; block and file storage attach to a machine. The durable pattern is metadata-in-DB, bytes-in-object via presigned URLs — never blobs in the DB. Durability and availability are separate numbers; lifecycle tiering controls cost."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - object-storage
+  - block-vs-file-storage
+  - presigned-urls
+  - metadata-bytes-split
+  - durability-vs-availability
+  - lifecycle-tiering
+prereqs:
+  - 04-data-distribution/01-replication
+  - 07-storage-choices/01-sql-vs-nosql
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://developers.cloudflare.com/r2/
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html
+  - https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An engineer stored user-uploaded images as `BYTEA` columns in Postgres — "it's one fewer system, and transactions keep the row and the bytes consistent." It worked at ten users. At a hundred thousand, the database was a smoking ruin: every backup now hauled terabytes of JPEGs, the buffer cache that should have held hot index pages was full of image bytes, replication lag spiked because each insert shipped megabytes down the WAL stream, and a single product page fanned twenty large blobs through the connection pool and starved every other query. The fix was not a bigger database. It was the realization that a relational engine is built to answer questions about small structured rows, and that asking it to also be a file server poisons the one thing it's good at.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Object storage holds bytes by key over HTTP; block/file attach to a machine. Metadata in the DB, bytes in the store, via presigned URLs.</Crux>
 
 <Explanation>
 
-## Blob & object storage
+## Three storage shapes: block, file, object
 
-Body to be authored.
+Storage comes in three abstractions, and they are not interchangeable:
+
+- **Block storage** (AWS EBS, a raw SSD/volume) — exposes raw fixed-size blocks; the OS lays a filesystem on top. It attaches to *one* machine at a time, is low-latency, and is what your database's data files live on. Think "a disk."
+- **File storage** (NFS, AWS EFS) — a shared hierarchical filesystem (directories, paths, POSIX semantics) that several machines can mount at once. Think "a shared network drive."
+- **Object storage** (AWS S3, Cloudflare R2, Google Cloud Storage) — a flat namespace of *objects*: each is an opaque blob plus metadata, addressed by a **key** (a string like `users/42/avatar.jpg`), read and written over **HTTP**. There is no filesystem, no partial in-place edit — you `PUT` a whole object and `GET` a whole object (or a byte range). Think "an infinitely large, durable HTTP key-value store for files."
+
+The defining property of object storage is that it is **not attached to a machine**. It's a service you call over the network, it scales to effectively unlimited capacity, and the provider replicates each object across many disks and facilities for you. That is exactly what makes it the right home for user uploads, logs, backups, build artifacts, and static assets — the "big, mostly-immutable bytes" of a system.
+
+## Why you never store blobs in the database
+
+The hook's mistake is one of the most common in junior backend design, and the reasons it fails are structural, not incidental:
+
+- **Backups and restores balloon.** Your database backup now includes every byte of every file. A 5 GB schema becomes a 5 TB backup, restores take hours, and point-in-time recovery becomes impractical — right when you need it most.
+- **The buffer cache is poisoned.** A database caches hot pages in RAM to keep queries fast. Large blobs evict the index and row pages that actually matter, so your *structured* queries slow down because the cache is full of image bytes that are read once.
+- **Replication and WAL bloat.** Every insert/update ships the blob down the replication stream, spiking lag and bandwidth. A megabyte image becomes a megabyte of write-ahead log per write.
+- **Connection pool starvation.** Streaming a large blob holds a precious DB connection for the whole transfer; a handful of concurrent downloads can exhaust the pool (recall **04-data-distribution** — the stateful tier is where scaling hurts).
+
+The rule is blunt: **databases are for small, structured, frequently-queried data; object stores are for large, opaque bytes.** Mixing them makes the database bad at its job. The few exceptions (tiny blobs under a few KB, or a genuine need for transactional consistency between row and bytes) are real but narrow — and even then you measure first.
+
+## The durable pattern: metadata in the DB, bytes in the object store
+
+The pattern every mature system converges on splits the two cleanly. The **bytes** live in the object store under a key. The **metadata** — owner, filename, content-type, size, the object key, upload timestamp, a `status` field — lives as a small row in your relational database, where it's cheap to query, join, and enforce permissions on. The row *points at* the object; it doesn't contain it.
+
+This gives you the best of both: you can run `SELECT * FROM files WHERE owner_id = 42 ORDER BY created_at` against a fast indexed table, then hand the client the object key to fetch the bytes directly. Your "list my photos" query never touches a single image byte. Your access control, search, and relationships live in the database where they belong; your terabytes of bytes live where terabytes belong.
+
+<Inset kind="why" lang="en">
+Why do presigned URLs matter so much here? Naively, every download flows *through* your application server: client → app → object store → app → client. That makes your stateless app tier a bandwidth bottleneck and a cost center, proxying terabytes it never needed to see. A **presigned URL** breaks that: your app, using its credentials, generates a time-limited, signed URL granting the bearer permission to `GET` (or `PUT`) one specific object directly from the object store, then hands that URL to the client. The bytes flow client ↔ object store, never through your servers. Uploads work the same way in reverse — the browser `PUT`s straight to S3/R2 with a presigned URL, so a 2 GB video upload never occupies an app server or a DB connection. The signature encodes the object, the operation, and an expiry, so the grant is narrow and short-lived. This is how you serve unlimited files from a small, stateless fleet.
+</Inset>
+
+<FlowDiagram
+  label="The metadata-and-bytes upload flow. The client asks the app for permission; the app writes a metadata row and returns a short-lived presigned URL; the client uploads the bytes directly to the object store, which never passes through the app server."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "client", label: "client", sub: "wants to upload 2 GB" },
+    { id: "app", label: "app server", sub: "stateless, no bytes" },
+    { id: "db", label: "database", sub: "metadata row + key" },
+    { id: "url", label: "presigned URL", sub: "signed, time-limited" },
+    { id: "obj", label: "object store", sub: "S3 / R2 — the bytes" },
+    { id: "done", label: "direct PUT", sub: "bytes skip the app" },
+  ]}
+  edges={[
+    { from: "client", to: "app", label: "1. request" },
+    { from: "app", to: "db", label: "2. write meta" },
+    { from: "app", to: "url", label: "3. sign" },
+    { from: "url", to: "client", label: "4. return" },
+    { from: "client", to: "obj", label: "5. PUT" },
+    { from: "obj", to: "done" },
+  ]}
+  caption="The app handles only the small metadata row and the signing; the large bytes flow client ↔ object store directly. The app tier stays stateless and is never a bandwidth bottleneck — the whole point of the split."
+/>
+
+## Durability vs availability: two different nines
+
+Object stores advertise eye-watering **durability** — S3 is designed for 99.999999999% (eleven nines) of annual object durability. People conflate this with **availability**, but they're different guarantees about different failures:
+
+- **Durability** is the probability your bytes *still exist* and aren't corrupted — the provider achieves it by replicating each object across many disks and facilities (the **04-data-distribution/01-replication** idea, applied to bytes). Eleven nines means you'd statistically expect to lose one object in tens of millions over millions of years.
+- **Availability** is the probability you can *reach* the bytes *right now* — typically a lower number (e.g. ~99.9%), because a region outage can make perfectly durable data temporarily unreachable.
+
+The design consequence: durability protects you from data *loss*; it does not protect you from a *region being down*. If you need to read the bytes during a regional outage, you need cross-region replication on top of the built-in durability — a separate, billable choice. Don't read "eleven nines" as "always reachable."
+
+<Inset kind="mistake" lang="en">
+A subtle, expensive trap: forgetting that object storage charges for **operations and egress**, not just stored bytes — and that **listing is not free or instant**. Teams design a system that does a `LIST` on a bucket on every request to "find the user's files," then discover that listing millions of keys is slow and metered, and that object stores are not databases — they have no secondary indexes, no `WHERE`, no joins. The fix is the pattern above: never query the object store for *which* objects exist or who owns them — that's what the metadata table is for. Use the object store only to read/write the bytes of a key you already know. If you find yourself listing or scanning the bucket to answer a question, you've put query logic in the wrong tier.
+</Inset>
+
+## Lifecycle and tiering: paying less for cold bytes
+
+Not all bytes are equally hot. A photo is viewed constantly its first week, then almost never; a log is queried for a month, then kept only for compliance. Object stores expose **storage classes** at different price/latency points — a hot standard tier, infrequent-access tiers, and deep cold archive tiers that are far cheaper per GB but charge more (and add latency, sometimes minutes to hours) to retrieve. A **lifecycle policy** automates the migration: "objects older than 30 days → infrequent access; older than 365 days → archive; older than 7 years → delete." You declare the rule once and the provider moves bytes between tiers on a schedule, so cost tracks how cold the data actually is. The senior move is to set lifecycle rules at design time — storage that only ever gets more expensive is a slow leak, and archive-tier retrieval surprises ("we need that 2 TB *today*") are a planning failure, not a platform one.
+
+<Quiz
+  id="07-blob-and-object-quiz-1"
+  lessonSlug="02-blob-and-object"
+  lang="en"
+  question="You're building a video platform. Users upload multi-gigabyte files and later stream them. Where do the bytes live, and how do clients move them without melting your app tier?"
+  choices={[
+    { label: "Bytes in object storage; the app writes a metadata row (owner, key, size) and returns a presigned URL so the client uploads/downloads directly against the store, never through the app server.", correct: true },
+    { label: "Bytes in a BYTEA/BLOB column so the upload and metadata stay in one transaction.", misconception: "That's the exact failure in the hook: backups balloon, the buffer cache is poisoned, WAL/replication bloats, and large transfers starve the connection pool. Databases are for small structured rows, not multi-GB blobs." },
+    { label: "Bytes in object storage, but proxy every byte through the app server for access control.", misconception: "Proxying terabytes through your stateless tier makes it a bandwidth bottleneck and cost center. Presigned URLs let you enforce access at signing time, then have bytes flow client ↔ store directly." },
+    { label: "Bytes on a block volume (EBS) attached to the app server's disk.", misconception: "Block storage attaches to one machine, doesn't scale out, isn't durable across machine death, and breaks the moment you add a second app node. Object storage is the machine-independent, durable home for large bytes." },
+  ]}
+/>
+
+<Quiz
+  id="07-blob-and-object-quiz-2"
+  lessonSlug="02-blob-and-object"
+  lang="en"
+  question="A teammate says 'S3 is eleven nines durable, so our images can never be a problem in an outage.' What's the precise correction?"
+  choices={[
+    { label: "Durability (bytes still exist, ~11 nines) is not availability (bytes reachable right now, often ~3 nines). A region outage leaves data perfectly durable but temporarily unreachable — for that you need cross-region replication on top.", correct: true },
+    { label: "Correct — eleven nines means the bytes are always available too.", misconception: "Durability and availability are different guarantees. Eleven nines is about not LOSING data; availability (reachability) is a separate, lower number, and a region outage breaks reachability without losing a byte." },
+    { label: "Durability is irrelevant; only latency matters for images.", misconception: "Durability very much matters (it's why you don't lose uploads), but the teammate conflated it with availability. The correction is to separate 'still exists' from 'reachable now,' not to dismiss durability." },
+    { label: "You should store the images in the database for an outage instead.", misconception: "That reintroduces every blob-in-DB failure and doesn't improve regional availability anyway. The right answer is cross-region replication of the object store, keeping bytes out of the DB." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="07-blob-and-object-metaphor-1"
+  lessonSlug="02-blob-and-object"
+  lang="en"
+  setup="To upload a large file without it ever passing through your stateless app servers, the app generates a short-lived, signed _______ URL that grants the client permission to write one specific object directly to the store."
+  accepted={["presigned", "pre-signed", "presigned url", "signed"]}
+  canonical="presigned"
+  explanation="A presigned URL encodes the object key, the allowed operation (GET/PUT), and an expiry, signed with the app's credentials. The client uses it to read or write that one object directly against the object store, so terabytes of bytes flow client ↔ store and never occupy an app server or a DB connection — the key to serving unlimited files from a small stateless fleet."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Object storage holds large bytes by key over HTTP. Never put blobs in the DB — it poisons backups, cache, replication. Metadata in DB, bytes in store, via presigned URLs. Durability ≠ availability; tier for cost.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="07-blob-and-object-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish block, file, and object storage by their access model.", a: "Block (EBS, a raw volume): fixed-size blocks the OS formats into a filesystem; attaches to ONE machine; low-latency; where DB data files live — 'a disk.' File (NFS, EFS): a shared hierarchical POSIX filesystem several machines can mount — 'a network drive.' Object (S3, R2, GCS): a flat namespace of opaque blobs+metadata addressed by a string key over HTTP, whole-object PUT/GET (or byte ranges), no in-place edit, machine-independent, provider-replicated, effectively unlimited — 'a durable HTTP key-value store for files.' Object storage is the home for large, mostly-immutable bytes." },
+    { q: "Why never store blobs in the database, and what is the correct pattern?", a: "Blobs in the DB balloon backups (5 GB schema → 5 TB backup), poison the buffer cache (image bytes evict hot index pages), bloat WAL/replication (each write ships megabytes), and starve the connection pool (a transfer holds a connection). DBs are for small structured rows; object stores for large opaque bytes. Correct pattern: bytes in the object store under a key; a small metadata row (owner, key, content-type, size, status) in the relational DB that points at the object. List/query/permission logic runs on the indexed table and never touches a byte; the bytes are served directly via presigned URLs." },
+    { q: "Contrast durability and availability, and explain lifecycle tiering.", a: "Durability = probability the bytes still exist/aren't corrupted (S3 ~11 nines via cross-disk/facility replication) — protects from data loss. Availability = probability you can reach them right now (often ~3 nines) — a region outage breaks reachability without losing a byte, so cross-region replication is a separate billable choice. Lifecycle tiering: object stores offer storage classes at different price/latency points (hot standard → infrequent access → cold archive); a lifecycle policy auto-migrates objects by age ('30d → IA, 365d → archive, 7y → delete') so cost tracks how cold the data is. Set rules at design time; archive retrieval is slow and metered." },
+  ]}
+/>
+
+<Recap lang="en">
+Storage has three shapes: **block** (a disk, one machine, where DB files live), **file** (a shared network drive), and **object** (S3/R2/GCS — opaque blobs addressed by a key over HTTP, machine-independent, provider-replicated, effectively unlimited). Object storage is the home for large, mostly-immutable bytes — uploads, logs, backups, assets. **Never store blobs in the database**: it balloons backups, poisons the buffer cache, bloats WAL/replication, and starves the connection pool, because a relational engine is built for small structured rows, not file serving. The pattern every mature system reaches is **metadata in the DB, bytes in the object store**: a small indexed row points at the object key, so list/query/permission logic never touches a byte, and **presigned URLs** let clients read and write the bytes *directly* against the store so the stateless app tier is never a bandwidth bottleneck. Finally, **durability ≠ availability** — eleven nines means your bytes won't be lost, not that a region can't go dark (use cross-region replication for that) — and **lifecycle tiering** moves cold bytes to cheaper classes automatically so cost tracks how cold the data actually is.
+</Recap>

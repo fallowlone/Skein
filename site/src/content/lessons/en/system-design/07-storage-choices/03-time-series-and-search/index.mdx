@@ -5,34 +5,160 @@ track: "system-design"
 unit: "07-storage-choices"
 order: 3
 title: "Time-series & search stores"
-summary: "Time-series & search stores — to be authored."
-estMin: 16
-status: stub
+summary: "Time-series stores are write-optimized (LSM, downsampling, retention) for append-only metrics; search engines invert text into a term index so full-text is fast where SQL LIKE collapses. A specialized store means owning the dual-write problem — add it only when the primary can't."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - time-series-db
+  - lsm-tree
+  - downsampling-retention
+  - inverted-index
+  - search-engine
+  - dual-write-consistency
+prereqs:
+  - 04-data-distribution/01-replication
+  - 07-storage-choices/01-sql-vs-nosql
+  - 07-storage-choices/02-blob-and-object
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/nosql/
+  - https://docs.aws.amazon.com/timestream/latest/developerguide/what-is-timestream.html
+  - https://www.elastic.co/guide/en/elasticsearch/reference/current/documents-indices.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+The product manager asked for two "small" features: a dashboard showing each server's CPU over the last 90 days, and a search box that finds products by any word in the title or description. Both went onto the existing Postgres primary because "it's just more tables." The metrics table grew by 50 million rows a day and its indexes thrashed the disk; the search ran `WHERE description LIKE '%word%'`, which the database can't use an index for, so every search became a full table scan that locked up under load. Neither feature was hard — they were just being asked of an engine built for a different shape of work. A relational primary is a brilliant transactional store and a terrible metrics firehose and a terrible search engine, and no amount of indexing changes that.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Time-series stores are write-optimized for metrics; search inverts text. Specialize only when the primary can't; own the dual write.</Crux>
 
 <Explanation>
 
-## Time-series & search stores
+## Time-series: a different write shape
 
-Body to be authored.
+**Time-series data** is a flood of timestamped, append-only measurements — server metrics, IoT sensor readings, application events, financial ticks. Its shape is unusual: writes vastly outnumber reads, almost nothing is ever updated or deleted individually, and queries are nearly always "aggregate this metric over *this time window*." A **time-series database** (Prometheus, InfluxDB, TimescaleDB, AWS Timestream) is built around that shape, and three properties define it:
+
+- **Write-optimized storage (LSM-trees).** Instead of updating data in place (which means a random disk seek per write — slow), a **log-structured merge tree** buffers writes in memory and flushes them to disk as sorted, immutable files, merging them in the background. The result is that writes are sequential appends — the single thing spinning and solid-state disks both do fastest — which is why an LSM store ingests far more write throughput than a traditional update-in-place (B-tree) store. The trade is more work at read time and during background compaction, which is fine because time-series is write-heavy.
+- **Downsampling.** You don't need per-second resolution for data from last year — you need it for the last hour. Downsampling pre-aggregates old data into coarser buckets (per-second → per-minute → per-hour), shrinking it by orders of magnitude while keeping the trend.
+- **Retention.** Old raw data is automatically dropped after a window (keep 7 days raw, 90 days at 1-minute, 2 years at 1-hour). Retention is a first-class, declarative feature — the store deletes aged data for you, so storage stays bounded instead of growing forever.
+
+A relational primary *can* store metrics, but it's the wrong shape: B-tree indexes degrade as billions of rows churn, there's no built-in downsampling or retention, and the write firehose competes with your transactional traffic for the same buffer cache and WAL — the exact poisoning you saw with blobs in **02-blob-and-object**.
+
+## Search: why `LIKE` is not search
+
+A search box that finds documents by any word looks like a database query, but it's a fundamentally different access pattern. SQL's `WHERE description LIKE '%word%'` forces a **full scan**: the leading wildcard means no B-tree index can help, so the engine reads and substring-matches every row. It also gives you no relevance ranking, no stemming ("running" matching "run"), no typo tolerance, no multi-field scoring. It works on a thousand rows and collapses on a million.
+
+A **search engine** (Elasticsearch/OpenSearch, Lucene, Postgres' own full-text via `tsvector`) solves this by building an **inverted index**. Where a normal index maps row → values, an inverted index maps the other way: for each *term* (word), it stores the list of documents that contain it. So "find documents containing `payment` and `failed`" becomes two cheap list lookups intersected — no scan. On top of the inverted index the engine layers the things `LIKE` can never do: tokenization and stemming (so "payments" finds "payment"), relevance scoring (which document is the *best* match, not just *a* match), fuzzy matching for typos, and aggregations (facets/filters). That's why you reach for a search engine the moment "search" means more than "exact prefix match on one column."
+
+<Inset kind="why" lang="en">
+Why is an inverted index fast for text where a B-tree is hopeless? A B-tree indexes a column's *value* left-to-right, so it can find rows where a column *starts with* "pay" in log time — but `'%word%'` has the wildcard on the *left*, so there's no prefix to seek on and the tree is useless; you scan everything. An inverted index sidesteps this by indexing *content*, not values: at write time the engine tokenizes each document into terms and, for every term, appends the document's id to that term's posting list. A query for "payment failed" then fetches two pre-built posting lists and intersects them — work proportional to how many documents contain those words, not to the size of the whole corpus. The cost is paid at write time (every document must be analyzed and the index updated) and in storage (the index can rival the data in size), which is precisely why search lives in a *separate, write-amortized* engine rather than as a feature bolted onto your transactional primary.
+</Inset>
+
+<FlowDiagram
+  label="Three workloads routed to three purpose-built stores from one application: transactional reads and writes to the relational primary, the metrics firehose to a write-optimized time-series store, and document text to a search engine's inverted index."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "app", label: "application", sub: "three access shapes" },
+    { id: "oltp", label: "relational primary", sub: "ACID rows, joins" },
+    { id: "ts", label: "time-series store", sub: "LSM, downsample, retention" },
+    { id: "metrics", label: "metrics firehose", sub: "append-only, write-heavy" },
+    { id: "search", label: "search engine", sub: "inverted index, relevance" },
+    { id: "text", label: "full-text queries", sub: "LIKE can't do this" },
+  ]}
+  edges={[
+    { from: "app", to: "oltp", label: "OLTP" },
+    { from: "app", to: "ts", label: "metrics" },
+    { from: "metrics", to: "ts" },
+    { from: "app", to: "search", label: "search" },
+    { from: "text", to: "search" },
+  ]}
+  caption="Each store matches a write/read shape the others handle badly — and each new store the app writes to is another copy of the truth that must be kept in sync with the primary. Specialization buys speed and pays in dual-write consistency."
+/>
+
+## The senior decision: specialize, or overload the primary?
+
+Every specialized store is a real cost — another system to run, monitor, back up, secure, and (the hard part) keep in sync. So the question is never "is a time-series DB better at metrics?" (obviously yes) but **"is my primary actually failing at this workload, and is the failure worth a second system?"** The honest progression:
+
+1. **Start on the primary.** Postgres has surprisingly capable full-text search (`tsvector`) and time-series extensions (TimescaleDB). For modest scale, one store is far cheaper than the consistency headache of two.
+2. **Specialize when a *measured* limit hits** — the metrics firehose is crowding out transactional traffic, or `LIKE` searches are scanning millions of rows and timing out. The limit, not the buzzword, justifies the second store.
+3. **Treat the specialized store as a derived index, not a source of truth.** Your relational primary stays the system of record; the search engine and time-series store are read-optimized *projections* of it. This is the key framing: if the search index is lost, you rebuild it from the primary — you don't lose data, only availability of that query path.
+
+## The dual-write consistency problem
+
+The moment a write must land in *two* stores — the row in Postgres and the document in Elasticsearch — you have the **dual-write problem**, and it's harder than it looks. Naive code writes to both in sequence: `db.save(order); search.index(order)`. But these are two systems with no shared transaction. If the process crashes between the two calls, or the search write fails and the DB write succeeded, the stores diverge — the order exists but isn't searchable, silently, forever. Retrying blindly can double-write; wrapping them in a "transaction" is impossible across two systems (no distributed transaction here). The robust patterns make the *primary* the single source of truth and derive the second store from its write log:
+
+- **Change Data Capture (CDC)** — tail the database's replication log (its WAL/binlog) and stream every committed change to the search/time-series store. The DB commit is the single atomic event; the index update is a downstream consumer that can retry and replay.
+- **Transactional outbox** — in the same DB transaction that writes the order, also write an "index this order" event to an `outbox` table; a separate relay reads the outbox and pushes to the search engine. Because the order row and the outbox row commit atomically, the event can't be lost.
+
+Both share one principle: **never trust two independent writes to stay consistent — make one store authoritative and propagate from its commit.** Accepting that the derived store is *eventually* consistent (a new order is searchable a second later) is usually fine; pretending the dual write is atomic is the bug.
+
+<Inset kind="mistake" lang="en">
+The classic dual-write failure is the "best-effort" index update buried in a request handler: write the row, then fire the search index call and ignore (or merely log) its failure to "keep the request fast." It works in every test and demo, because tests don't crash mid-handler and the network doesn't drop in CI. In production it drifts slowly — a few documents fail to index during each deploy, a queue hiccup here, a timeout there — and three months later "search is missing some results" is an un-debuggable mystery because nothing recorded *which* writes were lost. The fix isn't more retries in the handler; it's removing the dual write entirely by deriving the index from the DB's commit log (CDC or an outbox), so the act of committing the data *is* the act that guarantees it will be indexed.
+</Inset>
+
+<Quiz
+  id="07-time-series-and-search-quiz-1"
+  lessonSlug="03-time-series-and-search"
+  lang="en"
+  question="Your metrics table on the relational primary takes 50M append-only rows/day, and its B-tree indexes now thrash the disk while competing with transactional traffic. Why is a time-series store the right move, mechanically?"
+  choices={[
+    { label: "Its LSM-tree turns writes into sequential appends (fast on any disk) instead of in-place B-tree updates, and built-in downsampling + retention bound the data — matching the append-only, write-heavy, time-windowed shape of metrics.", correct: true },
+    { label: "Time-series stores are just faster databases; move everything there.", misconception: "They're not universally faster — they're optimized for one shape (append-only, write-heavy, time-windowed aggregates) and worse at transactional row updates and joins. You move the metrics workload, not the OLTP." },
+    { label: "Add more B-tree indexes to the existing table to speed the writes.", misconception: "More indexes make WRITES slower (each write updates every index) — the opposite of what a write-heavy firehose needs. The mechanical fix is LSM append-style storage plus downsampling/retention, which a relational primary lacks." },
+    { label: "Store the metrics as blobs in object storage instead.", misconception: "Object storage holds opaque bytes by key with no aggregation or time-window querying — you couldn't run 'avg CPU over 90 days.' The workload needs a time-series engine's LSM ingest and downsampling, not blob storage." },
+  ]}
+/>
+
+<Quiz
+  id="07-time-series-and-search-quiz-2"
+  lessonSlug="03-time-series-and-search"
+  lang="en"
+  question="You write each new order to Postgres, then call the search index in the same handler and log-and-ignore any failure 'to keep the request fast.' Months later, search is missing some orders unpredictably. What's the root cause and the fix?"
+  choices={[
+    { label: "A dual-write with no shared transaction: when the index call fails or the process crashes between writes, the stores silently diverge. Fix by making the DB authoritative and deriving the index from its commit log via CDC or a transactional outbox.", correct: true },
+    { label: "The search engine is buggy; switch vendors.", misconception: "No vendor fixes this — the bug is architectural. Two independent writes with no shared transaction will diverge on any crash or failure. The fix is to stop dual-writing and derive the index from the DB commit (CDC/outbox)." },
+    { label: "Add aggressive retries to the index call in the handler.", misconception: "Retries in the handler can't survive a process crash between the two writes and risk double-indexing; they also slow the request you were trying to keep fast. Derive the index from the commit log so committing the data guarantees indexing." },
+    { label: "Wrap both writes in a single database transaction.", misconception: "There is no transaction spanning Postgres and the search engine — they're separate systems with no shared commit. You need an outbox row that commits atomically WITH the order, then a relay to the index, or CDC off the WAL." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="07-time-series-and-search-metaphor-1"
+  lessonSlug="03-time-series-and-search"
+  lang="en"
+  setup="A search engine finds documents by any word without scanning the corpus because it builds an _______ index: for each term it stores the list of documents that contain it, so a query intersects pre-built lists instead of substring-matching every row the way SQL LIKE must."
+  accepted={["inverted", "inverted index", "an inverted"]}
+  canonical="inverted"
+  explanation="An inverted index maps term → list of documents containing it (a posting list), built at write time by tokenizing each document. A multi-word query fetches and intersects those posting lists — work proportional to the matching documents, not the whole corpus — and supports stemming, relevance scoring, and fuzzy matching, none of which SQL LIKE with a leading wildcard can do."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Time-series stores fit append-only metrics: LSM appends, downsampling, retention. Search builds an inverted index where LIKE scans. Add one only on a measured limit, as a derived index; solve the dual write with CDC.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="07-time-series-and-search-retrieval"
+  lang="en"
+  questions={[
+    { q: "What three properties make a time-series store fit metrics, and why does a relational primary fit badly?", a: "(1) Write-optimized LSM-tree storage: writes are buffered and flushed as sorted immutable files, so they become sequential appends (fastest on any disk) instead of random in-place B-tree updates — far higher write throughput for an append-only firehose. (2) Downsampling: old data is pre-aggregated to coarser buckets (per-sec → per-min → per-hour), shrinking it by orders of magnitude. (3) Retention: aged raw data is auto-dropped on a declared window, so storage stays bounded. A relational primary fits badly because B-tree indexes degrade under billions of churning rows, it has no built-in downsampling/retention, and the write firehose competes with transactional traffic for the buffer cache and WAL." },
+    { q: "Why is SQL LIKE not search, and how does an inverted index fix it?", a: "WHERE col LIKE '%word%' has a leading wildcard, so no B-tree prefix seek applies and the engine full-scans every row; it also offers no relevance ranking, stemming, typo tolerance, or multi-field scoring. A search engine builds an inverted index: term → posting list of documents containing it, built at write time by tokenizing each document. A query fetches and intersects posting lists (work proportional to matching docs, not corpus size) and layers stemming, relevance scoring, fuzzy matching, and aggregations on top. The cost is at write time and in index storage, which is why search lives in a separate write-amortized engine." },
+    { q: "State the dual-write problem and the two robust patterns that solve it.", a: "When a write must land in two stores (the row in Postgres and the document in the search/time-series store) there's no shared transaction, so a crash or a failed second write silently diverges them. The fix is to make one store authoritative (the relational primary = source of truth) and derive the second as an eventually-consistent index from its commit log: (1) Change Data Capture — tail the WAL/binlog and stream every committed change to the index, which can retry/replay; (2) transactional outbox — write an 'index this' event to an outbox table in the SAME transaction as the data, then a relay pushes it to the index. Both turn the single DB commit into the event that guarantees indexing — never trust two independent writes to stay consistent." },
+  ]}
+/>
+
+<Recap lang="en">
+A relational primary is a brilliant transactional store and a poor metrics firehose and a poor search engine. **Time-series stores** (Prometheus, InfluxDB, Timescale, Timestream) match the append-only metrics shape with three properties: **LSM-tree** storage that turns writes into fast sequential appends, **downsampling** that shrinks old data to coarser buckets, and **retention** that bounds storage by auto-dropping aged data. **Search engines** (Elasticsearch/OpenSearch, Lucene, Postgres `tsvector`) replace SQL's scan-forcing `LIKE` with an **inverted index** — term → posting list of documents — so full-text queries intersect pre-built lists and gain stemming, relevance scoring, and fuzzy matching, paying the cost at write time. The senior decision isn't "is the specialized store better" (it is) but "is my primary *measurably* failing this workload?" — start on the primary, specialize on a real limit, and treat the new store as a **derived index** with the primary as the source of truth. That framing exposes the real hazard: the **dual-write problem**. Two independent writes with no shared transaction silently diverge on any crash or failure, so you never best-effort the second write — you derive it from the DB's commit log via **CDC** or a **transactional outbox**, making the act of committing the data the act that guarantees it gets indexed.
+</Recap>

@@ -5,34 +5,175 @@ track: "system-design"
 unit: "08-building-blocks"
 order: 3
 title: "Bloom filters"
-summary: "Bloom filters — to be authored."
-estMin: 16
-status: stub
+summary: "A bloom filter answers 'maybe present, or definitely absent?' in a tiny bit-array with no false negatives. It trades a tunable false-positive rate for huge space savings, letting a cache or DB skip lookups that would certainly miss — at the cost of an occasional empty lookup."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - probabilistic-membership
+  - bit-array
+  - hash-functions
+  - false-positive-rate
+  - counting-bloom-filter
+  - read-avoidance
+prereqs:
+  - 08-building-blocks/02-unique-id-generation
 sources:
+  - https://en.wikipedia.org/wiki/Bloom_filter
+  - https://www.cloudflare.com/learning/cdn/glossary/what-is-caching/
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A storage engine was spending most of its read latency on lookups that returned nothing. A read for a key would check several on-disk files in turn, and for keys that didn't exist anywhere, it paid a disk seek per file only to confirm "not here." The fix wasn't a faster disk or more RAM for the index — both were too expensive at that data size. It was a tiny structure, a few bits per key, that could say with certainty "this key is definitely not in this file, don't bother reading it." It was sometimes wrong in the *cheap* direction — occasionally it said "maybe" and the read came back empty — but it was never wrong in the expensive one. That asymmetry is the entire idea of a bloom filter.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A bloom filter says "definitely absent" or "maybe present" from a bit-array and k hashes: no false negatives, a tunable false-positive rate.</Crux>
 
 <Explanation>
 
-## Bloom filters
+## The one-sided guarantee
 
-Body to be authored.
+A **bloom filter** is a probabilistic set-membership structure. You add elements to it, and later ask "is X in the set?" It answers with one of two verdicts, and the asymmetry between them is the whole point:
+
+- **"Definitely not present."** This answer is always correct. A bloom filter never has false negatives — if it says an element was never added, it really wasn't.
+- **"Possibly present."** This answer might be wrong. There is a tunable probability of a **false positive**: the filter says "maybe" for an element that was never added.
+
+So a bloom filter is a *fast, cheap, sometimes-wrong-in-the-safe-direction* pre-check. It can't store the elements themselves and can't enumerate them — it only answers membership, approximately. The payoff is space: it represents a set in a tiny fraction of the memory the actual elements would take, which is why it's used as a guard *in front of* an expensive exact lookup.
+
+## The mechanism: a bit-array and k hashes
+
+A bloom filter is a bit-array of `m` bits, all starting at 0, plus `k` independent hash functions, each mapping an element to one of the `m` positions.
+
+**To add** an element: hash it with all `k` functions to get `k` positions, and set those `k` bits to 1.
+
+**To query** an element: hash it with the same `k` functions and check those `k` positions. If *any* of them is 0, the element was definitely never added → **"definitely not present."** If *all* `k` are 1, the element is **"possibly present"** — but those bits might have been set to 1 by *other* elements that happen to share those positions. That coincidence is the false positive.
+
+```
+m-bit array (m = 16, k = 3 here)
+
+add "alice"  → hashes to bits 2, 7, 13   → set them
+add "bob"    → hashes to bits 4, 7, 11   → set them
+                                            (bit 7 now shared)
+
+index: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
+bit:   0 0 1 0 1 0 0 1 0 0 0  1  0  1  0  0
+
+query "carol" → bits 2, 4, 13 → ALL are 1 → "possibly present"
+                (but carol was never added — FALSE POSITIVE,
+                 her three positions were each set by alice/bob)
+query "dave"  → bits 3, 8, 15 → bit 3 is 0 → "definitely NOT present"
+```
+
+This is why there are no false negatives: adding an element only ever *sets* bits, never clears them, so a previously-added element always finds all its bits at 1. And it's why false positives exist: as more elements are added, more bits flip to 1, and eventually an unrelated element's `k` positions can all already be set.
+
+<FlowDiagram
+  label="A read request first consults a bloom filter that sits in front of an expensive store; a 'definitely absent' answer returns immediately with no store access, while a 'possibly present' answer falls through to the real lookup, which is occasionally a wasted empty read."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "read", label: "read key", sub: "k hashes" },
+    { id: "bf", label: "bloom filter", sub: "tiny bit-array" },
+    { id: "miss", label: "absent", sub: "skip lookup ✓" },
+    { id: "maybe", label: "maybe present", sub: "fall through" },
+    { id: "store", label: "expensive store", sub: "disk / network" },
+  ]}
+  edges={[
+    { from: "read", to: "bf" },
+    { from: "bf", to: "miss", label: "any bit 0" },
+    { from: "bf", to: "maybe", label: "all bits 1" },
+    { from: "maybe", to: "store" },
+  ]}
+  caption="The filter absorbs the certain-miss reads (the common case for non-existent keys) for free; only 'maybe' reads reach the store, and a small fraction of those are false positives that come back empty — a cheap price for skipping the rest."
+/>
+
+## The false-positive rate: size, count, and k
+
+The false-positive probability is not a fixed property — you *tune* it. It depends on three numbers: `m` (bits in the array), `n` (elements inserted), and `k` (number of hash functions). The intuition: more bits per element (`m/n`) means fewer collisions and a lower false-positive rate; too few or too many hash functions both hurt (too few and each element discriminates poorly; too many and you fill the array too fast). For a target false-positive rate there is an optimal `k`, and the rough engineering rule is that you need on the order of **~10 bits per element for a ~1% false-positive rate** — and adding ~5 bits per element cuts the rate by roughly another order of magnitude. The headline is the space win: ~1.2 bytes per element to guard a set, versus storing the full keys.
+
+A hard constraint: you must size the filter for the number of elements you'll insert. Keep adding past the planned `n` and the bit-array saturates (too many 1s), the false-positive rate climbs toward 100%, and the filter becomes useless — it says "maybe" to everything. There is no "just resize" for a plain bloom filter; you rebuild a larger one (or use a scalable variant).
+
+<Inset kind="why" lang="en">
+Why can't a standard bloom filter support deletion? Deleting "alice" would mean clearing her bits 2, 7, 13. But bit 7 was *also* set by "bob" — clearing it would make a query for "bob" find a 0 and wrongly report "definitely not present," a **false negative**, which breaks the entire guarantee the structure is built on. Because bits are shared, you can't tell which element a 1 belongs to, so you can't safely clear it. This is the central limitation, and it's exactly what the **counting bloom filter** fixes: replace each bit with a small counter (say 4 bits), increment on add and decrement on remove. Now bit 7 holds 2 (alice + bob), removing alice decrements it to 1, and bob is still found. The cost is ~4× the memory — you trade space to buy deletion.
+</Inset>
+
+## Where they earn their keep
+
+Bloom filters appear wherever a "definitely-not-here" answer lets you skip an expensive operation:
+
+- **LSM-tree databases** (Cassandra, RocksDB, LevelDB, HBase) put a bloom filter on each on-disk table file so a read for a missing key skips the disk seeks for files that certainly don't contain it — the storage-engine story from the hook.
+- **Caches** use a filter to avoid querying the backing store for keys that were never cached (and to fight cache-penetration attacks that hammer the DB with known-missing keys).
+- **CDNs and "one-hit-wonder" detection**: a CDN can use a filter to avoid caching content requested only once, saving cache space for items likely to be requested again.
+- **Web crawlers** check "have I already seen this URL?" against a filter instead of a giant set, accepting that they'll occasionally skip a new URL (here a false positive means a missed page — sometimes acceptable, sometimes not).
+
+The **cuckoo filter** is a newer alternative that supports deletion and can be more space-efficient at low false-positive rates, at the cost of a more complex insert that can fail when the structure is too full. Counting and cuckoo are the two variants to reach for when plain-bloom's no-delete limitation bites.
+
+<Inset kind="mistake" lang="en">
+Using a bloom filter where a false positive is unacceptable. The structure's contract is "no false negatives, *some* false positives" — so it is only safe when a false positive is *cheap*, i.e. it triggers a fallback that confirms the truth. A filter guarding a database read is fine: a false positive just means one occasionally-wasted lookup that returns empty. But never use a bloom filter as the *sole* authority for a decision where a wrong "yes" causes harm — "has this user already used this one-time coupon?", "is this transaction a known duplicate?" A false positive there would wrongly reject a legitimate action. The rule: a bloom filter is a fast pre-filter in front of ground truth, never the ground truth itself.
+</Inset>
+
+<Quiz
+  id="03-bloom-filters-quiz-1"
+  lessonSlug="03-bloom-filters"
+  lang="en"
+  question="A bloom filter returns 'possibly present' for key X. What can you correctly conclude?"
+  choices={[
+    { label: "X might be in the set or might not — all k of its bits are 1, but those bits could have been set by other elements (a false positive). You must consult ground truth to be sure.", correct: true },
+    { label: "X is definitely in the set.", misconception: "'Possibly present' is exactly the uncertain answer. All k bits being 1 can happen because other elements set those positions — a false positive. Only 'any bit is 0' is certain, and that means definitely absent." },
+    { label: "X was definitely added at some point but may have been deleted.", misconception: "A standard bloom filter doesn't support deletion at all, and 'possibly present' doesn't prove X was ever added — it may be a false positive from other elements' bits. The only certainty a bloom filter gives is 'definitely absent.'" },
+    { label: "The filter is broken — it should give a definite answer.", misconception: "Probabilistic 'maybe' on a positive is by design, not a bug. The whole tradeoff is no false negatives in exchange for a tunable false-positive rate, which buys enormous space savings." },
+  ]}
+/>
+
+<Quiz
+  id="03-bloom-filters-quiz-2"
+  lessonSlug="03-bloom-filters"
+  lang="en"
+  question="A team needs to remove elements from their bloom filter as items expire, but deletions are corrupting lookups. What's going on and what's the right structure?"
+  choices={[
+    { label: "Clearing a deleted element's bits also clears bits shared with other elements, causing false negatives. Use a counting bloom filter (a small counter per slot, increment on add, decrement on remove) or a cuckoo filter, which support deletion.", correct: true },
+    { label: "They're using too few hash functions; adding more enables deletion.", misconception: "k doesn't enable deletion. The problem is structural: bits are shared, so clearing one element's bits can clear another's, breaking the no-false-negative guarantee. You need counters per slot (counting bloom filter) or a cuckoo filter." },
+    { label: "Bloom filters delete fine; the bug must be elsewhere.", misconception: "Standard bloom filters genuinely cannot support deletion — a cleared shared bit produces false negatives. Deletion requires a counting bloom filter or a cuckoo filter; a plain one cannot do it safely." },
+    { label: "Just rebuild the whole filter on every delete.", misconception: "Rebuilding on every delete is prohibitively expensive and defeats the point. The proper fix is a structure designed for deletion: a counting bloom filter (counters instead of bits) or a cuckoo filter." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-bloom-filters-metaphor-1"
+  lessonSlug="03-bloom-filters"
+  lang="en"
+  setup="A bloom filter is safe to use as a pre-check precisely because it never produces a false _______ — if it says an element is absent, that is always true — so its only error is occasionally saying 'maybe' for something that isn't there, which just triggers a harmless fallback lookup."
+  accepted={["negative", "false negative", "negatives"]}
+  canonical="negative"
+  explanation="No false negatives is the load-bearing guarantee: 'definitely absent' is always correct because adding only ever sets bits. The error budget is entirely on the positive side (false positives), and that error is cheap because it only causes a fallback to ground truth — never a wrong 'no.'"
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A bloom filter says "definitely absent" (always true) or "maybe present" — no false negatives. ~10 bits/element ≈ 1%. It can't delete (use counting/cuckoo) and must never be the sole authority where a wrong "yes" harms.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-bloom-filters-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the add and query mechanism and why there are no false negatives.", a: "A bit-array of m bits (all 0) and k hash functions. Add: hash the element k ways and set those k bits to 1. Query: hash the same k ways; if ANY of those bits is 0 → definitely not present; if ALL are 1 → possibly present. No false negatives because adding only ever sets bits, never clears them, so a previously-added element always finds all its bits at 1. False positives exist because other elements may have already set an unrelated element's k positions." },
+    { q: "What controls the false-positive rate, and what's the rule of thumb?", a: "Three numbers: m (array bits), n (elements inserted), and k (hash functions). More bits per element (m/n) lowers the rate; there's an optimal k for a target rate (too few discriminates poorly, too many fills the array). Rough rule: ~10 bits/element for ~1% false positives, and ~5 more bits per element cuts the rate by roughly another order of magnitude. You must size for n: inserting past it saturates the array and the rate climbs toward 100%." },
+    { q: "Why can't a standard bloom filter delete, and what are the variants?", a: "Bits are shared between elements, so clearing a deleted element's bits can clear bits another element relies on, producing a false negative and breaking the core guarantee. The counting bloom filter fixes this by storing a small counter per slot (increment on add, decrement on remove) at ~4× the memory. The cuckoo filter also supports deletion and can be more space-efficient at low false-positive rates, with a more complex insert that can fail when nearly full." },
+  ]}
+/>
+
+<Recap lang="en">
+A **bloom filter** is a probabilistic membership structure with a one-sided guarantee: **"definitely absent" is always correct (no false negatives)**, while **"possibly present" carries a tunable false-positive rate**. The mechanism is an **`m`-bit array plus `k` hash functions**: adding sets `k` bits, querying checks them — any 0 means definitely absent, all 1 means maybe (those bits could belong to other elements). The false-positive rate is set by `m`, `n`, and `k`, with a rule of thumb of **~10 bits/element for ~1%**, and you must size for `n` or the array saturates. The killer use is **read avoidance**: an LSM-tree database, a cache, a CDN, or a crawler consults the tiny filter first and skips the expensive lookup for keys that are **definitely** absent, paying only an occasional wasted lookup on a false positive. A standard filter **can't delete** (shared bits) — that's what the **counting bloom filter** (counters per slot) and **cuckoo filter** are for. And the governing rule: a bloom filter is a **fast pre-filter in front of ground truth**, safe only where a false positive is cheap — never the sole authority for a decision where a wrong "yes" does harm.
+</Recap>

@@ -5,34 +5,172 @@ track: "system-design"
 unit: "04-data-distribution"
 order: 1
 title: "Replication"
-summary: "Replication — to be authored."
-estMin: 16
-status: stub
+summary: "Copy data to many nodes for reads, locality, and survival — but every copy is a lie until it catches up. Leader-follower, multi-leader, and leaderless each trade write availability against the chance of silently losing an acknowledged write."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - leader-follower-replication
+  - replication-lag
+  - read-your-writes
+  - failover
+  - quorum
+  - async-replication
+prereqs:
+  - 01-scalability/02-vertical-vs-horizontal
 sources:
+  - https://www.allthingsdistributed.com/files/amazon-dynamo-sosdp2007.pdf
+  - https://aws.amazon.com/builders-library/challenges-with-distributed-systems/
+  - https://jepsen.io/consistency
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A user updates their shipping address, sees the success toast, and refreshes — the old address is back. They update it again. Old address again. Support can't reproduce it. What's happening is invisible from any single console: the write landed on the leader, the success came back, and then the *read* was served by a follower that hadn't received the change yet. No bug, no error, no exception. Just two copies of the truth that disagree for a few hundred milliseconds, and a customer who now thinks your product is broken. Replication is how you survive a node dying and serve reads at scale — and it is also where "I saved it" quietly stops being true.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Replication copies data across nodes for reads and survival. Every copy lags; async replication can ack a write the leader then loses.</Crux>
 
 <Explanation>
 
-## Replication
+## Why copy data at all
 
-Body to be authored.
+A single node holding your data is a single point of failure and a single throughput limit — the exact problem the previous unit's vertical-scaling lesson ended on. **Replication** keeps the same data on multiple nodes, and it buys three distinct things, which people conflate at their peril:
+
+- **Read scaling** — fan reads out across many copies instead of hammering one node.
+- **Locality** — put a copy near the user (a replica in Europe for European reads) to cut latency.
+- **Fault tolerance** — if one node dies, another holds the data and can take over.
+
+The catch is the one the hook just showed: the moment there is more than one copy, those copies can disagree. Replication is therefore not a feature you turn on; it is a *consistency model you choose*, and the choice is which disagreement you can tolerate.
+
+## Leader-follower (the default)
+
+The most common topology is **leader-follower** (also called primary-replica or master-slave). One node is the **leader**: all writes go to it. The leader streams its changes — usually a replication log of every write — to one or more **followers**, which apply them in order. Reads can be served by the leader *or* any follower.
+
+The replication can be **synchronous** or **asynchronous**, and this single switch is the heart of the lesson:
+
+- **Synchronous**: the leader waits for a follower to confirm the write *before* acknowledging it to the client. The follower is guaranteed current — but if that follower is slow or down, the write blocks. Make all followers synchronous and one slow replica stalls every write.
+- **Asynchronous**: the leader acknowledges the write *immediately* and ships it to followers in the background. Fast and available — but the followers trail behind, and a write the leader has acknowledged may not yet exist anywhere else.
+
+Most production systems run **semi-synchronous**: one synchronous follower (so an acknowledged write survives on at least two nodes) and the rest asynchronous (so reads scale without blocking writes).
+
+<FlowDiagram
+  label="Leader-follower replication: all writes hit the single leader, which streams its change log to one synchronous follower (acknowledged before the client hears 'OK') and several asynchronous followers that trail behind by the replication lag."
+  perRow={4}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "client", label: "client", sub: "write" },
+    { id: "leader", label: "LEADER", sub: "all writes" },
+    { id: "sync", label: "sync follower", sub: "ack before OK" },
+    { id: "a1", label: "async f1", sub: "lag ~ms–s" },
+    { id: "a2", label: "async f2", sub: "lag ~ms–s" },
+    { id: "reads", label: "reads", sub: "any node" },
+  ]}
+  edges={[
+    { from: "client", to: "leader", label: "1 write" },
+    { from: "leader", to: "sync", label: "wait ack" },
+    { from: "leader", to: "a1", label: "background" },
+    { from: "leader", to: "a2", label: "background" },
+    { from: "sync", to: "reads" },
+    { from: "a1", to: "reads" },
+  ]}
+  caption="One synchronous follower guarantees an acknowledged write exists on two nodes; the async followers scale reads but trail by the replication lag — read from one of them right after a write and you can read stale data."
+/>
+
+## Replication lag and read-your-writes
+
+The gap between "the leader has the write" and "this follower has the write" is **replication lag**. Under load, or across a region, it ranges from sub-millisecond to seconds — and during a long-running operation or a network hiccup it can blow out to minutes. Lag is not a bug; it is the price of asynchronous replication.
+
+Lag produces a family of anomalies, and the hook's address bug is the most common: **read-your-writes** (also called read-after-write consistency). A user makes a write, then immediately reads — and gets routed to a lagging follower that hasn't applied it, so their own change appears to have vanished. The fixes are all about *routing*, not about making replication faster:
+
+- Read a user's own recently-written data **from the leader** for a short window after their write.
+- Track the write's log position (a version token) and route the read to a follower that has caught up to it.
+- Pin a user to one replica (with the trade-offs sticky sessions always carry).
+
+<Inset kind="why" lang="en">
+Why not just make all replication synchronous and be done with it? Because synchronous replication couples your write availability to your *slowest* replica. With one sync follower, a write needs two nodes up; with the leader plus N sync followers, a write needs all N+1 up — so adding replicas for durability would *lower* availability, the opposite of what you wanted. This is the tension the next two lessons formalize as CAP: you cannot have low-latency writes, strong read consistency, and tolerance of replica failure all at once. Semi-sync (one sync, rest async) is the pragmatic middle — it bounds the durability risk to "lose the leader and its one in-flight sync ack" without holding every write hostage to every replica.
+</Inset>
+
+## Failover, and the writes that vanish
+
+When the leader dies, the system must **fail over**: promote a follower to be the new leader. This is where asynchronous replication can silently lose data. Suppose the leader acknowledged writes 98, 99, and 100, but only shipped up to 97 to the followers before it crashed. The promoted follower's latest write is 97. Writes 98–100 were acknowledged to clients — the users saw success — and now they simply *do not exist*. Worse, if the old leader comes back and rejoins as a follower, those writes may be on it but conflict with new writes the cluster accepted in the meantime; the usual resolution is to discard them.
+
+This is the failure mode to burn into memory: **with async replication, an acknowledged write is not a durable write**. The client was told "saved" before the data existed anywhere but the leader, and a crash in that window erases it without a trace. GitHub's well-known 2012 outage and many others trace to exactly this — a failover that lost or resurrected writes. The mitigations are the durability levers above: at least one synchronous replica so an ack means "on two nodes," and careful failover tooling that refuses to promote a follower too far behind or fences the old leader so it can't accept writes after it's replaced.
+
+<Inset kind="mistake" lang="en">
+A subtle and dangerous failover bug is **split-brain**: the network partitions, the cluster wrongly concludes the leader is dead and promotes a follower, but the old leader is alive and still taking writes on the other side of the partition. Now there are *two* leaders, both accepting conflicting writes, and when the partition heals you have two divergent histories to reconcile — often by throwing one away. The defenses are fencing (a promoted node forces the old leader to step down, or STONITH — "shoot the other node in the head") and quorum-based promotion (a follower may only become leader if a majority agrees), which the distributed track's leader-election and Raft lessons develop in full. The composition-level point: never let "promote a new leader" happen without a mechanism that guarantees the old one can no longer write.
+</Inset>
+
+## Multi-leader and leaderless
+
+Two other topologies trade away the single leader:
+
+**Multi-leader** allows writes on more than one node (e.g. one leader per region, or an offline-capable client). It buys write locality and offline writes, but the price is **write conflicts**: two leaders accept conflicting updates to the same record, and you must resolve them — last-write-wins (which silently drops data), version vectors, or application-defined merges (CRDTs). Multi-leader doesn't remove the consistency problem; it moves it from "stale reads" to "conflicting writes."
+
+**Leaderless** (the Dynamo model) has no leader at all: the client writes to several nodes and reads from several nodes, and correctness comes from **quorums**. With `N` replicas, require `W` nodes to ack a write and `R` nodes to answer a read; if **`R + W > N`**, the read set and write set must overlap in at least one node, so a read is guaranteed to see the latest acknowledged write. Tune `W = N` for read-heavy durability or `W = 1` for write availability; the overlap inequality is the dial. This is the bridge to the next two lessons — leaderless quorums are how Dynamo-style stores stay available during partitions, at the cost of eventual rather than strong consistency, and the quorum mechanics get a full treatment in the **distributed** track's quorum unit.
+
+<Quiz
+  id="04-replication-quiz-1"
+  lessonSlug="01-replication"
+  lang="en"
+  question="A user updates their profile, sees 'Saved', and on the very next page load the old value is shown. No errors anywhere. What is the cause and the right fix?"
+  choices={[
+    { label: "Replication lag broke read-your-writes: the read hit an async follower that hadn't applied the write yet. Route the user's own recent reads to the leader (or to a follower known to have caught up to their write).", correct: true },
+    { label: "The write failed silently; add a retry on the write path.", misconception: "The write succeeded — it's on the leader, which is why the toast appeared. The problem is the READ landing on a lagging follower. Retrying the write does nothing; you must route the read to a current node." },
+    { label: "The database is corrupted; run a consistency repair.", misconception: "Nothing is corrupted. This is normal replication lag plus a read routed to a follower that's behind. The fix is read-your-writes routing, not a repair." },
+    { label: "Make every follower synchronous so reads are always current.", misconception: "That would fix staleness but couple write availability to the slowest follower — one slow replica stalls all writes. The targeted fix is to route the user's own recent reads to the leader, leaving the async followers for everyone else." },
+  ]}
+/>
+
+<Quiz
+  id="04-replication-quiz-2"
+  lessonSlug="01-replication"
+  lang="en"
+  question="Your async-replicated database acknowledges write #100 to the client, then the leader crashes before shipping #98–100 to followers. A follower at #97 is promoted. What happened to #98–100?"
+  choices={[
+    { label: "They are lost: acknowledged to clients but never replicated, so the new leader at #97 has no record of them. With async replication, an ack is not a durable write — the fix is at least one synchronous replica so an ack means 'on two nodes'.", correct: true },
+    { label: "They are safe; the load balancer replays unacknowledged writes.", misconception: "Load balancers don't replay database writes, and these WERE acknowledged. The writes lived only on the dead leader and vanished with it. Durability requires a synchronous replica, not the LB." },
+    { label: "They will arrive once the old leader is back online.", misconception: "Maybe — but if the cluster accepted new writes meanwhile, the resurrected #98–100 conflict with them and are typically discarded. You cannot rely on the old leader returning; treat them as lost." },
+    { label: "Nothing is lost because the client got a success response.", misconception: "That's exactly the trap: the success was sent before the data was durable. With async replication the ack precedes durability, so a crash in that window erases acknowledged writes silently." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-replication-metaphor-1"
+  lessonSlug="01-replication"
+  lang="en"
+  setup="In a leaderless store with N replicas, a read is guaranteed to see the latest acknowledged write whenever the read quorum R and write quorum W satisfy R + W _______ N — because then the set of nodes you wrote to and the set you read from must share at least one node."
+  accepted={["> n", ">n", "greater than", "exceeds", "> N", ">N", "is greater than"]}
+  canonical="> N"
+  explanation="R + W > N forces the read set and write set to overlap in at least one node, so every read touches a node that holds the latest write. It's the tunable dial of leaderless replication: raise W for durable writes, raise R for fresh reads, but keep their sum above N for the overlap guarantee."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Sync replication blocks on the slowest replica; async acks before durability, so failover can lose acknowledged writes. Keep one sync replica, route a user's own reads to a current node, use R + W > N when leaderless.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-replication-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast synchronous and asynchronous leader-follower replication, and what semi-sync buys.", a: "Synchronous: the leader waits for a follower to confirm before acknowledging the client, so an acknowledged write is durable on ≥2 nodes — but a slow/down follower blocks the write, coupling write availability to the slowest replica. Asynchronous: the leader acks immediately and ships in the background, so it's fast and available, but followers lag and an acknowledged write may exist only on the leader. Semi-synchronous (one sync follower, the rest async) is the pragmatic middle: an ack means 'on two nodes' for durability, while reads still scale on the async followers and one slow replica can't stall every write." },
+    { q: "What is read-your-writes, why does replication lag break it, and how do you fix it?", a: "Read-your-writes (read-after-write) means a user who just wrote should see their own write on the next read. Lag breaks it when the read is routed to an async follower that hasn't applied the write yet, so the change appears to vanish. Fixes are about routing, not speed: read a user's own recent data from the leader for a short window, route to a follower known to have caught up to the write's log position (a version token), or pin the user to one replica. It's a per-user freshness guarantee, weaker than global strong consistency." },
+    { q: "How does asynchronous replication silently lose acknowledged writes on failover, and what defends against it?", a: "The leader can acknowledge writes it hasn't yet shipped to any follower. If it crashes in that window, the promoted follower is behind, and those acknowledged writes — which clients saw succeed — simply don't exist; if the old leader rejoins, they may conflict with newer writes and get discarded. The rule: with async replication an ack is NOT a durable write. Defenses: at least one synchronous replica (ack = on two nodes), failover tooling that won't promote a too-far-behind follower, and fencing/STONITH plus quorum promotion to prevent split-brain (two leaders accepting conflicting writes during a partition)." },
+  ]}
+/>
+
+<Recap lang="en">
+Replication keeps the same data on multiple nodes to **scale reads, place data near users, and survive node death** — but it converts a consistency problem into a design choice. In **leader-follower**, all writes hit one leader that streams its log to followers; the write is **synchronous** (durable on ≥2 nodes but blocked by the slowest replica) or **asynchronous** (fast and available but the leader can ack a write that exists nowhere else yet), with **semi-synchronous** as the usual middle. The lag between leader and follower breaks **read-your-writes** — the hook's vanishing-address bug — fixed by routing a user's own recent reads to a current node. The headline failure mode: with async replication an **acknowledged write is not a durable write**, so a crash before the write ships, then a **failover**, loses data the client saw succeed; defend with a synchronous replica and with fencing/quorum promotion to avoid **split-brain** (two leaders). **Multi-leader** trades stale reads for write conflicts; **leaderless** (Dynamo) uses quorums where **R + W > N** guarantees the read and write sets overlap. The quorum mechanics and leader election here get their full derivation in the **distributed** track — this lesson stays at the composition altitude of *which disagreement you can tolerate*.
+</Recap>

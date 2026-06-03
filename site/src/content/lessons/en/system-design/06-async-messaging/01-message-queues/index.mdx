@@ -5,34 +5,173 @@ track: "system-design"
 unit: "06-async-messaging"
 order: 1
 title: "Message queues"
-summary: "Message queues — to be authored."
-estMin: 16
-status: stub
+summary: "A point-to-point queue decouples producer from consumer in time, so a slow or dead downstream can't take the caller with it. The cost is delivery semantics: at-least-once and at-most-once are the only honest options, and 'exactly-once' is really effectively-once via idempotency."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - message-queue
+  - decoupling
+  - delivery-semantics
+  - idempotency
+  - visibility-timeout
+  - dead-letter-queue
+prereqs:
+  - 02-availability/03-failover-and-fault-tolerance
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-dead-letter-queues.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A checkout service called the email service synchronously to send a receipt. One afternoon the email provider got slow — 8 seconds per call instead of 80 ms. Within minutes checkout itself was timing out: every payment thread was blocked waiting on email, the pool drained, and a non-critical dependency had taken down the part of the system that makes money. The fix wasn't a faster email provider. It was to stop coupling the two in time at all: drop a "send receipt" message into a queue, return to the customer immediately, and let a separate worker drain the queue at whatever pace email allows. The receipt is now late, not lost — and checkout never notices email is sick.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A queue decouples producer from consumer in time: enqueue and move on, a worker consumes later. The price is delivery semantics.</Crux>
 
 <Explanation>
 
-## Message queues
+## What a point-to-point queue actually buys you
 
-Body to be authored.
+A **message queue** is a durable buffer between two parties. A **producer** appends a message; the queue persists it; a **consumer** pulls it later, processes it, and acknowledges. "Point-to-point" means each message is delivered to *one* consumer in the group and then removed — contrast that with the fan-out of pub/sub in the next lesson, where every subscriber gets a copy. The defining property is **temporal decoupling**: the producer and consumer no longer have to be alive, fast, and reachable at the same instant.
+
+That single property buys three things at once. **Load levelling** — a spike of 10,000 enqueues doesn't have to be processed at 10,000/sec; the queue absorbs the burst and the consumer drains it at its sustainable rate. **Failure isolation** — if the consumer crashes, messages wait in the queue instead of erroring back to the producer; the work resumes when the consumer recovers. **Independent scaling** — you scale producers and consumers separately, adding consumer instances to drain faster without touching the producer.
+
+The senior framing is that a queue converts a *synchronous availability dependency* into an *asynchronous latency dependency*. Synchronously, your availability is the product of every downstream's availability — three 99.9% services in a call chain give you 99.7%. Put a durable queue between them and the producer's success no longer depends on the consumer being up; it depends only on the queue being up. You've traded "the whole request fails when email is down" for "the receipt arrives a few minutes late."
+
+## The honest delivery semantics: at-least-once vs at-most-once
+
+Here is the part juniors skip and seniors design around. A queue and its consumer talk over an unreliable network, and the consumer can crash at any point. That forces a choice about *when* you acknowledge a message, and the choice fixes your delivery guarantee:
+
+```
+at-most-once   ack BEFORE processing → if the worker crashes mid-process,
+               the message is gone. No duplicates, possible loss.
+
+at-least-once  ack AFTER processing → if the worker crashes after the work
+               but before the ack, the message is redelivered. No loss,
+               possible duplicates.
+```
+
+There is no third honest option over an unreliable network. You either risk losing a message (ack early) or risk processing it twice (ack late). Nearly every durable queue — SQS, RabbitMQ, classic JMS — defaults to **at-least-once**, because for most systems a duplicate is recoverable but a lost order is not. The consequence you must internalize: *your consumer will, eventually, see the same message twice.* Design as if it's guaranteed, because at scale it is.
+
+<Inset kind="why" lang="en">
+Why can't the broker just give you exactly-once and end the debate? Because "process the message" and "acknowledge the message" are two separate actions, and no protocol can make them a single atomic step across a network with crashes. Whatever order you put them in, a crash can land in the gap between them: ack-then-process can lose the work, process-then-ack can repeat it. The broker can make *its own* storage exactly-once (write the message once), but it cannot reach into your handler — which might charge a card or send an email — and make *that* side effect atomic with the ack. So the only place exactly-once can actually be enforced is inside your consumer, by making reprocessing harmless.
+</Inset>
+
+## "Exactly-once" is effectively-once: idempotency + dedup
+
+When a vendor sells "exactly-once," they mean **effectively-once**: the message may be *delivered* more than once, but its *effect* happens once. You get there with two tools working together. **Idempotency** — design the operation so applying it twice equals applying it once: `set balance = 100` is idempotent; `add 100 to balance` is not. **Deduplication** — give each message a stable business key (an order ID, a payment intent ID) and keep a record of keys you've already processed; on redelivery, you see the key, skip the work, and just re-ack.
+
+```
+producer: enqueue { idempotency_key: "order-8842", action: "charge $50" }
+
+consumer on each delivery:
+  if seen("order-8842"):  ack and stop      ← dedup catches redelivery
+  else:                   charge, mark seen("order-8842"), ack
+```
+
+The dedup store (a row with a unique constraint, a Redis key with a TTL) is what turns at-least-once delivery into effectively-once processing. This is why the right mental model is never "I'll find a queue that won't duplicate." It's "I'll accept duplicates at the door and make them harmless inside." Effectively-once is a property of *your* code, not a checkbox on the broker.
+
+## The mechanics that make at-least-once work: visibility timeout, DLQ, ordering
+
+Three mechanisms turn the theory into a running system:
+
+- **Visibility timeout.** When a consumer pulls a message, the queue doesn't delete it — it hides it for a configured window. If the consumer finishes and deletes it within the window, done. If the consumer crashes (never deletes), the timeout expires and the message reappears for another worker. This is *how* at-least-once redelivery actually happens. Set it too short and a slow-but-alive worker's message reappears and gets processed twice; set it too long and a genuinely crashed message takes ages to retry. Long jobs must **heartbeat** — extend the timeout while still working — or the queue will hand the same message to a second worker and you get parallel duplicate processing.
+- **Dead-letter queue (DLQ).** A message that fails repeatedly (a "poison" message — malformed input, a bug) would otherwise be redelivered forever, burning capacity and blocking the queue. After N failed attempts the broker moves it to a separate **dead-letter queue** for human inspection. Alarm on DLQ depth: a non-empty DLQ means a bug, not a transient blip.
+- **Ordering.** A plain queue with many parallel consumers makes *no* global ordering promise — message B can finish before message A. If you need order, you need ordering *per key* (SQS FIFO message groups, a single partition), which costs throughput because messages in one group can't be processed in parallel. Most systems don't need global order; they need order *within a single entity* (one user's events) and design the key accordingly.
+
+<FlowDiagram
+  label="A producer enqueues a message; a consumer pulls it, which hides the message under a visibility timeout; on success the consumer deletes it, on repeated failure the broker routes it to a dead-letter queue for inspection."
+  perRow={3}
+  hue="var(--d-backend)"
+  nodes={[
+    { id: "prod", label: "producer", sub: "enqueue + idemp. key" },
+    { id: "queue", label: "queue", sub: "durable buffer" },
+    { id: "cons", label: "consumer", sub: "pull → hidden (visibility)" },
+    { id: "ok", label: "success", sub: "delete (ack)" },
+    { id: "retry", label: "crash / fail", sub: "timeout → redeliver" },
+    { id: "dlq", label: "dead-letter queue", sub: "after N tries → human" },
+  ]}
+  edges={[
+    { from: "prod", to: "queue" },
+    { from: "queue", to: "cons" },
+    { from: "cons", to: "ok", label: "done in window" },
+    { from: "cons", to: "retry", label: "no ack" },
+    { from: "retry", to: "queue" },
+    { from: "retry", to: "dlq" },
+  ]}
+  caption="Visibility timeout is the engine of at-least-once: pull hides the message, success deletes it, a crash lets it reappear, and a message that keeps failing is sidelined to the DLQ instead of looping forever. The redelivery edge back to the queue is exactly why your consumer must be idempotent."
+/>
+
+<Inset kind="mistake" lang="en">
+The classic visibility-timeout bug: a worker pulls a message, the work takes longer than the timeout (a slow dependency, a big batch), and while it's *still running* the message reappears and a second worker starts the same job. Now you have two workers charging the same card in parallel — and if their work also takes too long, a third joins, and the service "fork-bombs itself" under load exactly when latency is already high. The fixes are to size the timeout above your real p99 processing time, to heartbeat long jobs (extend the timeout as you go), and — always — to make the handler idempotent so the duplicate is harmless even when the timeout is wrong.
+</Inset>
+
+<Quiz
+  id="06-message-queues-quiz-1"
+  lessonSlug="01-message-queues"
+  lang="en"
+  question="Your queue is configured at-least-once and your consumer charges a credit card on each message. What is the minimum correct design so a redelivery doesn't double-charge?"
+  choices={[
+    { label: "Attach a stable idempotency key to each message and dedup on it: before charging, check whether that key was already processed; if so, skip the charge and just re-acknowledge.", correct: true },
+    { label: "Switch the queue to exactly-once delivery so duplicates can't happen.", misconception: "No queue can guarantee exactly-once DELIVERY over an unreliable network — ack and process can't be made atomic. 'Exactly-once' is really effectively-once, achieved in YOUR consumer via idempotency + dedup, not by a broker setting." },
+    { label: "Set the visibility timeout very high so the message is never redelivered.", misconception: "A high timeout slows recovery from genuine crashes and still doesn't prevent duplicates (a true crash redelivers after the timeout). The durable fix is to make reprocessing harmless with a dedup key, not to hide redelivery." },
+    { label: "Acknowledge the message before charging, so a crash can't cause a second delivery.", misconception: "Acking before processing is at-most-once: if the worker crashes after the ack but before the charge, the charge is LOST. For a payment you want at-least-once + dedup, not silent loss." },
+  ]}
+/>
+
+<Quiz
+  id="06-message-queues-quiz-2"
+  lessonSlug="01-message-queues"
+  lang="en"
+  question="A worker pulls a message, but the job legitimately takes 90 seconds while the visibility timeout is 30 seconds. What happens, and what's the right fix?"
+  choices={[
+    { label: "The message reappears after 30s and a second worker starts the same job in parallel (duplicate processing). Fix: size the timeout above real p99 processing time and heartbeat to extend it while working — plus keep the handler idempotent.", correct: true },
+    { label: "Nothing — the queue waits for the worker to finish before redelivering.", misconception: "The queue can't know the worker is alive; it only knows the timeout expired without a delete. After 30s it assumes a crash and redelivers, so a second worker runs the same job. You must extend the timeout (heartbeat) or size it correctly." },
+    { label: "The message goes straight to the dead-letter queue because it took too long.", misconception: "Timeout expiry triggers redelivery, not the DLQ. A message reaches the DLQ only after N failed delivery attempts. A slow-but-successful job just gets duplicated unless you heartbeat." },
+    { label: "The worker is killed at 30s to free the queue.", misconception: "The broker doesn't reach into your process to kill it — your worker keeps running, oblivious, while a second copy is dispatched. That parallel duplicate is the danger; heartbeating the visibility timeout prevents it." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-message-queues-metaphor-1"
+  lessonSlug="01-message-queues"
+  lang="en"
+  setup="Because a durable queue defaults to at-least-once delivery, your consumer must be _______ — applying the same message twice has the same effect as applying it once — so that the redeliveries the visibility timeout inevitably causes are harmless."
+  accepted={["idempotent", "idempotent (dedup)", "idempotent / deduplicating"]}
+  canonical="idempotent"
+  explanation="At-least-once means duplicates are guaranteed eventually, so correctness can't depend on a message arriving exactly once. An idempotent handler (often via a dedup key on a stable business ID) makes reprocessing a no-op, which is how at-least-once delivery becomes effectively-once processing."
+/>
+
+This unit stays at system-composition altitude — *where* a queue sits in an architecture and *what guarantee* it changes. The dedicated **queues** track goes a level deeper into the brokers themselves: how SQS, RabbitMQ, and Kafka implement delivery, the exact ack protocols, and broker tuning. Reach for it when you're configuring a specific broker; stay here when you're deciding whether a queue belongs in the design at all.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A queue decouples producer and consumer in time — an availability dependency becomes a latency one. The price is delivery semantics: at-least-once is the safe default, so make your consumer idempotent.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="06-message-queues-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does a point-to-point queue decouple, and what does it cost?", a: "It decouples producer and consumer in TIME: the producer enqueues and returns immediately; a consumer processes later. Each message goes to one consumer and is removed (no fan-out). This buys load levelling (absorb bursts), failure isolation (consumer crash doesn't error the producer), and independent scaling. It converts a synchronous availability dependency into an asynchronous latency one. The cost is delivery semantics — you must now reason about duplicates and ordering — plus added end-to-end latency and a new component to operate." },
+    { q: "Contrast at-least-once and at-most-once, and explain why exactly-once is really effectively-once.", a: "The semantics come from WHEN you ack. Ack-before-process = at-most-once (no duplicates, possible loss on crash). Ack-after-process = at-least-once (no loss, possible duplicates on crash). There's no third honest option because process and ack can't be made atomic over an unreliable network. 'Exactly-once' = effectively-once: the message may be delivered more than once, but its effect happens once, via idempotency (applying twice == once) plus deduplication (skip work for an already-seen business key). It's a property of your consumer, not a broker setting." },
+    { q: "What do visibility timeout, DLQ, and ordering each handle?", a: "Visibility timeout: on pull, the message is hidden for a window; delete-within-window = done, expiry = assumed crash → redelivery (this is how at-least-once works). Too short → a slow live worker's message duplicates; too long → slow crash recovery; long jobs must heartbeat. DLQ: after N failed attempts a poison message is moved to a dead-letter queue for inspection instead of looping forever — alarm on its depth. Ordering: a plain multi-consumer queue gives no global order; you get per-key order (FIFO message group / single partition) at a throughput cost, and usually only need order within one entity." },
+  ]}
+/>
+
+<Recap lang="en">
+A **point-to-point message queue** is a durable buffer that decouples a producer from a consumer **in time**: the producer enqueues and moves on, a consumer drains later, and each message is delivered to one consumer and removed. That single property converts a **synchronous availability dependency** (the request fails if the downstream is down) into an **asynchronous latency dependency** (the work just arrives later), buying load levelling, failure isolation, and independent scaling. The price is **delivery semantics**: because "process" and "acknowledge" can't be atomic over an unreliable network, you choose at-most-once (ack first → no duplicates, possible loss) or **at-least-once** (ack last → no loss, possible duplicates), and almost everyone picks at-least-once. So-called **exactly-once is really effectively-once** — you accept duplicates at the door and make them harmless with **idempotency + a dedup key**, enforced in your own code, never by a broker checkbox. The running machinery is the **visibility timeout** (the engine of redelivery — size it above p99, heartbeat long jobs), the **dead-letter queue** (sideline poison messages, alarm on its depth), and **per-key ordering** when you truly need it. Decide here whether a queue belongs in the design; drop into the dedicated **queues** track when you're tuning a specific broker.
+</Recap>

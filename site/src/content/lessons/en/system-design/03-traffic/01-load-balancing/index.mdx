@@ -5,34 +5,153 @@ track: "system-design"
 unit: "03-traffic"
 order: 1
 title: "Load balancing"
-summary: "Load balancing — to be authored."
-estMin: 16
-status: stub
+summary: "A load balancer spreads requests across a pool of servers. The choice between L4 and L7, and between round-robin and load-aware algorithms, decides your tail latency — and a naive health-check on failover can stampede the survivors into a second outage."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - l4-vs-l7
+  - load-balancing-algorithms
+  - consistent-hashing
+  - health-checks
+  - sticky-sessions
+  - thundering-herd
+prereqs:
+  - 01-scalability/02-vertical-vs-horizontal
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://www.cloudflare.com/learning/performance/types-of-load-balancing-algorithms/
+  - https://docs.nginx.com/nginx/admin-guide/load-balancer/http-load-balancer/
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team ran six identical API nodes behind a plain round-robin balancer and slept well — until one node started garbage-collecting in long pauses. Round-robin kept feeding it one request in six, perfectly evenly, straight into a server that took 4 seconds to answer instead of 40 ms. The dashboards showed five healthy nodes and one sick one, but the p99 for the *whole service* tracked the sick node, because a sixth of all users were routed onto it by a balancer that counted requests and never once looked at whether they came back. "Even distribution" was exactly the wrong goal: they needed *load-aware* distribution, and they needed the balancer to notice a slow node before their users did.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A load balancer spreads requests across servers. L4 vs L7 and the algorithm you pick decide your tail latency and how failover behaves.</Crux>
 
 <Explanation>
 
-## Load balancing
+## What a load balancer actually does
 
-Body to be authored.
+A load balancer sits in front of a pool of identical servers and decides, per connection or per request, which one handles it. It buys three things at once: **horizontal scale** (the pool grows behind a single address), **fault tolerance** (a dead server is taken out of rotation and traffic flows to the rest), and **a stable entry point** (clients talk to one virtual address, not to individual machines). It is the front door that makes the stateless-tier scaling from the previous unit actually work — you can only "add more identical nodes" if something fans traffic across them.
+
+The two big decisions are *at what layer* it operates and *by what rule* it chooses a server. Get either wrong and the symptom is the same: load that looks balanced by request count but is wildly unbalanced by actual work, and a tail latency that no single server's metrics explain.
+
+## L4 vs L7: where the balancer reads the request
+
+**Layer 4 (transport)** balancing routes by the TCP/UDP connection: source/destination IP and port. It forwards packets (or splices a connection) without ever parsing the bytes inside. That makes it extremely fast and protocol-agnostic — it moves whatever flows over the connection, and it has no opinion about HTTP. The cost is that it cannot make decisions based on *content*: it can't route `/api` to one pool and `/images` to another, can't read a cookie, can't terminate TLS to inspect a path.
+
+**Layer 7 (application)** balancing terminates the connection, reads the HTTP request, and routes on its contents: path, host header, method, cookies. That unlocks content-based routing, per-route pools, header rewriting, TLS termination, and request-level retries. The cost is CPU and latency — it does real parsing work on every request, and it becomes a place where application concerns accumulate. (TLS termination here connects to the networking track's TLS lesson; we stay at the composition level — the point is *where* the handshake ends, not how it works.)
+
+The senior rule of thumb: **L4 when you need raw throughput and protocol independence** (databases, gRPC streams, anything where you don't need to see inside); **L7 when routing decisions depend on what's in the request** (web APIs, microservice gateways, anything path- or header-aware).
+
+<Inset kind="why" lang="en">
+Why does L4 cost so little and L7 so much? An L4 balancer can often hand a connection off and step out of the data path entirely (direct server return), or just shuttle packets — a few microseconds of work per connection. An L7 balancer must be on the path for the whole request: it terminates TCP and TLS, buffers and parses the HTTP message, applies routing rules, opens a *separate* upstream connection, and proxies the body both ways. That's two connections, a parse, and a copy per request instead of a forward. You pay that tax for the privilege of making decisions on content — which is exactly why you push L7 features (auth, rewriting, aggregation) into it only when you actually need to see the request.
+</Inset>
+
+## The algorithms — and why they decide your tail
+
+Once a server is chosen, *how* matters more than people expect. The common algorithms, from blind to load-aware:
+
+- **Round-robin** — hand each new request to the next server in turn. Simple, even by *count*, blind to *load*. Fine when every request costs the same and every server is identical; dangerous the moment one request is expensive or one node is slow (the hook).
+- **Weighted round-robin** — give bigger servers a larger share. Handles a heterogeneous fleet, still blind to live conditions.
+- **Least-connections** — send the next request to the server with the fewest active connections. A cheap proxy for "least busy," and far better than round-robin when request durations vary, because a slow node accumulates open connections and naturally stops receiving new ones.
+- **Least-response-time / EWMA** — track each server's recent latency (often an exponentially-weighted moving average) and prefer the fastest. This is the one that would have saved the hook's team: a node that starts taking 4 s gets *less* traffic, not its fair one-in-six. It's load-aware in the truest sense — it reacts to how the server is actually behaving right now.
+- **Consistent hashing** — hash a key (client IP, user ID, cache key) onto a ring of servers so the *same key lands on the same server* most of the time. Essential when the backend holds per-key state — a cache, a session, a shard — because it minimizes how many keys move when a server joins or leaves (only `1/N` of keys remap, not all of them).
+
+<FlowDiagram
+  label="A load balancer fans one stream of incoming requests across a pool of backend servers, while a separate health-check loop probes each server and removes any that fail, so traffic only flows to nodes proven to be answering."
+  perRow={4}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "clients", label: "clients", sub: "one virtual address" },
+    { id: "lb", label: "load balancer", sub: "L4 or L7 · picks a server" },
+    { id: "health", label: "health checks", sub: "probe · eject sick nodes" },
+    { id: "s1", label: "server A", sub: "healthy" },
+    { id: "s2", label: "server B", sub: "healthy" },
+    { id: "s3", label: "server C", sub: "ejected (failing)" },
+  ]}
+  edges={[
+    { from: "clients", to: "lb" },
+    { from: "lb", to: "s1" }, { from: "lb", to: "s2" },
+    { from: "health", to: "s1" }, { from: "health", to: "s2" }, { from: "health", to: "s3" },
+  ]}
+  caption="The algorithm decides which healthy server gets each request; the health-check loop decides which servers count as healthy at all. Server C is probed, found failing, and ejected — so the balancer fans only across A and B. The two mechanisms together are what make a pool resilient."
+/>
+
+## Health checks and sticky sessions
+
+A balancer is only as good as its picture of who's healthy. **Health checks** probe each server (a TCP connect, or better, an HTTP `/healthz` that actually exercises the app) and eject failing nodes from rotation. The subtlety is *active vs passive*: active probes ask "are you alive?" on a timer; passive checks watch real traffic and eject a node that starts erroring or timing out. The best systems do both — and crucially, a health check should test the *dependency chain* the server needs (can it reach the DB?), not just "is the process up," or you'll happily route traffic to a node that returns 500s instantly.
+
+**Sticky sessions** pin a given client to the same backend (via a cookie or source-IP hash) so per-user state held on that node stays reachable. The previous unit already flagged why this is a band-aid: it re-introduces a per-user single point of failure and breaks clean rebalancing. The clean alternative is the **stateless** tier — externalize session state to a shared store or a signed token — so any server can serve any request and you never need stickiness. Use consistent hashing for *cache locality* (a performance optimization you can lose safely), not for *correctness* (which stickiness implies and which will bite you when the node dies).
+
+<Inset kind="mistake" lang="en">
+The expensive failure mode is the **thundering herd on failover**. One node in a pool of ten dies; the balancer correctly redistributes its traffic — but now nine nodes each absorb an extra ~11% load *instantly*, and if they were already near the queueing knee, that shove can tip the next one over. It fails, its load redistributes onto eight, and you get a cascading collapse where the *recovery* causes the outage. It's worse with retries: every request that was on the dead node retries at once (a synchronized burst), and worse again with a cold cache on the survivors. The defenses are the ones AWS documents for retries — capacity headroom so survivors can absorb a peer's share, **jittered** rather than synchronized retries, and circuit breakers / load shedding so an overwhelmed survivor sheds new work instead of dying. Plan for N−1 (or N−2) capacity, or your failover *is* your outage.
+</Inset>
+
+<Quiz
+  id="01-load-balancing-quiz-1"
+  lessonSlug="01-load-balancing"
+  lang="en"
+  question="One node in a round-robin pool of six starts taking 4 s per request (it was 40 ms) but still accepts connections. What does the balancer do, and what's the better algorithm?"
+  choices={[
+    { label: "Round-robin keeps sending it 1-in-6 requests regardless, so the service p99 tracks the slow node. A load-aware algorithm — least-connections or least-response-time/EWMA — would route around it.", correct: true },
+    { label: "Round-robin automatically detects the slow node and skips it.", misconception: "Round-robin counts requests; it has no idea how long they take. It will keep feeding the slow node its even share. You need a load-aware algorithm (least-connections / least-response-time) or a passive health check to notice the slowness." },
+    { label: "The node is ejected immediately because it's slow.", misconception: "Slow is not the same as failing — a basic health check sees it accept connections and respond, just late, so it stays in rotation. Only a latency-aware probe or a load-aware algorithm reacts to slowness." },
+    { label: "Nothing matters — one slow node in six can't affect the tail.", misconception: "It dominates the tail: a sixth of all requests get the 4 s response, so the service p99 ≈ the slow node's latency. Tail latency is set by the worst server you keep routing to." },
+  ]}
+/>
+
+<Quiz
+  id="01-load-balancing-quiz-2"
+  lessonSlug="01-load-balancing"
+  lang="en"
+  question="You need to route by URL path (/api to one pool, static assets to another) and read a routing cookie. Which layer must the balancer operate at, and what's the cost?"
+  choices={[
+    { label: "Layer 7 — it must terminate the connection and parse the HTTP request to see the path and cookie. The cost is CPU/latency: it's on the data path for every request, doing a parse and proxying two connections.", correct: true },
+    { label: "Layer 4 — it's faster and can route on the path.", misconception: "L4 routes by IP/port only; it never parses the HTTP bytes, so it cannot see a path or a cookie. Content-based routing requires terminating and reading the request, which is L7." },
+    { label: "Either layer works; path routing is layer-independent.", misconception: "Path and cookie live inside the HTTP message. An L4 balancer forwards the connection without reading it, so it's blind to them. You must be at L7 to route on content." },
+    { label: "Layer 7, with no cost — parsing is free.", misconception: "The routing capability is real, but it isn't free: L7 terminates TLS/TCP, parses each request, and proxies two connections, costing CPU and latency. That tradeoff is exactly why you use L4 when you don't need to see inside." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-load-balancing-metaphor-1"
+  lessonSlug="01-load-balancing"
+  lang="en"
+  setup="To send a given cache key or shard key to the same backend most of the time — and to remap only ~1/N of keys when a server joins or leaves — a load balancer uses _______ hashing, instead of a plain modulo that reshuffles every key on a membership change."
+  accepted={["consistent", "consistent hashing", "the consistent"]}
+  canonical="consistent"
+  explanation="Consistent hashing maps both keys and servers onto a ring, so adding or removing a server moves only the keys in its arc (~1/N) rather than all of them. Plain hash-modulo-N remaps nearly every key when N changes, blowing away the whole cache at once — which is why stateful/cache-keyed routing uses consistent hashing."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>L4 is fast and protocol-blind; L7 routes on content at a CPU cost. Use load-aware algorithms (least-connections/EWMA) for tail latency, consistent hashing for cache locality; size N−1 against failover stampedes.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-load-balancing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast L4 and L7 load balancing — what each can and can't do, and when to use each.", a: "L4 (transport) routes by TCP/UDP IP+port without reading the payload: very fast, protocol-agnostic, but blind to content — it can't route by path/header/cookie. L7 (application) terminates the connection, parses the HTTP request, and routes on path/host/header/cookie, enabling content routing, TLS termination, and request retries — at a CPU/latency cost because it's on the data path proxying two connections per request. Use L4 for raw throughput and non-HTTP protocols; L7 when routing depends on request content." },
+    { q: "Name the load-balancing algorithms from blind to load-aware, and say which protects tail latency.", a: "Round-robin (even by count, blind to load) → weighted round-robin (handles heterogeneous fleet) → least-connections (proxy for least-busy, reacts to varying durations) → least-response-time / EWMA (tracks recent latency, prefers the fastest server) → consistent hashing (same key → same server, for cache/shard locality, remapping only ~1/N on change). Load-aware ones (least-connections, least-response-time) protect tail latency because a slow node accumulates connections / high measured latency and stops receiving its even share — round-robin would keep feeding it." },
+    { q: "What is the thundering herd on failover, and how do you defend against it?", a: "When a node dies, its traffic redistributes instantly onto the survivors; if they were near the queueing knee, the sudden extra share tips the next one over, cascading into an outage the recovery itself caused — made worse by synchronized retries and cold caches on the survivors. Defenses: provision N−1/N−2 capacity headroom so survivors can absorb a peer's load, use jittered (not synchronized) retries, and add circuit breakers / load shedding so an overwhelmed node sheds new work instead of dying." },
+  ]}
+/>
+
+<Recap lang="en">
+A **load balancer** is the front door that makes horizontal scaling real: it fans requests across a pool, ejects dead nodes, and gives clients one stable address. Two decisions dominate. **Layer**: L4 routes by IP/port — fast, protocol-blind, can't see inside; L7 terminates and parses the request to route on path/header/cookie and terminate TLS, at a CPU cost. **Algorithm**: round-robin and weighted RR are blind to load, while **least-connections** and **least-response-time/EWMA** are load-aware and protect your tail latency by routing *around* a slow node instead of feeding it an even share; **consistent hashing** sends a key to the same backend and remaps only ~1/N of keys on a membership change, which is why cache- and shard-keyed routing depends on it. **Health checks** must test the real dependency chain, not just "process up"; **sticky sessions** are a band-aid that re-creates a per-user SPOF — externalize state instead and keep the tier stateless. And always plan for the **thundering herd on failover**: size for N−1, jitter retries, and shed load, or the recovery from one dead node becomes a cascading outage.
+</Recap>

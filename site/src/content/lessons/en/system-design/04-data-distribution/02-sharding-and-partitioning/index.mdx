@@ -5,34 +5,172 @@ track: "system-design"
 unit: "04-data-distribution"
 order: 2
 title: "Sharding & partitioning"
-summary: "Sharding & partitioning — to be authored."
-estMin: 16
-status: stub
+summary: "When one node can't hold the data or absorb the writes, split it. Range, hash, and directory partitioning each balance differently — and all of them can produce a hot shard, a painful resharding, and queries that no longer fit on one node."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - partitioning-strategies
+  - partition-key
+  - hot-shard
+  - resharding
+  - cross-shard-queries
+  - secondary-indexes
+prereqs:
+  - 01-scalability/02-vertical-vs-horizontal
+  - 04-data-distribution/01-replication
 sources:
+  - https://www.allthingsdistributed.com/files/amazon-dynamo-sosdp2007.pdf
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A social app sharded its database by user ID — clean, even, every shard holding a few million users. Then a celebrity with 80 million followers posted, and one shard's CPU pinned at 100% while the other nineteen sat near-idle. The "evenly balanced" cluster had a single hot shard carrying a wildly disproportionate load, and there was no quick fix: you can't move *part* of a user to another node, and re-splitting the whole keyspace under live traffic is the scariest operation in the building. Sharding is how you scale past one machine — and the partition key you pick on day one decides, irreversibly, where your hot spots and your most painful migrations will live.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Sharding splits data by a partition key. Range, hash, and directory balance differently; a bad key gives a hot shard and a brutal reshard.</Crux>
 
 <Explanation>
 
-## Sharding & partitioning
+## Replication is not enough
 
-Body to be authored.
+Replication copies the *whole* dataset to every node, so it scales reads and survives failures — but every node still holds everything, and every node still takes every write. Once the data won't fit on one disk, or the write rate exceeds what one leader can absorb, copying doesn't help; you have to **split**. **Sharding** (horizontal partitioning) divides the dataset into disjoint pieces — **shards** or **partitions** — and puts each on a different node, so each node holds only `1/N` of the data and takes only its slice of the writes.
+
+(A note on words: "partitioning" inside one database engine — Postgres declarative partitions, say — and "sharding" across separate database servers are the same idea at different scopes. The databases track's sharding unit goes deep on the single-engine mechanics; here we reason about the distribution choice itself.)
+
+The decision that governs everything is the **partition key**: the field whose value decides which shard a row lives on. Pick it well and load spreads evenly and your common queries stay on one shard. Pick it badly and you get the hook's hot shard and cross-shard queries that fan out to every node.
+
+## Three ways to assign keys to shards
+
+```
+range:      [A–F] → shard 0   [G–M] → shard 1   [N–Z] → shard 2
+hash:       shard = hash(key) mod N         (spreads neighbours apart)
+directory:  lookup table: key → shard       (explicit, flexible, one more hop)
+```
+
+- **Range partitioning** keeps keys in sorted order, so range scans ("all orders from March") hit one shard and stay efficient. The danger is that ordered keys cluster: shard by timestamp and *all of today's writes* land on the last shard — a moving hot spot.
+- **Hash partitioning** runs the key through a hash and assigns by the result, scattering neighbouring keys across shards so load spreads evenly. The cost is that range scans now hit *every* shard, because adjacent keys are deliberately far apart.
+- **Directory partitioning** keeps an explicit lookup table mapping keys (or key ranges) to shards. Maximum flexibility — you can move a hot key to its own shard — at the cost of an extra lookup and a directory that is itself critical infrastructure.
+
+<FlowDiagram
+  label="A write's partition key is run through the routing layer, which applies the partitioning strategy (range, hash, or directory) to pick exactly one shard; each shard is itself a replicated leader-follower set, so distribution and replication compose."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "write", label: "write", sub: "partition key" },
+    { id: "router", label: "router", sub: "strategy → shard" },
+    { id: "dir", label: "scheme", sub: "range/hash/dir" },
+    { id: "s0", label: "shard 0", sub: "leader+followers" },
+    { id: "s1", label: "shard 1", sub: "leader+followers" },
+    { id: "s2", label: "shard 2", sub: "leader+followers" },
+  ]}
+  edges={[
+    { from: "write", to: "router", label: "key" },
+    { from: "router", to: "dir", label: "apply" },
+    { from: "dir", to: "s0" },
+    { from: "dir", to: "s1" },
+    { from: "dir", to: "s2" },
+  ]}
+  caption="The router maps each key to one shard via the chosen scheme; each shard is a replicated set (lesson 01), so a real system is sharded AND replicated — distribution chooses the node, replication keeps that node's data alive."
+/>
+
+## The hot-shard / celebrity problem
+
+Even partitioning evenly *by key count* does not partition evenly *by load*. The hook's celebrity is the canonical case: one key (a user, a product, a video) receives orders of magnitude more traffic than the average, so its shard saturates while the rest idle. This is **skew**, and it defeats the naive "just hash the key" answer, because all of one hot key's traffic still lands on the one shard that owns it.
+
+Mitigations all amount to *spreading a hot key's load*:
+
+- **Split the hot key**: append a random suffix (`celebrity_id:00`…`:09`) so its writes scatter across ten logical keys on different shards, and fan reads back in. You trade simplicity for spread.
+- **Cache the hot key** in front of the shard so most reads never reach it (the next unit's caching lessons).
+- **Isolate it**: give the known hot key its own dedicated shard (directory partitioning makes this a one-row change).
+
+The senior reflex: a uniform key distribution does *not* imply a uniform load distribution. You must reason about the access pattern, not just the key space.
+
+<Inset kind="why" lang="en">
+Why is choosing the partition key the highest-stakes decision and so hard to undo? Because the key is baked into where every row physically lives, and changing it means moving data. If you shard orders by `order_id` but your hottest query is "all orders for customer X," every such query now fans out to all shards and gathers results — a scatter-gather that is slow and that scales its tail latency with shard count (lesson 01-scalability's fan-out problem). Re-keying to `customer_id` later means re-reading and re-placing the entire dataset under live traffic. The discipline: choose the key from your dominant access pattern and your cardinality, not from what's convenient — high cardinality to avoid hot spots, and aligned with the field you most often filter or join on so common queries stay single-shard.
+</Inset>
+
+## Resharding pain
+
+Sooner or later you outgrow your shard count and must **reshard** — add shards and redistribute data. With the naive `hash(key) mod N` scheme this is brutal: change `N` and *almost every key* maps to a different shard, so you must move nearly the whole dataset at once, while serving live reads and writes against keys that are mid-flight. This is precisely the "rehash everything" pain that **consistent hashing** (the next lesson) exists to solve — it lets you add a shard and move only `~1/N` of the keys instead of all of them.
+
+Even with consistent hashing, resharding is an operational marathon: you copy data while it's changing, keep a record's old and new home in sync until cutover, double-write or use change-data-capture to avoid losing writes during the move, and flip routing atomically. Teams that designed for resharding (more logical shards than physical nodes, so growth is "move a shard," not "re-split the keyspace") have a far easier time than teams who must split a live keyspace for the first time during a capacity crisis.
+
+## Cross-shard joins, transactions, and secondary indexes
+
+Splitting data breaks the two things a single database gave you for free:
+
+- **Cross-shard joins** no longer happen in the engine. A join between data on different shards must be done by the application (or a query layer): scatter-gather the pieces and join them in memory. It works, but it's slow and fragile, which is why shard keys are chosen so that data joined together lives together (**colocation** — e.g. shard a customer's orders onto the same shard as the customer).
+- **Cross-shard transactions** lose single-node ACID atomicity. Updating two rows on two shards atomically needs a distributed transaction (two-phase commit) or a **saga** — a sequence of local transactions with compensating undo steps. Both are far more expensive and failure-prone than a single-node `BEGIN…COMMIT`; the distributed track's sagas unit covers the pattern in depth.
+- **Secondary indexes** stop being global. If you shard by `user_id` but need to query by `email`, the email index is scattered across all shards. You either keep a **local index** per shard (then a query by email must hit every shard — scatter-gather) or a **global index** that is itself a separate sharded structure (kept consistent with the base data, often asynchronously, so it can lag). DynamoDB's global secondary indexes, for instance, are eventually consistent for exactly this reason.
+
+<Inset kind="mistake" lang="en">
+A common and expensive mistake is treating a sharded store like a single database and writing queries that quietly fan out to every shard. A dashboard that does `SELECT … WHERE email = ?` against a `user_id`-sharded cluster looks fine in dev (one shard) and falls over in prod (a scatter-gather across 200 shards, with tail latency set by the slowest shard — lesson 01-scalability again). The discipline: know your shard key, make your hot-path queries include it so they're single-shard, and treat any query that doesn't carry the shard key as a scatter-gather to be designed for deliberately (a global index, a cache, or an async read model) — never to be discovered in an incident.
+</Inset>
+
+<Quiz
+  id="04-sharding-quiz-1"
+  lessonSlug="02-sharding-and-partitioning"
+  lang="en"
+  question="You shard a time-series table by timestamp using range partitioning. Writes feel fine in testing but one shard's CPU pins in production while the others idle. Why?"
+  choices={[
+    { label: "Range partitioning on a monotonically increasing key (time) sends all of today's writes to the single shard owning the latest range — a moving hot spot. Hash the key (or add a non-time prefix) so writes spread across shards.", correct: true },
+    { label: "The shards are unbalanced by row count; rebalance them evenly.", misconception: "Row counts may be even; the problem is LOAD, not count. With range-by-time, all current writes target the newest range's shard regardless of how rows are split. Spreading writes needs a different key/scheme, not a row rebalance." },
+    { label: "Replication lag is overloading one follower; add more followers.", misconception: "This is a write hot spot from the partitioning scheme, not a replication issue. More followers scale reads, not the concentrated write load on the latest-range shard." },
+    { label: "The hash function is broken; switch hash algorithms.", misconception: "There's no hash here — it's range partitioning. The fix is to stop using a monotonically increasing key as the range key (hash it or prefix it), not to swap a hash function you aren't using." },
+  ]}
+/>
+
+<Quiz
+  id="04-sharding-quiz-2"
+  lessonSlug="02-sharding-and-partitioning"
+  lang="en"
+  question="Your cluster is sharded by user_id with hash(user_id) mod 8. You need to grow to 12 shards. What's the core problem, and what design avoids it next time?"
+  choices={[
+    { label: "Changing N from 8 to 12 remaps almost every key, forcing a near-total data move under live traffic. Use consistent hashing (move only ~1/N of keys) and provision many logical shards up front so growth means relocating a shard, not re-splitting the keyspace.", correct: true },
+    { label: "No problem — mod 12 keeps each key on the same shard as mod 8.", misconception: "It doesn't: hash(key) mod 8 and mod 12 disagree for the vast majority of keys. That's the whole reason mod-N resharding is painful and why consistent hashing exists." },
+    { label: "Just add 4 empty shards; new writes will fill them and old data stays put.", misconception: "With mod-N routing, the divisor changes for ALL keys at once, so old data is now addressed to different shards than where it lives — reads miss. You can't simply append shards under mod-N; you must remap and move." },
+    { label: "Add read replicas to the existing 8 shards instead of resharding.", misconception: "Replicas scale reads but don't add write capacity or storage — if you're out of either, you must reshard. The lesson is to make that reshard cheap (consistent hashing + many logical shards), not to avoid it with replicas." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-sharding-metaphor-1"
+  lessonSlug="02-sharding-and-partitioning"
+  lang="en"
+  setup="A query that does not carry the shard key cannot be routed to one shard, so it must fan out to every shard and combine the results — a pattern called _______, whose tail latency is set by the slowest shard it touches."
+  accepted={["scatter-gather", "scatter gather", "scatter/gather", "scattergather"]}
+  canonical="scatter-gather"
+  explanation="Scatter-gather queries every shard and merges the answers, so they're slow and their tail latency grows with shard count (the fan-out problem). You avoid them by including the shard key in hot-path queries (single-shard), or by serving non-key queries from a global index, a cache, or an async read model."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Sharding splits data by a partition key — range, hash, or directory. A skewed key gives a hot shard; cross-shard joins, transactions, and indexes get harder. Choose the key from your dominant access pattern.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-sharding-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare range, hash, and directory partitioning by what each is good and bad at.", a: "Range: keys kept sorted, so range scans hit one shard and stay efficient — but a monotonically increasing key (time, auto-increment id) clusters all current writes on the last shard, a moving hot spot. Hash: hash(key) spreads neighbours across shards for even load — but range scans now hit every shard since adjacent keys are deliberately far apart. Directory: an explicit key→shard lookup table, maximally flexible (move a hot key to its own shard with a one-row change) at the cost of an extra hop and a directory that's itself critical infrastructure. The choice follows your dominant access pattern: range if you scan ranges, hash if you point-lookup and need spread." },
+    { q: "What is the hot-shard problem and how do you mitigate it?", a: "Even partitioning by key count does not mean even partitioning by load: one celebrity key (user/product/video) can get orders of magnitude more traffic than average and saturate its shard while others idle — skew. Hashing doesn't fix it because all of one hot key's traffic still lands on the one shard owning it. Mitigations spread the hot key's load: split it with a random suffix (celebrity:00..:09) and fan reads back in, cache it in front of the shard so reads rarely reach it, or isolate it on its own dedicated shard (trivial with directory partitioning). The reflex: uniform key distribution ≠ uniform load distribution; reason about the access pattern." },
+    { q: "Why does sharding break joins, transactions, and secondary indexes, and what replaces each?", a: "A single node gave them for free; splitting data removes that. Cross-shard joins leave the engine and become application-side scatter-gather, so shard keys are chosen for colocation (a customer's orders on the customer's shard). Cross-shard transactions lose single-node ACID atomicity and need 2PC or a saga (local transactions with compensating undos) — both costlier and more failure-prone. Secondary indexes stop being global: a query on a non-shard-key field needs either a local index per shard (scatter-gather to query) or a separate global index that's itself sharded and often kept consistent asynchronously, so it can lag (e.g. DynamoDB GSIs are eventually consistent). The unifying point: any operation not aligned with the shard key gets harder and usually slower." },
+  ]}
+/>
+
+<Recap lang="en">
+When replication isn't enough — the data won't fit, or one leader can't absorb the writes — you **shard**: split the dataset into disjoint partitions by a **partition key**, so each node holds only its slice. The scheme decides the trade-offs: **range** gives efficient scans but hot-spots on monotonically increasing keys, **hash** spreads load evenly but kills range scans, **directory** is flexible but adds a hop and a critical lookup table. The defining hazard is **skew** — a celebrity key whose load saturates one shard while the rest idle, because even key counts don't mean even load; you split, cache, or isolate the hot key. **Resharding** under `hash mod N` moves nearly every key at once, which is why the next lesson's **consistent hashing** (move only `~1/N`) and provisioning many logical shards up front matter. And splitting breaks the freebies of one node: **cross-shard joins** become application-side scatter-gather (so you colocate), **cross-shard transactions** need 2PC or **sagas**, and **secondary indexes** become local-and-scattered or global-but-lagging. The single highest-stakes call is the partition key — choose it from your dominant access pattern and cardinality, because it irreversibly fixes where your hot spots and your hardest migrations will live. The single-engine mechanics live in the **databases** track's sharding unit; the distributed-transaction patterns in the **distributed** track's sagas unit.
+</Recap>

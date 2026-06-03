@@ -5,34 +5,167 @@ track: "system-design"
 unit: "05-caching-at-scale"
 order: 1
 title: "Caching strategies"
-summary: "Caching strategies — to be authored."
-estMin: 16
-status: stub
+summary: "Cache-aside, read-through, write-through, write-back, and write-around are not interchangeable: each wires the read and write paths differently, and each makes a specific promise — and breaks a specific one — about freshness, miss cost, and what happens when the cache dies."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
+concepts:
+  - cache-aside
+  - read-through
+  - write-through
+  - write-back
+  - write-around
+  - read-write-path
 prereqs: []
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/mem-ug/Strategies.html
+  - https://redis.io/docs/latest/develop/use/patterns/
+  - https://aws.amazon.com/builders-library/caching-challenges-and-strategies/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team added a cache to their product service and watched p99 fall by 80% — a clear win, shipped on a Friday. On Monday, support flagged that a handful of products showed prices that were three days stale, and one customer was billed at the wrong amount. Nothing was "broken": the cache was doing exactly what they'd built it to do, which was to load a value on the first read and never update it again. They had picked a caching *strategy* without realizing they had a choice. The strategy is not "do we cache?" — it is "where does the data enter the cache, where does it leave, and who is responsible for keeping it honest?"
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Each strategy wires the read/write path differently. Pick by where freshness, miss cost, and cache-loss risk land — not by default.</Crux>
 
 <Explanation>
 
-## Caching strategies
+## A caching strategy is a wiring diagram for two paths
 
-Body to be authored.
+When you put a cache in front of a slower store, you have to answer two questions, and the answers are independent. On a **read**, who talks to the database when the cache misses — the application, or the cache itself? On a **write**, does the new value go to the cache, the database, or both, and in what order? The named strategies — cache-aside, read-through, write-through, write-back, write-around — are just the small set of sensible answers to those two questions. They are not features you toggle; they are the actual data flow, and choosing one fixes your freshness guarantee, your miss penalty, and your behaviour when the cache node dies.
+
+The five strategies split cleanly: **cache-aside** and **read-through** are *read-path* patterns (how data gets *into* the cache), while **write-through**, **write-back**, and **write-around** are *write-path* patterns (what a write does to the cache). Real systems combine one of each — the most common production pairing is cache-aside reads with write-around or TTL-based writes.
+
+## Cache-aside (lazy loading): the application orchestrates
+
+In **cache-aside** — AWS calls it *lazy loading* — the application owns the logic. On a read: ask the cache; on a hit, return it; on a miss, query the database, write the result back into the cache, and return it. The cache is a dumb key-value box that knows nothing about your database.
+
+```
+READ (cache-aside):
+  v = cache.get(key)
+  if v is null:               # miss
+      v = db.read(key)        #   trip to DB
+      cache.set(key, v, ttl)  #   populate
+  return v
+```
+
+Its virtues are exactly the ones AWS lists: **only requested data is cached** (the working set fills naturally, you never warm data nobody reads), and **a node failure is survivable** — a fresh empty cache node just produces misses that fill it back up, with degraded latency but no outage. Its costs: every miss is a **three-trip penalty** (cache miss, DB read, cache write), and because nothing updates the cache when the *database* changes, cached values go **stale** unless you add a TTL or invalidate on write. That staleness is precisely the bug in the hook.
+
+## Read-through: the cache orchestrates
+
+**Read-through** moves the miss logic *into the cache layer* (or a library/provider in front of it). The application only ever calls `cache.get(key)`; on a miss the cache itself loads from the database, stores the value, and returns it. The data flow is identical to cache-aside — the difference is *who writes the code*. Read-through centralizes the load logic so every caller behaves consistently and you can't ship a service that forgets to populate on miss; the trade is that you need a cache provider that supports it and you lose the freedom to shape each query.
+
+<Inset kind="why" lang="en">
+Why does cache-aside dominate despite read-through's tidiness? Because cache-aside keeps the cache and the database **decoupled**: the cache can be a generic Redis/Memcached box, the application can cache a *computed* value (a joined, rendered, or aggregated object that has no single DB row behind it), and you can change the load logic per call site. Read-through couples the cache to a known loader, which is clean for "cache one table by primary key" but awkward the moment the cached object is derived from five queries. Most large systems pick the decoupled path and pay for it with discipline — every write site must invalidate or set a TTL — which is exactly why invalidation becomes the unit's hardest lesson.
+</Inset>
+
+## The three write strategies: where the write lands
+
+On the write path, the question is what `write(key, value)` does to the cache. Three answers:
+
+- **Write-through** — write the cache *and* the database synchronously, on every write. The cache is **never stale** (it's updated whenever the DB is), but every write pays **two trips**, and you fill the cache with data that may never be read (*cache churn*) — which is why write-through is usually paired with a TTL to evict the unread junk. AWS notes the freshness/latency trade exactly: writes get slower, but users tolerate write latency more than read latency.
+- **Write-back (write-behind)** — write the cache *now*, return to the caller, and flush to the database *asynchronously* (batched, later). This gives the **lowest write latency and absorbs write bursts** by coalescing many updates into fewer DB writes. The danger is brutal: if the cache node dies before the flush, those acknowledged writes are **gone**. Write-back trades durability for speed, so it fits metrics, counters, and view-counts — not money.
+- **Write-around** — write *only* the database and skip the cache; the value enters the cache later, lazily, on the next read (via cache-aside). This avoids churning the cache with write-heavy data that isn't read soon, at the cost of a guaranteed **miss on the first read** after a write. It fits write-once-read-maybe data like logs.
+
+<FlowDiagram
+  label="The five strategies on two paths. Top row is the read path: cache-aside has the app load from the DB on a miss, while read-through has the cache itself load. Bottom row is the write path: write-through hits cache and DB synchronously, write-back hits the cache now and flushes to the DB later, and write-around skips the cache and writes only the DB."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "ca", label: "cache-aside", sub: "app loads on miss" },
+    { id: "rt", label: "read-through", sub: "cache loads on miss" },
+    { id: "store", label: "database", sub: "source of truth" },
+    { id: "wt", label: "write-through", sub: "cache + DB sync" },
+    { id: "wb", label: "write-back", sub: "cache now, DB later" },
+    { id: "wa", label: "write-around", sub: "DB only, skip cache" },
+  ]}
+  edges={[
+    { from: "ca", to: "store", label: "miss → read" },
+    { from: "rt", to: "store", label: "miss → read" },
+    { from: "wt", to: "store", label: "sync" },
+    { from: "wb", to: "store", label: "async flush" },
+    { from: "wa", to: "store", label: "write" },
+  ]}
+  caption="Read-path patterns (cache-aside, read-through) decide who loads on a miss; write-path patterns (through, back, around) decide what a write does to the cache. You compose one of each — e.g. cache-aside + write-around + TTL is the workhorse pairing."
+/>
+
+## Consistency: what each strategy promises and breaks
+
+The whole point of choosing is that each strategy makes a different freshness promise:
+
+- **Cache-aside / write-around / read-through** all allow **stale reads** between a DB change and the cache's next refresh — they need a TTL or explicit invalidation to bound the staleness. This is the common, accepted trade: a few seconds of staleness for huge read throughput.
+- **Write-through** is the only one that keeps the cache **continuously consistent with the DB on writes** — but it does *not* protect you against an update that bypasses the cache (a batch job, a second service writing the DB directly), which silently reintroduces staleness.
+- **Write-back** is **inconsistent with the DB by design** during the flush window, and risks **data loss** on cache failure — the strongest performance, the weakest durability.
+
+The senior framing: there is no "fresh and fast and durable" option; you are choosing which of the three to sacrifice, per data class. Prices and balances want write-through or explicit invalidation; a trending-items list is fine cache-aside with a short TTL; a view-counter is a textbook write-back.
+
+<Inset kind="mistake" lang="en">
+The expensive mistake is applying *one* strategy to *all* data. Teams pick "cache-aside with a 1-hour TTL" globally and then discover that the user's account balance is cached the same way as the homepage banner — so a payment shows up an hour late. Caching is per-data-class: classify each cached thing by how much staleness it tolerates and how costly a wrong value is. High-cost, low-tolerance data (money, permissions, inventory at checkout) gets write-through or active invalidation; low-cost, high-tolerance data (recommendations, counts, rendered fragments) gets cache-aside with a TTL. Picking one global strategy is picking the wrong one for most of your data.
+</Inset>
+
+<Quiz
+  id="05-caching-strategies-quiz-1"
+  lessonSlug="01-caching-strategies"
+  lang="en"
+  question="A service caches account balances with cache-aside and a 1-hour TTL, no invalidation. A user tops up their balance via a write that goes straight to the database. What does the next read show, and why?"
+  choices={[
+    { label: "The old balance, for up to an hour — cache-aside only refreshes on a miss, and nothing invalidated the key, so the stale cached value is served until the TTL expires.", correct: true },
+    { label: "The new balance immediately — the cache always reflects the latest DB write.", misconception: "Cache-aside does NOT watch the database. A write that bypasses the cache leaves the old value cached until it expires or is explicitly invalidated. That gap is the stale read this strategy permits." },
+    { label: "An error, because the cache and DB disagree.", misconception: "Nothing errors — the cache happily serves its (stale) value with no knowledge that the DB changed. Silent staleness, not an error, is the hazard of cache-aside without invalidation." },
+    { label: "The new balance, because TTL forces a refresh on every read.", misconception: "TTL only triggers a reload AFTER it expires; within the hour, reads are hits that return the cached value. To reflect the write sooner you must invalidate the key or use write-through." },
+  ]}
+/>
+
+<Quiz
+  id="05-caching-strategies-quiz-2"
+  lessonSlug="01-caching-strategies"
+  lang="en"
+  question="You need the lowest possible write latency for a high-volume view-counter, and a few seconds of data loss on a rare cache crash is acceptable. Which write strategy fits, and what is its risk?"
+  choices={[
+    { label: "Write-back: update the cache now and flush to the DB asynchronously in batches — lowest write latency and it coalesces bursts, at the risk of losing un-flushed writes if the cache node dies.", correct: true },
+    { label: "Write-through: it's the fastest because it writes everything at once.", misconception: "Write-through is the SLOWEST write path — it pays two synchronous trips (cache + DB) on every write. It's the most consistent, not the fastest. For minimal write latency you want write-back." },
+    { label: "Write-around: skipping the cache makes writes instant.", misconception: "Write-around writes only the DB, so its write latency is the DB's latency with no caching benefit, and it guarantees a miss on the next read. It doesn't give you a fast cached counter." },
+    { label: "Cache-aside: it's a write strategy with no durability risk.", misconception: "Cache-aside is a READ-path pattern; it says nothing about writes. The low-latency, lossy write pattern is write-back, whose risk is exactly the un-flushed-writes data loss." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-caching-strategies-metaphor-1"
+  lessonSlug="01-caching-strategies"
+  lang="en"
+  setup="In _______ caching (AWS calls it lazy loading), the application loads a value from the database only when a read misses, then stores it — so only requested data is ever cached and an empty node simply refills, but cached values go stale unless a TTL or invalidation bounds them."
+  accepted={["cache-aside", "cache aside", "lazy loading", "lazy-loading"]}
+  canonical="cache-aside"
+  explanation="Cache-aside (lazy loading) puts the load-on-miss logic in the application: check the cache, on a miss read the DB and populate the cache. It caches only requested data and survives empty nodes, but because it never watches the DB for changes, it permits stale reads until a TTL expires or the key is invalidated."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Cache-aside/read-through load on a miss; write-through/back/around decide what a write does to the cache. Compose one of each per data class, trading freshness, miss cost, or durability. No fast-fresh-durable option.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-caching-strategies-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast cache-aside and read-through — same data flow, what differs?", a: "Both load from the DB on a cache miss and store the result; the data flow is identical. The difference is who owns the code: cache-aside puts the load-on-miss logic in the application (the cache stays a dumb key-value box, decoupled from the DB, so you can cache computed values), while read-through pushes it into the cache layer/provider so every caller behaves consistently. Cache-aside dominates because of that decoupling — at the cost of discipline: every write site must invalidate or set a TTL." },
+    { q: "Compare write-through, write-back, and write-around on the write path.", a: "Write-through writes cache and DB synchronously on every write — never stale, but two trips per write and cache churn (pair with a TTL). Write-back writes the cache now and flushes to the DB asynchronously — lowest write latency, coalesces bursts, but loses un-flushed writes if the cache dies (fits counters/metrics, not money). Write-around writes only the DB and lets the value enter the cache lazily on the next read — avoids churning write-heavy data, at the cost of a guaranteed miss on the first read after a write." },
+    { q: "What freshness/durability does each strategy promise, and how do you choose?", a: "Cache-aside/read-through/write-around all permit stale reads until a TTL or invalidation bounds them. Write-through keeps the cache consistent with the DB on writes (but not against writes that bypass the cache). Write-back is inconsistent during the flush window and risks data loss. There's no fast-fresh-durable option, so you choose per data class: high-cost/low-staleness-tolerance (money, permissions, inventory) → write-through or active invalidation; low-cost/high-tolerance (recommendations, counts, fragments) → cache-aside + short TTL." },
+  ]}
+/>
+
+<Recap lang="en">
+A caching strategy is a **wiring diagram for two paths**, not a feature you toggle. On the read path, **cache-aside** (lazy loading) has the application load from the DB on a miss and populate the cache — caching only requested data and surviving empty nodes, but permitting stale reads; **read-through** moves that same load-on-miss logic into the cache layer for consistency at the cost of coupling. On the write path, **write-through** writes cache and DB synchronously (never stale, but two trips and churn — pair with a TTL), **write-back** writes the cache now and flushes the DB later (lowest latency, coalesces bursts, but loses un-flushed writes on a crash), and **write-around** writes only the DB and lets the value enter the cache lazily (no churn, but a guaranteed first-read miss). Each makes a different promise about **freshness, miss cost, and durability**, and there is no option that is fast, fresh, and durable at once — so you compose one read pattern and one write pattern **per data class**, never one global strategy for everything. Bounding the staleness that the lazy patterns permit is what the rest of this unit — eviction and TTL, then the genuinely hard problem of invalidation — is about.
+</Recap>

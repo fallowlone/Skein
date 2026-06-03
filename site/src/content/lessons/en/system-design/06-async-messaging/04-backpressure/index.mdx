@@ -5,34 +5,158 @@ track: "system-design"
 unit: "06-async-messaging"
 order: 4
 title: "Backpressure"
-summary: "Backpressure — to be authored."
-estMin: 16
-status: stub
+summary: "Backpressure is the signal a slow consumer sends upstream so producers slow instead of piling work into a growing buffer. An unbounded queue is a latent disaster: it absorbs an incident, then a backlog built in minutes takes hours to drain. Bound it, shed load, flow-control."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - backpressure
+  - bounded-vs-unbounded
+  - load-shedding
+  - queue-backlog
+  - rate-limiting
+  - flow-control
+prereqs:
+  - 02-availability/03-failover-and-fault-tolerance
+  - 06-async-messaging/01-message-queues
+  - 06-async-messaging/02-pub-sub
+  - 06-async-messaging/03-event-driven
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/
+  - https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/
+  - https://kafka.apache.org/documentation/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A notification service consumed events off a queue and called a downstream API. One morning that API slowed from 50 ms to 4 seconds. The queue — unbounded, "for safety" — happily absorbed every event the producers fired while the consumer crawled. By the time the API recovered an hour later, the queue held nine hours of backlog. The system was now in a second, worse outage: every notification arriving was nine hours stale, users were getting alerts about things that no longer mattered, and the only way out was to delete the backlog and accept the data loss. The queue meant to protect availability had *manufactured* a longer outage. The thing they were missing was backpressure — a way for the slow consumer to tell the producers "slow down" instead of silently hoarding work.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Backpressure is a slow consumer signalling upstream to slow down. Without it, an unbounded queue absorbs an incident, then can't drain.</Crux>
 
 <Explanation>
 
-## Backpressure
+## What backpressure is
 
-Body to be authored.
+**Backpressure** is the mechanism by which a component that can't keep up pushes that fact *upstream*, so the producer slows its rate rather than overwhelming the consumer. It's the difference between a system that *resists* overload and one that silently *accumulates* it. In a synchronous chain, backpressure is almost automatic: if B is slow, A's call to B blocks, A's own callers block, and the pressure propagates back to the source naturally. The danger of asynchronous, queue-based designs is that they *break* this feedback loop on purpose — the producer enqueues and returns immediately, never learning that the consumer is drowning. The buffer that decouples producer from consumer (lesson 1's whole point) also hides the consumer's pain from the producer. Backpressure is how you put that feedback back in deliberately.
+
+The core idea: the rate work *enters* a system must, over any sustained window, be ≤ the rate work *leaves* it. When arrival exceeds service rate, the difference has to go *somewhere* — and that somewhere is a queue. The only real questions are how big you let that queue grow and what you do when it's full.
+
+## The unbounded queue: a latent disaster
+
+An **unbounded queue** has no maximum size — it accepts everything. This feels safe ("we'll never reject work!") and is the single most dangerous default in async systems. Here is why it's a *latent* disaster — fine until it isn't:
+
+A queue-based system has two modes. When the queue is near-empty, latency is low — the **fast mode**. But if arrival rate exceeds service rate for any sustained period (a slow dependency, a traffic spike, a consumer deploy), the system flips into a second mode where the backlog grows and end-to-end latency climbs without bound. This **bimodal behaviour** is the trap: nothing looks wrong until you cross the line, and then the metric that matters (latency to process a message) degrades catastrophically while the producer, blissfully unaware, keeps enqueueing.
+
+The brutal arithmetic of recovery: if a system falls an hour behind, it needs roughly *double* its normal capacity for an hour just to catch up — and if a spike queued 10× the consumer's capacity, draining it takes 10× as long as the spike lasted. **A short incident becomes a long one.** A 30-minute pile-up can mean a 5-hour recovery. Worse, by the time the backlog is huge, the data may be stale enough to be useless — you process messages too late for the result to matter, which is exactly the availability hit the queue was supposed to prevent. The unbounded queue didn't absorb the incident; it laundered a brief failure into a prolonged one.
+
+<Inset kind="why" lang="en">
+Why is an unbounded buffer worse than rejecting work? Because rejecting work is *honest and immediate* — the producer learns instantly that the system is at capacity and can back off, retry later, or shed. An unbounded queue is *dishonest*: it accepts the work, returns success, and silently defers the failure to a future moment when the backlog is so deep that recovery is painful and the queued work may already be worthless. Synchronous systems mostly self-heal from overload because they drop excess load at the door and recover fast; asynchronous systems accumulate it and recover slowly. Memory makes it concrete — an in-process unbounded queue under sustained overload doesn't just slow down, it grows until the process runs out of memory and crashes, turning a slowdown into a hard outage. The bound is not a limitation; it's the thing that keeps the failure small and recoverable.
+</Inset>
+
+## The fixes: bound it, shed load, flow-control, rate-limit
+
+A handful of mechanisms restore the feedback loop. They compose; mature systems use several.
+
+- **Bounded queues.** Give every queue a maximum depth. When it's full, the enqueue *fails fast* — and that failure *is* the backpressure: the producer now knows and can react. A bound converts "silent infinite backlog" into "explicit, immediate signal." Choosing the bound is choosing how much burst you absorb before you push back.
+- **Load shedding.** When you're at capacity, deliberately reject (shed) some work rather than degrade everything. Reject the lowest-value work first; protect the critical path. Crucially, shedding load *cheaply* at the front door is far better than letting expensive half-done work pile up — fail fast and clearly. (See the dedicated availability work on load shedding for the full treatment.)
+- **Rate limiting at the consumer / fairness.** In a multi-tenant system, one tenant's spike can build a backlog that starves everyone. Per-tenant rate limits and isolating workloads (separate queues, or hashing tenants across a small pool of queues so a hot tenant only contaminates a few) keep one noisy neighbour from manufacturing a system-wide backlog.
+- **Flow control (log-based pull).** Pull-based consumers (Kafka) get backpressure almost for free: the consumer asks for the next batch when *it's* ready, so it can never be pushed faster than it can process. The "queue" is the retained log, which doesn't grow in memory — but the offset lag does, and **consumer lag is the metric you alarm on**: it's the direct measure of how far behind you've fallen and whether you're draining or drowning.
+
+<FlowDiagram
+  label="Producers feed a bounded queue; when it fills, the enqueue fails fast, signalling backpressure upstream so producers slow or shed load; the consumer pulls at its own rate and its lag is the alarm metric."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "prod", label: "producers", sub: "arrival rate" },
+    { id: "bound", label: "bounded queue", sub: "max depth" },
+    { id: "full", label: "queue full", sub: "fail fast = signal" },
+    { id: "shed", label: "backpressure", sub: "slow / shed low-value" },
+    { id: "cons", label: "consumer", sub: "pull at service rate" },
+    { id: "lag", label: "consumer lag", sub: "the alarm metric" },
+  ]}
+  edges={[
+    { from: "prod", to: "bound" },
+    { from: "bound", to: "full", label: "at max" },
+    { from: "full", to: "shed" },
+    { from: "shed", to: "prod", label: "push back" },
+    { from: "bound", to: "cons" },
+    { from: "cons", to: "lag" },
+  ]}
+  caption="The bound is what turns a silent infinite backlog into an explicit 'slow down' signal: a full queue fails fast, the producer feels it and sheds or throttles, and the consumer pulls at its sustainable rate. Alarm on queue depth / consumer lag — it's your early warning that arrival has overtaken service."
+/>
+
+## The mindset shift
+
+The deep lesson is that *a queue is not infinite headroom*. Juniors add a queue and feel safe; seniors add a queue and immediately ask: what's its bound, what happens when it's full, who feels the backpressure, and what's the recovery time if it fills during an incident? The queue's job is to absorb *brief* mismatches between arrival and service rate — a burst, a momentary slow dependency. It is not a place to store a sustained overload, because a sustained overload means arrival > service *forever*, and no buffer survives forever. When the rates won't reconcile, your only honest options are to add capacity (drain faster) or shed load (accept less). The buffer just buys you the minutes to choose.
+
+<Inset kind="mistake" lang="en">
+The retry-storm amplifier, the classic way a brownout becomes an outage. When the consumer slows, clients time out and *retry* — which adds load precisely when the system is already overloaded, accelerating the queue's collapse. Each retry is a *new* arrival on top of the original, so naive retries multiply offered load at the worst moment. The fixes are exponential backoff with jitter (spread retries out, don't thunder), a retry budget (cap retries as a fraction of traffic, not per-request), and circuit breakers (stop calling a failing dependency entirely for a cooldown). Adding retries without these is how teams turn a recoverable slowdown into a self-sustaining overload that won't drain until they shut traffic off.
+</Inset>
+
+<Quiz
+  id="06-backpressure-quiz-1"
+  lessonSlug="04-backpressure"
+  lang="en"
+  question="Your async pipeline uses an unbounded queue 'so we never drop events.' A downstream slows for 30 minutes during peak. What's the most likely outcome, and the root fix?"
+  choices={[
+    { label: "The queue silently absorbs a huge backlog that then takes hours to drain (and may be stale/worthless) — a brief incident becomes a long one. Root fix: bound the queue so a full queue fails fast and signals backpressure, plus shed low-value load.", correct: true },
+    { label: "Nothing — the queue protects you; events just arrive a little late.", misconception: "Under sustained arrival > service, the backlog grows without bound and recovery needs ~2× capacity for as long as you were behind (10× backlog → 10× drain time). 'A little late' becomes hours late and possibly useless. The unbounded queue manufactures a longer outage." },
+    { label: "The producers automatically slow down because the queue is full.", misconception: "An UNBOUNDED queue is never full, so it never pushes back — that's the bug. Producers only feel backpressure when the queue is bounded and the enqueue fails fast. Without a bound there's no signal." },
+    { label: "Add more consumers after the incident to catch up.", misconception: "That helps drain faster but doesn't prevent the disaster: during the incident the unbounded queue already hid the overload and let the backlog balloon. You need a bound + load shedding so the failure stays small in the first place." },
+  ]}
+/>
+
+<Quiz
+  id="06-backpressure-quiz-2"
+  lessonSlug="04-backpressure"
+  lang="en"
+  question="A consumer slows, clients time out and retry, and the system collapses faster than the original slowdown explains. What's happening and which fixes address it?"
+  choices={[
+    { label: "A retry storm: each retry is a NEW arrival added when the system is already overloaded, multiplying offered load at the worst moment. Fix with exponential backoff + jitter, a retry budget, and circuit breakers.", correct: true },
+    { label: "The queue is too small; make it unbounded so retries always fit.", misconception: "An unbounded queue just hides the retry-amplified overload and makes the backlog (and recovery) worse. The problem is too much offered load from retries; you reduce that load with backoff/budgets/breakers, not by removing the bound." },
+    { label: "Nothing unusual — retries are always safe and should be aggressive.", misconception: "Naive aggressive retries are a known overload amplifier: they add load exactly when capacity is scarce, turning a brownout into a self-sustaining outage. Retries need backoff, jitter, and a budget to be safe." },
+    { label: "Disable all retries permanently.", misconception: "Killing retries throws away resilience to transient blips. The fix is disciplined retries — exponential backoff with jitter, a retry budget capping them as a fraction of traffic, and circuit breakers — not removing them." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-backpressure-metaphor-1"
+  lessonSlug="04-backpressure"
+  lang="en"
+  setup="An unbounded queue can never push back because it is never full; the fix is to make every queue _______ so that a full queue fails fast — and that fast failure IS the backpressure signal that tells producers to slow down or shed load."
+  accepted={["bounded", "bounded (capped)", "size-bounded", "finite"]}
+  canonical="bounded"
+  explanation="A bound is what converts a silent infinite backlog into an explicit, immediate signal: when a bounded queue is full, the enqueue fails fast, the producer learns the system is at capacity, and it can throttle, retry later, or shed. Without a bound there's no full state and therefore no backpressure — just a backlog that grows until recovery is impossible."
+/>
+
+This is composition altitude: where backpressure belongs in a design and why the bound matters. Load shedding has its own depth in the availability track, and broker-specific flow-control (Kafka consumer lag tuning, RabbitMQ flow control) lives in the dedicated **queues** track — reach there to operate a specific broker; stay here to decide that your design needs a bound and a shed strategy at all.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Backpressure is a slow consumer signalling upstream to slow down. An unbounded queue breaks that feedback: a backlog built in minutes takes hours to drain. Bound every queue (full = fail fast), shed load, alarm on lag.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="06-backpressure-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is backpressure, and why do async/queue designs lose it?", a: "Backpressure is a component that can't keep up signalling that fact UPSTREAM so the producer slows down instead of overwhelming the consumer. In a synchronous chain it's nearly automatic — a slow B blocks A which blocks A's callers, propagating pressure to the source. Async/queue designs deliberately break this: the producer enqueues and returns immediately, so the decoupling buffer also hides the consumer's pain from the producer. Backpressure is putting that feedback loop back in on purpose. The invariant: over any sustained window, arrival rate must be ≤ service rate, or the difference piles into a queue." },
+    { q: "Why is an unbounded queue a latent disaster?", a: "Queue systems are bimodal: near-empty = low-latency fast mode; but once arrival > service for a sustained period the backlog grows without bound and end-to-end latency climbs — and nothing looks wrong until you cross the line. Recovery is brutal: falling an hour behind needs ~2× capacity for an hour; a 10× spike takes 10× the spike's duration to drain, so a short incident becomes a long one, and the backlog may be stale enough to be useless. An in-memory unbounded queue can also grow until the process OOMs. It doesn't absorb the incident — it launders a brief failure into a prolonged one. Rejecting work is honest and fast; an unbounded queue defers the failure to a worse moment." },
+    { q: "List the mechanisms that restore the feedback loop.", a: "(1) Bounded queues — a full queue fails fast, and that failure IS the backpressure signal; the bound sizes how much burst you absorb before pushing back. (2) Load shedding — at capacity, cheaply reject the lowest-value work at the front door to protect the critical path. (3) Rate limiting / fairness per tenant — so one noisy tenant can't build a system-wide backlog (per-tenant limits, isolated or hashed queues). (4) Flow control via pull (Kafka) — the consumer pulls when ready so it can't be overrun; alarm on CONSUMER LAG as the direct 'are we draining or drowning' metric. And guard retries (backoff + jitter, retry budget, circuit breakers) so a retry storm doesn't amplify the overload." },
+  ]}
+/>
+
+<Recap lang="en">
+**Backpressure** is the signal a component that can't keep up sends **upstream** so producers slow down rather than overwhelming it. Synchronous chains get it almost for free (a slow call blocks back to the source); **async/queue designs break the feedback loop on purpose** — the decoupling buffer that hides the consumer's slowness from the producer is exactly what removes the natural signal. The invariant to hold: over any sustained window, **arrival rate ≤ service rate**, or the surplus piles into a queue. An **unbounded queue** is the most dangerous default — a **latent disaster** with **bimodal** behaviour: fine in fast mode, then once arrival exceeds service the backlog grows without bound, recovery needs roughly double capacity for as long as you were behind (a 10× spike → 10× drain), the data may go stale, and an in-memory queue can OOM — so it **launders a brief failure into a long outage**. The fixes restore the loop: **bound every queue** (full = fail fast = the signal), **shed low-value load** cheaply at the front door, **rate-limit and isolate per tenant** so one noisy neighbour can't starve everyone, and use **pull-based flow control** while **alarming on consumer lag**. Guard against the **retry storm** (backoff + jitter, retry budget, circuit breakers) that turns a brownout into a self-sustaining outage. The mindset: a queue is not infinite headroom — it absorbs brief bursts, never sustained overload; when the rates won't reconcile, your honest options are add capacity or shed load, and the buffer just buys the minutes to choose.
+</Recap>

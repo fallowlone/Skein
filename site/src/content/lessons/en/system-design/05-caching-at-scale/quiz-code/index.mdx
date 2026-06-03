@@ -4,19 +4,163 @@ lang: en
 track: "system-design"
 unit: "05-caching-at-scale"
 order: 7
-title: "05-caching-at-scale: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Caching at scale: code and config reading"
+summary: "Read real caching code and config, then reason about behavior: a stale-read race, a miss-rate-to-DB-load calculation, a noeviction misconfiguration, and a hot-key stampede in a read path."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - cache-aside
+  - hit-ratio
+  - cache-stampede
+  - maxmemory-policy
+  - cache-invalidation
+  - request-coalescing
+prereqs:
+  - 05-caching-at-scale/01-caching-strategies
+  - 05-caching-at-scale/02-eviction-and-ttl
+  - 05-caching-at-scale/03-distributed-cache
+  - 05-caching-at-scale/04-cache-invalidation
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/mem-ug/Strategies.html
+  - https://redis.io/docs/latest/develop/reference/eviction/
+  - https://aws.amazon.com/builders-library/caching-challenges-and-strategies/
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 05-caching-at-scale unit. STUB.</Hook>
+<Hook>
+Caching bugs live in the code and config, not the prose: a missing invalidation, a synchronous miss path, a default eviction policy, a hot key read without coalescing. Read each snippet, reason about what it does under load, and pick the answer a senior engineer would commit to.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the code, find the strategy and the failure it invites, then pick the fix the behavior supports — not the one that hides it.</Crux>
+
+<Explanation>
+
+Practise the loop you run in a caching design or incident review: locate the strategy in the code, predict its behavior under concurrency and load, and choose the change the mechanics actually support.
+
+## Snippet 1 — the invalidation order
+
+```python
+# cache-aside read + "delete on write" invalidation
+def get_user(uid):
+    u = cache.get(f"user:{uid}")
+    if u is None:                       # miss
+        u = db.read_user(uid)           # slow load of CURRENT value
+        cache.set(f"user:{uid}", u)     # populate (no TTL)
+    return u
+
+def update_user(uid, patch):
+    db.write_user(uid, patch)           # new value to DB
+    cache.delete(f"user:{uid}")         # invalidate
+```
+
+<Quiz
+  id="05-caching-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Under concurrency, a user's stale value occasionally survives an update forever. What is the bug, and the most robust fix?"
+  choices={[
+    { label: "A write-time race: a concurrent reader can load the OLD value before update_user's delete, then set it back AFTER the delete — and with no TTL it persists forever. Use versioned keys (or at least add a TTL backstop) so the stale write can't re-poison a live key.", correct: true },
+    { label: "Nothing's wrong; delete-on-write is correct.", misconception: "It's correct in isolation but races under concurrency: a slow reader holding the old value can write it back after the delete, and with no TTL it never self-corrects. Versioned keys remove the shared mutable key being raced; a TTL backstop at least bounds the damage." },
+    { label: "The read should not populate the cache.", misconception: "Populating on miss is normal cache-aside. The bug is the interleaving of a slow read's set with the write's delete, plus no TTL to recover. Fix the race (versioned keys) and add a TTL backstop, not the populate step." },
+    { label: "Add more cache nodes.", misconception: "More nodes don't fix a logical race on a single key — the stale set-after-delete happens regardless of node count. Use versioned keys so the stale write lands on an orphaned old version, and add a TTL so any missed invalidation self-heals." },
+  ]}
+/>
+
+## Snippet 2 — the hit-ratio math
+
+```python
+def db_reads_per_sec(total_rps: float, hit_ratio: float) -> float:
+    miss_rate = 1.0 - hit_ratio
+    return total_rps * miss_rate
+
+before = db_reads_per_sec(80_000, 0.99)   # ?
+after  = db_reads_per_sec(80_000, 0.90)   # ?
+```
+
+<Quiz
+  id="05-caching-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What do before and after return, and what's the takeaway for the database?"
+  choices={[
+    { label: "before = 800/sec (1% of 80k), after = 8,000/sec (10% of 80k) — a 10× increase in DB load from a hit-ratio drop that looks like only 9 points. The DB feels the miss rate, and it was sized for ~1%.", correct: true },
+    { label: "before ≈ 79,200, after ≈ 72,000 — most reads hit the DB.", misconception: "You computed reads served from CACHE (hit_ratio × total), not the misses reaching the DB. db_reads = total × (1 − hit_ratio): 800 then 8,000. The DB sees the misses, which jumped 10×." },
+    { label: "before = 800, after = 8,000, but the 9-point drop is minor.", misconception: "The numbers are right but the conclusion is wrong: 800 → 8,000 is a 10× load increase, not minor. The hit-ratio change looks small precisely because the danger lives on the miss side, which multiplied tenfold." },
+    { label: "Both are ~0; the cache absorbs everything.", misconception: "Only hits are absorbed; misses fall through. At 99% there are still 800 misses/sec, and at 90% there are 8,000 — a 10× jump. Compute total × (1 − hit_ratio) to see what the DB actually feels." },
+  ]}
+/>
+
+## Snippet 3 — the Redis cache config
+
+```ini
+# redis instance used purely as a cache
+maxmemory 16gb
+maxmemory-policy noeviction        # left at default
+# app issues SET ... EX 600 for every key
+```
+
+<Quiz
+  id="05-caching-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What happens when this cache fills its 16GB, and what should the policy be?"
+  choices={[
+    { label: "With noeviction, writes (SETs) start FAILING once memory is full instead of evicting cold keys — wrong for a cache. Set allkeys-lru (or allkeys-lfu) so any key can be evicted and the cache keeps serving.", correct: true },
+    { label: "noeviction is safest — it protects your data.", misconception: "noeviction protects a durable store by refusing writes under pressure, but a cache is expendable: you WANT it to drop cold keys and keep serving. Failing SETs under load is an outage. Use allkeys-lru/lfu for a cache." },
+    { label: "It silently overwrites the oldest keys; no change needed.", misconception: "noeviction does NOT overwrite anything — it rejects new writes with an error when full. To make room by dropping cold keys you must set an eviction policy like allkeys-lru/lfu." },
+    { label: "Switch to volatile-lru to be safe.", misconception: "volatile-lru only evicts keys that have a TTL; any TTL-less key is un-evictable and silently fills memory until eviction can't proceed. Since you want any key evictable for a pure cache, use allkeys-lru/lfu." },
+  ]}
+/>
+
+## Snippet 4 — the hot-key read path
+
+```python
+# product page for a viral item, recompute is ~300ms
+def get_page(pid):
+    html = cache.get(f"page:{pid}")
+    if html is None:                    # miss
+        html = render_page(pid)         # expensive: 6 queries + render
+        cache.set(f"page:{pid}", html, ex=30)
+    return html
+# at peak, ~40,000 concurrent requests for the SAME pid
+```
+
+<Quiz
+  id="05-caching-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Every 30 seconds the backend is hit by thousands of simultaneous render_page calls for one pid. What's the failure and the fix?"
+  choices={[
+    { label: "A cache stampede: when page:{pid} expires, all ~40,000 concurrent readers miss and each calls render_page at once. Add request coalescing/single-flight so one request recomputes while the rest await that result (optionally probabilistic early recompute so it refreshes before expiry).", correct: true },
+    { label: "Just raise ex to 300; the problem goes away.", misconception: "A longer TTL only makes the stampede every 300s instead of 30s — it still detonates on expiry with thousands of simultaneous renders. Coalesce the misses (single-flight) so concurrent readers share one recompute." },
+    { label: "render_page is too slow; optimize it to 30ms.", misconception: "Faster rendering shrinks each stampede but doesn't stop thousands of simultaneous recomputes of the same value. The structural fix is coalescing concurrent misses into one recompute, regardless of how fast render_page is." },
+    { label: "Shard the cache so the key spreads out.", misconception: "A single key can't be split across shards — sharding doesn't help a hot key. The periodic spike on expiry is a stampede; fix it with single-flight (and consider near-caching/replicating the hot key for steady load)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Caching decisions show up in the code: an invalidation order that races, a miss rate that multiplies DB load 10×, a noeviction default that fails writes, a hot key without coalescing. Read the mechanics; pick the fix.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-caching-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does delete-on-write race, and what's the robust fix?", a: "A concurrent reader can load the OLD value, then set it into the cache AFTER the writer's delete, re-poisoning the key — and with no TTL it persists forever. The robust fix is versioned keys (bump a version on write so the stale set lands on an orphaned old version no new read requests); at minimum add a TTL backstop so any missed/lost invalidation self-heals within the TTL." },
+    { q: "From a hit ratio, how do you compute DB load, and why is the asymmetry dangerous?", a: "DB reads = total_rps × (1 − hit_ratio). At 80,000 RPS, 99% hits → 800 misses/sec; 90% hits → 8,000 misses/sec — a 10× jump from a 9-point hit-ratio drop. It's dangerous because the DB is sized assuming ~99% hits, so a small-looking hit-ratio regression multiplies its load tenfold; you reason about the miss side, not the hit side." },
+    { q: "Why is noeviction wrong for a cache, and how do you stop a hot-key stampede in a read path?", a: "noeviction makes Redis reject writes once memory is full instead of dropping cold keys — correct for a durable store, an outage for a cache; use allkeys-lru/lfu so any key is evictable. A hot-key stampede happens when an expensive key expires and thousands of concurrent readers all recompute it at once; stop it with request coalescing/single-flight (one recompute, the rest await the result), optionally probabilistic early recompute so the hot value refreshes before it ever goes absent." },
+  ]}
+/>
+
+<Recap lang="en">
+Every caching decision in this unit shows up directly in the code and config. **Delete-on-write invalidation** races under concurrency — a slow reader sets the old value back after the delete, and with no TTL it never recovers — so you use versioned keys (and a TTL backstop). The **miss-rate math** (`DB reads = total × (1 − hit_ratio)`) shows why 99%→90% hits is a 10× DB load spike: the DB feels the miss side, sized for ~1%. The **`noeviction` default** makes a Redis cache fail writes under memory pressure instead of dropping cold keys, so a pure cache wants `allkeys-lru/lfu`. And a **hot-key read path** without coalescing stampedes the backend on every expiry — thousands of simultaneous recomputes of one value — fixed by single-flight (one recompute, the rest wait) and optionally probabilistic early recompute. The senior habit is to read the mechanics, predict the behavior under load and concurrency, and choose the structural fix the code supports — not the one (a bigger TTL, more nodes, faster render) that merely papers over it.
+</Recap>

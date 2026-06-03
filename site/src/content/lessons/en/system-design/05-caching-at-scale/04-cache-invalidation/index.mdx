@@ -5,34 +5,150 @@ track: "system-design"
 unit: "05-caching-at-scale"
 order: 4
 title: "Cache invalidation"
-summary: "Cache invalidation — to be authored."
-estMin: 16
-status: stub
+summary: "Keeping the cache honest is the genuinely hard part. TTL, explicit invalidation, and versioned keys each trade staleness against complexity, write-time races produce stale reads, and the deepest trap is treating the cache as the source of truth instead of a disposable copy of it."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - cache-invalidation
+  - versioned-keys
+  - write-time-races
+  - negative-caching
+  - stale-reads
+  - source-of-truth
+prereqs:
+  - 05-caching-at-scale/01-caching-strategies
+  - 05-caching-at-scale/02-eviction-and-ttl
+  - 05-caching-at-scale/03-distributed-cache
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/caching-challenges-and-strategies/
+  - https://redis.io/docs/latest/develop/use/patterns/
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/mem-ug/Strategies.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team shipped explicit invalidation: every time the database changed, they deleted the matching cache key so the next read would reload fresh. Cleaner than a TTL, they thought. For weeks it worked. Then a user reported their *old* profile photo kept reappearing minutes after they changed it. The cause was a race: a read missed the key and started loading the old value from the database at the same instant a write updated the database and deleted the key. The slow read finished last and wrote the *stale* value it had fetched back into the now-empty cache — re-poisoning it for the full TTL. Nothing was broken; the ordering was just unlucky. This is why "there are only two hard things in computer science: cache invalidation and naming things" is a joke engineers tell with a wince.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>TTL, explicit delete, or versioned keys trade staleness for complexity. Write-time races cause stale reads. The cache is never the truth.</Crux>
 
 <Explanation>
 
-## Cache invalidation
+## Why invalidation is the hard problem
 
-Body to be authored.
+Every cache holds a *copy* of data that lives somewhere else. The moment the original changes, the copy is wrong — and the cache has no idea, because (as the strategies lesson showed) lazy caches don't watch the database. **Cache invalidation** is the discipline of getting the wrong copy out of the cache, on time, without breaking correctness or hammering the backend. It is famously hard not because any single technique is complex, but because it sits exactly where two independent timelines — your writes and your reads — interleave unpredictably across a distributed system. There are three families of approach, and each trades the same two things: **staleness** (how wrong can a read be?) against **complexity/coupling** (how much must the write path know about the cache?).
+
+## The three approaches
+
+- **TTL expiry** — let every entry expire after N seconds; the write path does *nothing*. This is the simplest and most decoupled: the cache self-heals, writers never touch it. The cost is bounded staleness — a value can be wrong for up to the TTL. It's the right default for data that tolerates seconds-to-minutes of lag (feeds, listings, rendered fragments).
+- **Explicit invalidation** — on every write, actively delete (or update) the affected cache key so the next read reloads. Staleness drops toward zero, but now the **write path is coupled to the cache**: it must know every key derived from the data it changed, and a single missed invalidation site leaves a key stale forever (until its TTL, if any). This coupling is where most cache bugs live.
+- **Versioned keys** — bake a version into the key itself: `user:42:v7`. A write doesn't delete anything; it bumps the version (`v7 → v8`), so reads of the new version simply *miss* a key that was never written and load fresh, while the old `v7` entries are now orphaned and eventually evicted. This sidesteps the delete-race entirely (you never mutate an existing key) at the cost of leaving garbage to be evicted and needing somewhere to track the current version.
+
+The senior framing mirrors the strategies lesson: there is no free option. TTL is simple but stale; explicit is fresh but coupled and race-prone; versioning is race-free but leaves orphans and needs a version source. You pick per data class, and you usually combine — explicit invalidation *with* a TTL backstop, so a missed invalidation self-corrects instead of poisoning forever.
+
+<Inset kind="why" lang="en">
+Why does explicit invalidation race, and why does *versioning* escape the race? The race is a classic read-write interleave: a reader misses key K and starts a slow load of the *old* DB value; meanwhile a writer updates the DB and deletes K. If the slow read finishes *after* the delete, it writes the old value back into the empty cache — a stale entry created by correct code in an unlucky order (the hook). Deleting can't fix this because the reader is already holding the stale value in flight. Versioned keys escape it because the writer bumps to `v8` and the reader's stale value is being written to the *old* key `v7` — which no new read will ever request. The new version is a fresh, never-before-written key, so its first read is a clean miss against the current DB state. You traded "mutate a shared key and hope the ordering is kind" for "write to a brand-new key per version," which has no ordering to get wrong.
+</Inset>
+
+## Stale reads, negative caching, and the dogpile
+
+Three more hazards sit around invalidation:
+
+- **Stale reads** are the accepted cost of TTL/lazy strategies, but they become a *correctness bug* when the data class can't tolerate them (the balance-shown-an-hour-late from the strategies lesson). The fix isn't "never be stale" — it's matching the staleness budget to the data: bound it with a short TTL, or pay the coupling cost of explicit invalidation, where it actually matters.
+- **Negative caching** — cache the *absence* of a value (a "not found"), so repeated lookups of a missing key don't hammer the database each time. Vital defense against a flood of misses for non-existent keys (e.g. an attacker requesting random IDs), but it has its own invalidation problem: when the thing finally *does* get created, a too-long negative-cache TTL hides it. Negative entries need short TTLs or explicit invalidation on create.
+- **The dogpile** — the stampede from the distributed-cache lesson is itself an invalidation event: invalidating (deleting) a hot key creates an instant gap that N concurrent readers all rush to refill. So invalidation and stampede protection are coupled: an aggressive "delete on every write" on a hot key *is* a stampede trigger, which is why hot keys often prefer update-in-place or versioning over delete.
+
+<FlowDiagram
+  label="The write-time race that produces a stale read. A reader misses key K and starts a slow load of the old database value. Concurrently a writer updates the database and deletes K. The slow read finishes last and writes the old value it fetched back into the now-empty cache, re-poisoning K with stale data."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "miss", label: "reader misses K", sub: "t0" },
+    { id: "slowread", label: "load OLD value", sub: "from DB, slow" },
+    { id: "repoison", label: "write OLD to cache", sub: "t3 — stale again" },
+    { id: "write", label: "writer updates DB", sub: "t1" },
+    { id: "delete", label: "delete K", sub: "t2 — too early" },
+    { id: "version", label: "fix: bump to K:v+1", sub: "no shared key to race" },
+  ]}
+  edges={[
+    { from: "miss", to: "slowread" },
+    { from: "slowread", to: "repoison", label: "finishes last" },
+    { from: "write", to: "delete" },
+    { from: "delete", to: "version", label: "delete can't fix" },
+  ]}
+  caption="The in-flight slow read holds the old value; deleting the key can't recall it, so it gets written back stale. Versioned keys remove the shared mutable key the two timelines were fighting over — the stale write lands on an orphaned old version no new read will request."
+/>
+
+## The deepest anti-pattern: cache as source of truth
+
+The most dangerous mistake is not a race; it's a category error. A cache is a **disposable copy** of authoritative data that lives in the durable store. Treat it as the *source of truth* — write only to the cache and lazily flush, or assume "if it's in the cache it must be correct" — and you've built a system that loses data when the cache restarts (it's not durable), serves whatever happened to be cached even when the DB disagrees, and can't be rebuilt from scratch because nothing knows the real state. Every invalidation strategy above assumes the database is authoritative and the cache is expendable: you must be able to **flush the entire cache at any moment** and have the system recover (slowly, via misses) to *correct* answers. If flushing the cache would lose data or serve wrong results indefinitely, it isn't a cache — it's an undurable primary database, and you've inherited all of its consistency problems with none of its guarantees.
+
+<Inset kind="mistake" lang="en">
+A concrete version of the source-of-truth trap: using write-back caching (from the strategies lesson) and then reading from the cache as if it's authoritative, while the asynchronous flush to the DB lags or fails silently. The cache shows the "right" number, the database shows an older one, and any process that reads the DB directly (a report, a second service, a backup) sees the wrong value — and if the cache evicts or crashes before the flush, the acknowledged write is simply gone. The rule that prevents this whole class of bug: writes are acknowledged only once they're in the durable store, and the cache is treated as a performance layer you can drop at any time. The cache makes reads fast; it does not make data exist.
+</Inset>
+
+<Quiz
+  id="05-cache-invalidation-quiz-1"
+  lessonSlug="04-cache-invalidation"
+  lang="en"
+  question="With explicit 'delete the key on every write' invalidation, a user's stale value occasionally reappears right after they update it. What is happening, and which approach removes the race?"
+  choices={[
+    { label: "A write-time race: a concurrent slow read loaded the old value before the delete, then wrote it back into the empty cache after the delete. Versioned keys remove the race — bump the version so the reader's stale write lands on an orphaned old key no new read requests.", correct: true },
+    { label: "The delete failed; just retry the delete.", misconception: "The delete succeeded — the problem is a slow read that was already holding the OLD value and wrote it back AFTER the delete. Retrying delete doesn't help because the reader re-poisons the key. Versioning (or a delete-after-write + double-delete) removes the shared mutable key being raced." },
+    { label: "TTL is too long; set it to zero.", misconception: "A TTL of zero defeats the cache entirely (every read misses). The bug isn't TTL length — it's a concurrent read writing a stale value back after the invalidating delete. Use versioned keys so there's no shared key to race over." },
+    { label: "Caching that data is impossible.", misconception: "It's very cachable — you just need an invalidation scheme without the delete-race. Versioned keys (bump the version on write) give race-free invalidation because the stale write lands on the old, now-orphaned version that no new read will ask for." },
+  ]}
+/>
+
+<Quiz
+  id="05-cache-invalidation-quiz-2"
+  lessonSlug="04-cache-invalidation"
+  lang="en"
+  question="An architect proposes writing all updates to Redis only and flushing to Postgres asynchronously, then reading from Redis as the authoritative value. What's the core objection?"
+  choices={[
+    { label: "It treats the cache as the source of truth: a Redis restart loses un-flushed writes (it's not durable), and any reader of Postgres sees stale data during the flush lag. A cache must be a disposable copy you can flush anytime and still recover correct answers.", correct: true },
+    { label: "Redis is too slow to be a source of truth.", misconception: "Speed isn't the objection — Redis is fast. The objection is durability and authority: a cache is an expendable copy, so making it the source of truth means a restart loses acknowledged writes and other DB readers see wrong values. The DB must stay authoritative." },
+    { label: "Nothing's wrong; this is just write-back caching.", misconception: "Write-back caching is fine AS A CACHE, but reading from it as the AUTHORITATIVE value is the anti-pattern. Acknowledge writes only once durable, and treat the cache as droppable. Otherwise a crash before flush loses data with no record of it." },
+    { label: "Postgres can't keep up with Redis writes.", misconception: "Throughput isn't the core issue; durability and authority are. If the cache is the source of truth, a flush or crash loses data and direct DB readers go stale. The fix is to keep the durable store authoritative and the cache disposable." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-cache-invalidation-metaphor-1"
+  lessonSlug="04-cache-invalidation"
+  lang="en"
+  setup="To invalidate without the delete-race, bake a version into the key (user:42:v7) and bump it on every write; this works because the reader's stale write lands on the now-orphaned old _______, which no new read will ever request — there is no shared mutable key for the two timelines to fight over."
+  accepted={["version", "key version", "versioned key", "version (v7)", "old version"]}
+  canonical="version"
+  explanation="Versioned keys turn each write into a fresh, never-before-written key (v7 → v8). A concurrent slow read can only write its stale value back to the old version v7, which no new read requests, so it's harmless garbage awaiting eviction. The new version is a clean miss against the current DB state — race-free, at the cost of orphaned old versions and needing somewhere to store the current version number."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Invalidation trades staleness vs coupling: TTL (simple, stale), explicit delete (fresh, race-prone), versioned keys (race-free, orphans). Combine explicit + TTL backstop. The cache is a disposable copy, never the truth.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-cache-invalidation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is cache invalidation hard, and what do the three approaches trade?", a: "A cache holds a copy of data that lives elsewhere; when the original changes, the copy is silently wrong, and getting it out on time across interleaving read/write timelines is the hard part. The three approaches all trade staleness vs complexity/coupling: TTL (write path does nothing, self-heals, but bounded staleness), explicit invalidation (delete on write, near-zero staleness, but the write path must know every derived key — a missed site leaves a key stale forever), and versioned keys (bump a version per write, race-free, but leaves orphans and needs a version source). There's no free option, so you pick per data class and usually combine explicit + a TTL backstop." },
+    { q: "Explain the write-time race and why versioned keys avoid it.", a: "A reader misses key K and starts a slow load of the OLD DB value; concurrently a writer updates the DB and deletes K. If the slow read finishes after the delete, it writes the old value back into the empty cache, re-poisoning K for its TTL — a stale entry from correct code in an unlucky order. Deleting can't fix it because the reader already holds the stale value in flight. Versioned keys avoid it: the writer bumps to v8, so the reader's stale write lands on the orphaned v7 that no new read requests, and the new v8 is a clean miss against current DB state." },
+    { q: "What are negative caching, the dogpile-as-invalidation link, and the source-of-truth anti-pattern?", a: "Negative caching stores the absence of a value so repeated lookups of a missing key don't hit the DB (defense against random-ID floods) — but a too-long negative TTL hides the value once it's created, so use short TTLs or invalidate on create. The dogpile link: invalidating a hot key creates an instant gap N readers rush to refill — a stampede — so hot keys often prefer update-in-place/versioning over delete. The source-of-truth anti-pattern: a cache is a disposable copy of the durable store; if writing only to the cache (or reading it as authoritative) means a flush/restart loses data or serves wrong answers, it's not a cache but an undurable primary DB. You must be able to flush the whole cache anytime and recover correct answers." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache invalidation is the genuinely hard part of caching — not because a single technique is complex, but because it lives where your **read and write timelines interleave** across a distributed system, and a cache silently holds a copy that goes wrong the instant the original changes. The three approaches all trade **staleness against complexity/coupling**: **TTL** (the write path does nothing, self-healing but bounded-stale), **explicit invalidation** (delete on write, near-fresh but the write path is coupled to every derived key and a missed site stays stale forever), and **versioned keys** (bump a version per write, race-free but leaving orphans). The **write-time race** — a slow read writing the old value back *after* an invalidating delete — is why versioning, which never mutates a shared key, beats delete; the practical default is explicit invalidation *with a TTL backstop*. Around this sit **stale reads** (match the budget to the data class), **negative caching** (cache absence, but with short TTLs so creates aren't hidden), and the **dogpile** (invalidating a hot key *is* a stampede trigger). The deepest trap is the category error of treating the cache as the **source of truth**: a cache is a disposable copy of an authoritative durable store, and you must be able to flush it entirely at any moment and recover correct answers — if you can't, you've built an undurable database wearing a cache's clothes. With this, the caching unit is complete: strategy, eviction/TTL, distribution, and the honesty of the copy.
+</Recap>

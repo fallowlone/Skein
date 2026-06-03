@@ -5,34 +5,156 @@ track: "system-design"
 unit: "02-availability"
 order: 2
 title: "Redundancy & single points of failure"
-summary: "Redundancy & single points of failure — to be authored."
-estMin: 16
-status: stub
+summary: "A single point of failure is any component whose death takes the whole system down. Redundancy removes it — N+1, N+2, active-active, active-passive — but only if the copies fail independently. Shared dependencies turn 'redundant' designs into one big blast radius."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - single-point-of-failure
+  - redundancy
+  - active-active
+  - correlated-failure
+  - blast-radius
+  - availability-zones
+prereqs:
+  - 01-scalability/02-vertical-vs-horizontal
+  - 02-availability/01-sla-slo-sli
 sources:
+  - https://aws.amazon.com/builders-library/static-stability-using-availability-zones/
+  - https://sre.google/sre-book/availability-table/
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An engineering team ran three application servers behind a load balancer and called the tier "redundant." It was — for the app servers. Then one quiet Tuesday the whole site went dark for forty minutes. The cause wasn't an app server; it was the single PostgreSQL primary all three of them talked to, which had rebooted for a kernel patch. The redundancy was real but it was in the wrong place: the team had triplicated the cheap, stateless layer and left the one component that actually mattered standing alone. Redundancy you don't have where the single point of failure lives is decoration.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A single point of failure is any component whose loss kills the system. Redundancy removes it — but only if the copies fail independently.</Crux>
 
 <Explanation>
 
-## Redundancy & single points of failure
+## What a single point of failure actually is
 
-Body to be authored.
+A **single point of failure (SPOF)** is any component whose individual failure takes down the entire system. It's the load-bearing wall: knock it out and everything above it falls. The discipline of building for availability is, at its core, the discipline of hunting down SPOFs and eliminating them — one at a time, because there is usually more than one and they hide.
+
+The way you find them is a thought experiment you run over every box and line in your architecture diagram: *"If this one thing dies right now, does the system keep serving?"* The database in the hook failed that test — kill it and everything stops. So does the single load balancer in front of a "redundant" fleet, the one NAT gateway all egress traffic flows through, the single DNS provider, the one CI server that holds the only copy of your deploy keys, the lone on-call engineer who knows how the legacy billing job works. SPOFs aren't only machines; they're any singular dependency — including a person or a vendor.
+
+## Redundancy: N, N+1, N+2
+
+You eliminate a SPOF with **redundancy** — running more than one of the thing so the system survives losing one. The standard vocabulary is borrowed from data-center power engineering:
+
+- **N** — exactly the capacity you need to serve peak load, no spare. If demand is 4 units and each box serves 1, you run 4. Lose any one and you're now under capacity. N is *not* redundant.
+- **N+1** — one spare beyond the need. Run 5 boxes for a 4-unit demand; lose one and the remaining 4 still carry peak. This is the baseline for "redundant," and it tolerates exactly one failure at a time.
+- **N+2** — two spares, so you survive a failure *while another node is already down* (e.g. one out for maintenance and a second dies). Higher availability tiers and anything with slow replacement times want N+2.
+
+The subtlety juniors miss: redundancy must be sized against *peak* load, not average. "We have two servers, so we're redundant" is false if a single server can't carry peak alone — losing one then overloads the survivor, which tips into the queueing collapse from the scalability unit, and your "redundant" pair fails as a unit. True N+1 means each surviving subset can still meet the SLO.
+
+## Active-active vs active-passive
+
+There are two ways to arrange redundant copies, and the choice trades cost against recovery speed:
+
+- **Active-active** — all copies serve traffic simultaneously, behind a load balancer. Lose one and the others absorb its share instantly (you sized for that with N+1). No "switchover" delay, and you're continuously exercising every replica, so you know they all work. The cost: every copy must be sized and paid for at all times, and stateful active-active needs conflict resolution because two copies can take writes at once.
+- **Active-passive** — one copy serves; the standby sits idle (or warm) and takes over only when the active dies. Cheaper for stateful systems (one writer, no conflicts) and simpler to reason about, but failover takes time, and a standby that's never exercised may be silently broken when you finally need it — the classic "the backup didn't work" outage.
+
+<FlowDiagram
+  label="Two redundancy arrangements. Top: active-active — a load balancer splits live traffic across two equal nodes, and losing one shifts its share to the other instantly. Bottom: active-passive — traffic flows only to the active node while a standby waits idle and is promoted on failure."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "lb", label: "load balancer", sub: "active-active" },
+    { id: "aa1", label: "node A", sub: "serving" },
+    { id: "aa2", label: "node B", sub: "serving" },
+    { id: "client", label: "traffic", sub: "active-passive" },
+    { id: "ap1", label: "active", sub: "serving" },
+    { id: "ap2", label: "standby", sub: "idle → promoted" },
+  ]}
+  edges={[
+    { from: "lb", to: "aa1" }, { from: "lb", to: "aa2" },
+    { from: "client", to: "ap1" }, { from: "ap1", to: "ap2", label: "replicate" },
+  ]}
+  caption="Active-active spreads live load and fails over instantly but pays for every copy and needs conflict handling on writes. Active-passive is cheaper and write-simple but loses time on switchover and risks a standby that was silently broken."
+/>
+
+## The trap: fake redundancy through a shared dependency
+
+Here is the failure mode that turns confident "redundant" architectures into outages: **two copies that look independent but share a hidden dependency are not redundant at all.** If your two database replicas live on the same physical host, the same storage array, the same rack, the same power circuit, or the same availability zone, then a single event — that host, that array, that rack, that power feed, that AZ — takes both down together. You have paid for two of everything and still have a single point of failure, just a less obvious one.
+
+This is **correlated failure**, and it is the central reason availability math based on independence ("each replica is 99.9%, so two give 99.9999%") is optimistic to the point of dangerous. The multiplication only holds if the failures are *independent*. The moment they share a cause, your real availability is governed by that shared thing, not by the count of replicas. The whole point of cloud **availability zones (AZs)** is to give you placement domains engineered to fail independently — separate power, cooling, and networking, far enough apart that one flooding/fire/power event can't take two — so that spreading replicas across AZs makes their failures genuinely uncorrelated.
+
+<Inset kind="why" lang="en">
+Why is correlated failure the silent killer rather than an obvious bug? Because everything works perfectly in normal operation and in most tests — both replicas are up, traffic flows, the dashboard is green. The shared dependency only reveals itself during the rare event that hits it (a rack PDU trips, an AZ loses power), at which point *both* copies vanish at the same instant and your failover has nowhere to go. You can't observe correlation by watching healthy traffic; you find it by tracing the *physical and logical dependency graph* of each replica — host, rack, power, network, region, control plane, even the deploy pipeline — and asking what single event is upstream of more than one "independent" copy. Anything shared is a correlation, and a correlation is a SPOF wearing a disguise.
+</Inset>
+
+## Blast radius: containing the failure you can't prevent
+
+You will never eliminate every failure, so the second discipline is bounding how much a single failure can take out — its **blast radius**. The design question shifts from "will this fail?" (it will) to "when it fails, how much goes with it?" Partitioning helps: shard users across cells so one cell's failure affects 1/N of users instead of everyone; isolate tenants so a noisy or broken one can't starve the rest; deploy region by region so a bad release can be caught before it's global. A system with small blast radii degrades in slices; a system with one giant shared everything fails all at once. Reducing blast radius doesn't raise the *probability* of staying up for any single user, but it dramatically lowers the *severity* of the failures that do happen — and severity is what shows up in the postmortem.
+
+<Inset kind="mistake" lang="en">
+A common and expensive mistake: adding redundancy to the component that's easy to duplicate while leaving the hard one alone — exactly the hook's team triplicating stateless app servers behind a *single* load balancer talking to a *single* database. Stateless tiers are trivial to make redundant (just add nodes), so teams pour effort there and feel safe, while the stateful tier and the shared infrastructure — the database primary, the one load balancer, the single message broker, the lone DNS or NAT path — quietly remain SPOFs. Always locate redundancy *at the SPOF*, not where it's convenient. Triplicating the cheap layer while the expensive layer stands alone buys you a green dashboard and a forty-minute outage.
+</Inset>
+
+<Quiz
+  id="02-redundancy-and-spof-quiz-1"
+  lessonSlug="02-redundancy-and-spof"
+  lang="en"
+  question="A service needs 4 servers to carry peak load and runs exactly 4 ('we have multiple servers, so we're redundant'). One server dies during peak. What actually happens?"
+  choices={[
+    { label: "This is N, not N+1 — losing one leaves 3 servers for a 4-server peak, so the survivors overload and the tier can collapse. Redundancy must be sized to N+1 (a 5th spare) so any subset still meets peak.", correct: true },
+    { label: "Fine — the load balancer redistributes the load, so 3 servers handle it.", misconception: "Redistribution doesn't create capacity. If peak needs 4 and you have 3, the survivors are overloaded; under the queueing curve that tips into collapse. You needed N+1 = 5 to tolerate one loss." },
+    { label: "Fine — having more than one server is the definition of redundant.", misconception: "Redundancy is about surviving a loss while still meeting peak, which requires spare capacity (N+1). Running exactly N means a single failure puts you under capacity — that's not redundant." },
+    { label: "Latency rises but capacity is unaffected.", misconception: "Capacity is exactly what's affected: you lost 25% of it at peak. The remaining nodes can't absorb the gap, so it's a capacity problem (and the latency spike is the symptom of the queueing collapse)." },
+  ]}
+/>
+
+<Quiz
+  id="02-redundancy-and-spof-quiz-2"
+  lessonSlug="02-redundancy-and-spof"
+  lang="en"
+  question="You run two database replicas for redundancy, but both are in the same availability zone. The AZ loses power. What does this reveal about the design?"
+  choices={[
+    { label: "The replicas share a dependency (the AZ), so their failures are correlated — they're not truly redundant. Real redundancy requires placing copies in failure domains engineered to fail independently, e.g. separate AZs.", correct: true },
+    { label: "Nothing — two replicas is redundant by definition, this was just bad luck.", misconception: "Two copies sharing a single failure domain aren't redundant; one event (the AZ) takes both. The point of redundancy is independent failure, and same-AZ placement makes the failures correlated." },
+    { label: "The fix is a third replica, also in that AZ.", misconception: "Adding copies inside the same shared dependency doesn't help — the AZ event still takes all of them. You must spread across independent failure domains (multiple AZs/regions), not pile more into one." },
+    { label: "Availability math still holds: two 99.9% replicas give ~99.9999%.", misconception: "That multiplication assumes INDEPENDENT failures. Sharing an AZ correlates them, so your real availability is governed by the AZ's availability, not the product of the replicas'." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-redundancy-and-spof-metaphor-1"
+  lessonSlug="02-redundancy-and-spof"
+  lang="en"
+  setup="Two replicas that share a hidden dependency — same host, rack, power feed, or availability zone — fail together when that dependency dies. This is called _______ failure, and it makes independence-based availability math dangerously optimistic."
+  accepted={["correlated", "correlated failure", "correlation"]}
+  canonical="correlated"
+  explanation="Correlated failure is when supposedly independent components share an upstream cause, so a single event takes them all out at once. It's why two replicas in one AZ aren't redundant, and why 'each is 99.9%, so together 99.9999%' is wrong — the multiplication only holds for independent failures. You break correlation by placing copies in failure domains (AZs/regions) engineered to fail independently."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A SPOF is any component whose loss kills the system. Remove it with N+1 redundancy against peak — but only if the copies fail independently; shared dependencies cause correlated failure. Then shrink the blast radius.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-redundancy-and-spof-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a single point of failure, and how do you find them?", a: "A SPOF is any component whose individual failure takes down the whole system. You find them with a thought experiment over every box and line in the architecture: 'if this one thing dies right now, does the system keep serving?' Anything that fails the test is a SPOF — not just servers but the single load balancer, NAT gateway, DNS provider, database primary, even a sole on-call person or vendor. There's usually more than one and they hide." },
+    { q: "Explain N, N+1, N+2 and active-active vs active-passive.", a: "N is exactly the capacity peak needs, no spare — not redundant. N+1 is one spare so you survive one failure while still meeting peak; N+2 survives a failure while another node is already down. Redundancy must be sized against peak, not average. Active-active: all copies serve at once behind a balancer, instant failover, but you pay for every copy and need write-conflict handling. Active-passive: one serves while a standby waits, cheaper and write-simple, but failover takes time and an unexercised standby may be silently broken." },
+    { q: "Why is 'fake redundancy' through a shared dependency dangerous, and how do AZs help?", a: "Two copies that share a hidden dependency (same host, rack, power, AZ) fail together — that's correlated failure, and it makes independence-based math ('two 99.9% replicas → 99.9999%') dangerously optimistic, because the multiplication only holds for independent failures. Everything looks fine until the shared thing dies and both vanish at once. Availability zones give placement domains engineered to fail independently (separate power, cooling, network), so spreading replicas across AZs makes their failures genuinely uncorrelated. Also shrink blast radius to bound the failures you can't prevent." },
+  ]}
+/>
+
+<Recap lang="en">
+A **single point of failure** is any component whose individual loss takes down the whole system, and you hunt them by asking of every box and line: *"if this dies now, do we keep serving?"* — they include not just servers but the lone load balancer, DNS provider, database primary, and even a sole on-call person. You remove a SPOF with **redundancy**, sized against *peak* not average: **N** is no spare (not redundant), **N+1** survives one loss, **N+2** survives a loss while another node is already down. Arrange the copies **active-active** (all serving, instant failover, but pay for every copy and resolve write conflicts) or **active-passive** (one serving, a standby waiting — cheaper and write-simple, but switchover takes time and an unexercised standby may be silently broken). The deadly trap is **fake redundancy**: copies that share a hidden dependency — same host, rack, power, or availability zone — fail together as **correlated failure**, which makes independence-based availability math wildly optimistic. **Availability zones** exist precisely to give failure domains engineered to fail independently, so spread replicas across them. And because you can't prevent every failure, bound the ones that get through by shrinking **blast radius** — partition users, isolate tenants, deploy region by region — so the system degrades in slices instead of going dark all at once, like the hook's team that triplicated the cheap layer and left the one database standing alone.
+</Recap>

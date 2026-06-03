@@ -5,34 +5,163 @@ track: "system-design"
 unit: "02-availability"
 order: 3
 title: "Failover & fault tolerance"
-summary: "Failover & fault tolerance — to be authored."
-estMin: 16
-status: stub
+summary: "Failover moves traffic off a dead component onto a healthy one. Fault tolerance survives a fault with no visible interruption at all. Get detection, split-brain, and the retry/timeout interaction wrong and your failover causes the outage it was meant to prevent."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - failover
+  - fault-tolerance
+  - split-brain
+  - graceful-degradation
+  - mttr-mtbf
+  - health-checks
+prereqs:
+  - 02-availability/01-sla-slo-sli
+  - 02-availability/02-redundancy-and-spof
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+  - https://sre.google/sre-book/addressing-cascading-failures/
+  - https://aws.amazon.com/builders-library/implementing-health-checks/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A database cluster had a standby ready and automatic failover configured — textbook resilience. Then the network between the primary and standby hiccuped for eight seconds. The standby couldn't reach the primary, declared it dead, and promoted itself. But the primary wasn't dead; it was fine, and still accepting writes. For those eight seconds the system had two primaries, both taking writes, diverging. When the network healed, the two write histories conflicted and an engineer spent the night hand-reconciling orders. The redundancy worked. The *failover* is what caused the outage — because the one thing it couldn't tell was the difference between "the primary is dead" and "I can't reach the primary."
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Failover moves traffic off a dead node; fault tolerance survives invisibly. The hard part is detection: "dead" vs "unreachable."</Crux>
 
 <Explanation>
 
-## Failover & fault tolerance
+## Two words that aren't the same thing
 
-Body to be authored.
+People say "fault tolerant" when they mean "has failover," and the gap between them is where expectations break.
+
+- **Failover** is a *reactive* sequence: a component dies, something notices, and traffic is moved to a healthy replacement. There is a window — detection plus switchover — during which requests fail or hang. Failover gives you **high availability**: the system recovers *quickly*, but not *instantly*. Active-passive database promotion is failover.
+- **Fault tolerance** is *masking* a fault so there is **no visible interruption at all**. The faulty component's work is absorbed by others with zero gap, because redundancy was already live and serving. Active-active behind a load balancer is fault tolerant for the loss of one node — the survivors were already taking traffic, so losing one is invisible to users.
+
+The practical distinction: a fault-tolerant system has *no recovery window* for the faults it tolerates; a highly-available system with failover has a *short* one. True fault tolerance is more expensive (you run and pay for the redundant capacity live, continuously), so most systems are highly available via failover for most components and fault tolerant only where a gap is unacceptable.
+
+## The mechanics: detect → promote → redirect → fail back
+
+A failover is a four-step pipeline, and each step has a failure mode:
+
+1. **Detect.** Something must notice the component is gone. Two common mechanisms: **health checks** (a watcher periodically probes "are you ok?" and expects a healthy response) and **heartbeats** (the component periodically announces "I'm alive" and silence means death). Detection is a tradeoff: probe too rarely and you're slow to react; probe too aggressively and a momentary blip looks like death and you fail over needlessly.
+2. **Promote.** A standby is elevated to take over — a replica becomes the new primary, a passive node goes active. For stateful systems this is the dangerous step: you must be *sure* the old one is really gone.
+3. **Redirect.** Traffic is pointed at the new target — update DNS, reconfigure the load balancer, flip a virtual IP. This step is bounded by how fast the redirect propagates (DNS TTLs, connection draining).
+4. **Fail back.** When the original recovers, you decide whether to return to it (fail back) or leave the promoted node as the new primary. Failing back is itself a controlled failover and a common place to cause a *second* outage by doing it carelessly under load.
+
+<FlowDiagram
+  label="The failover pipeline as a sequence: a health checker probes the primary; when probes fail, the standby is promoted to primary; traffic is redirected to it; and later, when the original node recovers, an operator optionally fails back. A fencing step before promotion guards against split-brain."
+  perRow={5}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "detect", label: "detect", sub: "health check / heartbeat" },
+    { id: "fence", label: "fence", sub: "kill old primary" },
+    { id: "promote", label: "promote", sub: "standby → primary" },
+    { id: "redirect", label: "redirect", sub: "DNS / LB / VIP" },
+    { id: "failback", label: "fail back", sub: "later, controlled" },
+  ]}
+  edges={[
+    { from: "detect", to: "fence", label: "probes fail" },
+    { from: "fence", to: "promote" },
+    { from: "promote", to: "redirect" },
+    { from: "redirect", to: "failback", label: "on recovery" },
+  ]}
+  caption="Detection is the riskiest step: it must distinguish a dead node from an unreachable one. Fencing the old primary before promoting is what prevents two primaries (split-brain) when the answer is 'unreachable, not dead.'"
+/>
+
+## Split-brain: the failure failover causes
+
+The hook's outage has a name: **split-brain**. It happens when a failover promotes a new primary while the old one is *still alive* — usually because a network partition made them unable to see each other, and each side concluded the other was dead. Now two nodes both believe they're the primary, both accept writes, and the data diverges. When the partition heals you have two conflicting histories and no automatic way to merge them. Split-brain is uniquely nasty because it doesn't lose availability — both halves are *up* and *serving* — it loses **correctness**, which is often worse and harder to detect.
+
+The root cause is the fundamental ambiguity detection can never fully resolve: from the standby's point of view, "the primary crashed" and "I lost the network to the primary" look *identical* — silence either way. The defenses all reduce to making sure at most one node can win:
+
+- **Quorum / consensus.** Require a majority of nodes to agree before promoting. A partition that leaves the old primary in the minority means it can't keep acting as primary, and only the majority side promotes. This is why consensus systems (Raft, ZooKeeper, etcd) need an odd number of nodes — a majority must be unambiguous.
+- **Fencing (STONITH — "shoot the other node in the head").** Before promoting, forcibly cut off the old primary — revoke its storage lease, kill its power, block it at the network — so even if it's alive it *cannot* keep writing. You don't ask it to stand down; you make standing down physically enforced.
+
+<Inset kind="why" lang="en">
+Why can't you just make detection smarter — longer timeouts, more probes — and avoid the whole problem? Because no timeout resolves the ambiguity; it only trades one bad outcome for another. A short detection timeout fails over fast but mistakes a transient blip for death and risks split-brain (and needless churn). A long timeout avoids false positives but means a *real* death leaves you down for the whole timeout. There is no setting that's both fast and safe, because "no response" genuinely cannot be distinguished from "slow response" or "dead" by waiting. That's why the durable fix isn't better detection — it's a mechanism that makes a wrong detection *harmless*: quorum so the minority can't promote, or fencing so a wrongly-declared-dead node can't keep writing. You design for detection to be wrong, not to be perfect.
+</Inset>
+
+## Graceful degradation: failing partway instead of all the way
+
+Fault tolerance isn't always all-or-nothing. **Graceful degradation** is designing the system to shed non-essential functionality under failure instead of going fully dark. If the recommendations service is down, show a generic popular list instead of a 500. If the personalization cache is unreachable, serve the page without personalization. If writes are failing, stay up in read-only mode. The user gets a *degraded* but *working* experience, and the failure is contained to the feature that broke. This is the practical complement to redundancy: redundancy keeps the critical path up, graceful degradation makes the non-critical paths fail softly, so one dependency's death is a missing feature, not a blank page.
+
+## The retry/timeout/failover interaction — where failover turns into outage
+
+This is the senior-level trap, and it's why AWS dedicates a whole Builders' Library article to it. Failover, timeouts, and retries interact, and misconfigured they *amplify* a small fault into a cascading one:
+
+- **Timeouts** must be set deliberately. Too long, and a single slow dependency holds threads hostage until the whole pool is exhausted and you've turned one slow backend into a full outage. Too short, and you abandon requests that would have succeeded, manufacturing failures.
+- **Retries** help with transient blips but are dangerous during overload. When a dependency is struggling, naive retries *multiply* the load on it exactly when it can least afford it — a feedback loop AWS calls a retry storm that drives brownout into outage. The defenses: a **retry budget** (cap retries as a fraction of traffic, not per-request), **exponential backoff** (wait longer between attempts), and **jitter** (randomize the backoff so all clients don't retry in lockstep and create synchronized spikes). And retries belong only on *idempotent* operations — retrying a non-idempotent write can double-charge a customer.
+- During **failover**, all of this compounds: the moment the primary dies, every in-flight request times out at once, every client retries at once, and that synchronized surge lands on a standby that's still warming up — so the failover event itself can knock over the thing you just promoted. AWS's prescription (bounded timeouts, capped retries, exponential backoff *with jitter*, circuit breakers) exists specifically so the recovery doesn't become the next incident.
+
+<Inset kind="practice" lang="en">
+The two numbers that summarize all of this are **MTBF** and **MTTR**. **MTBF (mean time between failures)** is how often things break; **MTTR (mean time to recovery)** is how long you're down when they do. Availability ≈ MTBF / (MTBF + MTTR), so you can raise availability two ways: fail less often (raise MTBF) or recover faster (lower MTTR). The senior insight is that **lowering MTTR is usually the better investment.** Failures are inevitable and chasing higher MTBF hits diminishing returns, but fast, automated, well-rehearsed recovery — good detection, tested failover, fencing, graceful degradation, runbooks — shrinks every incident. A system that fails twice as often but recovers ten times faster is far more available. This is why mature teams obsess over MTTR: practiced recovery, not the fantasy of never failing.
+</Inset>
+
+<Quiz
+  id="03-failover-and-fault-tolerance-quiz-1"
+  lessonSlug="03-failover-and-fault-tolerance"
+  lang="en"
+  question="A network partition isolates the primary from its standby. The standby can't reach the primary, declares it dead, and promotes itself — but the primary is alive and still taking writes. What is this, and what prevents it?"
+  choices={[
+    { label: "Split-brain: two primaries both accept writes and diverge. Prevent it with quorum (only the majority side may promote) or fencing (forcibly cut off the old primary before promoting) — design so a wrong detection is harmless.", correct: true },
+    { label: "Normal failover working as intended; the data will reconcile automatically.", misconception: "This is split-brain, and there's no automatic reconcile — you have two conflicting write histories. The failover misfired because it couldn't tell 'dead' from 'unreachable.' Quorum or fencing prevents it." },
+    { label: "A capacity problem; add a third standby.", misconception: "More replicas don't help and can worsen it. The issue is two nodes both believing they're primary during a partition. The fix is ensuring only one can win: quorum (majority) or fencing the old primary." },
+    { label: "Avoidable by setting a longer detection timeout so the blip is ignored.", misconception: "A longer timeout reduces false positives but means a REAL death leaves you down longer — it trades risks, it doesn't resolve the ambiguity. The durable fix is quorum/fencing so a wrong call can't cause divergence." },
+  ]}
+/>
+
+<Quiz
+  id="03-failover-and-fault-tolerance-quiz-2"
+  lessonSlug="03-failover-and-fault-tolerance"
+  lang="en"
+  question="A downstream service slows down. Clients have a long timeout and retry up to 3× with no backoff. What is the likely outcome, and the correct fix?"
+  choices={[
+    { label: "A retry storm: long timeouts exhaust thread pools and 3× lockstep retries multiply load on the struggling service, driving brownout into outage. Fix with bounded timeouts, a retry budget, and exponential backoff with jitter.", correct: true },
+    { label: "Retries make it more reliable, so this is the correct, resilient configuration.", misconception: "Naive retries during overload multiply load exactly when the dependency can least afford it — a retry storm. Reliability comes from capped retries, backoff, and jitter, not from retrying harder." },
+    { label: "Harmless — the retries just fill idle capacity.", misconception: "There is no idle capacity in an overloaded dependency; the retries are added load on a system already failing, accelerating collapse. That's why you need a retry budget and backoff with jitter." },
+    { label: "The only fix is to remove retries entirely.", misconception: "Retries are valuable for transient blips; you don't remove them, you bound them — retry budget, exponential backoff, jitter, and only on idempotent operations — so they help without amplifying overload." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="03-failover-and-fault-tolerance-metaphor-1"
+  lessonSlug="03-failover-and-fault-tolerance"
+  lang="en"
+  setup="Availability ≈ MTBF / (MTBF + MTTR), so you can fail less often or recover faster. Mature teams invest most in lowering _______ — the mean time to recovery — because failures are inevitable but fast, rehearsed recovery shrinks every incident."
+  accepted={["MTTR", "mttr", "mean time to recovery"]}
+  canonical="MTTR"
+  explanation="MTTR (mean time to recovery) is how long you're down per failure; MTBF is how often you fail. Since availability is MTBF/(MTBF+MTTR), lowering MTTR — via good detection, tested automated failover, fencing, graceful degradation, and runbooks — usually beats chasing ever-higher MTBF, which hits diminishing returns. A system that fails more often but recovers far faster is more available."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Failover recovers with a short window; fault tolerance masks the fault with none. Detection can't tell "dead" from "unreachable," so make a wrong call harmless via quorum or fencing. Availability ≈ MTBF/(MTBF+MTTR).</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="03-failover-and-fault-tolerance-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish failover from fault tolerance, and name the failover steps.", a: "Failover is reactive: a component dies, detection notices, and traffic moves to a replacement — there's a short recovery window where requests fail (this gives high availability). Fault tolerance masks the fault with no visible interruption at all, because redundant capacity was already live (e.g. active-active behind a load balancer); it has no recovery window but costs more. The failover pipeline is detect (health checks/heartbeats) → fence the old node → promote a standby → redirect traffic (DNS/LB/VIP) → optionally fail back when the original recovers." },
+    { q: "What is split-brain, why can't better detection prevent it, and what does?", a: "Split-brain is when a failover promotes a new primary while the old one is still alive (usually due to a network partition), so two primaries both accept writes and the data diverges with no automatic merge. Better detection can't prevent it because 'crashed' and 'unreachable' are indistinguishable by waiting — any timeout just trades false positives against slow real recovery. The fix is to make a wrong call harmless: quorum/consensus (only the majority side may promote, hence odd node counts) or fencing/STONITH (forcibly cut off the old primary before promoting so it can't keep writing)." },
+    { q: "How do retries, timeouts, and failover interact, and how do you keep recovery from becoming the next outage?", a: "Misconfigured, they amplify a small fault: long timeouts exhaust thread pools (one slow backend → full outage); naive retries during overload multiply load on a struggling dependency (a retry storm, brownout → outage); and at the moment of failover, every request times out and retries at once, surging onto a standby that's still warming up. The defenses are bounded timeouts, a retry budget (cap retries as a fraction of traffic), exponential backoff with jitter (so clients don't retry in lockstep), circuit breakers, and retrying only idempotent operations. Also lean on graceful degradation so non-critical paths fail softly. And remember availability ≈ MTBF/(MTBF+MTTR): investing in fast, rehearsed recovery (MTTR) usually beats chasing higher MTBF." },
+  ]}
+/>
+
+<Recap lang="en">
+**Failover** and **fault tolerance** are not synonyms: failover is the reactive *detect → fence → promote → redirect → fail back* sequence that gives **high availability** with a short recovery window, while fault tolerance *masks* the fault with **no visible interruption** (live redundant capacity, like active-active) at higher cost. The hard part is **detection**, because "the node crashed" and "I can't reach the node" are indistinguishable by waiting — and a failover that promotes a new primary while the old one is alive causes **split-brain**, two primaries taking writes and diverging with no automatic merge. You can't fix that with smarter timeouts (they only trade false positives against slow recovery); you fix it by making a wrong call *harmless* — **quorum** so only the majority promotes, or **fencing/STONITH** so the old primary can't keep writing. **Graceful degradation** shrinks failures further by shedding non-essential features (popular-items list, read-only mode) instead of going dark. The senior trap is the **retry/timeout/failover interaction**: long timeouts exhaust pools, naive retries during overload become a *retry storm*, and at failover every client times out and retries in lockstep onto a warming standby — so you bound timeouts and use capped retries with **exponential backoff and jitter** (only on idempotent ops) so recovery isn't the next incident. Finally, **availability ≈ MTBF/(MTBF+MTTR)**: since failures are inevitable, investing in fast, automated, rehearsed recovery (lower **MTTR**) usually beats chasing an ever-higher MTBF — exactly the discipline the hook's team lacked when their failover, not the fault, caused the outage.
+</Recap>

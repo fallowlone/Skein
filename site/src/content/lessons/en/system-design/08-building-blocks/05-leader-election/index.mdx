@@ -5,34 +5,163 @@ track: "system-design"
 unit: "08-building-blocks"
 order: 5
 title: "Leader election"
-summary: "Leader election — to be authored."
-estMin: 16
-status: stub
+summary: "Some jobs need exactly one coordinator. Leader election picks it — via a consensus protocol (Raft/ZAB) or a lease/lock in ZooKeeper, etcd, or Redis. The deep trap is split-brain: a paused leader that thinks it's still in charge. The fix is a fencing token, not a longer timeout."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - leader-election
+  - consensus
+  - lease-lock
+  - split-brain
+  - fencing-token
+  - coordination-service
+prereqs:
+  - 04-data-distribution/03-consistent-hashing
+  - 08-building-blocks/02-unique-id-generation
 sources:
+  - https://raft.github.io/
+  - https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A billing system ran a nightly job to charge subscriptions. To survive a crash, the team ran the scheduler on three machines and used a distributed lock so only the holder would run the job. One night, the lock-holder's JVM hit a 25-second garbage-collection pause right after acquiring the lock. The lock's lease expired, a second machine grabbed it and started charging customers — and then the first machine woke up, still believing it held the lock, and charged everyone again. Two coordinators, one job, double charges. The bug was not the lock; it was assuming "I acquired the lock" stays true forever. Electing a single coordinator is easy. Guaranteeing there is never *more than one* — even when a node freezes — is the hard part.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Leader election picks one coordinator via consensus or a lease. The trap is split-brain (two leaders); the fix is a fencing token.</Crux>
 
 <Explanation>
 
-## Leader election
+## Why you sometimes need exactly one
 
-Body to be authored.
+Most of system design pushes toward statelessness and "any node can do anything" — it scales and tolerates failure. But some tasks are **inherently singular**: they must be done by exactly one node at a time, or they break. A scheduler that must fire each cron job once (not three times); the single writer/primary in a replicated database; the one node assigning partitions or sequence ranges; the coordinator that compacts a shared log. Run two of these at once and you get duplicate side effects, conflicting writes, or corrupted state.
+
+**Leader election** is the mechanism that designates one node — the *leader* — to do the singular work, while the others stand by ready to take over if it dies. The two hard requirements are **uniqueness** (never two leaders simultaneously) and **liveness** (when the leader dies, a new one is elected promptly). Uniqueness is the one people underestimate, and the one that causes the worst outages.
+
+## Two ways to elect: consensus vs a lease
+
+There are two families of mechanism, and most real systems use the second built on top of the first.
+
+**Consensus protocols (Raft, ZAB, Paxos).** A cluster of nodes runs a protocol where a **majority (quorum)** must agree on who the leader is. In **Raft**, nodes vote in numbered *terms*; a candidate that wins votes from a majority becomes leader for that term, and because a majority is required, **two leaders can't be elected in the same term** — any two majorities overlap in at least one node, which won't vote twice. The leader sends heartbeats; if followers stop hearing them, they start a new term and elect again. This is how etcd, Consul, and Kafka's controller (KRaft) elect, and how a replicated state machine stays consistent.
+
+**A lease or lock in a coordination service.** Rather than run consensus yourself, you lean on a service that already does — **ZooKeeper**, **etcd**, or a lock in **Redis** — and treat "holding the lock/lease" as "being the leader." A node acquires a time-bounded **lease**; while it holds the lease it's the leader; it must **renew** before expiry or it loses leadership, and another node can acquire it. This is simpler to build (the hard consensus lives in the proven service) and is the common pattern for "I just need one worker to run this job."
+
+<FlowDiagram
+  label="Three candidate nodes contend for leadership through a coordination service that grants a single time-bounded lease; the lease holder is the leader and renews it via heartbeats, while the other two wait to acquire the lease if it expires."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "c1", label: "node A", sub: "LEADER" },
+    { id: "c2", label: "node B", sub: "standby" },
+    { id: "c3", label: "node C", sub: "standby" },
+    { id: "coord", label: "etcd / ZooKeeper", sub: "grants one lease" },
+    { id: "lease", label: "lease + token", sub: "renew or expire" },
+  ]}
+  edges={[
+    { from: "c1", to: "coord", label: "holds" },
+    { from: "c2", to: "coord" },
+    { from: "c3", to: "coord" },
+    { from: "coord", to: "lease" },
+  ]}
+  caption="The coordination service is the single source of truth for 'who is leader,' granting exactly one lease at a time. The leader renews via heartbeat; on expiry a standby acquires it — and the token attached to each grant is what makes the handoff safe."
+/>
+
+## Split-brain: the failure that defines the problem
+
+The reason leader election is hard is **split-brain**: a situation where two nodes both believe they are the leader at the same time. It happens not because the election code is buggy, but because of the gap between *being* the leader and *knowing* you still are:
+
+- A **network partition** isolates the leader from the cluster. The others can't hear its heartbeats, declare it dead, and elect a new leader — but the old leader, on its side of the partition, still thinks it's in charge.
+- A **GC pause, VM suspension, or long stall** freezes the leader past its lease expiry. The cluster elects a new leader. The frozen node wakes up *still holding its now-expired belief* and acts as leader — exactly the billing-system hook.
+
+The naïve "fix" — make the lease longer — only widens the window in which a real failure goes unhandled, trading one problem for another. A long timeout makes split-brain rarer but slower failover; a short one makes failover fast but split-brain more likely. **Tuning the timeout cannot eliminate split-brain**, because no timeout can distinguish "dead" from "frozen and about to wake up." You need a mechanism that makes a stale leader's actions *harmless* even if it acts.
+
+<Inset kind="why" lang="en">
+Why does a majority quorum prevent two leaders in consensus, but a lease alone doesn't? In Raft, becoming leader requires votes from a strict majority of nodes, and each node votes at most once per term. Any two majorities of the same set must share at least one node — and that shared node won't vote for two different candidates in one term — so at most one leader can win per term. The math forbids two leaders *in the same term*. A bare lease has no such overlap argument across the whole system: the coordination service grants one lease, but a leader that pauses past expiry and then resumes still *thinks* it holds it, and if it talks directly to a resource (a database, a file) without re-checking, nothing stops it. That's why a lease needs a fencing token: it ports the "monotonic, can't-go-back" property of consensus terms down to the resource being protected.
+</Inset>
+
+## The fencing token: the real fix
+
+The correct defence against split-brain is a **fencing token**: a monotonically increasing number the coordination service hands out with each leadership grant. Lease #1 carries token 33; when it expires and a new leader takes over, that grant carries token 34. The crucial rule lives at the **protected resource**: every operation includes its token, and the resource **rejects any token lower than the highest it has already seen**.
+
+```
+1. Leader A acquires lease, gets fencing token = 33
+2. A sends "write X" with token 33  → resource accepts (33 ≥ 33), remembers 33
+3. A freezes (GC pause); lease expires
+4. Leader B acquires lease, gets token = 34
+5. B sends "write Y" with token 34  → resource accepts (34 ≥ 34), remembers 34
+6. A wakes up, still thinks it's leader, sends "write Z" with token 33
+   → resource REJECTS: 33 < 34. A's stale write is fenced off. ✓
+```
+
+Now even if the zombie leader resumes and tries to act, its operations carry an old token and are refused — the harm is structurally impossible, regardless of timeouts. This is why "use a longer lock timeout" is the wrong answer and "the resource must enforce a fencing token" is the right one: correctness comes from the resource rejecting stale tokens, not from hoping the old leader stays asleep.
+
+<Inset kind="mistake" lang="en">
+Treating a Redis lock as a correctness guarantee without fencing. A single-node Redis `SET key value NX PX <ttl>` lock is convenient and great for **efficiency** (avoid two workers doing the same work — a duplicate is wasteful but not catastrophic). It is *not* safe for **correctness** (where a duplicate causes double-charging or data corruption), because it has no fencing token and its TTL can expire under a GC pause exactly as in the hook. If two workers running the job is merely wasteful, a plain lock is fine. If two workers is a disaster, you need fencing tokens enforced at the resource — and a lock service whose tokens are linearizable (etcd/ZooKeeper). Decide which case you're in *before* choosing the lock, not after the incident.
+</Inset>
+
+<Quiz
+  id="05-leader-election-quiz-1"
+  lessonSlug="05-leader-election"
+  lang="en"
+  question="A leader acquires a lock, then suffers a 30-second GC pause. Its lease expires, a new leader is elected, and the old one wakes up still believing it's the leader. Both now act. What is this called, and what actually prevents the damage?"
+  choices={[
+    { label: "Split-brain. The fix is a fencing token: the coordination service issues a monotonically increasing number per grant, and the protected resource rejects any operation carrying a token lower than the highest it has seen — so the woken-up leader's stale writes are refused.", correct: true },
+    { label: "Split-brain, fixed by setting a much longer lease so the GC pause fits inside it.", misconception: "A longer lease only widens the window before failover and can't cover an arbitrarily long pause. No timeout distinguishes 'dead' from 'frozen.' The real fix is a fencing token enforced at the resource, which makes a stale leader's writes harmless regardless of timing." },
+    { label: "A quorum failure, fixed by adding more nodes to the cluster.", misconception: "More nodes don't help: the problem isn't lack of quorum, it's that the old leader acts on stale belief after its lease expired. The fix is fencing tokens at the resource so stale-token operations are rejected." },
+    { label: "Normal failover; the old leader will simply notice and stop.", misconception: "It won't notice in time — that's the whole danger. A frozen node wakes up still believing it holds leadership and acts before re-checking. You must fence its stale operations at the resource, not rely on it to self-correct." },
+  ]}
+/>
+
+<Quiz
+  id="05-leader-election-quiz-2"
+  lessonSlug="05-leader-election"
+  lang="en"
+  question="In Raft, why can't two nodes both be elected leader within the same term?"
+  choices={[
+    { label: "Becoming leader requires votes from a strict majority, and each node votes at most once per term. Any two majorities overlap in at least one node, which won't vote twice — so at most one candidate can reach a majority per term.", correct: true },
+    { label: "Because the node with the lowest ID always wins, breaking ties deterministically.", misconception: "Raft doesn't elect by lowest ID; it elects by winning a majority of votes in a term. The uniqueness guarantee comes from majority overlap (any two majorities share a voter), not from an ID tiebreak." },
+    { label: "Because the leader holds a lock that physically blocks others from starting an election.", misconception: "There's no global physical lock; followers can start a new election (a new term) any time they miss heartbeats. Uniqueness within a term comes from the majority-vote rule and single-vote-per-term, not a blocking lock." },
+    { label: "It can happen — Raft allows two leaders briefly and resolves it later.", misconception: "Raft guarantees at most one leader PER TERM via majority voting. Two nodes can believe they're leader across DIFFERENT terms (an old leader hasn't noticed a new term), which is why followers reject the lower term — but never two elected leaders in the same term." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-leader-election-metaphor-1"
+  lessonSlug="05-leader-election"
+  lang="en"
+  setup="To make split-brain harmless, the coordination service issues a monotonically increasing _______ with each leadership grant, and the protected resource rejects any operation carrying a lower one — so a revived stale leader's writes are refused no matter what the timeouts were."
+  accepted={["fencing token", "fencing-token", "token", "fencing"]}
+  canonical="fencing token"
+  explanation="The fencing token ports the monotonic 'can't-go-backwards' property down to the resource: each grant's token strictly increases, the resource remembers the highest it has seen, and a stale leader's lower token is rejected. Correctness comes from this rejection, not from tuning the lease length."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Leader election names one coordinator — via majority-quorum consensus or a lease in etcd/ZooKeeper. The defining failure is split-brain: a paused leader acting on stale belief. The fix is a fencing token, not a timeout.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-leader-election-retrieval"
+  lang="en"
+  questions={[
+    { q: "When do you need leader election, and what are its two requirements?", a: "When a task is inherently singular — must be done by exactly one node at a time or it breaks: a cron scheduler that must fire once, the single write-primary in a replicated DB, a partition/sequence assigner, a log compactor. Run two and you get duplicate side effects, conflicting writes, or corruption. The two requirements are uniqueness (never two leaders at once) and liveness (a new leader is elected promptly when the current one dies). Uniqueness is the underestimated, outage-causing one." },
+    { q: "Contrast consensus-based election with a lease/lock, and why a majority prevents two leaders.", a: "Consensus (Raft/ZAB/Paxos): the cluster votes in numbered terms; a candidate needs a majority quorum to lead, and since any two majorities overlap in a node that votes at most once per term, two leaders can't win the same term (etcd, Consul, KRaft work this way). Lease/lock: lean on a coordination service (ZooKeeper, etcd, Redis) that already runs consensus — holding a renewable, time-bounded lease means being leader. The lease is simpler to build; the majority-overlap argument is what makes consensus's uniqueness airtight." },
+    { q: "What is split-brain, why doesn't a longer timeout fix it, and what does?", a: "Split-brain is two nodes both believing they're leader at once — caused by a network partition (old leader still thinks it leads its side) or a GC pause/VM suspension that outlasts the lease (frozen node wakes up still 'leader'). A longer timeout only widens the unhandled-failure window and can't cover an arbitrary pause; no timeout distinguishes dead from frozen. The fix is a fencing token: a monotonically increasing number per grant that the protected resource enforces by rejecting any lower token, making a stale leader's operations harmless regardless of timing." },
+  ]}
+/>
+
+<Recap lang="en">
+**Leader election** designates exactly one node to do **inherently singular** work — a once-only scheduler, the single write-primary, a partition assigner — where running two leaders causes duplicate side effects or corruption. Its two requirements are **uniqueness** and **liveness**, and uniqueness is the dangerous one. You elect either via a **consensus protocol** (Raft/ZAB/Paxos), where a **majority quorum** mathematically forbids two leaders in the same term because any two majorities share a voter, or via a **renewable lease/lock** in a coordination service (**ZooKeeper, etcd, Redis**) that already runs consensus for you. The failure that defines the whole problem is **split-brain** — two leaders at once, caused by a **network partition** or a **GC pause/VM stall** that outlasts the lease, after which a frozen node wakes up still acting as leader (the billing double-charge). Crucially, **a longer timeout cannot fix this** — no timeout tells "dead" from "frozen." The real fix is a **fencing token**: a monotonically increasing number issued per leadership grant that the **protected resource** enforces by rejecting any lower token, so a revived stale leader's writes are structurally refused. Correctness lives at the resource, not in the lease length — which is also why a plain Redis lock is fine for efficiency but unsafe for correctness without fencing.
+</Recap>
