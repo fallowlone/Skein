@@ -1,13 +1,228 @@
 ---
-slug: "02-caching-and-matrix"
+concepts:
+- dependency-caching
+- cache-key-design
+- restore-keys-fallback
+- matrix-builds
+- artifacts-between-jobs
+- artifacts-vs-cache
+deepensInto: []
+estMin: 16
 lang: ru
-track: "ci-cd"
-unit: "01-pipelines"
+lessonType: topic
+level: middle
 order: 2
-title: "Caching, matrix builds and artifacts"
-summary: "Caching, matrix builds and artifacts — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-caching-and-matrix
 sources:
-  - https://docs.github.com/en/actions
+- https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows
+- https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+- https://docs.github.com/en/actions/using-workflows/storing-workflow-data-as-artifacts
+spiral: []
+status: ready
+summary: 'Cache по хэшу lockfile восстанавливает зависимости между запусками; matrix
+  гоняет один job по версиям и ОС параллельно; артефакты передают вывод сборки между
+  job. Протухший key хуже, чем отсутствие кэша.'
+title: 'Кэш, matrix-сборки и артефакты'
+track: ci-cd
+unit: 01-pipelines
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Каждый CI-запуск на чистом раннере переустанавливает 1200 npm-пакетов из сети — три минуты, на каждый пуш, до того как побежит хоть один тест. Кто-то добавляет `actions/cache` с `key: deps`, константой. Первый запуск сохраняет `node_modules`; каждый следующий восстанавливает его. Сборки падают до сорока секунд. Через две недели прилетает апдейт зависимости, тесты проходят зелёными в CI и ломаются в проде — потому что константный key продолжал восстанавливать *старый* `node_modules`, а новый lockfile так и не установился. Кэш был быстрым и неправильным. Кэш, чей key никогда не меняется, — это бомба замедленного действия.
+</Hook>
+
+<Crux>Cache по хэшу lockfile восстанавливает deps; matrix гоняет job по версиям параллельно; артефакты передают вывод между job.</Crux>
+
+<Explanation>
+
+## Кэш: хэш lockfile — единственный безопасный key
+
+Каждый CI-job бежит на чистой машине, поэтому без помощи он заново делает каждый дорогой детерминированный шаг — прежде всего установку зависимостей — с нуля на каждый запуск. `actions/cache` это чинит: сохраняет директорию после первого запуска и восстанавливает на последующих по выбранной тобой строке-ключу. Кардинальное правило живёт целиком в этом key: **он должен меняться ровно тогда, когда должно поменяться кэшируемое содержимое, и не раньше.** Для зависимостей вход, определяющий `node_modules`, — это lockfile, поэтому его и хэшируют.
+
+```yaml
+- name: Cache node_modules
+  uses: actions/cache@v4
+  with:
+    path: node_modules
+    key: ${{ runner.os }}-npm-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-npm-
+```
+
+`hashFiles('**/package-lock.json')` даёт чек-сумму, которая меняется в тот же миг, когда меняется любая зависимость. При попадании cache восстанавливается и установка почти мгновенна; при промахе — новый lockfile — key новый, поэтому старая запись *не* переиспользуется, ты ставишь начисто, и запуск сохраняет новую запись под новым ключом. Вот почему константный `key: deps` опасен: он никогда не может промахнуться, поэтому восстанавливает протухшие зависимости вечно, а твой новый lockfile молча игнорируется. Всегда привязывай key к содержимому.
+
+`restore-keys` — это лестница отката. Когда точный key промахивается, GitHub перебирает каждый префикс по очереди и восстанавливает самое свежее частичное совпадение — так что апдейт lockfile всё равно засевает cache из предыдущей записи `runner.os-npm-`, а не начинает с пустого, и пакетный менеджер качает только *дельту*. Это тёплый старт, а не шорткат для корректности: точный `key` по-прежнему решает, считается ли запись актуальной.
+
+<Inset kind="why" lang="ru">
+У `setup-node` кэширование встроено: `with: { node-version: 22, cache: 'npm' }` хэширует твой lockfile и сам управляет ключом — предпочитай его рукотворному `actions/cache` для кэша пакетного менеджера. На уровне сеньора важны два факта о scope. Кэши скоупятся по ветке с наследованием вниз: ветка может восстановить из своей базы и из `main`, но не вбок из несвязанной ветки — поэтому же cache, записанный недоверенным fork-PR, не может отравить `main`. И есть бюджет вытеснения на репозиторий (10 ГБ); при превышении GitHub вытесняет наименее недавно использованные записи, так что неиспользуемые кэши тихо исчезают.
+</Inset>
+
+## Matrix: одно определение job, много параллельных запусков
+
+`strategy.matrix` запускает один и тот же job по разу на каждую комбинацию перечисленных измерений — стандартный способ доказать, что код работает на разных версиях Node и ОС, без копипасты job'ов. GitHub разворачивает декартово произведение и планирует каждую комбинацию параллельно.
+
+```yaml
+test:
+  strategy:
+    fail-fast: false
+    max-parallel: 4
+    matrix:
+      node: [18, 20, 22]
+      os: [ubuntu-latest, macos-latest]
+      include:
+        - { node: 22, os: ubuntu-latest, coverage: true }
+      exclude:
+        - { node: 18, os: macos-latest }
+  runs-on: ${{ matrix.os }}
+  steps:
+    - uses: actions/setup-node@v4
+      with: { node-version: ${{ matrix.node }} }
+```
+
+Эта сетка `node × os` — это 3 × 2 = 6 job'ов; `exclude` убирает один, `include` добавляет лишнее поле к одной существующей комбинации (а с новым значением мог бы добавить и целый job). `fail-fast: true` (по умолчанию) отменяет всех соседей в момент первого падения — быстрая обратная связь, но ты теряешь полную картину; ставь `false`, когда нужно увидеть, *какие именно* комбинации сломались. `max-parallel` ограничивает, сколько бежит одновременно, дросселируя параллельное использование раннеров. Помни о взрыве: измерения умножаются, поэтому добавление третьей оси на 3 значения превращает 6 job'ов в 18, и каждый ест минуты раннера — matrix это ручка стоимости, а не бесплатное покрытие.
+
+## Артефакты: передай вывод из одного job в следующий
+
+Поскольку каждый job — это свежая машина, сборка, собранная в одном job, не существует в следующем — файловая система пропадает, когда job завершается. Cache здесь неправильный инструмент: это keyed, best-effort, возможно-вытесненное ускорение, а не гарантированная передача. Артефакты — правильный инструмент: явные, надёжные-в-пределах-запуска выводы, которые ты загружаешь и потом скачиваешь и которые можешь публиковать как результаты запуска (собранный бандл, отчёты тестов, покрытие).
+
+```yaml
+build:
+  steps:
+    - run: npm run build
+    - uses: actions/upload-artifact@v4
+      with: { name: dist, path: dist/ }
+deploy:
+  needs: build
+  steps:
+    - uses: actions/download-artifact@v4
+      with: { name: dist }
+    - run: ./deploy.sh dist/
+```
+
+Собрал один раз — деплой ровно те же байты, что ты тестировал, без дрейфа пересборки между job'ами. У артефактов есть период хранения (по умолчанию 90 дней, настраивается) и они учитываются в хранилище, поэтому называй их осознанно, а большие держи недолго.
+
+<FlowDiagram
+  label="Двухстадийный CI-пайплайн: build-job загружает артефакт dist, matrix test-job восстанавливает cache по хэшу lockfile, deploy-job скачивает тот же артефакт"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "build", label: "build job", sub: "npm run build" },
+    { id: "upload", label: "upload-artifact", sub: "name: dist" },
+    { id: "test", label: "test (matrix)", sub: "18/20/22 × os" },
+    { id: "cache", label: "actions/cache", sub: "key: hash(lock)" },
+    { id: "download", label: "download-artifact", sub: "name: dist" },
+    { id: "deploy", label: "deploy job", sub: "needs: build" },
+  ]}
+  edges={[
+    { from: "build", to: "upload", label: "пишет dist/" },
+    { from: "upload", to: "download", label: "те же байты" },
+    { from: "test", to: "cache", label: "восст. deps" },
+    { from: "download", to: "deploy", label: "отгрузка" },
+  ]}
+  caption="Cache — это keyed-ускорение, которое могут вытеснить; артефакт — надёжная передача ровно того вывода, что ты тестировал. Разные job, разные инструменты, разные гарантии."
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Измерение</th>
+        <th class="border border-border px-3 py-2 text-left">Cache (<code>actions/cache</code>)</th>
+        <th class="border border-border px-3 py-2 text-left">Artifact (<code>upload/download-artifact</code>)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Назначение</td>
+        <td class="border border-border px-3 py-2">Ускорить воспроизводимый шаг (входы можно вывести заново)</td>
+        <td class="border border-border px-3 py-2">Передать / сохранить вывод, который дёшево не вывести заново</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Срок жизни</td>
+        <td class="border border-border px-3 py-2">Best-effort; LRU-вытеснение в рамках бюджета 10 ГБ на репо</td>
+        <td class="border border-border px-3 py-2">Хранится фиксированный период (по умолчанию 90 дней)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Ключуется по</td>
+        <td class="border border-border px-3 py-2">Строке key, которую ты проектируешь (напр. хэш lockfile)</td>
+        <td class="border border-border px-3 py-2">Простому имени на твой выбор (<code>dist</code>, <code>coverage</code>)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Между job?</td>
+        <td class="border border-border px-3 py-2">Да, но как подсказка — промах нормален и безопасен</td>
+        <td class="border border-border px-3 py-2">Да, и гарантированно в пределах запуска через <code>needs</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="02-caching-and-matrix-quiz-1"
+  lessonSlug="02-caching-and-matrix"
+  lang="ru"
+  question="Ты задал key кэша константой ('deps'). Сборки быстрые, но апдейт зависимости, прошедший CI, ломается в проде. Почему?"
+  choices={[
+    { label: "Константный key никогда не промахивается, поэтому продолжает восстанавливать старый node_modules, а новый lockfile никогда не устанавливается — быстро, но протухло", correct: true },
+    { label: "actions/cache не умеет хранить node_modules, только ~/.npm", misconception: "Он может кэшировать любой путь. Проблема в дизайне key: константный key никогда не инвалидируется, поэтому отдаёт протухшее содержимое независимо от пути." },
+    { label: "Ты забыл restore-keys, поэтому cache был пуст", misconception: "Пустой cache сделал бы сборки медленными, а не быстрыми-и-протухшими. Симптом (быстро + неправильно) указывает на cache, который всегда попадает со старым содержимым — константный key." },
+    { label: "Matrix переиспользовал cache между версиями Node", misconception: "Это была бы проблема scope, но описанный симптом — протухание в рамках одного тулчейна со временем, вызванное ключом, который не отслеживает lockfile." },
+  ]}
+/>
+
+<Quiz
+  id="02-caching-and-matrix-quiz-2"
+  lessonSlug="02-caching-and-matrix"
+  lang="ru"
+  question="build-job компилирует dist/; deploy-job с 'needs: build' находит dist/ отсутствующим. Какой механизм правильно его передаёт?"
+  choices={[
+    { label: "upload-artifact в build, download-artifact в deploy — каждый job это свежая машина, поэтому нужна гарантированная передача, а не cache", correct: true },
+    { label: "actions/cache с key: dist — кэширование это стандартный способ делиться файлами между job", misconception: "Cache — это best-effort, вытесняемое ускорение; промах нормален. Деплой обязан получить точные байты каждый раз, что гарантируют именно артефакты в пределах запуска." },
+    { label: "Ничего — job в одном workflow разделяют файловую систему", misconception: "Не разделяют. Каждый job бежит на своём чистом раннере; файловая система build пропадает, когда тот job завершается, — поэтому передача и нужна." },
+    { label: "Перезапустить npm run build в deploy-job", misconception: "Это работает, но пересобирает, рискуя дрейфом от того, что ты тестировал, и тратя минуты. Артефакты отгружают идентичные протестированные байты." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="02-caching-and-matrix-tradeoff-1"
+  lessonSlug="02-caching-and-matrix"
+  lang="ru"
+  prompt="Библиотека должна проверить работу на Node 18/20/22 на Ubuntu и macOS, дать ясный сигнал о падениях и не сжечь CI-минуты. Выбери стратегию matrix."
+  options={[
+    { name: "matrix node:[18,20,22] os:[ubuntu,macos], fail-fast:false, задан max-parallel, exclude редких комбинаций", summary: "Полная сетка, полный сигнал, дросселирование.", correct: true, justification: "Это дефолт сеньора: декартово произведение покрывает каждую поддерживаемую комбинацию, fail-fast:false даёт увидеть, какие именно ячейки сломались, вместо того чтобы одна отменила остальные, max-parallel дросселирует параллельное использование раннеров, чтобы сетка не насытила твои минуты, а exclude отрезает неподдерживаемые комбинации, борясь с мультипликативным взрывом. Покрытие и ясный сигнал при контролируемой стоимости." },
+    { name: "Один job только на node 22 / ubuntu", summary: "Дёшево, одна ячейка.", justification: "Дешевле и быстрее всего, но не доказывает ничего про Node 18/20 или macOS — ровно ту совместимость, которую библиотека обязана гарантировать. Годится для быстрой проверки-дыма, не для заявки о поддержке версий/ОС." },
+    { name: "Полная сетка с fail-fast:true (по умолчанию)", summary: "Сетка, но отмена при первом падении.", justification: "Комбинации ты получаешь, но первое падение отменяет всех соседей, поэтому узнаёшь одну сломанную ячейку и теряешь видимость остальных — чинишь, перезапускаешь, находишь следующую. fail-fast:true в пользу быстрой остановки CI; для matrix совместимости, где нужна вся картина падений, ставь false." },
+    { name: "Добавить третью ось (напр. 3 пакетных менеджера) в сетку ради полноты", summary: "Больше осей, больше покрытия.", justification: "Измерения умножаются: третья ось на 3 значения превращает 18 job'ов в 54, каждый жжёт минуты раннера ради маргинального сигнала. Matrix — ручка стоимости; добавляй ось, только когда комбинация реально падает по-другому, а не ради театра полноты." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Ключуй cache по хэшу lockfile, чтобы он инвалидировался при смене deps — константный key отдаёт протухшее вечно. Matrix тестирует версии параллельно; артефакты (не cache) передают вывод между job.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-caching-and-matrix-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему key кэша, привязанный к хэшу lockfile, безопасен, а константный key опасен, и что добавляет restore-keys?", a: "actions/cache восстанавливает сохранённую директорию только когда её key совпадает, и кардинальное правило в том, что key должен меняться ровно тогда, когда должно поменяться содержимое. hashFiles('**/package-lock.json') даёт чек-сумму, которая меняется в тот же миг, когда меняется любая зависимость, поэтому апдейт lockfile порождает новый key: старая запись не переиспользуется, ты ставишь начисто против нового lockfile, и запуск сохраняет новую запись. Константный key вроде 'deps' никогда не промахивается, поэтому восстанавливает один и тот же старый node_modules на каждом запуске вечно — твой новый lockfile молча игнорируется, что быстро и неправильно (может пройти CI и сломаться в проде). restore-keys — это лестница отката по префиксу: при промахе точного key GitHub восстанавливает самое свежее частичное совпадение (напр. runner.os-npm-), так что смена lockfile всё равно тёпло стартует из предыдущего cache, а пакетный менеджер качает только дельту. Это тёплый старт, а не механизм корректности — точный key по-прежнему решает, считается ли запись актуальной." },
+    { q: "Cache и артефакты оба двигают файлы между job. Когда использовать каждый и почему не cache для передачи build→deploy?", a: "У них разные гарантии, потому что каждый CI-job бежит на свежей машине, так что всё, что произвёл один job, пропадает в следующем. Cache — это keyed, best-effort ускорение для воспроизводимой работы, входы которой у тебя ещё есть: промах нормален и безопасен, потому что результат можно просто вывести заново (перезапустить установку). Его также могут вытеснить — у репо бюджет ~10 ГБ и LRU-вытеснение. Артефакт — это явный, надёжный-в-пределах-запуска вывод, который ты загружаешь и скачиваешь по имени, гарантированно доступный нижестоящему job через needs и пригодный как опубликованный результат запуска (бандл, отчёты тестов, покрытие). Для build→deploy ты обязан отгрузить точные байты, что тестировал: cache неправилен, потому что промах оставил бы deploy ни с чем, а повторный вывод рискует дрейфом пересборки, тогда как upload-artifact в build + download-artifact в deploy гарантирует идентичный протестированный вывод. Правило: cache = воспроизводимое ускорение, которое не жалко потерять; артефакт = вывод, который нужно сохранить или передать." },
+  ]}
+/>
+
+<Recap lang="ru">
+Кэширование и matrix — два главных рычага CI-пайплайна, а артефакты — то, как job'ы общаются друг с другом. Каждый job бежит на чистой машине, поэтому actions/cache сохраняет и восстанавливает директорию по строке-ключу, которую ты проектируешь, — и вся игра в этом key: привяжи его к hashFiles('**/package-lock.json'), чтобы он инвалидировался в момент смены зависимостей, потому что константный key никогда не промахивается и отдаёт протухший node_modules вечно, что быстро и неправильно. restore-keys даёт тёплый старт по префиксу после реальной смены, а встроенный cache: 'npm' у setup-node сам управляет ключом; помни, что кэши скоупятся по ветке с наследованием вниз и LRU-вытесняются в рамках бюджета 10 ГБ. strategy.matrix разворачивает одно определение job по версиям и ОС как декартово произведение, запускаемое параллельно, с include/exclude для формовки комбинаций, fail-fast для выбора между быстрой остановкой и полной видимостью падений и max-parallel для дросселирования — но измерения умножаются, поэтому matrix это ручка стоимости, а не бесплатное покрытие. Наконец, поскольку файловая система build пропадает вместе с job'ом, ты передаёшь вывод вперёд через upload-artifact/download-artifact: артефакты — надёжные, именованные, гарантированные-в-пределах-запуска выводы, которые ты сохраняешь или публикуешь, тогда как cache — best-effort вытесняемое ускорение. Используй cache для воспроизводимой работы, которую не жалко потерять, и артефакты для точных байтов, которые нужно передать дальше.
+</Recap>
