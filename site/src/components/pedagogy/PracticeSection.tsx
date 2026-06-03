@@ -47,7 +47,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   const ordered = orderTasks(tasks);
   const [tick, setTick] = useState(0);
   const bump = () => setTick((t) => t + 1);
-  void tick;
+  void tick; // tick only forces a re-render; readProgress is re-read each render
   const p = readProgress(lessonKey);
   const done = ordered.filter((t) => p[t.id] === "done").length;
   return (
@@ -58,11 +58,11 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
       </p>
       <div class="flex items-center gap-3 mb-6 text-xs font-mono text-muted">
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "recall", "вспомнить")}</span>
-        <span>→</span>
+        <span aria-hidden="true">→</span>
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "apply", "применить")}</span>
-        <span>→</span>
+        <span aria-hidden="true">→</span>
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "stretch", "углубить")}</span>
-        <span class="ml-auto tabular-nums">{done} {tt(lang, "of", "из")} {ordered.length} {tt(lang, "done", "сделано")}</span>
+        <span class="ml-auto tabular-nums">{done} {tt(lang, "of", "из")} {ordered.length} {tt(lang, "done", "завершено")}</span>
       </div>
       <ol class="space-y-4">
         {ordered.map((task) => (
@@ -161,6 +161,7 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       if (task.runtime === "parametric") {
         const Comp = task.parametric ? PARAMETRIC[task.parametric.component] : undefined;
         if (!Comp) return null;
+        // parametric sandboxes own their completion lifecycle; no setTaskStatus/onChange here
         return <Suspense fallback={<Loading lang={lang} />}><Comp lang={lang} /></Suspense>;
       }
       if (task.runtime === "sql") {
