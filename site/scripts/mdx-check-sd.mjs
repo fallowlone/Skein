@@ -2,9 +2,11 @@ import { compile } from "@mdx-js/mdx";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 async function walk(d){const o=[];for(const e of await readdir(d,{withFileTypes:true})){const p=join(d,e.name);if(e.isDirectory())o.push(...await walk(p));else if(e.name==="index.mdx")o.push(p);}return o;}
+const filter=process.argv[2];
 let bad=0,ok=0;
-for(const root of ["src/content/lessons/en/system-design","src/content/lessons/ru/system-design"]){
+for(const root of ["src/content/lessons/en/system-design","src/content/lessons/ru/system-design","src/content/lessons/en/system-design-cases","src/content/lessons/ru/system-design-cases"]){
   for(const f of await walk(root)){
+    if(filter && !f.includes(filter)) continue;
     const src=await readFile(f,"utf8");
     // strip frontmatter (--- ... ---) so MDX doesn't choke on YAML
     const body=src.replace(/^---\n[\s\S]*?\n---\n/,"");
