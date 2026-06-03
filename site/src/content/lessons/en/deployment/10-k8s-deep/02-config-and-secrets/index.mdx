@@ -1,13 +1,252 @@
 ---
-slug: "02-config-and-secrets"
+concepts:
+- config-from-image-separation
+- configmap-env-vs-volume
+- secret-base64-not-encryption
+- encryption-at-rest-rbac
+- immutable-and-rotation
+- external-secret-managers
+deepensInto: []
+estMin: 16
 lang: en
-track: "deployment"
-unit: "10-k8s-deep"
+lessonType: topic
+level: middle
 order: 2
-title: "ConfigMaps and secrets"
-summary: "ConfigMaps and secrets — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-config-and-secrets
 sources:
-  - https://kubernetes.io/docs/home/
+- https://kubernetes.io/docs/concepts/configuration/configmap/
+- https://kubernetes.io/docs/concepts/configuration/secret/
+spiral: []
+status: ready
+summary: 'Inject config and secrets at runtime, never bake them into the image. ConfigMaps
+  and Secrets feed env vars or mounted files — but base64 is encoding, not encryption,
+  so enable encryption-at-rest and RBAC.'
+title: 'ConfigMaps and secrets'
+track: deployment
+unit: 10-k8s-deep
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A staging build gets promoted to production and immediately starts writing to the staging database. The image was built with `DATABASE_URL=postgres://staging...` baked into an `ENV` line, so "promote the image" silently shipped staging config with it. Worse, `git log` shows the previous release embedded an API token the same way — it is now in every registry, every developer's `docker pull`, and the layer history forever. Both bugs have one root cause: configuration that belongs to the environment was frozen into the artifact.
+</Hook>
+
+<Crux>Inject config at runtime via ConfigMaps and Secrets — never bake it into the image. Base64 is encoding, not encryption.</Crux>
+
+<Explanation>
+
+## One image, many environments: the 12-factor split
+
+A container image is meant to be built once and run anywhere — dev, staging, production — identically. The moment you bake an environment-specific value into it (a database URL, a feature flag, an API key), you break that promise: the same image can no longer run in two environments, and anything secret you froze in is now permanent in the layer history. The 12-factor rule is to keep config in the environment, not the code, and inject it at runtime.
+
+Kubernetes gives you two objects for this. A **ConfigMap** holds non-confidential key/value config — "an API object used to store non-confidential data in key-value pairs." A **Secret** holds the same shapes for sensitive data. Both are decoupled from the Pod: you can change the config without rebuilding the image, and you can run the identical image in staging and prod by pointing it at different ConfigMaps and Secrets.
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: "info"
+  FEATURE_NEW_CHECKOUT: "true"
+  app.properties: |
+    cache.ttl=300
+    cache.size=2000
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-secrets
+type: Opaque
+data:
+  # base64 of "postgres://app:s3cr3t@db:5432/app" — encoding, NOT encryption
+  DATABASE_URL: cG9zdGdyZXM6Ly9hcHA6czNjcjN0QGRiOjU0MzIvYXBw
+```
+
+## Two ways in: env vars vs. mounted files
+
+A Pod consumes a ConfigMap or Secret in one of two shapes, and the choice has a runtime consequence most people learn the hard way. You can project values as **environment variables** (`envFrom` for a whole map, or `valueFrom.configMapKeyRef` / `secretKeyRef` for one key), or mount them as **files in a volume**, where each key becomes a file. Env vars are convenient for flat scalars; volumes are the right call for whole config files (a TLS cert, an `application.yaml`) and for anything you want to update without redeploying.
+
+The consequence: **mounted files update live; env vars do not.** When a ConfigMap consumed in a volume is updated, "projected keys are eventually updated as well" — the kubelet refreshes them on its periodic sync. But "ConfigMaps consumed as environment variables are not updated automatically and require a pod restart." The same split holds for Secrets. So if you change a value that the app reads from an env var, nothing happens until the Pod restarts; change a value mounted as a file, and the file updates in place — though your app still has to re-read it.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: app }
+  template:
+    metadata:
+      labels: { app: app }
+    spec:
+      containers:
+        - name: app
+          image: registry.example.com/app:1.4.2   # same image, every env
+          envFrom:
+            - configMapRef:
+                name: app-config        # whole ConfigMap as env vars
+          env:
+            - name: DATABASE_URL        # one secret key as an env var
+              valueFrom:
+                secretKeyRef:
+                  name: app-secrets
+                  key: DATABASE_URL
+          volumeMounts:
+            - name: config-files
+              mountPath: /etc/app        # app.properties shows up as a file; updates live
+              readOnly: true
+      volumes:
+        - name: config-files
+          configMap:
+            name: app-config
+```
+
+<Inset kind="why" lang="en">
+"Update live" is not the whole story. The kubelet only refreshes mounted volumes on its periodic sync, so the delay can be "as long as the kubelet sync period + cache propagation delay" — seconds to a minute, not instant. And the file changing on disk does nothing unless your application *watches* the file and reloads it; most apps read config once at startup. So mounting as a volume is necessary but not sufficient for live rotation — the app has to participate.
+</Inset>
+
+## The senior caveat: base64 is not security
+
+This is the failure that gets teams breached. In a Secret's `data` field the values are **base64-encoded, not encrypted** — and base64 is trivially reversible (`echo ... | base64 -d`). By default "Kubernetes Secrets are, by default, stored unencrypted in the API server's underlying data store (etcd)." So a Secret object is not, on its own, secret: "Anyone with API access can retrieve or modify a Secret, and so can anyone with access to etcd." A Secret differs from a ConfigMap mainly in intent and tooling (it is typed, kept out of some logs, can be RBAC-scoped) — not in any cryptography.
+
+To make Secrets actually safe, Kubernetes says to "take at least the following steps": **enable Encryption at Rest** so the bytes in etcd are encrypted, and **configure RBAC with least-privilege access** so only the workloads and people who need a Secret can `get` it. Layer on restricting Secret access to specific containers, and for real secret management reach for **external secret stores** — HashiCorp Vault, the External Secrets Operator, or a cloud secret manager (AWS/GCP/Azure) — which keep the source of truth outside the cluster, support audit and rotation, and sync into Kubernetes on demand. The cardinal sin to avoid: treating a base64 Secret manifest as safe and committing it to git. base64 in a repo is plaintext to anyone who clones it.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Property</th>
+        <th class="border border-border px-3 py-2 text-left">ConfigMap</th>
+        <th class="border border-border px-3 py-2 text-left">Secret</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Purpose</td>
+        <td class="border border-border px-3 py-2">Non-confidential config</td>
+        <td class="border border-border px-3 py-2">Sensitive data (tokens, passwords, keys)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">On-the-wire encoding</td>
+        <td class="border border-border px-3 py-2">Plain UTF-8 in <code>data</code></td>
+        <td class="border border-border px-3 py-2">base64 in <code>data</code> (encoding, not encryption)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Encrypted at rest in etcd?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Not by default — must enable encryption-at-rest</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Who can read it</td>
+        <td class="border border-border px-3 py-2">Anyone with API/etcd access</td>
+        <td class="border border-border px-3 py-2">Anyone with <code>get secret</code> RBAC — so scope it tightly</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Consumed as</td>
+        <td class="border border-border px-3 py-2">env vars or volume files</td>
+        <td class="border border-border px-3 py-2">env vars or volume files (same two shapes)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Immutability and rotation
+
+Two operational levers finish the picture. Mark a ConfigMap or Secret **immutable** (add a top-level `immutable: true`) when its value should never change in place. This buys two things: protection from accidental updates that would silently break running Pods, and a performance win — the kubelet stops watching immutable objects for changes, which materially reduces API-server load on large clusters. The tradeoff is that you cannot edit an immutable object; to change it you create a new one (often suffixed with a hash) and roll the Deployment to point at it.
+
+That naturally leads to **rotation**. Because env-var values are frozen at Pod start, rotating a Secret consumed as an env var does nothing until you restart the Pods — and a deliberate `kubectl rollout restart` is the honest way to apply it. A Secret mounted as a file *can* rotate without a restart, but only if the application watches the file and reloads. Many teams therefore standardize on either "mount + app watches" for true zero-downtime rotation, or "immutable + hash-suffixed names + rollout" so a config change is a normal, auditable, rollback-able deploy.
+
+<FlowDiagram
+  label="ConfigMap and Secret each feed a Pod as either environment variables or as files in a mounted volume"
+  hue="var(--d-systems)"
+  perRow="3"
+  nodes={[
+    { id: "cm", label: "ConfigMap", sub: "non-secret kv" },
+    { id: "pod", label: "Pod", sub: "container" },
+    { id: "files", label: "Volume files", sub: "update live" },
+    { id: "sec", label: "Secret", sub: "base64 kv" },
+    { id: "env", label: "Env vars", sub: "frozen at start" },
+  ]}
+  edges={[
+    { from: "cm", to: "env", label: "envFrom" },
+    { from: "cm", to: "files", label: "volume" },
+    { from: "sec", to: "env", label: "secretKeyRef" },
+    { from: "sec", to: "files", label: "volume" },
+    { from: "env", to: "pod", label: "restart to change" },
+    { from: "files", to: "pod", label: "live, app re-reads" },
+  ]}
+  caption="Both objects offer the same two shapes. The shape decides rotation behavior: env vars need a Pod restart; mounted files update on the kubelet sync but only take effect if the app re-reads them."
+/>
+
+<TradeoffMatrix
+  id="02-config-and-secrets-tradeoff-1"
+  lessonSlug="02-config-and-secrets"
+  lang="en"
+  prompt="A production app must rotate its database password with zero downtime. How should the credential be delivered to the Pods?"
+  options={[
+    { name: "Secret mounted as a volume file, with the app watching the file and reloading the connection pool on change", summary: "Live rotation.", correct: true, justification: "Mounted Secret files are eventually refreshed by the kubelet on its periodic sync, so the new password lands on disk without a restart. The catch is that a file changing does nothing unless the app re-reads it, so the zero-downtime requirement forces the app to watch the file and rebuild its pool. That combination — volume mount plus an app that participates — is the only path to genuinely restart-free rotation, which is exactly what the requirement demands." },
+    { name: "Secret as an environment variable via secretKeyRef", summary: "Frozen at start.", justification: "Env vars are read once at container start and never updated in place — 'consumed as environment variables are not updated automatically and require a pod restart.' Rotating the Secret leaves every running Pod on the old password until you restart them, so this cannot be zero-downtime by itself; it needs a rollout, which contradicts the requirement." },
+    { name: "Bake the password into the image as an ENV line and rebuild on rotation", summary: "In the artifact.", justification: "This is the anti-pattern the whole lesson exists to kill. The credential ends up permanent in the layer history and registry, the same image can't run across environments, and rotating means a full rebuild-and-redeploy — slow, leaky, and the opposite of zero-downtime." },
+    { name: "Commit a base64 Secret manifest to git and apply it on each rotation", summary: "base64 in a repo.", justification: "base64 is encoding, not encryption, so committing the manifest publishes the plaintext password to everyone who can clone the repo and to its history forever. It also still delivers via env or file with the same rotation tradeoffs. Real rotation belongs in an external secret manager, not git." },
+  ]}
+/>
+
+<Quiz
+  id="02-config-and-secrets-quiz-1"
+  lessonSlug="02-config-and-secrets"
+  lang="en"
+  question="A teammate says the Secret is safe because the values are base64-encoded. What is the accurate correction?"
+  choices={[
+    { label: "base64 is reversible encoding, not encryption — Secrets are unencrypted in etcd by default, and anyone with get-secret RBAC or etcd access can decode them; enable encryption-at-rest and least-privilege RBAC", correct: true },
+    { label: "base64 is a strong cipher, so it is fine as long as the cluster is private", misconception: "base64 is a transport encoding with no key and no secrecy; echo … | base64 -d reverses it instantly. A private network does not change that the value is plaintext to anyone who can read the object." },
+    { label: "Secrets are automatically encrypted at rest, so nothing more is needed", misconception: "By default Kubernetes Secrets are stored unencrypted in etcd. Encryption at rest is an opt-in you must configure; it is not on out of the box." },
+    { label: "Only the kube-apiserver can read Secrets, so RBAC is irrelevant", misconception: "Any subject with get on the Secret can retrieve and decode it, and anyone with etcd access can too. RBAC least-privilege is exactly how you limit who that is." },
+  ]}
+/>
+
+<Quiz
+  id="02-config-and-secrets-quiz-2"
+  lessonSlug="02-config-and-secrets"
+  lang="en"
+  question="You edit a ConfigMap value that the app reads from an environment variable. The running Pods don't pick up the change. Why?"
+  choices={[
+    { label: "Env-var values are injected once at container start and are not updated automatically — a Pod restart is required; mounting the key as a volume file is the shape that updates live", correct: true },
+    { label: "The ConfigMap edit didn't save; env vars always reflect the latest value", misconception: "The object updated fine. Env vars are simply not re-read after start: 'consumed as environment variables are not updated automatically and require a pod restart.'" },
+    { label: "ConfigMaps can't be changed after creation", misconception: "A normal ConfigMap is mutable; you can edit it freely. (An explicitly immutable one can't be edited, but that is opt-in.) The issue here is the env-var consumption shape, not mutability." },
+    { label: "You must delete and recreate the ConfigMap for any change to apply", misconception: "Editing in place works; mounted-file consumers even pick it up on the next kubelet sync. Only env-var consumers need the Pod to restart." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Inject config at runtime as ConfigMaps and Secrets, never baked in. Both feed env vars (restart to change) or volume files (live). base64 is encoding, not encryption: enable encryption-at-rest, scope RBAC, never commit.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-config-and-secrets-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is base64 in a Kubernetes Secret not security, and what must you actually do to protect Secrets?", a: "base64 is a reversible transport encoding with no key — `echo <value> | base64 -d` decodes it instantly — so the values in a Secret's data field are effectively plaintext to anyone who can read the object. By default Kubernetes Secrets are stored unencrypted in etcd, and anyone with API access (a get on the Secret via RBAC) or direct etcd access can retrieve and decode them. A Secret differs from a ConfigMap in intent and tooling, not in any cryptography. To actually protect them you take at least: enable Encryption at Rest so the bytes in etcd are encrypted; configure RBAC with least-privilege so only the workloads and people that need a Secret can get it; restrict Secret access to specific containers; and for real secret management use an external store such as Vault, the External Secrets Operator, or a cloud secret manager, which keeps the source of truth outside the cluster with audit and rotation. The classic breach is committing a base64 Secret manifest to git — that is just publishing the plaintext to everyone who can clone the repo." },
+    { q: "When does changing a ConfigMap or Secret value actually take effect in a running Pod, and how does the consumption shape decide it?", a: "It depends entirely on whether the value is consumed as an environment variable or as a mounted file. Env vars (envFrom, valueFrom.configMapKeyRef / secretKeyRef) are injected once when the container starts and are never updated in place — they are not updated automatically and require a Pod restart, so a deliberate kubectl rollout restart is how you apply the new value. Values mounted as files in a volume update live: when the underlying ConfigMap or Secret changes, the kubelet eventually refreshes the projected files on its periodic sync, with a delay up to the sync period plus cache-propagation delay. But the file changing on disk only matters if the application watches the file and reloads — most apps read config once at startup, so a volume mount is necessary but not sufficient for live rotation; the app has to participate. This is why zero-downtime rotation needs 'mount as file + app re-reads', while immutable ConfigMaps/Secrets force the opposite pattern: create a new hash-suffixed object and roll the Deployment to it." },
+  ]}
+/>
+
+<Recap lang="en">
+Configuration that belongs to the environment must be injected at runtime, not baked into the image — bake it in and the same artifact can no longer move across environments, and any secret you froze lives in the layer history forever. Kubernetes gives you a ConfigMap for non-confidential key/value config and a Secret for sensitive data, both decoupled from the Pod so one image runs everywhere by pointing at different objects. Each is consumed in one of two shapes — environment variables or files in a mounted volume — and the shape determines rotation: env vars are frozen at container start and need a Pod restart, while mounted files refresh on the kubelet sync but only take effect if the app re-reads them. The senior trap is that a Secret's base64 is encoding, not encryption: Secrets sit unencrypted in etcd by default and anyone with get-secret RBAC or etcd access can decode them, so you must enable encryption-at-rest, scope access with least-privilege RBAC, never commit a Secret manifest to git, and reach for an external secret manager for anything that truly matters. Finally, mark config immutable to prevent accidental edits and cut kubelet watch load, accepting that rotation then means a new hash-named object plus a rollout.
+</Recap>

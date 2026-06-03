@@ -1,13 +1,215 @@
 ---
-slug: "03-probes-and-resources"
+concepts:
+- readiness-probe
+- liveness-probe
+- startup-probe
+- requests-vs-limits
+- oomkilled-vs-throttling
+- qos-classes
+deepensInto: []
+estMin: 17
 lang: en
-track: "deployment"
-unit: "10-k8s-deep"
+lessonType: topic
+level: middle
 order: 3
-title: "Probes and resource limits"
-summary: "Probes and resource limits — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 03-probes-and-resources
 sources:
-  - https://kubernetes.io/docs/home/
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+- https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+spiral: []
+status: ready
+summary: 'Readiness gates traffic, liveness restarts, startup shields slow boots; requests
+  schedule and limits cap — over-CPU throttles, over-memory is OOMKilled. Set them wrong
+  and a healthy app CrashLoops or gets evicted.'
+title: 'Probes and resource limits'
+track: deployment
+unit: 10-k8s-deep
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A service ships fine, then at 3am pods start flapping. The dashboard shows `CrashLoopBackOff` climbing across every replica at once. Nobody pushed code. The cause: a `livenessProbe` with `initialDelaySeconds: 5` on an app that takes 25 seconds to warm its JIT and connect to the database. Every boot, the probe failed three times before the app was ready, Kubernetes ruled the container dead and restarted it — forever. A perfectly healthy app was being executed by its own health check. The fix was four lines of YAML. The lesson took the night.
+</Hook>
+
+<Crux>Readiness gates traffic, liveness restarts, startup shields boot; requests schedule, limits cap — CPU throttles, memory OOMKills.</Crux>
+
+<Explanation>
+
+## Three probes that answer three different questions
+
+Kubernetes does not assume a running container is a working one. It asks, repeatedly, via probes — and the kind of probe decides what happens when the answer is "no". Confusing them is the single most common source of self-inflicted outages in this lesson.
+
+**Readiness** asks *can this pod serve traffic right now?* When it fails, Kubernetes removes the pod from the Service's endpoints — traffic stops flowing to it — but it does **not** restart the container. The pod stays up, just out of rotation, and rejoins the moment readiness passes again. This is the gate for rollouts (a new pod gets no traffic until it is genuinely ready) and for transient overload (a pod under GC pressure can shed traffic without dying). Make readiness reflect *real* readiness: the app has bound its port, run migrations, and confirmed its critical dependencies are reachable.
+
+**Liveness** asks *is this container still alive, or is it wedged?* When it fails (past the threshold), Kubernetes **restarts the container**. This exists for one job: recovering from unrecoverable states — a deadlock, an event loop that stopped turning, a memory leak that hung the process. Liveness is a sledgehammer. If a slow-but-healthy app, or a temporary dependency blip, trips it, you get the restart loop from the hook.
+
+**Startup** asks *has this container finished booting yet?* It runs first; while it is still failing, the liveness and readiness probes are **held off entirely**. Once startup passes once, it never runs again and the other two take over. This is the correct shield for slow-starting apps — legacy JVMs, anything with a long warm-up — so you can keep liveness aggressive for *running* failures without it murdering the app during boot.
+
+```yaml
+containers:
+- name: api
+  image: registry.example.com/api:1.4.0
+  startupProbe:            # boot shield: up to 30 × 10s = 5 min to come alive
+    httpGet: { path: /healthz, port: 8080 }
+    periodSeconds: 10
+    failureThreshold: 30
+  readinessProbe:          # gate traffic; failing removes from Service, no restart
+    httpGet: { path: /ready, port: 8080 }
+    periodSeconds: 5
+    failureThreshold: 3
+  livenessProbe:           # restart if wedged; failing kills + restarts the container
+    httpGet: { path: /healthz, port: 8080 }
+    periodSeconds: 10
+    failureThreshold: 3
+```
+
+<Inset kind="why" lang="en">
+Two probe traps bite seniors. First, **liveness pointing at a dependency**: if your `/healthz` checks the database and the database has a 30-second hiccup, *every* pod's liveness fails at once and Kubernetes restarts your entire fleet — turning a brief dependency blip into a self-inflicted cascading outage. Liveness should test only the process itself; let readiness reflect dependencies. Second, **reusing one endpoint for both**: if `/healthz` does heavy dependency checks and you wire liveness to it, you have quietly made liveness depend on the world. Keep a cheap, local liveness endpoint and a richer readiness one.
+</Inset>
+
+## requests and limits: scheduling versus the hard cap
+
+Resources have two numbers per container, and they do completely different jobs.
+
+**`requests`** are what the pod is *guaranteed* and what the **scheduler** uses for placement: Kubernetes will only put the pod on a node that has at least `requests.cpu` and `requests.memory` free (summed across the node). It is a reservation, not a ceiling. Set requests to the typical, steady-state usage of the container.
+
+**`limits`** are the **hard cap** the container may not exceed at runtime — and what happens when it tries is the part people get wrong, because CPU and memory behave oppositely:
+
+- **CPU over limit → throttled, not killed.** CPU is compressible. Exceed `limits.cpu` and the kernel's CFS scheduler simply gives the container fewer time-slices; the app keeps running but gets slow. An under-set CPU limit shows up as mysterious latency, not crashes.
+- **Memory over limit → OOMKilled.** Memory is incompressible — you cannot give a process "less" RAM than it has allocated. Exceed `limits.memory` and the kernel's OOM killer terminates the container with exit code 137; you see `OOMKilled` and a restart. An under-set memory limit shows up as crashes, not slowness.
+
+```yaml
+resources:
+  requests:        # guaranteed + drives scheduling — set ≈ typical usage
+    cpu: "250m"
+    memory: "256Mi"
+  limits:          # hard cap — protects the node from a runaway container
+    cpu: "1"       # over → CFS throttling (slow, not killed)
+    memory: "512Mi"  # over → OOMKilled (exit 137, container restarts)
+```
+
+The senior rule: set **requests ≈ typical** so the scheduler packs the node honestly, and set **limits high enough to absorb spikes but low enough to protect the node**. Then watch the two failure signals — recurring `OOMKilled` means your memory limit is too low (or there is a leak); sustained CPU throttling means your CPU limit is too low. Tune from real metrics, not guesses.
+
+## QoS classes decide who dies first
+
+The relationship between requests and limits silently assigns each pod a **Quality of Service class**, and that class sets the eviction order when a node runs out of memory:
+
+- **Guaranteed** — every container has `requests == limits` for both CPU and memory. Evicted last. Use for latency-critical, stateful workloads.
+- **Burstable** — at least one request set, but not equal to limits (the common case). Evicted after BestEffort, ordered by how far over its requests it is using.
+- **BestEffort** — no requests or limits at all. First to be evicted, first to be OOM-killed under node pressure. Fine only for throwaway batch work.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Knob</th>
+        <th class="border border-border px-3 py-2 text-left">requests</th>
+        <th class="border border-border px-3 py-2 text-left">limits</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Role</td>
+        <td class="border border-border px-3 py-2">Guaranteed reservation; drives scheduling</td>
+        <td class="border border-border px-3 py-2">Hard runtime ceiling per container</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Used by scheduler?</td>
+        <td class="border border-border px-3 py-2">Yes — pod only lands on a node with this much free</td>
+        <td class="border border-border px-3 py-2">No — enforced at runtime by the kernel</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Over CPU</td>
+        <td class="border border-border px-3 py-2">n/a (request is a floor)</td>
+        <td class="border border-border px-3 py-2">CFS <strong>throttling</strong> — app slows, stays up</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Over memory</td>
+        <td class="border border-border px-3 py-2">n/a</td>
+        <td class="border border-border px-3 py-2"><strong>OOMKilled</strong> (exit 137) — container restarts</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Set it to</td>
+        <td class="border border-border px-3 py-2">≈ typical steady-state usage</td>
+        <td class="border border-border px-3 py-2">High enough for spikes, low enough to protect the node</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="03-probes-and-resources-tradeoff-1"
+  lessonSlug="03-probes-and-resources"
+  lang="en"
+  prompt="A slow-booting JVM service (25s warm-up) needs to recover from rare deadlocks without flapping on every restart. How do you configure its probes?"
+  options={[
+    { name: "Add a startupProbe (failureThreshold × periodSeconds ≥ boot time), then a normal-paced livenessProbe and a readinessProbe", summary: "Shield boot, then guard runtime.", correct: true, justification: "This is the textbook fix. The startupProbe holds liveness and readiness off until the app has finished its 25s warm-up, so a slow boot can never trip liveness. Once it passes once, the liveness probe takes over to catch genuine deadlocks at runtime, and readiness gates traffic. You get deadlock recovery without the boot-time restart loop — the two concerns are cleanly separated." },
+    { name: "Just raise livenessProbe.initialDelaySeconds to 30 and keep the rest aggressive", summary: "Delay liveness instead.", justification: "It works, but it is the blunter, fragile version. initialDelaySeconds is a fixed guess: too low and you reintroduce the crash loop, too high and a container that dies right after the delay sits dead for the whole window before liveness even starts checking. A startupProbe adapts — it stops as soon as the app is up — and keeps liveness responsive afterward. Prefer startupProbe for slow starters." },
+    { name: "Remove the livenessProbe so it can never restart the app", summary: "No liveness at all.", justification: "This trades one failure for another. Yes, you stop the boot-time restart loop, but you also lose the only mechanism that recovers a wedged process — the deadlock you were asked to handle now hangs forever with no auto-recovery. The right move is to scope liveness correctly with a startupProbe, not to delete it." },
+    { name: "Point the livenessProbe at /healthz which checks the database connection", summary: "Liveness checks deps.", justification: "Actively dangerous. A liveness probe that depends on the database means a 30-second DB hiccup fails every pod's liveness simultaneously and restarts the whole fleet — a cascading, self-inflicted outage. Liveness must test only the process; dependency health belongs in readiness." },
+  ]}
+/>
+
+<Quiz
+  id="03-probes-and-resources-quiz-1"
+  lessonSlug="03-probes-and-resources"
+  lang="en"
+  question="A container is repeatedly terminated with exit code 137 under load, then restarted. What does that tell you?"
+  choices={[
+    { label: "It is OOMKilled — it exceeded its memory limit, so raise limits.memory from observed peak (or fix a leak); memory is incompressible, so the kernel kills rather than slows it", correct: true },
+    { label: "The CPU limit is too low and it is being throttled", misconception: "CPU over-limit causes throttling, not a kill — the container slows but keeps running. Exit code 137 is SIGKILL from the OOM killer, which is a memory-limit symptom, not a CPU one." },
+    { label: "The liveness probe is failing and restarting it", misconception: "A liveness restart shows up as a probe-failure event, not exit code 137 with reason OOMKilled. 137 specifically means the OOM killer terminated the container for exceeding its memory limit." },
+    { label: "The node is out of disk", misconception: "Disk pressure triggers eviction with a different reason, not an OOMKill with exit 137. Code 137 is the memory-limit signature: SIGKILL from the kernel OOM killer." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A liveness probe that fails during a slow boot kills the container, which restarts and boots slowly again, tripping liveness once more — an endless CrashLoopBackOff on a healthy app"
+  hue="var(--d-systems)"
+  perRow={5}
+  nodes={[
+    { id: "boot", label: "Pod boots", sub: "25s warm-up" },
+    { id: "probe", label: "Liveness", sub: "delay 5s" },
+    { id: "fail", label: "Fails ×3", sub: "app not ready" },
+    { id: "kill", label: "Restart", sub: "container killed" },
+    { id: "loop", label: "CrashLoop", sub: "BackOff" },
+  ]}
+  edges={[
+    { from: "boot", to: "probe", label: "5s in" },
+    { from: "probe", to: "fail", label: "too early" },
+    { from: "fail", to: "kill", label: "ruled dead" },
+    { from: "kill", to: "loop", label: "repeat" },
+  ]}
+  caption="Aggressive liveness on a slow-starting app: the probe fires before warm-up finishes, fails its threshold, and restarts the container — which boots slowly and trips it again. A startupProbe (or a startup-sized initialDelay) breaks the loop by holding liveness off until boot completes."
+/>
+
+<KeyTakeaway>Readiness gates traffic (no restart); liveness restarts (deadlock recovery — never aim it at a dependency); startup shields boot. requests schedule, limits cap: over-CPU throttles, over-memory OOMKills (137).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-probes-and-resources-retrieval"
+  lang="en"
+  questions={[
+    { q: "A healthy app is stuck in CrashLoopBackOff right after deploy. Walk through the probe misconfiguration that causes it and the exact fix.", a: "The classic cause is an over-aggressive livenessProbe on a slow-starting app. Liveness asks 'is this container alive?' and on failure it restarts the container. If the app needs, say, 25 seconds to warm up (JIT, connection pools, migrations) but the liveness probe has a short initialDelaySeconds and a low failureThreshold, the probe fires while the app is still booting, fails its threshold, and Kubernetes rules the container dead and restarts it. The restarted container boots slowly again, the probe fails again, and you get an endless CrashLoopBackOff — on a perfectly healthy app, executed by its own health check. The fix is to stop liveness from running during boot. Add a startupProbe whose failureThreshold × periodSeconds comfortably exceeds the real boot time (e.g. 30 × 10s = 5 minutes); while it is still failing, both liveness and readiness are held off entirely. Once startup passes once, it never runs again and liveness takes over to catch genuine runtime deadlocks. A blunter alternative is raising the liveness initialDelaySeconds to cover boot, but startupProbe is preferred because it stops as soon as the app is up rather than waiting a fixed guess." },
+    { q: "What is the difference between a container being OOMKilled and being throttled, and what does each tell you to change?", a: "They are the two enforcement behaviors of resource limits, and they differ because memory is incompressible while CPU is compressible. When a container exceeds its memory limit, the kernel's OOM killer terminates it with exit code 137 — you see status OOMKilled and the container restarts. You cannot give a process 'less' RAM than it has allocated, so the only response is to kill it. This tells you the memory limit is set too low for the workload's real footprint, or there is a memory leak — either raise limits.memory based on observed usage, or fix the leak. When a container exceeds its CPU limit, nothing is killed: the kernel's CFS scheduler simply hands it fewer time-slices, so the app keeps running but gets slower. This shows up as mysterious latency, not crashes, and tells you the CPU limit is too low for the load — raise limits.cpu (and check the request reflects typical usage so the scheduler placed the pod somewhere with headroom). The rule of thumb: recurring OOMKilled means under-set memory; sustained throttling means under-set CPU. Always tune from real metrics rather than guesses." },
+  ]}
+/>
+
+<Recap lang="en">
+Kubernetes keeps pods healthy and right-sized with two independent tools, and the failures come from confusing the cases. There are three probes answering three questions: readiness ('can it serve?' — failing removes the pod from the Service's endpoints but does not restart it, the gate for rollouts and shedding transient load), liveness ('is it wedged?' — failing restarts the container, for recovering deadlocks only), and startup ('has it booted?' — running first and holding liveness and readiness off until boot completes, the shield for slow-starting apps). The two pitfalls that take down healthy fleets are an over-aggressive liveness probe that CrashLoops a slow-but-healthy app, and a liveness probe pointed at a dependency that restarts every pod at once during a brief dependency blip — keep liveness cheap and local, let readiness reflect dependencies. On resources, requests are the guaranteed reservation the scheduler uses for placement (set them near typical usage), and limits are the hard runtime cap — but the two resources enforce oppositely: exceed the CPU limit and you are throttled by CFS (slow, not killed), exceed the memory limit and you are OOMKilled with exit code 137 (killed and restarted). The ratio of requests to limits assigns a QoS class — Guaranteed (requests == limits, evicted last), Burstable, or BestEffort (no limits, evicted first) — which sets the order pods die under node pressure. Watch for recurring OOMKills (memory limit too low) and sustained throttling (CPU limit too low) and tune from metrics, not guesses.
+</Recap>
