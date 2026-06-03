@@ -4,19 +4,156 @@ lang: en
 track: "system-design"
 unit: "08-building-blocks"
 order: 8
-title: "08-building-blocks: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Building blocks: code and config reading"
+summary: "Read real limiter code, an ID config, a bloom-filter sizing call, and a geohash query, then pick the answer a senior engineer would commit to: the lost-update race, the index-fragmenting key, the saturated filter, and the missed boundary neighbour."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - distributed-rate-limiting
+  - index-locality
+  - false-positive-rate
+  - boundary-problem
+  - fencing-token
+  - fail-open
+prereqs:
+  - 08-building-blocks/01-rate-limiter
+  - 08-building-blocks/02-unique-id-generation
+  - 08-building-blocks/03-bloom-filters
+  - 08-building-blocks/05-leader-election
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://stripe.com/blog/rate-limiters
+  - https://en.wikipedia.org/wiki/Bloom_filter
+  - https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 08-building-blocks unit. STUB.</Hook>
+<Hook>
+Building-block bugs hide in the code, not the prose: a read-then-write that isn't atomic, a primary key that fragments the index, a filter sized for the wrong N, a query that forgets the neighbour cells. Read each snippet, find the flaw, and pick the fix a senior engineer would commit to.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Read the limiter, ID config, filter sizing, and geohash query; find the race, the fragmenting key, the saturation, the missed neighbour.</Crux>
+
+<Explanation>
+
+Practise the review loop you run on real building-block code: locate the operation, check whether it's atomic / time-ordered / correctly sized / boundary-aware, and choose the change the mechanism actually requires.
+
+## Snippet 1 — the limiter increment
+
+```python
+def allow(key, limit):
+    n = redis.get(key) or 0          # read
+    if int(n) < limit:
+        redis.set(key, int(n) + 1)   # modify-write (separate op)
+        return True
+    return False
+```
+
+<Quiz
+  id="08-building-blocks-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This limiter runs on many servers against one Redis. Under concurrency, what bug does the read-then-write introduce, and what's the fix?"
+  choices={[
+    { label: "A lost-update race: two requests both GET the same n below the limit and both SET n+1, so one increment is lost and the client exceeds the limit. Fix with an atomic redis.incr(key) (or a Lua script), then compare.", correct: true },
+    { label: "No bug — Redis serializes commands, so this is already safe.", misconception: "Redis serializes individual commands, but GET and SET here are SEPARATE commands with a gap between them. Two requests can both GET the same value before either SETs. You need a single atomic INCR (or Lua), not two ops." },
+    { label: "The bug is using a string instead of an integer type.", misconception: "The int() conversion is fine. The real bug is that the read and the write are two non-atomic operations, so concurrent requests race into a lost update. Use atomic INCR." },
+    { label: "It will under-count, rejecting valid requests.", misconception: "It OVER-counts the client (lets too many through): concurrent requests both see a stale low n and both allow. The fix for the lost update is an atomic increment-and-check." },
+  ]}
+/>
+
+## Snippet 2 — the primary key
+
+```sql
+-- high-volume events table, InnoDB (clustered PK)
+CREATE TABLE events (
+  id   UUID DEFAULT gen_random_uuid()  PRIMARY KEY,  -- random UUIDv4
+  body JSONB,
+  ts   TIMESTAMPTZ
+);
+```
+
+<Quiz
+  id="08-building-blocks-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="At millions of inserts/hour, this clustered random-UUID primary key hurts. What's the problem and the minimal change?"
+  choices={[
+    { label: "Random UUIDv4 keys scatter inserts across the whole clustered B-tree (page splits, lost cache locality, table fragmentation). Switch to a time-ordered ID (UUIDv7) so inserts land at the index's right edge.", correct: true },
+    { label: "UUIDs are too large; shrink to a 32-bit int.", misconception: "Width is secondary. The throughput hit is fragmentation from RANDOM keys on a clustered index. A time-ordered UUIDv7 keeps the UUID benefits while restoring right-edge inserts." },
+    { label: "gen_random_uuid() is too slow to call per insert.", misconception: "Generation cost is negligible next to the index fragmentation random keys cause. Use UUIDv7 (time-ordered) to fix the insert pattern, not to speed up generation." },
+    { label: "Nothing — random keys spread load evenly, which is good.", misconception: "On a clustered index, spreading inserts across the whole tree is BAD: it causes page splits and destroys cache locality. You want sequential right-edge inserts, which a time-ordered UUIDv7 provides." },
+  ]}
+/>
+
+## Snippet 3 — the bloom filter sizing
+
+```python
+# sized once at startup
+bf = BloomFilter(expected_items=1_000, fp_rate=0.01)
+# ...later, in production, it ingests every event key
+for key in stream:        # millions of keys over time
+    bf.add(key)
+```
+
+<Quiz
+  id="08-building-blocks-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="The filter was sized for 1,000 items but ingests millions. What happens, and what stays guaranteed?"
+  choices={[
+    { label: "It saturates: far more bits get set than planned, so the false-positive rate climbs toward 100% and the filter answers 'maybe' to almost everything (useless). The no-false-negatives guarantee still holds. Rebuild sized for the true N (or use a scalable filter).", correct: true },
+    { label: "It starts producing false negatives, missing keys that were added.", misconception: "Saturation never causes false negatives — that guarantee is structural (adding only sets bits). It causes the false-POSITIVE rate to climb toward 100%, making the filter useless but never wrong about 'definitely absent.'" },
+    { label: "It auto-resizes to fit the new item count.", misconception: "A plain bloom filter can't resize. Past its sized N it saturates and the false-positive rate climbs. You must rebuild a larger one (or use a scalable bloom filter that chains larger filters)." },
+    { label: "Nothing changes; the fp_rate is fixed at 1% forever.", misconception: "The 1% holds only at the sized N. Insert 1000× more and the array saturates, pushing the false-positive rate toward 100%. Size for the real N." },
+  ]}
+/>
+
+## Snippet 4 — the proximity query
+
+```python
+def nearby(lat, lng):
+    cell = geohash_encode(lat, lng, precision=6)   # ~1 km cell
+    return db.query(
+        "SELECT * FROM drivers WHERE geohash LIKE %s", cell + '%'
+    )   # only the rider's own cell
+```
+
+<Quiz
+  id="08-building-blocks-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="This returns no driver even when one is parked just across the street. What's wrong and what's the fix?"
+  choices={[
+    { label: "The boundary problem: a driver just over a cell edge has a different geohash prefix, so the single-cell LIKE misses them. Query the rider's cell PLUS its 8 neighbour cells, then rank by exact distance.", correct: true },
+    { label: "precision=6 is too coarse; use a longer geohash.", misconception: "Precision doesn't fix the boundary: a driver across ANY cell edge still has a different prefix. The fix is to expand the query to the 8 neighbour cells (3×3 grid), not change precision." },
+    { label: "LIKE can't use the index, so it scans everything.", misconception: "A prefix LIKE ('cell%') uses a string/B-tree index fine — that's geohash's whole point. The bug is querying only one cell; include the 8 neighbours." },
+    { label: "It also needs an exact-distance filter, but the cell choice is fine.", misconception: "Exact-distance ranking is needed too, but the missed-neighbour bug is the boundary problem: a single-cell query can't see a driver across the edge. You must add the 8 neighbour cells first, then rank by distance." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every decision is in the code: is the limiter increment atomic, the PK time-ordered, the filter sized for the real N, the query inclusive of the 8 neighbours? Find the operation, check the invariant, pick the right fix.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-building-blocks-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "How do you spot and fix the distributed-limiter race in code?", a: "Look for a read and a write as separate operations (GET then SET, or check-then-increment) against shared storage. Under concurrency two requests both read a stale count below the limit and both write, losing an increment — the client overshoots. Fix by collapsing it to a single atomic operation: Redis INCR (then compare), or a Lua script that refills and decrements the bucket server-side in one round trip." },
+    { q: "Why does a random-UUID clustered primary key hurt insert throughput, and the minimal fix?", a: "On a clustered index the table rows are stored in key order, so a random UUIDv4 inserts at a random leaf each time — scattering writes across the whole B-tree, causing page splits and collapsing buffer-cache locality. A monotonic/time-ordered key appends to the right edge (one hot page). Minimal fix: switch the PK to a time-ordered ID (UUIDv7) — same UUID type, but the high-bit timestamp restores right-edge inserts." },
+    { q: "What happens when a bloom filter is sized for too few items, and what's preserved?", a: "It saturates: many more bits are set than planned, so an unrelated key's k positions are likely all 1, and the false-positive rate climbs toward 100% — the filter answers 'maybe' to nearly everything and loses its value. The no-false-negatives guarantee is preserved throughout (adding only sets bits). A plain filter can't resize; rebuild one sized for the true N, or use a scalable bloom filter." },
+  ]}
+/>
+
+<Recap lang="en">
+Every building-block decision in this unit can be read straight off the code. A **limiter** that does a separate read then write across a fleet has a **lost-update race** — collapse it to an **atomic** INCR or Lua script. A **random-UUID clustered primary key** fragments the B-tree at high insert rates — switch to a **time-ordered** UUIDv7 for right-edge inserts. A **bloom filter** sized for too few items **saturates** (false-positive rate → 100%, but never false negatives) — rebuild for the true N. And a **geohash proximity query** that scans only the rider's cell hits the **boundary problem** — include the **8 neighbour cells**, then rank by exact distance. The senior habit is the same each time: find the operation, name the invariant it must hold (atomic / time-ordered / correctly sized / boundary-aware), and choose the fix that restores it.
+</Recap>

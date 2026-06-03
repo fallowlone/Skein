@@ -5,34 +5,163 @@ track: "system-design"
 unit: "06-async-messaging"
 order: 2
 title: "Publish/subscribe"
-summary: "Publish/subscribe — to be authored."
-estMin: 16
-status: stub
+summary: "Pub/sub replaces one-to-one delivery with topic-based fan-out: a publisher emits to a topic and every interested consumer gets a copy. The deepest split is broker queues that delete on consume versus log systems that keep an append-only log with per-consumer offsets and replay."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - publish-subscribe
+  - topic-fan-out
+  - consumer-group
+  - log-vs-broker
+  - offset-replay
+  - partition-ordering
+prereqs:
+  - 02-availability/03-failover-and-fault-tolerance
+  - 06-async-messaging/01-message-queues
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://kafka.apache.org/documentation/
+  - https://docs.aws.amazon.com/sns/latest/dg/welcome.html
+  - https://www.rabbitmq.com/tutorials/amqp-concepts
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+When an order was placed, the order service called four others in turn: inventory, email, analytics, fraud. Each new feature that cared about orders meant another call wired into the order service, another timeout to handle, another deploy that risked breaking checkout. The order service had become a hub that knew about everyone. The team flipped it: the order service now *publishes* one "order placed" event to a topic and forgets who listens. Inventory, email, analytics, and fraud each *subscribe* independently. Adding a fifth consumer — a loyalty service — is now a deploy of the loyalty service alone; the order service never changes. One write, many independent readers, zero coupling between them.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Pub/sub is topic-based fan-out: a publisher emits to a topic, every subscriber gets a copy. Producer and consumers don't know each other.</Crux>
 
 <Explanation>
 
-## Publish/subscribe
+## From one-to-one to one-to-many
 
-Body to be authored.
+A point-to-point queue delivers each message to *one* consumer. **Publish/subscribe** delivers each message to *every* interested party. The publisher emits a message to a named **topic**; the broker copies it to each **subscription**; each subscriber consumes its own copy independently. The publisher names a topic, not a recipient — it has no idea who is listening, and consumers come and go without the publisher knowing or caring. That indirection is the whole point: it adds a level of decoupling beyond the temporal decoupling of a plain queue.
+
+The result is the inversion in the hook. Instead of the producer holding an N-long list of downstreams to call (and a deploy whenever that list changes), the producer publishes once and the *consumers* decide what they care about. This is the difference between **commands** ("send this email" — addressed to one handler, a job → use a queue) and **events** ("an order was placed" — a fact, broadcast to whoever cares → use pub/sub). Getting that distinction right is most of the design: a command has exactly one correct handler; an event has zero or many, and you must not encode the consumers into the producer.
+
+## Two architectures wearing the same name: broker vs log
+
+"Pub/sub" describes a *behaviour* (fan-out), and two very different mechanisms implement it. The split is the most important thing to understand in this lesson.
+
+**Broker-style** (RabbitMQ, ActiveMQ, AWS SNS→SQS). The broker routes a copy of each message into a per-subscriber queue, and once a subscriber acknowledges, *that copy is deleted*. Message storage is transient — the broker's job is delivery, not retention. A subscriber that wasn't connected when a message was published may simply never see it (unless you configured durable subscriptions). The broker tracks delivery state on behalf of consumers.
+
+**Log-based** (Apache Kafka, AWS Kinesis, Apache Pulsar). The topic is an **append-only log**: messages are written in order and *retained* for a configured window (hours, days, or forever), independent of whether anyone has read them. Consumers don't get messages pushed and deleted; they *pull* and track their own position — an **offset** — into the log. Multiple independent consumers read the same log at their own offsets without interfering. Reading does not consume; the log just remembers where each consumer is.
+
+```
+BROKER (RabbitMQ/SNS)            LOG (Kafka/Kinesis)
+publish → fan copies → queues    append → immutable log [m0 m1 m2 m3 m4 …]
+consumer acks → copy DELETED      consumer A reads, advances its OFFSET → 3
+state lives in the BROKER         consumer B reads independently → offset 1
+"a delivery pipe"                 state (offset) lives in the CONSUMER
+                                  "a durable, replayable record"
+```
+
+This single architectural choice cascades into everything else: replay, ordering, throughput, and operational model all follow from "delete on consume" versus "append-only log with offsets."
+
+<Inset kind="why" lang="en">
+Why does the log model make **replay** almost free while the broker model can't? In a log, a message isn't removed when it's read — only the consumer's *offset* moves. So "replay the last hour" is just "reset my offset back an hour and read forward again"; the data is still there. A brand-new consumer can start at offset 0 and reprocess the entire history. In a broker, the message is gone the moment it's acknowledged: there is nothing to replay, because retention was never the broker's job. This is exactly why event sourcing, rebuilding a downstream from scratch, and adding a consumer that needs the backfill are all natural on a log and awkward-to-impossible on a classic broker — and why "should I be able to reprocess history?" is the question that decides which one you reach for.
+</Inset>
+
+## Consumer groups and partition ordering
+
+A log topic is split into **partitions** for parallelism — the unit of both scale and ordering. A **consumer group** is a set of cooperating consumers that share the work of a topic: each partition is assigned to exactly one consumer *in that group*, so adding consumers up to the partition count scales throughput linearly. Crucially, *different* groups each get the full stream — group "analytics" and group "fraud" both read every message at their own offsets. That is how one topic feeds many independent subscribers (fan-out across groups) while each subscriber load-balances internally (sharing across the group).
+
+Ordering follows from partitions. The log guarantees order **within a partition**, not across the topic. Messages with the same key (e.g. `user_id`) hash to the same partition, so all of one user's events stay ordered relative to each other; events of *different* users may interleave. This is the same per-key ordering tradeoff from the queues lesson, now made structural: you get parallelism *across* partitions and ordering *within* one, and you choose your partition key to put "things that must stay ordered" together. Pick a key with too few distinct values and you create a hot partition that can't be parallelized.
+
+<FlowDiagram
+  label="A publisher appends to a partitioned topic log; two independent consumer groups each read the full stream at their own offsets, and within a group each partition is owned by one consumer so the group shares the work."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "pub", label: "publisher", sub: "append to topic" },
+    { id: "p0", label: "partition 0", sub: "ordered log" },
+    { id: "p1", label: "partition 1", sub: "ordered log" },
+    { id: "ga", label: "group: analytics", sub: "own offsets" },
+    { id: "gf", label: "group: fraud", sub: "own offsets" },
+    { id: "replay", label: "new consumer", sub: "offset 0 → replay history" },
+  ]}
+  edges={[
+    { from: "pub", to: "p0", label: "key A" },
+    { from: "pub", to: "p1", label: "key B" },
+    { from: "p0", to: "ga" }, { from: "p1", to: "ga" },
+    { from: "p0", to: "gf" }, { from: "p1", to: "gf" },
+    { from: "p0", to: "replay" },
+  ]}
+  caption="Fan-out is across consumer GROUPS (analytics and fraud each see everything); load-sharing is within a group (one partition per consumer). Order holds within a partition, not across the topic — and because the log retains messages, a new consumer can start at offset 0 and replay the whole history."
+/>
+
+## So is a log just a fancy queue? No.
+
+The deepest takeaway: a queue and a log are not the same tool with different branding. A **queue** is a *delivery pipe* — messages flow through and are gone once handled; its state is "what's left to do." A **log** is a *durable record of facts* — messages stay, and consumers move over them; its state is "where is each reader." A queue answers "what work remains?"; a log answers "what happened, and can I read it again?" You reach for a broker/queue when work should be done once and forgotten, and for a log when events are facts you may want to fan out, reorder consumers over, or replay. Confusing them — treating Kafka as a task queue you delete from, or a queue as an event store you replay — is a common and expensive mismatch.
+
+<Inset kind="mistake" lang="en">
+A frequent fan-out trap: assuming "pub/sub" means every consumer always sees every message regardless of when it joins. On a broker, a subscriber that's offline at publish time misses the message entirely unless you explicitly configured a durable subscription — so a new analytics service gets *no history*, only messages published after it subscribed, and silently under-reports. On a log it's the opposite risk: a consumer that's down longer than the retention window comes back to find its offset has fallen off the end of the retained data and must skip ahead, dropping messages. Both are "I thought I'd get everything" bugs — always ask what happens to a consumer that is absent, slow, or brand new.
+</Inset>
+
+<Quiz
+  id="06-pub-sub-quiz-1"
+  lessonSlug="02-pub-sub"
+  lang="en"
+  question="You need to add a brand-new analytics consumer that must reprocess the last 30 days of order events to backfill a dashboard. Which architecture supports this directly, and why?"
+  choices={[
+    { label: "A log-based system (Kafka/Kinesis) with ≥30-day retention: the consumer starts at an old offset and reads forward, because the log retains messages independent of consumption — replay is just moving an offset.", correct: true },
+    { label: "A classic broker (RabbitMQ/SNS), because pub/sub always keeps every message for every subscriber.", misconception: "A broker deletes a message once it's acknowledged; retention isn't its job. A consumer that wasn't subscribed 30 days ago has nothing to replay. Backfill needs a log that retains history, not a broker." },
+    { label: "Any queue, by re-enqueueing the old messages from the producer.", misconception: "The producer no longer has the old events — they were transient. Re-deriving and re-publishing a month of history is exactly the manual pain a retained, replayable log avoids. Use a log with sufficient retention." },
+    { label: "Neither — historical reprocessing is impossible in pub/sub.", misconception: "It's natural on a log: a new consumer reads from offset 0 (or a timestamp) and replays. The log model exists precisely to make backfill and reprocessing first-class." },
+  ]}
+/>
+
+<Quiz
+  id="06-pub-sub-quiz-2"
+  lessonSlug="02-pub-sub"
+  lang="en"
+  question="On a Kafka topic with 4 partitions, you need each user's events processed strictly in order, but want to parallelize across users. How do you key and consume?"
+  choices={[
+    { label: "Partition by user_id so all of one user's events land in the same partition (ordered there), and run a consumer group with up to 4 consumers so different partitions are processed in parallel.", correct: true },
+    { label: "Use a random partition per message to spread load evenly, and rely on timestamps to reorder.", misconception: "Random partitioning destroys per-user order — a user's events scatter across partitions with no cross-partition ordering guarantee, and timestamp reordering is fragile and stateful. Key by user_id to keep each user's events ordered." },
+    { label: "Use a single partition so global order is guaranteed.", misconception: "One partition does give total order but kills parallelism — only one consumer can process it, so you can't scale across users. Key by user_id over multiple partitions: order within a user, parallelism across users." },
+    { label: "Add more consumers than partitions to increase parallelism.", misconception: "Consumers beyond the partition count sit idle — each partition is owned by exactly one consumer in the group. Parallelism is capped at the partition count; add partitions, not surplus consumers." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-pub-sub-metaphor-1"
+  lessonSlug="02-pub-sub"
+  lang="en"
+  setup="The deepest difference between a queue and a log: a queue is a delivery pipe whose messages vanish once handled, while a log retains messages and each consumer tracks its own _______ into it — which is exactly why replay and adding new consumers are first-class on a log."
+  accepted={["offset", "offsets", "an offset", "the offset"]}
+  canonical="offset"
+  explanation="In a log, reading doesn't consume; the message stays and only the consumer's position — its offset — moves. Because state lives in the consumer's offset and the data is retained, replay ('reset the offset') and onboarding a new consumer ('start at offset 0') are trivial — the things a delete-on-consume broker can't do."
+/>
+
+This is composition altitude: choosing fan-out and choosing log-vs-broker for a design. The dedicated **queues** track drills the internals — Kafka partition leadership and the ISR, RabbitMQ exchange types and bindings, exact offset-commit protocols. Use it when you're operating a specific broker; stay here when you're deciding whether the design wants fan-out and whether it wants replay.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Pub/sub is topic-based fan-out: publish once, every subscriber gets a copy. The deep split is broker (delete on consume) vs log (append-only offsets — a replayable record). Order holds within a partition.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="06-pub-sub-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does pub/sub add over a point-to-point queue, and when do you use each?", a: "Pub/sub delivers each message to EVERY interested subscriber via a named topic; the publisher names a topic, not a recipient, so producer and consumers don't know each other and consumers can be added without touching the producer. A queue delivers to ONE consumer. Use a queue for commands ('send this email' — one correct handler, a job to do once); use pub/sub for events ('an order was placed' — a fact broadcast to zero-or-many interested parties). The mistake is encoding the list of consumers into the producer." },
+    { q: "Contrast broker-style pub/sub with log-based, and what follows from the choice.", a: "Broker (RabbitMQ/SNS): copies are routed to per-subscriber queues and DELETED on ack; storage is transient, state lives in the broker, an absent subscriber misses messages — it's a delivery pipe. Log (Kafka/Kinesis): an append-only log RETAINS messages for a window regardless of reads; consumers pull and track their own OFFSET, state lives in the consumer — it's a durable, replayable record. The choice cascades: replay and backfill are near-free on a log (move the offset) and impossible on a broker; a log is not a fancy queue — queue = 'what work remains', log = 'what happened, can I read it again'." },
+    { q: "How do consumer groups and partitions give both fan-out and ordering?", a: "A topic is split into partitions (the unit of parallelism AND ordering). A consumer group shares the work: each partition is owned by exactly one consumer in the group, so up to partition-count consumers scale linearly; surplus consumers idle. DIFFERENT groups each get the full stream at their own offsets — that's fan-out. Ordering holds WITHIN a partition, not across the topic: key by an entity (user_id) so that entity's events stay ordered, while different entities parallelize across partitions. Too few distinct key values → a hot partition." },
+  ]}
+/>
+
+<Recap lang="en">
+**Publish/subscribe** turns one-to-one delivery into topic-based **fan-out**: a publisher emits to a named **topic**, the broker copies it to every **subscription**, and the publisher names a topic rather than a recipient — so producer and consumers are decoupled and you add a consumer without touching the producer. Use a queue for **commands** (one handler, do-once) and pub/sub for **events** (facts broadcast to zero-or-many). The lesson's spine is that two architectures wear the name: **broker-style** (RabbitMQ/SNS) routes copies and *deletes on ack* — transient, a delivery pipe — while **log-based** (Kafka/Kinesis) keeps an *append-only log* retained for a window, with each consumer tracking its own **offset** — a durable, replayable record. That one choice cascades into **replay** (near-free on a log, impossible on a broker), onboarding new consumers, and operations. **Consumer groups** give fan-out *across* groups and load-sharing *within* one (a partition per consumer, surplus consumers idle), and **partitions** give ordering *within* a partition (key by entity) plus parallelism *across* them. The takeaway to keep: a log is not a fancy queue — a queue answers "what work remains," a log answers "what happened, and can I read it again." The dedicated **queues** track covers the broker internals; stay here to decide fan-out and replay.
+</Recap>

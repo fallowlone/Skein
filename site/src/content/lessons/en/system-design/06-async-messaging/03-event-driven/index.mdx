@@ -5,34 +5,173 @@ track: "system-design"
 unit: "06-async-messaging"
 order: 3
 title: "Event-driven architecture"
-summary: "Event-driven architecture — to be authored."
-estMin: 16
-status: stub
+summary: "Event-driven systems coordinate via facts, not calls — choreography vs orchestration. The load-bearing pattern is the outbox: it makes 'write the DB and publish the event' atomic, defeating the dual-write problem at the cost of eventual consistency you must show in the UX."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - event-driven-architecture
+  - choreography-vs-orchestration
+  - event-sourcing-cqrs
+  - outbox-pattern
+  - dual-write-problem
+  - eventual-consistency
+prereqs:
+  - 02-availability/03-failover-and-fault-tolerance
+  - 06-async-messaging/01-message-queues
+  - 06-async-messaging/02-pub-sub
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html
+  - https://kafka.apache.org/documentation/
+  - https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+The order service did two things on checkout: it wrote the order to its database, then it published an "order placed" event so inventory and shipping could react. It worked in testing every time. In production, once every few thousand orders, the database commit succeeded and *then the process died before the event was published.* The order existed; the world never heard about it. Inventory wasn't decremented, no shipping label was created, and a paying customer's order silently vanished into a state no service knew to act on. The bug wasn't in either step. It was the gap *between* them — two systems updated with no transaction spanning both. That gap is the dual-write problem, and the fix is the heart of this lesson.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Event-driven systems coordinate by emitting facts, not calls. The hard part: publishing an event atomically with the state change behind it.</Crux>
 
 <Explanation>
 
-## Event-driven architecture
+## Coordinating with facts instead of calls
 
-Body to be authored.
+In a **request-driven** system, service A makes service B do something by calling it: A holds the control flow, waits, and depends on B being up. In an **event-driven architecture (EDA)**, A instead emits a *fact* — "an order was placed" — to a topic and moves on; whoever cares reacts on their own schedule. The control flow inverts: the producer no longer commands downstreams, it announces what happened, and the system's behaviour emerges from independent reactions to those facts.
+
+The payoff is the loose coupling from the pub/sub lesson, taken to the architecture level: services don't know about each other, you add capabilities by adding subscribers, and one slow service doesn't block the others. The cost is that you give up the simple, traceable control flow of "A called B called C." Behaviour is now distributed across reactions, debugging spans services, and — the theme of this whole unit — you inherit asynchrony's consequences: duplicates, ordering, and eventual consistency.
+
+## Choreography vs orchestration
+
+A business process usually needs *several* steps (place order → charge → reserve stock → ship). There are two ways to coordinate them, and choosing wrong scales badly.
+
+**Choreography** — no central brain. Each service listens for events and emits its own: the order service emits `OrderPlaced`; payments hears it, charges, emits `PaymentTaken`; inventory hears *that*, reserves stock, emits `StockReserved`; shipping reacts. The logic is the sum of the reactions, spread across services. It's maximally decoupled and great for simple flows — but for a complex process the end-to-end logic exists *nowhere*: no single place says "this is what placing an order does," which makes the flow hard to see, change, and debug.
+
+**Orchestration** — a central coordinator (an "orchestrator" or saga) explicitly drives the steps: it tells payments to charge, waits for the result, tells inventory to reserve, and on a failure runs **compensating actions** (refund, release stock) to unwind. The flow lives in one readable place, which is far better for complex, multi-step, must-not-half-complete processes — at the cost of reintroducing a component that knows about everyone (though it commands *via* events/commands, not synchronous chains).
+
+The rule of thumb: choreography for simple, few-step reactions where decoupling matters most; orchestration when the process is complex, has compensations, or someone needs to answer "where is order #8842 in the flow right now?"
+
+<Inset kind="why" lang="en">
+Why not just keep choreographing as the process grows? Because choreography distributes the *logic* but provides no place for the *state of the whole process*. With five services each reacting to the previous one's event, no component knows whether order #8842 finished step 3 or stalled, and a failure mid-flow leaves orphaned partial state with no one responsible for cleanup. You end up reconstructing the flow from logs across five services to answer one question. An orchestrator centralizes that process state and the failure/compensation logic deliberately — you trade some coupling for the ability to see, resume, and unwind a long-running transaction. The mistake is treating "choreography = always more decoupled = always better"; past a few steps, the missing process state becomes the dominant cost.
+</Inset>
+
+## Event sourcing and CQRS, briefly
+
+Two patterns ride along with EDA and are worth recognizing. **Event sourcing**: instead of storing current state and overwriting it, you store the *sequence of events* as the source of truth (`AccountOpened`, `Deposited 100`, `Withdrew 30`) and derive current state by replaying them. You gain a perfect audit log and the ability to rebuild any view — and this is exactly why a retained, replayable log (from the pub/sub lesson) is the natural substrate. **CQRS** (Command Query Responsibility Segregation): split the write model (commands, normalized for correctness) from the read model (queries, denormalized for speed), keeping the read side updated by consuming the write side's events. Both are powerful and both buy you operational complexity and eventual consistency — reach for them when the audit trail or independent read/write scaling genuinely justifies it, not by default.
+
+## The outbox pattern: defeating the dual-write problem
+
+Now the heart of it. The hook's bug is the **dual-write problem**: a handler must update its database *and* publish an event, but those are two separate systems with no shared transaction. Whatever order you choose, a crash in the gap corrupts state: commit-then-publish can lose the event (the hook); publish-then-commit can emit an event for a write that then rolls back (a phantom event downstreams act on). You cannot make a DB commit and a broker publish atomic directly.
+
+The **transactional outbox** turns two writes into one. In the *same local database transaction* that writes the business state, you also insert the event into an `outbox` table. Because both rows are in one transaction, they commit or roll back together — the atomicity you couldn't get across systems, recovered by keeping both writes in the system that *has* transactions. A separate **relay** process then reads unpublished rows from the outbox and publishes them to the broker, marking each done once acknowledged.
+
+```
+ONE local transaction:
+  INSERT order (id=8842, ...)            ← business state
+  INSERT outbox (event="OrderPlaced")    ← event to publish
+  COMMIT                                  ← both, or neither
+
+Relay (separate, async):
+  SELECT * FROM outbox WHERE published = false
+  publish each to broker  →  on ack, mark published = true
+```
+
+The relay publishes at-least-once (it may crash after publishing but before marking the row done, re-publishing on restart) — which loops us straight back to lesson 1: **consumers must be idempotent**, because the outbox guarantees the event is *never lost*, not that it's delivered *exactly once*. The outbox trades "lost events" for "duplicate events," and duplicates you already know how to handle.
+
+<FlowDiagram
+  label="A handler writes the business row and an outbox row in one local transaction that commits atomically; a separate relay polls the outbox, publishes each event to the broker, and marks it published, after which subscribers react."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "tx", label: "1 local TX", sub: "order + outbox row" },
+    { id: "db", label: "database", sub: "both commit or neither" },
+    { id: "relay", label: "relay", sub: "poll unpublished" },
+    { id: "broker", label: "broker / log", sub: "publish (at-least-once)" },
+    { id: "subs", label: "subscribers", sub: "react — idempotent" },
+    { id: "mark", label: "mark published", sub: "on ack" },
+  ]}
+  edges={[
+    { from: "tx", to: "db" },
+    { from: "db", to: "relay", label: "outbox row" },
+    { from: "relay", to: "broker" },
+    { from: "broker", to: "subs" },
+    { from: "broker", to: "mark", label: "ack" },
+    { from: "mark", to: "relay" },
+  ]}
+  caption="The outbox recovers atomicity by keeping BOTH writes inside the one system that has transactions (the DB). The relay is what bridges to the broker — and because it publishes at-least-once, the guarantee is 'never lost,' not 'never duplicated,' so subscribers must be idempotent."
+/>
+
+## Eventual consistency is a UX problem, not just a backend one
+
+Asynchrony means the rest of the system learns about a fact *after* it happened — there is a window where the order exists but inventory hasn't reacted yet. This **eventual consistency** is the unavoidable consequence of trading synchronous calls for events, and the senior mistake is treating it as purely a backend concern. It leaks straight into the UX: a user who places an order and immediately refreshes may not see it; a "your balance" view fed by a CQRS read model may lag the write by a beat. You must design the interface for the lag — optimistic UI that shows the expected result immediately, a "processing…" state, read-your-own-writes for the acting user, or explicit "may take a moment" messaging. Pretending the system is synchronous when it isn't is how you ship confusing, "did my click work?" experiences.
+
+<Inset kind="mistake" lang="en">
+A subtle outbox failure: doing the outbox insert but publishing the event *directly from the handler* "to save a hop," instead of from the relay. Now you're back to a dual write — the handler can crash after committing the outbox row but you've also tried an inline publish that may or may not have happened, and you've gained nothing. The discipline is strict: the handler's *only* job is the local transaction (business row + outbox row); a *separate* relay owns all publishing. Keep them separate or the pattern silently degrades back into the bug it was meant to fix.
+</Inset>
+
+<Quiz
+  id="06-event-driven-quiz-1"
+  lessonSlug="03-event-driven"
+  lang="en"
+  question="A handler does `db.commit(order)` then `broker.publish(event)`. Occasionally the order is saved but the event never fires. What is this, and how does the outbox fix it?"
+  choices={[
+    { label: "The dual-write problem: two systems updated with no shared transaction, so a crash in the gap loses the event. The outbox inserts the event into an outbox table in the SAME local transaction as the order, then a separate relay publishes it — making 'save + enqueue event' atomic.", correct: true },
+    { label: "A network bug; add retries around broker.publish.", misconception: "Retries don't help if the process dies before publish runs at all — the order is already committed and there's nothing to retry. You need the event to be persisted atomically with the order (the outbox), not just retried." },
+    { label: "Publish before committing instead — then the event always fires.", misconception: "That flips the bug: now a crash (or rollback) after publishing emits a phantom event for an order that doesn't exist, which downstreams act on. Neither order is safe; the outbox makes both writes one transaction." },
+    { label: "Use a distributed transaction (2PC) across the DB and broker.", misconception: "Most brokers don't support 2PC with your DB, and 2PC is slow and fragile (coordinator failure blocks participants). The outbox is the standard, lighter answer: one local transaction plus an async relay." },
+  ]}
+/>
+
+<Quiz
+  id="06-event-driven-quiz-2"
+  lessonSlug="03-event-driven"
+  lang="en"
+  question="A 6-step order fulfilment process must support refunds/stock-release on failure, and ops keeps asking 'where is this order in the flow?' Choreography or orchestration?"
+  choices={[
+    { label: "Orchestration: a central saga drives the steps, holds the process state (so 'where is it?' has an answer), and runs compensating actions on failure — the right fit for a complex, multi-step, must-not-half-complete flow.", correct: true },
+    { label: "Choreography: it's the most decoupled, which is always best.", misconception: "Decoupling isn't free here. With 6 services each reacting to the previous event, the end-to-end logic lives nowhere, no one holds the process state, and compensations are scattered — exactly the case orchestration exists for." },
+    { label: "Choreography, then reconstruct the flow from logs when asked where an order is.", misconception: "Reconstructing process state from logs across 6 services per query is the symptom of missing orchestration. A coordinator holds that state directly; don't push it into log archaeology." },
+    { label: "Neither — use synchronous request/response so the flow is traceable.", misconception: "Synchronous chaining reintroduces the availability coupling EDA removed (one slow step blocks all) and still needs compensation logic. Orchestration keeps async decoupling while centralizing the flow and its failure handling." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="06-event-driven-metaphor-1"
+  lessonSlug="03-event-driven"
+  lang="en"
+  setup="The outbox pattern defeats the dual-write problem by writing the business row and the event row in one local database transaction, so the event is never lost — but because a separate relay then publishes it at-least-once, consumers must still be _______ to absorb the duplicates."
+  accepted={["idempotent", "idempotent (dedup)", "idempotent / deduplicating"]}
+  canonical="idempotent"
+  explanation="The outbox guarantees the event is never LOST (atomic with the write), but the relay can crash after publishing and re-publish on restart, so delivery is at-least-once. Idempotent consumers make those inevitable duplicates harmless — the same effectively-once discipline from lesson 1, now closing the loop on event publication."
+/>
+
+This is composition altitude — choosing coordination styles and the outbox for a design. The dedicated **queues** track goes deeper into broker-side transactional/idempotent producers and exactly-once stream processing; reach there when you're implementing the relay against a specific broker, and stay here to decide choreography vs orchestration and whether you need the outbox at all.
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Coordinate by emitting facts — choreography for simple flows, orchestration for complex ones. The outbox writes state and event in one local transaction — defeating the dual-write problem. Cost: eventual consistency.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="06-event-driven-retrieval"
+  lang="en"
+  questions={[
+    { q: "What inverts in event-driven vs request-driven, and what does it cost?", a: "Control flow inverts: instead of A calling B to make it act (A holds control, waits, depends on B being up), A emits a FACT ('order placed') and moves on, and whoever cares reacts on their own schedule. You gain loose coupling (services don't know each other, add capabilities by adding subscribers, one slow service doesn't block others). You lose the simple traceable 'A→B→C' flow: behaviour is distributed across reactions, debugging spans services, and you inherit asynchrony's consequences — duplicates, ordering, eventual consistency." },
+    { q: "Choreography vs orchestration — define each and the rule of thumb.", a: "Choreography: no central brain; each service listens for events and emits its own, so the logic is the sum of reactions across services — maximally decoupled, great for simple flows, but for complex processes the end-to-end logic and process state live nowhere. Orchestration: a central coordinator/saga explicitly drives steps and runs compensating actions on failure — the flow is in one readable place, ideal for complex, must-not-half-complete processes, at the cost of a component that knows the flow. Rule: choreography for simple few-step reactions; orchestration when there are compensations or someone must answer 'where is this in the flow?'" },
+    { q: "What is the dual-write problem and how does the outbox solve it?", a: "Dual-write: a handler must update its DB AND publish an event, but they're separate systems with no shared transaction, so a crash in the gap loses the event (commit-then-publish) or emits a phantom event (publish-then-commit). The transactional outbox writes the business row and an outbox row in ONE local transaction (both commit or neither), then a separate relay reads the outbox and publishes to the broker. It recovers atomicity by keeping both writes in the system that has transactions. The relay publishes at-least-once, so it guarantees 'never lost,' not 'never duplicated' — consumers must be idempotent. And the resulting eventual consistency must be designed into the UX (optimistic UI, processing states, read-your-own-writes)." },
+  ]}
+/>
+
+<Recap lang="en">
+**Event-driven architecture** coordinates by emitting **facts** rather than making calls: the producer announces "what happened" and the system's behaviour emerges from independent reactions, buying loose coupling at the cost of a traceable control flow and inheriting asynchrony's consequences. Multi-step processes are coordinated by **choreography** (services react to each other's events — decoupled, best for simple flows, but the process logic and state live nowhere) or **orchestration** (a central saga drives the steps and runs **compensating actions** on failure — best when the flow is complex or must not half-complete). **Event sourcing** (events as the source of truth, replayed to derive state) and **CQRS** (split write and read models) ride along on a retained log and are worth their complexity only when audit or independent scaling justifies it. The load-bearing pattern is the **transactional outbox**, which defeats the **dual-write problem**: write the business row and the event row in one local transaction, then let a separate **relay** publish asynchronously — recovering atomicity inside the one system that has transactions. Because the relay publishes **at-least-once**, the guarantee is "never lost, possibly duplicated," so **consumers must be idempotent**; and the resulting **eventual consistency** is a UX problem you design for (optimistic UI, processing states, read-your-own-writes), not a backend detail you can hide. The dedicated **queues** track covers broker-side transactional producers; stay here to choose the coordination style and decide whether you need the outbox.
+</Recap>

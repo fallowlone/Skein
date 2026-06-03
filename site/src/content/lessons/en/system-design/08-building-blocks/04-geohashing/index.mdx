@@ -5,34 +5,170 @@ track: "system-design"
 unit: "08-building-blocks"
 order: 4
 title: "Geohashing"
-summary: "Geohashing — to be authored."
-estMin: 16
-status: stub
+summary: "Geohashing encodes lat/lng into a short sortable string where a shared prefix means proximity — turning 'find things near me' into an indexed prefix range scan. S2 and H3 refine the idea; all share one trap: neighbours can sit just across a cell boundary with a different code."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - geohash
+  - prefix-proximity
+  - spatial-indexing
+  - quadtree
+  - s2-h3
+  - boundary-problem
+prereqs:
+  - 04-data-distribution/03-consistent-hashing
+  - 08-building-blocks/02-unique-id-generation
 sources:
+  - https://en.wikipedia.org/wiki/Geohash
+  - https://h3geo.org/docs/
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A ride-hailing backend needed to answer "which drivers are within 2 km of this rider?" thousands of times a second. The naïve query — compute the distance from the rider to *every* driver and keep the close ones — is a full scan that scales with the number of drivers, not the number of nearby ones, and a B-tree index on `(lat, lng)` doesn't help because proximity in 2D isn't proximity in either column alone. The trick that made it fast was to collapse two dimensions into one **sortable string** in which physical closeness shows up as a **shared prefix** — so "near me" becomes a prefix range scan on an ordinary index. That string is a geohash, and its one sharp edge is what happens at the seams between cells.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Geohash encodes lat/lng into a sortable string where a shared prefix ≈ proximity, turning "find things near me" into an indexed prefix scan.</Crux>
 
 <Explanation>
 
-## Geohashing
+## The problem: proximity isn't one-dimensional
 
-Body to be authored.
+A location is two numbers, latitude and longitude. Databases index one dimension well (a B-tree on a single sorted column), but "find points near me" is inherently 2D: two points can be neighbours while differing in *both* coordinates, so a B-tree on `lat` alone, or `lng` alone, or even a composite `(lat, lng)`, can't return a compact set of nearby rows — sorting by latitude puts a point in Paris next to a point in Boston (same latitude, opposite sides of an ocean). The goal of a spatial encoding is to map 2D space onto a **1D sortable key** such that points close in space are *usually* close in the key — so a single index range covers a geographic neighbourhood.
+
+## How a geohash works: interleaving and Base32
+
+A geohash recursively bisects the world. Longitude spans −180…180 and latitude −90…90. To encode a point you repeatedly halve each range: is the longitude in the lower or upper half? Bit 0 or 1. Then the latitude: lower or upper half? Another bit. You **interleave** the longitude and latitude bits (lng, lat, lng, lat, …), narrowing the rectangle each time, and the resulting bit string is grouped into 5-bit chunks encoded as **Base32** characters. The result is a short string like `u4pruyd`.
+
+The two properties that make it useful:
+
+- **Length = precision.** Each extra character shrinks the cell roughly 32× in area. A 5-char geohash is a cell of a few km; 7 chars is ~150 m; 9 chars is a few metres. You pick the length for the precision you need.
+- **Shared prefix = proximity.** Two points in the same cell share the whole geohash; two points in nearby cells usually share a long prefix. So `u4pruy*` is "everything in this ~150 m cell," and a database range scan `WHERE geohash BETWEEN 'u4pruy' AND 'u4pruz'` returns the points in that cell — using an ordinary string index, no special spatial database required.
+
+```
+encode(lat, lng): interleave bits while bisecting each range
+
+lng ∈ [-180,180]: upper half? → 1
+lat ∈ [ -90, 90]: upper half? → 0
+lng (narrower):   lower half? → 0
+lat (narrower):   upper half? → 1
+...                            → 10010...  →  Base32  →  "u4pruyd"
+
+prefix length  cell size (approx)
+   4 chars        ~40 km
+   5 chars        ~5 km
+   6 chars        ~1 km
+   7 chars        ~150 m
+shared prefix length ↑  ⇒  points are closer together
+```
+
+<Inset kind="why" lang="en">
+Why does a longer *shared* prefix mean closer points — and why only "usually"? Because the prefix encodes the early bisection decisions, which carve out big rectangles first and then refine. Sharing the first `p` characters means two points fell on the same side of every early cut, so they're in the same coarse cell — physically close. The "usually" is the catch: the encoding follows a **Z-order (Morton) curve**, which visits cells in a zig-zag. A space-filling curve can't keep *all* neighbours adjacent on a 1D line — at certain seams the curve jumps far away, so two points a metre apart across such a seam can land in cells whose codes differ from the very first character. The prefix property is a strong heuristic, not a guarantee, which is exactly why the boundary problem below exists.
+</Inset>
+
+## The boundary problem
+
+Here is the trap that bites every geohash-based proximity search. Because the encoding bisects fixed global ranges, **adjacent points can fall on opposite sides of a cell boundary and get wildly different codes**. Two drivers 10 metres apart, but straddling a cell edge, can share *no* prefix at all — one is `u4pruy…`, the other `u4prv0…` — even though they're nearly on top of each other. If your "near me" query just selects the rider's own cell (`WHERE geohash LIKE 'u4pruy%'`), you will **miss** the closest driver simply because they're one metre into the next cell.
+
+The standard fix: a proximity search must query the rider's cell **and its eight neighbouring cells** (the 3×3 grid around the point), then compute exact distances within that candidate set and keep the truly-nearest. Computing the eight neighbour geohashes is a known algorithm, and the candidate set is small, so this is cheap — but forgetting it is the single most common geohash bug, and it shows up as "the app says the nearest driver is 800 m away when one is parked across the street."
+
+<FlowDiagram
+  label="A proximity query encodes the rider's location to a geohash cell, expands to that cell plus its eight neighbours to defeat the boundary problem, range-scans the index for candidates in those nine cells, then computes exact distances and returns the truly nearest."
+  perRow={3}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "loc", label: "rider lat/lng", sub: "encode" },
+    { id: "cell", label: "geohash cell", sub: "e.g. u4pruy" },
+    { id: "grid", label: "+ 8 neighbours", sub: "3×3 grid" },
+    { id: "scan", label: "prefix range scan", sub: "ordinary index" },
+    { id: "rank", label: "exact distance", sub: "keep nearest" },
+  ]}
+  edges={[
+    { from: "loc", to: "cell" },
+    { from: "cell", to: "grid", label: "expand" },
+    { from: "grid", to: "scan" },
+    { from: "scan", to: "rank" },
+  ]}
+  caption="The nine-cell expansion is what makes the boundary problem disappear: candidates are gathered from the rider's cell and all eight around it, so a neighbour one metre across a seam is never missed before exact distances are computed."
+/>
+
+## Quadtree, S2, and H3: the alternatives
+
+Geohash is one point on a design space; the same "1D key from 2D space" idea has refinements:
+
+- **Quadtree.** A tree that recursively splits a region into four quadrants, subdividing only where data is dense. Unlike a fixed-grid geohash, it adapts to density — sparse areas stay coarse, hot areas (a city centre) subdivide deeply — which keeps each leaf to a bounded number of points. Geohash is essentially a fixed-depth, string-encoded quadtree.
+- **S2 (Google).** Projects the sphere onto a cube and maps each face with a Hilbert curve. The Hilbert curve has better locality than geohash's Z-order (fewer wild jumps at seams), and S2 cells are more uniform in area across the globe, avoiding geohash's distortion near the poles.
+- **H3 (Uber).** A **hexagonal** grid. Hexagons have a key advantage for proximity: every neighbour is the same distance away (a hexagon has six equidistant neighbours), whereas a square cell's diagonal neighbours are farther than its edge neighbours — which makes "expand to neighbours" cleaner and distance reasoning more uniform. H3 was built precisely for the ride-hailing "drivers near me" problem.
+
+The tradeoff axis: geohash is dead simple and works on any string index; S2/H3 give better locality, more uniform cells, and cleaner neighbour math at the cost of a library and a more complex cell model. For "store a location and range-scan nearby in Postgres/Redis," geohash is often enough; for serious geospatial analytics or uniform global indexing, reach for S2 or H3.
+
+<Inset kind="mistake" lang="en">
+Picking one fixed precision for everything. A common mistake is hard-coding, say, 6-character geohashes (~1 km cells) and using them for both a dense downtown and an empty rural area. Downtown, a 1 km cell holds thousands of candidates — your "near me" scan returns far too many rows and you do thousands of exact-distance computations. In the countryside, a 1 km cell may hold zero, so you must expand to neighbours repeatedly to find anything. The fix is to choose precision per query from the search radius (a 2 km search wants a cell length whose cells are ~the radius), or to use a density-adaptive structure (quadtree, or H3's resolution levels). One global precision is a tuning compromise that's wrong almost everywhere.
+</Inset>
+
+<Quiz
+  id="04-geohashing-quiz-1"
+  lessonSlug="04-geohashing"
+  lang="en"
+  question="A 'find drivers near me' feature selects only the rider's own geohash cell and reports the nearest driver as 600 m away — but a driver is actually parked 15 m away, across the street. What went wrong?"
+  choices={[
+    { label: "The boundary problem: the close driver is just over a cell edge, so their geohash shares no prefix with the rider's cell and the single-cell query misses them. Query the rider's cell plus its 8 neighbours, then rank by exact distance.", correct: true },
+    { label: "The geohash precision is too high, so the driver was rounded into a different city.", misconception: "Precision controls cell size, not this bug. Even at the right precision, a driver just across a cell boundary has a different code and is missed by a single-cell query. The fix is the 3×3 neighbour expansion, not changing precision." },
+    { label: "Geohashes are random, so nearby points get unrelated codes by design.", misconception: "Geohashes aren't random — a shared prefix usually means proximity. The exception is exactly the boundary: adjacent points across a cell edge can differ. That's why you expand to the 8 neighbouring cells." },
+    { label: "The database needs a special spatial index; string indexes can't do this.", misconception: "An ordinary string/B-tree index handles the prefix range scan fine — that's geohash's whole appeal. The bug is querying only one cell; the fix is including the 8 neighbours, not switching index type." },
+  ]}
+/>
+
+<Quiz
+  id="04-geohashing-quiz-2"
+  lessonSlug="04-geohashing"
+  lang="en"
+  question="Why might a team choose Uber's H3 (hexagonal cells) over a plain geohash for a proximity service?"
+  choices={[
+    { label: "A hexagon's neighbours are all equidistant (six uniform neighbours), so neighbour expansion and distance reasoning are cleaner than with square cells, whose diagonal neighbours are farther than edge neighbours; H3 also gives more uniform cells globally.", correct: true },
+    { label: "H3 eliminates the boundary problem entirely, so you never need to check neighbours.", misconception: "No grid eliminates boundaries — points still straddle cell edges, so you still expand to neighbours. H3's advantage is that hex neighbours are equidistant and uniform, making that expansion and distance math cleaner, not unnecessary." },
+    { label: "H3 stores exact coordinates, so distances are exact without computation.", misconception: "H3 is still a cell index, not exact storage; you still compute exact distances within the candidate set. Its benefit is uniform, equidistant hexagonal cells and better global uniformity than geohash's distorted grid." },
+    { label: "Hexagons can be indexed by a B-tree but geohashes cannot.", misconception: "Geohashes index beautifully on an ordinary B-tree (that's their main selling point). H3 cell IDs are also indexable. The hex advantage is geometric (equidistant neighbours, uniform cells), not about index compatibility." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="04-geohashing-metaphor-1"
+  lessonSlug="04-geohashing"
+  lang="en"
+  setup="In a geohash, two locations that share a longer string _______ are usually physically closer — which is the property that lets a 'near me' search become an ordinary indexed range scan instead of a full distance computation over every point."
+  accepted={["prefix", "prefix (leading characters)", "shared prefix"]}
+  canonical="prefix"
+  explanation="A shared prefix encodes the same early bisection decisions, so the points fell in the same coarse cell and are physically close. That prefix-means-proximity property is what turns 2D 'find nearby' into a 1D prefix range scan — though it's a heuristic that fails at cell boundaries, which is why you expand to neighbours."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Geohash interleaves lat/lng into a Base32 string where a shared prefix ≈ proximity, so "find nearby" is a prefix scan. The trap: points across a cell edge get different codes, so query the cell plus its 8 neighbours.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="04-geohashing-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does a geohash encode a location, and what do length and prefix mean?", a: "It recursively bisects longitude (−180…180) and latitude (−90…90), interleaving one bit per dimension per step (lng, lat, lng, lat…), then groups the bits into 5-bit Base32 characters. Length = precision: each extra character shrinks the cell ~32× in area (≈5 chars → ~5 km, 7 chars → ~150 m). Shared prefix ≈ proximity: points in the same cell share the whole code, nearby points usually share a long prefix — so a prefix range scan on an ordinary string index returns a geographic neighbourhood." },
+    { q: "State the boundary problem and the standard fix.", a: "Because the encoding bisects fixed global ranges, two points a few metres apart but on opposite sides of a cell edge can get codes that share no prefix (the underlying Z-order curve jumps at seams). A single-cell query therefore misses a neighbour just across the boundary. Fix: query the point's cell PLUS its 8 surrounding cells (the 3×3 grid), gather candidates, then compute exact distances and keep the truly nearest. Forgetting the neighbour expansion is the classic geohash bug." },
+    { q: "Compare geohash with quadtree, S2, and H3.", a: "Quadtree: recursively splits into 4 quadrants and subdivides only where dense, adapting to data (geohash is essentially a fixed-depth string quadtree). S2 (Google): sphere→cube + Hilbert curve, giving better locality than geohash's Z-order and more uniform cells (no polar distortion). H3 (Uber): hexagonal cells whose 6 neighbours are all equidistant, making neighbour expansion and distance reasoning cleaner. Tradeoff: geohash is trivial and works on any string index; S2/H3 give better locality and uniformity at the cost of a library and a richer cell model." },
+  ]}
+/>
+
+<Recap lang="en">
+**Geohashing** solves the fact that **proximity is 2D but indexes are 1D**: it maps a latitude/longitude onto a short **sortable string** so that points close in space are usually close in the key. The mechanism is **recursive bisection with interleaved lng/lat bits**, grouped into **Base32** characters — where **length sets precision** (each char ~32× smaller cell) and a **shared prefix means proximity**, turning "find things near me" into a **prefix range scan on an ordinary index**. The sharp edge is the **boundary problem**: because the encoding cuts fixed global ranges (and follows a Z-order curve that jumps at seams), two points a metre apart across a cell edge can get unrelated codes — so a correct proximity search queries the point's cell **plus its 8 neighbours** before ranking by exact distance. The alternatives trade simplicity for quality: **quadtrees** adapt to density, **S2** uses a Hilbert curve and uniform cells for better locality, and **H3** uses **hexagons** whose six equidistant neighbours make distance and neighbour math cleaner — all built on the same idea of a 1D key over 2D space.
+</Recap>

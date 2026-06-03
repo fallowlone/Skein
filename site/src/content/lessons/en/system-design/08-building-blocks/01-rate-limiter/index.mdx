@@ -5,34 +5,169 @@ track: "system-design"
 unit: "08-building-blocks"
 order: 1
 title: "Rate limiter"
-summary: "Rate limiter — to be authored."
-estMin: 16
-status: stub
+summary: "A rate limiter caps how fast a client may hit you. Token bucket and leaky bucket smooth bursts; fixed windows are simple but spike on the boundary; sliding windows fix that. At scale the counter lives in shared storage, and the read-modify-write race is the whole problem."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - token-bucket
+  - leaky-bucket
+  - sliding-window
+  - distributed-rate-limiting
+  - retry-after
+  - fail-open
+prereqs:
+  - 04-data-distribution/03-consistent-hashing
 sources:
+  - https://stripe.com/blog/rate-limiters
+  - https://blog.cloudflare.com/counting-things-a-lot-of-different-things/
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A customer's nightly script had a retry loop with no backoff. One bad deploy on their side and it hammered a checkout endpoint at 9,000 requests per second — for one account. The endpoint was CPU-heavy, the worker pool saturated, queueing delay went vertical, and every *other* customer's checkout timed out. The fix wasn't more servers; one tenant can always outpace any fixed fleet. The fix was a rate limiter: a small, cheap gate that says "you, specifically, get N per second" before the request ever reaches the expensive code. The interesting part is not the idea — it's that the counter has to be correct across every server in the fleet at once, and that's where it gets hard.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A rate limiter caps each client's rate at the edge. Buckets smooth bursts; the hard part is one shared counter, correct across the fleet.</Crux>
 
 <Explanation>
 
-## Rate limiter
+## Why limit at all
 
-Body to be authored.
+A rate limiter protects a shared resource from being monopolised — accidentally (a runaway retry loop) or deliberately (abuse, credential stuffing, scraping). Without one, a single client's spike becomes everyone's outage: the expensive endpoint saturates, the queueing curve goes vertical, and well-behaved clients eat the latency caused by one misbehaving one. Stripe describes exactly this — a user's "misbehaving script accidentally sending a lot of requests" — and treats the request rate limiter as the single most important one to build first.
+
+A limiter is a *gate*, not capacity. If clients genuinely need that throughput and spacing requests out changes their result (real-time events), a limiter is the wrong tool — you need more capacity or a different protocol. The limiter's job is to reject the load you *can't* serve cheaply, with a clear signal, before it costs you the expensive work.
+
+## Four algorithms, two behaviours
+
+The algorithms split into two families: those that smooth bursts and those that count over a window.
+
+**Token bucket.** A bucket holds up to `B` tokens and refills at `R` tokens/second. Each request takes one token; if the bucket is empty, reject. The bucket lets a client save up unused allowance and spend it in a **burst** up to `B`, then settle to the sustained rate `R`. This is the algorithm Stripe uses in production (a centralised bucket host, tokens dripping in). It is the default for APIs because it matches how real traffic behaves: bursty, but bounded.
+
+**Leaky bucket.** Requests enter a queue (the bucket) and drain at a fixed rate, like water through a hole. Overflow is dropped. It produces a perfectly *smooth* output rate — good for protecting a downstream that hates bursts — but it adds queueing latency and, unlike token bucket, does not allow bursts through. Token bucket allows bursts up to `B`; leaky bucket flattens them.
+
+**Fixed window.** Count requests per fixed clock interval (e.g. per minute); reset the counter at the boundary. Trivial — one integer per client — but it has a sharp flaw covered below.
+
+**Sliding window.** Two cheaper-than-perfect variants fix the fixed-window flaw. The **sliding log** keeps a timestamp per request and counts those within the trailing window — exact, but stores every request. The **sliding window counter** blends the current and previous fixed-window counts by how far you are into the window — approximate, but O(1) memory. Cloudflare popularised the counter approximation precisely because storing a log per client doesn't scale to millions of keys.
+
+<Inset kind="edgecase" lang="en">
+The fixed-window boundary spike. A limit of "100 requests/minute" with fixed windows lets a client send 100 at 11:00:59 and another 100 at 11:01:00 — **200 requests in one second**, straddling the boundary, while never technically breaking the per-minute rule. Each minute's counter is innocent; the burst lives in the seam between them. That 2× spike is exactly the load you bought the limiter to prevent. Sliding window (log or counter) removes the seam by measuring a window that moves with *now* instead of snapping to the clock. If you only remember one reason fixed windows are dangerous, it's this one.
+</Inset>
+
+## Where to enforce it
+
+The limiter belongs as far **out** and as **early** as possible — ideally at the edge (CDN/WAF) or the API gateway, before the request consumes a connection slot, a worker, or a database query on the protected service. Enforcing inside the service still protects the database but wastes the cheap resources (the TLS handshake, the worker thread) on requests you're going to reject anyway. The general rule: reject as close to the client as you can, so the rejection is as cheap as possible.
+
+But the *outermost* layer often doesn't have the context to limit by the right key (user ID, API key, tenant), so real systems layer limiters: a coarse per-IP limit at the edge to absorb floods, then a precise per-API-key limit at the gateway, then sometimes a concurrency limiter at the service for expensive endpoints. Stripe runs four kinds in concert for exactly this reason.
+
+<FlowDiagram
+  label="A request passes through three rate-limiting layers in series — a coarse per-IP limit at the CDN edge, a precise per-API-key limit at the gateway backed by a shared Redis counter, and a concurrency limiter at the service for expensive endpoints — before reaching the protected handler."
+  perRow={5}
+  hue="var(--d-net)"
+  nodes={[
+    { id: "client", label: "client", sub: "API key + IP" },
+    { id: "edge", label: "CDN / WAF", sub: "per-IP, coarse" },
+    { id: "gw", label: "API gateway", sub: "per-key, token bucket" },
+    { id: "svc", label: "service", sub: "concurrency cap" },
+    { id: "handler", label: "handler", sub: "expensive work" },
+    { id: "redis", label: "Redis", sub: "shared counter" },
+  ]}
+  edges={[
+    { from: "client", to: "edge" },
+    { from: "edge", to: "gw" },
+    { from: "gw", to: "svc" },
+    { from: "svc", to: "handler" },
+    { from: "gw", to: "redis", label: "atomic incr" },
+  ]}
+  caption="Limiters layer: coarse and cheap at the edge, precise per-key at the gateway (where the shared counter lives), concurrency at the service. Reject as early and as far out as the key context allows, so a rejected request costs almost nothing."
+/>
+
+## The distributed counter and the race
+
+One server with one in-memory counter is easy. A fleet of fifty servers behind a load balancer is the real problem: each request for one API key can land on any server, so the count must be **shared**, or fifty servers each enforce "100/min" and the client actually gets 5,000/min. The standard answer is a shared store — usually Redis — holding one counter per key.
+
+Now the race. The naïve sequence is read-modify-write:
+
+```
+n = GET key          # server A reads 99
+n = GET key          # server B also reads 99 (concurrent)
+if n < 100:          # both see 99 < 100
+    SET key n+1      # both write 100 — one increment is LOST
+    allow
+```
+
+Two concurrent requests both read 99, both decide they're under the limit, both allow — the client got 101. Under high concurrency this leaks badly. The fix is **atomicity**: make the increment-and-check a single indivisible operation. `INCR` in Redis is atomic, so the common pattern is `INCR` then compare, or a small Lua script that does the whole token-bucket refill-and-decrement server-side in one round trip (Redis executes a script atomically). The race is the entire reason distributed rate limiting is harder than it looks — the algorithm is trivial; doing it correctly without a lost update is not.
+
+<Inset kind="mistake" lang="en">
+What happens when the rate-limit store goes down? If your limiter does `INCR` against Redis on the critical path and Redis is unreachable, a naïve implementation either errors every request (you took yourself down to enforce a *limit*) or hangs on the timeout (worse). Stripe's rule: **fail open**. Wrap the limiter so that if the backing store errors or times out, the request is *allowed*, not blocked — a limiter is a safety belt, not a load-bearing wall, and it should never be the reason your API is down. Pair that with a kill switch (a feature flag to disable a limiter that's misfiring) and a short timeout so a slow Redis can't add latency to every call.
+</Inset>
+
+## Telling the client: 429 and Retry-After
+
+When you reject, say so precisely. The standard is HTTP **429 Too Many Requests**, with a **`Retry-After`** header telling the client how many seconds to wait before trying again (some APIs also send `X-RateLimit-Remaining` / `-Reset` so a well-behaved client can self-throttle *before* hitting the wall). This matters because the alternative — a bare error with no guidance — pushes clients into tight retry loops that *add* load exactly when you're already overloaded, turning a brownout into an outage. A precise 429 with `Retry-After` lets a good client back off cleanly; combined with client-side exponential backoff and jitter, it's what keeps a limited system stable instead of thrashing.
+
+<Quiz
+  id="01-rate-limiter-quiz-1"
+  lessonSlug="01-rate-limiter"
+  lang="en"
+  question="A limit of 100 requests/minute uses a fixed window that resets on the clock minute. What is the worst-case burst a client can legitimately send, and over what span?"
+  choices={[
+    { label: "200 requests in ~1 second — 100 at the end of one window (e.g. 11:00:59) and 100 at the start of the next (11:01:00), straddling the boundary.", correct: true },
+    { label: "100 requests, ever — the limit is 100/minute and it's strictly enforced.", misconception: "The limit is enforced per window, not across the seam between windows. A client can fire 100 just before the reset and 100 just after — 200 in about a second — without ever breaking a single minute's count." },
+    { label: "Unlimited — fixed windows don't actually cap anything.", misconception: "They do cap each window at 100. The flaw is narrower: a 2× spike straddling the boundary. Sliding windows close that seam; fixed windows don't." },
+    { label: "There is no burst problem; the counter resets cleanly.", misconception: "The clean reset IS the problem — it creates a seam. 100 before the reset plus 100 after = 200 in ~1s, the exact spike the limiter was meant to stop." },
+  ]}
+/>
+
+<Quiz
+  id="01-rate-limiter-quiz-2"
+  lessonSlug="01-rate-limiter"
+  lang="en"
+  question="Across a 50-server fleet, each server reads the shared counter, checks it's below the limit, then writes the incremented value. Under concurrency the client exceeds its limit. What is the fix?"
+  choices={[
+    { label: "Make increment-and-check a single atomic operation (Redis INCR, or a Lua script that refills and decrements the bucket server-side) so no two requests can both read the same stale count.", correct: true },
+    { label: "Give each server its own counter and divide the limit by 50.", misconception: "Static per-server splits waste capacity (traffic isn't evenly balanced — a server with no traffic 'wastes' its share) and still drift under uneven load. The real fix is an atomic operation on one shared counter." },
+    { label: "Add a lock that each server acquires before reading the counter.", misconception: "A coarse distributed lock per request serialises everything and becomes the bottleneck. You don't need a lock — you need an atomic primitive (INCR / atomic Lua), which gives correctness without serialising the whole fleet." },
+    { label: "Read the counter twice and average the results.", misconception: "Reading twice doesn't make the read-modify-write atomic; both reads can still see stale data. The lost update comes from the gap between read and write, which only atomicity closes." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="01-rate-limiter-metaphor-1"
+  lessonSlug="01-rate-limiter"
+  lang="en"
+  setup="A _______ holds up to B tokens and refills at R per second; each request spends one token and is rejected if the bucket is empty — which is why a client can burst up to B after a quiet period but only sustains R over time."
+  accepted={["token bucket", "token-bucket", "the token bucket"]}
+  canonical="token bucket"
+  explanation="The token bucket is the production default (it's what Stripe uses): capacity B sets the maximum burst, refill rate R sets the sustained rate. It matches real bursty-but-bounded traffic, unlike the leaky bucket, which smooths bursts away entirely."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A rate limiter gates each client at the edge. Token bucket allows bursts to B at rate R; sliding windows beat fixed (2× boundary spike). At scale: one shared counter, atomic increment-and-check, fail open if it's down.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="01-rate-limiter-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast token bucket, leaky bucket, fixed window, and sliding window.", a: "Token bucket: capacity B (max burst) refilling at R/sec; allows bursts up to B then settles to R — the production default (Stripe). Leaky bucket: a queue draining at a fixed rate, giving a perfectly smooth output but no bursts and added queueing latency. Fixed window: one counter per clock interval — trivial but allows a 2× boundary spike. Sliding window: log (exact, stores every request) or counter (O(1), blends current+previous window) — closes the boundary seam." },
+    { q: "Why is distributed rate limiting hard, and what's the fix?", a: "Across a fleet, any request for a key can land on any server, so the count must be shared (else N servers each allow the full limit). The naïve read-modify-write races: two requests both read 99, both allow, the client gets 101 — a lost update. The fix is atomicity: Redis INCR, or a Lua script that does refill-and-decrement server-side in one atomic round trip. The algorithm is trivial; correctness under concurrency is the whole problem." },
+    { q: "How should a limiter behave when its backing store is down, and how should it reject?", a: "Fail open: if Redis errors or times out, allow the request rather than block it — a limiter is a safety belt, not load-bearing, and must not be the reason the API is down (pair with a kill switch and a short timeout). When it does reject, return HTTP 429 with Retry-After (and ideally X-RateLimit-Remaining/-Reset), so a good client backs off with exponential backoff + jitter instead of tight-looping and adding load." },
+  ]}
+/>
+
+<Recap lang="en">
+A **rate limiter** is a cheap gate that caps each client's request rate before the request reaches expensive work, protecting a shared resource from one tenant's spike — accidental or hostile. Four algorithms, two behaviours: **token bucket** (capacity B = max burst, refill R = sustained rate; the production default) and **leaky bucket** smooth bursts; **fixed window** is trivial but allows a **2× boundary spike** (100 just before the reset + 100 just after), which the **sliding window** (log or counter) closes. Enforce it **as far out and as early as possible** — coarse per-IP at the edge, precise per-key at the gateway, concurrency at the service — so a rejection is cheap. At scale the counter must be **shared** (one Redis counter per key), and the naïve read-modify-write **races** into lost updates, so increment-and-check must be **atomic** (INCR or an atomic Lua script). Finally, **fail open** when the store is down, and reject with **429 + Retry-After** so good clients back off instead of thrashing.
+</Recap>

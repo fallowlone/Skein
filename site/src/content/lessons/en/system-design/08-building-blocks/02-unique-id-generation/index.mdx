@@ -5,34 +5,155 @@ track: "system-design"
 unit: "08-building-blocks"
 order: 2
 title: "Unique ID generation"
-summary: "Unique ID generation — to be authored."
-estMin: 16
-status: stub
+summary: "At scale you can't ask one database for the next number. UUIDv4 is random and decentralized but fragments indexes; Snowflake and UUIDv7 are time-ordered (timestamp + machine + sequence), keeping IDs sortable and index-friendly — at the cost of leaking time and trusting the clock."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - auto-increment
+  - uuid-v4
+  - uuid-v7
+  - snowflake-id
+  - clock-skew
+  - index-locality
+prereqs:
+  - 04-data-distribution/03-consistent-hashing
+  - 08-building-blocks/01-rate-limiter
 sources:
+  - https://en.wikipedia.org/wiki/Snowflake_ID
+  - https://datatracker.ietf.org/doc/html/rfc9562
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A team sharded their orders table across eight databases and kept the schema they'd always used: an auto-incrementing primary key. The first insert against shard 3 returned id 1 — but shard 5 had already minted its own id 1 the day before. Two different orders, same global ID, and a downstream reconciliation job silently merged them. The lesson was not "auto-increment is bad" — on one node it's perfect. It's that the moment you have more than one writer, "the next number" stops being a thing one node can hand out, and you need an ID scheme that several machines can generate independently and still never collide.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>One writer hands out the next number; many can't. UUIDs are random; Snowflake/UUIDv7 add a timestamp so IDs stay sortable and index-safe.</Crux>
 
 <Explanation>
 
-## Unique ID generation
+## Why not just auto-increment
 
-Body to be authored.
+A single database's auto-increment (or a sequence) is the simplest possible ID: compact, sorted, gap-free-ish. It works beautifully on **one** writer because exactly one node owns the counter. Scale past one writer and it breaks in two ways. First, **coordination**: if every insert across a sharded fleet must ask one central sequence server for the next value, that server is now a bottleneck and a single point of failure on the write path — the very thing you sharded to avoid. Second, **collisions**: if each shard keeps its own local counter, two shards both emit id 1, 2, 3… and IDs are no longer globally unique. You can hack around it (give each shard a stride, or a high-bits prefix), but you've started reinventing a distributed ID scheme — so reach for one designed on purpose.
+
+The goal of a distributed ID generator: any node can mint an ID **locally, without coordination**, and the result is globally unique. The schemes differ in what *else* the ID gives you — randomness, or sortability.
+
+## UUIDv4: random and coordination-free
+
+A **UUIDv4** is 122 random bits (plus version/variant bits) in a 128-bit value. With that much entropy the collision probability is negligible in practice, so any process anywhere can generate one with no shared state — perfect decentralization. That's why it's the default for "I need a unique ID and don't want to think about it."
+
+The cost shows up in the **database index**. Primary keys are usually backed by a B-tree, and inserts in *sorted* order append to the right edge — cheap, cache-friendly, few page splits. UUIDv4 keys are *random*, so each insert lands at a random spot in the index, scattering writes across the whole B-tree: more page splits, poor cache locality, and on a clustered index (where the table rows are physically stored in key order, as in InnoDB or SQL Server) the table itself fragments. At high insert rates this is a measurable throughput and storage penalty. Random IDs buy decentralization and pay it back in index churn.
+
+<Inset kind="why" lang="en">
+Why does a random key fragment a B-tree but a sequential one doesn't? A B-tree keeps entries sorted. A monotonically increasing key always inserts at the rightmost leaf — the same hot page, which fills and splits cleanly, and old pages are never touched again (great for the buffer cache). A random key inserts into a random leaf each time: pages all over the tree must be read in, modified, and split, so the working set is the *whole* index rather than one hot page, cache hit-rate collapses, and clustered tables physically interleave unrelated rows. The fix that keeps decentralization is to make the *high* bits of the ID time-ordered, so inserts are mostly sequential again — which is exactly what Snowflake and UUIDv7 do.
+</Inset>
+
+## Snowflake: timestamp + machine + sequence
+
+Twitter's **Snowflake** scheme packs a 64-bit integer ID out of three fields, most-significant first:
+
+```
+| 41 bits: timestamp (ms since a custom epoch) | 10 bits: machine ID | 12 bits: sequence |
+  └ ~69 years of milliseconds                    └ up to 1024 nodes    └ 4096 ids/ms/node
+```
+
+Because the **timestamp is in the high bits**, IDs sort (roughly) by creation time — so they insert near the right edge of the index, restoring the B-tree locality auto-increment had. The **machine ID** makes each node's IDs disjoint without coordination (assigned at startup from config, ZooKeeper, etc.). The **sequence** counter disambiguates multiple IDs minted within the same millisecond on one node — up to 4096 per ms, after which the node waits for the next millisecond. The result: 64-bit, sortable, coordination-free, ~4 million IDs/sec per node. This is the workhorse for systems that want compact, time-ordered IDs at scale.
+
+<FlowDiagram
+  label="Three independent generator nodes each mint 64-bit Snowflake IDs from their own clock, their distinct machine ID, and a per-millisecond sequence counter; all IDs flow into one sharded store, sorted roughly by time because the timestamp sits in the high bits."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "n1", label: "node 1", sub: "machine 001" },
+    { id: "n2", label: "node 2", sub: "machine 002" },
+    { id: "n3", label: "node 3", sub: "machine 003" },
+    { id: "id", label: "64-bit ID", sub: "time | machine | seq" },
+    { id: "store", label: "sharded store", sub: "right-edge inserts" },
+  ]}
+  edges={[
+    { from: "n1", to: "id" },
+    { from: "n2", to: "id" },
+    { from: "n3", to: "id" },
+    { from: "id", to: "store", label: "time-ordered" },
+  ]}
+  caption="Each node generates locally with no shared counter; disjoint machine IDs prevent collisions, the high-bit timestamp keeps the global stream sortable, and time-ordered inserts land at the index's right edge instead of scattering."
+/>
+
+## UUIDv7: the standardized time-ordered UUID
+
+**UUIDv7** (standardized in RFC 9562, 2024) takes the same idea into the 128-bit UUID format: a 48-bit Unix-millisecond timestamp in the high bits, then random bits below. You keep the UUID's universal acceptance (every language and database has a UUID type and generator) and its coordination-free generation, but the time-ordered prefix gives you the index locality UUIDv4 lacked. The tradeoff versus Snowflake: UUIDv7 is bigger (128 vs 64 bits — more storage, fatter indexes) and needs no machine-ID assignment, while Snowflake is compact and explicitly encodes the node. The modern default for "unique, sortable, no coordination" is UUIDv7; Snowflake wins when 64-bit compactness or an embedded machine ID matters.
+
+## The sortability-vs-randomness tradeoff
+
+The core decision is one axis. **Time-ordered IDs** (Snowflake, UUIDv7) sort by creation, insert at the index's right edge, and let you range-scan by time — but they **leak information**: anyone holding two IDs can infer when each was created and roughly how many were issued between them (an enumeration / competitive-intelligence risk for public IDs). **Random IDs** (UUIDv4) leak nothing and are unguessable — better for public-facing identifiers (password-reset tokens, public object IDs) — but fragment indexes and can't be range-scanned. A common production split: time-ordered IDs (UUIDv7/Snowflake) for *internal* primary keys, and either random IDs or a separate opaque public slug for anything a client sees.
+
+<Inset kind="mistake" lang="en">
+Trusting the wall clock. A Snowflake or UUIDv7 node depends on its clock moving forward. If NTP steps the clock **backwards** (or a VM pauses and resumes), the node can mint an ID with an earlier timestamp than one it already issued — breaking monotonicity and, in the worst case, colliding with an ID from that earlier millisecond. The standard guard: detect a backwards step, and either refuse to issue IDs until the clock catches up, or keep a monotonic in-memory counter that never goes below the last timestamp used. This is why these schemes specify "wait if the clock went backward" — clock skew is the failure mode that turns a coordination-free generator back into a source of duplicates.
+</Inset>
+
+<Quiz
+  id="02-unique-id-generation-quiz-1"
+  lessonSlug="02-unique-id-generation"
+  lang="en"
+  question="An OLTP table on InnoDB (clustered primary key) ingests millions of rows/hour. The team switched the PK from auto-increment to UUIDv4 'for decentralization' and write throughput dropped while index size grew. Why?"
+  choices={[
+    { label: "UUIDv4 keys are random, so each insert lands at a random spot in the clustered B-tree — scattering writes, causing page splits across the whole index, and collapsing buffer-cache locality. A time-ordered ID (UUIDv7/Snowflake) keeps right-edge inserts.", correct: true },
+    { label: "UUIDs are slower to compare than integers, which is the main cost.", misconception: "Comparison cost is minor. The real penalty is index fragmentation: random keys scatter inserts across the whole B-tree (page splits, lost cache locality) instead of appending to one hot right-edge page." },
+    { label: "UUIDv4 isn't unique enough, so the DB retries on collisions.", misconception: "122 random bits make collisions negligible; that's not happening. The throughput/size hit is index fragmentation from inserting random keys into a clustered B-tree." },
+    { label: "Nothing should change — key choice doesn't affect insert performance.", misconception: "It very much does on a clustered index: sequential keys append to the right edge (cheap), random keys fragment the whole tree (expensive). That's the entire reason UUIDv7 exists." },
+  ]}
+/>
+
+<Quiz
+  id="02-unique-id-generation-quiz-2"
+  lessonSlug="02-unique-id-generation"
+  lang="en"
+  question="A Snowflake generator node's clock is stepped backward 200 ms by an NTP correction. With no guard, what is the danger?"
+  choices={[
+    { label: "It may mint IDs with timestamps earlier than ones it already issued — breaking time-ordering and risking a collision with an ID from that earlier millisecond. The guard is to wait (or hold a monotonic counter) until the clock passes the last-used timestamp.", correct: true },
+    { label: "Nothing — the machine-ID and sequence fields guarantee uniqueness regardless of the clock.", misconception: "The sequence only disambiguates within a single millisecond on one node. If the clock goes backward, the node can re-enter a millisecond it already used and re-issue sequence values — a real collision risk. The clock must move forward." },
+    { label: "All future IDs become non-unique forever.", misconception: "Only the window around the backward step is at risk, not all future IDs. And the standard guard (refuse/wait on a backward step, or a monotonic counter) prevents even that." },
+    { label: "The IDs get larger to compensate.", misconception: "ID width is fixed (64 bits). A backward clock doesn't resize IDs; it risks duplicate/out-of-order timestamps, which is why these schemes specify a wait-on-backward-clock rule." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="02-unique-id-generation-metaphor-1"
+  lessonSlug="02-unique-id-generation"
+  lang="en"
+  setup="Putting the _______ in the high (most-significant) bits of a Snowflake or UUIDv7 ID is what makes the IDs sort by creation order, so inserts land near the right edge of the index instead of scattering like a random UUIDv4 key."
+  accepted={["timestamp", "time", "the timestamp", "time component"]}
+  canonical="timestamp"
+  explanation="With the millisecond timestamp as the leading field, IDs increase (roughly) with time, so the B-tree sees mostly right-edge inserts — restoring the index locality auto-increment had, while still generating without coordination. That high-bit timestamp is the single design choice that separates UUIDv7/Snowflake from random UUIDv4."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Many writers can't share an auto-increment without a bottleneck or collisions. UUIDv4 is random but fragments indexes. Snowflake/UUIDv7 put a timestamp in the high bits — sortable, but they leak time and trust the clock.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="02-unique-id-generation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does auto-increment break with more than one writer?", a: "Two failure modes. Coordination: routing every insert to one central sequence server makes it a write-path bottleneck and a single point of failure — undoing the point of sharding. Collisions: if each shard keeps a local counter, multiple shards emit id 1, 2, 3… and IDs stop being globally unique. The goal of a distributed ID scheme is the opposite: any node mints a globally-unique ID locally, with no coordination." },
+    { q: "Compare UUIDv4, Snowflake, and UUIDv7 on the axes that matter.", a: "UUIDv4: 122 random bits, coordination-free, unguessable, leaks nothing — but random keys fragment a (clustered) B-tree: page splits, lost cache locality, no range-scan. Snowflake: 64-bit, high-bit ms timestamp + 10-bit machine ID + 12-bit sequence — compact, sortable, ~4M ids/sec/node, embeds the node. UUIDv7: 128-bit, high-bit ms timestamp + random — standardized (RFC 9562), universally supported, sortable, no machine-ID needed, but bigger than Snowflake. Time-ordered ones restore right-edge inserts; UUIDv4 does not." },
+    { q: "State the sortability-vs-randomness tradeoff and the clock-skew risk.", a: "Time-ordered IDs sort by creation, insert at the index's right edge, and allow range-scans by time — but leak creation time and approximate issue counts (enumeration risk for public IDs). Random IDs leak nothing and are unguessable (good for public tokens) but fragment indexes and can't be range-scanned. Common split: time-ordered internal PKs, random/opaque public IDs. Clock-skew risk: a backward clock step can re-issue an earlier timestamp and collide; guard by waiting on a backward step or holding a monotonic counter." },
+  ]}
+/>
+
+<Recap lang="en">
+**Auto-increment** is the perfect ID for **one** writer — compact and sorted — but fails with many writers, either as a central-sequence **bottleneck/SPOF** or as **per-shard collisions**. A distributed ID generator lets any node mint a globally-unique ID **with no coordination**. **UUIDv4** (122 random bits) is fully decentralized and unguessable but its randomness **fragments B-tree indexes** (page splits, lost cache locality, clustered-table fragmentation). **Snowflake** (64-bit: high-bit ms timestamp + 10-bit machine ID + 12-bit sequence) and **UUIDv7** (128-bit: high-bit ms timestamp + random, RFC 9562) put the **timestamp in the high bits**, so IDs stay sortable and insert at the index's **right edge**, restoring locality — UUIDv7 for universal support, Snowflake for 64-bit compactness and an embedded node ID. The core tradeoff is **sortability vs randomness**: time-ordered IDs are index-friendly and range-scannable but **leak time** (enumeration risk), while random IDs leak nothing but churn indexes — hence time-ordered internal keys and random/opaque public IDs. And every time-ordered scheme depends on the **clock moving forward**: a backward step risks duplicate, out-of-order IDs unless you wait or hold a monotonic counter.
+</Recap>

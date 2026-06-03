@@ -4,19 +4,149 @@ lang: en
 track: "system-design"
 unit: "06-async-messaging"
 order: 7
-title: "06-async-messaging: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Async & messaging: code and config reading"
+summary: "Read real consumer code, broker config, and an outbox handler, then pick the answer a senior would commit to: an ack-order bug, a visibility-timeout duplicate, an inline-publish dual write, and an unbounded buffer."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - delivery-semantics
+  - visibility-timeout
+  - outbox-pattern
+  - backpressure
+  - idempotency
+  - dead-letter-queue
+prereqs:
+  - 06-async-messaging/01-message-queues
+  - 06-async-messaging/03-event-driven
+  - 06-async-messaging/04-backpressure
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/avoiding-insurmountable-queue-backlogs/
+  - https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+  - https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 06-async-messaging unit. STUB.</Hook>
+<Hook>
+Messaging bugs live in the code and config, not the prose: where you put the ack, what the visibility timeout is set to, whether the relay owns publishing, and whether the buffer has a bound. Read each snippet, trace the crash, and pick the answer a senior engineer would commit to.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Find the ack order, the timeout, the publish site, or the missing bound, then pick the fix the failure mode demands.</Crux>
+
+<Explanation>
+
+Practise the loop you run during a design or code review: locate the load-bearing line, trace what a crash does to it, and choose the change that respects the delivery semantics instead of hiding them.
+
+## Snippet 1 — the ack order
+
+```python
+def handle(msg):
+    queue.ack(msg)          # acknowledged first
+    charge_card(msg.amount) # then the side effect
+```
+
+<Quiz
+  id="06-async-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What delivery semantic does this give, and what's the risk for a payment handler?"
+  choices={[
+    { label: "At-most-once: acking before the side effect means a crash between ack and charge_card LOSES the charge with no redelivery. For a payment you want at-least-once (ack after) plus idempotency, so a redelivery doesn't double-charge.", correct: true },
+    { label: "At-least-once — the ack guarantees the message is processed.", misconception: "Acking doesn't run the charge; it tells the broker to forget the message. A crash after ack but before charge_card loses the work with no redelivery. Ack-first is at-most-once (lossy), the opposite of what's claimed." },
+    { label: "Exactly-once, because the ack happens once.", misconception: "There's no exactly-once over an unreliable network. Ack-first is at-most-once (possible loss); to approximate once-effect you ack AFTER processing (at-least-once) and dedup. The ack's position decides the guarantee." },
+    { label: "It's fine — payments should ack early to free the queue fast.", misconception: "Freeing the queue before the charge runs is exactly how you silently lose a payment on crash. Ack after the charge (at-least-once) and dedup on an idempotency key so the redelivery is harmless." },
+  ]}
+/>
+
+## Snippet 2 — the visibility timeout
+
+```yaml
+# SQS consumer
+visibility_timeout: 30      # seconds
+# measured job processing time: p50 = 12s, p99 = 75s
+# handler is NOT idempotent
+```
+
+<Quiz
+  id="06-async-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="With these numbers, what happens to the slowest jobs, and what's the fix?"
+  choices={[
+    { label: "Jobs near p99 (75s) blow the 30s timeout while still running, so the message reappears and a second worker processes it in parallel — duplicates. Fix: raise the timeout above p99 and heartbeat to extend it during long jobs, and make the handler idempotent.", correct: true },
+    { label: "Nothing — the queue waits for the worker to finish before redelivering.", misconception: "The broker only knows the timeout expired without a delete; it can't tell a slow worker from a crashed one. At 30s it redelivers, so a 75s job runs twice in parallel. Size the timeout above p99 and heartbeat." },
+    { label: "Slow jobs go to the DLQ for being slow.", misconception: "The DLQ is for messages that FAIL repeatedly, not slow ones. A slow-but-successful job just gets redelivered (duplicated) when the visibility timeout expires. Raise the timeout / heartbeat." },
+    { label: "Lower the timeout to 10s so retries happen sooner.", misconception: "That makes it far worse — now even p50 jobs (12s) get duplicated. The timeout must be ABOVE real processing time (p99), not below it, plus heartbeating and idempotency." },
+  ]}
+/>
+
+## Snippet 3 — the outbox handler
+
+```python
+with db.transaction() as tx:
+    tx.insert(order)
+    tx.insert(outbox_row(OrderPlaced))   # atomic with the order — good
+    broker.publish(OrderPlaced)          # also published inline, "to save a hop"
+    tx.commit()
+# a separate relay ALSO reads the outbox and publishes
+```
+
+<Quiz
+  id="06-async-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="The outbox row is written correctly, so why is the inline `broker.publish` a bug?"
+  choices={[
+    { label: "It reintroduces a dual write: the inline publish is a separate system with no shared transaction with the commit, so a crash between publish and commit emits a phantom event (and the relay publishes too → duplicates). The handler must do ONLY the local transaction; a separate relay owns all publishing.", correct: true },
+    { label: "It's fine and faster — publishing inline just delivers the event sooner.", misconception: "It quietly recreates the exact problem the outbox removes. A crash after the inline publish but before commit emits an event for an order that rolled back (phantom), and the relay double-publishes. Remove the inline publish." },
+    { label: "The bug is the outbox row — you don't need it if you publish inline.", misconception: "Backwards: the outbox row is the correct, atomic part. The inline publish is the dual-write bug. Keep the outbox + relay; delete the inline call." },
+    { label: "Add a retry around the inline publish to make it reliable.", misconception: "Retrying a non-transactional publish doesn't make it atomic with the commit; it still risks a phantom event and still duplicates the relay. The fix is structural: only the relay publishes." },
+  ]}
+/>
+
+## Snippet 4 — the buffer
+
+```javascript
+const queue = []                       // in-memory, no max size
+function enqueue(job) { queue.push(job) }   // never rejects
+// worker drains at ~1k/s; producers can burst to ~8k/s during spikes
+// symptom: during spikes, pod RSS climbs until it's OOM-killed
+```
+
+<Quiz
+  id="06-async-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Why does the pod crash under spikes, and what's the correct change?"
+  choices={[
+    { label: "An unbounded in-memory queue under sustained arrival > service grows without limit, so RSS climbs until OOM — a slowdown becomes a hard crash. Bound the queue: when full, enqueue fails fast (reject/429 or block) — that's the backpressure signal — and use a durable broker if buffered work must survive a crash.", correct: true },
+    { label: "Nothing's wrong; just give the pod more memory.", misconception: "More memory only delays the OOM under sustained overload — an unbounded queue grows without limit. The fix is a bound that applies backpressure, not a bigger heap that fills more slowly." },
+    { label: "The worker is too slow; add workers and keep the unbounded queue.", misconception: "Faster draining helps, but with no bound a big enough spike still balloons the queue to OOM. You need a bound + fail-fast so producers feel backpressure during the spike, not just more consumers." },
+    { label: "Make the queue even bigger so spikes always fit.", misconception: "There's no size that 'always fits' a sustained arrival > service — the queue grows without limit by definition. A bound (and shedding when full) is what keeps the failure small, not a larger buffer." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every messaging bug is a load-bearing line: the ack position fixes the semantic, the visibility timeout fixes duplicates, the publish site fixes the dual write, the queue bound fixes the backlog.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="06-async-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does the ack's position decide the delivery semantic, and what's right for a payment?", a: "Ack BEFORE the side effect = at-most-once: a crash in the gap loses the work with no redelivery. Ack AFTER = at-least-once: a crash redelivers, so no loss but possible duplicates. For a payment you want at-least-once (never silently lose a charge) plus idempotency / a dedup key so a redelivery doesn't double-charge. The position of one line flips the guarantee." },
+    { q: "Why does the inline publish in an outbox handler reintroduce the dual write?", a: "The outbox works because the business row and the outbox row are one local transaction (atomic). An inline broker.publish is a separate system with no shared transaction with the commit, so a crash between publish and commit emits a phantom event for a rolled-back write, and it also duplicates what the relay will publish. The discipline is strict: the handler does ONLY the local transaction; a SEPARATE relay owns all publishing. The inline call buys nothing and breaks the guarantee." },
+  ]}
+/>
+
+<Recap lang="en">
+Every messaging decision in this unit shows up as a load-bearing line you can read straight off the code. The **ack's position** sets the delivery semantic — ack-first is at-most-once (lossy), ack-last is at-least-once (duplicates), and a payment wants the latter plus idempotency. The **visibility timeout** must sit above the real p99 processing time and be heartbeated, or slow jobs get redelivered and run twice in parallel. The **outbox** only works if the handler does *only* the local transaction and a *separate* relay publishes — an inline publish silently reintroduces the **dual write** (phantom events plus relay duplicates). And an in-memory queue with **no bound** grows without limit under sustained overload until the process OOMs, so you bound it and fail fast (the backpressure signal), shedding when full and using a durable broker if buffered work must survive a crash. The senior habit is to find the load-bearing line, trace what a crash does to it, and pick the fix the failure mode demands — not the one that hides it.
+</Recap>

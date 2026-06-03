@@ -4,19 +4,154 @@ lang: en
 track: "system-design"
 unit: "04-data-distribution"
 order: 7
-title: "04-data-distribution: applied review"
-summary: "Assessment block stub (applied review)."
+title: "Data distribution: config and code reading"
+summary: "Read real replication config, a partition-key choice, a routing function, and a quorum setting, then do the reasoning: spot the lost-write risk, the hot shard, the mod-N reshard trap, and whether a quorum guarantees a fresh read."
 estMin: 14
-status: stub
+status: ready
+lessonType: topic
 level: senior
-concepts: []
-prereqs: []
+concepts:
+  - async-replication
+  - partition-key
+  - consistent-hashing
+  - quorum
+  - hot-shard
+  - pacelc
+prereqs:
+  - 04-data-distribution/01-replication
+  - 04-data-distribution/02-sharding-and-partitioning
+  - 04-data-distribution/03-consistent-hashing
+  - 04-data-distribution/04-cap-and-pacelc
 sources:
+  - https://www.allthingsdistributed.com/files/amazon-dynamo-sosdp2007.pdf
+  - https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html
   - https://github.com/donnemartin/system-design-primer
 ---
 import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
 
-<Hook>This is a quiz-code for the 04-data-distribution unit. STUB.</Hook>
+<Hook>
+Distribution bugs live in the config and the routing code: a replication mode, a partition key, a modulus, a quorum number. Read each snippet, reason through the failure it implies, and pick the answer a senior engineer would commit to in review.
+</Hook>
 
-<Recap lang="en">STUB.</Recap>
+<Crux>Find the replication mode, key, routing, or quorum in the config, reason out the failure, and pick the fix the mechanism supports.</Crux>
+
+<Explanation>
+
+Practise the loop you run during a design or incident review: locate the distribution decision in the config or code, trace its failure mode, and choose the change the mechanism actually supports.
+
+## Snippet 1 — the replication config
+
+```yaml
+# database replication
+replication:
+  mode: async          # leader acks before followers receive the write
+  followers: 3
+  sync_replicas: 0     # none required to ack
+# on leader failure: auto-promote the most-caught-up follower
+```
+
+<Quiz
+  id="04-data-distribution-code-1"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What durability risk does this config carry, and what's the minimal change?"
+  choices={[
+    { label: "With sync_replicas: 0 and async mode, the leader acks before any follower has the write, so a leader crash loses every acknowledged-but-unshipped write on failover. Set sync_replicas: 1 so an ack means the write is on at least two nodes.", correct: true },
+    { label: "No risk — auto-promoting the most-caught-up follower prevents data loss.", misconception: "Promoting the most-caught-up follower minimizes loss but can't recover writes that reached only the dead leader. With sync_replicas: 0 those acked writes are gone. You need a synchronous replica so the ack itself implies durability." },
+    { label: "The risk is read staleness; add more followers.", misconception: "More followers scale reads but don't make an ack durable — they're all async here. The risk is LOST WRITES on failover, fixed by requiring a synchronous replica, not by adding async ones." },
+    { label: "Switch all 3 followers to synchronous for safety.", misconception: "All-synchronous couples write availability to the slowest of 3 followers — one slow replica stalls every write. The minimal safe change is sync_replicas: 1 (semi-sync): durable on two nodes without holding writes hostage to all three." },
+  ]}
+/>
+
+## Snippet 2 — the partition key
+
+```python
+# events table is sharded; choose the shard key
+def shard_for(event):
+    return hash(event.created_at_day) % NUM_SHARDS   # shard by day
+# hottest query: SELECT ... WHERE tenant_id = ? AND created_at_day = ?
+```
+
+<Quiz
+  id="04-data-distribution-code-2"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="What's wrong with sharding events by created_at_day, given the workload?"
+  choices={[
+    { label: "Sharding by day funnels all of today's writes onto a single shard (a moving hot spot), and the hottest query filters by tenant_id too, so it can't be routed to one shard by day alone. Shard by tenant_id (or a tenant+time composite) to spread writes and keep the hot query single-shard.", correct: true },
+    { label: "Nothing — hashing the day spreads load evenly across shards.", misconception: "Hashing the day spreads DIFFERENT days across shards, but all of one day's writes share a key, so today's writes all hit one shard — a write hot spot. And the query needs tenant_id, which the day-key can't route on." },
+    { label: "The modulus should be a prime number; change NUM_SHARDS.", misconception: "A prime modulus is irrelevant to this bug. The problem is the CHOICE of key (day) versus the access pattern (tenant + day): today's writes concentrate and the hot query can't be routed single-shard." },
+    { label: "Add a secondary index on tenant_id and keep the day key.", misconception: "A secondary index on a non-shard-key is local-per-shard (scatter-gather to query) or a separate global index — it doesn't fix the write hot spot from the day key. Re-keying to tenant_id addresses both the spread and the query." },
+  ]}
+/>
+
+## Snippet 3 — the routing function
+
+```python
+# cache client picks a node for each key
+def node_for(key, nodes):
+    return nodes[hash(key) % len(nodes)]   # nodes is a live, autoscaling list
+
+# autoscaler adds/removes cache nodes based on load
+```
+
+<Quiz
+  id="04-data-distribution-code-3"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="The cache fleet autoscales, so len(nodes) changes at runtime. What does this routing cause, and what's the fix?"
+  choices={[
+    { label: "Every autoscale event changes len(nodes), so hash(key) % len(nodes) remaps nearly all keys at once and the hit rate collapses each time. Replace mod-N with consistent hashing (a ring) so a membership change moves only ~1/N of keys.", correct: true },
+    { label: "Nothing — the hash function keeps keys on the same node.", misconception: "It doesn't: the divisor len(nodes) changes on every scale event, so hash(key) % len(nodes) reassigns nearly every key. That's the rehash-everything problem; mod-N is unsafe for a live, changing node set." },
+    { label: "It causes uneven load; switch to a better hash function.", misconception: "The hash is fine; the problem is mod-N's dependence on len(nodes), which remaps everything when the count changes. A better hash won't help — consistent hashing (decoupling routing from N) will." },
+    { label: "Pin len(nodes) to a constant in the formula.", misconception: "Hard-coding the count breaks routing the moment the real node set differs from the constant (keys route to nodes that may not exist). The correct fix is consistent hashing, which handles a changing node set by design." },
+  ]}
+/>
+
+## Snippet 4 — the quorum setting
+
+```python
+# leaderless key-value store
+N = 5          # replicas per key
+W = 2          # nodes that must ack a write
+R = 2          # nodes that must answer a read
+# product requirement: a read must always see the latest acknowledged write
+```
+
+<Quiz
+  id="04-data-distribution-code-4"
+  lessonSlug="quiz-code"
+  lang="en"
+  question="Does W = 2, R = 2 with N = 5 meet the requirement, and if not, what's the minimal correct setting?"
+  choices={[
+    { label: "No: R + W = 4 is not > N = 5, so the read and write sets can be disjoint and a read may miss the latest write. The minimal fix is to make R + W > 5 — e.g. W = 3, R = 3 — so the sets overlap in at least one node.", correct: true },
+    { label: "Yes — any quorum guarantees fresh reads.", misconception: "Only quorums with R + W > N guarantee overlap. Here R + W = 4 ≤ 5, so the two-node read set can entirely miss the two-node write set; the read can return stale data. You must raise the sum above N." },
+    { label: "No; set W = 5 so every replica has the write.", misconception: "W = 5 does guarantee fresh reads (any R overlaps), but it requires all replicas for a write — the least write availability, more than needed. R + W > 5 is enough; W = 3, R = 3 meets it with better write availability." },
+    { label: "No; lower R to 1 to make reads faster.", misconception: "Lowering R makes R + W = 3, still ≤ 5 and still non-overlapping — reads get faster AND less correct. To guarantee freshness you must increase the sum past N, e.g. W = 3, R = 3." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every distribution decision is readable in the config: sync_replicas for durability, the partition key for hot spots, the routing function for reshard pain, R + W vs N for read freshness. Read the mechanism.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-data-distribution-code-retrieval"
+  lang="en"
+  questions={[
+    { q: "How do you read durability risk off a replication config?", a: "Look at the mode and the required synchronous replicas. mode: async with sync_replicas: 0 means the leader acks before any follower has the write, so a crash before shipping loses every acknowledged-but-unreplicated write on failover — an ack is not a durable write. The minimal fix is sync_replicas: 1 (semi-sync): an ack now means the write is on at least two nodes, without all-synchronous coupling write availability to the slowest follower." },
+    { q: "Why is hash(key) % len(nodes) unsafe for an autoscaling node set, and what replaces it?", a: "Because len(nodes) is the divisor, every add/remove changes it and remaps nearly all keys at once — a cache hit-rate collapse on every scale event, or a near-total data move for a sharded store. Consistent hashing replaces it: nodes and keys go on a ring and a key routes to the next node clockwise, so a membership change touches only one arc and moves ~1/N of keys. Virtual nodes then keep the arcs balanced and spread a dead node's load." },
+    { q: "Given N, W, R, how do you tell if reads are guaranteed fresh, and what's the minimal fix when they aren't?", a: "A read is guaranteed to see the latest acknowledged write iff R + W > N, which forces the read set and write set to overlap in at least one node. With N = 5, W = 2, R = 2 gives R + W = 4 ≤ 5 — not guaranteed; the sets can be disjoint and the read can return stale data. The minimal fix raises the sum above N, e.g. W = 3, R = 3 (sum 6), which overlaps while keeping more write availability than W = 5." },
+  ]}
+/>
+
+<Recap lang="en">
+Every distribution decision in this unit is something you can read straight off the config or routing code. A **replication config** with `mode: async` and `sync_replicas: 0` acks before any follower has the write, so a failover loses acknowledged writes — the fix is one synchronous replica. A **partition key** chosen against the workload (sharding events by day when the hot query filters by tenant) creates a write hot spot and an unroutable query — re-key to match the access pattern. A **routing function** of `hash(key) % len(nodes)` over an autoscaling node set remaps nearly all keys on every scale event — replace it with a consistent-hashing ring so only ~1/N move. And a **quorum** guarantees a fresh read only when `R + W > N` — `W = 2, R = 2, N = 5` (sum 4) does not, while `W = 3, R = 3` (sum 6) does. The senior habit is to find the distribution decision in the config, trace its failure mode, and choose the fix the mechanism supports — not the one that hides it.
+</Recap>

@@ -5,34 +5,152 @@ track: "system-design"
 unit: "05-caching-at-scale"
 order: 3
 title: "Distributed caches"
-summary: "Distributed caches — to be authored."
-estMin: 16
-status: stub
+summary: "One cache node is not enough memory and is a single point of failure. Sharding (via consistent hashing) spreads keys across nodes; replication survives node death. But scaling out the cache invites cache stampedes, hot keys, and cold starts — failures that only appear at scale."
+estMin: 20
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - cache-sharding
+  - consistent-hashing
+  - cache-stampede
+  - request-coalescing
+  - hot-keys
+  - cold-start
+prereqs:
+  - 05-caching-at-scale/01-caching-strategies
+  - 05-caching-at-scale/02-eviction-and-ttl
+  - 04-data-distribution/03-consistent-hashing
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://aws.amazon.com/builders-library/caching-challenges-and-strategies/
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/red-ug/Replication.html
+  - https://redis.io/docs/latest/operate/oss_and_stack/management/scaling/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+A popular product page was cached with a single hot key and a 60-second TTL. At a traffic peak of 50,000 reads per second the key expired, and in the few hundred milliseconds it took to regenerate, every one of those 50,000 requests missed the cache, found nothing, and slammed the database with the *same* expensive query — all at once. The database, sized to handle the trickle of misses that normally leak through a 99%-hit cache, fell over. The page came back, the key warmed, traffic resumed... and 60 seconds later it happened again. Nobody had written a bug. The cache was working perfectly. The failure was structural: at scale, one expiring key can become a synchronized weapon pointed at your database.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>Shard (consistent hashing) for capacity, replicate for survival — but at scale a hot key's expiry stampedes the DB unless you coalesce.</Crux>
 
 <Explanation>
 
-## Distributed caches
+## Why one cache node isn't enough
 
-Body to be authored.
+A single cache node hits two walls the moment you scale. **Capacity**: the working set outgrows one machine's RAM, so you can't hold it all. **Availability**: that one node is a single point of failure — when it dies or restarts, your hit ratio drops to zero and (per the previous lesson's arithmetic) the full read load lands on the database. A distributed cache solves both with two orthogonal tools: **sharding** for capacity and **replication** for survival.
+
+**Sharding** partitions the keyspace across N nodes — each key lives on exactly one shard, so total capacity is N × one-node capacity. **Replication** keeps copies of a shard on more than one node, so losing a node loses no data and reads can fan out across replicas. The two compose: a production cache is usually sharded *and* each shard replicated. The hard question sharding raises is *which key goes to which node* — and naive answers fail badly.
+
+## Sharding: why consistent hashing, not modulo
+
+The obvious sharding rule is `node = hash(key) % N`. It works until N changes. Add or remove one node and `N` changes, so `hash(key) % N` changes for *almost every key* — a near-total remapping that invalidates the whole cache at once and stampedes the database. **Consistent hashing** (covered in the data-distribution unit) fixes this: keys and nodes are placed on a hash ring, a key belongs to the next node clockwise, and adding or removing a node only remaps the keys in *one arc* — roughly `1/N` of the keyspace — instead of all of them. That property is exactly what a cache needs: scaling the cluster should disturb a slice of the cache, not nuke it.
+
+<Inset kind="why" lang="en">
+Why is "only 1/N keys move" the property that matters most for a *cache* specifically? Because in a durable datastore a remap means copying data (expensive but correct); in a cache a remap means a **miss storm**. Every key that moves to a new (empty) node is now a guaranteed miss until it's reloaded from the database. With modulo hashing, scaling from 4 to 5 nodes remaps ~80% of keys, so ~80% of your cache instantly misses and that load hits the database in a thundering wave — the exact failure you added nodes to avoid. Consistent hashing caps the damage at the moved arc (~1/N), and virtual nodes (many ring positions per physical node) smooth the load so one node doesn't inherit a disproportionate arc. Sharding a cache without consistent hashing turns a routine scale-up into an outage.
+</Inset>
+
+## The cache stampede (thundering herd), and how to stop it
+
+The hook is a **cache stampede** (also *thundering herd* or *dogpile*): a hot key expires, and N concurrent readers all miss simultaneously and all recompute the same value at once, multiplying load on the backend by N. It is a *scale-only* failure — invisible at 10 RPS, lethal at 50,000. Three standard fixes, in increasing sophistication:
+
+- **Request coalescing (single-flight)** — when many requests miss the same key at the same time, let *one* of them recompute while the others *wait* for that single result instead of each launching their own DB query. N concurrent misses become one DB call. This is the workhorse fix.
+- **Early/probabilistic recompute** — don't wait for the key to fully expire. As it nears expiry, let a *single* request refresh it *ahead of time* in the background, so the hot value never actually goes absent. Probabilistic early expiration (each reader rolls a dice that gets likelier as expiry approaches) means exactly one tends to refresh, with no coordination.
+- **Locks / leases** — the recomputing request takes a short lock (or a lease) on the key; others see the lock and serve the slightly-stale old value, or wait briefly, rather than piling onto the backend.
+
+These mechanics are the subject of the dedicated **caching track's stampede lessons** (single-flight, probabilistic early recompute, stale-while-revalidate); at the system-design altitude the point is to *recognize the stampede as a structural risk of any hot, TTL'd key at scale* and to know that coalescing the misses is the answer.
+
+<FlowDiagram
+  label="Left: clients route a key through a consistent-hash ring to its owning shard; each shard is replicated for survival. Right: when a hot key misses, request coalescing lets a single in-flight recompute hit the database while the other concurrent misses wait for that one result instead of stampeding."
+  perRow={3}
+  hue="var(--d-infra)"
+  nodes={[
+    { id: "client", label: "clients", sub: "key → ring" },
+    { id: "ring", label: "hash ring", sub: "key → owning shard" },
+    { id: "shard", label: "shard + replica", sub: "1/N keys, survives loss" },
+    { id: "miss", label: "hot-key miss", sub: "N concurrent" },
+    { id: "single", label: "single-flight", sub: "1 recompute, rest wait" },
+    { id: "db", label: "database", sub: "sees 1 query, not N" },
+  ]}
+  edges={[
+    { from: "client", to: "ring" },
+    { from: "ring", to: "shard", label: "1/N moves on rescale" },
+    { from: "miss", to: "single", label: "coalesce" },
+    { from: "single", to: "db", label: "1 trip" },
+  ]}
+  caption="Consistent hashing routes and bounds rescale damage to one arc; replication survives node loss; request coalescing collapses a hot-key stampede from N database queries into one. All three are about controlling what happens to the backend when the cache layer is stressed."
+/>
+
+## Hot keys, cold starts, and client-side vs server-side
+
+Sharding assumes load spreads evenly across keys — but real traffic has **hot keys**: one celebrity's profile, one viral product, one global config value that every request reads. A hot key concentrates all its traffic on the *single shard* that owns it, so that one node saturates while the rest idle — sharding doesn't help because the key can't be split. Fixes: *replicate* the hot key to multiple nodes and read from a random replica, or *also* cache it locally in each app process (a small client-side/near cache) so most reads never reach the shared cache at all. That local tier is the **client-side vs server-side** distinction: a server-side cache (shared Redis cluster) is consistent across all app nodes but one network hop away; a client-side/in-process cache is a hop closer and absorbs hot keys, but each app node has its own copy and so they can disagree — you're back to per-node staleness.
+
+**Cold start** is the other scale failure: a freshly deployed or restarted cache is *empty*, so for the first minutes every read misses and the database eats the full unmitigated load — the same risk as a stampede but cluster-wide. Mitigations: warm the cache before taking traffic, roll restarts gradually (not all nodes at once), and lean on consistent hashing so a single replaced node only cold-starts its own arc.
+
+<Inset kind="mistake" lang="en">
+A subtle and common mistake is assuming replication makes your cache *strongly consistent*. Replicas in a cache are almost always **asynchronous**: a write to the primary shard propagates to replicas with a lag, so a read served from a replica can return a slightly older value than the primary. For a cache this is usually fine — it's a cache, staleness is already on the table — but teams that read-from-replica for scale and then assume "the cache is the source of truth" get bitten when a just-written value isn't on the replica yet. The cache is never the source of truth (that's the next lesson's anti-pattern); replication buys you survival and read throughput, not a consistency guarantee. Size replica lag into your freshness budget, don't pretend it's zero.
+</Inset>
+
+<Quiz
+  id="05-distributed-cache-quiz-1"
+  lessonSlug="03-distributed-cache"
+  lang="en"
+  question="Your cache shards keys with hash(key) % N. You add one node to go from 4 to 5 nodes during a traffic peak, and the database immediately falls over. Why, and what should you have used?"
+  choices={[
+    { label: "Modulo hashing remaps ~80% of keys when N changes 4→5, so most of the cache instantly misses and stampedes the DB. Consistent hashing would have moved only ~1/N of keys (one arc), bounding the miss storm.", correct: true },
+    { label: "Adding a node always overloads the database; never scale the cache under load.", misconception: "Adding a node shouldn't cause a miss storm — that's a property of MODULO hashing specifically, which remaps almost all keys. With consistent hashing only ~1/N keys move, so scaling under load is safe. The hashing scheme is the bug, not the scaling." },
+    { label: "The new node's RAM was too small.", misconception: "RAM size isn't the issue — the issue is that hash(key) % N changed for nearly every key when N went 4→5, so ~80% of the cache remapped to (empty) nodes and missed at once. Consistent hashing limits the remap to one arc." },
+    { label: "Replication lag caused the failure.", misconception: "This is a sharding/routing failure, not replication. Modulo hashing remapped most keys on the topology change, causing a mass miss. The fix is consistent hashing, which moves only ~1/N keys when the cluster changes." },
+  ]}
+/>
+
+<Quiz
+  id="05-distributed-cache-quiz-2"
+  lessonSlug="03-distributed-cache"
+  lang="en"
+  question="A single hot key with a 30s TTL serves 40,000 RPS. Every 30 seconds the database briefly spikes to thousands of identical queries. What is this, and what's the most direct fix?"
+  choices={[
+    { label: "A cache stampede (thundering herd): on expiry, thousands of concurrent reads all miss and recompute the same value at once. Coalesce them with single-flight so one request recomputes while the rest wait for that result.", correct: true },
+    { label: "Normal cache behavior; raise the TTL to 300s.", misconception: "A longer TTL just makes the stampede less frequent (every 300s instead of 30s), not gone — it still detonates on expiry. The structural fix is request coalescing (single-flight) so concurrent misses collapse into one DB call." },
+    { label: "A hot-key sharding problem; spread the key across more shards.", misconception: "Replicating a hot key helps with steady saturation, but the periodic spike at the TTL boundary is a STAMPEDE on expiry — many concurrent recomputes of the same value. Coalesce the misses (single-flight) to fix the spike directly." },
+    { label: "The database is undersized; add read replicas.", misconception: "More DB capacity treats the symptom; the cause is thousands of simultaneous identical recomputes when the key expires. Collapse them with single-flight (or probabilistic early recompute) so the DB sees one query, not thousands." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-distributed-cache-metaphor-1"
+  lessonSlug="03-distributed-cache"
+  lang="en"
+  setup="To shard a cache without nuking it on every scale change, you route keys with _______ hashing, which moves only ~1/N of keys (one arc of the ring) when a node is added or removed — instead of modulo's near-total remap that would stampede the database."
+  accepted={["consistent", "consistent hashing", "consistent-hashing"]}
+  canonical="consistent"
+  explanation="Consistent hashing places keys and nodes on a ring so a key belongs to the next node clockwise; adding or removing a node only remaps the keys in that node's arc (~1/N), not the whole keyspace. For a cache a remap means a miss storm, so bounding it to one arc — plus virtual nodes to even out the load — is what makes scaling the cluster safe instead of an outage."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>Shard with consistent hashing (only ~1/N keys move on rescale); replicate (async) for survival. A hot TTL'd key stampedes the DB — coalesce with single-flight. Watch hot keys, cold starts, replica lag.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-distributed-cache-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why shard with consistent hashing instead of modulo, and what does replication add?", a: "Sharding spreads the keyspace for capacity; the routing rule matters because for a cache a remap is a miss storm, not just a copy. Modulo (hash % N) remaps almost every key when N changes (4→5 ≈ 80% of keys), so most of the cache misses at once and stampedes the DB. Consistent hashing moves only ~1/N keys (one ring arc) on a topology change, with virtual nodes evening out the load. Replication is the orthogonal tool: it keeps copies of each shard so a node death loses no data and reads fan out — but it's usually asynchronous, so replicas lag." },
+    { q: "What is a cache stampede and what are the three fixes?", a: "A stampede (thundering herd / dogpile) is when a hot key expires and N concurrent readers all miss and recompute the same value at once, multiplying backend load by N — a scale-only failure. Fixes: (1) request coalescing / single-flight — one request recomputes while the rest wait for that result, turning N DB calls into one (the workhorse); (2) early/probabilistic recompute — refresh the key ahead of expiry in the background so it never goes absent; (3) locks/leases — the recomputing request locks the key while others serve stale or wait. The dedicated caching track covers the mechanics; system design just needs to recognize the structural risk." },
+    { q: "Explain hot keys, cold start, and client-side vs server-side caching.", a: "Hot keys concentrate traffic on the single shard that owns them, saturating one node while others idle (sharding can't split one key) — fix by replicating the hot key across nodes or caching it in-process per app. Cold start: a fresh/restarted cache is empty, so every read misses and the DB eats full load for minutes — warm before taking traffic, roll restarts gradually, and rely on consistent hashing so a replaced node only cold-starts its arc. Client-side (in-process) caches are a hop closer and absorb hot keys but each app node has its own copy and they can disagree; server-side (shared Redis) is consistent across app nodes but one network hop away." },
+  ]}
+/>
+
+<Recap lang="en">
+One cache node hits a **capacity** wall (working set outgrows RAM) and is a **single point of failure**, so a distributed cache uses two orthogonal tools: **sharding** for capacity and **replication** for survival. Shard with **consistent hashing**, not modulo — because for a cache a remap is a *miss storm*, and modulo remaps ~80% of keys on a 4→5 scale-up while consistent hashing moves only the ~1/N keys in one ring arc (virtual nodes even out the load). Replication keeps each shard's copies for node-loss survival and read fan-out, but it's typically **asynchronous**, so replicas lag — the cache is never the source of truth. Scaling out invites failures invisible at small scale: the **cache stampede** (a hot TTL'd key expires and N concurrent reads recompute it at once, multiplying DB load by N) is stopped by **request coalescing / single-flight**, probabilistic early recompute, or locks; **hot keys** saturate their owning shard and want replication or an in-process near-cache; and **cold start** leaves a fresh cache empty, mitigated by warming, gradual restarts, and consistent hashing's per-arc scope. The deeper mechanics live in the dedicated caching track; the genuinely hard remaining problem — keeping all these copies *honest* — is the next lesson, invalidation.
+</Recap>

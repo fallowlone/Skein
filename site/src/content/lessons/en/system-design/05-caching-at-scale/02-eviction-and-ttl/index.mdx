@@ -4,35 +4,153 @@ lang: en
 track: "system-design"
 unit: "05-caching-at-scale"
 order: 2
-title: "Eviction & TTL"
-summary: "Eviction & TTL — to be authored."
-estMin: 16
-status: stub
+title: "Eviction policies and TTL"
+summary: "A cache is finite, so it must throw things away. Eviction policy (LRU, LFU, FIFO, random) decides what leaves when memory fills; TTL decides when a value goes stale. Both exist to keep the working set hot — and your hit ratio, not your cache size, is the number that matters."
+estMin: 18
+status: ready
 lessonType: topic
 level: middle
-concepts: []
-prereqs: []
+concepts:
+  - eviction-policy
+  - lru-lfu
+  - ttl
+  - hit-ratio
+  - working-set
+  - maxmemory-policy
+prereqs:
+  - 05-caching-at-scale/01-caching-strategies
 sources:
-  - https://github.com/donnemartin/system-design-primer
+  - https://redis.io/docs/latest/develop/reference/eviction/
+  - https://docs.aws.amazon.com/AmazonElastiCache/latest/mem-ug/Strategies.html
+  - https://aws.amazon.com/builders-library/caching-challenges-and-strategies/
 ---
 import Hook from "~/components/lesson/Hook.astro";
 import Crux from "~/components/prose/Crux.astro";
 import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
 import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import MetaphorComplete from "~/components/pedagogy/MetaphorComplete.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 
-<Hook>STUB — lesson to be authored.</Hook>
+<Hook>
+An engineer set a cache to evict the oldest entry first (FIFO) and went home happy. The cache held the homepage, which is read a million times an hour, plus a nightly report nobody touches until 9 a.m. Because the homepage was loaded at boot — it was the *oldest* entry — FIFO threw it out the moment the cache filled, then reloaded it on the next read, then evicted it again. The cache was busy churning out its single most valuable item while faithfully retaining the report. The fix was one word in a config — change the eviction policy from FIFO to LRU — but it exposed the real lesson: a finite cache is defined less by its size than by *what it chooses to forget*.
+</Hook>
 
-<Crux>STUB.</Crux>
+<Crux>A finite cache must forget. Eviction picks what leaves when full; TTL picks when a value goes stale. Hit ratio is the metric, not size.</Crux>
 
 <Explanation>
 
-## Eviction & TTL
+## Why a cache must throw things away
 
-Body to be authored.
+A cache is a bounded amount of fast memory standing in front of a much larger slow store. The store holds everything; the cache holds a tiny, hot subset. Two mechanisms decide what's in that subset. **Eviction** answers "memory is full and I need room — what do I delete?" **TTL (time to live)** answers "this value has been here a while — when do I stop trusting it?" They solve different problems: eviction is about *space* (capacity pressure), TTL is about *time* (staleness). A production cache almost always uses both.
+
+The reason it matters is the **working set** — the set of keys actually being accessed in a given window. If your cache is at least as big as the working set, almost every read is a hit and eviction rarely fires. If the cache is smaller than the working set, you *thrash*: every read evicts something you'll need soon, and your hit ratio collapses. So the first question is never "which policy?" — it's "is the cache big enough to hold the working set, or am I trying to fit an elephant in a shoebox?"
+
+## The eviction policies and what each assumes
+
+Each policy is a *bet about the future* encoded in a rule about the past:
+
+- **LRU (Least Recently Used)** evicts the entry untouched for the longest. The bet: *recency predicts reuse* — what you used lately you'll use again. This matches most real access patterns (temporal locality) and is the sensible default.
+- **LFU (Least Frequently Used)** evicts the entry with the fewest accesses. The bet: *popularity predicts reuse*. LFU shines when a stable set of hot keys should survive a flood of one-off reads — a one-time scan can't evict your perennially-hot keys the way it can under LRU.
+- **FIFO (First In, First Out)** evicts the oldest *inserted* entry regardless of use — exactly the hook's bug, because the most valuable item is often inserted early and stays valuable. FIFO ignores access entirely; it's rarely the right cache policy.
+- **Random** evicts an arbitrary entry. It sounds dumb, but it's cheap (no bookkeeping) and surprisingly robust — it can't be defeated by a pathological scan the way strict LRU can. Redis's `allkeys-random` exists for exactly this.
+
+<Inset kind="why" lang="en">
+Why do real caches approximate LRU/LFU instead of implementing them exactly? Because *perfect* LRU means maintaining a precise access-ordered linked list on every single read — extra writes and locking on the hottest path. Redis instead samples: on eviction it picks a few random keys (default 5) and evicts the best one by the policy's metric, an approximation that gets very close to true LRU/LFU for a fraction of the cost and no global ordering structure. The senior point is that eviction accuracy is itself a tradeoff against eviction speed — and on a cache doing a million reads a second, the bookkeeping cost of "perfect" can exceed the benefit of the better choice. Approximate-LRU is the default precisely because the approximation is cheap and nearly as good.
+</Inset>
+
+## TTL: bounding staleness, and the jitter trap
+
+TTL attaches an expiry to a key: after N seconds it's treated as absent, forcing a reload from the source. As the previous lesson showed, TTL is how cache-aside bounds its staleness — it's the floor under "how wrong can this value get." Short TTLs mean fresher data and more misses (more DB load); long TTLs mean fewer misses and staler data. You tune TTL per data class: seconds for a fast-moving feed, hours for a rarely-changing config.
+
+But a uniform TTL hides a sharp edge. If you warm 10,000 keys at startup all with `ttl=3600`, they **all expire in the same second** an hour later — and at that instant every one of them misses simultaneously, stampeding the database with 10,000 concurrent reloads. The fix is **TTL jitter**: add a small random spread (e.g. `3600 ± 300s`) so expirations scatter across a window instead of detonating together. Jitter is one line of code and it prevents a self-inflicted thundering-herd you'd otherwise debug at 3 a.m.
+
+<FlowDiagram
+  label="A read enters the cache. If the key is present and not past its TTL it is a hit, served from memory. Otherwise it is a miss: the value is loaded from the database and inserted, which may force an eviction (by LRU/LFU/FIFO/random) if memory is at the maxmemory limit. Hit ratio is the fraction of reads that take the top path."
+  perRow={3}
+  hue="var(--d-data)"
+  nodes={[
+    { id: "read", label: "read key", sub: "request" },
+    { id: "hit", label: "HIT", sub: "in cache, TTL valid" },
+    { id: "serve", label: "serve fast", sub: "from memory" },
+    { id: "miss", label: "MISS", sub: "absent or TTL expired" },
+    { id: "load", label: "load + insert", sub: "DB trip" },
+    { id: "evict", label: "evict if full", sub: "LRU/LFU/random" },
+  ]}
+  edges={[
+    { from: "read", to: "hit", label: "present" },
+    { from: "read", to: "miss", label: "absent/expired" },
+    { from: "hit", to: "serve" },
+    { from: "miss", to: "load" },
+    { from: "load", to: "evict", label: "at maxmemory" },
+  ]}
+  caption="TTL turns hits into misses by time; maxmemory turns inserts into evictions by space. The whole machine exists to keep the working set on the fast top path — which is what hit ratio measures."
+/>
+
+## Hit ratio is the metric, and a miss costs more than you think
+
+The number that tells you whether a cache is working is the **hit ratio**: hits ÷ total reads. A cache at 99% hits and one at 90% hits sound close, but they are not: the *miss* rate went from 1% to 10%, a **10× increase in load on the database behind the cache**. Because the backing store is sized assuming the cache absorbs most reads, a hit-ratio drop from 99% to 90% can take the database from comfortable to on-fire. This is the asymmetry that makes caching dangerous: the cache hides how fragile the system underneath it is, and a hit-ratio regression (a bad deploy that lowers it, an eviction storm) hits the database 10× harder than the percentage change suggests.
+
+A miss is also not free in latency: as AWS notes for lazy loading, each miss is three trips (check cache, read DB, write cache), so the user on a miss waits the full backend path plus the cache round trips. Hit ratio, miss penalty, and working-set fit are the three numbers; cache *size in GB* matters only insofar as it changes them.
+
+<Inset kind="mistake" lang="en">
+The dangerous misconfiguration is the `maxmemory-policy`. Redis defaults to `noeviction`: when memory is full, **writes start failing** rather than evicting anything — which is correct for a durable store but catastrophic for a cache, where you wanted it to drop cold keys and keep serving. Teams deploy Redis as a cache, leave the default, and one day every `SET` errors under memory pressure. For a pure cache you want `allkeys-lru` (or `allkeys-lfu`) so any key can be evicted; `volatile-lru` only evicts keys that have a TTL, which silently fills memory with your TTL-less keys until it can't evict at all. Pick the eviction policy deliberately, and never run a cache on `noeviction`.
+</Inset>
+
+<Quiz
+  id="05-eviction-ttl-quiz-1"
+  lessonSlug="02-eviction-and-ttl"
+  lang="en"
+  question="Your cache hit ratio quietly drops from 99% to 90% after a deploy. The cache latency looks fine. Why is the on-call paged about the database melting down?"
+  choices={[
+    { label: "The miss rate went from 1% to 10% — a 10× increase in reads reaching the database, which was sized assuming the cache absorbs ~99% of them.", correct: true },
+    { label: "Hit ratio doesn't affect the database; the cache serves everything.", misconception: "Only HITS are served from cache; misses fall through to the DB. Going from 1% to 10% misses is 10× more DB reads. The DB feels the miss rate, not the hit rate, and it was sized for ~1%." },
+    { label: "A 9-point drop is tiny; nothing should change downstream.", misconception: "The 9 points are on the HIT side; on the miss side it's a 10× jump (1% → 10%). The database load scales with misses, so a small-looking hit-ratio drop is a large-looking DB load spike." },
+    { label: "The cache must be returning errors.", misconception: "The cache is fine — it's serving its 90% of hits normally. The problem is the extra 9% of reads now hitting the DB, 10× the previous miss volume. It's a load problem downstream, not a cache error." },
+  ]}
+/>
+
+<Quiz
+  id="05-eviction-ttl-quiz-2"
+  lessonSlug="02-eviction-and-ttl"
+  lang="en"
+  question="At startup you warm 50,000 keys into Redis, each with exactly ttl=600. The service runs fine for ten minutes, then the database spikes hard every ten minutes. What's the cause and the one-line fix?"
+  choices={[
+    { label: "All 50,000 keys share an expiry instant, so they expire together and stampede the DB with simultaneous reloads. Add TTL jitter (e.g. 600 ± 60s) so expirations scatter across a window.", correct: true },
+    { label: "The TTL is too short; raise it to 6000s.", misconception: "A longer TTL just moves the synchronized cliff farther out — they'll still all expire at once, every 6000s instead of 600s. The problem is synchronized expiry, fixed by jitter, not by a bigger uniform TTL." },
+    { label: "LRU is evicting the keys early.", misconception: "The spike is periodic and matches the TTL exactly (every 600s), which is the signature of synchronized expiry, not eviction. Eviction pressure would correlate with memory/traffic, not the TTL clock." },
+    { label: "Redis can't hold 50,000 keys.", misconception: "50,000 keys is trivial for Redis. The periodicity at the TTL interval is the tell: they all expire together. Jitter the TTLs so the reloads spread out instead of detonating in one second." },
+  ]}
+/>
+
+<MetaphorComplete
+  id="05-eviction-ttl-metaphor-1"
+  lessonSlug="02-eviction-and-ttl"
+  lang="en"
+  setup="The default eviction policy in real caches approximates _______ — evict the entry untouched for the longest — because it bets that recency predicts reuse, which matches the temporal locality of most real access patterns, and because sampling a few keys approximates it cheaply on the hot read path."
+  accepted={["lru", "least recently used", "least-recently-used"]}
+  canonical="LRU"
+  explanation="LRU (Least Recently Used) evicts whatever has gone untouched longest, betting that recency predicts reuse. It fits temporal locality and is the sensible default; real caches like Redis approximate it by sampling a few random keys per eviction rather than maintaining a perfect global order, trading a little accuracy for a lot of speed on the hot path."
+/>
 
 </Explanation>
 
-<KeyTakeaway>STUB.</KeyTakeaway>
+<KeyTakeaway>A finite cache forgets via eviction (space — LRU bets recency predicts reuse) and TTL (time — jitter it). Watch hit ratio, not size: 99%→90% hits is 10× DB load. Never run a cache on noeviction.</KeyTakeaway>
 
-<Recap lang="en">STUB.</Recap>
+<RetrievalDrawer
+  client:load
+  id="05-eviction-ttl-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish eviction from TTL, and tie both to the working set.", a: "Eviction handles SPACE: memory is full, so it deletes something to make room (LRU/LFU/FIFO/random). TTL handles TIME: a value has been cached long enough that it may be stale, so it's treated as absent and reloaded. Both serve the working set — the keys actually accessed in a window. If the cache is at least working-set sized, hits dominate and eviction rarely fires; if it's smaller, you thrash and the hit ratio collapses. The first question is always 'is the cache big enough for the working set,' not 'which policy.'" },
+    { q: "What does each eviction policy bet, and why is LRU the default?", a: "LRU bets recency predicts reuse (matches temporal locality) — the sensible default. LFU bets popularity predicts reuse — keeps a stable hot set alive through a flood of one-off reads. FIFO evicts oldest-inserted regardless of use, so it can evict your most valuable early-inserted item (a classic bug). Random is cheap and robust against pathological scans. Real caches approximate LRU/LFU by sampling a few keys per eviction instead of maintaining a perfect global order, trading accuracy for hot-path speed." },
+    { q: "Why is hit ratio the metric, and what are the TTL jitter and maxmemory-policy traps?", a: "Hit ratio = hits/reads, and the DB feels the MISS rate: 99%→90% hits is 1%→10% misses, a 10× jump in DB load on a store sized assuming the cache absorbs most reads — so a small hit-ratio drop is a large DB spike. TTL jitter: a uniform TTL makes warmed keys expire in the same instant and stampede the DB; add a random spread (600 ± 60s). maxmemory-policy: Redis defaults to noeviction (writes fail under pressure) — wrong for a cache; use allkeys-lru/lfu so any key can be evicted, and avoid volatile-lru silently filling memory with TTL-less keys." },
+  ]}
+/>
+
+<Recap lang="en">
+A cache is finite, so it must forget — by two independent mechanisms. **Eviction** handles space pressure (memory is full, delete something): **LRU** bets recency predicts reuse and is the default, **LFU** bets on popularity and protects a hot set from one-off floods, **FIFO** ignores access and can evict your most valuable early item (the hook's bug), and **random** is cheap and scan-resistant. Real caches **approximate** LRU/LFU by sampling rather than maintaining a perfect order, trading accuracy for speed on the hot path. **TTL** handles time (bound the staleness the lazy patterns permit), but a uniform TTL detonates all warmed keys at once — so you **jitter** it. The number that actually matters is the **hit ratio**, not the cache size in GB: a drop from 99% to 90% hits is a *10× increase* in database load, because the backing store is sized assuming the cache absorbs nearly everything. And the misconfiguration that takes a cache down is the **maxmemory-policy** — Redis's `noeviction` default makes writes fail under pressure, which is wrong for a cache; pick `allkeys-lru/lfu` deliberately. Everything here exists to keep the working set on the fast path; the next lesson scales this beyond one node.
+</Recap>
