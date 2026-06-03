@@ -14,6 +14,8 @@ import type { CardState, Grade } from "~/english/scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { GerBand } from "./types";
 import { vocabA1 } from "./data/vocab-a1";
+import { vocabA2 } from "./data/vocab-a2";
+import { vocabB1 } from "./data/vocab-b1";
 
 const KEY = "awesome.german.v1";
 const scheduler = fsrsScheduler();
@@ -22,10 +24,10 @@ const scheduler = fsrsScheduler();
 const MATURE_DAYS = 21;
 
 /**
- * The aggregated German vocabulary deck. Today it is just A1; as A2/B1 decks
- * land, add them here and every consumer (stats, queueing) picks them up.
+ * The aggregated German vocabulary deck — A1 + A2 + B1. Every consumer
+ * (stats band bars, queueing, VocabModule) reads from this single source.
  */
-export const germanDeck = [...vocabA1];
+export const germanDeck = [...vocabA1, ...vocabA2, ...vocabB1];
 
 export type WordStatus = "new" | "learning" | "known";
 
