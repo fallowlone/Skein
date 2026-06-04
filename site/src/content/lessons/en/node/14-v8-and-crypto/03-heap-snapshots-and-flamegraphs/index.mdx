@@ -1,0 +1,247 @@
+---
+concepts:
+- heap-snapshots
+- retained-size
+- three-snapshot-technique
+- cpu-profiling
+- flame-graphs
+- leak-vs-churn
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-heap-snapshots-and-flamegraphs
+sources:
+- https://nodejs.org/en/learn/diagnostics/memory
+- https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
+- https://developer.chrome.com/docs/devtools/memory-problems/heap-snapshots
+spiral: []
+status: ready
+summary: 'Heap snapshots and flame graphs are the two lenses on a hot Node process: retained size and the three-snapshot diff find a leak, the V8 profiler and flame graph find where CPU goes — and you must tell a true leak from harmless churn.'
+title: 'Heap snapshots and flame graphs: finding leaks and hot paths in production Node'
+track: node
+unit: 14-v8-and-crypto
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The pod restarts every six hours. RSS climbs a clean diagonal from 180MB to the 512MB cgroup limit, the kernel OOM-kills it, Kubernetes restarts it, and the line starts again — a perfect sawtooth on the dashboard that everyone has learned to ignore. "It's just Node, it leaks, we bumped the limit." Three weeks later p99 latency spikes start riding the same six-hour cycle: GC works harder as the live set grows, and the last hour before each kill is visibly slower. Nobody added a feature. The leak was a `Map` used as a per-request cache that nothing ever evicted — every request added a key, none were removed, and a heap snapshot would have named the retainer in two minutes.
+</Hook>
+
+<Crux>Snapshots show what is retained and by whom; flame graphs show where CPU goes. A leak grows monotonically; churn just sawtooths.</Crux>
+
+<Explanation>
+
+## Taking the snapshot: get the heap out of the process
+
+A V8 heap snapshot is a complete graph of every reachable object at one instant, with the edges that keep each object alive. You have three ways to capture one, and the right choice depends on whether the process is healthy, hard to reach, or about to die.
+
+From inside the process, `v8.writeHeapSnapshot()` dumps a `.heapsnapshot` file synchronously — it stops the world for the duration, which on a multi-GB heap can be seconds, so never call it on a hot path. Wire it to a signal handler so you can trigger it on demand:
+
+```js
+const v8 = require("node:v8");
+process.on("SIGUSR2", () => {
+  const file = `/tmp/heap-${Date.now()}.heapsnapshot`;
+  console.log("writing", v8.writeHeapSnapshot(file));
+});
+// kill -SIGUSR2 <pid>  — captures a snapshot without an attached debugger
+```
+
+For a process you can reach over the inspector, start it with `--inspect` and open `chrome://inspect` in Chrome; the Memory tab takes and diffs snapshots interactively. And for the case in the hook — a process that dies before you can catch it — `--heapsnapshot-near-heap-limit=2` tells V8 to automatically write up to two snapshots as it approaches the heap limit, so you get the dump from the exact moment of failure instead of guessing.
+
+Before any snapshot, `v8.getHeapStatistics()` is the cheap first read: `used_heap_size`, `heap_size_limit`, and `number_of_native_contexts` (a steadily rising context count is itself a classic leak signature). Sample it on an interval and you have the monotonic-growth signal that justifies pulling a full snapshot.
+
+```js
+const v8 = require("node:v8");
+setInterval(() => {
+  const s = v8.getHeapStatistics();
+  console.log(JSON.stringify({
+    used: s.used_heap_size,
+    limit: s.heap_size_limit,
+    contexts: s.number_of_native_contexts,
+    detached: s.number_of_detached_contexts,
+  }));
+}, 30_000).unref();
+```
+
+## Reading the snapshot: shallow vs retained, and the retaining path
+
+A snapshot is useless until you know which two sizes you are looking at. **Shallow size** is the memory the object itself occupies — for a plain object, just its headers and field slots, often tiny. **Retained size** is the memory that would be freed if this object were deleted: the object plus everything reachable *only* through it. A 200-byte `Map` with a shallow size of 200 bytes can have a retained size of 400MB because it is the sole thing keeping 400MB of entries alive. **Retained size is what you sort by to find a leak**; shallow size will hide the culprit at the bottom of the list.
+
+The **retaining path** answers the actual question — *why is this still alive?* It is the chain of references from a GC root down to the object. If it terminates at a global, a module-level `const`, a closure, or an active timer, that is your leak's anchor. The **dominator** of an object is the node that every retaining path must pass through; deleting a dominator frees its whole subtree, which is why dominator-tree view groups a leak into one collapsible block instead of ten thousand individual entries.
+
+The hard part in practice is separating your objects from V8 internals. A raw snapshot is full of `(system)`, `(compiled code)`, `Map` (the hidden-class kind, not the JS `Map`), and `(array)` nodes that are V8 bookkeeping, not your data. Filter the Summary view by your own constructor names, sort by retained size, and follow the retaining path — the bytes you can act on are almost always rooted in your own closures, caches, or event-emitter listener arrays.
+
+<Inset kind="why" lang="en">
+A snapshot only contains *reachable* objects — V8 runs a full GC immediately before writing, so anything genuinely collectable is already gone and will not appear. This is exactly what makes a snapshot trustworthy for leak hunting: if an object is in the snapshot, it is reachable, which means something is *deliberately* keeping it alive. The job is never "why wasn't this collected" (it can't be — it's reachable); it is "what reference do I need to break."
+</Inset>
+
+## The three-snapshot technique: name the survivors
+
+A single snapshot tells you what is big *now*; it cannot tell you what is *growing*. The three-snapshot technique turns "big" into "leaking" by isolating objects that are allocated during work and then never released.
+
+<FlowDiagram
+  label="The three-snapshot leak-finding workflow: baseline, exercise the suspected path, then diff to isolate objects allocated during the exercise that are still alive"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "s1", label: "Snapshot 1", sub: "baseline" },
+    { id: "ex", label: "Exercise", sub: "N requests" },
+    { id: "s2", label: "Snapshot 2", sub: "after work" },
+    { id: "ex2", label: "Exercise", sub: "N requests" },
+    { id: "s3", label: "Snapshot 3", sub: "after work" },
+    { id: "diff", label: "Diff 1→3", sub: "survivors" },
+  ]}
+  edges={[
+    { from: "s1", to: "ex", label: "settle" },
+    { from: "ex", to: "s2" },
+    { from: "s2", to: "ex2", label: "repeat" },
+    { from: "ex2", to: "s3" },
+    { from: "s3", to: "diff", label: "compare" },
+  ]}
+  caption="Take a baseline, exercise the suspected path, snapshot, exercise again, snapshot. In the Comparison view between snapshots 1 and 3, objects allocated after snapshot 1 and still alive at snapshot 3 are the leak — work-scoped allocations that should have been freed but weren't."
+/>
+
+Concretely, in Chrome DevTools' Memory tab: take snapshot 1 after the process has settled. Drive the suspected workload (replay N identical requests). Take snapshot 2. Drive the *same* workload again. Take snapshot 3. Now switch the dropdown to **Comparison** and compare snapshot 3 against snapshot 1 — or use the "Objects allocated between snapshot 1 and snapshot 2" selector. Anything that was allocated during the exercise and is *still alive two snapshots later* is suspect: a non-leaking workload allocates and releases, so its delta returns to zero. A leak shows a `# New` count that grows by the same amount each round and a `# Deleted` of zero. That linear, repeatable growth — not raw size — is the signature you trust.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Signal</th>
+        <th class="border border-border px-3 py-2 text-left">Healthy (churn)</th>
+        <th class="border border-border px-3 py-2 text-left">Leak</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">RSS / heap over time</td>
+        <td class="border border-border px-3 py-2">Sawtooth — climbs, GC reclaims, drops back</td>
+        <td class="border border-border px-3 py-2">Monotonic — rises and never returns to baseline</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">3-snapshot delta per round</td>
+        <td class="border border-border px-3 py-2">Returns to ~0; allocated objects are deleted</td>
+        <td class="border border-border px-3 py-2">Grows by a fixed amount each round; <code>#Deleted</code> ≈ 0</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Retaining path of survivors</td>
+        <td class="border border-border px-3 py-2">None — objects unreachable after the request</td>
+        <td class="border border-border px-3 py-2">Rooted in a global Map, closure, listener array, or timer</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">GC pressure / pause time</td>
+        <td class="border border-border px-3 py-2">High allocation rate, short stable pauses</td>
+        <td class="border border-border px-3 py-2">Pauses lengthen as the live set grows</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## CPU profiling and flame graphs: where the time goes
+
+A leak is a memory question; a hot endpoint is a CPU question, and the tool is a profiler, not a snapshot. The V8 sampling profiler interrupts the process thousands of times a second and records the call stack each time; the share of samples a function appears in approximates the share of CPU it consumed.
+
+The lowest-friction capture is `node --cpu-prof app.js`, which writes a `.cpuprofile` you load straight into the Chrome DevTools Performance tab. The classic, dependency-free path is `node --prof app.js`, which emits a raw `isolate-*.log` of V8 ticks; `node --prof-process isolate-*.log` turns it into a human-readable summary with a "ticks" breakdown and a bottom-up call tree. For a flame graph specifically, `0x app.js` or `clinic flame -- node app.js` renders the stacks as an interactive SVG.
+
+```bash
+# One-shot CPU profile, no deps — opens in DevTools › Performance
+node --cpu-prof --cpu-prof-dir=/tmp/prof server.js
+
+# V8 tick processor: raw log → ranked summary
+node --prof server.js
+node --prof-process isolate-*.log > processed.txt
+
+# Flame graph
+npx 0x -- node server.js
+```
+
+Reading a flame graph is mechanical once you know the axes. **Width is time, not call order** — a frame's width is the fraction of samples it was on the stack, so the *widest* frames are where CPU went. The **y-axis is stack depth**: a box sits on top of its caller. A function's **self time** is its own width minus the widths of its children stacked above it; a wide frame with nothing on top is doing the work itself (a tight loop, a sync `JSON.parse`, a regex), while a wide frame that is wide only because of a tall stack above it is just a hot *caller*. Plateaus — wide flat tops — are your optimization targets. The horizontal order means nothing; do not read it left-to-right as a timeline.
+
+<TradeoffMatrix
+  id="03-heap-snapshots-and-flamegraphs-tradeoff-1"
+  lessonSlug="03-heap-snapshots-and-flamegraphs"
+  lang="en"
+  prompt="A Node service's RSS climbs steadily toward its container limit over hours and gets OOM-killed. You need the artifact that names the retainer. Pick the first move."
+  options={[
+    { name: "Capture heap snapshots and compare with the three-snapshot technique, sorting survivors by retained size and following the retaining path", summary: "Snapshot diff.", correct: true, justification: "Steady RSS growth to an OOM kill is the textbook leak signature, and the question is 'what is keeping these objects alive.' Snapshots are the only artifact that records the object graph and the retaining paths. The three-snapshot diff isolates objects allocated during work that survive, retained-size sorting surfaces the dominator, and the retaining path names the anchor — a global Map, a closure, an un-removed listener. That is a leak named in minutes." },
+    { name: "Capture a CPU profile with --cpu-prof and read the flame graph for the widest frame", summary: "CPU profile.", justification: "A flame graph answers 'where does CPU go,' not 'what is retaining memory.' A leak can sit in a process whose CPU profile looks perfectly flat. You would burn time confirming the service isn't CPU-bound and still not know which reference to break. CPU profiling is the right tool for a hot endpoint or high GC time, not for a monotonic memory climb." },
+    { name: "Add --max-old-space-size to raise the heap limit so it stops getting killed", summary: "Raise the limit.", justification: "This treats the symptom and hides the disease. A true leak is monotonic — raise the ceiling and it simply takes longer to hit, while GC pauses grow with the live set and p99 latency degrades the whole way up. You buy time, never a fix, and you still haven't identified the retainer. Use it only as a stopgap while you snapshot." },
+    { name: "Restart the pod on a schedule before it hits the limit", summary: "Scheduled restart.", justification: "Cron-restarting around a leak is operational denial: it papers over monotonic growth, accepts periodic cold starts and dropped in-flight work, and guarantees the leak is never diagnosed. It can be a legitimate temporary mitigation, but it is never the first diagnostic move when a two-minute snapshot would name the retainer." },
+  ]}
+/>
+
+<Quiz
+  id="03-heap-snapshots-and-flamegraphs-quiz-1"
+  lessonSlug="03-heap-snapshots-and-flamegraphs"
+  lang="en"
+  question="In a heap snapshot, an object's shallow size is 80 bytes but its retained size is 300MB. What does that tell you?"
+  choices={[
+    { label: "The object itself is tiny, but it is the sole thing keeping ~300MB of other objects reachable — deleting it would free all of them, so it is a prime leak suspect to sort to the top", correct: true },
+    { label: "The object is corrupt because shallow and retained size should match", misconception: "They almost never match. Shallow size is the object's own bytes; retained size includes everything reachable only through it. A large gap is normal for containers like Maps and arrays — and is exactly the leak signal." },
+    { label: "300MB is the object's own allocation and V8 is double-counting", misconception: "Retained size is not the object's own bytes — that's shallow size (80B here). Retained size is the transitive closure of what only this object keeps alive; there is no double-counting." },
+    { label: "Nothing actionable — you should sort by shallow size instead", misconception: "Sorting by shallow size hides leaks: the culprit container is small and sinks to the bottom. You sort by retained size precisely to surface the object that anchors the most memory." },
+  ]}
+/>
+
+<Quiz
+  id="03-heap-snapshots-and-flamegraphs-quiz-2"
+  lessonSlug="03-heap-snapshots-and-flamegraphs"
+  lang="en"
+  question="A flame graph shows one very wide frame with almost nothing stacked on top of it. What does the width and the bare top mean?"
+  choices={[
+    { label: "Width = the fraction of samples that frame was on the stack (its share of CPU), and a bare top means high self time — the function is doing the work itself, so it's the optimization target", correct: true },
+    { label: "Width is how many times the function was called", misconception: "Width is sampled time on the stack, not call count. A function called millions of times but returning instantly is a sliver; one called once but looping for a second is wide." },
+    { label: "The bare top means the function is idle and can be ignored", misconception: "The opposite. A bare top means high self time — nothing is stacked above because the frame itself is consuming the samples. That plateau is exactly where to optimize." },
+    { label: "Horizontal position shows it ran first, so it's the entry point", misconception: "The x-axis carries no time order in a flame graph; it's just alphabetical/aggregation order. Reading it left-to-right as a timeline is the classic misread." },
+  ]}
+/>
+
+<DragOrder
+  id="03-heap-snapshots-and-flamegraphs-drag-1"
+  lessonSlug="03-heap-snapshots-and-flamegraphs"
+  lang="en"
+  prompt="Order the steps to find a suspected leak with the three-snapshot technique:"
+  items={[
+    { id: "a", label: "Let the process settle, then take snapshot 1 as the baseline" },
+    { id: "b", label: "Exercise the suspected path — replay N identical requests" },
+    { id: "c", label: "Take snapshot 2, then exercise the same N requests again" },
+    { id: "d", label: "Take snapshot 3, then switch to Comparison and diff 3 against 1" },
+    { id: "e", label: "Sort surviving allocations by retained size and follow the retaining path to the GC root" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Sort snapshots by retained size, not shallow; the three-snapshot diff names objects that should have died, and the retaining path finds the anchor. Flame width is CPU time. Monotonic growth is a leak; sawtooth is churn.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-heap-snapshots-and-flamegraphs-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how the three-snapshot technique distinguishes a true leak from harmless churn, and what 'retained size' adds.", a: "A single snapshot only tells you what is big right now, not what is growing, so you take three. Snapshot 1 is a baseline after the process settles. You exercise the suspected path — replay N identical requests — and take snapshot 2; you exercise the same N again and take snapshot 3. Then you diff snapshot 3 against snapshot 1 (or use the 'allocated between 1 and 2' selector) in the Comparison view. The discriminator is the per-round delta: harmless churn allocates and releases, so its objects appear in snapshot 2 but are gone by snapshot 3 and the net delta returns to roughly zero — a sawtooth. A real leak allocates work-scoped objects that are never freed, so the '# New' count climbs by the same fixed amount every round while '# Deleted' stays near zero — linear, repeatable growth. Retained size is what you then sort the survivors by: shallow size is just the object's own bytes (a Map header is tiny and would sink to the bottom), while retained size is everything reachable only through that object, so sorting by it surfaces the small container that anchors hundreds of MB. Finally the retaining path walks from a GC root to the survivor and names the anchor — a module-level Map, a closure, an un-removed event listener, an active timer — which is the reference you break." },
+    { q: "You have a flame graph from --cpu-prof. How do you read it to find what to optimize, and why is a snapshot the wrong tool here?", a: "A flame graph plots sampled call stacks: the y-axis is stack depth (a box sits on its caller), and the x-axis width is the fraction of samples a frame was on the stack — i.e. its share of CPU time, NOT call count and NOT call order. So you scan for the widest frames, because that is where CPU went. Then you separate self time from caller time: a function's self time is its own width minus the widths of the children stacked on top of it. A wide frame with a tall stack above it is just a hot caller; a wide frame with a bare or nearly-bare top has high self time — it is doing the work itself (a tight loop, a synchronous JSON.parse, a catastrophic regex). Those flat plateaus are the optimization targets. You ignore horizontal order entirely; reading it left-to-right as a timeline is the classic misread. A heap snapshot is the wrong tool because it captures the object graph and retaining paths — it answers 'what is keeping memory alive,' which is a leak question. A CPU-bound endpoint can have a perfectly stable, healthy heap; the snapshot would show nothing actionable while the flame graph points straight at the hot function." },
+  ]}
+/>
+
+<Recap lang="en">
+Heap snapshots and flame graphs are the two lenses on a hot Node process, and they answer different questions. A snapshot is the reachable object graph at one instant; capture it with `v8.writeHeapSnapshot()` on a signal, over the inspector's Memory tab, or — for a process that dies before you can catch it — with `--heapsnapshot-near-heap-limit`, after sampling `v8.getHeapStatistics()` to confirm monotonic growth. Read it by retained size, not shallow size, because the leak is usually a tiny container anchoring a huge subtree; the retaining path from a GC root names the anchor and the dominator groups the subtree. The three-snapshot technique turns "big" into "leaking": baseline, exercise, snapshot, exercise again, snapshot, then diff — objects allocated during work that survive to the third snapshot, with a flat `# Deleted`, are the leak. For CPU you reach for a profiler instead: `--cpu-prof` or `--prof` + `--prof-process`, rendered as a flame graph where width is CPU time and a wide bare top is high self time — the plateau you optimize. And the discipline underneath all of it is telling a true leak (monotonic growth, retained, rooted) from churn (high allocation, GC reclaims, sawtooth), because raising `--max-old-space-size` or cron-restarting only delays a leak you could have named in two minutes.
+</Recap>
