@@ -185,4 +185,142 @@ export const germanOutputTasks: OutputTask[] = [
       ru: "Хорошее резюме отвечает на четыре вопроса: когда и как долго? Что сломалось и для кого? Почему? Каков статус сейчас? Придерживайтесь фактов и хронологии. Немецкие даты: '30.05.2026', время в 24-часовом UTC.",
     },
   },
+  {
+    id: "out-de-standup-a2",
+    band: "A2",
+    type: "standup",
+    prompt: {
+      en: "Write your daily standup in German. Yesterday you reviewed a colleague's pull request. Today you will deploy to staging. You have one blocker: you are waiting on QA before the deploy. Use three lines: Gestern / Heute / Blocker.",
+      ru: "Напишите своё ежедневное стендап-сообщение на немецком. Вчера вы проверили пул-реквест коллеги. Сегодня вы выкатите релиз на staging. Есть один блокер: вы ждёте QA перед деплоем. Используйте три строки: Gestern / Heute / Blocker.",
+    },
+    rubric: [
+      "Deckt alle drei Punkte ab: Gestern, Heute und Blocker.",
+      "Perfekt für gestern (z. B. 'habe … überprüft'), Präsens oder werden für heute.",
+      "Der Blocker nennt klar die Abhängigkeit von QA (z. B. 'Ich warte auf QA').",
+      "Korrekte A2-Wortstellung; trennbare Verben (deployen/freigeben) richtig verwendet.",
+    ],
+    modelAnswer: {
+      de: "Gestern: Ich habe den Pull-Request von Lena überprüft und freigegeben.\nHeute: Ich deploye die neue Version auf Staging.\nBlocker: Ich warte noch auf QA — vor dem Deploy muss das Team die Tests bestätigen.",
+      ru: "Вчера: я проверил и одобрил пул-реквест Лены.\nСегодня: я выкатываю новую версию на staging.\nБлокер: я всё ещё жду QA — перед деплоем команда должна подтвердить тесты.",
+    },
+    hint: {
+      en: "Use Perfekt for yesterday ('Ich habe … überprüft'), present for today ('Ich deploye …'). For the blocker, 'Ich warte auf QA' (warten auf + Akkusativ) is the natural phrasing.",
+      ru: "Используйте Perfekt для вчера ('Ich habe … überprüft'), настоящее для сегодня ('Ich deploye …'). Для блокера 'Ich warte auf QA' (warten auf + винительный) — естественная формулировка.",
+    },
+  },
+  {
+    id: "out-de-commit-message-a2",
+    band: "A2",
+    type: "commit-message",
+    prompt: {
+      en: "The profile page crashed when a user had no avatar, because the code did not check for null. You added a null check. Write a German git commit message: an imperative subject line plus one body line explaining why.",
+      ru: "Страница профиля падала, когда у пользователя не было аватара, потому что код не проверял null. Вы добавили проверку на null. Напишите сообщение git-коммита на немецком: строка темы в повелительном наклонении плюс одна строка тела, объясняющая причину.",
+    },
+    rubric: [
+      "Betreffzeile im Imperativ mit Präfix 'fix:' und kurz (unter 72 Zeichen).",
+      "Eine Body-Zeile, die das Warum erklärt (fehlender Avatar führte zum Absturz).",
+      "Leerzeile zwischen Betreff und Body.",
+      "Korrektes, knappes A2-Deutsch ohne überflüssige Wörter.",
+    ],
+    modelAnswer: {
+      de: "fix: Prüfe auf fehlenden Avatar auf der Profilseite\n\nOhne diese Prüfung stürzte die Seite ab, wenn der Nutzer kein Avatar-Bild hatte.",
+      ru: "fix: проверять отсутствующий аватар на странице профиля\n\nБез этой проверки страница падала, если у пользователя не было изображения аватара.",
+    },
+    hint: {
+      en: "Subject: 'fix:' + imperative ('Prüfe …'). Leave a blank line, then one sentence with 'Ohne …, wenn …' for the cause. Past tense 'stürzte … ab' (separable verb abstürzen) describes the old behaviour.",
+      ru: "Тема: 'fix:' + императив ('Prüfe …'). Пустая строка, затем одно предложение с 'Ohne …, wenn …' для причины. Прошедшее 'stürzte … ab' (отделяемый глагол abstürzen) описывает прежнее поведение.",
+    },
+  },
+  {
+    id: "out-de-pr-comment-b1",
+    band: "B1",
+    type: "pr-comment",
+    prompt: {
+      en: "You are reviewing a pull request. The same database query (loading a user by id with their roles) is duplicated in two service methods. Write a polite German PR comment (3–5 sentences) asking the author to extract it into a shared helper, with a concrete suggestion for how.",
+      ru: "Вы проверяете пул-реквест. Один и тот же запрос к базе (загрузка пользователя по id вместе с ролями) дублируется в двух методах сервиса. Напишите вежливый комментарий к PR на немецком (3–5 предложений) с просьбой вынести его в общий хелпер и конкретным предложением, как это сделать.",
+    },
+    rubric: [
+      "Höflicher, kollegialer Ton; benennt das Problem klar (duplizierte Query).",
+      "Macht einen konkreten Vorschlag (z. B. eine Methode 'findUserWithRoles' im Repository).",
+      "Begründet den Nutzen (eine Stelle zum Ändern, weniger Fehlerrisiko).",
+      "Korrekte B1-Grammatik mit Nebensatz und höflicher Bitte ('Könntest du …?').",
+    ],
+    modelAnswer: {
+      de: "Mir ist aufgefallen, dass dieselbe Query — den Nutzer per ID samt Rollen laden — in `getProfile` und `updateProfile` fast identisch vorkommt. Könntest du sie in eine gemeinsame Methode auslagern, zum Beispiel `findUserWithRoles(id)` im UserRepository? Dann gibt es nur noch eine Stelle, die wir anpassen müssen, falls sich das Schema ändert, und das Risiko, dass die beiden Varianten auseinanderlaufen, fällt weg. Ansonsten sieht der PR gut aus — danke!",
+      ru: "Я заметил, что один и тот же запрос — загрузка пользователя по ID вместе с ролями — почти идентично встречается в `getProfile` и `updateProfile`. Не мог бы ты вынести его в общий метод, например `findUserWithRoles(id)` в UserRepository? Тогда останется только одно место, которое нужно будет править при изменении схемы, и исчезнет риск, что эти два варианта разойдутся. В остальном PR выглядит хорошо — спасибо!",
+    },
+    hint: {
+      en: "State the observation neutrally ('Mir ist aufgefallen, dass …'), make the request with 'Könntest du …?', then give the benefit. The separable verb 'auslagern' goes to the end of its clause.",
+      ru: "Сформулируйте наблюдение нейтрально ('Mir ist aufgefallen, dass …'), просьбу — через 'Könntest du …?', затем дайте выгоду. Отделяемый глагол 'auslagern' уходит в конец придаточного.",
+    },
+  },
+  {
+    id: "out-de-bug-report-b1",
+    band: "B1",
+    type: "bug-report",
+    prompt: {
+      en: "You found an intermittent bug: under load, the /search endpoint sometimes returns HTTP 504 (Gateway Timeout). It happens roughly once in twenty requests during peak traffic, only on production. Write a German bug report with sections: Schritte, Erwartet, Tatsächlich, plus a note on frequency (Häufigkeit) and environment (Umgebung).",
+      ru: "Вы нашли непостоянный баг: под нагрузкой эндпоинт /search иногда возвращает HTTP 504 (Gateway Timeout). Это случается примерно раз на двадцать запросов в часы пик, только на проде. Напишите баг-репорт на немецком с разделами: Schritte, Erwartet, Tatsächlich, плюс заметка о частоте (Häufigkeit) и окружении (Umgebung).",
+    },
+    rubric: [
+      "Enthält nummerierte Reproduktionsschritte, die die Last (paralleles Aufrufen) erwähnen.",
+      "Klar getrennte Abschnitte 'Erwartet' und 'Tatsächlich' mit dem konkreten Statuscode (504).",
+      "Beschreibt die Häufigkeit (sporadisch, ungefähre Rate) und die Umgebung (nur Produktion).",
+      "Korrektes B1-Deutsch; sachlicher Ton, präzise Fachbegriffe.",
+    ],
+    modelAnswer: {
+      de: "**Schritte zur Reproduktion:**\n1. Sende viele gleichzeitige Anfragen an den Endpunkt `GET /search?q=...` (z. B. 50 parallele Requests).\n2. Wiederhole das während des Spitzenverkehrs.\n3. Beobachte die HTTP-Statuscodes der Antworten.\n\n**Erwartet:** Jede Anfrage liefert innerhalb von zwei Sekunden HTTP 200 mit den Suchergebnissen.\n\n**Tatsächlich:** Etwa jede zwanzigste Anfrage läuft in einen Timeout und gibt nach 30 Sekunden HTTP 504 (Gateway Timeout) zurück. Die übrigen Anfragen funktionieren normal.\n\n**Häufigkeit:** Sporadisch, ungefähr 5 % der Anfragen, ausschließlich unter Last zu Spitzenzeiten. Bei geringem Traffic tritt der Fehler nicht auf.\n\n**Umgebung:** Nur Produktion (Region eu-central-1). In Staging konnte der Fehler bisher nicht reproduziert werden.",
+      ru: "**Шаги для воспроизведения:**\n1. Отправьте много одновременных запросов на эндпоинт `GET /search?q=...` (например, 50 параллельных запросов).\n2. Повторите это в часы пик.\n3. Наблюдайте за HTTP-статусами ответов.\n\n**Ожидаемое:** Каждый запрос возвращает HTTP 200 с результатами поиска в течение двух секунд.\n\n**Фактическое:** Примерно каждый двадцатый запрос уходит в таймаут и спустя 30 секунд возвращает HTTP 504 (Gateway Timeout). Остальные запросы работают нормально.\n\n**Частота:** Спорадически, примерно 5 % запросов, исключительно под нагрузкой в часы пик. При низком трафике ошибка не возникает.\n\n**Окружение:** Только продакшн (регион eu-central-1). В staging ошибку пока воспроизвести не удалось.",
+    },
+    hint: {
+      en: "For intermittent bugs, frequency and environment matter as much as the steps. 'Etwa jede zwanzigste Anfrage' = 'roughly one in twenty requests'. Use 'ausschließlich unter Last' to scope the conditions precisely.",
+      ru: "Для непостоянных багов частота и окружение важны не меньше шагов. 'Etwa jede zwanzigste Anfrage' = «примерно каждый двадцатый запрос». Используйте 'ausschließlich unter Last', чтобы точно ограничить условия.",
+    },
+  },
+  {
+    id: "out-de-design-rationale-a2",
+    band: "A2",
+    type: "design-rationale",
+    prompt: {
+      en: "Your list endpoint used to return all rows at once. You added pagination (returning the data in pages). Write 3–4 simple German sentences explaining to a colleague why pagination is better than returning everything.",
+      ru: "Ваш эндпоинт списка раньше возвращал все строки сразу. Вы добавили пагинацию (возврат данных страницами). Напишите 3–4 простых предложения на немецком, объясняя коллеге, почему пагинация лучше, чем возврат всего сразу.",
+    },
+    rubric: [
+      "Nennt klar die Entscheidung (Pagination statt alle Zeilen auf einmal).",
+      "Gibt mindestens zwei einfache Gründe (Geschwindigkeit/Serverlast, weniger Daten pro Antwort).",
+      "Einfache, korrekte A2-Sätze; 'weil' oder 'so' richtig verwendet.",
+      "Sachlicher, klarer Ton ohne komplizierte Nebensätze.",
+    ],
+    modelAnswer: {
+      de: "Ich habe Pagination hinzugefügt, statt alle Zeilen auf einmal zu schicken. Bei vielen Daten war die Antwort sehr groß und langsam. Jetzt schicken wir nur eine Seite, zum Beispiel 20 Einträge. So lädt die Liste schneller und der Server hat weniger Last.",
+      ru: "Я добавил пагинацию вместо отправки всех строк сразу. При большом объёме данных ответ был очень большим и медленным. Теперь мы отправляем только одну страницу, например 20 записей. Так список загружается быстрее, а сервер получает меньше нагрузки.",
+    },
+    hint: {
+      en: "Keep it simple: decision first, then the problem ('war sehr groß und langsam'), then the fix and the benefit. 'So lädt die Liste schneller' uses inversion — verb second after 'So'.",
+      ru: "Проще: сначала решение, затем проблема ('war sehr groß und langsam'), потом решение и выгода. 'So lädt die Liste schneller' использует инверсию — глагол на втором месте после 'So'.",
+    },
+  },
+  {
+    id: "out-de-rfc-summary-b1",
+    band: "B1",
+    type: "rfc-summary",
+    prompt: {
+      en: "Your team wants to migrate the internal services from plain REST to a typed API contract (e.g. OpenAPI- or tRPC-style), so request and response types are generated and checked at compile time. Write a German Summary (Zusammenfassung) section of an RFC (5–7 sentences) covering: what is proposed, why, the expected outcome, and the main risks.",
+      ru: "Ваша команда хочет мигрировать внутренние сервисы с обычного REST на типизированный API-контракт (в стиле OpenAPI или tRPC), чтобы типы запросов и ответов генерировались и проверялись на этапе компиляции. Напишите раздел Summary (Zusammenfassung) для RFC на немецком (5–7 предложений): что предлагается, зачем, ожидаемый результат и основные риски.",
+    },
+    rubric: [
+      "Sagt klar, was vorgeschlagen wird (Wechsel zu einem typisierten API-Vertrag).",
+      "Erklärt die Motivation (Typsicherheit, weniger Integrationsfehler zwischen Diensten).",
+      "Beschreibt das erwartete Ergebnis (generierte Typen, Fehler zur Compile-Zeit statt zur Laufzeit).",
+      "Nennt mindestens zwei konkrete Risiken (Migrationsaufwand, Lernkurve/Tooling) und bleibt sachlich; korrekte B1-Grammatik.",
+    ],
+    modelAnswer: {
+      de: "## Zusammenfassung\n\nDieses RFC schlägt vor, die internen Dienste schrittweise von handgeschriebenen REST-Aufrufen auf einen typisierten API-Vertrag umzustellen (OpenAPI- bzw. tRPC-Stil). Aktuell sind Request- und Response-Formate nur in der Dokumentation festgehalten, sodass Abweichungen zwischen Anbieter und Aufrufer erst zur Laufzeit auffallen — oft erst in der Produktion. Mit einem gemeinsamen Vertrag generieren wir die Typen für beide Seiten aus einer einzigen Quelle, und der Compiler erkennt nicht passende Felder, bevor der Code überhaupt deployt wird. Wir erwarten dadurch weniger Integrationsfehler, schnellere Reviews und sicherere Refactorings, weil sich vertragsbrechende Änderungen sofort zeigen. Die Hauptrisiken sind der einmalige Migrationsaufwand für die bestehenden Endpunkte sowie eine gewisse Lernkurve beim neuen Tooling und im Build-Prozess. Um das Risiko zu begrenzen, schlagen wir eine schrittweise Migration vor, bei der wir mit einem unkritischen Dienst beginnen und die Erfahrungen vor dem breiten Rollout auswerten.",
+      ru: "## Резюме\n\nЭтот RFC предлагает поэтапно перевести внутренние сервисы с вручную написанных REST-вызовов на типизированный API-контракт (в стиле OpenAPI или tRPC). Сейчас форматы запросов и ответов зафиксированы только в документации, поэтому расхождения между поставщиком и вызывающей стороной обнаруживаются лишь во время выполнения — нередко уже в продакшене. С общим контрактом мы генерируем типы для обеих сторон из единого источника, и компилятор находит несоответствующие поля ещё до того, как код вообще будет задеплоен. Благодаря этому мы ожидаем меньше ошибок интеграции, более быстрые ревью и более безопасный рефакторинг, потому что нарушающие контракт изменения проявляются сразу. Основные риски — это разовые трудозатраты на миграцию существующих эндпоинтов, а также определённая кривая обучения новому инструментарию и процессу сборки. Чтобы ограничить риск, мы предлагаем поэтапную миграцию: начать с некритичного сервиса и проанализировать опыт перед широким развёртыванием.",
+    },
+    hint: {
+      en: "Structure: Was? Warum? Was wird besser? Welche Risiken? State the proposal as fact ('Dieses RFC schlägt vor, … umzustellen'). For the risk-mitigation, 'Um das Risiko zu begrenzen, schlagen wir … vor' reads naturally.",
+      ru: "Структура: Was? Warum? Was wird besser? Welche Risiken? Формулируйте предложение как факт ('Dieses RFC schlägt vor, … umzustellen'). Для смягчения рисков естественно звучит 'Um das Risiko zu begrenzen, schlagen wir … vor'.",
+    },
+  },
 ];
