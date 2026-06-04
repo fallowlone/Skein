@@ -177,6 +177,22 @@ const drill = defineCollection({
 
 export type DrillData = z.infer<typeof drill.schema>;
 
+// ── Lab ──────────────────────────────────────────────────────────────────────
+const LabTier = z.enum(["warmup", "build", "diagnose", "capstone"]);
+const lab = defineCollection({
+  loader: glob({ pattern: "**/*.json", base: "./src/content/lab" }),
+  schema: z.object({
+    track: Track,
+    tier: LabTier,
+    order: z.number().int().nonnegative(),
+    title: Bi,
+    intro: Bi,
+    challenges: z.array(PracticeTask).min(3).max(20),
+  }),
+});
+
+export type LabData = z.infer<typeof lab.schema>;
+
 // ── Projects ────────────────────────────────────────────────────────────────
 const ProjectSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
@@ -202,4 +218,4 @@ const projects = defineCollection({
 
 export type ProjectData = z.infer<typeof ProjectSchema>;
 
-export const collections = { tracks, units, lessons, practice, projects, drill };
+export const collections = { tracks, units, lessons, practice, projects, drill, lab };
