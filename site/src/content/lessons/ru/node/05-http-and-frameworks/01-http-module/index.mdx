@@ -1,13 +1,271 @@
 ---
-slug: "01-http-module"
+concepts:
+- incoming-message-stream
+- server-response-writable
+- backpressure-drain
+- keep-alive-agent
+- request-timeouts
+- body-size-limit
+deepensInto: []
+estMin: 18
 lang: ru
-track: "node"
-unit: "05-http-and-frameworks"
+lessonType: topic
+level: middle
 order: 1
-title: "Модуль http: серверы, клиенты, стриминг"
-summary: "Модуль http: серверы, клиенты, стриминг — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 01-http-module
 sources:
-  - https://nodejs.org/api/http.html
+- https://nodejs.org/api/http.html
+- https://nodejs.org/en/learn/modules/anatomy-of-an-http-transaction
+- https://nodejs.org/api/https.html
+spiral: []
+status: ready
+summary: 'В сыром http req — это IncomingMessage (Readable-тело + заголовки), а res
+  — ServerResponse (Writable). Стримь тело, уважай backpressure, переиспользуй сокеты
+  через keep-alive и добавь таймауты и лимит тела, которые http не ставит, — иначе
+  медленный клиент выжмет сокеты.'
+title: 'Модуль http: серверы, клиенты и потоки'
+track: node
+unit: 05-http-and-frameworks
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Внутренний API замолчал во вторник днём — ни ошибок, ни падения, просто каждый запрос висит. Процесс Node здоров, CPU около нуля, heap ровный. Причиной был один кривой cron-клиент на нестабильном канале: он открывал соединения, слал несколько байт заголовков, а остальное — по байту раз в несколько секунд. У самописного `http.createServer` не было ни `requestTimeout`, ни `headersTimeout`, поэтому каждый из этих полуоткрытых сокетов вечно сидел в пуле соединений. За минуты медленный клиент тихо занял все доступные сокеты, и легитимный трафик больше не мог получить соединение. В коде ничего не было «неправильным» — просто не хватало таймаутов, которые любой фреймворк ставит за тебя.
+</Hook>
+
+<Crux>`req` — readable-поток, `res` — writable: стримь тело, ставь таймауты и ограничивай размер, иначе медленный клиент держит сокеты.</Crux>
+
+<Explanation>
+
+## req — это Readable, res — это Writable
+
+`http.createServer((req, res) => …)` отдаёт тебе два объекта-потока, и самая частая ошибка новичка — забыть об этом. `req` — это `IncomingMessage` — **Readable-поток** тела запроса, украшенный `req.method`, `req.url` и `req.headers`. Заголовки разобраны и доступны сразу, но **тело за тебя не буферизуется**: оно приходит чанками потока, и если ты их не читаешь, ты не получишь тело (а сокет может застрять). `res` — это `ServerResponse` — **Writable-поток**. Ты начинаешь его через `res.writeHead(status, headers)`, толкаешь байты через `res.write(chunk)` и завершаешь через `res.end()`.
+
+Поскольку тело — это поток, ты потребляешь его потоковыми идиомами, а не тянешься к магическому свойству `.body`:
+
+```js
+import { createServer } from "node:http";
+
+const server = createServer(async (req, res) => {
+  if (req.method === "POST") {
+    let body = "";
+    // req — async-iterable: каждый чанк это Buffer
+    for await (const chunk of req) {
+      body += chunk;            // (см. предупреждение про лимит размера ниже)
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ received: body.length }));
+    return;
+  }
+  res.writeHead(405).end();
+});
+
+server.listen(3000);
+```
+
+Эквивалентный событийный API — `req.on("data", chunk => …)`, затем `req.on("end", …)` — делает то же самое; `for await` — это просто современная обёртка над ним. В любом случае **обрабатывай ещё `req.on("error", …)` и случай `'aborted'`/`'close'`**: клиент, отвалившийся посреди загрузки, генерит ошибку на потоке запроса, а необработанное событие `'error'` потока роняет процесс.
+
+## Backpressure: write() может сказать «стоп»
+
+Когда ты шлёшь большой или неизвестной длины ответ, нельзя просто долбить `res.write()` в цикле. `res.write()` возвращает булево: **`true`** — чанк сброшен в буфер сокета ядра; **`false`** — он поставлен в очередь в памяти твоего процесса, потому что буфер полон. Игнорировать этот `false` и продолжать писать — это как один медленный клиент раздувает heap Node: ты буферизуешь данные, которые сеть пока не может слить. Контракт такой: когда `write()` вернул `false`, **остановись и жди событие `'drain'`** прежде чем писать дальше.
+
+```js
+// Ручной backpressure — продолжаем только когда в буфере есть место
+function writeChunk(res, chunk, next) {
+  if (res.write(chunk)) {
+    next();                       // в буфере было место, идём дальше
+  } else {
+    res.once("drain", next);      // ждём, пока опустеет
+  }
+}
+```
+
+На практике этот цикл почти никогда не пишут руками. Если твой источник сам поток — файл, ответ апстрима, трансформ — **пайпи его** и дай Node управлять backpressure из конца в конец:
+
+```js
+import { createReadStream } from "node:fs";
+// pipeline пробрасывает backpressure И сводит ошибки в одно место
+import { pipeline } from "node:stream/promises";
+
+await pipeline(createReadStream("./big.csv"), res);
+```
+
+Когда длина тела неизвестна (поток без `content-length`), Node автоматически переключает ответ на **chunked transfer encoding**, отправляя каждый `write()` как свой обрамлённый чанк, завершаемый нулевым чанком на `end()`.
+
+<Inset kind="why" lang="ru">
+Почему просто не буферизовать всё тело или ответ в память и не возиться со стримингом? Потому что память — это ресурс, который атакующий (или плохой клиент) бьёт первым. Загрузка в 4 ГБ, собранная в строку, — это 4 ГБ резидентного heap на запрос; сотня параллельных — это OOM-kill. Стриминг держит в полёте лишь один чанк за раз, так что память остаётся ограниченной независимо от размера полезной нагрузки — ровно поэтому лимит размера ниже так важен.
+</Inset>
+
+## Клиент, Agent и keep-alive
+
+Тот же модуль — ещё и HTTP-клиент: `http.request(options, cb)` возвращает writable-поток запроса, а `http.get` — сокращение, которое вызывает `req.end()` за тебя. Ответ приходит как ещё один `IncomingMessage`, который ты обязан слить.
+
+```js
+import { request } from "node:http";
+
+const req = request("http://api.internal/users/1", (res) => {
+  let data = "";
+  res.on("data", (c) => (data += c));   // ты ОБЯЗАН потребить ответ
+  res.on("end", () => console.log(res.statusCode, data));
+});
+req.on("error", console.error);          // сетевые ошибки прилетают сюда
+req.end();
+```
+
+За каждым клиентским запросом стоит **`Agent`**, который пулит сокеты. Смысл пула — **keep-alive**: переиспользование живого TCP-соединения между запросами пропускает свежий TCP-хендшейк (~1 RTT) и, на HTTPS, полный TLS-хендшейк сверху — большая экономия на запрос, когда ты часто зовёшь один и тот же хост. Глобальный agent включает `keepAlive` по умолчанию с Node 19; до этого ты включал его явно через `new Agent(&#123; keepAlive: true &#125;)`. Кнопка, которая кусается под нагрузкой, — **`maxSockets`** — предел числа параллельных соединений, которые agent открывает на хост. По умолчанию `Infinity`, так что неограниченный fan-out может открыть тысячи сокетов разом и исчерпать порты или захлестнуть апстрим; задай разумный `maxSockets`, когда жёстко молотишь одну зависимость.
+
+## Таймауты и лимиты тела: чего http НЕ делает за тебя
+
+Это сеньорская часть, и она вся про то, что `http` *опускает*. Сырой http по умолчанию позволит клиенту не торопиться и прислать тело любого размера. И то и другое — векторы отказа в обслуживании. Кнопки таймаутов, ограничивающие медленного клиента, — это свойства сервера:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Кнопка</th>
+        <th class="border border-border px-3 py-2 text-left">Что ограничивает</th>
+        <th class="border border-border px-3 py-2 text-left">Дефолт</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>server.requestTimeout</code></td>
+        <td class="border border-border px-3 py-2">Время на приём <em>всего</em> запроса (заголовки + тело)</td>
+        <td class="border border-border px-3 py-2">300000 мс (5 мин)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>server.headersTimeout</code></td>
+        <td class="border border-border px-3 py-2">Время на приём полных заголовков запроса</td>
+        <td class="border border-border px-3 py-2">min(requestTimeout, 60000)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>server.keepAliveTimeout</code></td>
+        <td class="border border-border px-3 py-2">Простой keep-alive-сокета в ожидании следующего запроса</td>
+        <td class="border border-border px-3 py-2">5000 мс</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>server.timeout</code> (на сокет)</td>
+        <td class="border border-border px-3 py-2">Бездействие на сокете до его уничтожения</td>
+        <td class="border border-border px-3 py-2">0 (отключён)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Хук — ровно та брешь, которую закрывают `requestTimeout` и `headersTimeout`: атака **Slowloris** капает заголовками или телом медленно, чтобы держать сокеты открытыми. С дефолтным 300-секундным `requestTimeout` и 60-секундным `headersTimeout` полуоткрытый сокет отбирается, а не течёт вечно — но если ты сделаешь `req.socket.setTimeout(0)` или отключишь их на самописном сервере, ты снова откроешь дверь.
+
+Другое упущение — **размер тела**. Встроенного лимита нет: `for await (const chunk of req) body += chunk` радостно накопит многогигабайтную загрузку в твой heap и убьёт процесс по OOM. Ты обязан ограничить его сам (это одна из главных вещей, что `express.json(&#123; limit &#125;)` или `body-parser` делают за тебя):
+
+```js
+const MAX = 1_000_000; // 1 МБ
+let size = 0, chunks = [];
+for await (const chunk of req) {
+  size += chunk.length;
+  if (size > MAX) {
+    res.writeHead(413).end("payload too large"); // 413 Payload Too Large
+    req.destroy();                                // прекрати чтение, освободи сокет
+    return;
+  }
+  chunks.push(chunk);
+}
+```
+
+<Quiz
+  id="05-http-module-quiz-1"
+  lessonSlug="01-http-module"
+  lang="ru"
+  question="В обработчике http.createServer ты логируешь req.body внутри колбэка и получаешь undefined для POST-запроса. Почему?"
+  choices={[
+    { label: "req — это IncomingMessage, Readable-поток. Тело не буферизуется в свойство; ты обязан потребить поток (for await…of req или req.on('data')/'end'), чтобы собрать его.", correct: true },
+    { label: "POST-тела доступны только на res, а не на req", misconception: "Тело однозначно принадлежит запросу. res — это writable ServerResponse, которым ты отвечаешь; входящее тело — это читаемая сторона req, его просто надо стримить, ведь в сыром http нет авто-разобранного req.body." },
+    { label: "Ты забыл сначала вызвать res.writeHead", misconception: "writeHead ставит статус и заголовки ответа; к чтению тела запроса он не имеет отношения. Тело undefined, потому что сырой http никогда не заполняет поле .body — фреймворки добавляют это, читая поток за тебя." },
+    { label: "Тело там есть, но JSON.stringify его спрятал", misconception: "Свойства body, которое можно застрингифицировать, нет. IncomingMessage отдаёт method, url и headers сразу, но полезная нагрузка существует только как чанки потока, пока ты их не прочитаешь и не соберёшь." },
+  ]}
+/>
+
+<Quiz
+  id="05-http-module-quiz-2"
+  lessonSlug="01-http-module"
+  lang="ru"
+  question="Твой сервис делает тысячи исходящих вызовов к одному апстриму, и ты включаешь keep-alive на agent. Что keep-alive экономит на каждый запрос прежде всего?"
+  choices={[
+    { label: "Стоимость установки свежего соединения — примерно один RTT TCP-хендшейка плюс полный TLS-хендшейк на HTTPS — потому что живой сокет переиспользуется, а не открывается заново", correct: true },
+    { label: "Он сжимает тела запроса и ответа", misconception: "Keep-alive про переиспользование соединения, а не про размер нагрузки. Сжатие — отдельная забота (content-encoding/gzip); keep-alive экономит стоимость открытия нового TCP+TLS-соединения каждый раз." },
+    { label: "Он снимает необходимость читать поток ответа", misconception: "Ты обязан всегда сливать ответ, с keep-alive или без — более того, непрочитанный ответ может держать пуловый сокет занятым. Keep-alive лишь избегает повторного хендшейка, он не меняет того, как ты читаешь тело." },
+    { label: "Он автоматически поднимает maxSockets", misconception: "maxSockets — независимый предел, который ставишь ты; keep-alive его не меняет. Keep-alive переиспользует сокеты в рамках того, что разрешает maxSockets, — экономя RTT хендшейков, а не поднимая лимит параллелизма." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="05-http-module-tradeoff-1"
+  lessonSlug="01-http-module"
+  lang="ru"
+  prompt="Ты принимаешь загрузки файлов на публичном эндпоинте, построенном на сыром http.createServer. Как не дать вредоносному клиенту убить процесс по OOM одной гигантской загрузкой?"
+  options={[
+    { name: "Стримь тело и навязывай макс. размер по мере прихода чанков: считай байты, и при превышении лимита отвечай 413 и req.destroy()", summary: "Ограниченная память.", correct: true, justification: "Это production-ответ. Стриминг означает, что в памяти резидентен лишь один чанк за раз, так что память ограничена размером чанка, а не нагрузки; бегущий счётчик байт позволяет отвергнуть рано — в момент превышения лимита ты шлёшь 413 Payload Too Large и уничтожаешь запрос, чтобы прекратить чтение и освободить сокет. Атакующий не может вынудить неограниченный рост heap, потому что ты никогда не накапливаешь всё тело. Ровно это express.json({ limit }) делает под капотом." },
+    { name: "Забуферь всё тело в строку, потом проверь body.length и отвергни, если велико", summary: "Слишком поздно.", justification: "Проверка бежит после того, как ты уже прочитал всё в память, так что загрузка в 4 ГБ — это 4 ГБ heap прежде, чем ты вообще взглянешь на length, — OOM случается до отказа. Ограничивать чтение надо по мере стриминга, а не валидировать, когда урон уже нанесён." },
+    { name: "Доверься заголовку Content-Length и отвергни большие значения сразу", summary: "Подделываем.", justification: "Content-Length задаётся клиентом и может врать или вовсе отсутствовать (у chunked transfer encoding нет Content-Length). Проверка заголовка — полезный быстрый отказ, но это не настоящий лимит — атакующий просто шлёт маленький или отсутствующий Content-Length и всё равно стримит гигабайты. Тебе всё равно нужен жёсткий предел на реально полученные байты." },
+    { name: "Подними лимит памяти процесса, чтобы большие загрузки помещались", summary: "Делает хуже.", justification: "Это поощряет атаку: больше запаса просто значит, что для OOM нужна загрузка побольше, а каждый легитимный запрос теперь рискует съесть куда больше памяти. Это трактует отсутствующий контроль валидации ввода как проблему ёмкости. Фикс — ограничить то, что ты читаешь, а не растить буфер, который ты даёшь атакующему наполнить." },
+  ]}
+/>
+
+<DragOrder
+  id="05-http-module-drag-1"
+  lessonSlug="01-http-module"
+  lang="ru"
+  prompt="Расставь шаги безопасной обработки стримовой загрузки в сыром http-обработчике — от прихода запроса до чистого завершения:"
+  items={[
+    { id: "a", label: "Проверь req.method и req.headers; отвергни всё, кроме ожидаемого метода/content-type, рано" },
+    { id: "b", label: "Повесь req.on('error', …) и обработай 'aborted'/'close', чтобы обрыв посреди загрузки не уронил процесс" },
+    { id: "c", label: "Стримь тело через for await…of req, считая бегущую сумму байт против жёсткого максимума" },
+    { id: "d", label: "При превышении предела ответь 413 и сделай req.destroy(), чтобы прекратить чтение и освободить сокет" },
+    { id: "e", label: "При успехе обработай собранное тело, затем res.writeHead + res.end ответа" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Keep-alive HTTP-обмен через модуль http: поток запроса внутрь, поток ответа наружу, сокет переиспользуется"
+  hue="var(--d-systems)"
+  actors={["client", "server"]}
+  messages={[
+    { from: "client", to: "server", label: "open socket + send headers" },
+    { from: "client", to: "server", label: "stream body chunks (req Readable)" },
+    { from: "server", to: "client", label: "writeHead + write (res Writable)" },
+    { from: "server", to: "client", label: "end() — response complete" },
+    { from: "client", to: "server", label: "next request reuses same socket" },
+  ]}
+  caption="Клиент стримит тело запроса в req (Readable), пока сервер стримит ответ наружу через res (Writable); с keep-alive сокет остаётся открыт для следующего запроса, пропуская свежий TCP+TLS-хендшейк. headersTimeout ограничивает фазу заголовков, requestTimeout — весь запрос, а keepAliveTimeout — простой между запросами."
+/>
+
+<KeyTakeaway>`req` — Readable, `res` — Writable: стримь тело, держи backpressure (false→`drain`), переиспользуй сокеты keep-alive. У сырого http нет лимита тела и таймаута — добавь `requestTimeout` и лимит, иначе Slowloris задушит.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-http-module-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что значит, что res.write() вернул false, и что с этим надо делать?", a: "Это значит, что чанк, который ты только что записал, не удалось сбросить в буфер сокета ядра и он вместо этого поставлен в очередь в памяти твоего процесса, потому что буфер полон — сеть не может сливать данные так быстро, как ты их производишь. Если игнорировать этот false и продолжать звать write(), эта очередь в памяти растёт неограниченно и heap раздувается (медленный клиент может довести тебя до OOM). Контракт — прекратить запись и ждать событие 'drain', которое Node генерит, когда в буфере снова есть место, затем возобновить. На практике ты избегаешь ручного цикла, используя pipe() или stream.pipeline() из потока-источника в res — они пробрасывают backpressure (и сводят ошибки) за тебя автоматически. Backpressure — это и есть причина, почему res — это Writable-поток, а не простая функция send()." },
+    { q: "Почему самописный http.createServer — это риск Slowloris и OOM, которым фреймворк обычно не является, и какие именно дефолты закрывают брешь?", a: "Сырой http делает две небезопасные по умолчанию вещи. Первое — он ставит щедрые-или-нулевые таймауты под твой контроль: Slowloris-клиент, капающий заголовками или телом по байту, держит сокет открытым, и с достаточным их числом он занимает все сокеты пула, так что реальный трафик не может подключиться. server.requestTimeout у Node (дефолт 300000 мс) ограничивает время на приём всего запроса, а server.headersTimeout (дефолт min(requestTimeout, 60000)) — фазу заголовков, вместе они отбирают полуоткрытые сокеты, но если ты их отключишь или сделаешь req.socket.setTimeout(0), ты снова откроешь дыру. Второе — http не накладывает лимит на размер тела: for await…of req накопит многогигабайтную загрузку в heap и убьёт процесс по OOM. Ты обязан считать полученные байты и отвечать 413 + req.destroy() после предела. Фреймворки (express.json({ limit }), body-parser, Fastify) поставляют разумные таймауты и дефолтный лимит тела — поэтому «просто используй http» рискованно на публичном эндпоинте." },
+  ]}
+/>
+
+<Recap lang="ru">
+Модуль `http` отдаёт твоему обработчику два потока: `req` — `IncomingMessage`, который является **Readable** и несёт тело плюс `method`/`url`/`headers`, и `res` — `ServerResponse`, который является **Writable** и которым ты управляешь через `writeHead`/`write`/`end`. Авто-разобранного `req.body` нет — ты потребляешь тело через `for await…of req` (или события `data`/`end`) и обязан обработать случаи `'error'`/`'aborted'` потока, иначе оборванная загрузка роняет процесс. Запись ответа означает уважение к **backpressure**: `res.write()` возвращает `false`, когда буфер ядра полон, так что жди `'drain'` или просто `pipeline()`-ни поток-источник в `res` и дай Node управлять (он переключается на chunked encoding, когда длина неизвестна). Тот же модуль — клиент через `http.request`/`http.get`, пулящий сокеты через `Agent`, чей **keep-alive** (включён по умолчанию с Node 19) переиспользует живое соединение, чтобы пропустить RTT TCP-хендшейка и TLS-хендшейк на запрос, а `maxSockets` (дефолт `Infinity`) ограничивает параллелизм на хост. Сеньорская дисциплина — это всё, чего `http` *не* делает: ставь `server.requestTimeout` (дефолт 300000 мс) и `server.headersTimeout` (min(requestTimeout, 60000)), чтобы Slowloris не пришпилил твои сокеты, помни про `keepAliveTimeout` (5000 мс) и **ограничивай размер тела сам** — сырой `http` прочитает неограниченную нагрузку прямо в heap, так что считай байты и отвечай `413` после предела, ровно как фреймворки делают за тебя.
+</Recap>

@@ -1,13 +1,271 @@
 ---
-slug: "01-http-module"
+concepts:
+- incoming-message-stream
+- server-response-writable
+- backpressure-drain
+- keep-alive-agent
+- request-timeouts
+- body-size-limit
+deepensInto: []
+estMin: 18
 lang: en
-track: "node"
-unit: "05-http-and-frameworks"
+lessonType: topic
+level: middle
 order: 1
-title: "The http module: servers, clients, streaming"
-summary: "The http module: servers, clients, streaming — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 01-http-module
 sources:
-  - https://nodejs.org/api/http.html
+- https://nodejs.org/api/http.html
+- https://nodejs.org/en/learn/modules/anatomy-of-an-http-transaction
+- https://nodejs.org/api/https.html
+spiral: []
+status: ready
+summary: 'In raw http, req is an IncomingMessage (a Readable body + headers) and res
+  is a ServerResponse (a Writable). Stream the body, respect backpressure, reuse sockets
+  with keep-alive, and add the timeouts and body cap that http omits — or a slow client
+  exhausts your sockets.'
+title: 'The http module: servers, clients, and streams'
+track: node
+unit: 05-http-and-frameworks
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+An internal API went dark on a Tuesday afternoon — no errors, no crash, just every request hanging. The Node process was healthy, CPU near zero, heap flat. The cause was a single misbehaving cron client on a flaky link: it opened connections, sent a few header bytes, and then sent the rest one byte every few seconds. The hand-rolled `http.createServer` had no `requestTimeout` and no `headersTimeout`, so each of those half-open sockets sat in the connection pool forever. Within minutes the slow client had quietly occupied every available socket, and legitimate traffic could no longer get a connection. Nothing in the code was "wrong" — it was just missing the timeouts that every framework sets for you.
+</Hook>
+
+<Crux>`req` is a readable stream, `res` a writable — stream the body, set timeouts, cap its size, or a slow client holds sockets hostage.</Crux>
+
+<Explanation>
+
+## req is a Readable, res is a Writable
+
+`http.createServer((req, res) => …)` hands you two stream objects, and the single most common beginner mistake is forgetting that. `req` is an `IncomingMessage` — a **Readable stream** of the request body, decorated with `req.method`, `req.url`, and `req.headers`. The headers are parsed and present immediately, but **the body is not buffered for you**: it arrives as stream chunks, and if you never read them, you never get the body (and the socket can stall). `res` is a `ServerResponse` — a **Writable stream**. You start it with `res.writeHead(status, headers)`, push bytes with `res.write(chunk)`, and finish with `res.end()`.
+
+Because the body is a stream, you consume it with stream idioms, not by reaching for a magic `.body` property:
+
+```js
+import { createServer } from "node:http";
+
+const server = createServer(async (req, res) => {
+  if (req.method === "POST") {
+    let body = "";
+    // req is async-iterable: each chunk is a Buffer
+    for await (const chunk of req) {
+      body += chunk;            // (see the size-cap warning below)
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ received: body.length }));
+    return;
+  }
+  res.writeHead(405).end();
+});
+
+server.listen(3000);
+```
+
+The equivalent event API — `req.on("data", chunk => …)` then `req.on("end", …)` — does the same thing; `for await` is just the modern surface over it. Either way, **also handle `req.on("error", …)` and the `'aborted'`/`'close'` case**: a client that disconnects mid-upload fires an error on the request stream, and an unhandled stream `'error'` event crashes the process.
+
+## Backpressure: write() can say "stop"
+
+When you send a large or unknown-length response, you cannot just blast `res.write()` in a loop. `res.write()` returns a boolean: **`true`** means the chunk was flushed to the kernel socket buffer; **`false`** means it was queued in your process's memory because the buffer is full. Ignoring that `false` and continuing to write is how a single slow client makes your Node heap balloon — you keep buffering data the network can't drain yet. The contract is: when `write()` returns `false`, **stop and wait for the `'drain'` event** before writing more.
+
+```js
+// Manual backpressure — only continue when the buffer has room
+function writeChunk(res, chunk, next) {
+  if (res.write(chunk)) {
+    next();                       // buffer had room, keep going
+  } else {
+    res.once("drain", next);      // wait until it empties
+  }
+}
+```
+
+In practice you almost never write that loop by hand. If your source is itself a stream — a file, an upstream response, a transform — **pipe it** and let Node manage backpressure end to end:
+
+```js
+import { createReadStream } from "node:fs";
+// pipeline propagates backpressure AND forwards errors to one place
+import { pipeline } from "node:stream/promises";
+
+await pipeline(createReadStream("./big.csv"), res);
+```
+
+When the body length is unknown (a stream with no `content-length`), Node switches the response to **chunked transfer encoding** automatically, sending each `write()` as its own framed chunk terminated by a zero-length chunk at `end()`.
+
+<Inset kind="why" lang="en">
+Why not just buffer the whole body or response in memory and skip streaming? Because memory is the resource an attacker (or a bad client) attacks first. A 4 GB upload buffered into a string is 4 GB of resident heap per request; a hundred concurrent ones is an OOM kill. Streaming keeps only a chunk in flight at a time, so memory stays bounded regardless of payload size — which is exactly why the size cap below matters.
+</Inset>
+
+## The client, the Agent, and keep-alive
+
+The same module is also an HTTP client: `http.request(options, cb)` returns a writable request stream, and `http.get` is the shorthand that calls `req.end()` for you. The response arrives as another `IncomingMessage` you must drain.
+
+```js
+import { request } from "node:http";
+
+const req = request("http://api.internal/users/1", (res) => {
+  let data = "";
+  res.on("data", (c) => (data += c));   // you MUST consume the response
+  res.on("end", () => console.log(res.statusCode, data));
+});
+req.on("error", console.error);          // network errors land here
+req.end();
+```
+
+Behind every client request is an **`Agent`** that pools sockets. The point of pooling is **keep-alive**: reusing a live TCP connection across requests skips a fresh TCP handshake (~1 RTT) and, on HTTPS, a full TLS handshake on top — a large per-request saving when you call the same host repeatedly. The global agent enables `keepAlive` by default since Node 19; before that you opted in with `new Agent(&#123; keepAlive: true &#125;)`. The knob that bites under load is **`maxSockets`** — the cap on concurrent connections the agent opens per host. It defaults to `Infinity`, so an unbounded fan-out can open thousands of sockets at once and exhaust ports or overwhelm the upstream; set a sane `maxSockets` when you call a single dependency hard.
+
+## Timeouts and body limits: what http does NOT do for you
+
+This is the senior part, and it is all about what `http` *omits*. Raw `http` will, by default, let a client take its time and send a body of any size. Both are denial-of-service vectors. The timeout knobs that bound a slow client are server properties:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Knob</th>
+        <th class="border border-border px-3 py-2 text-left">What it bounds</th>
+        <th class="border border-border px-3 py-2 text-left">Default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>server.requestTimeout</code></td>
+        <td class="border border-border px-3 py-2">Time to receive the <em>entire</em> request (headers + body)</td>
+        <td class="border border-border px-3 py-2">300000 ms (5 min)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>server.headersTimeout</code></td>
+        <td class="border border-border px-3 py-2">Time to receive the complete request headers</td>
+        <td class="border border-border px-3 py-2">min(requestTimeout, 60000)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>server.keepAliveTimeout</code></td>
+        <td class="border border-border px-3 py-2">Idle time a kept-alive socket waits for the next request</td>
+        <td class="border border-border px-3 py-2">5000 ms</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>server.timeout</code> (per-socket)</td>
+        <td class="border border-border px-3 py-2">Inactivity on a socket before it is destroyed</td>
+        <td class="border border-border px-3 py-2">0 (disabled)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The hook is exactly the gap `requestTimeout` and `headersTimeout` close: a **Slowloris** attack drips headers or body slowly to hold sockets open. With the default 300 s `requestTimeout` and the 60 s `headersTimeout`, a half-open socket is reclaimed instead of leaking forever — but if you read `req.socket.setTimeout(0)` or disable these on a hand-rolled server, you reopen the door.
+
+The other omission is **body size**. There is no built-in limit: `for await (const chunk of req) body += chunk` will happily accumulate a multi-gigabyte upload into your heap and OOM-kill the process. You must cap it yourself (this is one of the main things `express.json(&#123; limit &#125;)` or `body-parser` do for you):
+
+```js
+const MAX = 1_000_000; // 1 MB
+let size = 0, chunks = [];
+for await (const chunk of req) {
+  size += chunk.length;
+  if (size > MAX) {
+    res.writeHead(413).end("payload too large"); // 413 Payload Too Large
+    req.destroy();                                // stop reading, free the socket
+    return;
+  }
+  chunks.push(chunk);
+}
+```
+
+<Quiz
+  id="05-http-module-quiz-1"
+  lessonSlug="01-http-module"
+  lang="en"
+  question="In an http.createServer handler, you log req.body inside the callback and get undefined for a POST request. Why?"
+  choices={[
+    { label: "req is an IncomingMessage — a Readable stream. The body is not buffered into a property; you must consume the stream (for await…of req, or req.on('data')/'end') to assemble it.", correct: true },
+    { label: "POST bodies are only available on res, not req", misconception: "The body absolutely belongs to the request. res is the writable ServerResponse you reply with; the inbound body is the readable side of req — you just have to stream it, since there is no auto-parsed req.body in raw http." },
+    { label: "You forgot to call res.writeHead first", misconception: "writeHead sets the response status and headers; it has nothing to do with reading the request body. The body is undefined because raw http never populates a .body field — frameworks add that by reading the stream for you." },
+    { label: "The body is there but JSON.stringify hid it", misconception: "There is no body property to stringify. IncomingMessage exposes method, url, and headers eagerly, but the payload only exists as stream chunks until you read and combine them." },
+  ]}
+/>
+
+<Quiz
+  id="05-http-module-quiz-2"
+  lessonSlug="01-http-module"
+  lang="en"
+  question="Your service makes thousands of outbound calls to one upstream and you enable keep-alive on the agent. What does keep-alive primarily save per request?"
+  choices={[
+    { label: "The cost of establishing a fresh connection — roughly one TCP handshake RTT, plus the full TLS handshake on HTTPS — because a live socket is reused instead of dialed anew", correct: true },
+    { label: "It compresses the request and response bodies", misconception: "Keep-alive is about connection reuse, not payload size. Compression is a separate concern (content-encoding/gzip); keep-alive saves the setup cost of opening a new TCP+TLS connection each time." },
+    { label: "It removes the need to read the response stream", misconception: "You must always drain the response, keep-alive or not — in fact an un-consumed response can keep a pooled socket pinned. Keep-alive only avoids re-handshaking, it doesn't change how you read the body." },
+    { label: "It raises maxSockets automatically", misconception: "maxSockets is an independent cap you set; keep-alive doesn't change it. Keep-alive reuses sockets within whatever maxSockets allows — saving handshake RTTs, not raising the concurrency limit." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="05-http-module-tradeoff-1"
+  lessonSlug="01-http-module"
+  lang="en"
+  prompt="You are accepting file uploads on a public endpoint built on raw http.createServer. How do you keep a malicious client from OOM-killing the process with one giant upload?"
+  options={[
+    { name: "Stream the body and enforce a max size as chunks arrive: track bytes, and on exceeding the limit respond 413 and req.destroy()", summary: "Bounded memory.", correct: true, justification: "This is the production answer. Streaming means only one chunk is resident at a time, so memory stays bounded by chunk size, not payload size; the running byte counter lets you reject early — the moment the limit is crossed you send 413 Payload Too Large and destroy the request to stop reading and free the socket. The attacker can't force unbounded heap growth because you never accumulate the whole body. This is exactly what express.json({ limit }) does under the hood." },
+    { name: "Buffer the whole body into a string, then check body.length and reject if too big", summary: "Too late.", justification: "The check runs after you have already read everything into memory, so a 4 GB upload is 4 GB of heap before you ever look at the length — the OOM happens before the rejection. You must bound the read as it streams, not validate after the damage is done." },
+    { name: "Trust the Content-Length header and reject large values up front", summary: "Spoofable.", justification: "Content-Length is client-supplied and can lie or be omitted entirely (chunked transfer encoding has no Content-Length). A header check is a useful fast-path rejection, but it is not a real limit — an attacker simply sends a small or absent Content-Length and streams gigabytes anyway. You still need a hard cap on bytes actually received." },
+    { name: "Raise the process memory limit so big uploads fit", summary: "Makes it worse.", justification: "This rewards the attack: more headroom just means a bigger upload is needed to OOM you, while every legitimate request now risks consuming far more memory. It treats a missing input-validation control as a capacity problem. The fix is to bound what you read, never to grow the buffer you let an attacker fill." },
+  ]}
+/>
+
+<DragOrder
+  id="05-http-module-drag-1"
+  lessonSlug="01-http-module"
+  lang="en"
+  prompt="Order the steps to handle a streamed upload safely in a raw http handler, from request arrival to clean completion:"
+  items={[
+    { id: "a", label: "Inspect req.method and req.headers; reject anything but the expected method/content-type early" },
+    { id: "b", label: "Attach req.on('error', …) and handle 'aborted'/'close' so a mid-upload disconnect can't crash the process" },
+    { id: "c", label: "Stream the body with for await…of req, tracking a running byte total against a hard max" },
+    { id: "d", label: "On exceeding the cap, respond 413 and req.destroy() to stop reading and release the socket" },
+    { id: "e", label: "On success, process the assembled body, then res.writeHead + res.end the response" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A keep-alive HTTP exchange over the http module: request stream in, response stream out, socket reused"
+  hue="var(--d-systems)"
+  actors={["client", "server"]}
+  messages={[
+    { from: "client", to: "server", label: "open socket + send headers" },
+    { from: "client", to: "server", label: "stream body chunks (req Readable)" },
+    { from: "server", to: "client", label: "writeHead + write (res Writable)" },
+    { from: "server", to: "client", label: "end() — response complete" },
+    { from: "client", to: "server", label: "next request reuses same socket" },
+  ]}
+  caption="The client streams the request body into req (a Readable) while the server streams the response out through res (a Writable); with keep-alive the socket stays open for the next request, skipping a fresh TCP+TLS handshake. headersTimeout bounds the header phase, requestTimeout the whole request, and keepAliveTimeout the idle wait between requests."
+/>
+
+<KeyTakeaway>`req` is Readable, `res` Writable: stream the body, honour backpressure (false→`drain`), reuse sockets via keep-alive. Raw http has no body cap or timeout — add `requestTimeout` and a size limit or Slowloris drains you.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-http-module-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does res.write() returning false mean, and what must you do about it?", a: "It means the chunk you just wrote could not be flushed to the kernel socket buffer and was instead queued in your process's memory because the buffer is full — the network can't drain data as fast as you're producing it. If you ignore the false and keep calling write(), that in-memory queue grows unbounded and your heap balloons (a slow client can drive you to OOM). The contract is to stop writing and wait for the 'drain' event, which Node emits when the buffer has room again, then resume. In practice you avoid hand-writing this loop by using pipe() or stream.pipeline() from a source stream into res — those propagate backpressure (and forward errors) for you automatically. Backpressure is the whole reason res is a Writable stream and not a simple send() function." },
+    { q: "Why is a hand-rolled http.createServer a Slowloris and OOM risk that a framework usually isn't, and which specific defaults close the gap?", a: "Raw http does two unsafe-by-omission things. First, it sets generous-to-no timeouts in your control: a Slowloris client that dribbles headers or body byte-by-byte holds a socket open, and with enough of them it occupies every socket in the pool so real traffic can't connect. Node's server.requestTimeout (default 300000 ms) bounds the time to receive the whole request, and server.headersTimeout (default min(requestTimeout, 60000)) bounds the header phase — together they reclaim half-open sockets, but if you disable them or set req.socket.setTimeout(0) you reopen the hole. Second, http imposes no body-size limit: for await…of req will accumulate a multi-gigabyte upload into the heap and OOM-kill the process. You must track received bytes and respond 413 + req.destroy() past a cap. Frameworks (express.json({ limit }), body-parser, Fastify) ship sane timeouts and a default body cap, which is why 'just use http' is risky on a public endpoint." },
+  ]}
+/>
+
+<Recap lang="en">
+The `http` module hands your handler two streams: `req`, an `IncomingMessage` that is a **Readable** carrying the body plus `method`/`url`/`headers`, and `res`, a `ServerResponse` that is a **Writable** you drive with `writeHead`/`write`/`end`. There is no auto-parsed `req.body` — you consume the body with `for await…of req` (or `data`/`end` events) and you must handle the stream's `'error'`/`'aborted'` cases or an aborted upload crashes the process. Writing a response means respecting **backpressure**: `res.write()` returns `false` when the kernel buffer is full, so wait for `'drain'`, or just `pipeline()` a source stream into `res` and let Node handle it (it switches to chunked encoding when length is unknown). The same module is a client via `http.request`/`http.get`, pooling sockets through an `Agent` whose **keep-alive** (on by default since Node 19) reuses a live connection to skip a TCP handshake RTT and a TLS handshake per request, with `maxSockets` (default `Infinity`) capping per-host concurrency. The senior discipline is everything `http` *doesn't* do: set `server.requestTimeout` (default 300000 ms) and `server.headersTimeout` (min(requestTimeout, 60000)) so a Slowloris can't pin your sockets, mind `keepAliveTimeout` (5000 ms), and **cap the body size yourself** — raw `http` will read an unbounded payload straight into the heap, so track bytes and reply `413` past a limit, exactly as frameworks do for you.
+</Recap>
