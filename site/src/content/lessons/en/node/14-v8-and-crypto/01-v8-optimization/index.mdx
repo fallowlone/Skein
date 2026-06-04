@@ -1,0 +1,239 @@
+---
+concepts:
+- hidden-classes
+- inline-caches
+- jit-tiers
+- deoptimization
+- gc-generations
+- monomorphism
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs:
+- node/04-performance
+slug: 01-v8-optimization
+sources:
+- https://v8.dev/blog/fast-properties
+- https://v8.dev/blog/maglev
+- https://v8.dev/docs/turbofan
+- https://nodejs.org/en/learn/getting-started/the-v8-javascript-engine
+spiral: []
+status: ready
+summary: V8 makes type-stable code fast by giving same-shaped objects one hidden class, caching property lookups monomorphically, and tiering hot functions up to TurboFan. Shape churn, deletes, and type-mixing trigger deopts and slow dictionary mode.
+title: 'V8 optimization: hidden classes, inline caches, and the JIT tiers'
+track: node
+unit: 14-v8-and-crypto
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A hot request handler that parsed JSON and normalised it ran at 40k ops/s in the benchmark and 9k ops/s in production. Same code, same Node version. The benchmark fed it one object literal; production fed it five payload variants, and one path did `delete obj.temp` before returning. That single `delete` flipped the object into dictionary mode, the property-read inline cache went megamorphic, and TurboFan refused to keep the function optimised — it bailed back to the interpreter on every hot loop. The fix was three lines: build a fresh object with a stable shape instead of mutating-then-deleting. Throughput went back to 38k.
+</Hook>
+
+<Crux>V8 makes type-stable, same-shaped, monomorphic code fast; shape churn, deletes, and mixed types force slow dictionary mode and deopts.</Crux>
+
+<Explanation>
+
+## Hidden classes: objects are typed even though JavaScript isn't
+
+JavaScript has no static types, but V8 invents them at runtime. Every object points to a **hidden class** (V8 calls it a `Map`, also documented as a Shape) that records the object's layout: which properties exist, in what order, and at which memory offset each one lives. Two objects created the same way — same properties added in the same order — share the *same* hidden class, so V8 can compile a property access into "read the slot at offset 16" instead of a hash-map lookup.
+
+Hidden classes are built by **transitions**. Start with `{}` (the empty hidden class C0); add `x` and you transition to C1; add `y` and you transition to C2. V8 caches these transitions in a tree, so the next object that adds `x` then `y` walks the same path and lands on the same C2 — no new class allocated. This is why object construction order is load-bearing.
+
+```js
+function makePoint(a, b) {
+  const p = {};
+  p.x = a;   // C0 -> C1
+  p.y = b;   // C1 -> C2
+  return p;
+}
+// Both share hidden class C2 — V8 treats them as one "type":
+const p1 = makePoint(1, 2);
+const p2 = makePoint(3, 4);
+
+// But add the SAME properties in a different ORDER and you get a
+// different transition path — a SECOND hidden class for the same fields:
+const q = {};
+q.y = 2;   // C0 -> C1'
+q.x = 1;   // C1' -> C2'   (C2' != C2)
+```
+
+Three things break shape sharing and you must know all three:
+
+- **Adding properties in a different order** produces a divergent transition path and a distinct hidden class, even though the field *set* is identical.
+- **`delete obj.prop`** is the worst: V8 cannot represent a "hole" in a fast packed layout, so it converts the object to **dictionary mode** (slow properties) — a hash map per object, with no shared hidden class and no inline-cache benefit. Use `obj.prop = undefined` or rebuild the object if you truly need the key gone.
+- **Mixing value types** in the same slot (an integer where a double or object usually lives) changes the field's representation and forces a hidden-class change; for arrays it triggers an *elements-kind* transition (PACKED_SMI → PACKED_DOUBLE → PACKED_ELEMENTS, each strictly more general and less optimisable).
+
+## Inline caches: monomorphic, polymorphic, megamorphic
+
+A hidden class is only half the machinery. The other half is the **inline cache (IC)**: at each property-access site — `obj.x` in some function — V8 remembers which hidden class it saw and the offset it resolved to. Next time, if the object has the same hidden class, it reads the cached offset directly. The IC's *state* is the single best predictor of how fast that site runs.
+
+```js
+function dist(p) {
+  return Math.sqrt(p.x * p.x + p.y * p.y); // the IC lives at p.x / p.y
+}
+```
+
+- **Monomorphic** — the site has only ever seen *one* hidden class. The IC is a single compare-and-read; this is the fast path and the one TurboFan can inline and speculate on hardest.
+- **Polymorphic** — the site has seen 2–4 hidden classes. V8 keeps a small list and linearly checks each; slower, but still optimisable.
+- **Megamorphic** — more than ~4 shapes. V8 gives up on the per-site cache and falls back to a generic megamorphic stub (a global hash lookup). This is the cliff: it is dramatically slower and blocks the function from being well-optimised.
+
+The practical rule: feed each hot call site objects of **one** shape. A function that normalises three different payload shapes should be three monomorphic functions (or normalise to one shape *before* the hot path), not one megamorphic one.
+
+<Inset kind="why" lang="en">
+You can peek at the IC/optimisation state in development with natives syntax: run `node --allow-natives-syntax` and call `%GetOptimizationStatus(fn)` or print IC states with `--trace-ic`. This is a *diagnostic peek only* — never ship it, never branch production logic on it. `%`-functions are an internal V8 contract that changes between versions, and `--allow-natives-syntax` disables safety assumptions. Use it to confirm a hypothesis ("is this function actually optimised?"), then delete the flag.
+</Inset>
+
+## JIT tiers: Ignition, Sparkplug, Maglev, TurboFan
+
+V8 does not compile your code to optimised machine code up front — that would waste compile time on code that runs once. Instead it tiers up based on how hot a function is, trading compile speed for code quality at each step.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Tier</th>
+        <th class="border border-border px-3 py-2 text-left">Role</th>
+        <th class="border border-border px-3 py-2 text-left">Speed tradeoff</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><b>Ignition</b></td>
+        <td class="border border-border px-3 py-2">Interpreter. Compiles JS to bytecode, runs it, and gathers type feedback (hidden classes seen at each IC).</td>
+        <td class="border border-border px-3 py-2">Instant start, slowest execution.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><b>Sparkplug</b></td>
+        <td class="border border-border px-3 py-2">Baseline JIT. Bytecode &#8594; machine code near-instantly, no optimisation; ~45% faster than the interpreter.</td>
+        <td class="border border-border px-3 py-2">Very fast compile, modest speedup.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><b>Maglev</b></td>
+        <td class="border border-border px-3 py-2">Mid optimiser (SSA + feedback). Much faster code than Sparkplug, compiled far faster than TurboFan.</td>
+        <td class="border border-border px-3 py-2">Balanced.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><b>TurboFan</b></td>
+        <td class="border border-border px-3 py-2">Peak optimiser. Speculative, type-specialised machine code based on stable feedback; inlines aggressively.</td>
+        <td class="border border-border px-3 py-2">Slow compile, fastest execution.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+TurboFan's speed comes from **speculation**: it assumes `p` is always shape C2 and bakes that assumption into the code, dropping all the type checks. When the assumption holds, it flies. When it breaks — a C3 object shows up, a slot's type changes — the speculation is invalid and V8 **deoptimizes**: it discards the optimised code and drops the function back to the interpreter to re-collect feedback. A few deopts are normal warm-up; a function that deopts *repeatedly* (a deopt loop) is stuck paying interpreter prices on a hot path.
+
+The triggers you control:
+
+```js
+// 1. Hidden-class churn: this site sees C2, then C2', then dictionary-mode
+//    objects -> goes polymorphic, then megamorphic, then deopts.
+function sum(o) { return o.x + o.y; }
+
+// 2. `arguments` leaking out of a function used to defeat optimisation;
+//    even today, prefer rest params, which V8 reasons about cleanly:
+function bad() { return Array.prototype.slice.call(arguments); } // avoid
+function good(...args) { return args; }                          // optimisable
+```
+
+Historically `try/catch` and `arguments` misuse blocked optimisation outright; modern TurboFan handles `try/catch` fine, but **shape churn and type instability remain the reliable deopt triggers**. Keep the shapes and types a hot function sees constant and it climbs to TurboFan and stays there.
+
+## Garbage collection: why short-lived allocations are cheap
+
+V8's heap is **generational**, built on the empirical fact that most objects die young. New objects go in the **young generation** (a small space split into two semi-spaces, `from` and `to`). Collection there — the **Scavenge** — is a cheap copying collector: it copies the still-live objects from `from` to `to`, then declares the whole `from` space free in one move. Because it only touches survivors and most objects are already dead, a Scavenge is fast and frequent.
+
+Objects that survive a couple of Scavenges are **promoted** to the **old generation**, collected by **Mark-Sweep-Compact**: mark everything reachable, sweep the dead, occasionally compact to fight fragmentation. This is the expensive, less frequent collector. The takeaway for hot code: a short-lived allocation inside a request — a temporary array, an intermediate object — is genuinely cheap because it dies in the young space and is reclaimed by a fast Scavenge. What hurts is **promoting garbage**: holding references that keep objects alive just long enough to reach the old generation, where collecting them is costly. Pool or reuse only when profiling proves a real Scavenge/promotion problem — premature object pooling often *adds* old-gen pressure.
+
+<FlowDiagram
+  label="V8 execution pipeline: Ignition interpreter gathers feedback then tiers hot functions up through Sparkplug and Maglev to TurboFan, with a deoptimize edge back to the interpreter when speculation breaks"
+  hue="var(--d-runtime)"
+  perRow={4}
+  nodes={[
+    { id: "ign", label: "Ignition", sub: "interpret" },
+    { id: "spark", label: "Sparkplug", sub: "baseline" },
+    { id: "mag", label: "Maglev", sub: "mid-tier" },
+    { id: "turbo", label: "TurboFan", sub: "peak" },
+  ]}
+  edges={[
+    { from: "ign", to: "spark", label: "warm" },
+    { from: "spark", to: "mag", label: "hot" },
+    { from: "mag", to: "turbo", label: "stable" },
+    { from: "turbo", to: "ign", label: "deopt" },
+  ]}
+  caption="Functions tier up as they get hot, trading compile time for code quality. TurboFan speculates on stable shapes/types; when that speculation breaks, V8 deoptimizes back to the interpreter to re-collect feedback."
+/>
+
+<Quiz
+  id="01-v8-optimization-quiz-1"
+  lessonSlug="01-v8-optimization"
+  lang="en"
+  question="A hot function reads obj.id, and the call site has seen 7 different hidden classes. What is the IC state and the consequence?"
+  choices={[
+    { label: "Megamorphic — V8 abandons the per-site cache for a generic hash-lookup stub and the function can't be well-optimised, so it runs far slower", correct: true },
+    { label: "Polymorphic — V8 keeps a list of all 7 shapes and checks them linearly, which is fine", misconception: "Polymorphic covers roughly 2–4 shapes. Past that threshold (about 4) the IC goes megamorphic and V8 stops keeping a per-site list, falling back to a slow generic stub." },
+    { label: "Monomorphic — V8 picks the most common of the 7 shapes and optimises for it", misconception: "Monomorphic means the site has seen exactly one hidden class. V8 does not 'pick a favourite' among many; many shapes is precisely what pushes the site to megamorphic." },
+    { label: "It has no effect; hidden classes only matter for object construction, not reads", misconception: "Inline caches live at property-access (read) sites and key on the hidden class seen there. Shape variety at a read site is exactly what degrades the IC and blocks optimisation." },
+  ]}
+/>
+
+<Quiz
+  id="01-v8-optimization-quiz-2"
+  lessonSlug="01-v8-optimization"
+  lang="en"
+  question="Why does `delete obj.temp` on a hot object hurt far more than setting `obj.temp = undefined`?"
+  choices={[
+    { label: "delete forces the object into dictionary (slow-properties) mode — a per-object hash map with no shared hidden class and no inline-cache benefit; = undefined keeps the fast packed layout and shared shape", correct: true },
+    { label: "delete is slower only because it's a function call, whereas assignment is a single instruction", misconception: "The cost is not call overhead. delete changes the object's representation: V8 can't leave a hole in a fast packed layout, so it switches the object to dictionary mode, losing the hidden class and IC fast path." },
+    { label: "They are equivalent; V8 treats both identically", misconception: "They are not equivalent. = undefined keeps the property slot and the object's hidden class intact; delete removes the slot and degrades the object to dictionary mode." },
+    { label: "delete triggers an immediate full Mark-Sweep-Compact GC", misconception: "delete does not force a GC. Its cost is the structural conversion to dictionary mode and the loss of shape-based optimisation, not garbage collection." },
+  ]}
+/>
+
+<DragOrder
+  id="01-v8-optimization-drag-1"
+  lessonSlug="01-v8-optimization"
+  lang="en"
+  prompt="Order V8's execution tiers from first-run to peak-optimised:"
+  items={[
+    { id: "a", label: "Ignition — interpret bytecode, gather type feedback at each IC" },
+    { id: "b", label: "Sparkplug — baseline JIT, bytecode to machine code near-instantly" },
+    { id: "c", label: "Maglev — mid-tier optimiser, SSA + feedback, fast to compile" },
+    { id: "d", label: "TurboFan — peak speculative optimiser on stable shapes/types" },
+  ]}
+  correctOrder={["a", "b", "c", "d"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>V8 fakes types: same-shaped objects share a hidden class, monomorphic ICs read fields by offset, hot functions tier up to TurboFan. `delete`, out-of-order props, and type-mixing force dictionary mode and deopts.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-v8-optimization-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through exactly why a function that processes five differently-shaped payloads runs far slower than the same logic over one shape — name the hidden-class, IC, and tier mechanisms.", a: "Every object points to a hidden class describing its layout — which properties exist, in what order, at which offset. Objects built identically share one hidden class, so V8 compiles a property access into a direct offset read. At each access site (obj.x in your function) sits an inline cache that remembers the hidden classes it has seen. With one payload shape the site is monomorphic: a single compare-and-read, and TurboFan can speculate hard, inline, and drop type checks. Feed it five shapes and the site first goes polymorphic (a small linear list of 2–4 shapes, slower but still optimisable), then megamorphic past ~4 shapes — V8 abandons the per-site cache and falls back to a generic hash-lookup stub, and the function can no longer be well-optimised. Worse, if one path mutates types or deletes a property, objects fall into dictionary mode, and TurboFan's speculation about a fixed shape becomes invalid, so it deoptimizes back to the interpreter, re-collects feedback, and may deopt-loop. The fix is to make each hot call site see one shape: normalise payloads to a single shape before the hot path, or split into separate monomorphic functions." },
+    { q: "Why are short-lived allocations in a request handler cheap, and what is the allocation pattern that actually hurts GC?", a: "V8's heap is generational because most objects die young. New objects are allocated in the young generation, a small space split into two semi-spaces. Its collector, the Scavenge, is a copying collector: it copies only the still-live objects from one semi-space to the other and frees the entire source space in one move. Because it touches only survivors and most young objects are already dead, a Scavenge is fast and frequent — so a temporary array or intermediate object inside a request is genuinely cheap; it dies in the young space and costs almost nothing. Objects that survive a couple of Scavenges are promoted to the old generation, which is collected by Mark-Sweep-Compact — mark reachable, sweep dead, occasionally compact — an expensive, infrequent collector. The pattern that hurts is promoting garbage: holding references (caches, leaked closures, buffers parked on long-lived objects) that keep short-lived objects alive just long enough to reach the old generation, where reclaiming them is costly and can drive long GC pauses. So don't fear small per-request allocations; fear accidental retention. Object pooling only pays off when profiling proves a real promotion or Scavenge-rate problem, and otherwise tends to add old-gen pressure." },
+  ]}
+/>
+
+<Recap lang="en">
+V8 invents types for type-less JavaScript: every object points to a hidden class recording its exact layout, and objects built the same way — same properties, same order — share one hidden class, so a property access becomes a direct offset read. At each access site an inline cache caches the shape it sees: monomorphic (one shape) is the fast path, polymorphic (2–4) is tolerable, and megamorphic (more than ~4) is the cliff where V8 falls back to a generic hash lookup. Hot functions tier up — Ignition interprets and gathers feedback, Sparkplug emits baseline machine code, Maglev mid-optimises, and TurboFan produces peak speculative code that assumes stable shapes and types; when that assumption breaks it deoptimizes back to the interpreter. The reliable deopt triggers you control are shape churn: adding properties out of order, `delete` (which drops an object into slow dictionary mode), and mixing value types in a slot or array. Use `obj.prop = undefined` over `delete`, normalise payloads to one shape before the hot path, and prefer rest params over leaking `arguments`. On memory, the heap is generational: short-lived allocations die in the young space and are reclaimed by a cheap, frequent Scavenge, so small per-request objects are nearly free — what hurts is promoting garbage into the old generation, collected by costly Mark-Sweep-Compact. Peek at optimisation state with `node --allow-natives-syntax` and `%GetOptimizationStatus` only as a diagnostic, never in production. Type-stable, stable-shaped, monomorphic code is fast code.
+</Recap>

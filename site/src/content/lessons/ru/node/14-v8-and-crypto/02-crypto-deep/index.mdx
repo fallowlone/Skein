@@ -1,0 +1,266 @@
+---
+concepts:
+- hashing-vs-hmac
+- password-kdf
+- asymmetric-sign-verify
+- csprng-randombytes
+- timing-safe-equal
+deepensInto: []
+estMin: 16
+lang: ru
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: 02-crypto-deep
+sources:
+- https://nodejs.org/api/crypto.html
+- https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- https://codahale.com/a-lesson-in-timing-attacks/
+spiral: []
+status: ready
+summary: 'Модуль crypto в Node корректен только при правильном выборе примитива: scrypt для паролей, HMAC для аутентифицированной целостности, randomBytes для секретов, timingSafeEqual для сравнения. Быстрые хэши и === — это баги.'
+title: 'Node crypto без ошибок: KDF, HMAC, подписи и сравнение за константное время'
+track: node
+unit: 14-v8-and-crypto
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Команда хранила пароли как `sha256(password)` — быстро, «захэшировано», на ревью выглядит нормально. Потом утёк бэкап. Поскольку SHA-256 спроектирован быть быстрым, GPU атакующего перебирал миллиарды догадок в секунду сразу по всем строкам, а отсутствие salt означало, что одна заранее посчитанная rainbow-таблица мгновенно вскрыла популярные пароли. Та же кодовая база сравнивала API-токены через `===`, утекая тайминг, который позволял восстановить валидный токен байт за байтом. Каждый из этих случаев — это `crypto` с неправильным примитивом, а правильный был в одном вызове функции.
+</Hook>
+
+<Crux>Выбирай примитив по задаче: scrypt для паролей, HMAC для целостности с ключом, randomBytes для секретов, timingSafeEqual для сравнения.</Crux>
+
+<Explanation>
+
+## Хэш против HMAC: целостность, а затем *аутентифицированная* целостность
+
+Обычный хэш отвечает на один вопрос: менялись ли эти байты? `crypto.createHash('sha256')` отображает вход в дайджест фиксированной длины, поэтому одинаковый вход всегда даёт одинаковый выход, и любая подмена его меняет. Это годится для контрольной суммы контента или ключа кэша — но ничего не доказывает о том, *кто* его произвёл. Дайджест может пересчитать кто угодно, поэтому атакующий, изменивший сообщение, просто пересчитает его хэш, и ты этого не отличишь.
+
+HMAC закрывает этот пробел. Он подмешивает в хэш **секретный ключ**, поэтому валидный тег могут произвести или проверить только стороны, владеющие ключом. Используй обычный хэш для целостности против случайного повреждения; используй HMAC, когда нужна *аутентифицированная* целостность — доказательство, что значение пришло от того, кто знает ключ. Подписанные cookie, подписи webhook'ов (Stripe, GitHub) и stateless-токены опираются на HMAC, а не на голый хэш.
+
+```js
+const crypto = require('node:crypto');
+
+// Обычный хэш — только целостность, пересчитать может кто угодно
+const digest = crypto.createHash('sha256').update(payload).digest('hex');
+
+// HMAC — с ключом, валидный тег производят/проверяют только владельцы ключа
+const key = process.env.WEBHOOK_SECRET;
+const tag = crypto.createHmac('sha256', key).update(rawBody).digest('hex');
+// позже: сравни `tag` со значением из заголовка через timingSafeEqual (ниже)
+```
+
+## Паролям нужен KDF, а не быстрый хэш
+
+Баг из хука — самая частая crypto-ошибка в веб-приложениях: хэширование паролей быстрым алгоритмом. SHA-256, SHA-512 и MD5 *спроектированы* быть быстрыми, а это ровно то, чего для паролей хотеть не надо: скорость помогает атакующему перебирать офлайн. Утёкшая база несолёных SHA-256-дайджестов падает под GPU, делающими миллиарды догадок в секунду, а одинаковые пароли дают одинаковые дайджесты, поэтому работают rainbow-таблицы и атаки «взломай раз — подбери многим».
+
+Хранению паролей нужна **функция вывода ключа** (KDF): намеренно медленная, memory-hard и солёная для каждого пароля. Node поставляет `scrypt` и `pbkdf2` нативно; `argon2` и `bcrypt` доступны через библиотеки. Salt (из CSPRNG) делает каждый хэш уникальным, так что одинаковые пароли различаются, а rainbow-таблицы умирают; cost factor делает каждую догадку дорогой. Всегда используй **асинхронную** форму, чтобы не блокировать event loop, пока KDF намеренно жжёт CPU.
+
+```js
+const crypto = require('node:crypto');
+
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);          // уникальный на пароль, из CSPRNG
+    // cost N=2**15, выход 64 байта; salt хранится рядом с хэшем
+    crypto.scrypt(password, salt, 64, { N: 2 ** 15 }, (err, hash) => {
+      if (err) return reject(err);
+      resolve(`${salt.toString('hex')}:${hash.toString('hex')}`);
+    });
+  });
+}
+
+function verifyPassword(password, stored) {
+  return new Promise((resolve, reject) => {
+    const [saltHex, hashHex] = stored.split(':');
+    const salt = Buffer.from(saltHex, 'hex');
+    const expected = Buffer.from(hashHex, 'hex');
+    crypto.scrypt(password, salt, expected.length, { N: 2 ** 15 }, (err, actual) => {
+      if (err) return reject(err);
+      resolve(crypto.timingSafeEqual(actual, expected)); // константное время, ниже
+    });
+  });
+}
+```
+
+<Inset kind="why" lang="ru">
+Почему «быстро» — это враг? Обычный логин проверяет один пароль на запрос — микросекунды в любую сторону пользователю незаметны. Но атакующий с утёкшим дампом хэшей гоняет офлайн против твоих хранимых хэшей без rate limit и без сетевого round-trip. Если твой хэш быстрый — он тестирует миллиарды в секунду; если это настроенный scrypt с высоким `N` — тысячи. Cost factor — это ручка, которую ты крутишь вверх с годами по мере роста железа; асимметрия между одним честным логином и миллиардом догадок атакующего и есть весь смысл.
+</Inset>
+
+## Асимметричные подписи: доказать происхождение без общего секрета
+
+HMAC работает, когда обе стороны делят один секрет. Когда не могут — ты хочешь опубликовать нечто, что проверить может *кто угодно*, а произвести только ты (релиз ПО, JWT, подписанный сервером авторизации, лицензия) — нужна **асимметричная** подпись. Ты подписываешь **приватным** ключом, а проверяет любой соответствующим **публичным**. Публичный ключ не даёт никакой возможности подделать; подписать может только приватный.
+
+```js
+const crypto = require('node:crypto');
+
+const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+
+// Подпись приватным ключом (Ed25519 принимает null как аргумент алгоритма)
+const signature = crypto.sign(null, Buffer.from(message), privateKey);
+
+// Любой с публичным ключом проверяет — возвращает true/false
+const ok = crypto.verify(null, Buffer.from(message), publicKey, signature);
+```
+
+Для потоковых или больших входов используй объектный API `crypto.createSign('SHA256')` / `crypto.createVerify('SHA256')` с ключами RSA или ECDSA: многократно `.update(chunk)`, затем `.sign(privateKey)` / `.verify(publicKey, sig)`. Выбор ключа — HMAC против подписи — про то, можно ли доверять проверяющим силу подписи.
+
+<TradeoffMatrix
+  id="02-crypto-deep-tradeoff-1"
+  lessonSlug="02-crypto-deep"
+  lang="ru"
+  prompt="Нужно дать многим третьим сторонам проверять, что сообщение пришло от твоего сервиса, при этом никто из них не должен мочь подделывать сообщения. Выбери примитив."
+  options={[
+    { name: "Асимметричная подпись (Ed25519/RSA): подпись приватным ключом, публичный раздаётся для проверки", summary: "Проверка без силы подделки.", correct: true, justification: "Это ровно асимметричный случай. Проверяющие держат только публичный ключ, который позволяет проверить подпись, но никогда — произвести её, поэтому его можно раздать любому числу недоверенных сторон. Приватный ключ есть только у твоего сервиса — он единственный, кто может подписать. Так работают JWT RS256/EdDSA, подписанные релизы и проверка webhook'ов через границы доверия." },
+    { name: "HMAC-SHA256 с общим секретом, выданным каждой третьей стороне", summary: "Общий ключ.", justification: "HMAC требует, чтобы каждый проверяющий держал тот же секрет, которым произведён тег, — а значит любой проверяющий может и подделывать сообщения. Годится, когда обе стороны — один домен доверия (твои сервисы, подписанные cookie), но проваливает требование, что третьи стороны НЕ должны мочь подделывать. Один HMAC-ключ на много сторон означает, что одна утечка подделывает всё." },
+    { name: "Обычный SHA-256 сообщения, добавленный как контрольная сумма", summary: "Голый хэш.", justification: "У голого хэша нет ключа, поэтому пересчитать его над подменённым сообщением может кто угодно. Он доказывает, что байты не повредились случайно, а не что они пришли от тебя. Атакующий просто перепишет сообщение и его хэш. Никогда не используй хэш без ключа для аутентичности." },
+    { name: "scrypt сообщения с серверным salt", summary: "KDF не по назначению.", justification: "scrypt — это парольный KDF: медленный, солёный, спроектированный сопротивляться перебору низкоэнтропийных секретов. Это не схема подписи: нет деления на публичный/приватный, нет способа третьей стороне проверить происхождение, а гонять его на каждое сообщение бессмысленно дорого. Совершенно не тот инструмент." },
+  ]}
+/>
+
+## Случайность и сравнение за константное время: два тихих footgun'а
+
+Ещё две ошибки коварны, потому что код *работает нормально*. Первая — **случайность**: `Math.random()` — это быстрый PRNG без криптографических гарантий; его выход предсказуем и никогда не должен генерировать токены, salt, session ID или ключи. Используй `crypto.randomBytes(n)` (CSPRNG) для сырых байтов и `crypto.randomUUID()` для идентификаторов. Вторая — **сравнение**: сравнение секретов через `===`, `==` или `Buffer.compare` выходит на первом отличающемся байте, поэтому затраченное время утекает, сколько ведущих байтов совпало — и атакующий восстанавливает токен байт за байтом, измеряя время ответа. Используй `crypto.timingSafeEqual(a, b)`, который сравнивает за константное время. Он требует два `Buffer` **равной длины** (иначе бросает исключение), поэтому сначала приведи обе стороны к фиксированной длине хэшем или проверь длину перед вызовом.
+
+```js
+const crypto = require('node:crypto');
+
+// НЕВЕРНО — утекает через тайминг, сколько ведущих байтов совпало
+if (userToken === storedToken) grantAccess();
+
+// ВЕРНО — константное время; оба Buffer должны быть равной длины
+const a = Buffer.from(userToken);
+const b = Buffer.from(storedToken);
+if (a.length === b.length && crypto.timingSafeEqual(a, b)) grantAccess();
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Задача</th>
+        <th class="border border-border px-3 py-2 text-left">Правильный примитив</th>
+        <th class="border border-border px-3 py-2 text-left">Неверный выбор и почему он провален</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Хранить пароль</td>
+        <td class="border border-border px-3 py-2"><code>crypto.scrypt</code> / <code>pbkdf2</code> (async, salt, высокий cost)</td>
+        <td class="border border-border px-3 py-2"><code>sha256</code>/<code>md5</code> — быстрый + без salt → GPU-перебор, rainbow-таблицы</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Аутентифиц. целостность (общий ключ)</td>
+        <td class="border border-border px-3 py-2"><code>crypto.createHmac</code></td>
+        <td class="border border-border px-3 py-2">голый <code>createHash</code> — без ключа, атакующий пересчитает дайджест</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Проверяемое происхождение, недоверенные проверяющие</td>
+        <td class="border border-border px-3 py-2"><code>crypto.sign</code>/<code>verify</code> (Ed25519/RSA)</td>
+        <td class="border border-border px-3 py-2">HMAC — каждый проверяющий может и подделывать</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Токен / salt / session ID</td>
+        <td class="border border-border px-3 py-2"><code>crypto.randomBytes</code> / <code>randomUUID</code></td>
+        <td class="border border-border px-3 py-2"><code>Math.random()</code> — предсказуем, не CSPRNG</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Сравнить два секрета</td>
+        <td class="border border-border px-3 py-2"><code>crypto.timingSafeEqual</code> (Buffer равной длины)</td>
+        <td class="border border-border px-3 py-2"><code>===</code>/<code>==</code> — ранний выход утекает тайминг → восстановление по байту</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<FlowDiagram
+  label="Поток проверки пароля: вывести scrypt-хэш из присланного пароля и хранимого salt, затем сравнить с хранимым хэшем за константное время"
+  hue="var(--d-systems)"
+  perRow="4"
+  nodes={[
+    { id: "in", label: "Попытка входа", sub: "пароль" },
+    { id: "salt", label: "Загрузить", sub: "salt + хэш" },
+    { id: "kdf", label: "scrypt", sub: "медленно + salt" },
+    { id: "cmp", label: "timingSafeEqual", sub: "константа" },
+  ]}
+  edges={[
+    { from: "in", to: "salt" },
+    { from: "salt", to: "kdf", label: "salt" },
+    { from: "kdf", to: "cmp", label: "вывод" },
+  ]}
+  caption="Никогда не храни и не сравнивай сырой пароль. Выведи заново с тем же salt и cost, затем сравни два дайджеста фиксированной длины через timingSafeEqual — равная длина, константное время."
+/>
+
+<Quiz
+  id="02-crypto-deep-quiz-1"
+  lessonSlug="02-crypto-deep"
+  lang="ru"
+  question="Сервис хранит пароли как crypto.createHash('sha256').update(password).digest('hex'). Почему это небезопасно?"
+  choices={[
+    { label: "SHA-256 здесь быстрый и без salt, поэтому утёкший дамп падает под GPU-перебор и rainbow-таблицы; паролям нужен медленный солёный KDF вроде scrypt", correct: true },
+    { label: "SHA-256 даёт коллизии, поэтому два пароля отображаются в один хэш", misconception: "SHA-256 устойчив к коллизиям; проблема не в этом. Проблема в том, что он быстрый и используется без salt на пароль, поэтому офлайн-перебор и rainbow-таблицы дёшевы. Фикс — медленный солёный KDF, а не другой обычный хэш." },
+    { label: "Нужно использовать SHA-512, который безопасен для паролей", misconception: "SHA-512 тоже быстрый хэш и так же неверен для паролей. Дело в классе алгоритма, а не в размере дайджеста — нужен намеренно медленный, memory-hard KDF (scrypt/argon2/bcrypt/pbkdf2)." },
+    { label: "Ничего — хэширование это ровно то, что нужно хранению паролей", misconception: "Хэширование само по себе необходимо, но недостаточно. Быстрый несолёный хэш перебираем офлайн; хранению паролей нужен именно солёный KDF с настроенным cost." },
+  ]}
+/>
+
+<Quiz
+  id="02-crypto-deep-quiz-2"
+  lessonSlug="02-crypto-deep"
+  lang="ru"
+  question="Почему заменять `userToken === storedToken` на crypto.timingSafeEqual при сравнении секрета?"
+  choices={[
+    { label: "=== выходит на первом отличающемся байте, поэтому время сравнения утекает, сколько ведущих байтов совпало, позволяя восстановить токен байт за байтом; timingSafeEqual сравнивает за константное время", correct: true },
+    { label: "=== не умеет сравнивать Buffer, поэтому всегда возвращает false", misconception: "=== работает на строках и сравнивает Buffer по ссылке, но проблема безопасности не в этом. Уязвимость — это тайминговый side channel от раннего выхода, который timingSafeEqual устраняет." },
+    { label: "timingSafeEqual ещё и хэширует входы, делая их секретными", misconception: "timingSafeEqual не хэширует — он лишь сравнивает два Buffer равной длины за константное время. Его задача — убрать тайминговый side channel; он требует равной длины и иначе бросает исключение." },
+    { label: "=== медленнее, чем timingSafeEqual", misconception: "=== обычно быстрее в среднем — в этом и опасность. Переменное, зависящее от входа время и есть утечка. timingSafeEqual намеренно константен по времени, а не быстрее." },
+  ]}
+/>
+
+<DragOrder
+  id="02-crypto-deep-drag-1"
+  lessonSlug="02-crypto-deep"
+  lang="ru"
+  prompt="Расставь шаги безопасной проверки присланного пароля против хранимого scrypt-хэша:"
+  items={[
+    { id: "a", label: "Разбей хранимое значение на salt и ожидаемый хэш" },
+    { id: "b", label: "Перезапусти scrypt на присланном пароле с этим salt и тем же cost factor" },
+    { id: "c", label: "Убедись, что выведенный и ожидаемый хэш — Buffer равной длины" },
+    { id: "d", label: "Сравни их через crypto.timingSafeEqual (константное время)" },
+    { id: "e", label: "Дай или отклони доступ по булеву результату" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Сопоставляй примитив задаче: scrypt/pbkdf2 (async, salt) для паролей, не быстрый хэш; HMAC для целостности с ключом; sign/verify для недоверенных сторон; randomBytes для секретов; timingSafeEqual для сравнения.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-crypto-deep-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему хранить пароли через sha256 небезопасно и что использовать вместо?", a: "SHA-256 (как SHA-512 и MD5) сделан быстрым — ровно неподходящее свойство для хранения паролей. Атакующий, укравший дамп хэшей, гоняет офлайн без rate limit, и быстрый хэш позволяет GPU перебирать миллиарды догадок в секунду сразу по всем строкам. Если хэши без salt, одинаковые пароли дают одинаковые дайджесты, поэтому одна заранее посчитанная rainbow-таблица вскрывает популярные, и один взлом подходит многим аккаунтам. Фикс — функция вывода ключа: scrypt или pbkdf2 в Node (или argon2/bcrypt через библиотеки). KDF намеренно медленный и memory-hard, и ты даёшь ему salt на каждый пароль из crypto.randomBytes, чтобы каждый хэш был уникален, а rainbow-таблицы умерли. Всегда используй асинхронную форму (crypto.scrypt(...callback)), чтобы намеренно дорогое вычисление не блокировало event loop, храни salt рядом с хэшем и крути cost factor вверх с годами по мере роста железа." },
+    { q: "Почему сравнение секрета через === утекает информацию и как timingSafeEqual это чинит?", a: "=== (и ==, и Buffer.compare) сравнивает байт за байтом и возвращает результат в момент первого несовпадения. Значит сравнение длится чуть дольше, чем больше ведущих байтов верны — это зависящая от входа разница во времени. Атакующий, способный измерить время ответа, шлёт догадки и смотрит, какой префикс отклоняется на микросекунды дольше, восстанавливая валидный токен или HMAC-тег по одному байту, не зная всего значения заранее. crypto.timingSafeEqual закрывает это, сравнивая за константное время: он всегда просматривает каждый байт независимо от места первого отличия, поэтому длительность ничего не выдаёт о том, сколько совпало. Единственное ограничение — он требует два Buffer равной длины и иначе бросает исключение, поэтому либо приводи обе стороны к фиксированной длине хэшем, либо проверяй длину перед вызовом (и заметь, что сама длина может утечь — поэтому хэш до фиксированного размера самый чистый паттерн)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Модуль crypto в Node настолько безопасен, насколько верен твой выбор примитива. Обычный хэш (createHash) даёт целостность, но не аутентичность — пересчитать может кто угодно — поэтому тянись к HMAC (createHmac), когда нужно доказать, что значение пришло от владельца ключа, как в подписях webhook'ов и подписанных cookie. Пароли — отдельная категория: никогда не быстрый хэш вроде SHA-256 или MD5, которые падают под офлайн GPU-перебор и rainbow-таблицы, а намеренно медленный, солёный KDF — scrypt или pbkdf2 в асинхронной форме, с salt на каждый пароль из CSPRNG и cost factor, который ты поднимаешь со временем. Когда проверяющим нельзя доверить силу подписи, переходи с HMAC на асимметричные подписи (crypto.sign/verify или createSign/createVerify с парой ключей Ed25519 или RSA): подписывай приватным ключом, дай любому проверять публичным. Генерируй каждый секрет, salt и ID через crypto.randomBytes или crypto.randomUUID, никогда Math.random, который не CSPRNG. И сравнивай любые два секрета через crypto.timingSafeEqual на Buffer равной длины, никогда === или ==, потому что сравнение с ранним выходом утекает тайминг, позволяющий восстановить секрет байт за байтом. Правильный примитив, правильный вызов — неверный учит привычке, которая тихо отгружает уязвимость.
+</Recap>
