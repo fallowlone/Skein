@@ -1,13 +1,266 @@
 ---
-slug: "03-middleware-and-errors"
+concepts:
+- middleware-pipeline
+- middleware-order
+- error-boundary
+- async-error-forwarding
+- graceful-shutdown
+- readiness-drain
+deepensInto: []
+estMin: 18
 lang: en
-track: "node"
-unit: "05-http-and-frameworks"
+lessonType: topic
+level: middle
 order: 3
-title: "Middleware, error handling, graceful shutdown"
-summary: "Middleware, error handling, graceful shutdown — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 03-middleware-and-errors
 sources:
-  - https://expressjs.com/en/guide/error-handling.html
+- https://expressjs.com/en/guide/writing-middleware.html
+- https://expressjs.com/en/guide/error-handling.html
+- https://nodejs.org/api/http.html#serverclosecallback
+spiral: []
+status: ready
+summary: 'Middleware is an ordered pipeline ending in one 4-arg error boundary that
+  maps typed errors to status codes and a safe body. Async throws need forwarding in
+  Express 4, and SIGTERM must drain in-flight requests via server.close() before exit.'
+title: 'Middleware, error boundaries, and graceful shutdown'
+track: node
+unit: 05-http-and-frameworks
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Every deploy, the dashboards lit up with a burst of 502s — a few hundred failed requests, then quiet. The app itself was healthy; the rollout just killed pods mid-request. Kubernetes sent `SIGTERM`, the old process died instantly, and every in-flight request — including a 9-second report export — was severed at the socket, surfacing to the load balancer as a 502. The fix wasn't a bigger cluster or a retry library. It was eight lines: catch `SIGTERM`, call `server.close()` to stop accepting new connections while letting open ones finish, then exit. The outage was never about capacity. It was about a process that didn't know how to say goodbye.
+</Hook>
+
+<Crux>Middleware runs in registration order; one 4-arg handler maps typed errors to status; SIGTERM must drain in-flight requests first.</Crux>
+
+<Explanation>
+
+## Middleware is an ordered pipeline
+
+An HTTP framework like Express is, at its core, an array of functions called in the order you registered them. Each `(req, res, next)` runs, does its slice of work, and calls `next()` to hand control to the next one — or calls `next(err)` to skip everything and jump straight to the error handler. The request flows through the array; the response flows back. Because it's an ordered array, **registration order is behaviour, not style**: a body parser registered after a route means the route sees `req.body` as `undefined`; an auth check registered after a protected route means the route runs for unauthenticated users.
+
+```js
+import express from "express";
+const app = express();
+
+app.use(logger);              // 1. cross-cutting: runs for every request
+app.use(express.json());      // 2. body parser — MUST precede routes that read req.body
+app.use(authenticate);        // 3. populates req.user (or next(err) on bad token)
+
+app.get("/orders/:id", requireAuth, getOrder); // 4. routes, after their prerequisites
+
+app.use(notFound);            // 5. 404 — only reached if no route matched
+app.use(errorHandler);        // 6. error boundary — 4 args, registered LAST
+```
+
+The mental model is a funnel: cross-cutting concerns first (logging, request id, CORS), then parsing, then authentication and authorization, then validation, then the route. The two terminal handlers — a 404 catch-all and the error boundary — go **after** every route, because middleware after a `res.send()` (or after a matched route ends the response) never runs. Composition is the payoff: logging, auth, rate-limiting, and validation each live in one reusable function instead of being copy-pasted into every handler.
+
+## One centralized error boundary
+
+Express recognizes one special shape: a middleware with **four** arguments, `(err, req, res, next)`. The arity is the signal — Express counts `fn.length === 4` to classify it as the error handler, so dropping `next` by accident turns your error handler into a silently-skipped normal middleware. You want exactly one of these, registered last, and it does three jobs: map a typed error to a status code, send a **safe** body to the client, and log the **full** error for operators.
+
+```js
+function errorHandler(err, req, res, next) {
+  if (res.headersSent) return next(err); // response started — let Express close it
+
+  const status = err.status ?? statusFor(err); // ValidationError→400, NotFoundError→404
+  logger.error({ err, reqId: req.id }, "request failed"); // full stack + cause for ops
+
+  res.status(status).json({
+    error: { code: err.code ?? "INTERNAL", message: status < 500 ? err.message : "Internal error" },
+  }); // 5xx hides internals; 4xx can echo the validation message
+}
+```
+
+The crucial separation is **client view vs operator view**. The client gets a stable shape — a code and a message — and for 5xx that message is a generic `"Internal error"`, never a stack trace, a SQL fragment, or a file path. Leaking a stack to the client hands an attacker your dependency versions and internal structure. Operators get the opposite: the whole `Error` object with its `stack` and `cause` chain in the logs. One place decides the mapping, so a new error type means one edit, not a grep across every handler.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Middleware</th>
+        <th class="border border-border px-3 py-2 text-left">Must come before</th>
+        <th class="border border-border px-3 py-2 text-left">Failure if misordered</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Body parser (<code>express.json()</code>)</td>
+        <td class="border border-border px-3 py-2">any route reading <code>req.body</code></td>
+        <td class="border border-border px-3 py-2"><code>req.body</code> is <code>undefined</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Auth / <code>requireAuth</code></td>
+        <td class="border border-border px-3 py-2">protected routes</td>
+        <td class="border border-border px-3 py-2">handler runs for anonymous users</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">404 catch-all</td>
+        <td class="border border-border px-3 py-2">the error handler, after all routes</td>
+        <td class="border border-border px-3 py-2">never reached, or shadows real routes</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Error handler (4-arg)</td>
+        <td class="border border-border px-3 py-2">nothing — it is LAST</td>
+        <td class="border border-border px-3 py-2">if first, it never runs at all</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="05-middleware-and-errors-quiz-1"
+  lessonSlug="03-middleware-and-errors"
+  lang="en"
+  question="Why must the error-handling middleware be registered LAST, after all routes and the 404 handler, and why does it need four arguments?"
+  choices={[
+    { label: "Express routes to the error handler only via next(err) from earlier middleware/routes, so it must sit after them to receive their errors; and Express identifies it by arity — fn.length === 4, (err, req, res, next) — so dropping next reclassifies it as a normal middleware", correct: true },
+    { label: "The order is just convention; Express finds the error handler anywhere by its name", misconception: "Express has no name-based lookup. It detects the error handler purely by its 4-argument signature and only reaches it through next(err) flowing forward, so position and arity both matter." },
+    { label: "Four arguments make it run faster; last just looks tidy", misconception: "Arity is not a performance hint — it is how Express classifies the function as an error handler. And last is mandatory: registered before the routes, no later next(err) can reach it." },
+    { label: "It must be last so it can call next() to continue to the routes", misconception: "An error handler ends the response; it does not fall through to routes. It is last precisely because it is the terminal handler, and it usually does not call next() except when headers are already sent." },
+  ]}
+/>
+
+## Async errors and validation at the boundary
+
+Here is the Express 4 trap that produces silent, hung requests. A synchronous `throw` inside a handler is caught by Express and routed to the error handler. But a rejection inside an `async` handler is **not** — Express 4 never `await`s your handler, so the rejected promise escapes into `process` as an `unhandledRejection`, the client's request hangs until it times out, and your error boundary never sees it.
+
+```js
+// Express 4: this rejection is NOT caught — request hangs, unhandledRejection fires
+app.get("/users/:id", async (req, res) => {
+  const user = await db.findUser(req.params.id); // rejects? escapes Express
+  res.json(user);
+});
+
+// Fix A — try/catch and forward explicitly
+app.get("/users/:id", async (req, res, next) => {
+  try { res.json(await db.findUser(req.params.id)); }
+  catch (err) { next(err); } // now it reaches the error boundary
+});
+
+// Fix B — a wrapper (or the express-async-errors package) does it for every route
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+app.get("/users/:id", wrap(async (req, res) => res.json(await db.findUser(req.params.id))));
+```
+
+**Express 5 fixes this at the framework level**: a rejected promise returned from a handler is forwarded to `next(err)` automatically, so the wrapper becomes unnecessary. Until you're on 5, wrap every async handler. The companion pattern is validation middleware (zod, joi, celebrate) that rejects malformed input *at the boundary* with a `400` before any handler logic runs — so your business code can assume `req.body` is already the right shape, and bad input becomes a clean typed `ValidationError` instead of a deep `TypeError`.
+
+<Inset kind="why" lang="en">
+Why does the rejection "hang" the request instead of just crashing? When the async handler rejects, no code ever calls `res.send`, `res.json`, or `next` for that request. Express has no timeout of its own, so the socket stays open with the client waiting. The process keeps serving other requests; only that one connection is stuck until the client or a proxy gives up (often 30–60s). That's why it's worse than a crash — it's invisible in success metrics and only shows up as latency outliers and an `unhandledRejection` in the logs.
+</Inset>
+
+<Quiz
+  id="05-middleware-and-errors-quiz-2"
+  lessonSlug="03-middleware-and-errors"
+  lang="en"
+  question="On Express 4, an async route handler does `await db.query(...)` which rejects, with no try/catch and no wrapper. What happens?"
+  choices={[
+    { label: "Express never awaits the handler, so the rejection escapes the framework: no response is sent, the request hangs until the client times out, and the rejection surfaces as a process-level unhandledRejection — it does NOT reach your error handler", correct: true },
+    { label: "Express catches the rejection and routes it to your 4-arg error handler automatically", misconception: "That is Express 5 behaviour. Express 4 does not await handler return values, so a rejected promise is invisible to it and never reaches next(err) — you must forward it yourself with try/catch or a wrapper." },
+    { label: "The request returns a 500 immediately because the promise rejected", misconception: "Nothing sends a 500 — no code in the request path runs after the rejection, so no status is ever set. The socket simply hangs open until the client or a proxy times out." },
+    { label: "Node retries the awaited call until it succeeds", misconception: "Node has no automatic retry for a rejected await. The rejection propagates as an unhandled rejection; retries are something you build explicitly, not a default." },
+  ]}
+/>
+
+## Graceful shutdown on SIGTERM
+
+Orchestrators stop a process by sending `SIGTERM` (Kubernetes, Docker `stop`, and systemd all do this). The default Node behaviour for `SIGTERM` is to exit immediately — dropping every in-flight request. Graceful shutdown means: stop accepting **new** connections, let **existing** requests finish, release resources, then exit.
+
+```js
+process.on("SIGTERM", async () => {
+  isReady = false; // 1. flip readiness so the LB stops routing new traffic
+
+  server.close(async () => { // 2. stop accepting new conns; callback fires when in-flight finish
+    await pool.end();        // 3. close DB pool and other resources
+    process.exit(0);
+  });
+
+  setTimeout(() => process.exit(1), 10_000).unref(); // 4. hard cap — don't hang forever
+});
+```
+
+Four points matter. **First**, flip the readiness probe to "not ready" *before* `server.close()`, so the load balancer drains you instead of sending requests to a port that's about to close. **Second**, `server.close()` stops new connections and fires its callback only once existing requests complete. **Third**, the hard `setTimeout(..., 10_000)` is mandatory: HTTP keep-alive leaves idle connections open, and an idle keep-alive socket counts as a "connection" that can keep `server.close()` from ever firing — so you force-exit after a deadline. **Fourth**, the numbers: Kubernetes' default `terminationGracePeriodSeconds` is **30s**, after which it sends `SIGKILL` and you lose control — so your hard timeout (e.g. 10s) must be comfortably under that window.
+
+<TradeoffMatrix
+  id="05-middleware-and-errors-tradeoff-1"
+  lessonSlug="03-middleware-and-errors"
+  lang="en"
+  prompt="On SIGTERM in a Kubernetes pod, how should an HTTP service shut down so a rolling deploy produces zero dropped requests?"
+  options={[
+    { name: "Flip readiness to not-ready, server.close() to drain in-flight, then close resources and exit — with a hard timeout fallback", summary: "Drain, then exit.", correct: true, justification: "This is the production-correct sequence. Flipping readiness first makes the load balancer stop sending NEW traffic before you stop accepting it, so no request is rejected at the door. server.close() lets in-flight requests finish, then you release the DB pool and exit 0. The hard setTimeout(…, 10s).unref() guards against idle keep-alive sockets that could otherwise keep server.close() from firing, and stays under the 30s terminationGracePeriodSeconds before SIGKILL." },
+    { name: "Call process.exit(0) immediately in the SIGTERM handler", summary: "Exit now.", justification: "This is exactly the bug from the hook. Exiting immediately severs every in-flight request at the socket, which the load balancer reports as 5xx/502 on every deploy. It also skips closing the DB pool, risking leaked connections. Fast, but it trades a clean process for dropped user requests." },
+    { name: "Ignore SIGTERM and let Kubernetes SIGKILL the pod after the grace period", summary: "Let it be killed.", justification: "Worse than exiting fast: you do nothing for the whole grace period and then get SIGKILL'd, which cannot be trapped and gives zero chance to finish in-flight work or close resources. You drop requests AND wait 30s to do it. SIGKILL is a last resort, not a shutdown strategy." },
+    { name: "server.close() but skip the readiness flip and the hard timeout", summary: "Drain only.", justification: "Better than killing instantly, but two gaps remain. Without flipping readiness first, the LB may still route new requests to a server that's closing, causing connection errors. Without the hard timeout, an idle keep-alive socket can keep server.close() from ever firing, so the pod hangs until SIGKILL at 30s. Drain correctly AND guard the edges." },
+  ]}
+/>
+
+<DragOrder
+  id="05-middleware-and-errors-drag-1"
+  lessonSlug="03-middleware-and-errors"
+  lang="en"
+  prompt="Order the graceful-shutdown sequence after a SIGTERM arrives, so a rolling deploy drops zero requests:"
+  items={[
+    { id: "a", label: "SIGTERM arrives from the orchestrator (Kubernetes / Docker / systemd)" },
+    { id: "b", label: "Flip the readiness probe to 'not ready' so the load balancer drains new traffic" },
+    { id: "c", label: "Call server.close() to stop accepting new connections while in-flight requests finish" },
+    { id: "d", label: "In server.close()'s callback, close the DB pool and other resources" },
+    { id: "e", label: "process.exit(0) — or a hard setTimeout forces exit(1) if draining stalls" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A request flowing through the middleware pipeline to a response or the error boundary"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "log", label: "logger", sub: "cross-cut" },
+    { id: "body", label: "body parser", sub: "req.body" },
+    { id: "auth", label: "auth + validate", sub: "req.user" },
+    { id: "h", label: "route handler", sub: "logic" },
+    { id: "err", label: "error boundary", sub: "4-arg" },
+    { id: "res", label: "response", sub: "client" },
+  ]}
+  edges={[
+    { from: "log", to: "body" },
+    { from: "body", to: "auth" },
+    { from: "auth", to: "h", label: "next()" },
+    { from: "h", to: "res", label: "res.json" },
+    { from: "h", to: "err", label: "next(err)" },
+    { from: "err", to: "res", label: "status+body" },
+  ]}
+  caption="Each middleware calls next() to advance or next(err) to jump to the single 4-arg error boundary at the end. The boundary maps a typed error to a status, sends a safe client body, and logs the full error — while order earlier in the chain (parse before route, auth before protected route) decides whether the handler even sees valid input."
+/>
+
+<KeyTakeaway>Order is behaviour: parse before routes, auth before protected routes, error handler LAST. In Express 4 forward async rejections to one 4-arg boundary. On SIGTERM, drain via `server.close()` plus a hard timeout.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-middleware-and-errors-retrieval"
+  lang="en"
+  questions={[
+    { q: "In Express 4, why does a rejection inside an async route handler hang the request instead of reaching your error handler, and what are the two fixes?", a: "Express 4 calls your handler but never awaits the promise it returns, so a rejection has nowhere to go: Express doesn't see it, your error boundary is reached only via next(err) which never gets called, and no code ever calls res.send/res.json/next for that request. The socket stays open — Express has no built-in request timeout — so the client hangs until it or a proxy times out (often 30–60s), while the rejection surfaces as a process-level unhandledRejection in the logs. It's worse than a crash because success metrics look fine; it only shows as latency outliers. Two fixes: (A) wrap the handler body in try/catch and call next(err) explicitly so the rejection enters the normal error path; or (B) wrap every async handler with a helper like const wrap = fn => (req,res,next) => Promise.resolve(fn(req,res,next)).catch(next) (the express-async-errors package patches this globally). Express 5 removes the trap entirely: it forwards a rejected handler promise to next(err) automatically." },
+    { q: "Walk through a correct graceful shutdown on SIGTERM, and explain why the hard timeout and the readiness flip are both required.", a: "On SIGTERM: (1) flip the readiness probe to 'not ready' first, so the load balancer stops routing NEW requests before you stop accepting them — otherwise the LB sends traffic to a server that's already closing and clients get connection errors. (2) Call server.close(), which stops accepting new connections and fires its callback only once all in-flight requests have finished — this is what prevents the 502 burst from severing live requests. (3) In that callback, release resources: close the DB pool (await pool.end()), flush logs, etc. (4) process.exit(0). The hard timeout — setTimeout(() => process.exit(1), 10_000).unref() — is mandatory because HTTP keep-alive leaves idle sockets open, and an idle keep-alive connection counts toward the connections server.close() waits on, so without a deadline server.close()'s callback may never fire and the pod hangs. The 10s figure must sit under Kubernetes' default terminationGracePeriodSeconds of 30s, after which the orchestrator sends an untrappable SIGKILL and you lose all control." },
+  ]}
+/>
+
+<Recap lang="en">
+An HTTP framework is an ordered pipeline of `(req, res, next)` functions: each calls `next()` to advance or `next(err)` to jump to the error handler, so registration order is behaviour — the body parser must precede routes that read `req.body`, auth must precede protected routes, and the 404 catch-all plus the error boundary must come after all routes. That boundary is one middleware with exactly four arguments, `(err, req, res, next)` — Express classifies it by arity — and it does three things: map a typed error to a status code (ValidationError→400, NotFoundError→404, else 500), send a safe client body that hides stacks and internals on 5xx, and log the full error with its cause chain for operators. The sharp Express 4 trap is that a rejection inside an `async` handler is never awaited, so it escapes to `unhandledRejection`, hangs the request, and never reaches your boundary — fix it with try/catch + `next(err)` or a wrapper, while Express 5 forwards rejected promises automatically and validation middleware rejects bad input with a 400 at the edge. Finally, graceful shutdown: on `SIGTERM`, flip readiness to not-ready so the load balancer drains you, call `server.close()` to finish in-flight requests, close the DB pool, and exit — with a hard `setTimeout` force-exit because idle keep-alive sockets can otherwise keep the server open past Kubernetes' 30s `terminationGracePeriodSeconds` and its untrappable `SIGKILL`.
+</Recap>

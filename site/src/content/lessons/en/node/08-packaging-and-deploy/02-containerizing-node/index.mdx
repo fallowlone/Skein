@@ -1,13 +1,263 @@
 ---
-slug: "02-containerizing-node"
+concepts:
+- multi-stage-build
+- pid-1-signals
+- graceful-shutdown
+- slim-base-image
+- non-root-user
+- dockerignore-and-healthcheck
+deepensInto: []
+estMin: 18
 lang: en
-track: "node"
-unit: "08-packaging-and-deploy"
+lessonType: topic
+level: middle
 order: 2
-title: "Containerizing Node"
-summary: "Containerizing Node — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-containerizing-node
 sources:
-  - https://docs.docker.com/guides/nodejs/containerize/
+- https://docs.docker.com/guides/nodejs/containerize/
+- https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md
+- https://docs.docker.com/build/building/multi-stage/
+spiral: []
+status: ready
+summary: 'A Node process running as PID 1 ignores SIGTERM by default, so deploys
+  hang the full grace period then hard-kill. Run node in exec form behind an init,
+  build a multi-stage slim non-root image, and add a healthcheck and .dockerignore.'
+title: 'Containerizing Node: PID 1, signals, and slim images'
+track: node
+unit: 08-packaging-and-deploy
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Every deploy of a checkout service took exactly thirty seconds longer than it should, and a thin slice of requests 502'd each time. The team blamed Kubernetes. The actual culprit was one line in the Dockerfile: `CMD npm start`. `npm` ran as PID 1, forked `node` as a child, and when the rollout sent `SIGTERM`, npm — with no signal handler and no forwarding — let it evaporate. Node never heard the shutdown, kept holding open connections, and Kubernetes waited out the full `terminationGracePeriodSeconds` before `SIGKILL` tore the pod down mid-request. The fix was four characters of JSON: `["node","server.js"]`. The image had been quietly fighting the orchestrator on every single release.
+</Hook>
+
+<Crux>A Node process as PID 1 ignores SIGTERM by default — use exec-form CMD, an init, and a slim non-root image.</Crux>
+
+<Explanation>
+
+## PID 1 is special, and Node is not built for it
+
+Inside a Linux container the first process started is PID 1, and the kernel treats PID 1 unlike any other process. Two rules bite Node specifically. First, **PID 1 gets no default signal handlers** — for a normal process the kernel installs a default action for `SIGTERM` (terminate), but for PID 1 there is *no* default, so a `SIGTERM` with no explicit handler is simply ignored. Second, **PID 1 must reap zombies**: when a child exits, its parent must `wait()` on it, and orphaned children are re-parented to PID 1. If PID 1 never reaps, dead children accumulate as zombies in the process table.
+
+Node *does* install its own `SIGTERM` listener path only if you add one — but the deadly variant is starting Node indirectly. `CMD npm start` makes **`npm`** PID 1; npm spawns `node` as a child and does not forward signals to it. So the orchestrator's `SIGTERM` hits npm (which ignores it as PID 1) and never reaches your application. The container appears to hang on shutdown.
+
+```dockerfile
+# ❌ npm is PID 1; SIGTERM dies at npm, node never hears it
+CMD npm start
+
+# ❌ shell form: /bin/sh -c "node server.js" → sh is PID 1, also no forwarding
+CMD node server.js
+
+# ✅ exec form: node IS PID 1, your in-app SIGTERM handler runs
+CMD ["node", "server.js"]
+```
+
+The shell form `CMD node server.js` is the same trap wearing a different hat: Docker wraps it as `/bin/sh -c "node server.js"`, so `sh` becomes PID 1 and `node` is its child — signals stop at the shell. Always use the **exec form** (the JSON array) for your server so `node` is PID 1 directly.
+
+## Handle SIGTERM, or put an init in front of it
+
+There are two complementary fixes, and production Node usually wants both.
+
+The first is to **run node directly (exec form) and handle `SIGTERM` in the app** for graceful shutdown: stop accepting new connections, finish in-flight requests, close the DB pool, then exit. This is what turns a hard kill into a clean drain.
+
+```js
+const server = app.listen(3000);
+
+process.on("SIGTERM", () => {
+  // stop taking new work, drain what's open, then exit cleanly
+  server.close(() => {
+    pool.end().then(() => process.exit(0));
+  });
+});
+```
+
+The second is to **run an init as PID 1** so something reaps zombies and forwards signals even if your code forgets. Docker ships one: `docker run --init` injects `tini` as PID 1, which forwards `SIGTERM` to your node child and reaps orphans. You can also bake `tini`/`dumb-init` into the image as the `ENTRYPOINT`. An init matters most when your process spawns children (a build tool, a `child_process`, a wrapper script) — without one, those orphans become zombies.
+
+<Inset kind="why" lang="en">
+Why not just always rely on the init and skip the in-app handler? Because `tini` forwards the signal — it doesn't drain your connections for you. Without a `SIGTERM` listener, node receives the forwarded signal and exits immediately, dropping in-flight requests. The init guarantees node *gets* the signal; your handler decides what graceful means. Init for delivery and reaping, app handler for drain — they solve different halves.
+</Inset>
+
+## Multi-stage builds and a slim, non-root base
+
+A single-stage image bakes your compiler, dev dependencies, and full toolchain into what you ship. A **multi-stage build** splits that: a `builder` stage runs `npm ci` and the build, and a thin runtime stage copies only the artifacts it needs.
+
+```dockerfile
+# ---- builder ----
+FROM node:22 AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci                      # full deps for the build
+COPY . .
+RUN npm run build               # → /app/dist
+
+# ---- runtime ----
+FROM node:22-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev           # prod deps only
+COPY --from=builder /app/dist ./dist
+USER node                       # the official image ships a non-root 'node' user
+CMD ["node", "dist/server.js"]
+```
+
+Two details earn their keep. **Copy `package*.json` and run `npm ci` *before* copying source.** Docker caches each layer by its inputs; if the dependency layer's inputs (the lockfile) don't change, the whole `npm ci` layer is reused from cache and your slow install is skipped — only a source change invalidates the cheap `COPY . .` below it. (Layer caching is covered in depth in the deployment track; here the Node-specific point is *lockfile before source*.) And **pick a slim base**: a full `node` image is roughly **1 GB**, while `node:slim` is a few hundred MB and a **distroless** Node runtime is in the **tens of MB** — a smaller image pulls faster and exposes a far smaller CVE surface because there's no shell or package manager to attack.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Pitfall</th>
+        <th class="border border-border px-3 py-2 text-left">Symptom in production</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>CMD npm start</code> as PID 1</td>
+        <td class="border border-border px-3 py-2">SIGTERM dies at npm; deploys hang ~30s then SIGKILL drops requests</td>
+        <td class="border border-border px-3 py-2">Exec form <code>CMD ["node","server.js"]</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Shell-form <code>CMD node server.js</code></td>
+        <td class="border border-border px-3 py-2"><code>sh</code> is PID 1, swallows the signal, zombies pile up</td>
+        <td class="border border-border px-3 py-2">Exec-form CMD and/or <code>--init</code> / tini</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Runs as root</td>
+        <td class="border border-border px-3 py-2">A code RCE owns the container; bigger blast radius</td>
+        <td class="border border-border px-3 py-2"><code>USER node</code> (non-root)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Single-stage image</td>
+        <td class="border border-border px-3 py-2">~1 GB image, slow pulls, huge CVE surface, dev deps shipped</td>
+        <td class="border border-border px-3 py-2">Multi-stage + slim/distroless runtime</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">No healthcheck, <code>.env</code> in image</td>
+        <td class="border border-border px-3 py-2">Dead pods stay in rotation; secrets leak in image layers</td>
+        <td class="border border-border px-3 py-2">HEALTHCHECK / probes + <code>.dockerignore</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Hardening: non-root, healthcheck, and .dockerignore
+
+Three cheap moves separate a toy image from a production one. **Run as non-root**: the official `node` image already ships an unprivileged `node` user, so a single `USER node` line means a code-execution bug can't trivially own the container. **Add a healthcheck** so the orchestrator knows when the process is actually serving — a Docker `HEALTHCHECK` curling a `/health` route, or in Kubernetes a `livenessProbe`/`readinessProbe` hitting `/health` and `/ready`; without one, a wedged process stays in the load-balancer rotation. **Add a `.dockerignore`** listing `node_modules`, `.git`, and `.env`: it keeps the build context small (faster builds) and, critically, prevents a committed `.env` from being copied into an image layer where the secret lives forever, recoverable by anyone who pulls the image.
+
+```dockerfile
+# .dockerignore
+node_modules
+.git
+.env
+*.log
+```
+
+On Kubernetes the numbers tie back to PID 1: when a pod is deleted the kubelet sends `SIGTERM`, waits `terminationGracePeriodSeconds` (**default 30s**), and only then sends `SIGKILL`. If node never receives the `SIGTERM` (npm/shell PID 1) or has no handler, every deploy burns the full 30 seconds and then hard-kills in-flight work — exactly the hook's slow, lossy rollout.
+
+<TradeoffMatrix
+  id="08-container-tradeoff-1"
+  lessonSlug="02-containerizing-node"
+  lang="en"
+  prompt="You want a containerized Node service to shut down gracefully on deploy and never accumulate zombie children. Which PID-1 strategy is the production default?"
+  options={[
+    { name: "Exec-form CMD running node directly, an in-app SIGTERM handler, AND an init (tini / --init) as PID 1", summary: "Init + handler.", correct: true, justification: "This is the senior default. The init (tini via --init or baked as ENTRYPOINT) guarantees node receives the forwarded SIGTERM and reaps any orphaned children, while the in-app handler drains in-flight requests and closes the DB pool before exiting. Init handles delivery and reaping; the app handles graceful drain. The two solve different halves of the problem, so together you get both signal correctness and a clean shutdown." },
+    { name: "Exec-form CMD with node as PID 1 and an in-app SIGTERM handler, no init", summary: "Handler only.", justification: "Better than the bad options and fine for a single-process server: node is PID 1, hears SIGTERM, and drains. But node-as-PID-1 still won't reap orphaned grandchildren, so if your process spawns children (build tools, child_process) zombies can accumulate. Add an init to cover reaping — that's why init + handler is the safer default." },
+    { name: "Shell-form CMD (CMD node server.js) so the shell manages the process", summary: "Shell as PID 1.", justification: "This is the trap, not a fix. Docker wraps it as /bin/sh -c 'node server.js', so sh becomes PID 1 and node is its child; sh doesn't forward SIGTERM, so node never hears the shutdown and the orchestrator hard-kills after the grace period. The shell adds a layer that swallows signals — exactly what you must avoid." },
+    { name: "CMD npm start so npm supervises node", summary: "npm as PID 1.", justification: "The classic signal-forwarding trap. npm runs as PID 1, ignores SIGTERM (no default handler for PID 1), and does not forward it to the node child it spawned. Every deploy hangs the full terminationGracePeriodSeconds then SIGKILLs, dropping requests. Never use npm start as a container CMD." },
+  ]}
+/>
+
+<Quiz
+  id="08-container-quiz-1"
+  lessonSlug="02-containerizing-node"
+  lang="en"
+  question="Why does CMD npm start cause deploys to hang and then drop in-flight requests?"
+  choices={[
+    { label: "npm runs as PID 1, which gets no default SIGTERM handler and does not forward the signal to the node child it spawned, so node never shuts down and the orchestrator SIGKILLs it after the grace period", correct: true },
+    { label: "npm start is slower to boot than running node directly", misconception: "Boot time isn't the issue — the problem is shutdown. npm as PID 1 ignores SIGTERM and doesn't forward it, so node never even starts shutting down; the hang is the orchestrator waiting out the grace period before SIGKILL." },
+    { label: "npm holds the TCP connections open instead of node", misconception: "npm doesn't hold your sockets — node does. The connections stay open because node never receives the SIGTERM to start draining them; npm swallowed it as PID 1." },
+    { label: "npm start runs the build step on every container start", misconception: "npm start runs your start script, not a build. The failure is signal handling at PID 1, not extra work at startup." },
+  ]}
+/>
+
+<Quiz
+  id="08-container-quiz-2"
+  lessonSlug="02-containerizing-node"
+  lang="en"
+  question="Why prefer exec-form CMD (the JSON-array form, node + server.js) with USER node over shell-form CMD running as root?"
+  choices={[
+    { label: "Exec form makes node PID 1 so it directly receives SIGTERM (no shell to swallow it), and USER node drops privileges so a code-exec bug can't trivially own the container", correct: true },
+    { label: "Exec form runs the process faster at runtime", misconception: "There's no meaningful runtime speed difference. The win is correctness and security: node becomes PID 1 and actually receives signals, and a non-root user shrinks the blast radius of a compromise." },
+    { label: "Shell form can't pass environment variables", misconception: "Shell form can read env vars fine — that's not the problem. The problem is the shell becomes PID 1 and swallows SIGTERM, and running as root widens the blast radius." },
+    { label: "USER node is required for the image to build at all", misconception: "Images build and run fine as root by default; that's the danger. USER node is a hardening choice, not a build requirement — it limits what a compromised process can do." },
+  ]}
+/>
+
+<DragOrder
+  id="08-container-drag-1"
+  lessonSlug="02-containerizing-node"
+  lang="en"
+  prompt="Order the lines of a hardened multi-stage runtime stage so dependency caching works and the image is safe:"
+  items={[
+    { id: "a", label: "FROM node:22-slim AS runtime  (small, slim base)" },
+    { id: "b", label: "ENV NODE_ENV=production" },
+    { id: "c", label: "COPY package*.json ./  then  RUN npm ci --omit=dev  (deps before source → cached layer)" },
+    { id: "d", label: "COPY --from=builder /app/dist ./dist  (only the built artifacts)" },
+    { id: "e", label: "USER node  (drop to the non-root user)" },
+    { id: "f", label: "CMD [\"node\",\"dist/server.js\"]  (exec form, node is PID 1)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="How SIGTERM travels from the orchestrator to a graceful Node exit"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "o", label: "orchestrator", sub: "sends SIGTERM" },
+    { id: "i", label: "init / PID 1", sub: "tini, forwards" },
+    { id: "n", label: "node handler", sub: "drain + close" },
+    { id: "x", label: "exit 0", sub: "before grace ends" },
+  ]}
+  edges={[
+    { from: "o", to: "i", label: "SIGTERM" },
+    { from: "i", to: "n", label: "forward" },
+    { from: "n", to: "x", label: "graceful" },
+  ]}
+  caption="On deploy the orchestrator sends SIGTERM and starts the terminationGracePeriodSeconds clock (default 30s). An init as PID 1 forwards the signal to node, whose handler stops accepting connections, drains in-flight requests, closes pools, and exits 0 — well before the deadline. Skip the init or the handler (npm/shell PID 1) and SIGTERM is lost, so the clock runs out and SIGKILL drops live requests."
+/>
+
+<KeyTakeaway>Run node in exec form so it is PID 1 and receives `SIGTERM`; never `npm start` or shell-form. Add an init to forward and reap, handle `SIGTERM` to drain, and ship a multi-stage slim non-root image with a healthcheck.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-container-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is special about PID 1 in a container, and why does CMD npm start break graceful shutdown because of it?", a: "The first process in a container is PID 1, and the Linux kernel treats it differently in two ways: PID 1 gets NO default signal handlers (a normal process has a kernel-installed default action for SIGTERM, but PID 1 does not, so an unhandled SIGTERM is simply ignored), and PID 1 is responsible for reaping zombie children. CMD npm start makes npm the PID 1: npm has no SIGTERM handler so it ignores the signal, and it does not forward signals to the node process it spawned as a child. So when the orchestrator sends SIGTERM on deploy, it dies at npm and node never hears it — node keeps holding open connections, the kubelet waits out terminationGracePeriodSeconds (default 30s), then sends SIGKILL, which hard-terminates the process mid-request and drops in-flight work. The fixes are to run node directly in exec form (CMD [\"node\",\"server.js\"]) so node is PID 1 and receives the signal, add an in-app SIGTERM handler to drain gracefully, and/or run an init (--init / tini) as PID 1 to forward signals and reap zombies." },
+    { q: "How does a multi-stage Dockerfile shrink a Node image and its CVE surface, and why must npm ci come before COPY of the source?", a: "A multi-stage build uses a fat builder stage (full node base, npm ci with all deps, npm run build) and then a thin runtime stage that FROM-copies only the artifacts it needs (--from=builder /app/dist) plus production-only deps (npm ci --omit=dev) onto a slim or distroless base. A full node image is roughly 1 GB; node:slim is a few hundred MB and distroless Node is in the tens of MB. Smaller means faster pulls and a much smaller attack surface, because distroless has no shell or package manager for an attacker to use. The ordering matters because of layer caching: Docker caches each layer keyed on its inputs, so if you COPY package*.json ./ and RUN npm ci BEFORE COPY . ., the expensive install layer is keyed only on the lockfile — a source-only change leaves the lockfile untouched, the npm ci layer is reused from cache, and only the cheap COPY of source re-runs. Copy source first and every code change busts the dependency layer, forcing a full reinstall on every build." },
+  ]}
+/>
+
+<Recap lang="en">
+A container's first process is PID 1, and the kernel gives PID 1 no default signal handlers and makes it responsible for reaping zombies — neither of which Node was designed for. `CMD npm start` makes npm PID 1, which ignores `SIGTERM` and never forwards it to the node child; shell-form `CMD node server.js` makes `/bin/sh` PID 1 with the same effect. Either way node never hears the shutdown, so on Kubernetes the kubelet waits the full `terminationGracePeriodSeconds` (default 30s) and then `SIGKILL`s mid-request, hanging every deploy and dropping in-flight work. The fix is exec-form `CMD ["node","server.js"]` so node is PID 1 and receives the signal, an in-app `SIGTERM` handler that stops accepting connections and drains before exiting, and an init (`--init` / tini) to forward signals and reap orphans. Wrap that in a multi-stage build — a fat builder running `npm ci` and the build, a slim or distroless runtime copying only `dist` and `npm ci --omit=dev` production deps — and copy `package*.json` + `npm ci` before the source so the dependency layer stays cached. Finish with `USER node` for non-root, a `HEALTHCHECK` or liveness/readiness probes, and a `.dockerignore` (`node_modules`, `.git`, `.env`) so the build context stays lean and no secret is ever baked into a layer.
+</Recap>
