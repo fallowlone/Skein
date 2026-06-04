@@ -1,0 +1,204 @@
+---
+concepts:
+- dependency-pinning
+- dependabot
+- renovate
+- secret-scanning
+- least-privilege-token
+- oidc
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: 02-dependency-and-secret-hygiene
+sources:
+- https://docs.github.com/en/actions/security-for-github-actions/security-hardening-for-github-actions/security-hardening-for-github-actions
+- https://docs.github.com/en/code-security/secret-scanning/introduction/about-secret-scanning
+- https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+- https://www.cisa.gov/news-events/alerts/2025/03/18/supply-chain-compromise-third-party-tj-actionschanged-files-cve-2025-30066-and-reviewdogaction
+spiral: []
+status: ready
+summary: 'The CI runner holds every secret you give it, so harden CI itself: pin actions by full commit SHA (a tag can be moved to malicious code), scan and block leaked credentials at push, set permissions to least-privilege, and prefer short-lived OIDC creds over stored keys.'
+title: 'Dependency and secret hygiene: hardening CI itself'
+track: ci-cd
+unit: 05-supply-chain
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+On 14 March 2025, an engineer at one of ~23,000 repositories pushed a routine commit. Their workflow referenced a wildly popular helper, `tj-actions/changed-files@v35` — a mutable tag. Hours earlier, an attacker had force-moved *every* version tag on that action, from `v1` up, to a single malicious commit. The injected code base64-decoded a payload that dumped the runner's memory — AWS keys, npm tokens, GitHub PATs, private RSA keys — straight into the build log, where it sat in plain text for anyone who could read Actions output. Nobody changed their workflow. The tag they trusted yesterday pointed at attacker code today. Repos that had pinned the action to a full commit SHA ran the old, safe code and were untouched.
+</Hook>
+
+<Crux>The runner holds every secret you give it, so harden CI itself: pin by SHA, scan at push, run least-privilege, prefer short-lived OIDC.</Crux>
+
+<Explanation>
+
+## Pinning: a tag is a promise, a SHA is a fact
+
+Your application's lockfile (`package-lock.json`, `pnpm-lock.yaml`, `poetry.lock`) pins the exact byte-content of every dependency by integrity hash, so `npm ci` installs the same tree on every machine. That discipline is well understood. The blind spot is the *other* dependencies your pipeline pulls: the GitHub Actions themselves. Writing `uses: actions/checkout@v4` looks like a version pin, but `v4` is a **mutable git tag** — a label the maintainer (or anyone who compromises them) can force-move to a different commit at any time, with no change to your repository. You are not pinning code; you are pinning a *promise* to keep pointing the tag at good code.
+
+A full commit SHA is the opposite: it is the content-address of an exact tree, and git's object model means you cannot move it without breaking the hash. `uses: actions/checkout@<40-char-sha>` runs the same bytes forever. This is the single control that would have neutralised the tj-actions blast radius — the malicious code lived behind the *tags*, so every SHA-pinned consumer kept running the old, safe commit. Pin third-party actions, and the riskiest first-party ones, by full-length SHA, with a trailing comment recording the human-readable version:
+
+```yaml
+# BAD — mutable tag, default (often broad) token, secrets exposed to everything
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4          # @v4 can be force-moved to malicious code
+      - uses: tj-actions/changed-files@v35 # the exact action whose tags were repointed
+      - run: ./deploy.sh                   # AWS_KEY in env, available to every step above
+
+# GOOD — pinned by full SHA, least-privilege token, OIDC only where needed
+on: push
+permissions:
+  contents: read                           # default everything to read-only
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write                      # grant OIDC ONLY in the job that needs it
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11  # v4.1.1
+      - uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502  # v4.0.2
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/ci-deploy       # short-lived, no stored key
+          aws-region: eu-central-1
+      - run: ./deploy.sh
+```
+
+## Automate updates, or pinning rots into stale CVEs
+
+Pinning by SHA buys security at the cost of toil: a frozen digest never picks up the upstream bugfix or the patch for the next CVE. Left manual, "pin everything" decays into "run vulnerable versions forever." The resolution is to let a bot do the bumping. **Dependabot** and **Renovate** both open pull requests that update pinned dependencies — including action SHAs — and, configured well, they update the SHA *and* the human-readable version comment together. Group related updates so you review one PR instead of forty; schedule them weekly so they do not interrupt feature work; and reserve **auto-merge** for genuinely low-risk classes only — a patch bump with passing CI and an unchanged maintainer. Renovate has auto-merge built in (`automerge: true` in a package rule); Dependabot needs a small Actions workflow using `dependabot/fetch-metadata` to gate `gh pr merge --auto` on the update type. The principle is the same: machine bumps the digest, CI proves it still builds, a human approves anything non-trivial.
+
+<Inset kind="why" lang="en">
+Auto-merging a minor or major update — or any update where the *maintainer changed* — is exactly the gap a supply-chain attacker wants. A package handed to a new owner, or a dependency that quietly added a postinstall script, sails straight to `main` if your auto-merge rule is too generous. Keep auto-merge to patch-level, tests-green, same-maintainer, and require human eyes on everything else.
+</Inset>
+
+## Secret scanning and push protection: stop the leak at the door
+
+Pinning protects you from *other people's* compromised code; the next layer protects the pipeline from *your own team's* mistakes. The most common leak is mundane: someone hardcodes an API key, commits it, and it lives in git history forever (and in every fork and clone). **Secret scanning** matches pushed content against a large library of known credential formats — cloud keys, tokens, connection strings — and alerts on anything detected. **Push protection** is the proactive half: it inspects the content *during* the push and **blocks the commit before it ever reaches the remote** when it matches a high-confidence pattern, so the secret never enters history in the first place. The author either removes it or, rarely, records an explicit justification to bypass. Treating a blocked push as the normal outcome — not an obstacle to route around — is the cultural shift that keeps credentials out of the repo.
+
+## Least privilege and short-lived creds: shrink the blast radius
+
+Even a perfectly pinned, leak-free pipeline must assume *some* dependency will eventually turn malicious. Least privilege is what bounds the damage when it does. Two levers matter most. First, the workflow token: GitHub's `GITHUB_TOKEN` has defaulted to **read-only** since February 2023, but many repos still run with broad write scopes. Declare `permissions:` explicitly at the top of the workflow, default everything to read, and grant write scopes only on the specific job that needs them — so a malicious dependency running in your test job cannot push to `main` or publish a package, because the token in that job simply lacks the scope. Second, cloud credentials: a long-lived `AWS_SECRET_ACCESS_KEY` sitting in repo secrets is a permanent prize — leak it once (to a log, to a compromised action) and it works until someone notices and rotates it. **OIDC** replaces it with a short-lived, audience-scoped token minted per run: the workflow requests an OIDC token (`id-token: write`), exchanges it with the cloud provider, and receives credentials that expire in minutes and were never stored anywhere. Nothing durable to steal.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Control</th>
+        <th class="border border-border px-3 py-2 text-left">Failure it prevents</th>
+        <th class="border border-border px-3 py-2 text-left">Concrete mechanism</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Pin actions by SHA</td>
+        <td class="border border-border px-3 py-2">A trusted tag force-moved to malicious code (tj-actions)</td>
+        <td class="border border-border px-3 py-2"><code>uses: org/action@&lt;40-char-sha&gt;</code> + Dependabot/Renovate to bump it</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Secret scanning + push protection</td>
+        <td class="border border-border px-3 py-2">A hardcoded key committed into history</td>
+        <td class="border border-border px-3 py-2">Block the push before it lands; alert on anything that slipped past</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Least-privilege token</td>
+        <td class="border border-border px-3 py-2">A malicious dep using a write-scoped token to push or publish</td>
+        <td class="border border-border px-3 py-2">Top-level <code>permissions: &#123; contents: read &#125;</code>; widen per-job only</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">OIDC short-lived creds</td>
+        <td class="border border-border px-3 py-2">A leaked long-lived cloud key usable until rotated</td>
+        <td class="border border-border px-3 py-2"><code>id-token: write</code> → exchange for minutes-long creds, nothing stored</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="02-dependency-and-secret-hygiene-tradeoff-1"
+  lessonSlug="02-dependency-and-secret-hygiene"
+  lang="en"
+  prompt="A team adopts a popular third-party GitHub Action across all pipelines that handle deploy secrets. How should they reference it?"
+  options={[
+    { name: "Pin to a full commit SHA, with Dependabot/Renovate opening PRs to bump it", summary: "Immutable + maintained.", correct: true, justification: "This is the senior answer because it gets both properties that matter. The full SHA is content-addressed: the bytes you run can never change underneath you, so a force-moved tag (exactly the tj-actions vector that hit ~23,000 repos) cannot reach you. And the bot removes the toil objection — it opens a PR to advance the SHA when a real new version ships, updating the version comment alongside, so you stay patched without manually chasing digests. Pair it with least-privilege permissions and you have defence in depth." },
+    { name: "Pin to a major tag like @v4 — it only moves forward within v4", summary: "Convenient, still mutable.", justification: "A major tag is still a mutable label. The maintainer, or an attacker who compromises the maintainer, can force-move @v4 to any commit, including malicious code — which is precisely what happened across the tj-actions tags. Tag pinning gives you no immutability guarantee; it only feels safer than @main. The compromised window hit tagged consumers and spared SHA-pinned ones." },
+    { name: "Pin to @main so you always get the latest fixes fastest", summary: "Bleeding edge.", justification: "@main is the most dangerous reference: every push to the action's default branch runs in your pipeline immediately, with zero review and full access to your secrets. Any single bad commit upstream — accidental or malicious — executes against your runner before anyone can react. This maximises blast radius rather than shrinking it." },
+    { name: "Fork the action and reference your fork's tag", summary: "Control via fork.", justification: "Forking can be justified for a genuinely critical action you intend to audit and own, but a fork referenced by its own mutable tag reproduces the original problem inside your namespace, and a stale fork silently misses upstream security fixes. Without SHA-pinning your fork and a process to sync patches, you have traded one mutable-tag risk for an unmaintained one." },
+  ]}
+/>
+
+<Quiz
+  id="02-dependency-and-secret-hygiene-quiz-1"
+  lessonSlug="02-dependency-and-secret-hygiene"
+  lang="en"
+  question="Your workflow uses `actions/checkout@v4`. Overnight, with no change to your repo, the action's behaviour becomes malicious and dumps your secrets to the log. How is that possible?"
+  choices={[
+    { label: "`@v4` is a mutable git tag; the maintainer (or an attacker who compromised them) force-moved it to a malicious commit — your unchanged workflow now resolves to attacker code", correct: true },
+    { label: "GitHub randomly upgrades action versions, so you got a new release", misconception: "GitHub does not silently upgrade your pinned reference. The danger is the opposite: the reference (@v4) stayed the same string, but the commit that tag points to was moved underneath you. A SHA reference cannot be moved this way." },
+    { label: "Your GITHUB_TOKEN expired and fell back to an insecure default", misconception: "Token expiry would fail the job, not silently run malicious code. The vector here is the mutable tag resolving to a different commit; token scope is a separate (also important) control that bounds the damage." },
+    { label: "It's impossible — a pinned version reference always runs the same code", misconception: "A tag is not a pin in the immutable sense. Only a full commit SHA is content-addressed and unmovable. Tags like @v4 are labels that can be repointed, which is the entire tj-actions failure mode." },
+  ]}
+/>
+
+<Quiz
+  id="02-dependency-and-secret-hygiene-quiz-2"
+  lessonSlug="02-dependency-and-secret-hygiene"
+  lang="en"
+  question="You want to deploy to AWS from CI without a long-lived `AWS_SECRET_ACCESS_KEY` stored in repo secrets. What is the senior approach?"
+  choices={[
+    { label: "Use OIDC: grant `id-token: write` on the deploy job, have the workflow exchange a short-lived OIDC token with AWS for credentials that expire in minutes and are never stored", correct: true },
+    { label: "Store the key but base64-encode it so scanners don't flag it", misconception: "Encoding is not protection — anyone with log or secret access decodes it trivially, and it's still a long-lived credential that works until rotated. OIDC removes the durable secret entirely rather than hiding it." },
+    { label: "Give the whole workflow `permissions: write-all` so the deploy step has what it needs", misconception: "`write-all` is the opposite of least privilege — it hands every scope to every step, so any compromised dependency inherits full write access. Grant only `id-token: write` (plus what the job needs) on the single job that deploys." },
+    { label: "Print the key in a debug step so you can confirm it loaded correctly", misconception: "Printing a secret writes it to the build log in plaintext — exactly how the tj-actions payload exfiltrated credentials. Never echo secrets; rely on the platform's masking and, better, eliminate the stored secret with OIDC." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="Four defensive layers hardening the CI environment, from pinned dependencies at the base up to short-lived cloud credentials at the top"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "OIDC short-lived cloud creds", note: "id-token: write — minutes-long, nothing stored" },
+    { label: "Least-privilege GITHUB_TOKEN", note: "permissions: contents: read; widen per-job" },
+    { label: "Secret scanning + push protection", note: "block leaked credentials before they land" },
+    { label: "Pin deps & actions by digest", note: "uses: org/action@<sha> — immutable bytes" },
+  ]}
+  caption="Defence in depth: pinning stops a moved tag reaching you, push protection stops your own leaks, least-privilege bounds a malicious dep, and OIDC leaves no durable credential to steal. No single layer is enough alone."
+/>
+
+<KeyTakeaway>Pin actions by full SHA (a tag can be moved — tj-actions hit ~23,000 repos), let Dependabot/Renovate bump them, block leaks with push protection, set `permissions:` least-privilege, swap stored keys for OIDC.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-dependency-and-secret-hygiene-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is `uses: actions/checkout@v4` a weaker pin than `@<full-sha>`, and how did the tj-actions incident prove it?", a: "`@v4` is a mutable git tag — a human-readable label that points at a commit, and that pointer can be force-moved at any time by the maintainer or by an attacker who compromises the maintainer's account. So `@v4` is not a content guarantee; it's a promise that the tag will keep pointing at good code. A full 40-character commit SHA is content-addressed: it names an exact git tree, and git's object model means you cannot move a SHA to different bytes without breaking the hash. In the March 2025 tj-actions/changed-files compromise (CVE-2025-30066), an attacker force-moved every version tag — v1 upward — on an action used by ~23,000 repositories to a single malicious commit that dumped the runner's secrets (AWS keys, PATs, npm tokens, private keys) into the build log. Every consumer referencing a tag silently resolved to the attacker's code; every consumer that had pinned the action by full SHA kept running the original commit and was unaffected. That is the whole argument for SHA-pinning, with Dependabot or Renovate automating the bumps so you stay patched." },
+    { q: "How do least-privilege `permissions:` and OIDC each reduce the blast radius of a compromised CI dependency?", a: "They attack two different prizes. Least-privilege `permissions:` shrinks what the workflow's own GITHUB_TOKEN can do: the token defaults to read-only (since Feb 2023), and by declaring `permissions: { contents: read }` at the top and granting write scopes only on the specific job that needs them, you ensure a malicious dependency running in, say, your test job holds a token with no write scope — it cannot push to main, publish a package, or open a release, because the capability simply isn't there. OIDC attacks the other prize: long-lived cloud credentials. A stored AWS_SECRET_ACCESS_KEY is a permanent target — leak it once and it works until someone rotates it. With OIDC, the job requests a short-lived token (`id-token: write`), exchanges it with the cloud provider for credentials that expire in minutes and were never written to repo secrets, so there is nothing durable to exfiltrate. Together they mean that even when a dependency does turn malicious, it inherits a near-useless token and no standing cloud key — the damage is bounded by design." },
+  ]}
+/>
+
+<Recap lang="en">
+The CI runner is a high-value target: it holds every credential you hand it, so the environment itself must be hardened, not just the app it builds. Start with pinning. Your lockfile already content-pins app dependencies, but GitHub Actions are dependencies too, and `@v4` is a mutable tag that can be force-moved to malicious code — the exact vector that turned `tj-actions/changed-files` into a secret-exfiltrating payload across ~23,000 repositories in March 2025, while SHA-pinned consumers were untouched. So pin actions by full commit SHA, and let Dependabot or Renovate open PRs to bump those SHAs (auto-merge only patch-level, tests-green, same-maintainer) so security and freshness coexist. Next, stop your own leaks: secret scanning alerts on committed credentials and push protection blocks them before they ever enter history. Then bound the damage of whatever still gets through with least privilege — declare `permissions:` explicitly, default to read-only, and widen write scopes only on the one job that needs them, so a malicious dependency can't push or publish. Finally, replace long-lived stored cloud keys with OIDC: a short-lived, per-run token (`id-token: write`) leaves nothing durable to steal. Pin, scan, restrict, expire — four layers, none sufficient alone, defence in depth for the pipeline.
+</Recap>

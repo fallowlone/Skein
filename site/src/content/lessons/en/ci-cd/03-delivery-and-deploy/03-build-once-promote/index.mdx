@@ -1,0 +1,213 @@
+---
+concepts:
+- build-once
+- immutable-artifacts
+- config-per-env
+- artifact-promotion
+- rebuild-drift
+- twelve-factor
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-build-once-promote
+sources:
+- https://12factor.net/build-release-run
+- https://12factor.net/config
+- https://docs.docker.com/dhi/core-concepts/digests/
+- https://martinfowler.com/bliki/ImmutableServer.html
+spiral: []
+status: ready
+summary: Build once, pin the artifact by its sha256 digest, and promote that exact
+  digest through staging to prod with config injected at runtime. Rebuilding per environment
+  ships different bytes — "works in staging, breaks in prod" with no diff to explain it.
+title: 'Build once, promote many: immutable artifacts'
+track: ci-cd
+unit: 03-delivery-and-deploy
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Staging was green for a week. The same commit went to production on Friday and the service crash-looped on boot — a native module failing to load against a libc it had never seen in staging. There was no code change between the two; `git diff` was empty. The pipeline had simply run `docker build` again at deploy time, and in the hours between the two builds the `node:22` base tag had been re-pushed with an OS patch. Staging ran one set of bytes, production ran a different set, and the only artifact that proved it was a digest nobody had bothered to compare. Twelve hours of incident bridge to discover the bug was that two "identical" builds were not identical at all.
+</Hook>
+
+<Crux>Build once, pin the artifact to its immutable sha256 digest, promote that digest everywhere, inject config per environment at runtime.</Crux>
+
+<Explanation>
+
+## One build, one identity: the digest is the artifact
+
+The 12-factor model splits a deploy into three stages: **build** transforms your code repo into an executable bundle at a specific commit; **release** combines that exact build with the deploy's config; **run** launches a process from a release. The hard rule is directionality — you cannot mutate code at run time and have it flow back into the build. "A release cannot be mutated once it is created." Each gets a unique ID so you always know precisely what is running.
+
+Build-once-deploy-many is the operational consequence: the build stage runs **exactly one time** per change, and what it produces is an immutable artifact. For a container, that artifact's true identity is not its tag — it is its **content digest**, a sha256 hash of the image manifest. A tag like `:latest`, `:v1.4`, or `node:22` is a *mutable pointer*; it can be re-aimed at different content at any moment. A digest is *content-addressable*: `sha256:9b2f…` is computed from the bytes, so any change — even one byte — yields a different digest. Pulling by digest guarantees you get the exact image that was built and tested, on every node, in every environment. The digest is the artifact; the tag is just a sticky note on top of it.
+
+Promotion, then, is not a rebuild. It is moving that one digest forward — staging validated `sha256:9b2f…`, so production runs `sha256:9b2f…`, the same bytes, unchanged. What *does* change between environments is config, and that is injected at run time.
+
+## Config is per-environment; the bytes are not
+
+If staging and prod run the same artifact, where do the database URL, the API keys, the feature flags live? Not in the image. The 12-factor config factor is blunt: store config in the environment, keep a strict separation between config and code, and the litmus test is that you could open-source the build tomorrow without leaking a single credential. Config is everything that *varies between deploys*; the artifact is everything that does *not*.
+
+```
+release = immutable artifact (sha256 digest)  +  per-environment config (injected at runtime)
+```
+
+Concretely, the same digest is launched in each environment with config supplied as environment variables, a mounted ConfigMap, or secrets pulled from a vault — never baked into a layer. Bake `DATABASE_URL=staging-db` into the image and you have just created a staging-only artifact: you are now forced to rebuild for prod, which reintroduces exactly the drift this principle exists to kill.
+
+## Rebuild drift: the empty-diff outage
+
+Here is the failure mode that costs the most incident hours, precisely because there is nothing to look at. When a pipeline rebuilds the artifact separately for each environment, every rebuild re-resolves whatever is *floating*: a moving base tag, an unpinned transitive dependency, a `latest` of some build tool, even transient registry state. Common base tags are re-pushed frequently — for OS security patches a tag like `node:22` or `python:3.12` resolves to a **different digest this month than last month** while the tag string never changes. So two builds from the same commit, hours apart, can embed different glibc/musl, a different OpenSSL, a different patch of the runtime. The binaries diverge with no source change to explain it. This is "works in staging, breaks in prod" in its purest, most maddening form.
+
+<Inset kind="why" lang="en">
+Why does an empty `git diff` mislead so badly? Because the diff only covers *your* code. A per-environment rebuild also pulls inputs you don't version: the base image behind a floating tag, OS packages behind `apt-get install` with no pinned versions, and any dependency with a caret range that resolved to a newer patch. None of those show in your repo, so the artifacts differ while the source is byte-identical. Build-once removes the entire class of bug by never giving the second build a chance to resolve anything differently — there is no second build.
+</Inset>
+
+The contrast in pipeline shape:
+
+```bash
+# BAD — rebuild per environment, deploy a mutable tag
+# staging job
+docker build -t myapp:latest .          # resolves node:22 -> digest A
+docker push myapp:latest
+kubectl set image deploy/app app=myapp:latest   # staging pulls A
+# production job, hours later
+docker build -t myapp:latest .          # resolves node:22 -> digest B (base re-pushed!)
+docker push myapp:latest                # :latest now points at B
+kubectl set image deploy/app app=myapp:latest   # prod pulls B — different bytes, empty git diff
+
+# GOOD — build once, capture the digest, promote it, config at runtime
+docker buildx build --push -t registry/myapp:1.4.0 --metadata-file out.json .
+DIGEST=$(jq -r '."containerimage.digest"' out.json)
+# DIGEST = sha256:9b2f...  — the immutable identity, captured ONCE
+kubectl set image deploy/app app=registry/myapp@$DIGEST -n staging   # staging runs the digest
+# ...staging passes its gates...
+kubectl set image deploy/app app=registry/myapp@$DIGEST -n prod      # prod runs the SAME digest
+# config differs per env via env vars / ConfigMap / secrets — never rebaked into the image
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Question</th>
+        <th class="border border-border px-3 py-2 text-left">Rebuild-per-env + <code>:latest</code> (anti-pattern)</th>
+        <th class="border border-border px-3 py-2 text-left">Build-once + promote digest</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">How many times is the artifact built?</td>
+        <td class="border border-border px-3 py-2">Once per environment (2–4×)</td>
+        <td class="border border-border px-3 py-2">Exactly once, per change</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">What identifies the deploy?</td>
+        <td class="border border-border px-3 py-2">A mutable tag (<code>:latest</code>) — can point anywhere</td>
+        <td class="border border-border px-3 py-2">A sha256 digest — content-addressable, immutable</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Are staging and prod bytes identical?</td>
+        <td class="border border-border px-3 py-2">Not guaranteed — floating base/deps re-resolve</td>
+        <td class="border border-border px-3 py-2">Guaranteed — same digest pulled everywhere</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Where does config live?</td>
+        <td class="border border-border px-3 py-2">Often baked in → forces a per-env rebuild</td>
+        <td class="border border-border px-3 py-2">Injected at runtime (env vars / ConfigMap / secrets)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Failure signature</td>
+        <td class="border border-border px-3 py-2">"Works in staging, breaks in prod", empty <code>git diff</code></td>
+        <td class="border border-border px-3 py-2">What you tested is what you ship</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="03-build-once-promote-tradeoff-1"
+  lessonSlug="03-build-once-promote"
+  lang="en"
+  prompt="Staging validated the build. You must move that exact artifact to production. Pick the promotion mechanism."
+  options={[
+    { name: "Promote by digest: deploy registry/app@sha256:… — the same digest staging ran", summary: "Content-addressable, immutable.", correct: true, justification: "This is build-once-promote done right. The digest is computed from the image bytes, so deploying the exact sha256 that passed staging guarantees production runs identical content — no re-resolution of floating bases or dependencies is even possible. Promotion becomes a pure pointer move: tag or re-push the same digest into prod, or just reference it. Config differs per environment via runtime injection, so the same bytes run everywhere. This is the reproducible, auditable default." },
+    { name: "Re-run docker build in the production pipeline from the same commit", summary: "Same source, new build.", justification: "This is exactly the rebuild-drift anti-pattern. Same commit does not mean same artifact: the production build re-resolves a floating base tag (node:22 can be a different digest than it was for the staging build hours earlier), unpinned OS packages, and caret-ranged deps. You ship different bytes than you tested, with an empty git diff to mislead the incident. Never rebuild to promote." },
+    { name: "Re-point the :latest tag at the new image and deploy :latest to prod", summary: "Mutable tag.", justification: "A tag is a mutable pointer; :latest can be re-aimed at any content, and a concurrent push during a rolling deploy means some nodes pull the old image and some the new one. You lose the guarantee that prod runs what staging ran and you lose auditability — there is no stable identity for the release. If you must use a tag, use an immutable, unique release tag and verify its digest; better, reference the digest directly." },
+    { name: "Bake the prod database URL and keys into the image and rebuild for production", summary: "Config in the artifact.", justification: "This violates the config factor and forces a per-env rebuild, reintroducing drift. Baking config makes the artifact environment-specific, so it can no longer be promoted unchanged. Config must be injected at runtime (env vars, ConfigMap, secrets) so the one immutable artifact runs in every environment." },
+  ]}
+/>
+
+<Quiz
+  id="03-build-once-promote-quiz-1"
+  lessonSlug="03-build-once-promote"
+  lang="en"
+  question="Staging is green; the same commit crash-loops in prod. git diff between the two deploys is empty. What is the most likely root cause?"
+  choices={[
+    { label: "The pipeline rebuilt the artifact per environment, and between builds a floating base tag (or unpinned dependency) re-resolved to different bytes — so prod ran a different binary than staging despite identical source", correct: true },
+    { label: "A code change slipped in without a commit", misconception: "An empty git diff means the source is identical between the two deploys. The divergence comes from inputs you don't version — the base image behind a floating tag, unpinned OS packages — not from untracked code." },
+    { label: "Production has more traffic, so it's a load issue", misconception: "Load can expose bugs, but a crash-loop on boot against an unfamiliar libc is a binary-identity problem. The tell is that the same commit produced two different artifacts because it was built twice." },
+    { label: "Kubernetes cached an old image", misconception: "The opposite — the problem is that a fresh per-env rebuild produced new, different bytes. Build-once-promote (deploy by digest) would have made the two environments byte-identical." },
+  ]}
+/>
+
+<Quiz
+  id="03-build-once-promote-quiz-2"
+  lessonSlug="03-build-once-promote"
+  lang="en"
+  question="Why is promoting by sha256 digest stronger than promoting by re-pointing the :latest tag?"
+  choices={[
+    { label: "A digest is content-addressable and immutable — it always resolves to the exact bytes that were built and tested; a tag is a mutable pointer that can be re-aimed at different content at any time", correct: true },
+    { label: "Digests pull faster than tags", misconception: "Pull performance is not the point and is essentially the same. The value of a digest is identity: it is a hash of the content, so it cannot silently change, whereas a tag can." },
+    { label: "Tags don't work across registries", misconception: "Tags work across registries fine. The issue is mutability, not portability — :latest can point at different images over time, so it gives no guarantee about which bytes you run." },
+    { label: "Digests embed the config, so config travels with the image", misconception: "Digests identify only the image bytes, and config must NOT be baked in. Config is injected per environment at runtime; the digest guarantees the artifact, not the config." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A single build produces one immutable artifact identified by a sha256 digest, which is promoted unchanged from staging to production while config is injected at each runtime"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "build", label: "Build", sub: "runs once" },
+    { id: "artifact", label: "Artifact", sub: "sha256 digest" },
+    { id: "staging", label: "Staging", sub: "digest + staging cfg" },
+    { id: "prod", label: "Production", sub: "digest + prod cfg" },
+  ]}
+  edges={[
+    { from: "build", to: "artifact", label: "build once" },
+    { from: "artifact", to: "staging", label: "same digest" },
+    { from: "staging", to: "prod", label: "same digest" },
+  ]}
+  caption="The build runs exactly once; its sha256 digest is the artifact's identity. That same digest is promoted through staging to production unchanged, with per-environment config injected at run time — so the bytes that passed staging are the bytes that serve production."
+/>
+
+<KeyTakeaway>Pin the artifact to its sha256 digest, not `:latest`, and promote that digest from staging to prod with config injected at runtime. Rebuilding per environment ships different bytes — rebuild drift, the empty-diff outage.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-build-once-promote-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain rebuild drift end to end: how a per-environment rebuild from the same commit produces different binaries with an empty git diff.", a: "Build-once means the artifact is produced exactly one time per change; rebuild drift is what happens when you violate that and build separately for each environment. The trap is that a build re-resolves everything you didn't pin. A base tag like node:22 is a mutable pointer — for OS security patches it is re-pushed and resolves to a different sha256 digest this month than last, while the tag string is unchanged. Unpinned OS packages (apt-get install with no version) and caret-ranged dependencies similarly resolve to newer patches between builds. So the staging build, run at 9am, embeds digest A of the base plus one set of patched libraries; the production build, run at 2pm from the identical commit, embeds digest B plus newer libraries. The two artifacts are different bytes, but git diff is empty because none of those inputs live in your repository — they are resolved at build time, not committed. The result is 'works in staging, breaks in prod' with nothing in the source to explain it, which is why these outages eat so many incident hours. The fix is to never give a second build the chance to resolve differently: build once, capture the digest, and promote that exact digest to every environment." },
+    { q: "What does 'release = artifact + config' mean, and why must config be injected at runtime rather than baked into the image?", a: "The 12-factor model separates build, release, and run. The build produces an immutable artifact — the executable bundle, identified for a container by its sha256 digest. The release combines that exact artifact with the deploy's config to produce something runnable; the run stage launches a process from it. So release = the one immutable artifact + the per-environment config. Config is everything that varies between deploys — database URLs, API keys, feature flags — while the artifact is everything that does not. The reason config must be injected at runtime (environment variables, a mounted ConfigMap, secrets from a vault) and never baked into a layer is that the moment you bake DATABASE_URL=staging into the image, you have made a staging-only artifact: it can no longer be promoted unchanged to production, so you are forced to rebuild for prod, which reintroduces rebuild drift. The litmus test from the config factor is that you could open-source the build without leaking a credential. Keeping config out of the artifact is precisely what lets the same digest — the same bytes — run identically in every environment, with only its surrounding config differing." },
+  ]}
+/>
+
+<Recap lang="en">
+Build-once-deploy-many says the artifact is produced exactly one time per change and then promoted unchanged through every environment. Its real identity is not a tag — a tag like `:latest` or `node:22` is a mutable pointer that can be re-aimed at any content — but its sha256 content digest, which is computed from the image bytes and is therefore immutable: pull by digest and you get exactly what was built and tested. Promotion is moving that one digest forward, so staging validates `sha256:…` and production runs the same `sha256:…`. Config is the part that varies between environments, so it lives outside the artifact and is injected at run time as env vars, a ConfigMap, or secrets — release = the immutable artifact + per-environment config, and baking config in would force a per-env rebuild. That rebuild is the whole danger: building separately for each environment re-resolves floating base tags (re-pushed for OS patches into new digests), unpinned OS packages, and caret-ranged deps, so two builds from the identical commit embed different bytes. The outage that follows — "works in staging, breaks in prod" with an empty `git diff` — has no source change to explain it, because the differing inputs were never in your repo. Build once, pin and promote the digest, inject config at runtime, and the bytes you tested are the bytes you ship.
+</Recap>
