@@ -1,13 +1,275 @@
 ---
-slug: "01-capstone-full-pipeline"
+concepts:
+- pipeline-design
+- pr-checks
+- build-once
+- canary-rollback
+- provenance
+- end-to-end
+deepensInto: []
+estMin: 19
 lang: en
-track: "ci-cd"
-unit: "07-putting-it-together"
+lessonType: topic
+level: senior
 order: 1
-title: "Capstone: design a complete CI/CD pipeline"
-summary: "Capstone: design a complete CI/CD pipeline — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 01-capstone-full-pipeline
 sources:
-  - https://docs.github.com/en/actions/deployment/about-deployments/deploying-with-github-actions
+- https://docs.github.com/en/actions/deployment/about-deployments/deploying-with-github-actions
+- https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
+- https://slsa.dev/spec/v1.0/levels
+- https://martinfowler.com/bliki/ContinuousDelivery.html
+spiral: []
+status: ready
+summary: A production pipeline is one chain — PR checks gate merge, the artifact is built once with an SBOM and a signed provenance attestation, then the same digest is promoted staging → canary → prod with metric-gated rollback. Skip any link and the chain breaks.
+title: 'Capstone: design a complete CI/CD pipeline end to end'
+track: ci-cd
+unit: 07-putting-it-together
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The release looked clean: green PR, green tag build, staging healthy, one approval click, production deploy succeeded. Forty minutes later, p99 latency tripled and the error budget for the quarter was gone in an afternoon. The post-mortem found one line. The production job did its own `docker build` from the tag instead of pulling the digest that staging had verified — a transitive dependency had published a new patch in the gap, so prod ran a *different* binary than the one that passed every gate. Every stage worked. The chain didn't, because one stage rebuilt instead of promoting. There was also no automated rollback, so a human had to notice, page, and revert by hand.
+</Hook>
+
+<Crux>A pipeline is one chain: gate the PR, build once with signed provenance, then promote that one digest stage by stage, with rollback.</Crux>
+
+<Explanation>
+
+## The whole pipeline is one chain, and a chain is only as strong as its skipped link
+
+Every earlier lesson in this track was a single link: pipelines, testing in CI, delivery strategies, environments and approvals, release automation, supply-chain provenance, scaling. A capstone pipeline is those links welded in order, and the integrative failure mode is the same every time: **any link you skip silently breaks the guarantee the whole chain was supposed to give.** Rebuild per stage and your "tested artifact" promise is a lie. Deploy with no rollback path and your canary is just a slower outage. Ship an unverified artifact and your SBOM and tests describe a binary that isn't the one running. The discipline of a senior pipeline is not adding more stages — it is making sure no stage quietly substitutes a weaker guarantee.
+
+There are three load-bearing invariants. **(1) PR checks are the merge gate** — fast feedback first, required status checks block merge, so `main` is always releasable. **(2) Build once** — on merge or tag the artifact is built exactly one time, producing one immutable digest, and from that point nothing is ever rebuilt; it is only *promoted*. **(3) Promote the same digest** — staging, canary, and production all deploy the identical `image@sha256:…`, so the only variable across environments is configuration, never the binary. Hold those three and most release-day surprises become impossible by construction.
+
+## Stage 1 — PR checks: fail fast, then prove, then block merge
+
+The PR gate has a shape: cheapest, most-likely-to-fail checks first. Lint and typecheck run in seconds and catch the majority of mistakes, so they go first and short-circuit the expensive work. Then the affected-only build and test — on a monorepo you test what the diff touches, not the world (this is where the scaling lesson pays off). Configure these as **required status checks** on the branch so a red check physically blocks the merge button; a check that only *reports* is a suggestion, not a gate. The PR stage never deploys and never signs — its single job is to keep `main` mergeable-means-releasable.
+
+```yaml
+name: ci
+on:
+  pull_request:
+permissions:
+  contents: read          # least privilege: PR checks need nothing more
+jobs:
+  fast-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4 pinned by SHA
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a  # v4 pinned by SHA
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run lint && npm run typecheck   # seconds; fail fast
+      - run: npx nx affected -t build test       # affected-only, not the world
+```
+
+## Stage 2 — Build once: one digest, SBOM, signed provenance
+
+This is the pivot of the whole pipeline. On merge to `main` (or on a release tag) you build the image **one time** and push it by digest. In the same run you generate an **SBOM** (what is inside), produce a **build-provenance attestation** (how, where, and from which commit it was built), and **sign** them with keyless cosign via Sigstore — GitHub's OIDC token is the signing identity, so there is no long-lived key to leak. This is exactly the chain that earns SLSA Build L2 (and L3 with an isolated, ephemeral reusable-workflow builder): a hosted, hardened builder that generates and signs provenance automatically. Two non-negotiables for a senior workflow: **pin third-party actions by full commit SHA** (a moved tag is a supply-chain backdoor), and grant **least-privilege `permissions:`** per job, adding `id-token: write` only on the job that actually needs OIDC and `attestations: write` only where you attest.
+
+```yaml
+  build-once:
+    needs: fast-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push to GHCR
+      id-token: write         # OIDC for keyless signing
+      attestations: write     # provenance attestation
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4
+      - uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcd730a4f6c4f  # v6
+        id: push
+        with:
+          push: true
+          tags: ghcr.io/acme/api:${{ github.sha }}
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v1
+        with:
+          subject-name: ghcr.io/acme/api
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - uses: anchore/sbom-action@d94f46e13c6c62f59525ac9a1e147a99dc0b9bf5  # SPDX SBOM
+        with: { image: ghcr.io/acme/api@${{ steps.push.outputs.digest }} }
+```
+
+## Stage 3–4 — Release, then promote the same digest with gates and rollback
+
+Release is bookkeeping on top of the verified artifact: derive the version from conventional commits (semver), tag, and publish the signed image to the registry. Then deployment is pure **promotion of one digest**. Staging auto-deploys `api@${{ digest }}` and runs smoke tests. Production is a separate GitHub **environment with protection rules** — required reviewers and a "no self-approval" setting turn the deploy into a deliberate, audited human gate. Past the gate you do not flip 100% of traffic; you **canary**: route a small slice, let an automated analysis watch error rate and latency against the baseline for a few minutes, and only widen if the metric gate passes. If an **SLO breach** trips, the rollout halts and **automatically rolls back** to the previous digest — the link the war-story pipeline was missing. The same immutable digest flows through every stage; only config changes.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Stage</th>
+        <th class="border border-border px-3 py-2 text-left">Goal</th>
+        <th class="border border-border px-3 py-2 text-left">What plugs in here</th>
+        <th class="border border-border px-3 py-2 text-left">Failure if skipped</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">PR checks</td>
+        <td class="border border-border px-3 py-2">Keep <code>main</code> releasable</td>
+        <td class="border border-border px-3 py-2">Lint/typecheck fast gate, affected-only test, required status checks</td>
+        <td class="border border-border px-3 py-2">Broken code merges; every later stage inherits the rot</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Build once</td>
+        <td class="border border-border px-3 py-2">One immutable digest</td>
+        <td class="border border-border px-3 py-2">SBOM, provenance attestation, cosign keyless, SHA-pinned actions, OIDC</td>
+        <td class="border border-border px-3 py-2">Rebuild per stage → prod runs a different binary than was tested</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Release</td>
+        <td class="border border-border px-3 py-2">Versioned, published artifact</td>
+        <td class="border border-border px-3 py-2">Conventional commits → semver, tag, push signed image</td>
+        <td class="border border-border px-3 py-2">No traceable version; can't say what's deployed or roll forward cleanly</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Staged deploy</td>
+        <td class="border border-border px-3 py-2">Promote the same digest safely</td>
+        <td class="border border-border px-3 py-2">Environment approval, smoke tests, canary + metric gate, auto-rollback</td>
+        <td class="border border-border px-3 py-2">No rollback path → a bad canary is just a slower, fuller outage</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+```yaml
+  deploy:
+    needs: build-once
+    uses: ./.github/workflows/promote.yml
+    with:
+      digest: ${{ needs.build-once.outputs.digest }}   # promote, never rebuild
+  staging:
+    needs: build-once
+    environment: staging                                # auto-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - run: deploy ghcr.io/acme/api@${{ needs.build-once.outputs.digest }}
+      - run: ./smoke-tests.sh
+  production:
+    needs: staging
+    environment: production    # protection rule: required reviewers, no self-approval
+    runs-on: ubuntu-latest
+    steps:
+      - run: deploy-canary ghcr.io/acme/api@${{ needs.build-once.outputs.digest }} --weight 5
+      - run: analyze-slo --window 5m || { rollback; exit 1; }   # metric gate → auto-rollback
+      - run: promote-to-full --weight 100
+```
+
+<Inset kind="why" lang="en">
+Why verify the artifact at deploy time when you already signed it? Because signing at build time and *not checking the signature before deploy* leaves the gap wide open — anyone who can write to the registry or swap a tag could substitute an image. The production job should `cosign verify-attestation` (or `gh attestation verify`) the exact digest against the expected workflow identity before it deploys. Provenance you generate but never verify is decoration; provenance you check at the gate is a control.
+</Inset>
+
+<TradeoffMatrix
+  id="01-capstone-full-pipeline-tradeoff-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="en"
+  prompt="How should production receive the artifact that staging already verified?"
+  options={[
+    { name: "Promote the exact digest staging verified: deploy ghcr.io/acme/api@sha256:… unchanged through staging → canary → prod", summary: "Build once, promote many.", correct: true, justification: "This is the core invariant. The same immutable digest flows through every environment, so the only thing that varies is configuration, never the binary. The artifact production runs is byte-for-byte the one that passed PR checks, smoke tests, and its signature/SBOM/provenance verification. It makes the war-story impossible: there is no rebuild step in which a transitive dependency or a moved tag can substitute a different binary. Rollback is also trivial — you redeploy the previous known-good digest." },
+    { name: "Rebuild from the release tag in the production job for a clean, reproducible environment", summary: "Fresh build per stage.", justification: "This is exactly the bug from the hook. Rebuilding re-resolves dependencies and re-runs the toolchain, so a transitive patch published in the gap, a non-pinned base image, or any non-determinism yields a different binary than the one staging tested. Your green gates now certify an artifact that isn't running. 'Reproducible' build environments are still rarely bit-identical across time in practice — and even if they were, you've thrown away the signed provenance that pinned the tested digest." },
+    { name: "Re-tag staging's image as :prod and deploy by tag", summary: "Tag instead of digest.", justification: "Tags are mutable pointers; a later push can move :prod to a different image, and deploying by tag means you can't prove which digest actually ran. It's closer to right than rebuilding, but it discards the one identifier that is immutable and verifiable. Deploy by digest and keep tags as human-friendly aliases only." },
+    { name: "Have each environment pull 'latest' so they always get the newest build", summary: "Float on latest.", justification: "The worst option: :latest races with every merge, so staging and prod can silently diverge mid-pipeline and you have no idea what's deployed where. It defeats build-once, gating, and rollback simultaneously. Never deploy a floating tag to anything you care about." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-full-pipeline-quiz-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="en"
+  question="Staging passed all gates, but production tripled its latency. The prod job ran `docker build` from the tag. What broke?"
+  choices={[
+    { label: "Production rebuilt instead of promoting the verified digest, so a dependency resolved differently and prod ran a different binary than the one that passed every gate", correct: true },
+    { label: "Staging's smoke tests were too weak to catch the latency regression", misconception: "Even perfect smoke tests can't certify a binary that production then replaces by rebuilding. The gates ran against staging's artifact; prod's rebuild produced a new one they never saw. The fix is build-once + promote-the-digest, not more staging tests." },
+    { label: "The canary window was too short to detect the problem", misconception: "A longer canary might have caught it sooner, but the root cause is that prod was running an unverified, rebuilt binary at all. Promote the same digest and the canary is watching the exact artifact your gates approved." },
+    { label: "The required reviewers approved too quickly", misconception: "Human approval gates intent, not binary identity — a reviewer can't see that the prod job will rebuild a different image. The structural fix is to deploy the digest, not to slow down approvals." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-full-pipeline-quiz-2"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="en"
+  question="On the build-once job you add `id-token: write` and pin actions by SHA. Why both, specifically?"
+  choices={[
+    { label: "id-token: write lets the job mint an OIDC token for keyless cosign signing without a stored key; SHA-pinning stops a moved action tag from injecting malicious code into the trusted build", correct: true },
+    { label: "Both are just GitHub defaults you have to copy from the docs", misconception: "Neither is a default — permissions default to read-only for contents and nothing else, and most examples use floating tags. You add id-token: write deliberately for OIDC, and you pin by SHA deliberately for supply-chain integrity." },
+    { label: "id-token: write speeds up the build and SHA-pinning improves caching", misconception: "Neither touches build speed or caching. id-token: write is purely about OIDC identity for keyless signing; SHA-pinning is purely about preventing a mutable tag from swapping the action's code." },
+    { label: "They let you skip generating the SBOM", misconception: "They're unrelated to the SBOM. The SBOM is generated by a separate step; OIDC signs attestations and SHA-pinning hardens which action code runs." },
+  ]}
+/>
+
+<DragOrder
+  id="01-capstone-full-pipeline-drag-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="en"
+  prompt="Order the stages of the full pipeline from a PR to a fully-rolled-out production release:"
+  items={[
+    { id: "a", label: "PR checks — fast lint/typecheck gate, affected-only test, required status checks block merge" },
+    { id: "b", label: "Build once — one digest + SBOM + signed provenance attestation (OIDC, SHA-pinned actions)" },
+    { id: "c", label: "Release — semver from conventional commits, tag, publish the signed image" },
+    { id: "d", label: "Staging — auto-deploy the same digest, run smoke tests" },
+    { id: "e", label: "Production gate — manual approval via environment protection rules" },
+    { id: "f", label: "Canary + rollback — small-slice rollout watched by a metric gate; auto-rollback on SLO breach" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The full CI/CD pipeline from PR checks through a single build to a staged, gated, canary deployment with a rollback edge"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "pr", label: "PR checks", sub: "required" },
+    { id: "build", label: "Build once", sub: "SBOM+sign" },
+    { id: "publish", label: "Publish", sub: "semver tag" },
+    { id: "staging", label: "Staging", sub: "smoke" },
+    { id: "canary", label: "Canary", sub: "metric gate" },
+    { id: "prod", label: "Production", sub: "approved" },
+  ]}
+  edges={[
+    { from: "pr", to: "build", label: "merge" },
+    { from: "build", to: "publish", label: "digest" },
+    { from: "publish", to: "staging", label: "promote" },
+    { from: "staging", to: "canary", label: "approve" },
+    { from: "canary", to: "prod", label: "SLO ok" },
+    { from: "canary", to: "staging", label: "rollback" },
+  ]}
+  caption="One immutable digest flows left to right: PR checks gate the merge, the artifact is built and signed exactly once, then the same digest is promoted through staging and a metric-gated canary. A breached SLO trips the rollback edge back to the last good digest."
+/>
+
+<KeyTakeaway>A pipeline is one chain. Gate the PR, build the artifact once (digest + SBOM + signed provenance), promote that exact digest: staging smoke → approval → metric-gated canary → auto-rollback. Skip a link and it breaks.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-capstone-full-pipeline-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full pipeline from PR to production and name what plugs in at each stage and what breaks if you skip it.", a: "Stage 1, PR checks: a fast lint/typecheck gate runs first to fail fast, then an affected-only build and test, and these are wired as required status checks so a red check blocks the merge button — skip it and broken code reaches main and every later stage inherits it. Stage 2, build once: on merge or tag you build the image exactly one time to a single immutable digest, generate an SBOM, produce a build-provenance attestation, and sign them with keyless cosign using GitHub's OIDC identity, with third-party actions pinned by commit SHA and least-privilege permissions (id-token: write only here) — skip build-once and rebuild per stage, and production can run a different binary than the one that was tested. Stage 3, release: derive the version from conventional commits, tag, and publish the signed image — skip it and you can't say what's deployed or roll forward cleanly. Stage 4, staged deploy: staging auto-deploys the same digest and runs smoke tests, production sits behind an environment protection rule (required reviewers, no self-approval), then a canary routes a small slice watched by a metric gate against the baseline, widening only if it passes and auto-rolling-back to the previous digest on an SLO breach — skip the rollback path and a bad canary is just a slower outage. The invariant tying it together: the same immutable digest flows through every stage, so only configuration varies, never the binary." },
+    { q: "Why is 'build once, promote the same digest' the load-bearing invariant, and how does it make the war-story impossible?", a: "Because the only way every gate's guarantee survives to production is if the exact bytes that passed each gate are the bytes that run. The build-once rule says the artifact is produced a single time, yielding one immutable digest, and from then on nothing rebuilds — staging, canary, and production all deploy image@sha256:… unchanged. That means the SBOM, the provenance attestation, the smoke tests, and the canary analysis all describe and exercise the identical binary that ends up serving production, so the only variable across environments is configuration. The war-story happened because the production job ran its own docker build from the tag instead of promoting the digest: a transitive dependency had published a patch in the gap, so prod resolved a different binary than staging tested, and every green gate certified an artifact that wasn't running. Promote-the-digest removes the rebuild step entirely, so there is no point at which a moved tag, a floating base image, or a new transitive version can substitute a different binary — and rollback becomes trivial because the previous known-good digest is still right there to redeploy." },
+  ]}
+/>
+
+<Recap lang="en">
+A production CI/CD pipeline is a single chain whose guarantee survives only if no link is skipped. PR checks come first as the merge gate: a fast lint/typecheck pass fails cheaply, an affected-only build and test covers what the diff touches, and required status checks physically block the merge so main stays releasable. On merge or tag the artifact is built exactly once into one immutable digest, with an SBOM for what's inside, a build-provenance attestation for how and where it was built, and keyless cosign signatures using GitHub's OIDC identity — actions pinned by commit SHA and permissions kept least-privilege per job. Release is bookkeeping on the verified artifact: semver from conventional commits, tag, publish the signed image. Then deployment is pure promotion of that one digest — staging auto-deploys and smoke-tests it, production sits behind an environment protection rule with required reviewers and no self-approval, and past the gate a canary routes a small slice watched by a metric gate that auto-rolls-back on an SLO breach. The integrative failure mode is always a skipped link: rebuild per stage and prod runs an untested binary, deploy with no rollback and a bad canary is a slower outage, ship an unverified artifact and your SBOM describes something else. Build once, verify, and promote the same digest — that is the whole pipeline.
+</Recap>

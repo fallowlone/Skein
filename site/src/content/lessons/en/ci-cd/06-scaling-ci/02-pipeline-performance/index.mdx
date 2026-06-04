@@ -1,13 +1,232 @@
 ---
-slug: "02-pipeline-performance"
+concepts:
+- cache-layers
+- parallelism
+- fail-fast
+- flaky-quarantine
+- ci-cost
+- job-matrix
+deepensInto: []
+estMin: 17
 lang: en
-track: "ci-cd"
-unit: "06-scaling-ci"
+lessonType: topic
+level: middle
 order: 2
-title: "Pipeline performance: caching, parallelism, fail-fast"
-summary: "Pipeline performance: caching, parallelism, fail-fast — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-pipeline-performance
 sources:
-  - https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows
+- https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows
+- https://docs.github.com/en/actions/writing-workflows/choosing-what-your-workflow-does/control-the-concurrency-of-workflows-and-workflow-runs
+- https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions
+spiral: []
+status: ready
+summary: Make one pipeline fast and cheap. Cache deps on a lockfile hash with restore-keys fallback, run the cheapest checks first behind needs, fan out only where it pays, quarantine flaky tests, and watch that parallelism doesn't just buy idle runner minutes.
+title: 'Pipeline performance: caching, parallelism, fail-fast'
+track: ci-cd
+unit: 06-scaling-ci
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The pull request is one line: a renamed variable. CI runs for 35 minutes — install, build, unit tests, then the full Playwright e2e suite across three browsers — and *then* fails. The error is a typo: `lenght` instead of `length`, the kind of thing a typecheck catches in two seconds. But typecheck ran as a step *inside* the e2e job, after the browsers booted, so the cheapest, most-certain failure waited behind the slowest, flakiest work in the pipeline. Multiply that by forty pushes a day and the team is burning hours of human waiting and hundreds of runner-minutes to learn something a two-second job could have told them first.
+</Hook>
+
+<Crux>Cache deps on a lockfile hash, run the cheapest checks first behind `needs`, and fan out only where parallelism actually pays.</Crux>
+
+<Explanation>
+
+## Caching: the right key is a lockfile hash
+
+Every CI job starts on a clean runner, so without a cache it redoes every expensive deterministic step — chiefly the dependency install — from scratch on each run. A cache fixes that, but only if its **key** is right. The key is a string; a cache *hits* when that exact string already exists, otherwise it *misses* and a fresh cache is saved at the end of a successful job. So the key must change exactly when the cached contents should change, and never otherwise.
+
+For dependencies the input that determines `node_modules` is the lockfile, so you hash it with `hashFiles`. Add `restore-keys` as an ordered list of prefixes: on a miss, GitHub walks them in order and restores the most recent cache whose key starts with the prefix — a *partial* hit, so `npm ci` reinstalls only the delta instead of all 1,200 packages over the network.
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: ${{ runner.os }}-node22-${{ hashFiles('**/package-lock.json') }}
+    restore-keys: |
+      ${{ runner.os }}-node22-
+      ${{ runner.os }}-
+```
+
+There are three cache *layers* worth distinguishing, each keyed the same way: the **dependency cache** (`~/.npm`, `~/.cache/pip`, Go module cache — often automatic via `setup-node`'s `cache: npm`), the **build cache** (incremental compiler output, Turborepo/Nx remote cache), and the **Docker layer cache** (`type=gha` with buildx). The anti-pattern that kills all three is the same: a **volatile key**. Bake a timestamp or `${{ github.run_id }}` into the key and it is unique every run — so it *never* hits, the cache silently saves and is never read, and you pay full install time forever while believing you have a cache.
+
+## Fail-fast: cheapest, most-likely-to-fail first
+
+`needs` turns a flat list of jobs into a DAG: a job with `needs: [lint]` will not start until `lint` succeeds. That single keyword lets you gate the slow, expensive work behind the cheap work — so a two-second lint failure short-circuits the run before a twenty-minute e2e suite ever boots a browser. The ordering rule is **cheapest and most-likely-to-fail first**: lint and typecheck run in seconds and catch the most common mistakes, so they go at the front of the DAG and everything slow hangs off them with `needs`.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Check</th>
+        <th class="border border-border px-3 py-2 text-left">Typical time</th>
+        <th class="border border-border px-3 py-2 text-left">Order</th>
+        <th class="border border-border px-3 py-2 text-left">Wasted on the typo PR</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">lint / typecheck</td>
+        <td class="border border-border px-3 py-2">~2–15 s</td>
+        <td class="border border-border px-3 py-2">first (gate)</td>
+        <td class="border border-border px-3 py-2">finds it in seconds</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">unit tests</td>
+        <td class="border border-border px-3 py-2">~1–3 min</td>
+        <td class="border border-border px-3 py-2"><code>needs: lint</code></td>
+        <td class="border border-border px-3 py-2">never runs — skipped</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">e2e (3 browsers)</td>
+        <td class="border border-border px-3 py-2">~15–25 min</td>
+        <td class="border border-border px-3 py-2"><code>needs: [unit, build]</code></td>
+        <td class="border border-border px-3 py-2">never runs — skipped</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><b>flat (no needs)</b></td>
+        <td class="border border-border px-3 py-2"><b>~25 min</b></td>
+        <td class="border border-border px-3 py-2"><b>all at once</b></td>
+        <td class="border border-border px-3 py-2"><b>pays the full e2e, then fails on the typo</b></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+```yaml
+jobs:
+  lint:                       # ~10 s — the cheap gate
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { run: npm run lint && npm run typecheck }]
+
+  unit:
+    needs: lint               # never starts if lint fails
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { run: npm test }]
+
+  build:
+    needs: lint               # parallel with unit — both only need lint
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { run: npm run build }]
+
+  e2e:
+    needs: [unit, build]      # the slow suite is gated behind everything cheap
+    strategy:
+      fail-fast: true         # one shard fails → cancel the rest
+      matrix:
+        browser: [chromium, firefox, webkit]
+    runs-on: ubuntu-latest
+    steps: [{ uses: actions/checkout@v4 }, { run: npx playwright test --project=${{ matrix.browser }} }]
+```
+
+<Inset kind="why" lang="en">
+`fail-fast: true` is the matrix-level twin of `needs` ordering: it is the default, and it cancels in-progress and queued shards the instant one shard fails. On a PR check that is what you want — you already know the build is red, so why pay for the other two browsers to finish. Flip it to `false` only for a nightly or release run where you want the *complete* failure report across every cell, not the fastest possible red.
+</Inset>
+
+## Parallelism and a `matrix`: split work, but fan-out isn't free
+
+When jobs are independent — `unit` and `build` above both only need `lint` — they run in parallel automatically, cutting wall-clock time. A `matrix` is the compact way to fan one job over a list (browsers, Node versions, OSes), spawning one job per cell. The catch is **cost**. GitHub bills each job's minutes independently and rounds each job up to the whole minute, so a 3-browser × 2-OS matrix is six separate jobs, each paying its own checkout, install, and cache-restore overhead. Parallelism trades *billable minutes* for *latency*: five 1-minute shards finish in one minute of wall-clock but bill five minutes. Fan out where the latency win is real; cap runaway fan-out with `max-parallel`.
+
+## Cost: minutes, runner size, and idle
+
+Runner minutes are the bill. Linux is the cheap baseline; Windows costs roughly 2× per minute and macOS roughly 10×, so a careless macOS matrix is the fastest way to a surprise invoice. Two more levers cut both ways. A **bigger runner** (more vCPUs) finishes a CPU-bound job faster but costs proportionally more per minute — worth it only if your job actually parallelises across cores; a 16-core runner that runs a single-threaded build just bills 8× for nothing and **sits idle**. And **cache restore time** is not free: restoring a multi-hundred-MB cache over the network can cost more than the rebuild it saves, so cache the slow-to-produce things (deps, compiled output), not everything.
+
+<Quiz
+  id="02-pipeline-performance-quiz-1"
+  lessonSlug="02-pipeline-performance"
+  lang="en"
+  question="A workflow's cache key is `build-${{ github.run_id }}`. Builds are still slow and the cache never seems to help. Why?"
+  choices={[
+    { label: "github.run_id is unique to every run, so the key is never the same twice — every run misses, saves a fresh cache, and never restores one", correct: true },
+    { label: "actions/cache only works for npm, not for build output", misconception: "actions/cache is content-agnostic — it saves and restores any path you give it. The problem is the key, not what's being cached." },
+    { label: "The cache is too big to restore, so GitHub skips it", misconception: "GitHub does not silently skip a matching cache. The issue is that the key never matches: a run_id changes every run, so there is never a hit to restore." },
+    { label: "You need restore-keys; without them caching is disabled", misconception: "restore-keys only add prefix fallbacks. Even with them, a key embedding run_id never produces a saved cache whose prefix is reused meaningfully — fix the volatile key first by hashing the lockfile." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="02-pipeline-performance-tradeoff-1"
+  lessonSlug="02-pipeline-performance"
+  lang="en"
+  prompt="A 35-minute pipeline's wall-clock is dominated by a single-threaded `npm run build` plus a `npm ci` that reinstalls 1,200 packages every run. You want the biggest cut for the least extra billable cost. Which move first?"
+  options={[
+    { name: "Cache ~/.npm on a lockfile hash (with restore-keys) and reorder lint/typecheck ahead of the slow jobs with needs", summary: "Cache + cheap-first.", correct: true, justification: "This attacks both real costs with essentially zero added billable minutes. Hashing the lockfile turns the 1,200-package reinstall into a sub-second cache hit on the vast majority of pushes (only lockfile changes miss), and a restore-keys prefix fallback installs just the delta when it does. Putting lint/typecheck first behind needs means a broken PR fails in seconds instead of paying the full 35 minutes. You spend almost nothing extra and cut both latency and average minutes." },
+    { name: "Move the whole pipeline to a 16-core larger runner", summary: "Bigger box.", justification: "A bigger runner only helps work that parallelises across cores. The bottleneck here is a single-threaded build, which won't get faster on 16 cores — you'd just bill several times more per minute for a box that sits mostly idle. And it does nothing about the redundant 1,200-package reinstall. Right tool only for genuinely CPU-parallel jobs, not this one." },
+    { name: "Fan the build out into a large matrix across many runners", summary: "Massive fan-out.", justification: "Matrix fan-out cuts latency only for work that splits into independent shards; a single build artifact doesn't shard, and each extra cell re-pays checkout, install, and cache-restore overhead while billing its own rounded-up minutes. You'd multiply cost without cutting the build's own time. Save matrix for naturally independent work like multi-browser e2e." },
+    { name: "Disable the cache entirely with --no-cache so runs are reproducible", summary: "Turn cache off.", justification: "This is backwards — it guarantees the slow path every run. A correctly keyed lockfile-hash cache is already deterministic: it changes exactly when dependencies change. The reproducibility concern is solved by keying on the lockfile, not by paying full install time forever." },
+  ]}
+/>
+
+<DragOrder
+  id="02-pipeline-performance-drag-1"
+  lessonSlug="02-pipeline-performance"
+  lang="en"
+  prompt="Order these CI jobs into a fail-fast DAG — cheapest, most-likely-to-fail first, slowest gated last:"
+  items={[
+    { id: "a", label: "lint + typecheck — seconds, catches the most common mistakes (the gate)" },
+    { id: "b", label: "unit tests — a minute or two, needs: lint" },
+    { id: "c", label: "build — parallel with unit, needs: lint" },
+    { id: "d", label: "e2e matrix (3 browsers) — 15–25 min, needs: [unit, build], fail-fast: true" },
+    { id: "e", label: "deploy — only on green, needs: e2e" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+<Inset kind="note" lang="en">
+**Flaky-test quarantine** (recap from the testing unit): a test that passes and fails on identical code erodes trust and, worse, gets papered over by auto-retries that can mask a *real* regression. Don't let a known-flaky test gate the pipeline. Tag it, move it into a separate non-blocking job (or mark it `test.fixme`/`continue-on-error`), and track it on a fix list — so the green check stays meaningful and a genuine failure is never re-run away.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="A fail-fast CI DAG: a cheap lint/typecheck gate that, on success, fans out to parallel unit and build jobs, which gate a slow e2e matrix, which gates deploy"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "lint", label: "lint+typecheck", sub: "~10 s · gate" },
+    { id: "unit", label: "unit tests", sub: "needs: lint" },
+    { id: "build", label: "build", sub: "needs: lint" },
+    { id: "e2e", label: "e2e matrix", sub: "fail-fast: true" },
+    { id: "deploy", label: "deploy", sub: "needs: e2e" },
+  ]}
+  edges={[
+    { from: "lint", to: "unit", label: "on green" },
+    { from: "lint", to: "build", label: "parallel" },
+    { from: "unit", to: "e2e", label: "needs" },
+    { from: "build", to: "e2e", label: "needs" },
+    { from: "e2e", to: "deploy", label: "on green" },
+  ]}
+  caption="needs forms the DAG: a 2-second lint failure short-circuits the run before the 20-minute e2e ever boots a browser. The cheapest, most-likely-to-fail check goes first; the slowest work hangs off it."
+/>
+
+<KeyTakeaway>Cache deps on a lockfile hash; a timestamp key never hits. Gate slow jobs behind cheap lint/typecheck with `needs`, fan out via `matrix` only where latency pays, and quarantine flaky tests so green stays honest.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-pipeline-performance-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a cache key like `build-${{ github.run_id }}` make the cache useless, and what is the correct key plus fallback?", a: "A cache hits only when its key string already exists from a previous run. github.run_id is unique to every workflow run, so the key is never the same twice: every run misses, dutifully saves a brand-new cache at the end, and then never restores it — you pay the full install or build every time while believing the cache is helping. The key must change exactly when the cached contents should change and never otherwise. For dependencies the input that determines the contents is the lockfile, so the correct key hashes it: key: ${{ runner.os }}-node22-${{ hashFiles('**/package-lock.json') }}. Then add restore-keys as an ordered list of prefixes — ${{ runner.os }}-node22- then ${{ runner.os }}- — so when the lockfile does change and the exact key misses, GitHub restores the most recent cache whose key starts with that prefix, a partial hit that lets the installer reinstall only the delta instead of all 1,200 packages over the network." },
+    { q: "Explain how `needs` and fail-fast cut feedback time, and the cost trap of fanning everything into a matrix.", a: "needs turns a flat set of jobs into a DAG: a job with needs: [lint] will not start until lint succeeds, so you can gate the slow expensive work behind the cheap work. Put lint and typecheck first — they run in seconds and catch the most common mistakes — and a two-second failure short-circuits the run before a twenty-minute e2e suite ever boots a browser. Matrix-level fail-fast: true (the default) is the twin idea: the instant one shard fails it cancels the remaining in-progress and queued shards, so a known-red run stops paying for the other browsers. The cost trap is that parallelism is not free: GitHub bills every job's minutes independently and rounds each up to a whole minute, so a six-cell matrix is six separate jobs each re-paying checkout, install, and cache-restore overhead. Parallelism trades billable minutes for latency — five one-minute shards finish in one minute of wall-clock but bill five minutes — so fan out only where the latency win is real, and cap runaway fan-out with max-parallel." },
+  ]}
+/>
+
+<Recap lang="en">
+A fast, cheap pipeline comes from three moves layered together. First, cache the expensive deterministic steps on a key that is a lockfile hash — `hashFiles('**/package-lock.json')` — with ordered `restore-keys` prefixes so a changed lockfile still restores a partial cache and reinstalls only the delta; the fatal mistake is a volatile key (a timestamp or `run_id`) that is unique every run, so it never hits and you pay full install time while believing you are cached. The three cache layers — dependency, build, and Docker layer cache — all obey the same key rule. Second, order jobs cheapest and most-likely-to-fail first: `needs` builds a DAG so a two-second lint/typecheck failure short-circuits the run before a twenty-minute e2e suite ever starts, and matrix `fail-fast: true` cancels the remaining shards the moment one goes red. Third, respect cost: parallelism and a `matrix` cut latency but each job bills its own minutes rounded up, Windows and macOS runners cost roughly 2× and 10× Linux, and a bigger runner only pays off for genuinely multi-core work — otherwise it sits idle billing more. Quarantine known-flaky tests into a non-blocking job so auto-retries never mask a real regression and the green check keeps meaning something.
+</Recap>
