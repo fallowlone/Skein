@@ -1,0 +1,244 @@
+---
+concepts:
+- cpu-profiling
+- flame-graphs
+- heap-snapshots
+- shallow-vs-retained
+- gc-and-heap-limit
+- leak-triage
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: 02-cpu-and-memory-profiling
+sources:
+- https://nodejs.org/en/learn/diagnostics/memory/using-heap-snapshot
+- https://nodejs.org/en/learn/getting-started/profiling
+- https://nodejs.org/api/v8.html
+spiral: []
+status: ready
+summary: 'A CPU profile shows where time goes — wide flame frames are hot. A leak is
+  old space that climbs across GCs and never drops; find it with three heap snapshots,
+  chase retained size and the retainer path, then bound the cache or remove the listener.'
+title: 'CPU profiles and the heap-snapshot leak hunt'
+track: node
+unit: 04-performance
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A checkout service started getting OOM-killed every 14 hours, like clockwork. The team's first reflex was to raise `--max-old-space-size` from 2048 to 4096 — and the crash simply moved to every 28 hours. RSS climbed in a straight line across every garbage collection and never came back down, which is the signature of a leak, not a tuning problem. Three heap snapshots later the answer was a one-liner: a module-level `Map` used as a response cache, keyed by request id, with no eviction. Each request added one entry that nothing ever removed. The "fix" of doubling the heap had only bought time for the same `Map` to grow twice as large before killing the process again.
+</Hook>
+
+<Crux>Wide flame frames are hot (width = self time); a leak is old space climbing across GCs — hunt it with three snapshots.</Crux>
+
+<Explanation>
+
+## CPU profiling: find the wide frame
+
+When a service is slow or pegging a core, you do not guess — you sample. A **CPU profile** records which function is on the stack at each sampling interval, so the function that appears most often is where time actually goes. The fastest way in Node is the built-in flag `--cpu-prof`: it writes a `.cpuprofile` file on exit that you open in the Chrome DevTools **Performance** tab. There you read a **flame graph** where each box is a stack frame and **width = self time** — the widest frames are your hot path, full stop. Depth is just call nesting; ignore it and chase width.
+
+```bash
+# writes isolate-*.cpuprofile on clean exit; open in Chrome DevTools → Performance
+node --cpu-prof --cpu-prof-dir=./prof server.js
+
+# the classic V8 tick processor: a text report, no GUI needed
+node --prof server.js
+node --prof-process isolate-*.log > processed.txt
+```
+
+`--prof` plus `node --prof-process` gives you the same sampled data as a **text tick report** — handy on a headless box where you can't open DevTools. Higher-level tools wrap this: **0x** generates an interactive flame graph from one command, and **clinic flame** does the same with a guided workflow. All of these are **sampling** profilers (snapshot the stack every N microseconds, cheap, ~1-2% overhead) as opposed to **instrumentation** (wrap every call, exact counts, but so heavy it distorts the very timings you're measuring). For production triage you almost always want sampling. The classic find: a regex or a deep `JSON.parse` shows up as one fat frame eating 40% of self time — optimize it, cache it, or move it off the main thread to a Worker.
+
+## Heap snapshots: the three-snapshot leak hunt
+
+A CPU profile won't find a leak; for that you photograph the heap. A **heap snapshot** is a complete graph of every live object and who points to whom. Capture one with `v8.writeHeapSnapshot()` from inside the process, trigger one on demand with `--heapsnapshot-signal=SIGUSR2` (then `kill -USR2 <pid>`), or take one from the DevTools **Memory** tab. One snapshot tells you what's big *now*; it can't tell you what's *leaking*. For that you use the **three-snapshot technique**.
+
+```js
+import v8 from "node:v8";
+
+// snapshot 1 — baseline, after warm-up
+v8.writeHeapSnapshot("./snap-1.heapsnapshot");
+await exerciseSuspectPath({ times: 5000 }); // hammer the suspected route
+// snapshot 2 — after the load
+v8.writeHeapSnapshot("./snap-2.heapsnapshot");
+await exerciseSuspectPath({ times: 5000 }); // do it again
+v8.writeHeapSnapshot("./snap-3.heapsnapshot");
+```
+
+Load all three into the Memory tab, switch the dropdown to **Comparison**, and use **"Objects allocated between snapshots"**: anything whose count only ever **grows** from snap 1 → 2 → 3, and never drops after a GC, is your leak. A stable workload should reach a sawtooth — allocate, collect, repeat — so the steady upward staircase is the tell. The next column is the one that matters most: not **shallow size** (the object's own bytes) but **retained size** — the memory that would be freed if this object were freed, i.e. everything only it keeps alive. Sort by retained size, pick the constructor whose count grew, and follow its **retainer path** (the chain of references holding it) straight to the cache, array, or listener that won't let go.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Leak source</th>
+        <th class="border border-border px-3 py-2 text-left">Snapshot signature</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Unbounded <code>Map</code>/array cache, no eviction</td>
+        <td class="border border-border px-3 py-2">One constructor's count grows every snapshot; huge retained size on a single <code>Map</code></td>
+        <td class="border border-border px-3 py-2">Bound it: LRU with a max size / TTL, or <code>WeakMap</code> if keyed by object</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Forgotten event listeners</td>
+        <td class="border border-border px-3 py-2">Listener/closure count climbs; <code>MaxListenersExceededWarning</code> in logs</td>
+        <td class="border border-border px-3 py-2"><code>removeListener</code> / <code>off</code> on teardown; <code>once</code> for one-shots</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Closure capturing a large object</td>
+        <td class="border border-border px-3 py-2">Retainer path runs through a closure context holding a big buffer/DOM-like graph</td>
+        <td class="border border-border px-3 py-2">Null the reference; don't close over more than you need</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Module-level global that only grows</td>
+        <td class="border border-border px-3 py-2">A top-level array/Set rises monotonically; never shrinks across GCs</td>
+        <td class="border border-border px-3 py-2">Cap it, flush periodically, or move state out of module scope</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="04-profiling-quiz-1"
+  lessonSlug="02-cpu-and-memory-profiling"
+  lang="en"
+  question="In a heap snapshot, you find a cache entry whose shallow size is 48 bytes but whose retained size is 90 MB. What does that tell you?"
+  choices={[
+    { label: "The object itself is tiny, but it is the sole thing keeping ~90 MB alive — freeing it (e.g. evicting the cache key) would release that 90 MB, so this is the retainer to chase", correct: true },
+    { label: "The object is corrupted because the two sizes disagree", misconception: "There's nothing corrupt about it. Shallow size is the object's own bytes; retained size is everything that would be freed if it were freed. A small object retaining a huge graph is exactly the normal shape of a leak root." },
+    { label: "Retained size is always wrong for caches and should be ignored", misconception: "Retained size is precisely the field you want for leak hunting — it's the memory you'd reclaim. Shallow size (48 bytes) is the one that's nearly useless here on its own." },
+    { label: "You need to raise --max-old-space-size to fit the 90 MB", misconception: "Raising the heap limit just delays the OOM; the 90 MB is held because of a reference, not because the heap is too small. Cut the retainer (evict the key) and the memory frees on the next GC." },
+  ]}
+/>
+
+## GC, the heap limit, and what "leak" actually means
+
+V8's heap is **generational**. New allocations land in **new space**, collected by **Scavenge** — fast, frequent, copying survivors out. Objects that survive a couple of Scavenges get promoted to **old space**, collected by the slower **Mark-Sweep-Compact**. The practical definition of a leak falls right out of this: **old space (and RSS) that climbs across full GCs and never comes back down**. A healthy process sawtooths; a leaking one staircases. Watch it directly with `--trace-gc`, which prints one line per collection with before/after sizes.
+
+```bash
+node --trace-gc server.js
+# [12345:0x...] 4210 ms: Mark-Sweep 1850.2 (2048.0) -> 1844.9 (2048.0) MB
+#                                    ^ after a full GC it barely dropped → leaking
+```
+
+The hard ceiling is **`--max-old-space-size=<MB>`**. On 64-bit Node the old-space default is large but bounded (historically ~2 GB; it varies by platform and version), and a real workload with a big legitimate heap may need it raised. But raising it is a tuning knob, **not a leak fix** — as the hook shows, doubling the limit just doubles the time to OOM. The diagnostic question is always the same: does memory return after a full GC? If yes, you're under-provisioned, raise the limit. If no, you have a leak, take snapshots.
+
+<Inset kind="why" lang="en">
+Why does an unhandled, ever-growing `Map` defeat GC entirely? Garbage collection frees only what is **unreachable**. A module-level `Map` is reachable for the entire process lifetime, and every value you put in it is reachable *through* the Map — so from V8's point of view none of it is garbage, ever. The collector is working perfectly; you've simply told it, by keeping the reference, that all of this is live. That's why the fix is never "tune the GC" but "drop the reference" — add eviction so old keys become unreachable and the next Mark-Sweep can reclaim them.
+</Inset>
+
+<TradeoffMatrix
+  id="04-profiling-tradeoff-1"
+  lessonSlug="02-cpu-and-memory-profiling"
+  lang="en"
+  prompt="A production API on a headless server is intermittently pegging one CPU core. You can't open Chrome DevTools against it and you want the lowest-friction way to see the hot function. What do you reach for first?"
+  options={[
+    { name: "node --prof, then node --prof-process to get a text tick report", summary: "Built-in, text, headless-friendly.", correct: true, justification: "This is the right first move on a box with no GUI. --prof is built into Node (zero install), samples the stack cheaply, and --prof-process renders a plain-text report you can read over SSH — the top of the 'Summary' and 'bottom up' sections names the hottest functions. It costs nothing to add and works anywhere Node runs, which is exactly what you want for first-look triage on a headless server." },
+    { name: "node --cpu-prof and open the .cpuprofile in Chrome DevTools", summary: "Great UI, needs DevTools.", justification: "Excellent for reading a flame graph visually, but the constraint here is no DevTools access. You'd have to copy the .cpuprofile off the box to a machine with Chrome — doable, but more friction than just reading --prof-process text in place. It's the better tool once you can get the file to a browser, not the lowest-friction first step on the server." },
+    { name: "Install and run clinic flame", summary: "Guided, but extra deps.", justification: "clinic flame produces a beautiful guided flame graph, but it's an extra dependency to install on a production host and still renders to HTML you'd open in a browser. Powerful for a deeper investigation, overkill and higher-friction for a quick 'which function is hot' check over SSH." },
+    { name: "Take a heap snapshot with v8.writeHeapSnapshot()", summary: "Wrong tool — that's for memory.", justification: "A heap snapshot photographs memory, not CPU time. It will tell you what objects are live, not which function is burning the core. Reaching for it here means you'd analyze the wrong dimension entirely — CPU pegging is a profiling problem, not a leak problem." },
+  ]}
+/>
+
+## The leak-triage runbook
+
+When memory climbs and you get OOM-killed, the moves are mechanical, not magical. Confirm it's a leak (old space doesn't drop after a full GC via `--trace-gc`). Take a baseline snapshot, exercise the suspected path hard, snapshot again, repeat for a third. Use the comparison view's "allocated between snapshots" to find the constructor whose count only grows. Sort by **retained size**, open the **retainer path**, and walk it to the root reference — almost always an unbounded cache, a forgotten listener, a fat closure, or a module global. Then make the reference go away: add LRU eviction or a TTL to the cache, `removeListener`/`off` on teardown, null the closed-over object. Re-run the snapshot diff to prove the count is now flat. A regression test that asserts steady-state RSS after N iterations keeps it from coming back.
+
+```js
+// before: leaks one entry per request, forever
+const cache = new Map();
+function handle(req) {
+  cache.set(req.id, expensiveResult(req)); // never evicted → OOM in hours/days
+}
+
+// after: bounded — old keys become unreachable and GC reclaims them
+import { LRUCache } from "lru-cache";
+const cache = new LRUCache({ max: 10_000, ttl: 60_000 });
+function handle(req) {
+  cache.set(req.id, expensiveResult(req)); // evicts oldest past 10k entries
+}
+```
+
+<DragOrder
+  id="04-profiling-drag-1"
+  lessonSlug="02-cpu-and-memory-profiling"
+  lang="en"
+  prompt="Order the steps of a heap-snapshot leak hunt, from first suspicion to verified fix:"
+  items={[
+    { id: "a", label: "Confirm it's a leak: --trace-gc shows old space not dropping after a full GC" },
+    { id: "b", label: "Take a baseline snapshot after warm-up" },
+    { id: "c", label: "Exercise the suspected path hard, then snapshot again — repeat for a third" },
+    { id: "d", label: "Use the comparison view to find the constructor whose count only grows" },
+    { id: "e", label: "Sort by retained size and follow the retainer path to the root reference" },
+    { id: "f", label: "Cut the reference (LRU eviction / removeListener) and re-diff snapshots to prove it's flat" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+<Quiz
+  id="04-profiling-quiz-2"
+  lessonSlug="02-cpu-and-memory-profiling"
+  lang="en"
+  question="With --trace-gc running, you see old space sit at ~1850 MB before a Mark-Sweep and ~1845 MB after, climbing a few MB every cycle. What does this pattern mean?"
+  choices={[
+    { label: "A leak: a full GC barely reclaims anything and old space rises monotonically across collections — something reachable keeps growing, so take three heap snapshots", correct: true },
+    { label: "Healthy steady state — this is the normal sawtooth", misconception: "A healthy heap sawtooths: it drops substantially after a full GC. Here the full GC reclaims almost nothing (1850→1845) and the floor keeps rising — that's a staircase, the signature of a leak, not a sawtooth." },
+    { label: "The GC is broken and needs --max-old-space-size raised", misconception: "The GC isn't broken — it can only free unreachable objects, and these are reachable (held by some cache/listener/global). Raising the limit just delays the OOM; you need to find and cut the retainer." },
+    { label: "Normal new-space churn from Scavenge", misconception: "Scavenge collects new space; Mark-Sweep is the old-space collector named in the trace. The fact that the old-space floor rises after each Mark-Sweep is precisely what rules out benign new-space churn." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The three-snapshot leak hunt from suspicion to a flat baseline"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "g", label: "--trace-gc", sub: "old space climbs" },
+    { id: "s", label: "3 snapshots", sub: "diff comparison" },
+    { id: "r", label: "retained size", sub: "retainer path" },
+    { id: "f", label: "cut reference", sub: "evict / off" },
+  ]}
+  edges={[
+    { from: "g", to: "s", label: "confirm" },
+    { from: "s", to: "r", label: "find grower" },
+    { from: "r", to: "f", label: "follow + fix" },
+  ]}
+  caption="Confirm a leak with --trace-gc (old space never drops after a full GC), capture three heap snapshots around the suspected path, sort the only-growing constructor by retained size and walk its retainer path to the root reference, then cut that reference — bound the cache or remove the listener — and re-diff to prove the count is flat."
+/>
+
+<KeyTakeaway>A CPU profile finds the wide flame frame (width = self time). A leak is old space climbing across GCs and never dropping — take three snapshots, chase retained size and the retainer path, then bound the cache.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-profiling-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the difference between shallow and retained size in a heap snapshot, and which one do you sort by to hunt a leak?", a: "Shallow size is the memory the object occupies on its own — just its own fields, a few dozen bytes for most objects. Retained size is the total memory that would be freed if this object were freed: itself plus everything reachable *only* through it, i.e. the whole subgraph it keeps alive. A leak root is almost always a small object with a huge retained size — a 48-byte Map or closure that single-handedly retains tens or hundreds of MB. So you sort by retained size, not shallow size: shallow tells you how fat one object is, retained tells you how much memory it's holding hostage. Once you've found the high-retained-size grower, you open its retainer path — the chain of references keeping it reachable — and walk it to the actual culprit: the unbounded cache, the forgotten listener, the module global. Cutting that one reference lets the next GC reclaim the entire retained subgraph." },
+    { q: "Why does doubling --max-old-space-size not fix a memory leak, and how do you tell a leak from genuine under-provisioning?", a: "Because a leak is about *reachability*, not heap size. The leaking memory is held by a live reference — a module-level Map, a registered listener, a closure — so V8 correctly refuses to collect it no matter how big the heap is. Raising --max-old-space-size just gives the same ever-growing structure more room before it hits the ceiling, so the OOM-kill moves from every 14 hours to every 28; the slope is identical. The diagnostic that distinguishes the two is whether memory returns after a full garbage collection, which you watch with --trace-gc. If old space drops substantially after a Mark-Sweep and then refills under load — a sawtooth — you're simply under-provisioned for a legitimately large working set, and raising the limit is the right call. If old space barely drops after a full GC and the floor keeps climbing — a staircase — you have a leak, and the fix is to find the retainer with three heap snapshots and cut the reference, not to feed it more heap." },
+  ]}
+/>
+
+<Recap lang="en">
+Profiling and leak-hunting are two different jobs with two different tools. For CPU, you sample: `--cpu-prof` writes a `.cpuprofile` for the Chrome DevTools Performance tab, `--prof` plus `node --prof-process` gives a headless-friendly text tick report, and 0x or clinic flame wrap the same data into a flame graph where **width is self time** — chase the widest frame, ignore depth. For memory, you photograph the heap. A heap snapshot (`v8.writeHeapSnapshot()`, `--heapsnapshot-signal=SIGUSR2`, or the DevTools Memory tab) shows what's live now, but only the **three-snapshot technique** — baseline, exercise the path, snapshot, repeat — reveals a leak, via the comparison view's "objects allocated between snapshots": the constructor whose count only grows is your culprit. Sort by **retained size** (what's freed if this is freed), not shallow size, and follow the **retainer path** to the root: an unbounded `Map`/array cache, a forgotten event listener (`MaxListenersExceededWarning`), a fat closure, or a module global. The mechanism underneath is V8's generational heap — fast Scavenge on new space, slower Mark-Sweep-Compact on old space — so the precise definition of a leak is **old space that climbs across full GCs and never drops**, which you watch with `--trace-gc`. Raising `--max-old-space-size` is a provisioning knob, never a leak fix: if memory returns after a full GC you're under-provisioned, if it doesn't you have a leak. The fix is always to make the reference unreachable — add LRU eviction or a TTL, `removeListener` on teardown, null the closure — then re-diff the snapshots to prove the count is flat.
+</Recap>

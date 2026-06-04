@@ -1,0 +1,247 @@
+---
+concepts:
+- diagnostics-channel
+- async-local-storage
+- async-hooks
+- process-signals
+- on-demand-profiling
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-diagnostics
+sources:
+- https://nodejs.org/api/diagnostics_channel.html
+- https://nodejs.org/api/async_context.html
+- https://nodejs.org/api/process.html#signal-events
+- https://nodejs.org/api/cli.html#--cpu-prof
+spiral: []
+status: ready
+summary: 'diagnostics_channel is in-process pub/sub that costs nothing unless subscribed,
+  AsyncLocalStorage carries a request id across await without threading args, and
+  --cpu-prof writes a profile on exit — instrument without monkey-patching.'
+title: 'Diagnostics: channels, async context, and profiles'
+track: node
+unit: 03-errors-and-diagnostics
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A checkout service had clean structured logs, but every line was an island: `level=error msg="charge failed"` with no way to tie it to the request that triggered it. The team had threaded a `traceId` argument through the HTTP handler and the order service, but two layers down a library callback dropped it, and from there every log line was anonymous. During a partial outage they had thousands of error lines and no way to reconstruct a single user's journey. The fix wasn't another log field by hand — it was `AsyncLocalStorage`, which carries the id across every `await` and callback automatically, so the deep logger reads it without anyone passing it.
+</Hook>
+
+<Crux>`diagnostics_channel` is free unless subscribed, `AsyncLocalStorage` carries an id across `await`, `--cpu-prof` profiles on demand.</Crux>
+
+<Explanation>
+
+## diagnostics_channel: instrument without monkey-patching
+
+The old way to add tracing or metrics to a library was to monkey-patch its prototype — wrap `http.request`, swap a method on the driver — which breaks silently on the next upgrade and couples your observability code to internals. `node:diagnostics_channel` replaces that with a built-in, in-process pub/sub bus. A producer publishes named messages; subscribers receive them synchronously. Core, `undici`, and `http` already expose channels, so you instrument them without touching their code.
+
+The performance property that makes it safe to leave in hot paths is `hasSubscribers`. A `publish` with no listeners is essentially free, so a library can guard the cost of *building* the message and pay nothing when nobody is watching.
+
+```js
+import diagnostics_channel from "node:diagnostics_channel";
+
+const channel = diagnostics_channel.channel("app:db:query");
+
+// producer (in the DB wrapper) — pay to build the payload only if observed
+function runQuery(sql, params) {
+  if (channel.hasSubscribers) {
+    channel.publish({ sql, params, startedAt: performance.now() });
+  }
+  return driver.query(sql, params);
+}
+
+// subscriber (in your tracing setup) — attach with zero coupling to the wrapper
+channel.subscribe((message) => {
+  metrics.increment("db.query", { sql: message.sql });
+});
+```
+
+The tradeoff versus an event emitter or a wrapper: channels are synchronous and unordered across producers, so a subscriber must be fast and must not throw into the producer's call. The win is decoupling — you can subscribe to `undici`'s built-in request channels for distributed tracing without a single line of patching, and the instrumentation survives library upgrades.
+
+## AsyncLocalStorage: request context that survives await
+
+The hook's bug — a `traceId` dropped two layers down — is the canonical case for `AsyncLocalStorage` (from `node:async_hooks`). It gives you a store that is scoped to an asynchronous call tree: you call `als.run(store, fn)` once at the request boundary, and any code reached from `fn` — across `await`, `setTimeout`, promise chains, library callbacks — can call `als.getStore()` and read the same `store`. You never pass the id as an argument again.
+
+```js
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const als = new AsyncLocalStorage();
+
+// at the boundary: open a context for this request
+app.use((req, res, next) => {
+  const store = { traceId: req.headers["x-trace-id"] ?? crypto.randomUUID() };
+  als.run(store, () => next());
+});
+
+// anywhere downstream, however deep, with no plumbing:
+function log(msg) {
+  const { traceId } = als.getStore() ?? {};
+  logger.info({ traceId, msg });
+}
+```
+
+Contrast this with a module-level variable: a global is shared across *all* concurrent requests, so under load request B overwrites request A's id and your traces interleave into nonsense. `AsyncLocalStorage` keeps a separate store per async context, which is exactly the isolation a server needs. The cost is real but bounded — it rides on `async_hooks`, so there is per-async-operation overhead; keep the store small (ids and flags, not large objects) and you pay single-digit-percent in typical request handlers.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+        <th class="border border-border px-3 py-2 text-left">What it gives</th>
+        <th class="border border-border px-3 py-2 text-left">Cost / when to reach for it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>diagnostics_channel</code></td>
+        <td class="border border-border px-3 py-2">In-process pub/sub to instrument core/undici/http with no patching</td>
+        <td class="border border-border px-3 py-2">~free when no subscribers (<code>hasSubscribers</code>); always-on tracing/metrics hooks</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>AsyncLocalStorage</code></td>
+        <td class="border border-border px-3 py-2">Request-scoped store readable across <code>await</code>/callbacks</td>
+        <td class="border border-border px-3 py-2">Bounded per-op overhead; carry trace/request ids and tenant flags</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>async_hooks</code></td>
+        <td class="border border-border px-3 py-2">Raw init/before/after/destroy lifecycle of async resources</td>
+        <td class="border border-border px-3 py-2">Real per-resource CPU cost; use sparingly, prefer ALS for context</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>--cpu-prof</code> / <code>--heap-prof</code></td>
+        <td class="border border-border px-3 py-2">A <code>.cpuprofile</code>/<code>.heapprofile</code> written on exit, opened in DevTools</td>
+        <td class="border border-border px-3 py-2">Profiling overhead while on; on-demand CPU/heap investigation</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">signals (SIGTERM/SIGINT/SIGUSR1)</td>
+        <td class="border border-border px-3 py-2">Lifecycle hooks: graceful shutdown, Ctrl-C, open inspector</td>
+        <td class="border border-border px-3 py-2">Free; handle SIGTERM to drain before orchestrators kill you</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+`AsyncLocalStorage` is built on `async_hooks`, but they are not the same tool. `async_hooks` exposes the raw lifecycle of every async resource — `init`, `before`, `after`, `destroy` — and a busy hook fires on *every* timer, socket, and promise, which is why naive use can cost double-digit percent CPU. `AsyncLocalStorage` is the one well-optimized consumer of that machinery you actually want for context. The rule: reach for `AsyncLocalStorage` for request-scoped data, and only drop to raw `async_hooks` for deep resource tracking you can't get otherwise — and measure when you do.
+</Inset>
+
+## Signals and on-demand profiling
+
+A long-running process talks to its operator through signals. Orchestrators send **SIGTERM** to ask for a graceful shutdown — you get a window to stop accepting new work, drain in-flight requests, close DB pools, and exit; if you ignore it, Kubernetes follows with SIGKILL after the grace period (30s by default) and cuts you off mid-request. **SIGINT** is Ctrl-C in a terminal. **SIGUSR1** is special: Node opens the inspector on receipt by default, so you can attach a debugger to a live process without a restart.
+
+```js
+// graceful shutdown: stop accepting → drain → close deps → exit
+process.on("SIGTERM", async () => {
+  server.close();             // stop accepting new connections
+  await drainInFlight();      // let active requests finish
+  await db.end();             // close pools / flush
+  process.exit(0);
+});
+```
+
+When you need to see *why* a process is slow or leaking, profile it on demand. Launch with `--cpu-prof` (or `--heap-prof`) and Node writes a `.cpuprofile` (or `.heapprofile`) on exit that you open in Chrome DevTools' Performance/Memory panel; `--diagnostic-dir` controls where the files land. For a hard crash, enable core dumps (`ulimit -c unlimited`, and `--abort-on-uncaught-exception` to dump on an uncaught throw) and inspect the dump post-mortem with `llnode`/`lldb`. The throughline: none of these requires editing your application code, so they're safe to add to a misbehaving production process.
+
+<TradeoffMatrix
+  id="03-diagnostics-tradeoff-1"
+  lessonSlug="03-diagnostics"
+  lang="en"
+  prompt="A web service must attach a trace id at the request boundary and have a logger five call-layers down emit it, including inside a third-party library's async callbacks. How should the id be propagated?"
+  options={[
+    { name: "AsyncLocalStorage: als.run(store, handler) at the boundary, als.getStore() in the logger", summary: "Per-context store across await.", correct: true, justification: "This is the senior default. ALS keeps a distinct store per async call tree, so it survives every await, timer, and library callback without you threading an argument, and concurrent requests stay isolated because each has its own store. The logger five layers down reads getStore() with zero plumbing, and the third-party callback inherits the same context. The only cost is bounded async_hooks overhead, which a small store keeps to single digits." },
+    { name: "A module-level let currentTraceId, set on each request", summary: "Shared global.", justification: "This breaks under concurrency. One variable is shared across all in-flight requests, so while request A is awaiting I/O, request B sets the same variable, and A's next log line emits B's id. It looks fine in a single-request test and corrupts every trace under load — the exact failure mode ALS exists to prevent." },
+    { name: "Thread the traceId as an explicit argument through every function", summary: "Manual plumbing.", justification: "Correct in principle but brittle in practice, which is the hook's bug: every new function must remember to accept and forward it, and the moment a third-party callback or a refactor drops it, every log line below goes anonymous with no error. ALS gives the same correctness without the discipline tax." },
+    { name: "Store the id on the req object and pass req everywhere", summary: "Couples to the request.", justification: "It works only as far as you keep handing req down, which means plumbing req through service and repository layers that have no business knowing about HTTP — and it still fails inside library callbacks that never received req. You've recreated manual threading with a heavier object; ALS decouples the context from the transport." },
+  ]}
+/>
+
+<Quiz
+  id="03-diagnostics-quiz-1"
+  lessonSlug="03-diagnostics"
+  lang="en"
+  question="Why is a module-level global variable wrong for holding a per-request trace id, while AsyncLocalStorage is right?"
+  choices={[
+    { label: "A single global is shared across all concurrent requests, so one request overwrites another's id while it awaits I/O; AsyncLocalStorage keeps a separate store per async call tree, so each request reads its own id even across await and callbacks", correct: true },
+    { label: "Globals are slower to read than als.getStore()", misconception: "Read speed isn't the issue — a plain variable read is faster than getStore(). The problem is correctness under concurrency: a global is shared, so concurrent requests clobber each other's value, which ALS's per-context store prevents." },
+    { label: "Module-level variables can't hold strings", misconception: "They can hold any value. The failure is that one shared slot can't represent many simultaneous requests at once — interleaved async work overwrites it. ALS provides one store per async context instead of one shared slot." },
+    { label: "AsyncLocalStorage persists the id to disk between requests", misconception: "ALS stores nothing on disk; it's purely in-memory, scoped to an async call tree, and gone when the context ends. Its advantage is isolation per request, not persistence." },
+  ]}
+/>
+
+<Quiz
+  id="03-diagnostics-quiz-2"
+  lessonSlug="03-diagnostics"
+  lang="en"
+  question="A library publishes to a diagnostics_channel on every DB query but the team measures no overhead in production where nothing subscribes. Why is the publish nearly free?"
+  choices={[
+    { label: "The library guards with channel.hasSubscribers and skips building/publishing the message when there are no subscribers, so an unobserved publish costs essentially nothing", correct: true },
+    { label: "diagnostics_channel messages are sent on a background thread", misconception: "Channels are synchronous and in-process, not threaded — subscribers run on the same call. The reason an unsubscribed publish is cheap is the hasSubscribers guard, which skips the work entirely when nobody is listening." },
+    { label: "Node batches the messages and drops them after a timeout", misconception: "There's no batching or buffering of dropped messages. With no subscribers there's simply nothing to deliver to, and a hasSubscribers check lets the producer avoid even building the payload." },
+    { label: "The messages are compressed so they're tiny", misconception: "Size isn't the point and there's no compression. The cost avoided is constructing and dispatching the message at all, which hasSubscribers short-circuits when the subscriber set is empty." },
+  ]}
+/>
+
+<DragOrder
+  id="03-diagnostics-drag-1"
+  lessonSlug="03-diagnostics"
+  lang="en"
+  prompt="Order a correct SIGTERM graceful shutdown, from receiving the signal to a clean exit:"
+  items={[
+    { id: "a", label: "Receive SIGTERM from the orchestrator (the request to shut down)" },
+    { id: "b", label: "Stop accepting new connections / work (server.close, leave the load balancer)" },
+    { id: "c", label: "Drain in-flight requests — let active work finish within the grace window" },
+    { id: "d", label: "Close dependencies: end DB pools, flush buffers, close queues" },
+    { id: "e", label: "process.exit(0) before the orchestrator's SIGKILL deadline" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A trace id flowing through one request via AsyncLocalStorage"
+  hue="var(--d-systems)"
+  actors={["Request", "ALS", "Service", "Logger"]}
+  messages={[
+    { from: "Request", to: "ALS", label: "als.run({traceId})" },
+    { from: "ALS", to: "Service", label: "handler() runs" },
+    { from: "Service", to: "Logger", label: "log() after await" },
+    { from: "Logger", to: "ALS", label: "getStore().traceId" },
+    { from: "ALS", to: "Logger", label: "same id, no args" },
+  ]}
+  caption="als.run opens a store at the request boundary; everything reached from the handler — across await and callbacks, however deep — shares that async context, so the logger calls getStore() and reads the same traceId without it ever being passed as an argument. A module-level global would be overwritten by the next concurrent request; the per-context store is not."
+/>
+
+<KeyTakeaway>Instrument with `diagnostics_channel` (free unless subscribed, no monkey-patching), carry ids in `AsyncLocalStorage` (per-context, survives `await`), handle SIGTERM to drain, and profile on demand with `--cpu-prof`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-diagnostics-retrieval"
+  lang="en"
+  questions={[
+    { q: "What makes diagnostics_channel cheap enough to leave in a hot path, and what is its tradeoff versus monkey-patching a library?", a: "The cost control is channel.hasSubscribers: a producer checks it before building and publishing a message, so when nobody subscribes the publish is essentially free and there's no measurable overhead — that's why a library can leave publish calls on every DB query or HTTP request in production. The tradeoff versus monkey-patching is decoupling and durability: instead of wrapping http.request or swapping a method on a driver's prototype — which couples your tracing to internals and breaks silently on the next upgrade — you subscribe to a named channel the library already exposes (core, undici, and http publish their own). The cost you accept is that delivery is synchronous and in-process: a subscriber runs on the producer's call, so it must be fast and must not throw back into the producer. Net: you get tracing/metrics that survive upgrades with no patching, at the price of keeping subscribers cheap and well-behaved." },
+    { q: "Why does a module-level global fail to hold a per-request trace id under concurrency, and how does AsyncLocalStorage fix it without changing every function signature?", a: "A global is a single shared slot. A Node server interleaves many requests on one thread: while request A awaits I/O, the event loop runs request B, which writes the same global. When A resumes, the global now holds B's id, so A's next log line is mislabeled — traces silently cross-contaminate, and it only shows up under load, never in a single-request test. AsyncLocalStorage fixes this by keeping a distinct store per asynchronous call tree: you call als.run(store, fn) once at the request boundary, and the store is automatically associated with every async operation reached from fn — across await, timers, promise chains, and library callbacks. Any code, however deep, calls als.getStore() to read its own request's store, so concurrent requests stay isolated. Crucially you never thread the id as an argument, so adding a new deep function or a third-party callback can't 'forget' to forward it — the exact brittleness that drops ids in the hand-threaded approach. The cost is bounded async_hooks overhead, kept to single digits by storing only small values like ids and flags." },
+  ]}
+/>
+
+<Recap lang="en">
+Node ships first-class diagnostics that don't require editing your app. `diagnostics_channel` is an in-process pub/sub bus: producers `publish` named messages and subscribers receive them synchronously, and because a producer guards with `hasSubscribers`, an unobserved publish is essentially free — so you instrument core, `undici`, and `http` for tracing or metrics without monkey-patching prototypes that break on upgrade. For request-scoped context, `AsyncLocalStorage` (built on `async_hooks`) keeps a separate store per async call tree: `als.run(store, fn)` at the boundary, `als.getStore()` anywhere downstream across every `await` and callback, which a shared module-level global can't do because concurrent requests would overwrite each other's id. Use raw `async_hooks` sparingly — its `init/before/after/destroy` lifecycle fires on every async resource and costs real CPU — and keep the ALS store small. Talk to the operator through signals: handle SIGTERM to stop accepting, drain in-flight work, close dependencies, and `process.exit(0)` before the orchestrator's SIGKILL deadline; SIGINT is Ctrl-C and SIGUSR1 opens the inspector. And investigate on demand: `--cpu-prof`/`--heap-prof` write a profile on exit for DevTools, `--diagnostic-dir` places the files, and core dumps with `llnode`/`lldb` cover hard crashes — all without touching application code.
+</Recap>
