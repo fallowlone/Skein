@@ -154,10 +154,13 @@ export function checkPracticeSandboxBudget(html: string, file: string): string[]
   const norm = file.replace(/\\/g, "/");
   const isLesson = /\/dist\/(en|ru)\/learn\/.+\/index\.html$/.test(norm);
   if (!isLesson) return [];
+  // The Mastery Lab is a dedicated practice hub: one PracticeSection per tier is
+  // its purpose. Exempt it from the single-island cap, but keep the client:load ban.
+  const isLab = /\/dist\/(en|ru)\/learn\/[^/]+\/lab\/index\.html$/.test(norm);
   const errs: string[] = [];
 
   const markers = html.match(/data-practice-layer\b/g)?.length ?? 0;
-  if (markers > 1) errs.push(`${file}: at most one PracticeSection per page (found ${markers})`);
+  if (!isLab && markers > 1) errs.push(`${file}: at most one PracticeSection per page (found ${markers})`);
 
   const islandRe = /<astro-island\b[^>]*component-url="[^"]*\/PracticeSection\.[^"]+\.js"[^>]*>/g;
   let m: RegExpExecArray | null;
