@@ -15,6 +15,7 @@ import { checkCjkLeak } from "./rules/cjk-leak";
 import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeSandboxBudget } from "./rules/practice";
 import { checkBlockStubs } from "./rules/block-stubs";
 import { checkDrill } from "./rules/drill";
+import { checkLab } from "./rules/lab";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -87,6 +88,9 @@ export function lintCurriculum(): AstroIntegration {
         const drillRes = await checkDrill(siteSrc);
         errors.push(...drillRes.errors);
         warnings.push(...drillRes.warnings);
+        const labRes = await checkLab(siteSrc);
+        errors.push(...labRes.errors);
+        warnings.push(...labRes.warnings);
 
         await writeFile(
           join(root, "lint-report.json"),
