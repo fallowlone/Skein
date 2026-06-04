@@ -1,13 +1,307 @@
 ---
-slug: "02-health-and-interceptors"
+concepts:
+- terminus
+- health-checks
+- liveness-readiness
+- timeout-interceptor
+- metrics
+deepensInto: []
+estMin: 17
 lang: en
-track: "nest"
-unit: "07-errors-and-observability"
+lessonType: topic
+level: senior
 order: 2
-title: "Health checks and cross-cutting interceptors"
-summary: "Health checks and cross-cutting interceptors — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "02-health-and-interceptors"
 sources:
-  - https://docs.nestjs.com/recipes/terminus
+- https://docs.nestjs.com/recipes/terminus
+- https://docs.nestjs.com/interceptors
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+spiral: []
+status: ready
+summary: '@nestjs/terminus aggregates health indicators behind /health. The senior split: liveness must stay dependency-free (it triggers restarts), readiness checks deps and gates the LB. Layer TimeoutInterceptor + a metrics interceptor on top.'
+title: 'Health checks and cross-cutting interceptors'
+track: nest
+unit: "07-errors-and-observability"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A primary database had a forty-second blip — a failover, nothing dramatic. Forty seconds later your entire fleet was down, and it stayed down well after the database recovered. The postmortem was short and brutal: someone had wired `db.pingCheck('database')` into the `livenessProbe`. When the DB went away, every pod failed liveness, so Kubernetes did exactly what it is told to do for a failed liveness probe — it killed and restarted the pods. The fresh pods also couldn't reach the DB, failed liveness again, and got killed again. A transient dependency hiccup became a self-inflicted, cluster-wide restart storm. The health endpoint was not the problem. Putting a *dependency* check behind the *liveness* probe was.
+</Hook>
+
+<Crux>Liveness must stay dependency-free (it restarts the pod); readiness checks deps and only drains it from the load balancer.</Crux>
+
+<Explanation>
+
+## Terminus: one endpoint, many indicators
+
+`@nestjs/terminus` is Nest's health-check toolkit. You inject `HealthCheckService` and call `check([...])` with an array of indicator functions; the check is healthy only if every indicator reports `up`. Terminus ships indicators for the common dependencies — `TypeOrmHealthIndicator` (runs a `SELECT 1` via `pingCheck`), `HttpHealthIndicator.pingCheck(name, url)`, `MemoryHealthIndicator.checkHeap(key, bytes)`, plus Mongoose/Prisma/Redis/Disk variants — and you write custom ones with `HealthIndicatorService`. The `@HealthCheck()` decorator wires up the Swagger/response shape.
+
+```ts
+import { Controller, Get } from '@nestjs/common';
+import {
+  HealthCheckService, HealthCheck,
+  TypeOrmHealthIndicator, MemoryHealthIndicator,
+} from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: TypeOrmHealthIndicator,
+    private memory: MemoryHealthIndicator,
+  ) {}
+
+  // LIVENESS: "is this process alive and un-wedged?" — NO downstream deps.
+  @Get('live')
+  @HealthCheck()
+  liveness() {
+    return this.health.check([
+      () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024),
+    ]);
+  }
+
+  // READINESS: "can I serve traffic right now?" — deps ARE allowed here.
+  @Get('ready')
+  @HealthCheck()
+  readiness() {
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+    ]);
+  }
+}
+```
+
+A custom indicator follows the same contract — `HealthIndicatorService.check(key)` gives you an indicator you mark `up()` or `down({ ...detail })`:
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { HealthIndicatorService } from '@nestjs/terminus';
+
+@Injectable()
+export class QueueHealthIndicator {
+  constructor(private readonly hi: HealthIndicatorService) {}
+
+  async isHealthy(key: string) {
+    const indicator = this.hi.check(key);
+    const depth = await this.queue.depth();
+    return depth < 10_000 ? indicator.up({ depth }) : indicator.down({ depth });
+  }
+}
+```
+
+## Liveness vs readiness: the distinction that prevents outages
+
+This is the senior point, and the hook is the whole reason it matters. Kubernetes runs two probes with **completely different failure semantics**, and conflating them is how a small dependency blip turns into a fleet-wide outage.
+
+- **Liveness** answers *"is the process alive and un-wedged?"* A failed liveness probe makes the kubelet **restart the pod**. Therefore liveness must **never** depend on a downstream service. If your DB, a cache, or a queue is briefly unreachable, that is not a reason to kill your process — restarting won't fix an external outage, it only amplifies it into a crash loop. Keep liveness to "the event loop responds and the process isn't deadlocked."
+- **Readiness** answers *"can I serve traffic right now?"* A failed readiness probe pulls the pod **out of the Service / load-balancer endpoints** but **leaves the process running**. So readiness *can and should* check the critical dependencies it needs to actually serve a request. When the DB returns, readiness passes again and the pod is put back in rotation — no restart, no lost process, no storm.
+
+The matching Kubernetes probes point at the two separate endpoints:
+
+```yaml
+livenessProbe:
+  httpGet: { path: /health/live, port: 3000 }
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /health/ready, port: 3000 }
+  periodSeconds: 5
+  failureThreshold: 2
+```
+
+<SequenceDiagram
+  label="Kubernetes probes hit two separate Nest endpoints: the liveness probe calls /health/live which only runs the dependency-free memory indicator and returns up, so the pod is never restarted during a DB outage; the readiness probe calls /health/ready which runs the database pingCheck indicator, and when the database is down that indicator reports down so readiness returns 503 and the pod is pulled from the load balancer without being killed; when the database recovers readiness returns up again and the pod is put back into rotation."
+  hue="var(--d-systems)"
+  actors={["k8s probe", "HealthCheckService", "Indicators"]}
+  messages={[
+    { from: "k8s probe", to: "HealthCheckService", label: "GET /health/live" },
+    { from: "HealthCheckService", to: "Indicators", label: "memory.checkHeap (no deps)" },
+    { from: "Indicators", to: "HealthCheckService", label: "up -> never restart" },
+    { from: "k8s probe", to: "HealthCheckService", label: "GET /health/ready" },
+    { from: "HealthCheckService", to: "Indicators", label: "db.pingCheck (dep)" },
+    { from: "Indicators", to: "HealthCheckService", label: "down on DB outage" },
+    { from: "HealthCheckService", to: "k8s probe", label: "503 -> drain from LB, keep pod" },
+  ]}
+  caption="Liveness runs only dependency-free indicators, so a DB outage cannot restart the pod. Readiness runs the dependency check and returns 503, draining the pod from the load balancer while leaving the process alive to recover."
+/>
+
+## Readiness as the graceful-shutdown lever
+
+The same readiness endpoint is your drain control on shutdown. On `SIGTERM`, you want the load balancer to stop sending new traffic *before* you start tearing down — otherwise in-flight requests get cut. So the correct shutdown order is: flip readiness to `down` **first**, wait for the LB to notice and drain, *then* close the server and connections. Nest's shutdown hooks give you the seam:
+
+```ts
+@Injectable()
+export class ReadinessState {
+  private ready = true;
+  isReady() { return this.ready; }
+  setDraining() { this.ready = false; } // readiness indicator reads this
+}
+
+// In the readiness check, gate on this state so SIGTERM flips it to 503 first.
+async beforeApplicationShutdown() {
+  this.readinessState.setDraining();      // fail readiness -> LB drains us
+  await sleep(this.drainGraceMs);         // give k8s a few probe intervals
+}
+```
+
+That single ordering — readiness down, drain, then close — is what makes a rolling deploy lose zero requests. (App-level shutdown wiring lives in the graceful-shutdown lesson; here the point is *which* signal flips readiness, and why it must precede teardown.)
+
+## Cross-cutting interceptors for resilience and observability
+
+Interceptors wrap `next.handle()` (an RxJS `Observable`) on both sides, which makes them the right home for the cross-cutting layer that brackets every request: a **timeout** so a wedged downstream can't pin a request open forever, **metrics** so you can see latency and status, and **caching** for hot GETs. The canonical `TimeoutInterceptor` races the handler against an RxJS `timeout()` and converts the resulting `TimeoutError` into a proper `RequestTimeoutException` (a 408):
+
+```ts
+import {
+  Injectable, NestInterceptor, ExecutionContext,
+  CallHandler, RequestTimeoutException,
+} from '@nestjs/common';
+import { Observable, throwError, TimeoutError } from 'rxjs';
+import { catchError, timeout } from 'rxjs/operators';
+
+@Injectable()
+export class TimeoutInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    return next.handle().pipe(
+      timeout(5000),
+      catchError((err) =>
+        err instanceof TimeoutError
+          ? throwError(() => new RequestTimeoutException())
+          : throwError(() => err),
+      ),
+    );
+  }
+}
+```
+
+A **metrics interceptor** records duration and outcome into a `prom-client` histogram, tapping both the success and error paths:
+
+```ts
+@Injectable()
+export class MetricsInterceptor implements NestInterceptor {
+  constructor(private readonly httpDuration: Histogram) {}
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const route = ctx.switchToHttp().getRequest().route?.path ?? 'unknown';
+    const stop = this.httpDuration.startTimer({ route });
+    return next.handle().pipe(
+      tap(() => stop({ status: 'ok' })),
+      catchError((err) => { stop({ status: 'error' }); return throwError(() => err); }),
+    );
+  }
+}
+```
+
+The subtlety seniors must hold: **global interceptors compose, and the outbound path unwinds in reverse**. Inbound they run global → controller → route; the response stream unwinds route → controller → global, like nested function returns. So **order matters**. If you want metrics to record the *real* served latency including a timeout, the metrics interceptor must wrap *outside* the timeout interceptor — otherwise it stops its timer before the timeout fires and under-reports tail latency.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Check / concern</th>
+        <th class="border border-border px-3 py-2 text-left">Endpoint or component</th>
+        <th class="border border-border px-3 py-2 text-left">Depends on downstream?</th>
+        <th class="border border-border px-3 py-2 text-left">k8s / effect on failure</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Liveness</strong></td>
+        <td class="border border-border px-3 py-2">/health/live — memory, event-loop only</td>
+        <td class="border border-border px-3 py-2">No — never</td>
+        <td class="border border-border px-3 py-2">Pod is RESTARTED (killed + recreated)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Readiness</strong></td>
+        <td class="border border-border px-3 py-2">/health/ready — db/cache/queue pingCheck</td>
+        <td class="border border-border px-3 py-2">Yes — critical deps</td>
+        <td class="border border-border px-3 py-2">Pod DRAINED from LB, process kept alive</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Timeout</strong></td>
+        <td class="border border-border px-3 py-2">TimeoutInterceptor (RxJS timeout)</td>
+        <td class="border border-border px-3 py-2">Wraps the handler</td>
+        <td class="border border-border px-3 py-2">408 RequestTimeoutException, frees the request</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Metrics</strong></td>
+        <td class="border border-border px-3 py-2">MetricsInterceptor -> prom-client</td>
+        <td class="border border-border px-3 py-2">Wraps the handler (outermost)</td>
+        <td class="border border-border px-3 py-2">Records duration + status, no request effect</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why must metrics wrap *outside* the timeout, not inside? Inbound order is the order you register global interceptors; outbound unwinds in reverse. If `TimeoutInterceptor` is outermost, the `timeout()` fires and the metrics interceptor's `catchError` never sees the slow request as slow — the timer was already stopped, or the stream errored before `tap` ran on the real duration. Put metrics outermost and it brackets the entire request including the timeout path, so your p99 reflects what clients actually experienced. Ordering is not cosmetic; it changes what your dashboards say.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-02-health-and-interceptors-tradeoff-1"
+  lessonSlug="02-health-and-interceptors"
+  lang="en"
+  prompt="You have a Terminus health endpoint that runs db.pingCheck('database'). Where do you wire it, given that a brief DB outage must NOT restart every pod in the fleet?"
+  options={[
+    { name: "Wire the DB check into READINESS (/health/ready); keep LIVENESS (/health/live) dependency-free (memory/event-loop only)", summary: "Deps in readiness, liveness clean.", correct: true, justification: "This is the whole lesson. A failed readiness probe pulls the pod out of the load balancer but leaves the process running, so a DB blip drains traffic and self-heals the moment the DB returns — no restart, no storm. Liveness stays dependency-free because a failed liveness probe RESTARTS the pod, and restarting can never fix an external outage; it only turns a dependency hiccup into a crash loop. Separate endpoints, separate semantics: exactly what Kubernetes' two-probe model is for." },
+    { name: "Wire the DB check into LIVENESS (/health/live)", summary: "The outage amplifier.", justification: "This is the postmortem from the hook. A failed liveness probe makes Kubernetes kill and recreate the pod. During a DB outage every pod fails liveness, every pod gets restarted, the fresh pods still can't reach the DB, and you get a cluster-wide restart storm that outlives the actual outage. A transient dependency hiccup must never restart your process." },
+    { name: "Put both the DB check and memory into a single combined /health used for both probes", summary: "Couples restart to deps.", justification: "A combined endpoint forces liveness and readiness to share a fate. The moment the DB check is in the path the liveness probe consumes, a DB outage restarts the fleet — you've reintroduced the exact failure mode, just hidden behind one URL. The two probes exist precisely so their failure semantics can differ; collapsing them throws that away." },
+    { name: "Skip readiness entirely; rely on liveness plus a short timeout interceptor to shed load", summary: "Wrong layer.", justification: "A timeout interceptor frees an individual stuck request; it does nothing to take a pod out of rotation when its dependency is down. Without readiness, the load balancer keeps routing to a pod that can't serve, and liveness either does nothing (if dep-free) or restarts the fleet (if it checks the dep). Readiness is the only mechanism that drains without killing." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-02-health-and-interceptors-quiz-1"
+  lessonSlug="02-health-and-interceptors"
+  lang="en"
+  question="A failed Kubernetes liveness probe versus a failed readiness probe — what does each cause?"
+  choices={[
+    { label: "Failed liveness RESTARTS the pod; failed readiness pulls it from the load balancer but leaves the process running", correct: true },
+    { label: "Both restart the pod; readiness just restarts it faster", misconception: "Readiness never restarts the pod. A failed readiness probe only removes the pod from the Service endpoints (the load balancer), leaving the process alive so it can recover and rejoin when it passes again." },
+    { label: "Failed liveness drains traffic; failed readiness restarts the pod", misconception: "This is exactly backwards, and the inversion is what causes outages. Liveness failure restarts; readiness failure drains. Wiring a dependency check into liveness because you thought it would 'just drain' is how a DB blip restarts the fleet." },
+    { label: "Neither has any effect unless you also configure a startupProbe", misconception: "Liveness and readiness act on their own. A startupProbe only delays the other two during slow boots; it doesn't gate whether their failures cause a restart or a drain." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-02-health-and-interceptors-quiz-2"
+  lessonSlug="02-health-and-interceptors"
+  lang="en"
+  question="You add a metrics interceptor and a timeout interceptor globally, and want p99 to include requests that time out. How do you order them?"
+  choices={[
+    { label: "Metrics outermost, timeout inner — so metrics brackets the whole request including the timeout path", correct: true },
+    { label: "Timeout outermost, metrics inner — so the timeout fires before metrics records anything", misconception: "If the timeout is outermost it errors the stream before the inner metrics interceptor can record the true served latency, so timed-out requests are under-counted or mis-timed. Metrics must wrap outside the timeout to see the real duration." },
+    { label: "Order doesn't matter; interceptors are independent", misconception: "Global interceptors compose and the outbound path unwinds in reverse (route -> controller -> global). Which one wraps the other changes what each observes — here it determines whether your p99 reflects the timeout path at all." },
+    { label: "Put the timeout in a guard and metrics in a filter so ordering is irrelevant", misconception: "A guard returns a boolean and can't time the handler; a filter only runs on a throw and never sees a successful response's duration. Both of these are interceptor jobs — and ordering between the two interceptors still matters." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Split health: liveness (dependency-free; failing it RESTARTS the pod) vs readiness (checks deps; failing it DRAINS from the LB). Wire DB checks into readiness only. Layer TimeoutInterceptor + metrics, metrics outermost.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-07-errors-and-observability-02-health-and-interceptors-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the liveness-vs-readiness distinction and why a dependency check (db.pingCheck) belongs in only one of them.", a: "Liveness answers 'is the process alive and un-wedged?' — a failed liveness probe makes Kubernetes RESTART the pod (kill + recreate). Readiness answers 'can I serve traffic right now?' — a failed readiness probe pulls the pod out of the Service / load-balancer endpoints but LEAVES the process running. A dependency check like db.pingCheck belongs in readiness only: if the DB is briefly down, you want the pod drained from the load balancer until the DB returns, then put back automatically — no restart. If you instead put db.pingCheck in liveness, a DB outage restarts every pod; the fresh pods still can't reach the DB, fail liveness again, and you get a cluster-wide restart storm that outlives the outage. Liveness must therefore stay dependency-free (memory/event-loop only), because restarting can never fix an external dependency outage." },
+    { q: "How do Terminus and interceptors compose into a production health + resilience layer, and why does interceptor ordering matter?", a: "@nestjs/terminus exposes health via HealthCheckService.check([...]) with indicators (TypeOrmHealthIndicator.pingCheck, HttpHealthIndicator.pingCheck, MemoryHealthIndicator.checkHeap, custom ones via HealthIndicatorService). You expose two endpoints — /health/live (dependency-free) and /health/ready (checks critical deps) — pointed at the k8s liveness and readiness probes. Readiness also doubles as the graceful-drain lever: on SIGTERM you flip readiness to down FIRST so the load balancer drains the pod before you close the server, losing zero in-flight requests. On top you layer cross-cutting interceptors: a TimeoutInterceptor (RxJS timeout() -> RequestTimeoutException) so a wedged downstream can't pin a request open, a metrics interceptor recording duration/status into prom-client, and CacheInterceptor for hot GETs. Global interceptors compose and the outbound path unwinds in reverse (route -> controller -> global), so ordering matters: put the metrics interceptor OUTSIDE the timeout interceptor, otherwise metrics stops its timer before the timeout fires and your p99 under-reports the requests that actually timed out." },
+  ]}
+/>
+
+<Recap lang="en">
+@nestjs/terminus exposes health behind HealthCheckService.check([...]), aggregating indicators — TypeOrmHealthIndicator.pingCheck, HttpHealthIndicator.pingCheck, MemoryHealthIndicator.checkHeap, and custom ones via HealthIndicatorService.up()/down() — where the check is healthy only if every indicator is up. The senior distinction is liveness vs readiness, and it has direct Kubernetes consequences. Liveness ("is the process alive and un-wedged?") must stay dependency-free, because a failed liveness probe RESTARTS the pod, and restarting can never fix an external outage — it only amplifies a dependency blip into a fleet-wide restart storm. Readiness ("can I serve traffic right now?") checks the critical dependencies, because a failed readiness probe only DRAINS the pod from the load balancer while leaving the process alive to recover. So wire db.pingCheck into /health/ready, never /health/live. Readiness is also the graceful-shutdown lever: on SIGTERM flip it to down first so the LB drains the pod before teardown. On top, cross-cutting interceptors carry resilience and observability — a TimeoutInterceptor (RxJS timeout() -> RequestTimeoutException), a metrics interceptor into prom-client, and CacheInterceptor for GETs. Global interceptors compose and unwind in reverse, so order matters: metrics goes outermost so p99 includes the timeout path.
+</Recap>

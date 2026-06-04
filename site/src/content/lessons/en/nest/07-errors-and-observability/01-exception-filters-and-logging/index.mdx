@@ -1,13 +1,288 @@
 ---
-slug: "01-exception-filters-and-logging"
+concepts:
+- exception-filters
+- global-filter
+- structured-logging
+- request-id
+- correlation
+deepensInto: []
+estMin: 16
 lang: en
-track: "nest"
-unit: "07-errors-and-observability"
+lessonType: topic
+level: middle
 order: 1
-title: "Exception filters and structured logging"
-summary: "Exception filters and structured logging — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "01-exception-filters-and-logging"
 sources:
-  - https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/techniques/logger
+spiral: []
+status: ready
+summary: 'One global @Catch() filter maps every throw to a consistent JSON error envelope with a requestId; a structured JSON logger plus an AsyncLocalStorage correlation id lets you trace one request across many log lines and services.'
+title: 'Exception filters and structured logging'
+track: nest
+unit: "07-errors-and-observability"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+2:14am, an on-call page: "checkout intermittently 500s." You open the logs and find a wall of `console.log` lines with no timestamps, no request boundaries, and no way to tell which line belongs to the one request that failed. The error itself? A handler caught it, logged `err.message` with a bare `console.error`, then re-threw, so the same stack got logged three times by three layers — and the response that went back to the client was an HTTP 200 with `{"error":"something went wrong"}`, because someone called `res.json(...)` and forgot `res.status(...)`. You cannot grep your way out of this. The problem is not the bug; it is that the service has no error boundary and no correlation. You have to build both before you can even see the bug.
+</Hook>
+
+<Crux>One global filter shapes every error into one envelope; a structured logger plus a request id makes a request traceable everywhere.</Crux>
+
+<Explanation>
+
+## The global filter: one error boundary, one envelope
+
+When anything in the pipeline throws, Nest's built-in exception layer catches it: `HttpException` and its subclasses map to their status code, and everything else becomes a 500. A custom `@Catch()` filter registered globally lets you own that response shape *once* instead of formatting errors by hand in nineteen handlers. The contract: read the status, emit one consistent JSON envelope, set the status correctly.
+
+```ts
+import {
+  ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+import { getRequestId } from './request-context';
+
+@Catch() // no argument -> catches EVERYTHING, not just HttpException
+export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const res = ctx.getResponse<Response>();
+    const req = ctx.getRequest<Request>();
+
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const requestId = getRequestId();
+
+    // Log ONCE, here at the boundary, with full context — including the stack.
+    this.logger.error(
+      { requestId, path: req.url, status, err: exception },
+      exception instanceof Error ? exception.stack : 'non-error thrown',
+    );
+
+    // Never leak internals on a 500: send a generic message in prod.
+    const message =
+      status === HttpStatus.INTERNAL_SERVER_ERROR
+        ? 'Internal server error'
+        : (exception as HttpException).getResponse();
+
+    res.status(status).json({          // <-- the .status() is load-bearing
+      statusCode: status,
+      message,
+      timestamp: new Date().toISOString(),
+      path: req.url,
+      requestId,
+    });
+  }
+}
+```
+
+Two senior details. First, `res.status(status).json(...)` — call `res.json(...)` *without* `res.status(...)` and Express defaults the HTTP status to **200**, so a failing request ships a success status with an error body, and every client that branches on the status code treats the failure as a success. Second, on a 500 you return a generic `"Internal server error"` to the client but log the full stack with context server-side: leaking a stack trace or a raw `err.message` (which may contain a SQL fragment, a file path, or an internal hostname) is an information-disclosure bug. Map *known* domain errors to safe `HttpException` subclasses (`NotFoundException`, `ConflictException`); let everything else fall through to a deliberately vague 500.
+
+Register it globally with the `APP_FILTER` token so it can use dependency injection:
+
+```ts
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { AllExceptionsFilter } from './all-exceptions.filter';
+
+@Module({
+  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+})
+export class AppModule {}
+```
+
+## Structured logging: JSON over console.log
+
+`console.log('user', userId, 'failed checkout')` produces a string a human can read and a machine cannot. Replace the built-in logger with a **structured JSON logger** — `nestjs-pino` (a thin Nest wrapper over `pino`) is the common choice — set in `bootstrap` with `bufferLogs: true` so even the logs emitted *during* startup go through your logger once it is ready:
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { Logger } from 'nestjs-pino';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger)); // swap Nest's default logger for pino
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+Now every log line is a JSON object — `{"level":"error","time":...,"requestId":"...","msg":"..."}` — that your log platform (Loki, CloudWatch, Datadog) parses into queryable fields. You can filter `level >= warn`, group by `path`, or pull every line for one `requestId` with a single query. That is impossible with free-form strings. Honour log **levels** (`debug`/`log`/`warn`/`error`) so prod can drop `debug` and you are not paying to store noise. (Nest's own `ConsoleLogger` also supports `new ConsoleLogger({ json: true })` if you do not want a dependency — but pino gives you redaction and far higher throughput.)
+
+## Correlation: one request id across every line
+
+The missing piece in the hook was *correlation*: no way to tie the twelve log lines of one request together, let alone follow that request into a downstream service. The fix is a per-request id, generated once at the edge and stored in `AsyncLocalStorage` so any code — your filter, a deep service method, an outbound HTTP call — can read it without threading it through every function signature.
+
+```ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+import { Request, Response, NextFunction } from 'express';
+
+export const als = new AsyncLocalStorage<{ requestId: string }>();
+export const getRequestId = () => als.getStore()?.requestId ?? 'no-request-id';
+
+@Injectable()
+export class RequestIdMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    // Reuse an upstream id if present (trace across services), else mint one.
+    const requestId = (req.headers['x-request-id'] as string) ?? randomUUID();
+    res.setHeader('x-request-id', requestId);
+    als.run({ requestId }, () => next()); // store survives every await in the chain
+  }
+}
+```
+
+Because the middleware wraps `next()` inside `als.run(...)`, the store is alive for the entire async lifetime of that request, and `getRequestId()` returns the same id in your logger and your filter without any parameter passing. Crucially, the middleware **propagates** an inbound `x-request-id` header rather than always minting a new one — so when service A calls service B with that header, both services log the same id and you can stitch one request's journey across the whole system. Configure your structured logger to attach `requestId` to every line (pino's `mixin`, or `genReqId`), and the correlation is automatic.
+
+<FlowDiagram
+  label="The error and observability path: a request enters and the RequestId middleware mints or reuses an id stored in AsyncLocalStorage, the handler runs and throws, the global AllExceptionsFilter catches the throw, logs it once with the requestId as structured JSON, and returns a consistent error envelope carrying the same requestId to the client."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "x-request-id?" },
+    { id: "mw", label: "RequestId MW", sub: "ALS.run(id)" },
+    { id: "handler", label: "Handler", sub: "throws" },
+    { id: "filter", label: "AllExceptionsFilter", sub: "@Catch()" },
+    { id: "log", label: "Structured log", sub: "1x, requestId" },
+    { id: "res", label: "Error envelope", sub: "status+requestId" },
+  ]}
+  edges={[
+    { from: "req", to: "mw", label: "enter" },
+    { from: "mw", to: "handler", label: "next()" },
+    { from: "handler", to: "filter", label: "throw" },
+    { from: "filter", to: "log", label: "log once" },
+    { from: "filter", to: "res", label: "shape" },
+  ]}
+  caption="The id is minted/reused once at the edge and read from AsyncLocalStorage by both the logger and the filter; the filter is the single boundary that logs once and shapes the response — same requestId on the log line and the envelope."
+/>
+
+## Where each responsibility lives
+
+The whole lesson is one placement decision: error *shape* belongs in a global filter, error *logging* in a structured logger called once at that boundary, and *correlation* in request-scoped context. Get them in the wrong place and you get the hook: triple-logged stacks, a 200 on a failure, and un-traceable requests.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Responsibility</th>
+        <th class="border border-border px-3 py-2 text-left">Where it belongs</th>
+        <th class="border border-border px-3 py-2 text-left">Why there</th>
+        <th class="border border-border px-3 py-2 text-left">Anti-pattern</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Error shape</strong></td>
+        <td class="border border-border px-3 py-2">Global <code>@Catch()</code> filter</td>
+        <td class="border border-border px-3 py-2">Single sink for every throw &#8594; one envelope</td>
+        <td class="border border-border px-3 py-2">Hand-formatting per handler</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Status code</strong></td>
+        <td class="border border-border px-3 py-2"><code>res.status(s).json(...)</code></td>
+        <td class="border border-border px-3 py-2">Skipping <code>.status()</code> &#8594; Express defaults 200</td>
+        <td class="border border-border px-3 py-2"><code>res.json(...)</code> alone</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Logging</strong></td>
+        <td class="border border-border px-3 py-2">Structured logger, once at the filter</td>
+        <td class="border border-border px-3 py-2">JSON is queryable; one log avoids dup stacks</td>
+        <td class="border border-border px-3 py-2"><code>console.log</code> in every layer</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Correlation</strong></td>
+        <td class="border border-border px-3 py-2">Request id in <code>AsyncLocalStorage</code></td>
+        <td class="border border-border px-3 py-2">Same id on every line + downstream call</td>
+        <td class="border border-border px-3 py-2">No id; un-traceable requests</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>500 message</strong></td>
+        <td class="border border-border px-3 py-2">Generic to client, full stack to logs</td>
+        <td class="border border-border px-3 py-2">Stack/err.message leaks internals</td>
+        <td class="border border-border px-3 py-2">Returning the raw stack</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why `AsyncLocalStorage` and not just `req`? You *could* stash the id on `req` and pass `req` everywhere — but that means threading the request object through every service method, repository, and helper that might want to log, which couples your whole stack to the HTTP layer. `AsyncLocalStorage` gives you an ambient, request-scoped store that survives every `await`: a deep `PaymentService.charge()` can call `getRequestId()` with zero arguments and get the right id, even though it has no idea an HTTP request exists. It is the Node primitive that makes correlation possible without polluting signatures — the same idea as thread-local storage in other runtimes.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-tradeoff-1"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="en"
+  prompt="You need a consistent error response shape, useful logs, and the ability to trace one request across services. Where does error formatting and logging belong?"
+  options={[
+    { name: "A global @Catch() filter for the error envelope + a structured logger that logs once at the filter, with a request id in AsyncLocalStorage", summary: "The boundary owns it.", correct: true, justification: "The filter is the single sink for every throw, so the error shape lives there and the response is logged exactly once with full context — no duplicate stacks. A structured JSON logger makes those lines queryable, and a request id stored in AsyncLocalStorage (minted or propagated at the edge) rides on every log line and the envelope, so one request is traceable across handlers and downstream services. This is the senior layout: shape at the boundary, log once, correlate by id." },
+    { name: "A try/catch in every handler that formats the error and console.logs it", summary: "The hook's bug.", justification: "Per-handler try/catch duplicates the formatting logic everywhere, guarantees inconsistent envelopes, and re-logs the same stack at every layer. console.log emits unqueryable free-form strings with no levels and no correlation. It is exactly the smell the lesson opens with — and one forgotten res.status() ships a 200 on a failure." },
+    { name: "A logging interceptor only — it wraps next.handle() and logs, no global filter", summary: "Half the job.", justification: "An interceptor is great for happy-path request/response logging and timing, but it is not the error boundary: it does not own the response shape on a throw, and catchError in an interceptor is a worse place to format the canonical envelope than the filter that already catches every throw from every stage. You still need the global filter for shape and the single error log." },
+    { name: "Let Nest's default filter handle errors and add console.log lines where you need them", summary: "No envelope, no correlation.", justification: "The default filter gives a reasonable status but not your envelope (no requestId, no controlled 500 message), and scattering console.log lines gives you neither structured fields nor a correlation id. You get back exactly the un-greppable, un-traceable logs from the hook." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-quiz-1"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="en"
+  question="Your filter calls res.json({ statusCode: 500, message: 'oops' }) but never calls res.status(...). What HTTP status does the client receive?"
+  choices={[
+    { label: "200 — Express defaults the status when .status() is never called, so a failure ships as a success with an error body", correct: true },
+    { label: "500 — the statusCode field in the JSON body sets the HTTP status", misconception: "The statusCode field is just data inside the response body; it has no effect on the actual HTTP status line. Only res.status(...) sets that. Without it, Express uses its default of 200." },
+    { label: "400 — Express infers a client error from the error-shaped body", misconception: "Express does not parse your body to infer a status. The HTTP status is whatever res.status(...) set, or the default 200 if you never called it. The body shape is irrelevant to the status code." },
+    { label: "204 — a JSON body with no explicit status is treated as no content", misconception: "204 means no content and is never inferred from a JSON body. With no res.status() call, Express defaults to 200 and sends your body as-is." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-quiz-2"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="en"
+  question="A plain throw new Error('boom') (not an HttpException) reaches a filter decorated @Catch(HttpException). What happens?"
+  choices={[
+    { label: "The filter is skipped — @Catch(HttpException) only matches HttpException and its subclasses, so a plain Error falls through to Nest's default handler and becomes a 500", correct: true },
+    { label: "The filter catches it and exception.getStatus() returns 500", misconception: "@Catch(HttpException) narrows the filter to that type, so a plain Error never enters this filter at all. And getStatus() only exists on HttpException — a plain Error has no such method. Use @Catch() with no argument to catch everything." },
+    { label: "Nest crashes the process because the error is unhandled", misconception: "Nest's built-in exception layer still catches anything the typed filter does not, mapping a non-HttpException to a 500 response. The process does not crash; the request just gets a default 500." },
+    { label: "The error is silently swallowed and the client gets a 200", misconception: "An uncaught-by-your-filter error is not swallowed — Nest's default handler turns a non-HttpException into a 500. To control that shape yourself, the filter must be @Catch() (catch-all), not @Catch(HttpException)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>One global @Catch() filter shapes every throw into one envelope and logs it once (generic 500 out, full stack to logs); a request id in AsyncLocalStorage traces a request everywhere. Always res.status(s).json(...).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-exception-filters-and-logging-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe a production-grade global exception filter: what it catches, the envelope it emits, how it sets the status, what it logs, and what it must NOT leak.", a: "Register one AllExceptionsFilter via the APP_FILTER provider token and decorate it @Catch() with no argument so it catches everything, not just HttpException. Inside catch(exception, host): switchToHttp() to get req/res, compute the status as exception.getStatus() when it's an HttpException else HttpStatus.INTERNAL_SERVER_ERROR (500), and emit one consistent envelope { statusCode, message, timestamp, path, requestId } via res.status(status).json(...) — the .status() call is load-bearing, because res.json() alone makes Express default the HTTP status to 200, shipping a failure as a success. Log ONCE here at the boundary with full context (requestId, path, status, and the stack) so you don't get the same stack triple-logged by every layer. It must NOT leak internals: on a 500 return a generic 'Internal server error' to the client while logging the full stack server-side, because err.message or a stack can contain SQL, file paths, or hostnames. Map known domain errors to safe HttpException subclasses; let the rest fall through to a vague 500." },
+    { q: "Why structured JSON logging over console.log, and how does AsyncLocalStorage give you a correlation id across an entire request and across services?", a: "console.log emits free-form strings with no levels, no timestamps, and no request boundaries — a human can read one line but a machine can't query them. A structured JSON logger (nestjs-pino over pino, set in bootstrap with bufferLogs: true and app.useLogger(app.get(Logger))) emits each line as a JSON object so your log platform parses it into queryable fields: filter by level, group by path, or pull every line for one requestId in a single query. Honour log levels so prod can drop debug noise. For correlation, a middleware mints a request id (or reuses an inbound x-request-id header so the trace spans services) and calls als.run({ requestId }, () => next()) on an AsyncLocalStorage; the store survives every await, so getRequestId() returns the same id in a deep service method, the logger, and the filter — with zero parameter threading. Echo the id back as a response header and propagate it on outbound calls, and one request is traceable across every log line and every service." },
+  ]}
+/>
+
+<Recap lang="en">
+Errors and observability come down to three placements. First, error shape: register one global AllExceptionsFilter through the APP_FILTER token, decorated @Catch() (no argument) so it catches everything; map HttpException to its status and everything else to 500, and emit one consistent JSON envelope &#123; statusCode, message, timestamp, path, requestId &#125; with res.status(status).json(...) — forget the .status() and Express ships a 200 on a failure. Second, logging: replace console.log with a structured JSON logger (nestjs-pino, set in bootstrap with bufferLogs: true and app.useLogger), because JSON lines are machine-queryable and levels let prod drop noise; log the error exactly once at the filter boundary with full context and the stack, so the same error isn't logged three times. Don't leak internals — return a generic message for 500s to the client while logging the full stack server-side, and map known domain errors to safe HTTP shapes. Third, correlation: a middleware mints or reuses a per-request id and stores it in AsyncLocalStorage so every log line and the error envelope carry the same id; propagate an inbound x-request-id header so one request is traceable across handlers and downstream services. Shape at the boundary, log once, correlate by id.
+</Recap>

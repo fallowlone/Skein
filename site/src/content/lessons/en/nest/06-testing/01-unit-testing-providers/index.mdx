@@ -1,13 +1,266 @@
 ---
-slug: "01-unit-testing-providers"
+concepts:
+- testing-module
+- createtestingmodule
+- overrideprovider
+- mocking
+- repository-token
+deepensInto: []
+estMin: 15
 lang: en
-track: "nest"
-unit: "06-testing"
+lessonType: topic
+level: middle
 order: 1
-title: "Unit testing providers with the testing module"
-summary: "Unit testing providers with the testing module — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "01-unit-testing-providers"
 sources:
-  - https://docs.nestjs.com/fundamentals/testing
+- https://docs.nestjs.com/fundamentals/testing
+- https://jestjs.io/docs/mock-functions
+- https://docs.nestjs.com/techniques/database
+spiral: []
+status: ready
+summary: 'Unit-test a Nest provider by building an isolated DI container with Test.createTestingModule, mocking every dependency at its boundary (the repository, the HTTP client) via useValue or overrideProvider, then asserting behavior with jest.fn().'
+title: 'Unit testing providers with the testing module'
+track: nest
+unit: 06-testing
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+CI for `UsersService` was green for months, then started taking nine minutes and failing one run in five. You open the "unit" test and find it boots the full `AppModule`, opens a real Postgres connection, and hits a staging mail API to "verify" the welcome email. The flakiness is a connection-pool timeout; the nine minutes is everyone's "unit" suite doing the same thing. None of it tests the thing you care about — the *logic* of `UsersService.register`: does it hash the password, reject a duplicate email, and call `save` exactly once? You don't need a database to answer that. You need a testing module with the repository mocked at the boundary.
+</Hook>
+
+<Crux>Build an isolated container with createTestingModule, mock each dependency at its boundary, then assert what the provider did, not how.</Crux>
+
+<Explanation>
+
+## The testing module is a throwaway DI container
+
+`Test.createTestingModule({ providers: [...] })` builds a *fresh, isolated* Nest dependency-injection container that contains only what you list. Calling `.compile()` resolves the graph and hands you a `TestingModule`; `module.get(Token)` pulls a singleton instance out of it — your unit under test, already wired. Because you control the `providers` array, you decide exactly which dependencies are real and which are doubles. List the service under test as a real class, and supply every dependency it injects as a mock.
+
+The cleanest way to supply a mock is a custom provider with `useValue`: same injection token, fake implementation. A `jest.fn()` per method gives you a spy you can program and assert against.
+
+```ts
+import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { UsersService } from './users.service';
+import { User } from './user.entity';
+
+describe('UsersService', () => {
+  let service: UsersService;
+  let repo: jest.Mocked<Repository<User>>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UsersService, // real — this is the unit under test
+        {
+          provide: getRepositoryToken(User), // the token Nest injects for @InjectRepository(User)
+          useValue: {
+            findOne: jest.fn(),
+            create: jest.fn((dto) => dto),
+            save: jest.fn(),
+          },
+        },
+      ],
+    }).compile();
+
+    service = module.get(UsersService);
+    repo = module.get(getRepositoryToken(User));
+  });
+
+  it('rejects a duplicate email without saving', async () => {
+    repo.findOne.mockResolvedValue({ id: 1, email: 'a@b.io' } as User);
+
+    await expect(service.register({ email: 'a@b.io', password: 'pw' }))
+      .rejects.toThrow('email already in use');
+
+    expect(repo.save).not.toHaveBeenCalled(); // behavior, not implementation detail
+  });
+
+  it('saves a new user exactly once', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.save.mockResolvedValue({ id: 7, email: 'new@b.io' } as User);
+
+    const result = await service.register({ email: 'new@b.io', password: 'pw' });
+
+    expect(repo.save).toHaveBeenCalledTimes(1);
+    expect(repo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'new@b.io' }),
+    );
+    expect(result.id).toBe(7);
+  });
+});
+```
+
+Two details earn their keep. The token for a TypeORM repository is **not** the entity class — it's `getRepositoryToken(User)`, the synthetic token `@InjectRepository(User)` resolves to. Provide a value for *that* token and the service gets your mock. And the assertions check **behavior**: "didn't save on a duplicate", "saved once with this email". They never reach into the service's private fields. Tests coupled to behavior survive refactors; tests coupled to implementation break the moment you rename a variable.
+
+## Mock at the boundary, and only there
+
+The same pattern covers any external collaborator. A `JwtService`, an HTTP client wrapping a payment API, a mailer — each is a seam between your logic and the outside world, and each gets a `useValue` double keyed by its token. What you do **not** mock is the thing under test (you'd be testing nothing) or pure internal helpers like a value object or a password-strength function — mocking those just freezes the implementation in place and tests your mock instead of your code. Mock the I/O boundary; let the logic run.
+
+For a service that talks to both a repository and an external client, that's two doubles:
+
+```ts
+const module = await Test.createTestingModule({
+  providers: [
+    OrdersService,
+    { provide: getRepositoryToken(Order), useValue: { findOne: jest.fn(), save: jest.fn() } },
+    { provide: PaymentClient, useValue: { charge: jest.fn().mockResolvedValue({ ok: true }) } },
+  ],
+}).compile();
+```
+
+Now `OrdersService.checkout` can be driven through every branch — payment declines, repository conflicts, happy path — in milliseconds, deterministically, with no network and no DB.
+
+## overrideProvider when the module is real
+
+`useValue` works when you assemble the providers yourself. Sometimes you'd rather import the **real** feature module — to keep its wiring honest — and swap out just the leaf dependencies. That's `overrideProvider(TOKEN)`:
+
+```ts
+const module = await Test.createTestingModule({
+  imports: [UsersModule], // the real module, real wiring
+})
+  .overrideProvider(getRepositoryToken(User))
+  .useValue({ findOne: jest.fn(), save: jest.fn() })
+  .compile();
+```
+
+After `.useValue(...)`, you can instead chain `.useClass(FakeRepo)` (a stub class Nest instantiates with its own deps) or `.useFactory({ factory: () => mock })` (when the double needs construction logic). And if you'd rather not name every double, `.useMocker((token) => ...)` auto-stubs *everything not explicitly provided* — handy for a service with a long dependency list, where you only care about one or two collaborators and want the rest to be inert no-op mocks.
+
+<FlowDiagram
+  label="How a unit test for a Nest provider flows: Test.createTestingModule declares the providers, you either provide a useValue mock or overrideProvider on the real module, .compile() builds the isolated DI container, module.get resolves the service under test with its mocked dependencies, you call a method, and you assert the jest.fn() spies recorded the expected behavior."
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "create", label: "createTestingModule", sub: "providers: [...]" },
+    { id: "mock", label: "Supply doubles", sub: "useValue / override" },
+    { id: "compile", label: "compile()", sub: "isolated container" },
+    { id: "get", label: "module.get(Svc)", sub: "unit under test" },
+    { id: "call", label: "call method", sub: "service.register()" },
+    { id: "assert", label: "assert", sub: "toHaveBeenCalledWith" },
+  ]}
+  edges={[
+    { from: "create", to: "mock", label: "key by token" },
+    { from: "mock", to: "compile", label: "resolve graph" },
+    { from: "compile", to: "get", label: "pull singleton" },
+    { from: "get", to: "call", label: "drive a branch" },
+    { from: "call", to: "assert", label: "check spies" },
+  ]}
+  caption="The testing module is a throwaway DI container: declare providers, inject mocks at each boundary, compile, get the service, call it, and assert on the jest.fn() spies. No DB, no network — fast and deterministic."
+/>
+
+## Two ways to supply a dependency, side by side
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Way to supply the dep</th>
+        <th class="border border-border px-3 py-2 text-left">How</th>
+        <th class="border border-border px-3 py-2 text-left">Touches DB / network?</th>
+        <th class="border border-border px-3 py-2 text-left">Use when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Real implementation</strong></td>
+        <td class="border border-border px-3 py-2">List the real provider; let Nest wire it</td>
+        <td class="border border-border px-3 py-2">Yes — that's the problem</td>
+        <td class="border border-border px-3 py-2">Integration/e2e test, not a unit test</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>useValue mock</strong></td>
+        <td class="border border-border px-3 py-2"><code>&#123; provide: TOKEN, useValue: &#123; m: jest.fn() &#125; &#125;</code></td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">You assemble the providers array yourself</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>overrideProvider</strong></td>
+        <td class="border border-border px-3 py-2"><code>.overrideProvider(TOKEN).useValue/useClass/useFactory</code></td>
+        <td class="border border-border px-3 py-2">No (for the overridden dep)</td>
+        <td class="border border-border px-3 py-2">You import the real module and swap one leaf</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>useMocker</strong></td>
+        <td class="border border-border px-3 py-2"><code>.useMocker((token) =&gt; mock)</code></td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Auto-stub a long dep list; care about one or two</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why is `getRepositoryToken(User)` the token, and not `Repository` or `User`? `@InjectRepository(User)` doesn't inject "a Repository" — many repositories share that class, one per entity — so Nest needs a per-entity token to tell them apart. `getRepositoryToken(User)` returns exactly that synthetic token (a string like `UserRepository`). The `@nestjs/typeorm` module registers the real repository under it at runtime; in a test you register your mock under the same token. Provide a `useValue` keyed by `Repository` and nothing injects it — the service still gets the real repo (or a missing-dependency error). Always key the double by the token the decorator resolves to.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-06-testing-01-unit-testing-providers-tradeoff-1"
+  lessonSlug="01-unit-testing-providers"
+  lang="en"
+  prompt="You need to unit-test UsersService.register's logic — hash the password, reject a duplicate, save once — without a database, fast and deterministic. How do you supply its UserRepository dependency?"
+  options={[
+    { name: "Provide a useValue mock keyed by getRepositoryToken(User), with findOne/save as jest.fn(), in the createTestingModule providers array", summary: "Mock at the boundary.", correct: true, justification: "This is the textbook unit test. You declare UsersService as the real provider and supply the repository as a double keyed by the exact token @InjectRepository(User) resolves to. jest.fn() lets you program findOne (return a duplicate, or null) and assert save was called once with the right shape. No DB connection, so the test runs in milliseconds and never flakes on a pool timeout, and it exercises the logic — the only thing you actually want to test." },
+    { name: "List the real TypeOrmModule and a real UserRepository so the test is 'realistic'", summary: "That's not a unit test.", justification: "Wiring the real repository opens a database connection, which is exactly the slowness and flakiness the lesson opens with. It also tests Postgres and TypeORM, not your register logic. Real wiring belongs in an integration or e2e test with a dedicated test database — not in the fast, deterministic unit suite." },
+    { name: "Provide a useValue mock keyed by the Repository class instead of getRepositoryToken(User)", summary: "Wrong token.", justification: "@InjectRepository(User) resolves to the synthetic per-entity token getRepositoryToken(User), not the Repository class — multiple entities share that class. Keying the double by Repository means nothing injects it; the service either gets the real repo or Nest throws a missing-dependency error. The mock has to match the injection token exactly." },
+    { name: "Mock the service's private password-hash helper so you control its output", summary: "Mocking the wrong seam.", justification: "The hash helper is internal logic, not an I/O boundary — mocking it freezes the implementation and tests your mock instead of your code. Mock at the boundary (the repository), let the pure logic run, and assert the resulting behavior. The only things you never mock are the unit under test and its pure internals." },
+  ]}
+/>
+
+<Quiz
+  id="nest-06-testing-01-unit-testing-providers-quiz-1"
+  lessonSlug="01-unit-testing-providers"
+  lang="en"
+  question="In a UsersService unit test, which token must your repository mock be provided under?"
+  choices={[
+    { label: "getRepositoryToken(User) — the synthetic per-entity token that @InjectRepository(User) resolves to", correct: true },
+    { label: "The Repository class, since that's the type the service injects", misconception: "Repository is the type, but the injection token is the per-entity getRepositoryToken(User) — many entities share the Repository class, so Nest needs a distinct token for each. Keying the mock by Repository means nothing injects it." },
+    { label: "The User entity class, since that's what the repository wraps", misconception: "The entity class is the argument to getRepositoryToken(User), not the token itself. @InjectRepository(User) resolves to the synthetic token, e.g. 'UserRepository' — provide your mock under getRepositoryToken(User)." },
+    { label: "A string literal 'UserRepository' written by hand", misconception: "That happens to be what getRepositoryToken(User) produces, but hard-coding the string is brittle and version-dependent. Always call getRepositoryToken(User) so the token stays correct." },
+  ]}
+/>
+
+<Quiz
+  id="nest-06-testing-01-unit-testing-providers-quiz-2"
+  lessonSlug="01-unit-testing-providers"
+  lang="en"
+  question="You import the real UsersModule in a test but want the repository to be a mock instead of hitting Postgres. Which approach fits?"
+  choices={[
+    { label: "Chain .overrideProvider(getRepositoryToken(User)).useValue({ findOne: jest.fn(), save: jest.fn() }) before .compile()", correct: true },
+    { label: "Add a second { provide: getRepositoryToken(User), useValue: mock } to the providers array alongside the import", misconception: "When you import the real module, the repository is already registered inside it; adding a duplicate provider at the test level is ambiguous and won't reliably replace the module's binding. overrideProvider is the API designed to swap a binding from an imported module." },
+    { label: "Delete TypeOrmModule from UsersModule for the test build", misconception: "You can't (and shouldn't) edit production module wiring for a test. The testing module gives you overrideProvider precisely so you can keep the real module intact and swap one leaf dependency for a double." },
+    { label: "Nothing — importing the real module always uses real dependencies, so just point it at a test database", misconception: "Pointing at a test database makes it an integration test, not a unit test — it's slower and can flake. overrideProvider lets you keep the real module's wiring while replacing the repository with an in-memory mock." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>List the provider real in createTestingModule and mock each dependency at its boundary — useValue keyed by getRepositoryToken(User), or overrideProvider on a real module. Assert behavior with jest.fn(); no DB or network.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-06-testing-01-unit-testing-providers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through unit-testing UsersService against a mocked TypeORM repository: what does each of createTestingModule, the providers array, getRepositoryToken, compile, and module.get do?", a: "Test.createTestingModule({ providers: [...] }) builds a fresh, isolated DI container holding only what you list. You put UsersService in as a real provider (it's the unit under test) and supply its dependency as a custom provider { provide: getRepositoryToken(User), useValue: { findOne: jest.fn(), save: jest.fn() } } — getRepositoryToken(User) is the synthetic per-entity token that @InjectRepository(User) resolves to, so the mock lands exactly where the real repository would. .compile() resolves the graph and returns a TestingModule. module.get(UsersService) pulls the wired service (a singleton) and module.get(getRepositoryToken(User)) pulls the same mock so you can program it. Then you drive a method: repo.findOne.mockResolvedValue(...) to set up state, call service.register(...), and assert behavior — expect(repo.save).toHaveBeenCalledWith(...) / not.toHaveBeenCalled() — never reaching into private fields. No database connects, so it's fast and deterministic." },
+    { q: "What are the ways to supply a dependency in a Nest unit test, and what is the rule for what to mock vs not mock?", a: "Four ways: (1) list the real provider — only for integration/e2e, since it touches DB/network; (2) a useValue mock { provide: TOKEN, useValue: { m: jest.fn() } } when you assemble the providers array yourself; (3) .overrideProvider(TOKEN).useValue / .useClass / .useFactory when you import the real module and want to swap just one leaf dependency while keeping its wiring honest; (4) .useMocker((token) => mock) to auto-stub everything not explicitly provided, handy for a long dependency list. The rule: mock at the I/O boundary — the repository, the JwtService, the HTTP/payment client — and only there. Never mock the thing under test (you'd test nothing) or pure internal helpers like value objects or a hash function (that just freezes the implementation and tests the mock). Mock the seams; let the logic run." },
+  ]}
+/>
+
+<Recap lang="en">
+A unit test for a Nest provider builds a throwaway DI container with Test.createTestingModule(&#123; providers: [...] &#125;) and .compile(), then module.get(Service) resolves the service under test already wired to doubles you control. List the service as a real provider and supply each dependency it injects as a mock — the cleanest being a custom provider &#123; provide: TOKEN, useValue: &#123; method: jest.fn() &#125; &#125;. For a TypeORM repository the token is getRepositoryToken(User), the synthetic per-entity token @InjectRepository(User) resolves to — not the Repository class or the entity. The same pattern covers a JwtService or an HTTP/payment client: each is an I/O boundary that gets a useValue double. If you'd rather import the real module to keep its wiring honest, .overrideProvider(TOKEN) swaps one leaf with .useValue / .useClass / .useFactory, and .useMocker auto-stubs everything not explicitly provided. With every dependency mocked there's no DB and no network, so the test is fast and deterministic — and you assert behavior (toHaveBeenCalledWith, not.toHaveBeenCalled, mockResolvedValue to set up state) rather than implementation detail, so the test survives refactors. What you never mock is the unit under test itself or its pure internal helpers; mock the boundary, let the logic run.
+</Recap>

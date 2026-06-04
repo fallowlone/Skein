@@ -1,13 +1,242 @@
 ---
-slug: "03-lifecycle-and-bootstrapping"
+concepts:
+- lifecycle-hooks
+- onmoduleinit
+- onapplicationbootstrap
+- onapplicationshutdown
+- graceful-shutdown
+deepensInto: []
+estMin: 15
 lang: en
-track: "nest"
-unit: "03-config-and-modules"
+lessonType: topic
+level: middle
 order: 3
-title: "Lifecycle hooks and graceful shutdown"
-summary: "Lifecycle hooks and graceful shutdown — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "03-lifecycle-and-bootstrapping"
 sources:
-  - https://docs.nestjs.com/fundamentals/lifecycle-events
+- https://docs.nestjs.com/fundamentals/lifecycle-events
+- https://docs.nestjs.com/faq/keep-alive-connections
+spiral: []
+status: ready
+summary: 'Nest fires init hooks bottom-up (onModuleInit then onApplicationBootstrap)
+  and shutdown hooks in reverse (onModuleDestroy, beforeApplicationShutdown, onApplicationShutdown)
+  — but only if you call enableShutdownHooks() so it listens for SIGTERM.'
+title: 'Lifecycle hooks and graceful shutdown'
+track: nest
+unit: 03-config-and-modules
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A deploy goes out at 14:02. Kubernetes rolls the pods, and for ninety seconds your error dashboard lights up: `ECONNRESET`, half-written rows, a spike of 502s from the load balancer. The new pods are healthy; it's the *old* ones that are misbehaving on the way out. You open the service and find a `PrismaService` whose `$connect()` lives in the constructor and whose `$disconnect()` lives nowhere — and a `main.ts` that never calls `enableShutdownHooks()`. So when k8s sends `SIGTERM`, Node just dies: in-flight requests are severed mid-write and the connection pool is never drained. Nest had a hook for every one of those steps. Nobody wired them up.
+</Hook>
+
+<Crux>Nest runs init hooks bottom-up and shutdown hooks in reverse — but only listens for SIGTERM if you call enableShutdownHooks().</Crux>
+
+<Explanation>
+
+## The lifecycle has two phases, each with a fixed order
+
+A Nest application has a birth and a death, and both are ordered events you can hook into. Knowing the order is the whole game: it tells you *when* your injected dependencies are guaranteed ready, and *when* it is safe to close them.
+
+**Init runs bottom-up.** When you call `app.listen()` (or `app.init()`), Nest resolves the dependency graph and then fires, per provider/module:
+
+1. `onModuleInit()` — called for a module **after that module's own dependencies are resolved**. This is the first moment your injected providers are guaranteed constructed and wired.
+2. `onApplicationBootstrap()` — called **after every module has finished initializing**, just before the server starts listening. This is the first moment *the whole app* is ready, including providers from other modules.
+
+**Teardown runs in reverse.** On `app.close()` or a termination signal, Nest unwinds in reverse dependency order:
+
+1. `onModuleDestroy()` — the termination signal has arrived; begin tearing down.
+2. `beforeApplicationShutdown(signal)` — runs after all `onModuleDestroy()` handlers, **before connections are closed**; receives the signal (`"SIGTERM"`, `"SIGINT"`, …).
+3. `onApplicationShutdown(signal)` — runs **after connections are closed**; the last breath, where you release pools, queue consumers, and clients.
+
+Reverse order matters: a module that depends on the database is torn down *before* the database module, so it never tries to use a connection that's already gone. Each interface contributes one method — `OnModuleInit`, `OnApplicationBootstrap`, `OnModuleDestroy`, `BeforeApplicationShutdown`, `OnApplicationShutdown` — and you implement only the ones you need. Async hooks are awaited: returning a `Promise` pauses the sequence until it resolves.
+
+<SequenceDiagram
+  label="The Nest application lifecycle in order: on startup Nest fires onModuleInit per module once that module's dependencies are resolved, then onApplicationBootstrap once every module has initialized, then the HTTP server begins listening; on a SIGTERM termination signal Nest fires onModuleDestroy, then beforeApplicationShutdown with the signal, then closes connections, then onApplicationShutdown with the signal, running these teardown hooks in reverse dependency order to the init order."
+  hue="var(--d-systems)"
+  actors={["Signal", "Nest", "Provider"]}
+  messages={[
+    { from: "Nest", to: "Provider", label: "INIT 1. onModuleInit (deps ready)" },
+    { from: "Nest", to: "Provider", label: "INIT 2. onApplicationBootstrap (all modules up)" },
+    { from: "Nest", to: "Nest", label: "-> app.listen(): now serving" },
+    { from: "Signal", to: "Nest", label: "SIGTERM (needs enableShutdownHooks)" },
+    { from: "Nest", to: "Provider", label: "DOWN 1. onModuleDestroy" },
+    { from: "Nest", to: "Provider", label: "DOWN 2. beforeApplicationShutdown(signal)" },
+    { from: "Nest", to: "Provider", label: "DOWN 3. onApplicationShutdown(signal)" },
+  ]}
+  caption="Init is bottom-up (onModuleInit then onApplicationBootstrap); teardown is the reverse, fired only when enableShutdownHooks() has registered the SIGTERM/SIGINT listeners. Async hooks pause the sequence until they resolve."
+/>
+
+## onModuleInit vs the constructor
+
+A provider's **constructor** runs at instantiation, while Nest is still wiring the graph. At that point your injected dependencies *exist* (they were constructed first), but any async setup they need — a TCP connection, a primed cache, a fetched config — has not run. Doing real I/O in the constructor is a trap: constructors can't be `async`, so you either block synchronously or fire-and-forget a floating promise, and you have no clean place to handle failure.
+
+`onModuleInit()` is the answer. It runs once, right after the module's dependencies resolve, it can be `async`, and Nest awaits it before moving on. That makes it the correct home for warm-up that needs ready dependencies:
+
+```ts
+import { Injectable, OnModuleInit, OnApplicationShutdown } from '@nestjs/common';
+import { Pool } from 'pg';
+
+@Injectable()
+export class DatabaseService implements OnModuleInit, OnApplicationShutdown {
+  private pool!: Pool;
+
+  constructor(private readonly config: ConfigService) {
+    // constructor: deps exist, but do NO async I/O here
+    this.pool = new Pool({ connectionString: this.config.get('DB_URL') });
+  }
+
+  async onModuleInit(): Promise<void> {
+    // warm-up: dependencies are ready, await is honored
+    await this.pool.query('SELECT 1'); // prove the pool connects before we serve traffic
+  }
+
+  async onApplicationShutdown(signal: string): Promise<void> {
+    // drain: connections close last, after in-flight work is done
+    console.log(`shutting down on ${signal}`);
+    await this.pool.end(); // close every client in the pool
+  }
+}
+```
+
+The split is deliberate: construct cheaply, connect in `onModuleInit`, and release in `onApplicationShutdown`. If the warm-up query throws, Nest aborts startup with a clear error instead of booting a service that can't reach its database. Use `onApplicationBootstrap` instead of `onModuleInit` only when the warm-up depends on *another* module being fully up — e.g. priming a cache from a service defined in a different module that must finish its own `onModuleInit` first.
+
+## Graceful shutdown, done right
+
+Shutdown hooks do nothing unless you opt in. `app.enableShutdownHooks()` registers process listeners for `SIGTERM`/`SIGINT` so Nest can fire the teardown sequence; it is **off by default because attaching signal listeners has a cost** and Nest won't impose it silently.
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, {
+    // also force-close idle Keep-Alive sockets so the process can actually exit
+    forceCloseConnections: true,
+  });
+  app.enableShutdownHooks(); // REQUIRED: otherwise SIGTERM just kills the process
+  await app.listen(process.env.PORT ?? 3000);
+}
+bootstrap();
+```
+
+Now the actual sequence on `SIGTERM`: **stop accepting new work, drain in-flight requests, then close resources.** Nest's HTTP adapter stops the server and waits for open responses to finish before resolving the close — but long-lived `Connection: Keep-Alive` sockets can keep the process hostage, which is why `forceCloseConnections` exists. Once requests are drained, your `onApplicationShutdown` closes the DB pool, queue consumers, and Kafka clients — in reverse dependency order, so nothing closes a resource another provider still needs.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Hook</th>
+        <th class="border border-border px-3 py-2 text-left">Phase</th>
+        <th class="border border-border px-3 py-2 text-left">Fires when</th>
+        <th class="border border-border px-3 py-2 text-left">Use it for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>onModuleInit</strong></td>
+        <td class="border border-border px-3 py-2">Init (1st)</td>
+        <td class="border border-border px-3 py-2">After this module's deps resolve</td>
+        <td class="border border-border px-3 py-2">Connect, prime cache, warm-up needing injected deps</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>onApplicationBootstrap</strong></td>
+        <td class="border border-border px-3 py-2">Init (2nd)</td>
+        <td class="border border-border px-3 py-2">After ALL modules initialized, before listen</td>
+        <td class="border border-border px-3 py-2">Cross-module warm-up that needs the whole app up</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>onModuleDestroy</strong></td>
+        <td class="border border-border px-3 py-2">Down (1st)</td>
+        <td class="border border-border px-3 py-2">Signal arrived; teardown begins</td>
+        <td class="border border-border px-3 py-2">Stop consumers, flush buffers</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>beforeApplicationShutdown</strong></td>
+        <td class="border border-border px-3 py-2">Down (2nd)</td>
+        <td class="border border-border px-3 py-2">After onModuleDestroy, before connections close</td>
+        <td class="border border-border px-3 py-2">Last-chance work needing live connections; reads signal</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>onApplicationShutdown</strong></td>
+        <td class="border border-border px-3 py-2">Down (3rd)</td>
+        <td class="border border-border px-3 py-2">After connections close</td>
+        <td class="border border-border px-3 py-2">Release pools, clients, sockets; reads signal</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why does Kubernetes make this urgent? On a rolling update, k8s sends `SIGTERM` and waits `terminationGracePeriodSeconds` (default 30s) before sending an unstoppable `SIGKILL`. If you never enabled shutdown hooks, nothing drains and `SIGKILL` cuts every connection. But there's a subtler race: k8s removes the pod from the Service endpoints *and* sends `SIGTERM` roughly in parallel, so for a moment the load balancer may still route new requests to a terminating pod. The senior fix is to flip the **readiness probe** to failing first — the pod leaves the load-balancer rotation, traffic stops arriving, and only then do you drain and close. This is why graceful shutdown is a networking concern as much as a lifecycle one.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-03-config-and-modules-03-lifecycle-and-bootstrapping-tradeoff-1"
+  lessonSlug="03-lifecycle-and-bootstrapping"
+  lang="en"
+  prompt="A provider needs to open a database connection at startup. Where should the connect() call live so the connection is ready before traffic arrives and failures abort the boot cleanly?"
+  options={[
+    { name: "In onModuleInit (or onApplicationBootstrap if it depends on another module being fully up)", summary: "The lifecycle slot for warm-up.", correct: true, justification: "onModuleInit runs once, right after the module's injected dependencies resolve; it can be async and Nest awaits it, so the connection is established and verified before app.listen() starts serving, and a failure throws cleanly to abort startup. If the warm-up needs a provider from a different module to be fully initialized first, onApplicationBootstrap is the correct choice because it fires after every module's onModuleInit has completed. This is exactly what these hooks exist for." },
+    { name: "In the constructor, calling connect() directly", summary: "The hook's bug.", justification: "Constructors run during graph wiring and cannot be async. You either block the event loop synchronously or kick off a floating promise that Nest never awaits — so listen() may start before the connection is ready, and a connection failure has no clean place to abort the boot. Construct cheaply; connect in onModuleInit." },
+    { name: "Lazily, on the first request that needs the connection", summary: "Defers the failure.", justification: "Lazy-connecting moves a startup failure into request-handling time, so the first user hits the cold-start latency and any auth/DNS/credential problem surfaces as a 500 in production rather than a failed boot. Readiness checks also can't catch it. Warm-up belongs in onModuleInit so the pod is only marked ready once it can actually reach its dependencies." },
+    { name: "In main.ts after app.listen(), via app.get(Service)", summary: "Too late and out of band.", justification: "By the time listen() resolves the server is already accepting traffic, so connecting afterward races real requests; it also scatters wiring logic outside the provider, defeating DI. The provider should own its own warm-up in onModuleInit, not have bootstrap reach in and do it." },
+  ]}
+/>
+
+<Quiz
+  id="nest-03-config-and-modules-03-lifecycle-and-bootstrapping-quiz-1"
+  lessonSlug="03-lifecycle-and-bootstrapping"
+  lang="en"
+  question="In what order do Nest's init and shutdown hooks fire?"
+  choices={[
+    { label: "Init: onModuleInit then onApplicationBootstrap; shutdown (reverse): onModuleDestroy, beforeApplicationShutdown, onApplicationShutdown", correct: true },
+    { label: "Init: onApplicationBootstrap then onModuleInit; shutdown: onApplicationShutdown then onModuleDestroy", misconception: "The init order is the other way around: onModuleInit fires per module as its dependencies resolve, and onApplicationBootstrap fires once after every module has initialized. Shutdown then runs in reverse dependency order, starting with onModuleDestroy." },
+    { label: "All four init hooks fire, then the four shutdown hooks, in the same top-down order both times", misconception: "Teardown is not the same order as init — it runs in reverse dependency order, so a module that depends on another is destroyed before its dependency. That reversal is what keeps a provider from touching a resource that's already closed." },
+    { label: "onApplicationShutdown fires first on shutdown, before connections are closed", misconception: "onApplicationShutdown is the LAST teardown hook and runs AFTER connections are closed. beforeApplicationShutdown is the one that runs before connections close; onModuleDestroy runs first of all." },
+  ]}
+/>
+
+<Quiz
+  id="nest-03-config-and-modules-03-lifecycle-and-bootstrapping-quiz-2"
+  lessonSlug="03-lifecycle-and-bootstrapping"
+  lang="en"
+  question="Your onApplicationShutdown never fires when Kubernetes sends SIGTERM. What's the most likely cause?"
+  choices={[
+    { label: "You never called app.enableShutdownHooks(), so Nest isn't listening for SIGTERM and the process just exits", correct: true },
+    { label: "Shutdown hooks are on by default; the hook itself must be throwing silently", misconception: "Shutdown hooks are OFF by default — Nest does not attach the SIGTERM/SIGINT listeners until you call enableShutdownHooks(), precisely because process listeners carry a cost. Without that call, the signal kills the process and no hook runs." },
+    { label: "onApplicationShutdown only runs on app.close(), never on OS signals", misconception: "It runs on both app.close() AND on OS termination signals — but only once enableShutdownHooks() has registered the signal listeners. The signal path is exactly the Kubernetes case." },
+    { label: "SIGTERM is ignored by Node; you must trap SIGKILL instead", misconception: "Node can handle SIGTERM, and SIGKILL is by definition untrappable — you can never run code on SIGKILL. The fix is to enable shutdown hooks so Nest handles SIGTERM and drains before the grace period ends." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Init is bottom-up (onModuleInit → onApplicationBootstrap); teardown is reverse and fires only if enableShutdownHooks() registered the SIGTERM listeners. Connect in onModuleInit, drain in onApplicationShutdown.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-03-lifecycle-and-bootstrapping-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the full Nest lifecycle order for both init and shutdown, and explain why teardown runs in reverse.", a: "Init runs bottom-up: onModuleInit fires for a module right after that module's own dependencies are resolved (the first moment injected providers are wired), then onApplicationBootstrap fires once after every module has finished initializing, just before app.listen() starts serving. Teardown runs in the reverse of the dependency order: onModuleDestroy first (signal arrived, begin teardown), then beforeApplicationShutdown(signal) which runs before connections are closed, then onApplicationShutdown(signal) which runs after connections are closed. Reverse order matters because a module that depends on another — say a service that uses the database module — must be torn down before the thing it depends on, so it never reaches for a connection that has already been released. Async hooks are awaited, so returning a Promise pauses the sequence until it resolves." },
+    { q: "Why is enableShutdownHooks() required, and how does graceful shutdown tie into Kubernetes?", a: "Shutdown hooks are disabled by default because attaching process signal listeners for SIGTERM/SIGINT carries a cost, so Nest makes it opt-in: app.enableShutdownHooks() registers those listeners so the teardown sequence (onModuleDestroy → beforeApplicationShutdown → onApplicationShutdown) actually fires on a signal. Without it, SIGTERM just kills the process, severing in-flight requests and leaking connections. In Kubernetes this is critical: on a rolling update k8s sends SIGTERM and waits terminationGracePeriodSeconds (default 30s) before an untrappable SIGKILL, so you must drain within that window — stop accepting new work, let in-flight requests finish (forceCloseConnections helps when long-lived Keep-Alive sockets would otherwise keep the process alive), then close pools and consumers in onApplicationShutdown. Because the pod is removed from the Service endpoints roughly in parallel with the signal, the readiness probe should start failing first so the load balancer pulls the pod out of rotation before you begin draining." },
+  ]}
+/>
+
+<Recap lang="en">
+A Nest application has an ordered birth and death you can hook into. Init runs bottom-up: onModuleInit fires for each module the moment its own dependencies resolve — the correct, async-aware home for warm-up like opening a connection or priming a cache — and onApplicationBootstrap fires once after every module is up, for cross-module warm-up that needs the whole app ready. The constructor is the wrong place for that work because it can't be async and runs while the graph is still wiring. Teardown runs in reverse dependency order: onModuleDestroy, then beforeApplicationShutdown(signal) before connections close, then onApplicationShutdown(signal) after they close — the slot to release pools, queue consumers, and clients. None of the shutdown hooks fire unless you call app.enableShutdownHooks(), which is opt-in because it attaches SIGTERM/SIGINT listeners; the cost is why Nest won't do it silently. Graceful shutdown done right is: stop accepting new work, drain in-flight requests (forceCloseConnections for stubborn Keep-Alive sockets), then close resources — and in Kubernetes you flip the readiness probe to failing first so the load balancer pulls the pod before you drain, all within terminationGracePeriodSeconds before SIGKILL. The classic bug is connecting in the constructor and closing nowhere, with shutdown hooks never enabled, so a deploy severs requests and leaks connections.
+</Recap>

@@ -1,13 +1,270 @@
 ---
-slug: "03-data-modeling-and-pitfalls"
+concepts:
+- relations
+- n-plus-one
+- lazy-vs-eager
+- request-scope
+- durable-providers
+deepensInto: []
+estMin: 18
 lang: en
-track: "nest"
-unit: "04-persistence"
+lessonType: topic
+level: senior
 order: 3
-title: "Data modeling pitfalls: N+1, lazy vs eager, request scope"
-summary: "Data modeling pitfalls: N+1, lazy vs eager, request scope — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "03-data-modeling-and-pitfalls"
 sources:
-  - https://docs.nestjs.com/fundamentals/injection-scopes
+- https://docs.nestjs.com/fundamentals/injection-scopes
+- https://typeorm.io/eager-and-lazy-relations
+- https://docs.nestjs.com/fundamentals/injection-scopes#durable-providers
+- https://typeorm.io/relations
+spiral: []
+status: ready
+summary: 'Three data-modeling traps that look fine in dev and burn p99 in prod: relations that quietly trigger N+1, lazy vs eager defaults that hide or force joins, and request-scoped providers that bubble up the whole graph. Load relations explicitly; reach for durable providers.'
+title: 'Data modeling pitfalls: N+1, lazy vs eager, request scope'
+track: nest
+unit: 04-persistence
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The endpoint was fine for a year. `GET /authors` returned a hundred rows, and someone added one innocent line to the response mapper: `posts: author.posts.length`. In dev, with eight seeded authors, nobody noticed. In prod, p99 on that route jumped from 40ms to 2.1 seconds and the database CPU graph grew a new plateau. The query log told the story: one `SELECT` for the authors, then a hundred more — one per author — to lazy-load `posts`. Nobody wrote a loop with a hundred queries in it. The ORM did, on their behalf, the instant they touched a relation property inside a `.map`. This lesson is about the three data-modeling defaults that quietly generate that kind of work: relations, lazy-vs-eager, and request scope.
+</Hook>
+
+<Crux>Relations, lazy/eager defaults, and request scope each hide a cost: load relations explicitly, keep providers singleton by default.</Crux>
+
+<Explanation>
+
+## Relations: who owns the foreign key
+
+A relation is just a foreign key with a TypeScript shape on top. `@ManyToOne` / `@OneToMany` is the common pair: the *many* side (`Post`) owns the foreign key column and carries the `@JoinColumn`; the *one* side (`Author`) only declares the inverse. `@ManyToMany` introduces a third table — the **join table** — and one side must be the **owning side** with `@JoinTable()`, which is what actually decides the join-table name and columns.
+
+```ts
+@Entity()
+export class Author {
+  @PrimaryGeneratedColumn() id: number;
+
+  // inverse side: no FK column lives here, just the navigation
+  @OneToMany(() => Post, (post) => post.author)
+  posts: Post[];
+}
+
+@Entity()
+export class Post {
+  @PrimaryGeneratedColumn() id: number;
+
+  // owning side: this table holds author_id, this is where @JoinColumn goes
+  @ManyToOne(() => Author, (author) => author.posts)
+  @JoinColumn({ name: 'author_id' })
+  author: Author;
+}
+```
+
+Knowing the owning side matters because it tells you which table to query to avoid a round trip: to count posts per author you join from `Post` (which already has `author_id`), not from `Author`. Get the owning side wrong and you write the more expensive query without realizing it.
+
+## The N+1 problem: one query becomes a hundred and one
+
+Here is the exact shape of the production incident. You load a list of N parents, then access a relation on each one inside a loop. Each access that wasn't pre-loaded fires its own `SELECT`. N parents → **1 + N queries**.
+
+```ts
+// N+1: 1 query for authors, then 1 per author for posts = 101 queries for 100 authors
+async function listAuthorsBad(repo: Repository<Author>) {
+  const authors = await repo.find();              // 1 query
+  return Promise.all(
+    authors.map(async (a) => ({
+      name: a.name,
+      postCount: (await a.posts).length,           // +1 query EACH (lazy relation)
+    })),
+  );
+}
+```
+
+The fix is to make the database do the join once. Three options, in rough order of reach:
+
+```ts
+// Fix A — eager-load this relation FOR THIS QUERY ONLY (one LEFT JOIN, one round trip)
+const authors = await repo.find({ relations: { posts: true } });
+
+// Fix B — QueryBuilder when you need columns, conditions, or pagination control
+const authors = await repo
+  .createQueryBuilder('author')
+  .leftJoinAndSelect('author.posts', 'post')
+  .getMany();
+
+// Fix C — DataLoader: batch N relation reads into one IN (...) query, dedupe, cache per request
+//   ideal for GraphQL resolvers where the "loop" is the resolver fan-out you don't control
+const loader = new DataLoader((authorIds: readonly number[]) =>
+  postRepo.find({ where: { author: { id: In([...authorIds]) } } }).then(group(authorIds)),
+);
+```
+
+Fix A and B collapse 101 queries into 1. DataLoader collapses them into 2 (one for parents, one batched `IN (...)` for children) and is the right tool when the fan-out happens across independent resolver calls you can't merge into a single `find`. The point is that `relations: { posts: true }` here is a **per-query** decision — explicit, visible in the call site, and trivially removable when you don't need the children.
+
+<FlowDiagram
+  label="The N+1 query pattern versus the joined query. Top path: a request loads a list of N parent authors with one SELECT, then iterating the list and touching the posts relation per author fires one additional SELECT per row, producing 1 + N queries — for 100 authors that is 101 round trips to Postgres and a latency cliff. Bottom path: the same data loaded with relations posts true issues a single LEFT JOIN, producing exactly one round trip regardless of list size."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "list", label: "find() authors", sub: "1 query" },
+    { id: "loop", label: "loop + a.posts", sub: "N queries" },
+    { id: "cliff", label: "1 + N = 101", sub: "latency cliff" },
+    { id: "join", label: "relations: posts", sub: "1 LEFT JOIN" },
+    { id: "one", label: "1 query", sub: "any N" },
+  ]}
+  edges={[
+    { from: "list", to: "loop", label: "lazy access" },
+    { from: "loop", to: "cliff", label: "N+1" },
+    { from: "join", to: "one", label: "join once" },
+  ]}
+  caption="N+1 (top): the list query plus one lazy relation read per row balloons to 1 + N queries. The fix (bottom): one explicit join answers the same question in a single round trip, flat in N."
+/>
+
+## Lazy vs eager: two defaults, both wrong as a default
+
+TypeORM gives you two ways to make a relation load without writing the join, and both are traps when used as the standing default.
+
+**Lazy relations** type the property as a `Promise&lt;T>`: accessing it `await`s a fresh query. They feel ergonomic — `await author.posts` "just works" — but that is exactly how the incident happened: every `await` inside a loop is a hidden query. Lazy relations are N+1 *generators*; the cost is invisible at the call site because it reads like a property access.
+
+**Eager relations** (`eager: true` on the decorator) flip the opposite way: the relation is **always** joined on every `find` of that entity, whether or not you need it. You can't opt out per query with `find` — so a list endpoint that only needs author names still drags every post across the wire. Eager over-fetches; lazy under-fetches and then back-fills with N queries.
+
+```ts
+// Lazy: property is a Promise — every access is a query (hidden N+1 generator)
+@OneToMany(() => Post, (post) => post.author)
+posts: Promise<Post[]>;
+
+// Eager: ALWAYS joined on every find(Author) — you cannot opt out per query
+@OneToMany(() => Post, (post) => post.author, { eager: true })
+posts: Post[];
+```
+
+The senior stance is to **avoid both defaults**: declare relations plainly (no `Promise&lt;>` type, no `eager: true`) and load them explicitly per query with `relations` or QueryBuilder. That keeps each call site honest about what it fetches and what it costs.
+
+<Inset kind="why" lang="en">
+Why is "always eager" still a trap when it avoids N+1? Because it trades one failure for another: you never get N+1, but you over-fetch on *every* query of that entity, including the dozens of code paths that never read the relation. A `count`, an existence check, a name lookup — all now drag a join and its rows. And because `eager: true` lives on the entity, not the call, you can't see at the query site that you're paying for it, and you can't turn it off with `find`. Explicit per-query loading is the only option that's both N+1-free and pay-for-what-you-use.
+</Inset>
+
+## Request scope: the cost that bubbles up
+
+Providers are singletons by default — one instance for the whole app, shared across every request. That's almost always what you want. `Scope.REQUEST` makes Nest instantiate a *new* provider per incoming request, which you need when the provider must hold per-request context: the authenticated user, a tenant id, a request-scoped transaction's `EntityManager`.
+
+```ts
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })
+export class TenantContext {
+  // a fresh instance per request — safe to stash the current tenant / user here
+  tenantId: string;
+}
+```
+
+The senior cost is **bubbling**: request scope is contagious *upward*. Any provider that injects a request-scoped provider becomes request-scoped itself, and so does anything that injects *that*, all the way up the dependency graph. So one request-scoped `TenantContext` injected deep in a chain can force the whole chain — controller included — to be re-instantiated on every request, paying construction cost and memory per request, and it complicates injecting that chain into things that are inherently singleton, like global guards and interceptors.
+
+The escape hatch is **durable providers**: mark the provider `durable: true` and register a `ContextIdStrategy` that maps requests to a shared sub-tree by some key (commonly the tenant). Now Nest keeps *one* instance per tenant instead of one per request, so a multi-tenant request-scoped `DataSource` or context is created once per tenant and reused, cutting the per-request instantiation cost while preserving the per-tenant isolation you actually wanted.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Scope</th>
+        <th class="border border-border px-3 py-2 text-left">Instances</th>
+        <th class="border border-border px-3 py-2 text-left">Use when</th>
+        <th class="border border-border px-3 py-2 text-left">The catch</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>DEFAULT (singleton)</strong></td>
+        <td class="border border-border px-3 py-2">One, shared app-wide</td>
+        <td class="border border-border px-3 py-2">Almost always — stateless services, repos</td>
+        <td class="border border-border px-3 py-2">Must not hold per-request state</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>REQUEST</strong></td>
+        <td class="border border-border px-3 py-2">New per HTTP request</td>
+        <td class="border border-border px-3 py-2">Per-request context: tenant, user, txn manager</td>
+        <td class="border border-border px-3 py-2">Bubbles up — re-instantiates the whole chain per request</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>TRANSIENT</strong></td>
+        <td class="border border-border px-3 py-2">New per consumer</td>
+        <td class="border border-border px-3 py-2">Each injector needs its own fresh instance</td>
+        <td class="border border-border px-3 py-2">No sharing at all; easy to over-allocate</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>REQUEST + durable</strong></td>
+        <td class="border border-border px-3 py-2">One per context key (e.g. tenant)</td>
+        <td class="border border-border px-3 py-2">Multi-tenant per-request state you can pool</td>
+        <td class="border border-border px-3 py-2">Needs a ContextIdStrategy; shared across requests of a tenant</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-tradeoff-1"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="en"
+  prompt="You must return a list of 100 authors each with their posts in a single REST endpoint. How should you load the posts relation?"
+  options={[
+    { name: "Declare the relation plainly and load it per query with find({ relations: { posts: true } }) or a QueryBuilder leftJoinAndSelect", summary: "Explicit join.", correct: true, justification: "This issues one LEFT JOIN and returns parents-with-children in a single round trip, flat in N — 1 query for 100 authors instead of 101. The decision lives at the call site, so it's visible in review and trivially removable on the code paths that don't need posts. QueryBuilder is the variant when you also need specific columns, a WHERE, or pagination. This is the senior default: load relations explicitly, per query." },
+    { name: "Make the relation lazy (posts: Promise<Post[]>) and await author.posts inside the response map", summary: "N+1 generator.", justification: "This is precisely the incident: a Promise-typed relation fires a fresh SELECT on each await, so iterating 100 authors and awaiting posts per row is 1 + 100 = 101 queries and a p99 cliff. The cost is invisible because it reads like a property access. Lazy relations are convenient for a one-off, never as the loading strategy for a list." },
+    { name: "Mark the relation eager: true so it's always joined", summary: "Over-fetches everywhere.", justification: "Eager fixes N+1 but at the cost of joining posts on EVERY find(Author) app-wide — counts, name lookups, existence checks all drag the relation. You can't opt out per query with find, and the cost is hidden on the entity, not the call. Wrong as a standing default; an explicit per-query join gets the same single round trip without taxing every other query." },
+    { name: "DataLoader batching the post reads", summary: "Right for graph fan-out, overkill here.", justification: "DataLoader is excellent when the loop is a resolver fan-out you don't control (GraphQL), batching N reads into one IN (...) query and deduping per request. But for a single REST list endpoint you DO control, a plain join is simpler, one round trip instead of two, and needs no extra infrastructure. Correct tool, wrong scale for this case." },
+  ]}
+/>
+
+<Quiz
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-quiz-1"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="en"
+  question="A repo.find() returns 100 authors. The response mapper does `await author.posts` (a lazy relation) for each. How many queries hit the database?"
+  choices={[
+    { label: "101 — one for the author list, then one per author to lazy-load posts", correct: true },
+    { label: "1 — the lazy relation is included in the original find()", misconception: "A lazy relation is NOT joined by the original find — that's the whole point. The find() returns authors only; each await author.posts then fires its own SELECT. That's 1 + 100. To get a single query you must load the relation explicitly via relations: { posts: true } or a leftJoinAndSelect." },
+    { label: "2 — TypeORM automatically batches the lazy reads into one IN (...) query", misconception: "TypeORM does not auto-batch lazy reads; each awaited access is an independent query. Batching into one IN (...) is what DataLoader gives you, and only if you wire it up. Plain lazy relations produce N separate queries: 1 + N." },
+    { label: "100 — one query per author, the list query is free", misconception: "The list query is not free — repo.find() is itself one SELECT for the 100 authors. Then each lazy posts access adds one more. The total is 1 (list) + 100 (per-row) = 101." },
+  ]}
+/>
+
+<Quiz
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-quiz-2"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="en"
+  question="You inject a Scope.REQUEST TenantContext into a service that a controller depends on. What happens to the scope of the service and controller?"
+  choices={[
+    { label: "Both become request-scoped — request scope bubbles UP the injection graph, re-instantiating the chain per request", correct: true },
+    { label: "Only TenantContext is request-scoped; the service and controller stay singletons", misconception: "Request scope is contagious upward: any provider that injects a request-scoped one becomes request-scoped, and so does its injector, all the way up. The service and the controller are both promoted to request scope and re-created per request. That cascading cost is the main reason to use REQUEST sparingly." },
+    { label: "Nest throws — you cannot inject a request-scoped provider into a singleton", misconception: "Nest doesn't throw; it silently promotes the consumers to request scope to satisfy the dependency. That's exactly the trap — there's no error, just a quiet latency/memory cost as more of the graph is rebuilt every request. (Injecting request scope into a truly global guard/interceptor is the harder case.)" },
+    { label: "The service becomes transient, getting a new instance per method call", misconception: "Injecting a request-scoped provider promotes consumers to REQUEST scope (one instance per request), not TRANSIENT (one per consumer/injection). Transient is a separate scope you opt into explicitly; it isn't what bubbling produces." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Load relations explicitly, not lazy (N+1) or eager (over-fetch): a 100-row list is 1 join vs 101 queries. Request scope bubbles up the graph — keep providers singleton, use durable providers per-tenant.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the N+1 problem: how it arises, what it costs for a 100-row list, and the three ways to fix it.", a: "N+1 arises when you load a list of N parent rows with one query, then access an un-preloaded relation on each parent inside a loop — every access fires its own SELECT, so you pay 1 (the list) + N (one per row) queries. For a 100-author list where the mapper touches posts per author, that's 1 + 100 = 101 queries, which is how a route's p99 jumps from ~40ms to seconds: the round trips serialize and the DB CPU climbs. The fixes: (A) load the relation explicitly for that query with find({ relations: { posts: true } }), which becomes one LEFT JOIN; (B) use QueryBuilder leftJoinAndSelect when you also need specific columns, a WHERE, or pagination — also one round trip; (C) use DataLoader to batch the N relation reads into a single IN (...) query (2 queries total) and dedupe per request, which is the right tool when the fan-out is a resolver graph you don't control (GraphQL). A and B collapse 101 to 1; DataLoader collapses to 2. The common thread is making the relation load a per-query, visible decision instead of an implicit per-row one." },
+    { q: "Contrast lazy relations, eager relations, and explicit loading; and explain why request scope is expensive and how durable providers help.", a: "Lazy relations type the property as Promise<T>, so each await fires a fresh query — ergonomic but a hidden N+1 generator inside loops; the cost is invisible because it reads like a property access. Eager relations (eager: true) are ALWAYS joined on every find of that entity and can't be opted out per query, so they over-fetch on every code path, including counts and name lookups that never read the relation. The senior stance is to avoid both as defaults: declare relations plainly and load them explicitly per query (relations / leftJoinAndSelect), keeping each call site honest. On scopes: DEFAULT is a shared singleton (one instance app-wide); REQUEST makes a new instance per request, needed for per-request context like tenant/user or a request transaction manager; TRANSIENT is new per consumer. Request scope is expensive because it bubbles UP — any provider injecting a request-scoped one becomes request-scoped too, cascading up the graph so the whole chain (controller included) is re-instantiated per request, costing latency and memory and complicating injection into global guards/interceptors. Durable providers (durable: true + a ContextIdStrategy) escape this by keying instances to a context (e.g. tenant) so Nest pools one instance per tenant shared across that tenant's requests, instead of one per request — keeping multi-tenant isolation without the per-request rebuild cost." },
+  ]}
+/>
+
+<Recap lang="en">
+Three data-modeling defaults quietly generate work that looks fine in dev and burns p99 in prod. Relations are foreign keys with a TypeScript shape: the many side owns the FK and @JoinColumn, the one side declares the inverse, and @ManyToMany adds a join table whose owning side carries @JoinTable. The N+1 problem appears when you load N parents and then touch a relation per row in a loop — 1 + N queries, so a 100-row list becomes 101 round trips and a latency cliff; fix it by loading the relation explicitly for that query with find(&#123; relations: &#123; posts: true &#125; &#125;) or QueryBuilder leftJoinAndSelect (one join, one round trip), or by batching with DataLoader (two queries) when the fan-out is a resolver graph you don't control. Lazy relations (Promise-typed, query-on-await) are hidden N+1 generators; eager: true relations are always joined and over-fetch on every query; the senior stance avoids both and loads relations explicitly per query. Injection scope is the third trap: DEFAULT is a shared singleton, REQUEST is per-request (for tenant/user/transaction context), TRANSIENT is per-consumer — and request scope bubbles up the graph, promoting every consumer to request scope and re-instantiating the whole chain per request, which durable providers (durable: true + ContextIdStrategy) escape by pooling one instance per tenant.
+</Recap>
