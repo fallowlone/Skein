@@ -147,7 +147,27 @@ bun run build   # Runs Astro build + linter
 
 Expected: 301 pages, lint clean.
 
+**Runnable code samples:** lesson code that should actually execute is opt-in.
+Tag a fenced block with `run` in its info string and `bun run verify:samples`
+(in `site/`) executes it under `bun`, asserting exit 0 within a timeout:
+
+````
+```js run
+import crypto from 'node:crypto';
+// … self-contained, stdlib-only or site/-installed deps; runs as the reader sees it
+```
+````
+
+Directives: `run` (execute), `no-run` (never), `expect-throws` (must fail —
+teaching a failure), `timeout=15000` (ms). Untagged blocks are left alone (most
+are illustrative fragments). A `run` block must be self-contained — its own
+imports, no hidden setup — so green means the displayed snippet works. EN is the
+canonical run (code is identical across locales); mirror the tag to RU for parity.
+`site/scripts/run-code-samples.mjs --self-test` proves the runner catches a crash.
+
 **Deploy:** Cloudflare Pages (or Hetzner CAX21 alt). Static output from `site/dist/`.
+CI (`.github/workflows/deploy.yml`) gates the deploy on unit tests + `verify:samples`
+before the build, so a sample that crashes on its runtime blocks the deploy.
 
 ## Fenix rules
 
@@ -156,6 +176,7 @@ Expected: 301 pages, lint clean.
 - Prefer `bun` for Node projects (yarn as fallback).
 - Before finishing any task: check types, lint, no console.log left in production code.
 - Run the site build (`bun run build` in `site/`) if you touch any piece content.
+- If you add or edit a `run`-tagged code sample, run `bun run verify:samples` (in `site/`).
 
 ## References
 
