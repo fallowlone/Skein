@@ -1,13 +1,270 @@
 ---
-slug: "01-capstone-typed-api"
+concepts:
+- end-to-end-design
+- layered-architecture
+- typed-contracts
+- production-readiness
+- request-pipeline
+deepensInto: []
+estMin: 20
 lang: ru
-track: "nest"
-unit: "09-putting-it-together"
+lessonType: topic
+level: senior
 order: 1
-title: "Capstone: полностью типизированный, защищённый, протестированный API"
-summary: "Capstone: полностью типизированный, защищённый, протестированный API — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "01-capstone-typed-api"
 sources:
-  - https://docs.nestjs.com/
+- https://docs.nestjs.com/
+- https://docs.nestjs.com/techniques/validation
+- https://docs.nestjs.com/techniques/configuration
+- https://docs.nestjs.com/fundamentals/lifecycle-events
+spiral: []
+status: ready
+summary: 'Собрать весь трек воедино: feature-модули поверх Controller -> Service -> Repository, core-модуль, привязывающий глобальные guard/pipe/interceptor/filter, типы на границах и чек-лист production-готовности, который падает рано.'
+title: 'Capstone: типизированный, защищённый, протестированный API'
+track: nest
+unit: "09-putting-it-together"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Сервис заказов выкатывается, и три недели всё нормально. Потом пятничный деплой добавляет `STRIPE_KEY`, который команда забыла прописать в staging, — приложение поднимается зелёным, проходит liveness и не отдаёт 404 ни на чём, потому что ключ читается только при первом чекауте, в 16:00, в проде. Дежурный инженер, копая, находит ещё три мины: контроллер, который сам делает проверку роли и сам валидирует, сервис, который открывает сырой запрос вне всякой транзакции, и `synchronize: true`, тихо меняющий схему на каждом рестарте. Ни одно из этого — не хитрый баг. Каждое — это задача, которая уползла из слота, уже данного фреймворком. Этот урок — сборочный чертёж: каждая прежняя деталь трека, собранная в один сервис, которому ты бы реально доверял на дежурстве.
+</Hook>
+
+<Crux>Один контракт на границу, один слот на сквозную задачу, один fail-fast boot — весь трек, собранный в один сервис.</Crux>
+
+<Explanation>
+
+## Скелет: feature-модули поверх типизированного core
+
+В сервисе, о котором можно рассуждать, два рода модулей. **Feature-модули** (`OrdersModule`, `UsersModule`) владеют одним срезом домена и следуют одной внутренней форме: **Controller** (HTTP-граница, без логики), **Service** (бизнес-операции, единственное место, где живут правила) и **Repository** (персистентность, типизированный `Repository&lt;T>`). Единственный **core-модуль** владеет всем сквозным: типизированным `ConfigModule`, глобальным `ValidationPipe`, глобальным логирующим interceptor, глобальным exception filter, auth-guard и health-контроллером. Feature-модули импортируют core; ничто не импортирует внутренности feature-модуля.
+
+Core-модуль — это место, где lifecycle привязывается один раз, через DI-осведомлённые токены-провайдеры, чтобы guard/filter/interceptor могли сами инжектить зависимости:
+
+```ts
+import { Module } from '@nestjs/common';
+import { APP_GUARD, APP_PIPE, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
+import { ValidationPipe } from '@nestjs/common';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { AllExceptionsFilter } from './filters/all-exceptions.filter';
+import { TransformInterceptor } from './interceptors/transform.interceptor';
+import { validateEnv } from './config/env.validation';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }), // fail-fast на boot
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },                  // authn на каждом маршруте
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe({ whitelist: true, transform: true }),
+    },
+    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },     // конверт + тайминг
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },           // одна форма ошибки
+  ],
+})
+export class CoreModule {}
+```
+
+`whitelist: true` срезает свойства без DTO-декоратора (защита от mass-assignment); `transform: true` превращает обычное JSON-тело в настоящий инстанс DTO и приводит примитивы. Привязка через токены `APP_*` — а не через `app.useGlobalGuards()` — держит эти глобалы внутри DI-контейнера, так что guard может инжектить `Reflector`, а filter — твой `Logger`.
+
+## Один запрос, фиксированный lifecycle как хребет
+
+Каждый запрос проходит ту же цепочку, что ты выучил раньше, — теперь читай её как хребет всего дизайна. **`JwtAuthGuard`** (аутентификация) выполняется первым и читает метаданные `@Public()`, чтобы `/health` и `/login` могли отписаться. **`RolesGuard`** (авторизация) читает `@Roles()` и решает доступ — улажено до того, как разобрано любое тело. **`ValidationPipe`** заводит типизированный DTO внутрь. **Хендлер** тонкий: он зовёт сервис и возвращает. **Service** выполняет бизнес-операцию внутри `dataSource.transaction`, разделяя транзакционный `EntityManager`, так что каждая запись коммитится или откатывается вместе. **Interceptor** оборачивает ответ в конверт и снимает тайминг на выходе. **`AllExceptionsFilter`** формирует всё, что выброшено на любом этапе.
+
+```ts
+// orders.controller.ts — тонкая граница, без бизнес-логики
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Post()
+  @Roles('customer')
+  create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
+    return this.orders.place(dto, user.id); // DTO уже валидирован глобальным pipe
+  }
+}
+
+// orders.service.ts — правила живут здесь, персистентность — в одной транзакции
+@Injectable()
+export class OrdersService {
+  constructor(private readonly dataSource: DataSource) {}
+
+  place(dto: CreateOrderDto, userId: string): Promise<OrderView> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Order);                 // типизированный Repository<Order>
+      const stock = await manager.findOne(Product, { where: { id: dto.productId } });
+      if (!stock || stock.qty < dto.quantity) throw new ConflictException('out of stock');
+      const order = repo.create({ userId, ...dto });
+      await repo.save(order);                                    // та же tx, что и чтение остатка
+      return toOrderView(order);                                 // domain -> response DTO
+    });
+  }
+}
+```
+
+Хендлер никогда не видит ни транзакции, ни проверки роли, ни формы ошибки — они живут в своих слотах lifecycle. Сервис никогда не видит HTTP. В этом разделении весь смысл: каждый этап ссылается на нужный прежний урок — guards для authz, pipe для валидации, общий транзакционный менеджер для персистентности, interceptor для конверта, filter для ошибок.
+
+<FlowDiagram
+  label="Готовый pipeline запроса как поток слева направо: входящий запрос проходит через JwtAuthGuard для аутентификации, затем RolesGuard для авторизации, затем ValidationPipe, который заводит типизированный DTO внутрь, затем тонкий хендлер контроллера, который зовёт Service, выполняющий бизнес-операцию внутри dataSource.transaction поверх типизированного Repository, затем TransformInterceptor оборачивает ответ в конверт с таймингом на выходе, а AllExceptionsFilter формирует любой выброс с любого прежнего этапа в одну форму ошибки."
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "guard", label: "Guards", sub: "authn -> authz" },
+    { id: "pipe", label: "ValidationPipe", sub: "типизир. DTO" },
+    { id: "handler", label: "Controller", sub: "тонкий хендлер" },
+    { id: "svc", label: "Service + tx", sub: "Repository<T>" },
+    { id: "intc", label: "Interceptor", sub: "конверт + тайминг" },
+    { id: "filter", label: "Filter", sub: "одна форма ошибки" },
+  ]}
+  edges={[
+    { from: "guard", to: "pipe", label: "allowed" },
+    { from: "pipe", to: "handler", label: "valid DTO" },
+    { from: "handler", to: "svc", label: "calls service" },
+    { from: "svc", to: "intc", label: "domain result" },
+    { from: "intc", to: "filter", label: "on throw" },
+  ]}
+  caption="Lifecycle И ЕСТЬ архитектура: каждая задача сидит в одном слоте, по порядку. Любой выброс — guard, pipe, хендлер или транзакция сервиса — прыгает в один и тот же filter."
+/>
+
+## Типы на границах, fail-fast на boot
+
+Контракт этого сервиса — его типы, проверяемые там, где данные пересекают границу. Три DTO, не один: **request DTO** (валидированный вход), **доменная сущность** (то, что держит база) и **response DTO** (то, что видят вызывающие, — никогда не утекай сущностью). Конфиг тоже типизирован: `registerAs` плюс `ConfigType` даёт сервису строго типизированный срез вместо stringly-typed обращений к `process.env`, а `validate` отвергает плохое окружение на boot, а не при первом использовании.
+
+```ts
+// config/database.config.ts
+import { registerAs, ConfigType } from '@nestjs/config';
+
+export const databaseConfig = registerAs('db', () => ({
+  url: process.env.DATABASE_URL!,
+  poolSize: Number(process.env.DB_POOL_SIZE ?? 10),
+}));
+export type DatabaseConfig = ConfigType<typeof databaseConfig>;
+
+// где-то в провайдере:
+constructor(@Inject(databaseConfig.KEY) private readonly db: DatabaseConfig) {}
+// db.poolSize — number, db.url — string — без `as`, без `process.env` на местах вызова
+```
+
+Чек-лист production-готовности — то сеньорское суждение, что отделяет «компилируется» от «доверяю на дежурстве»:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Задача</th>
+        <th class="border border-border px-3 py-2 text-left">Production-готовый ответ</th>
+        <th class="border border-border px-3 py-2 text-left">Какой сбой это предотвращает</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Config</strong></td>
+        <td class="border border-border px-3 py-2">Env валидирован на boot (<code>validate</code>); секреты через config, никогда в JWT</td>
+        <td class="border border-border px-3 py-2">Пропущенная переменная падает при первом использовании в проде, а не на деплое</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Схема</strong></td>
+        <td class="border border-border px-3 py-2">Только миграции; <code>synchronize: false</code></td>
+        <td class="border border-border px-3 py-2"><code>synchronize: true</code> тихо меняет/дропает колонки на рестарте</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Lifecycle</strong></td>
+        <td class="border border-border px-3 py-2">Graceful shutdown (<code>enableShutdownHooks</code>); readiness гейтит трафик</td>
+        <td class="border border-border px-3 py-2">In-flight запросы теряются; трафик идёт до того, как зависимости прогреты</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Health</strong></td>
+        <td class="border border-border px-3 py-2">Liveness = процесс жив; readiness = БД/зависимости доступны</td>
+        <td class="border border-border px-3 py-2">Liveness, проверяющий БД, запускает цикл рестартов на сбое БД</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Observability</strong></td>
+        <td class="border border-border px-3 py-2">Структурные логи с correlation id на каждый запрос</td>
+        <td class="border border-border px-3 py-2">Нечем трассировать один запрос между сервисами после инцидента</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Idempotency</strong></td>
+        <td class="border border-border px-3 py-2">Идемпотентные хендлеры там, где доставка at-least-once</td>
+        <td class="border border-border px-3 py-2">Переотправленное сообщение списывает или создаёт дважды</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Стратегия тестирования зеркалит слои: **unit-тестируй сервисы** с мокнутыми репозиториями — быстро, без БД, проверяя бизнес-правила в изоляции — и **e2e-тестируй собранный pipeline** с реальной тестовой БД и реальным токеном, так что guard, pipe, транзакция, interceptor и filter все отрабатывают ровно как в проде.
+
+<Inset kind="why" lang="ru">
+Почему разделять liveness и readiness, а не один `/health`? Они отвечают на разные вопросы разным наблюдателям. **Liveness** отвечает «не заклинило ли этот процесс?» — если он падает, оркестратор рестартит под, поэтому он должен зависеть только от самого процесса, никогда от базы. **Readiness** отвечает «должен ли трафик идти сюда прямо сейчас?» — если он падает, балансировщик перестаёт маршрутизировать, но не рестартит, поэтому это верное место проверять БД и нижестоящие зависимости. Схлопни их в один probe, который пингует базу, — и краткий сбой БД станет штормом рестартов: все поды разом проваливают liveness, все рестартятся, а теперь холодные пулы соединений делают сбой хуже.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-09-putting-it-together-01-capstone-typed-api-tradeoff-1"
+  lessonSlug="01-capstone-typed-api"
+  lang="ru"
+  prompt="Ты структурируешь фичу размещения заказа так, чтобы она оставалась поддерживаемой и тестируемой по мере роста команды и правил. Как ты расположишь код?"
+  options={[
+    { name: "Controller -> Service -> Repository: контроллер — тонкая HTTP-граница, Service держит бизнес-правила и владеет транзакцией, Repository — типизированный Repository<T>; сквозные задачи привязаны глобально в core-модуле", summary: "Слоисто, задачи в своих слотах.", correct: true, justification: "У каждого слоя одна причина меняться и один способ тестироваться: Service unit-тестируется с мокнутым репозиторием (без БД, быстро), собранный pipeline e2e-тестируется с реальной БД и токеном. Бизнес-правила живут ровно в одном месте, персистентность сменяема за репозиторием, а authz/валидация/форма-ошибки сидят в своих слотах lifecycle через APP_GUARD/APP_PIPE/APP_FILTER — никогда не скопированы в хендлеры. Это дизайн, к которому ведёт весь трек." },
+    { name: "Толстые контроллеры: разбор, авторизация, валидация, выполнение SQL и формирование ошибок — всё внутри каждого @Post-хендлера", summary: "Всё в границе.", justification: "Каждый хендлер заново реализует auth, валидацию и формирование ошибок, поэтому сквозная логика скопирована, и одна забытая строка — дыра в безопасности или корректности. Нет шва, чтобы unit-тестировать правила без подъёма HTTP, и контроллер меняется по любому поводу. Это ровно тот запах, с которого начинается урок." },
+    { name: "Всё в сервисах: пропустить репозитории, пусть каждый сервис шлёт сырые запросы и сам HTTP-формирует свои ответы", summary: "Нет шва персистентности.", justification: "Вложение персистентности в сервис связывает бизнес-правила с драйвером базы, так что нельзя unit-тестировать правило без реальной БД, и нет типизированной границы Repository<T> для мока. Давать сервисам формировать HTTP-ответы тоже возвращает транспортную задачу в бизнес-логику. Шов репозитория — это то, что делает сервис тестируемым в изоляции." },
+    { name: "Один гигантский модуль со всеми контроллерами и сервисами плоско, без границ фич", summary: "Нет границ модулей.", justification: "Расплющивание всего в один модуль разрушает инкапсуляцию: любой провайдер может дотянуться до любого, импорты превращаются в клубок, и теряется пофичевое владение, позволяющее командам работать параллельно. Feature-модули, импортирующие общий core, — это то, что держит граф зависимостей читаемым по мере роста сервиса." },
+  ]}
+/>
+
+<Quiz
+  id="nest-09-putting-it-together-01-capstone-typed-api-quiz-1"
+  lessonSlug="01-capstone-typed-api"
+  lang="ru"
+  question="В готовом дизайне в каком порядке сквозные компоненты касаются одного успешного запроса POST /orders?"
+  choices={[
+    { label: "JwtAuthGuard (authn) -> RolesGuard (authz) -> ValidationPipe (типизированный DTO) -> хендлер -> Service в dataSource.transaction -> interceptor (конверт + тайминг) на выходе", correct: true },
+    { label: "Сначала ValidationPipe, чтобы разобрать тело, затем guards, когда DTO известен, затем хендлер", misconception: "Guards выполняются до pipes by design — авторизация улажена до того, как разобрано любое тело. Валидировать вход до решения о доступе — тратить работу на запросы, которые ты отклонишь, и протаскивать валидность payload в решение authz." },
+    { label: "Сначала interceptor (он оборачивает всё), затем guards, затем pipe, затем хендлер", misconception: "Pre-код interceptor действительно выполняется рано, но аутентификация — задача guard и идёт первой; важнее то, что конверт/тайминг interceptor — это его POST-работа, которая происходит на выходе, после возврата хендлера." },
+    { label: "Exception filter выполняется в цепочке на каждом запросе, между pipe и хендлером", misconception: "Filter не в линейной цепочке — это сток сбоку, который срабатывает только при выбросе. На успешном запросе он никогда не выполняется." },
+  ]}
+/>
+
+<Quiz
+  id="nest-09-putting-it-together-01-capstone-typed-api-quiz-2"
+  lessonSlug="01-capstone-typed-api"
+  lang="ru"
+  question="Почему привязывать глобальный ValidationPipe с { whitelist: true, transform: true } через APP_PIPE, а не создавать его в main.ts, и почему важен whitelist?"
+  choices={[
+    { label: "APP_PIPE держит pipe внутри DI-контейнера, так что он (и guard/filter) могут инжектить зависимости; whitelist срезает недекорированные свойства, блокируя mass-assignment, transform даёт настоящий типизированный инстанс DTO", correct: true },
+    { label: "Обе формы идентичны; APP_PIPE просто короче печатать, а whitelist лишь делает ошибки красивее", misconception: "Они не идентичны: pipe, созданный в main.ts, живёт вне DI и не может инжектить провайдеры, а whitelist — это контроль безопасности: он удаляет свойства без DTO-декоратора, чтобы вызывающий не протащил лишние поля (mass-assignment), что куда больше косметики." },
+    { label: "whitelist делает валидацию опциональной, а transform отключает её, так что вместе они ускоряют запросы, пропуская проверки", misconception: "Наоборот: whitelist срезает неизвестные свойства (а с forbidNonWhitelisted — отвергает их), а transform строит и приводит типизированный инстанс. Ни то ни другое не отключает валидацию; они её ужесточают." },
+    { label: "Его никогда не следует привязывать глобально — каждый контроллер должен создавать свой ValidationPipe, чтобы DTO различались по маршруту", misconception: "Глобальный ValidationPipe применяется по каждому DTO автоматически через собственные декораторы каждого DTO, так что одна глобальная привязка уже даёт пофичевое поведение. Пересоздавать его в каждом контроллере — просто дублировать конфиг и звать дрейф." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Feature-модули поверх Controller -> Service -> Repository; core-модуль привязывает APP_GUARD/PIPE/FILTER/INTERCEPTOR; три DTO типизируют границы; сервис работает в одной транзакции; чек-лист падает рано на boot.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-capstone-typed-api-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опиши скелет модулей и слоёв готового сервиса и где привязывается каждая сквозная задача.", a: "Два рода модулей. Feature-модули (OrdersModule, UsersModule) каждый владеет одним срезом домена с одной внутренней формой: Controller (тонкая HTTP-граница, без бизнес-логики), Service (единственный дом бизнес-правил и слой, владеющий транзакцией) и Repository (типизированный Repository<T> для персистентности). Один общий core-модуль владеет всем сквозным и привязывает lifecycle один раз через DI-осведомлённые токены: APP_GUARD для JwtAuthGuard (authn, плюс RolesGuard для authz, читающий @Roles()), APP_PIPE для глобального ValidationPipe({ whitelist: true, transform: true }), APP_INTERCEPTOR для transform/timing interceptor, оборачивающего каждый ответ в конверт, и APP_FILTER для AllExceptionsFilter, формирующего каждый выброс. Feature-модули импортируют core; core импортирует типизированный ConfigModule и хостит health-контроллер. Привязка через APP_* держит глобалы внутри DI, так что guard может инжектить Reflector, а filter — Logger, чего создание их в main.ts не дало бы." },
+    { q: "Проведи один запрос POST /orders через фиксированный lifecycle и назови пункты production-готовности, которые держат его надёжным.", a: "Порядок: JwtAuthGuard аутентифицирует (и читает @Public(), чтобы /health и /login отписались) -> RolesGuard авторизует через @Roles(), улажено до любого разбора -> ValidationPipe заводит валидированный типизированный CreateOrderDto внутрь -> тонкий хендлер зовёт сервис и возвращает -> Service выполняет бизнес-операцию внутри dataSource.transaction, разделяя транзакционный EntityManager, так что чтение остатка и запись заказа коммитятся или откатываются вместе поверх типизированного Repository, и мапит доменную сущность в response DTO (никогда не утекая сущностью) -> interceptor оборачивает результат в конверт и снимает тайминг на выходе -> AllExceptionsFilter формирует всё выброшенное на любом этапе в одну форму ошибки. Чек-лист готовности: env валидирован на boot, чтобы пропущенная переменная падала рано (а не при первом использовании); только миграции с synchronize: false; graceful shutdown через enableShutdownHooks и readiness, гейтящий трафик (liveness = процесс жив, readiness = БД/зависимости доступны — никогда не проверяй БД в liveness); структурные логи с correlation id на запрос; секреты через config, никогда внутри JWT; идемпотентные хендлеры везде, где доставка at-least-once. Тестируй это, unit-тестируя сервисы с мокнутыми репозиториями и e2e-тестируя собранный pipeline против реальной тестовой БД с реальным токеном." },
+  ]}
+/>
+
+<Recap lang="ru">
+Capstone собирает весь трек в один сервис, которому ты бы доверял на дежурстве. Скелет — это feature-модули (OrdersModule, UsersModule) поверх фиксированного внутреннего слоения — Controller (тонкая HTTP-граница), Service (единственный дом бизнес-правил и владелец транзакции), Repository (типизированный Repository&lt;T>) — плюс единственный core-модуль, привязывающий каждую сквозную задачу один раз через DI-осведомлённые токены: APP_GUARD для authn/authz, APP_PIPE для глобального ValidationPipe с whitelist и transform, APP_INTERCEPTOR для конверта ответа и тайминга, APP_FILTER для одной формы ошибки. Фиксированный request lifecycle — это хребет: guard -> guard -> pipe -> handler -> service-в-транзакции -> interceptor -> filter, каждый этап ссылается на свой прежний урок. Контракт — это типы на границах: request DTO, доменная сущность и response DTO, никогда не схлопнутые в один, с ConfigType и типизированным Repository, убирающими stringly-typed обращения. Production-готовность — это сеньорское суждение: валидируй env на boot, чтобы падать рано, только миграции с выключенным synchronize, graceful shutdown с readiness, гейтящим трафик, liveness, который никогда не трогает БД, структурные логи с correlation id, секреты в config, а не в токенах, и идемпотентные хендлеры там, где доставка at-least-once. Тестируй слоение так, как строил: unit-тестируй сервисы с мокнутыми репозиториями, e2e-тестируй собранный pipeline против реальной БД с реальной аутентификацией.
+</Recap>

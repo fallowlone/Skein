@@ -1,13 +1,273 @@
 ---
-slug: "01-microservices-transport"
+concepts:
+- microservices
+- transports
+- message-pattern
+- event-pattern
+- delivery-guarantees
+deepensInto: []
+estMin: 18
 lang: en
-track: "nest"
-unit: "08-microservices-and-graphql"
+lessonType: topic
+level: senior
 order: 1
-title: "Microservice transports: TCP, Redis, NATS, Kafka"
-summary: "Microservice transports: TCP, Redis, NATS, Kafka — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "01-microservices-transport"
 sources:
-  - https://docs.nestjs.com/microservices/basics
+- https://docs.nestjs.com/microservices/basics
+- https://docs.nestjs.com/microservices/kafka
+- https://docs.nestjs.com/faq/hybrid-application
+spiral: []
+status: ready
+summary: 'A Nest microservice listens on a swappable transporter, not HTTP. send/@MessagePattern is request–response; emit/@EventPattern is fire-and-forget. Pick the transport on delivery: TCP/Redis lose messages, RabbitMQ/Kafka redeliver — forcing idempotent consumers.'
+title: 'Microservice transports: TCP, Redis, NATS, Kafka'
+track: nest
+unit: "08-microservices-and-graphql"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The "order placed" flow worked in the demo: the orders service called `emit('order.placed', order)` over Redis, the billing service charged the card, the email service sent the receipt. Then a billing pod was rolling during a deploy when fourteen orders came in. Redis pub/sub dropped them on the floor — no subscriber was listening, so there was nothing to deliver — and fourteen customers were charged zero and shipped product. The fix was not a code bug; it was the transport. Redis pub/sub is at-most-once with no persistence, and "react to this later" needs a broker that holds the message until a consumer is back. That choice — TCP vs Redis vs RabbitMQ vs Kafka, `send` vs `emit` — is the whole lesson.
+</Hook>
+
+<Crux>A microservice swaps the transporter, not the handlers; send/@MessagePattern is request–response, emit/@EventPattern fire-and-forget.</Crux>
+
+<Explanation>
+
+## A microservice is an app on a transporter, not HTTP
+
+A Nest microservice is the same `AppModule` you already write, bootstrapped to listen on a **transporter** instead of an HTTP server. You call `createMicroservice` with a `transport` and `options`; the transporter is swappable, and your controllers' handlers stay byte-for-byte the same when you move from TCP to Kafka.
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.TCP, // swap to REDIS / NATS / RMQ / KAFKA, handlers unchanged
+    options: { host: '0.0.0.0', port: 3001 },
+  });
+  await app.listen();
+}
+bootstrap();
+```
+
+Handlers come in two flavours, and the distinction is the most important idea in the lesson. `@MessagePattern(pattern)` is **request–response**: the handler's return value (or `Observable`) is serialized back to the caller, and the transporter correlates the reply to the request with a correlation id. `@EventPattern(event)` is **fire-and-forget**: it reacts to something that happened and returns nothing — there is no reply channel at all.
+
+```ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern, EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class OrdersController {
+  // request–response: caller is waiting for this return value
+  @MessagePattern({ cmd: 'order.total' })
+  total(@Payload() ids: number[]): number {
+    return ids.reduce((sum, id) => sum + priceOf(id), 0);
+  }
+
+  // fire-and-forget: "this happened"; nobody is waiting for a reply
+  @EventPattern('order.placed')
+  async onOrderPlaced(@Payload() order: OrderDto): Promise<void> {
+    await this.billing.charge(order); // no return value is sent anywhere
+  }
+}
+```
+
+On the caller side, `ClientProxy` mirrors the split: `send()` for `@MessagePattern`, `emit()` for `@EventPattern`. `send()` returns a **cold Observable** — nothing is sent until you subscribe, and the stream emits the reply — so it is for "I need an answer". `emit()` publishes the event and does not wait for one — it is for "this happened, react if you care".
+
+```ts
+import { Injectable, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Injectable()
+export class OrdersService {
+  constructor(@Inject('ORDERS') private readonly client: ClientProxy) {}
+
+  // send: returns an Observable of the reply; await it for the value
+  total(ids: number[]) {
+    return firstValueFrom(this.client.send<number>({ cmd: 'order.total' }, ids));
+  }
+
+  // emit: publish and move on; no reply is expected
+  placed(order: OrderDto) {
+    this.client.emit('order.placed', order); // fire-and-forget
+  }
+}
+```
+
+<Inset kind="why" lang="en">
+Why is `send()` a *cold* Observable? Because the request is not actually dispatched until something subscribes — so calling `this.client.send(...)` and never subscribing sends nothing at all. That trips people coming from promise-based HTTP clients: the call looks like it fired, but with no `subscribe()` (or `firstValueFrom`/`await lastValueFrom`) the message never leaves. `emit()` is different — Nest subscribes internally so the event publishes — but it still gives you back no reply.
+</Inset>
+
+## Choosing a transporter: it is a choice about delivery
+
+Every transporter speaks the same handler API, so the decision is never about syntax — it is about **delivery semantics**: does the broker persist the message, can a recovered consumer replay it, is ordering guaranteed, how much throughput does it sustain. TCP and Redis pub/sub are simple and fast but lossy; RabbitMQ and Kafka are durable but make you pay for it with idempotency.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Transporter</th>
+        <th class="border border-border px-3 py-2 text-left">Model</th>
+        <th class="border border-border px-3 py-2 text-left">Durable / replay?</th>
+        <th class="border border-border px-3 py-2 text-left">Delivery</th>
+        <th class="border border-border px-3 py-2 text-left">Pick it when</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>TCP</strong></td>
+        <td class="border border-border px-3 py-2">Point-to-point</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">At-most-once</td>
+        <td class="border border-border px-3 py-2">Simple internal request–response, no broker to run</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Redis</strong></td>
+        <td class="border border-border px-3 py-2">Pub/sub</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">At-most-once</td>
+        <td class="border border-border px-3 py-2">Cheap fan-out where dropping a message is acceptable</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>NATS</strong></td>
+        <td class="border border-border px-3 py-2">Pub/sub (subjects)</td>
+        <td class="border border-border px-3 py-2">Core no; JetStream yes</td>
+        <td class="border border-border px-3 py-2">At-most-once (core)</td>
+        <td class="border border-border px-3 py-2">Lightweight, low-latency messaging; add JetStream for persistence</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>RabbitMQ</strong></td>
+        <td class="border border-border px-3 py-2">Queues + routing</td>
+        <td class="border border-border px-3 py-2">Yes (acks, requeue)</td>
+        <td class="border border-border px-3 py-2">At-least-once</td>
+        <td class="border border-border px-3 py-2">Work queues, per-message ack, complex routing</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Kafka</strong></td>
+        <td class="border border-border px-3 py-2">Partitioned log</td>
+        <td class="border border-border px-3 py-2">Yes (offset replay)</td>
+        <td class="border border-border px-3 py-2">At-least-once</td>
+        <td class="border border-border px-3 py-2">High-throughput event streams, replay, ordering per partition</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Two facts from that table carry the senior weight. First, **at-least-once (RabbitMQ, Kafka) means redelivery**, which means your consumer can run twice on the same message — so it must be **idempotent** or you double-charge a card. Second, **Kafka orders messages only within a partition**, not across the topic: events for one `orderId` stay ordered only if they hash to the same partition (key by `orderId`), and a consumer group spreads partitions across instances for parallelism while preserving per-partition order. Kafka request–response also exists but is heavier — the client must `subscribeToResponseOf(topic)` so replies land on a dedicated reply topic, matched back by correlation id.
+
+```ts
+// Kafka microservice: a broker list and a consumer group
+const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+  transport: Transport.KAFKA,
+  options: {
+    client: { brokers: ['localhost:9092'] },
+    consumer: { groupId: 'billing-consumer' }, // group => partitions split across pods
+  },
+});
+```
+
+## Hybrid apps: HTTP and a transporter at once
+
+You rarely throw away HTTP. A **hybrid application** is a normal HTTP app that *also* listens as a microservice: you `connectMicroservice` one or more transporters, then `startAllMicroservices()` before `listen()`. The same process serves REST and reacts to broker events.
+
+```ts
+const app = await NestFactory.create(AppModule);
+app.connectMicroservice<MicroserviceOptions>({
+  transport: Transport.KAFKA,
+  options: { client: { brokers: ['localhost:9092'] }, consumer: { groupId: 'orders' } },
+});
+await app.startAllMicroservices(); // begin consuming events
+await app.listen(3000);            // and keep serving HTTP
+```
+
+<FlowDiagram
+  label="Order placed flow across a broker: the orders producer sends a request-response message and emits a fire-and-forget event; send waits for a correlated reply, while emit publishes to the broker which durably fans the event out to the billing and email consumers, who acknowledge but send no reply back."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "prod", label: "Orders", sub: "producer" },
+    { id: "broker", label: "Broker", sub: "Kafka / RMQ" },
+    { id: "billing", label: "Billing", sub: "consumer" },
+    { id: "email", label: "Email", sub: "consumer" },
+  ]}
+  edges={[
+    { from: "prod", to: "broker", label: "emit (no reply)" },
+    { from: "broker", to: "billing", label: "deliver" },
+    { from: "broker", to: "email", label: "deliver" },
+    { from: "billing", to: "broker", label: "ack" },
+  ]}
+  caption="emit/@EventPattern is fire-and-forget: the producer does not wait. A durable broker (Kafka/RMQ) holds the event and redelivers on ack failure, so a recovered consumer still gets it — at the cost of needing idempotent handlers. send/@MessagePattern would instead block on a correlated reply."
+/>
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-01-microservices-transport-tradeoff-1"
+  lessonSlug="01-microservices-transport"
+  lang="en"
+  prompt="The 'order placed' event fans out to billing and email. The hard requirement: if a consumer pod is down during a deploy, the events must survive and be replayable when it returns — and per-order events must stay ordered. Which transporter?"
+  options={[
+    { name: "Kafka — partitioned append-only log; key by orderId for per-partition ordering, consumer groups for parallel replay, offsets to re-read after an outage", summary: "Durable + replay + ordering.", correct: true, justification: "The constraint is survive-an-outage-and-replay plus per-order ordering. Kafka persists every event in an append-only log and tracks consumer offsets, so a recovered pod re-reads from where it left off — nothing is lost. Keying by orderId pins each order's events to one partition, where Kafka guarantees order, while a consumer group spreads partitions across pods for throughput. The price you accept is at-least-once delivery, so billing must be idempotent. This is the textbook fit for high-throughput, replayable event streams." },
+    { name: "RabbitMQ — durable queues with per-message acks and requeue on failure", summary: "Durable, but replay is consume-once.", justification: "RabbitMQ is genuinely durable and at-least-once: a down consumer's messages wait in the queue and redeliver on reconnect, so it survives the outage. But it is a queue, not a log — once a message is acked it is gone, so you cannot replay history or re-read past events the way the requirement implies, and global ordering across competing consumers is not guaranteed. A strong second choice; Kafka wins specifically on replay and per-partition ordering." },
+    { name: "Redis pub/sub — fast in-memory fan-out", summary: "At-most-once, no persistence.", justification: "Redis pub/sub is exactly the hook's bug: it delivers only to subscribers connected at publish time and persists nothing. A pod that is down during the deploy never sees the event, and there is no offset or queue to replay from. It fails the survive-an-outage requirement outright." },
+    { name: "TCP — direct point-to-point request–response", summary: "No broker, no fan-out, no durability.", justification: "TCP is point-to-point with no broker in between, so there is nothing to hold an event for a down consumer and no native fan-out to two services. It is at-most-once and built for simple synchronous request–response, not a durable, replayable, multi-consumer event pipeline." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-01-microservices-transport-quiz-1"
+  lessonSlug="01-microservices-transport"
+  lang="en"
+  question="A producer calls client.emit('order.placed', order) over Redis pub/sub while the only consumer pod is mid-restart. What happens to that event?"
+  choices={[
+    { label: "It is dropped — Redis pub/sub is at-most-once and delivers only to subscribers connected at publish time; with no listener, nothing is persisted and nothing is replayed", correct: true },
+    { label: "Redis queues it and delivers it once the consumer reconnects", misconception: "That is a durable queue (RabbitMQ) or a log (Kafka), not Redis pub/sub. Plain pub/sub holds nothing — a message published with no current subscriber is simply gone." },
+    { label: "emit() blocks until a consumer is available, so the producer waits out the restart", misconception: "emit() is fire-and-forget: it never blocks waiting for a consumer or a reply. send() is the request–response call, and even it would not park until a subscriber appears." },
+    { label: "The producer receives an error reply it can retry", misconception: "There is no reply channel for an event — @EventPattern returns nothing and emit() expects no response. The producer gets no acknowledgement at all, which is exactly why the loss is silent." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-01-microservices-transport-quiz-2"
+  lessonSlug="01-microservices-transport"
+  lang="en"
+  question="You move the 'order placed' flow to Kafka. Billing now occasionally charges a card twice. What is the root cause and the right fix?"
+  choices={[
+    { label: "Kafka is at-least-once, so a handler can be redelivered the same event (e.g. after a rebalance before the offset commits) — make the consumer idempotent, e.g. dedupe on orderId / a processed-events table", correct: true },
+    { label: "Kafka lost ordering, so the charge ran out of order — switch to a single partition", misconception: "Double-charging is a duplication problem, not an ordering one. Kafka does order within a partition; the cause here is redelivery under at-least-once semantics, which idempotency fixes — collapsing to one partition would only throttle throughput." },
+    { label: "send() was used instead of emit(), so the reply triggered a second charge", misconception: "An event flow uses emit()/@EventPattern, which has no reply at all. The duplicate comes from the broker redelivering the event, not from a reply path that does not exist here." },
+    { label: "Kafka has no acks, so the broker re-sent the message blindly — disable retries", misconception: "Kafka tracks offsets and commits, and redelivery on at-least-once is a feature, not a misconfiguration. Disabling retries would risk dropping events; the correct response is to make the side effect safe to repeat." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Swap the transporter, keep the handlers. send/@MessagePattern = request–response; emit/@EventPattern = fire-and-forget. Pick on delivery: TCP/Redis lose; RabbitMQ/Kafka redeliver, so consumers must be idempotent.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-08-microservices-and-graphql-01-microservices-transport-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the difference between @MessagePattern + send() and @EventPattern + emit(), including what the caller receives and when you'd use each.", a: "@MessagePattern(pattern) is request–response: the handler's return value (or Observable) is serialized back to the caller, and the transporter matches the reply to the request via a correlation id. On the caller side, ClientProxy.send(pattern, payload) returns a COLD Observable — nothing is dispatched until you subscribe (or await firstValueFrom/lastValueFrom), and the stream emits the reply. Use it when you need an answer (a query, a computed total, a synchronous-feeling RPC). @EventPattern(event) is fire-and-forget: the handler reacts to something that happened and returns nothing — there is no reply channel. ClientProxy.emit(event, payload) publishes and does not wait; Nest subscribes internally so the event actually goes out, but the caller gets no reply. Use it when you want to announce 'this happened, react if you care' and decouple the producer from however many consumers care — at the cost of losing the synchronous reply." },
+    { q: "You must choose a transporter for an event that has to survive a consumer outage and be replayable, with per-order ordering. Walk through TCP, Redis, RabbitMQ, and Kafka and justify the pick.", a: "TCP is point-to-point with no broker — at-most-once, nothing holds an event for a down consumer, and no fan-out — so it fails immediately. Redis pub/sub is at-most-once with no persistence: it delivers only to subscribers connected at publish time, so an event published while the pod is restarting is lost forever and cannot be replayed — also out. RabbitMQ is durable and at-least-once: a down consumer's messages wait in the queue and redeliver on reconnect, so it survives the outage, but it is a queue — once acked, a message is gone, so you cannot re-read history/replay, and global ordering across competing consumers isn't guaranteed. Kafka is the pick: a partitioned append-only log that persists events and tracks consumer offsets, so a recovered pod re-reads from its last offset (true replay); keying by orderId pins each order's events to one partition where ordering is guaranteed, and a consumer group spreads partitions across pods for throughput. The trade-off you accept for both RabbitMQ and Kafka is at-least-once delivery, which means redelivery is possible, so the consumer must be idempotent (e.g. dedupe on orderId)." },
+  ]}
+/>
+
+<Recap lang="en">
+A Nest microservice is your ordinary AppModule bootstrapped with createMicroservice onto a swappable transporter instead of an HTTP server; the transporter changes but the handlers do not. The core semantic split is request–response versus fire-and-forget: @MessagePattern with ClientProxy.send() returns a cold Observable of a correlated reply (use it when you need an answer), while @EventPattern with ClientProxy.emit() publishes an event and expects nothing back (use it to announce that something happened and let any number of consumers react). The transporter choice is a choice about delivery semantics: TCP is simple point-to-point and Redis pub/sub is cheap fan-out, but both are at-most-once with no persistence, so a message published to no current listener is lost; NATS core is similarly at-most-once with JetStream adding persistence; RabbitMQ gives durable queues, per-message acks, and routing at at-least-once; and Kafka is a partitioned append-only log with consumer groups, ordering per partition, and offset replay for high throughput. The senior consequences follow directly: at-least-once (RabbitMQ, Kafka) means redelivery, so consumers must be idempotent or they double-charge; Kafka's ordering holds only within a partition, so key by orderId; and a hybrid app — connectMicroservice plus startAllMicroservices before listen — lets one process serve HTTP and react to broker events at once.
+</Recap>

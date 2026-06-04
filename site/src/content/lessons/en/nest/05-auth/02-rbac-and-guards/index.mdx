@@ -1,13 +1,273 @@
 ---
-slug: "02-rbac-and-guards"
+concepts:
+- rbac
+- roles-decorator
+- reflector
+- policy-based-access
+- resource-authorization
+deepensInto: []
+estMin: 18
 lang: en
-track: "nest"
-unit: "05-auth"
+lessonType: topic
+level: senior
 order: 2
-title: "RBAC: roles, guards and the Reflector"
-summary: "RBAC: roles, guards and the Reflector — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "02-rbac-and-guards"
 sources:
-  - https://docs.nestjs.com/security/authorization
+- https://docs.nestjs.com/security/authorization
+- https://docs.nestjs.com/guards
+spiral: []
+status: ready
+summary: 'RBAC lives in a guard: a @Roles() decorator stamps metadata, a RolesGuard reads it via the Reflector. But a role guard cannot enforce "edit only your own post" — ownership needs the loaded record, so it belongs in a policy guard or the service.'
+title: 'RBAC: roles, guards and the Reflector'
+track: nest
+unit: "05-auth"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A support ticket lands: a user deleted another user's draft post. You check the code and it looks airtight — every write route is behind `@Roles('editor')` and a `RolesGuard`, and the offending user really is an editor. So the guard did its job perfectly: it confirmed the caller is *an* editor. What it never asked — what it structurally *cannot* ask — is whether this editor owns *this specific draft*. A role guard runs before the handler, with no record loaded; it knows the user's roles and nothing about row 4192. The fix is not a bigger guard. It is understanding which authorization questions a guard can answer and which ones only the service layer can.
+</Hook>
+
+<Crux>A guard answers "are you an admin?" but not "do you own this record?" without loading it — ownership is a service or policy concern.</Crux>
+
+<Explanation>
+
+## RBAC: a @Roles() decorator plus a guard that reads it
+
+Role-based access control maps each user to a set of roles, and each role to a set of permissions. In Nest the idiomatic encoding is metadata: a `@Roles()` decorator stamps the required roles onto a handler or controller, and a `RolesGuard` reads them back through the `Reflector`. The decorator is the smaller half — `SetMetadata` (or `Reflector.createDecorator` for a typed key) is all it takes:
+
+```ts
+// roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+import { Role } from './role.enum'; // enum Role { Admin = 'admin', Editor = 'editor' }
+
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+```
+
+The guard is where the decision lives. It reads the metadata with `getAllAndOverride`, comparing the handler's metadata first and falling back to the controller's, then checks the authenticated user's roles:
+
+```ts
+// roles.guard.ts
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from './roles.decorator';
+import { Role } from './role.enum';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const required = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
+      context.getHandler(), // route-level @Roles() wins...
+      context.getClass(),   // ...over the controller default
+    ]);
+    if (!required) return true; // no @Roles() on this route -> open
+    const { user } = context.switchToHttp().getRequest();
+    const ok = required.some((role) => user?.roles?.includes(role));
+    if (!ok) throw new ForbiddenException(); // clean 403 instead of a bare false
+    return ok;
+  }
+}
+```
+
+Two senior details. First, `getAllAndOverride(key, [getHandler(), getClass()])` returns the *first* defined value in that array — so a handler-level `@Roles('admin')` **overrides** a controller-wide default, which is exactly the precedence you want. (Its sibling `getAllAndMerge` would union them instead.) Second, returning `false` yields a generic 403 with no body; throwing `ForbiddenException` lets you ship a clean, message-bearing 403 — and your exception filter renders it uniformly.
+
+## Guard composition: authentication first, authorization second
+
+A `RolesGuard` reads `user.roles`. That field does not exist until *authentication* has run and attached `req.user`. So order is not cosmetic — it is a correctness constraint: the authn guard (e.g. a `JwtAuthGuard`) must execute **before** the authz guard, or `RolesGuard` reads `undefined.roles` and either crashes or fails open.
+
+When you bind both globally with the `APP_GUARD` provider token, Nest runs them in **declaration order**, so list authentication first:
+
+```ts
+// app.module.ts
+import { APP_GUARD } from '@nestjs/core';
+
+@Module({
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard }, // 1. establishes req.user
+    { provide: APP_GUARD, useClass: RolesGuard },    // 2. reads user.roles
+  ],
+})
+export class AppModule {}
+```
+
+This ordering also encodes a *fail-closed* default: authenticate globally, and a route that forgets to add `@Roles()` is still authenticated — it is merely open to any logged-in user, not open to the public. The dangerous inverse is binding authz per-route only: forget the binding on one handler and that route has **no** gate at all. A missing guard binding is a silent hole; prefer global authn plus explicit authz.
+
+<SequenceDiagram
+  label="The authorization pipeline for a write request: an incoming request first hits the JwtAuthGuard, which verifies the token and attaches req.user; then the RolesGuard uses the Reflector to read the @Roles() metadata and checks user.roles, settling the coarse role question; then, for a resource-scoped rule like 'edit only your own post', a policy guard or the service layer loads the actual record and compares its ownerId to the user; only if every layer passes does the handler run."
+  hue="var(--d-systems)"
+  actors={["Request", "Guards", "Service"]}
+  messages={[
+    { from: "Request", to: "Guards", label: "1. JwtAuthGuard -> req.user" },
+    { from: "Guards", to: "Guards", label: "2. RolesGuard: reflector reads @Roles" },
+    { from: "Guards", to: "Guards", label: "3. has role? yes/no (coarse)" },
+    { from: "Guards", to: "Service", label: "4. handler / policy guard" },
+    { from: "Service", to: "Service", label: "5. load record, check ownerId == user.id" },
+    { from: "Service", to: "Request", label: "6. allow (or 403 Forbidden)" },
+  ]}
+  caption="Authentication establishes identity first; the role guard answers the coarse 'is this user an editor?'. Ownership ('is it THEIR post?') needs the loaded record, so it lives one layer deeper — in a policy guard that loads the resource, or in the service."
+/>
+
+## The senior limit: roles vs ownership vs policies
+
+Here is the category error the hook hides. A `RolesGuard` runs in the *inbound* phase, before the handler, with **no domain object loaded**. It can evaluate any fact already on `req.user` — roles, tenant id, scopes. It *cannot* evaluate a fact that depends on a specific record, because that record has not been fetched yet. "Is this user an admin?" is answerable from `req.user` alone. "Does this user own post 4192?" requires `SELECT ... WHERE id = 4192` and a comparison of `post.ownerId` to `user.id` — a query the guard has no business issuing and the route params alone cannot answer.
+
+That is why **resource/ownership authorization belongs where the subject is loaded**: in the service method that already fetched the record, or in a *policy guard* that loads it deliberately. Pushing ownership into a role guard is not a tuning problem you can fix with more `@Roles()` — it is asking the wrong layer a question it has no data for.
+
+```ts
+// ownership lives in the service, where the record is already in hand
+async update(postId: number, dto: UpdatePostDto, user: AuthUser) {
+  const post = await this.posts.findOneOrFail(postId);
+  if (post.ownerId !== user.id && !user.roles.includes(Role.Admin)) {
+    throw new ForbiddenException('not your post'); // ownership, decided WITH the record
+  }
+  return this.posts.save({ ...post, ...dto });
+}
+```
+
+When roles start to explode — `editor`, `senior-editor`, `editor-but-only-drafts`, `editor-of-section-X` — that is the signal to move from RBAC to **policy-based / ABAC** access. Instead of strings, you evaluate an *ability* against a subject. With CASL, an `AbilityFactory` builds per-user rules (including record-shaped conditions like `{ authorId: user.id }`), and a `PoliciesGuard` + `@CheckPolicies()` evaluates a handler's policy against that ability:
+
+```ts
+// casl-ability.factory.ts — rules can be record-shaped
+can(Action.Update, Article, { authorId: user.id }); // own articles only
+can(Action.Read, 'all');
+
+// policies.guard.ts — evaluate the route's policy against the ability
+@Injectable()
+export class PoliciesGuard implements CanActivate {
+  constructor(private reflector: Reflector, private abilityFactory: CaslAbilityFactory) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const handlers = this.reflector.get<PolicyHandler[]>(CHECK_POLICIES_KEY, ctx.getHandler()) ?? [];
+    const { user } = ctx.switchToHttp().getRequest();
+    const ability = this.abilityFactory.createForUser(user);
+    return handlers.every((h) => (typeof h === 'function' ? h(ability) : h.handle(ability)));
+  }
+}
+
+// controller — declare the policy, not a raw role
+@Patch(':id')
+@CheckPolicies((a: AppAbility) => a.can(Action.Update, 'Article'))
+update() {/* ... */}
+```
+
+Note the honest caveat: a `can(Action.Update, Article, { authorId: user.id })` rule only enforces ownership *when CASL is handed a real `Article` instance to test*. Checking `can(Action.Update, 'Article')` against the bare subject type still can't see record 4192 — you either load the article first and test the instance, or the ownership check still lands in the service. ABAC moves the *expressiveness* up; it does not repeal the rule that you need the record to judge ownership.
+
+## Which layer owns which question?
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Question</th>
+        <th class="border border-border px-3 py-2 text-left">Needs the record?</th>
+        <th class="border border-border px-3 py-2 text-left">Right layer</th>
+        <th class="border border-border px-3 py-2 text-left">Mechanism</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Is the caller authenticated?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Authn guard (runs first)</td>
+        <td class="border border-border px-3 py-2">JwtAuthGuard sets req.user</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Does the caller have a role?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">RolesGuard (after authn)</td>
+        <td class="border border-border px-3 py-2">@Roles() + Reflector.getAllAndOverride</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">May this role do this action on this type?</td>
+        <td class="border border-border px-3 py-2">No</td>
+        <td class="border border-border px-3 py-2">Policy guard (ABAC)</td>
+        <td class="border border-border px-3 py-2">PoliciesGuard + ability.can(action, Type)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Does the caller own THIS record?</td>
+        <td class="border border-border px-3 py-2">Yes</td>
+        <td class="border border-border px-3 py-2">Service, or policy guard that loads it</td>
+        <td class="border border-border px-3 py-2">load record, compare ownerId to user.id</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The rule of thumb: every authorization question that can be answered from `req.user` and route metadata alone belongs in a guard; every question that depends on the *contents of a specific row* must wait until that row is loaded, which means the service layer or a deliberately resource-loading policy guard.
+
+<Inset kind="why" lang="en">
+Why can't the guard just load the record itself? It can — but then it stops being a generic, reusable role gate and becomes coupled to one repository, one entity, and one id-extraction convention (is the id in the path? the body? nested?). You also pay the query twice if the handler re-loads the same record. A *policy guard* that loads the resource is a legitimate pattern, but most teams find the check is cleaner in the service, where the record is fetched once and the ownership comparison sits next to the mutation it guards. The coarse role gate stays a reusable guard; the record-shaped check goes where the record already lives.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-05-auth-02-rbac-and-guards-tradeoff-1"
+  lessonSlug="02-rbac-and-guards"
+  lang="en"
+  prompt="The rule is: a user may edit only their OWN posts (admins may edit any). Where does this constraint get enforced?"
+  options={[
+    { name: "In the service method that loads the post: fetch it, then compare post.ownerId to user.id (allowing admins), throwing ForbiddenException otherwise", summary: "Ownership where the record lives.", correct: true, justification: "Ownership is a record-shaped fact: it depends on a column of one specific row. A RolesGuard runs before the handler with nothing loaded, so it structurally cannot see post.ownerId. The service has already fetched the post to update it, so the ownership comparison sits next to the mutation it guards, costs no extra query, and reads exactly the data it needs. (A deliberately resource-loading policy guard is the other legitimate home; both share the principle: judge ownership WITH the record.)" },
+    { name: "Add a finer role like 'post-owner' and gate the route with @Roles('post-owner') on a RolesGuard", summary: "Category error.", justification: "Ownership is not a role. A role is a fact about the user that is true across all records; 'owns post 4192' is true for one record and false for the next. You can't enumerate a role per record, and the guard still can't see which record is targeted. This is exactly the explosion that signals RBAC has hit its limit." },
+    { name: "An if-check inlined at the top of every controller handler comparing req.body.ownerId to req.user.id", summary: "Trusts client input.", justification: "Two faults: it compares against req.body.ownerId — attacker-controlled input the client can forge — instead of the persisted post.ownerId, and it smears a security check across every handler to be copy-pasted and eventually forgotten. The truth is in the database row, so you must load it; and the check belongs in one reusable place, not duplicated per route." },
+    { name: "A RolesGuard alone with @Roles('editor'); trust that editors only touch their own posts", summary: "The hook's bug.", justification: "This is precisely the production incident: the guard confirms the caller is an editor and waves them through, but it never checks WHICH post. An editor can edit any editor's post. The role gate is necessary but not sufficient — the ownership question lives one layer deeper, with the record loaded." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-02-rbac-and-guards-quiz-1"
+  lessonSlug="02-rbac-and-guards"
+  lang="en"
+  question="In the RolesGuard, what does reflector.getAllAndOverride(ROLES_KEY, [context.getHandler(), context.getClass()]) return, and why that array order?"
+  choices={[
+    { label: "The first defined metadata value in the array — so handler-level @Roles() takes precedence over a controller-wide default", correct: true },
+    { label: "The union of the handler's and the controller's roles merged together", misconception: "That is getAllAndMerge, a different method. getAllAndOverride returns the first defined value and stops — it overrides rather than merges, so a route-level @Roles() replaces the controller default rather than adding to it." },
+    { label: "Only the controller-level metadata, because getClass() is listed and outranks the handler", misconception: "Array order is precedence order: getHandler() is listed first, so the handler's metadata wins. getClass() is the fallback used only when the handler has no @Roles() of its own." },
+    { label: "The current user's roles, read from req.user", misconception: "The Reflector reads route metadata (what @Roles() stamped), not the user. The user's roles come separately from context.switchToHttp().getRequest().user, which the guard then compares against the required roles." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-02-rbac-and-guards-quiz-2"
+  lessonSlug="02-rbac-and-guards"
+  lang="en"
+  question="You bind a RolesGuard globally via APP_GUARD, but it crashes reading user.roles of undefined. What is the cause?"
+  choices={[
+    { label: "The RolesGuard runs before authentication, so req.user was never attached — authn must be ordered before authz", correct: true },
+    { label: "getAllAndOverride returned undefined, which is the real crash", misconception: "An undefined metadata result is handled by the early 'if (!required) return true' — it opens the route, it doesn't crash. The crash is reading .roles off an undefined user, which means req.user itself is missing." },
+    { label: "The @Roles() decorator must be imported into the guard file", misconception: "The guard only needs ROLES_KEY, not the decorator. Importing the decorator changes nothing about whether req.user exists. The missing piece is the authentication guard that populates req.user, which must run first." },
+    { label: "APP_GUARD can only register one guard, so the authn guard was dropped", misconception: "APP_GUARD is a multi-provider: you can register several guards and Nest runs them in declaration order. The fix is to declare the JwtAuthGuard provider before the RolesGuard so authentication runs first." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RBAC = @Roles() + a RolesGuard reading it via Reflector.getAllAndOverride; bind authn before authz. But a guard can't see a record it hasn't loaded — ownership belongs in the service or a policy guard.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-05-auth-02-rbac-and-guards-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the canonical RBAC setup in Nest: the @Roles() decorator, the RolesGuard, getAllAndOverride, and the ordering relative to authentication.", a: "RBAC is encoded as metadata plus a guard. A @Roles() decorator built with SetMetadata (or Reflector.createDecorator for a typed key) stamps the required roles onto a handler or controller under a key like ROLES_KEY. A RolesGuard implementing CanActivate reads them back with reflector.getAllAndOverride(ROLES_KEY, [context.getHandler(), context.getClass()]) — which returns the first defined value, so a handler-level @Roles() overrides a controller default (getAllAndMerge would union instead). If no roles are required it returns true (open route); otherwise it pulls req.user via context.switchToHttp().getRequest() and checks whether user.roles includes any required role, throwing ForbiddenException for a clean 403 rather than returning a bare false. Ordering matters: req.user only exists after authentication, so a JwtAuthGuard must run before the RolesGuard. With APP_GUARD providers, Nest runs guards in declaration order, so list authentication first; this also gives a fail-closed default where a route missing @Roles() is still authenticated, just open to any logged-in user." },
+    { q: "Explain the senior limit: why a role guard cannot enforce 'a user may edit only their own post', and where that check belongs.", a: "A role guard runs in the inbound phase, before the handler, with no domain object loaded. It can evaluate facts already on req.user — roles, tenant, scopes — because they require no query. 'Is this user an admin?' is answerable from req.user alone. But 'does this user own post 4192?' depends on the contents of one specific row: you must load the post and compare post.ownerId to user.id. The guard has not fetched that row and shouldn't (doing so couples a generic gate to one repository/entity/id convention and risks a double query). So resource/ownership authorization belongs where the subject is loaded: in the service method that already fetched the record (compare ownerId next to the mutation), or in a deliberate policy guard that loads the resource. Pushing ownership into a RolesGuard is a category error — it asks the wrong layer a question it has no data for; you cannot fix it with more @Roles() strings. When roles explode into record-shaped variants, that's the signal to move to ABAC/policy-based access (e.g. CASL: an AbilityFactory builds per-user rules like can(Action.Update, Article, { authorId: user.id }), and a PoliciesGuard + @CheckPolicies evaluates them) — but even ABAC needs the actual record instance to judge ownership; it raises expressiveness, it doesn't remove the need to load the row." },
+  ]}
+/>
+
+<Recap lang="en">
+RBAC in Nest is metadata plus a guard: a @Roles() decorator (SetMetadata or Reflector.createDecorator) stamps required roles onto a handler or controller, and a RolesGuard reads them with reflector.getAllAndOverride(ROLES_KEY, [getHandler(), getClass()]) — returning the first defined value so a handler-level @Roles() overrides the controller default, then comparing against req.user.roles and throwing ForbiddenException for a clean 403. Order is a correctness constraint, not a style choice: req.user is only attached after authentication, so the JwtAuthGuard must run before the RolesGuard; with APP_GUARD providers Nest runs guards in declaration order, which also yields a fail-closed default where a route that forgets @Roles() is still authenticated rather than public. The senior limit is the heart of the lesson: a guard runs before the handler with no record loaded, so it can answer "is this user an editor?" but structurally cannot answer "does this editor own THIS draft?" — that question needs the row fetched and post.ownerId compared to user.id, which is why ownership authorization lives in the service (next to the mutation) or in a deliberately resource-loading policy guard, never in a role guard. When roles multiply into record-shaped variants, move to policy-based/ABAC access with CASL — an AbilityFactory, a PoliciesGuard, and @CheckPolicies evaluating can(action, subject) — remembering that even ABAC must be handed the real record instance to enforce ownership.
+</Recap>

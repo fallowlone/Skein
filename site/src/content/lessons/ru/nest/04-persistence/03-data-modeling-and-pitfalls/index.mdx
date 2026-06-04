@@ -1,13 +1,270 @@
 ---
-slug: "03-data-modeling-and-pitfalls"
+concepts:
+- relations
+- n-plus-one
+- lazy-vs-eager
+- request-scope
+- durable-providers
+deepensInto: []
+estMin: 18
 lang: ru
-track: "nest"
-unit: "04-persistence"
+lessonType: topic
+level: senior
 order: 3
-title: "Подводные камни моделирования: N+1, lazy vs eager, request scope"
-summary: "Подводные камни моделирования: N+1, lazy vs eager, request scope — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "03-data-modeling-and-pitfalls"
 sources:
-  - https://docs.nestjs.com/fundamentals/injection-scopes
+- https://docs.nestjs.com/fundamentals/injection-scopes
+- https://typeorm.io/eager-and-lazy-relations
+- https://docs.nestjs.com/fundamentals/injection-scopes#durable-providers
+- https://typeorm.io/relations
+spiral: []
+status: ready
+summary: 'Три ловушки моделирования данных, незаметные в dev и жгущие p99 в проде: relations, тихо порождающие N+1, дефолты lazy/eager, и request-scoped провайдеры, всплывающие вверх по графу. Грузи relations явно; тянись к durable providers.'
+title: 'Подводные камни данных: N+1, lazy vs eager, request scope'
+track: nest
+unit: 04-persistence
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Эндпоинт год работал нормально. `GET /authors` возвращал сотню строк, и кто-то добавил одну невинную строчку в маппер ответа: `posts: author.posts.length`. В dev, с восемью засеянными авторами, никто не заметил. В проде p99 на этом маршруте прыгнул с 40 мс до 2,1 секунды, а график CPU базы вырос новым плато. Лог запросов рассказал историю: один `SELECT` за авторами, затем ещё сотня — по одному на автора — чтобы lazy-загрузить `posts`. Никто не писал цикл с сотней запросов внутри. ORM сделала это за них в тот миг, когда они тронули relation-свойство внутри `.map`. Этот урок — про три дефолта моделирования данных, тихо порождающих такую работу: relations, lazy-vs-eager и request scope.
+</Hook>
+
+<Crux>Relations, дефолты lazy/eager и request scope — у каждого скрытая цена: грузи relations явно и держи провайдеры singleton по умолчанию.</Crux>
+
+<Explanation>
+
+## Relations: кто владеет внешним ключом
+
+Relation — это просто внешний ключ с TypeScript-формой сверху. `@ManyToOne` / `@OneToMany` — частая пара: сторона *many* (`Post`) владеет колонкой внешнего ключа и несёт `@JoinColumn`; сторона *one* (`Author`) лишь объявляет обратную связь. `@ManyToMany` вводит третью таблицу — **join table** — и одна сторона должна быть **owning side** с `@JoinTable()`, что и решает имя и колонки join-таблицы.
+
+```ts
+@Entity()
+export class Author {
+  @PrimaryGeneratedColumn() id: number;
+
+  // inverse side: no FK column lives here, just the navigation
+  @OneToMany(() => Post, (post) => post.author)
+  posts: Post[];
+}
+
+@Entity()
+export class Post {
+  @PrimaryGeneratedColumn() id: number;
+
+  // owning side: this table holds author_id, this is where @JoinColumn goes
+  @ManyToOne(() => Author, (author) => author.posts)
+  @JoinColumn({ name: 'author_id' })
+  author: Author;
+}
+```
+
+Знать owning side важно, потому что это говорит, какую таблицу запрашивать, чтобы избежать лишнего похода: чтобы посчитать посты по авторам, ты делаешь join от `Post` (где уже есть `author_id`), а не от `Author`. Ошибёшься с owning side — напишешь более дорогой запрос, сам того не заметив.
+
+## Проблема N+1: один запрос становится сто одним
+
+Вот точная форма того продового инцидента. Ты грузишь список из N родителей, затем обращаешься к relation на каждом внутри цикла. Каждое обращение, которое не было предзагружено, выпускает свой `SELECT`. N родителей → **1 + N запросов**.
+
+```ts
+// N+1: 1 query for authors, then 1 per author for posts = 101 queries for 100 authors
+async function listAuthorsBad(repo: Repository<Author>) {
+  const authors = await repo.find();              // 1 query
+  return Promise.all(
+    authors.map(async (a) => ({
+      name: a.name,
+      postCount: (await a.posts).length,           // +1 query EACH (lazy relation)
+    })),
+  );
+}
+```
+
+Фикс — заставить базу сделать join один раз. Три опции, примерно по нарастанию охвата:
+
+```ts
+// Fix A — eager-load this relation FOR THIS QUERY ONLY (one LEFT JOIN, one round trip)
+const authors = await repo.find({ relations: { posts: true } });
+
+// Fix B — QueryBuilder when you need columns, conditions, or pagination control
+const authors = await repo
+  .createQueryBuilder('author')
+  .leftJoinAndSelect('author.posts', 'post')
+  .getMany();
+
+// Fix C — DataLoader: batch N relation reads into one IN (...) query, dedupe, cache per request
+//   ideal for GraphQL resolvers where the "loop" is the resolver fan-out you don't control
+const loader = new DataLoader((authorIds: readonly number[]) =>
+  postRepo.find({ where: { author: { id: In([...authorIds]) } } }).then(group(authorIds)),
+);
+```
+
+Fix A и B сворачивают 101 запрос в 1. DataLoader сворачивает их в 2 (один за родителями, один батченый `IN (...)` за детьми) и является верным инструментом, когда fan-out происходит по независимым вызовам резолверов, которые ты не можешь слить в один `find`. Суть в том, что `relations: { posts: true }` здесь — это решение **на запрос**: явное, видимое в месте вызова и тривиально убираемое, когда дети не нужны.
+
+<FlowDiagram
+  label="The N+1 query pattern versus the joined query. Top path: a request loads a list of N parent authors with one SELECT, then iterating the list and touching the posts relation per author fires one additional SELECT per row, producing 1 + N queries — for 100 authors that is 101 round trips to Postgres and a latency cliff. Bottom path: the same data loaded with relations posts true issues a single LEFT JOIN, producing exactly one round trip regardless of list size."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "list", label: "find() authors", sub: "1 query" },
+    { id: "loop", label: "loop + a.posts", sub: "N queries" },
+    { id: "cliff", label: "1 + N = 101", sub: "latency cliff" },
+    { id: "join", label: "relations: posts", sub: "1 LEFT JOIN" },
+    { id: "one", label: "1 query", sub: "any N" },
+  ]}
+  edges={[
+    { from: "list", to: "loop", label: "lazy access" },
+    { from: "loop", to: "cliff", label: "N+1" },
+    { from: "join", to: "one", label: "join once" },
+  ]}
+  caption="N+1 (сверху): запрос списка плюс одно lazy-чтение relation на строку раздувается до 1 + N запросов. Фикс (снизу): один явный join отвечает на тот же вопрос за один поход, плоско по N."
+/>
+
+## Lazy vs eager: два дефолта, оба неверны как дефолт
+
+TypeORM даёт два способа загрузить relation, не написав join, и оба — ловушки, если их использовать как постоянный дефолт.
+
+**Lazy relations** типизируют свойство как `Promise&lt;T>`: обращение к нему `await`-ит свежий запрос. Они кажутся удобными — `await author.posts` «просто работает» — но именно так и случился инцидент: каждый `await` внутри цикла — это скрытый запрос. Lazy relations — *генераторы* N+1; цена невидима в месте вызова, потому что читается как обращение к свойству.
+
+**Eager relations** (`eager: true` на декораторе) переворачивают всё наоборот: relation **всегда** джойнится на каждом `find` этой сущности, нужен он тебе или нет. Ты не можешь отказаться от него на запрос через `find` — так что list-эндпоинт, которому нужны лишь имена авторов, всё равно тащит каждый пост по проводу. Eager перегружает выборку; lazy недогружает, а затем добивает N запросами.
+
+```ts
+// Lazy: property is a Promise — every access is a query (hidden N+1 generator)
+@OneToMany(() => Post, (post) => post.author)
+posts: Promise<Post[]>;
+
+// Eager: ALWAYS joined on every find(Author) — you cannot opt out per query
+@OneToMany(() => Post, (post) => post.author, { eager: true })
+posts: Post[];
+```
+
+Сеньорская позиция — **избегать обоих дефолтов**: объявляй relations просто (без типа `Promise&lt;>`, без `eager: true`) и грузи их явно на запрос через `relations` или QueryBuilder. Так каждое место вызова честно по тому, что выбирает и сколько это стоит.
+
+<Inset kind="why" lang="ru">
+Почему «всегда eager» — всё ещё ловушка, хотя он избегает N+1? Потому что он меняет один провал на другой: N+1 ты не получаешь никогда, но перегружаешь выборку на *каждом* запросе этой сущности, включая десятки путей кода, которые relation вообще не читают. `count`, проверка существования, поиск имени — все теперь тащат join и его строки. А поскольку `eager: true` живёт на сущности, а не на вызове, ты не видишь в месте запроса, что платишь за него, и не можешь отключить его через `find`. Явная загрузка на запрос — единственный вариант, который и без N+1, и плати-за-то-что-используешь.
+</Inset>
+
+## Request scope: цена, которая всплывает вверх
+
+Провайдеры по умолчанию — singleton: один экземпляр на всё приложение, общий для каждого запроса. Это почти всегда то, что нужно. `Scope.REQUEST` заставляет Nest создавать *новый* провайдер на каждый входящий запрос, что нужно, когда провайдер должен держать per-request контекст: аутентифицированного пользователя, tenant id, `EntityManager` request-scoped транзакции.
+
+```ts
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })
+export class TenantContext {
+  // a fresh instance per request — safe to stash the current tenant / user here
+  tenantId: string;
+}
+```
+
+Сеньорская цена — **всплытие (bubbling)**: request scope заразен *вверх*. Любой провайдер, который инжектит request-scoped провайдер, сам становится request-scoped, и так же всё, что инжектит *его*, — вплоть до самого верха графа зависимостей. Так что один request-scoped `TenantContext`, заинжекченный глубоко в цепочке, может заставить всю цепочку — включая контроллер — пересоздаваться на каждый запрос, платя цену конструирования и память на запрос, и усложняет инъекцию этой цепочки в то, что по сути singleton, — глобальные guards и interceptors.
+
+Аварийный выход — **durable providers**: пометь провайдер `durable: true` и зарегистрируй `ContextIdStrategy`, которая мапит запросы на общее поддерево по какому-то ключу (обычно tenant). Теперь Nest держит *один* экземпляр на tenant вместо одного на запрос, так что multi-tenant request-scoped `DataSource` или контекст создаётся раз на tenant и переиспользуется, срезая цену per-request инстанцирования, сохраняя per-tenant изоляцию, которая тебе и была нужна.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Scope</th>
+        <th class="border border-border px-3 py-2 text-left">Экземпляры</th>
+        <th class="border border-border px-3 py-2 text-left">Когда использовать</th>
+        <th class="border border-border px-3 py-2 text-left">Подвох</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>DEFAULT (singleton)</strong></td>
+        <td class="border border-border px-3 py-2">Один, общий на всё приложение</td>
+        <td class="border border-border px-3 py-2">Почти всегда — stateless-сервисы, repos</td>
+        <td class="border border-border px-3 py-2">Не должен держать per-request состояние</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>REQUEST</strong></td>
+        <td class="border border-border px-3 py-2">Новый на HTTP-запрос</td>
+        <td class="border border-border px-3 py-2">Per-request контекст: tenant, user, txn-manager</td>
+        <td class="border border-border px-3 py-2">Всплывает вверх — пересоздаёт всю цепочку на запрос</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>TRANSIENT</strong></td>
+        <td class="border border-border px-3 py-2">Новый на потребителя</td>
+        <td class="border border-border px-3 py-2">Каждому инжектору нужен свой свежий экземпляр</td>
+        <td class="border border-border px-3 py-2">Нет шеринга вообще; легко переаллоцировать</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>REQUEST + durable</strong></td>
+        <td class="border border-border px-3 py-2">Один на ключ контекста (напр. tenant)</td>
+        <td class="border border-border px-3 py-2">Multi-tenant per-request состояние, которое можно пулить</td>
+        <td class="border border-border px-3 py-2">Нужен ContextIdStrategy; общий между запросами tenant</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-tradeoff-1"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="ru"
+  prompt="Нужно вернуть список из 100 авторов, у каждого с его постами, в одном REST-эндпоинте. Как грузить relation posts?"
+  options={[
+    { name: "Объявить relation просто и грузить на запрос через find({ relations: { posts: true } }) или QueryBuilder leftJoinAndSelect", summary: "Явный join.", correct: true, justification: "Это выпускает один LEFT JOIN и возвращает родителей-с-детьми за один поход, плоско по N — 1 запрос на 100 авторов вместо 101. Решение живёт в месте вызова, поэтому видно в ревью и тривиально убирается на путях кода, которым posts не нужны. QueryBuilder — вариант, когда тебе ещё нужны конкретные колонки, WHERE или пагинация. Это сеньорский дефолт: грузи relations явно, на запрос." },
+    { name: "Сделать relation lazy (posts: Promise<Post[]>) и await author.posts внутри маппера ответа", summary: "Генератор N+1.", justification: "Это ровно тот инцидент: Promise-типизированный relation выпускает свежий SELECT на каждый await, так что итерация 100 авторов с await posts на строку — это 1 + 100 = 101 запрос и обрыв p99. Цена невидима, потому что читается как обращение к свойству. Lazy relations удобны для разового случая, но никогда как стратегия загрузки для списка." },
+    { name: "Пометить relation eager: true, чтобы он всегда джойнился", summary: "Перегружает везде.", justification: "Eager чинит N+1, но ценой join posts на КАЖДОМ find(Author) во всём приложении — counts, поиски имени, проверки существования тащат relation. Нельзя отказаться на запрос через find, и цена скрыта на сущности, а не на вызове. Неверно как постоянный дефолт; явный join на запрос даёт тот же один поход, не облагая налогом каждый другой запрос." },
+    { name: "DataLoader, батчащий чтения постов", summary: "Верно для graph fan-out, избыточно здесь.", justification: "DataLoader отличен, когда цикл — это fan-out резолверов, который ты не контролируешь (GraphQL), батчащий N чтений в один IN (...) запрос и дедуплицирующий на запрос. Но для одного REST list-эндпоинта, который ты КОНТРОЛИРУЕШЬ, простой join проще, один поход вместо двух и не требует лишней инфраструктуры. Верный инструмент, неверный масштаб для этого случая." },
+  ]}
+/>
+
+<Quiz
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-quiz-1"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="ru"
+  question="repo.find() возвращает 100 авторов. Маппер ответа делает `await author.posts` (lazy relation) для каждого. Сколько запросов уйдёт в базу?"
+  choices={[
+    { label: "101 — один за списком авторов, затем по одному на автора, чтобы lazy-загрузить posts", correct: true },
+    { label: "1 — lazy relation включён в исходный find()", misconception: "Lazy relation НЕ джойнится исходным find — в этом весь смысл. find() возвращает только авторов; затем каждый await author.posts выпускает свой SELECT. Это 1 + 100. Чтобы получить один запрос, нужно грузить relation явно через relations: { posts: true } или leftJoinAndSelect." },
+    { label: "2 — TypeORM автоматически батчит lazy-чтения в один IN (...) запрос", misconception: "TypeORM не авто-батчит lazy-чтения; каждое await-обращение — независимый запрос. Батчинг в один IN (...) даёт DataLoader, и только если ты его подключишь. Голые lazy relations порождают N отдельных запросов: 1 + N." },
+    { label: "100 — по одному запросу на автора, запрос списка бесплатный", misconception: "Запрос списка не бесплатный — repo.find() сам по себе один SELECT за 100 авторов. Затем каждое lazy-обращение к posts добавляет ещё один. Итого 1 (список) + 100 (на строку) = 101." },
+  ]}
+/>
+
+<Quiz
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-quiz-2"
+  lessonSlug="03-data-modeling-and-pitfalls"
+  lang="ru"
+  question="Ты инжектишь Scope.REQUEST TenantContext в сервис, от которого зависит контроллер. Что произойдёт со scope сервиса и контроллера?"
+  choices={[
+    { label: "Оба станут request-scoped — request scope всплывает ВВЕРХ по графу инъекций, пересоздавая цепочку на запрос", correct: true },
+    { label: "Только TenantContext request-scoped; сервис и контроллер остаются singleton", misconception: "Request scope заразен вверх: любой провайдер, инжектящий request-scoped, сам становится request-scoped, и так же его инжектор, вплоть до верха. И сервис, и контроллер повышаются до request scope и пересоздаются на запрос. Эта каскадная цена — главная причина использовать REQUEST экономно." },
+    { label: "Nest бросит ошибку — нельзя инжектить request-scoped провайдер в singleton", misconception: "Nest не бросает; он молча повышает потребителей до request scope, чтобы удовлетворить зависимость. В этом и ловушка — нет ошибки, лишь тихая цена latency/памяти, пока всё больше графа перестраивается на запрос. (Инъекция request scope в по-настоящему глобальный guard/interceptor — более тяжёлый случай.)" },
+    { label: "Сервис станет transient, получая новый экземпляр на каждый вызов метода", misconception: "Инъекция request-scoped провайдера повышает потребителей до REQUEST scope (один экземпляр на запрос), а не до TRANSIENT (один на потребителя/инъекцию). Transient — отдельный scope, в который входят явно; всплытие даёт не его." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Грузи relations явно, не lazy (N+1) и не eager (перегруз): список в 100 строк — 1 join против 101 запроса. Request scope всплывает по графу — держи провайдеры singleton, durable providers пулят на tenant.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-04-persistence-03-data-modeling-and-pitfalls-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни проблему N+1: как она возникает, во что обходится для списка в 100 строк и три способа её починить.", a: "N+1 возникает, когда ты грузишь список из N родительских строк одним запросом, затем обращаешься к непредзагруженному relation на каждом родителе внутри цикла — каждое обращение выпускает свой SELECT, так что ты платишь 1 (список) + N (по одному на строку) запросов. Для списка в 100 авторов, где маппер трогает posts на автора, это 1 + 100 = 101 запрос — так p99 маршрута прыгает с ~40 мс до секунд: походы сериализуются, а CPU базы лезет вверх. Фиксы: (A) грузить relation явно для этого запроса через find({ relations: { posts: true } }), что становится одним LEFT JOIN; (B) использовать QueryBuilder leftJoinAndSelect, когда нужны ещё и конкретные колонки, WHERE или пагинация — тоже один поход; (C) использовать DataLoader, чтобы сбатчить N чтений relation в один IN (...) запрос (итого 2 запроса) и дедуплицировать на запрос — верный инструмент, когда fan-out — это граф резолверов, который ты не контролируешь (GraphQL). A и B сворачивают 101 в 1; DataLoader сворачивает в 2. Общая нить — сделать загрузку relation решением на запрос, видимым, а не неявным на строку." },
+    { q: "Сопоставь lazy relations, eager relations и явную загрузку; и объясни, почему request scope дорог и как помогают durable providers.", a: "Lazy relations типизируют свойство как Promise<T>, так что каждый await выпускает свежий запрос — удобно, но это скрытый генератор N+1 внутри циклов; цена невидима, потому что читается как обращение к свойству. Eager relations (eager: true) ВСЕГДА джойнятся на каждом find этой сущности и от них нельзя отказаться на запрос, так что они перегружают выборку на каждом пути кода, включая counts и поиски имени, которые relation не читают. Сеньорская позиция — избегать обоих как дефолтов: объявлять relations просто и грузить их явно на запрос (relations / leftJoinAndSelect), держа каждое место вызова честным. По scope: DEFAULT — общий singleton (один экземпляр на приложение); REQUEST создаёт новый экземпляр на запрос, нужный для per-request контекста вроде tenant/user или request-менеджера транзакции; TRANSIENT — новый на потребителя. Request scope дорог, потому что всплывает ВВЕРХ — любой провайдер, инжектящий request-scoped, сам становится request-scoped, каскадируя вверх по графу, так что вся цепочка (включая контроллер) пересоздаётся на запрос, стоя latency и памяти и усложняя инъекцию в глобальные guards/interceptors. Durable providers (durable: true + ContextIdStrategy) обходят это, привязывая экземпляры к контексту (например, tenant), так что Nest пулит один экземпляр на tenant, общий для запросов этого tenant, вместо одного на запрос — сохраняя multi-tenant изоляцию без цены пересборки на запрос." },
+  ]}
+/>
+
+<Recap lang="ru">
+Три дефолта моделирования данных тихо порождают работу, которая выглядит нормально в dev и жжёт p99 в проде. Relations — это внешние ключи с TypeScript-формой: сторона many владеет FK и @JoinColumn, сторона one объявляет обратную связь, а @ManyToMany добавляет join table, чья owning side несёт @JoinTable. Проблема N+1 появляется, когда ты грузишь N родителей, а затем трогаешь relation на строку в цикле — 1 + N запросов, так что список в 100 строк становится 101 походом и обрывом latency; чини её, грузя relation явно для этого запроса через find(&#123; relations: &#123; posts: true &#125; &#125;) или QueryBuilder leftJoinAndSelect (один join, один поход), либо батчингом через DataLoader (два запроса), когда fan-out — это граф резолверов, который ты не контролируешь. Lazy relations (Promise-типизированные, запрос-на-await) — скрытые генераторы N+1; eager: true relations всегда джойнятся и перегружают каждый запрос; сеньорская позиция избегает обоих и грузит relations явно на запрос. Injection scope — третья ловушка: DEFAULT — общий singleton, REQUEST — на запрос (для контекста tenant/user/транзакции), TRANSIENT — на потребителя, — и request scope всплывает по графу, повышая каждого потребителя до request scope и пересоздавая всю цепочку на запрос, чего durable providers (durable: true + ContextIdStrategy) избегают, пуля один экземпляр на tenant.
+</Recap>

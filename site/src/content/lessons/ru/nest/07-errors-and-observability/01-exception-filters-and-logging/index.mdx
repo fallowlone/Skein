@@ -1,13 +1,288 @@
 ---
-slug: "01-exception-filters-and-logging"
+concepts:
+- exception-filters
+- global-filter
+- structured-logging
+- request-id
+- correlation
+deepensInto: []
+estMin: 16
 lang: ru
-track: "nest"
-unit: "07-errors-and-observability"
+lessonType: topic
+level: middle
 order: 1
-title: "Exception filters и структурное логирование"
-summary: "Exception filters и структурное логирование — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: "01-exception-filters-and-logging"
 sources:
-  - https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/techniques/logger
+spiral: []
+status: ready
+summary: 'Один глобальный @Catch()-filter мапит каждый выброс в единый JSON-конверт ошибки с requestId; структурный JSON-логгер плюс correlation id в AsyncLocalStorage делают один запрос прослеживаемым через множество лог-строк и сервисов.'
+title: 'Exception filters и структурное логирование'
+track: nest
+unit: "07-errors-and-observability"
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+2:14 ночи, пейдж от on-call: «checkout периодически отдаёт 500». Открываешь логи и видишь стену строк `console.log` без таймстемпов, без границ запросов и без способа понять, какая строка относится к тому единственному запросу, что упал. Сама ошибка? Хендлер поймал её, залогировал `err.message` голым `console.error`, потом перебросил, так что один и тот же стек залогировали трижды три слоя — а ответ, ушедший клиенту, был HTTP 200 с `{"error":"something went wrong"}`, потому что кто-то вызвал `res.json(...)` и забыл `res.status(...)`. Грепом отсюда не выбраться. Проблема не в баге; проблема в том, что у сервиса нет ни границы ошибок, ни корреляции. Тебе придётся построить и то и другое, прежде чем ты вообще увидишь баг.
+</Hook>
+
+<Crux>Один глобальный filter формирует каждую ошибку в единый конверт; структурный логгер плюс request id делают запрос прослеживаемым везде.</Crux>
+
+<Explanation>
+
+## Глобальный filter: одна граница ошибок, один конверт
+
+Когда что-то в pipeline выбрасывает, встроенный слой исключений Nest ловит это: `HttpException` и его наследники мапятся на свой статус-код, а всё остальное становится 500. Кастомный `@Catch()`-filter, зарегистрированный глобально, позволяет владеть этой формой ответа *один раз*, вместо форматирования ошибок руками в девятнадцати хендлерах. Контракт: прочитай статус, выдай один единый JSON-конверт, выстави статус правильно.
+
+```ts
+import {
+  ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+import { getRequestId } from './request-context';
+
+@Catch() // без аргумента -> ловит ВСЁ, не только HttpException
+export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const res = ctx.getResponse<Response>();
+    const req = ctx.getRequest<Request>();
+
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const requestId = getRequestId();
+
+    // Логируем ОДИН раз, здесь на границе, с полным контекстом — включая стек.
+    this.logger.error(
+      { requestId, path: req.url, status, err: exception },
+      exception instanceof Error ? exception.stack : 'non-error thrown',
+    );
+
+    // Никогда не утекай внутренности на 500: в проде отдай общее сообщение.
+    const message =
+      status === HttpStatus.INTERNAL_SERVER_ERROR
+        ? 'Internal server error'
+        : (exception as HttpException).getResponse();
+
+    res.status(status).json({          // <-- .status() здесь несущий
+      statusCode: status,
+      message,
+      timestamp: new Date().toISOString(),
+      path: req.url,
+      requestId,
+    });
+  }
+}
+```
+
+Две сеньорские детали. Первая: `res.status(status).json(...)` — вызови `res.json(...)` *без* `res.status(...)`, и Express дефолтит HTTP-статус в **200**, так что упавший запрос уедет с успешным статусом и телом ошибки, а каждый клиент, который ветвится по статус-коду, посчитает сбой успехом. Вторая: на 500 ты возвращаешь клиенту общее `"Internal server error"`, но логируешь полный стек с контекстом на сервере: утечка стек-трейса или сырого `err.message` (где может быть фрагмент SQL, путь к файлу или внутренний хостнейм) — это баг раскрытия информации. Мапь *известные* доменные ошибки на безопасные наследники `HttpException` (`NotFoundException`, `ConflictException`); пусть всё остальное проваливается в намеренно расплывчатый 500.
+
+Регистрируй его глобально через токен `APP_FILTER`, чтобы он мог использовать dependency injection:
+
+```ts
+import { Module } from '@nestjs/common';
+import { APP_FILTER } from '@nestjs/core';
+import { AllExceptionsFilter } from './all-exceptions.filter';
+
+@Module({
+  providers: [{ provide: APP_FILTER, useClass: AllExceptionsFilter }],
+})
+export class AppModule {}
+```
+
+## Структурное логирование: JSON вместо console.log
+
+`console.log('user', userId, 'failed checkout')` выдаёт строку, которую прочтёт человек, но не машина. Замени встроенный логгер на **структурный JSON-логгер** — `nestjs-pino` (тонкая Nest-обёртка над `pino`) — частый выбор — выставленный в `bootstrap` с `bufferLogs: true`, чтобы даже логи, выданные *во время* старта, прошли через твой логгер, как только он будет готов:
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { Logger } from 'nestjs-pino';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger)); // подменяем дефолтный логгер Nest на pino
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+Теперь каждая лог-строка — JSON-объект — `{"level":"error","time":...,"requestId":"...","msg":"..."}` — который твоя лог-платформа (Loki, CloudWatch, Datadog) парсит в запрашиваемые поля. Можно фильтровать `level >= warn`, группировать по `path` или вытащить каждую строку для одного `requestId` одним запросом. Со свободными строками это невозможно. Соблюдай уровни лога (`debug`/`log`/`warn`/`error`), чтобы прод мог отбросить `debug` и ты не платил за хранение шума. (Собственный `ConsoleLogger` Nest тоже поддерживает `new ConsoleLogger({ json: true })`, если не хочешь зависимость, — но pino даёт редактирование чувствительных полей и куда более высокую пропускную способность.)
+
+## Корреляция: один request id во всех строках
+
+Недостающее звено в хуке — это *корреляция*: нет способа связать двенадцать лог-строк одного запроса между собой, не говоря о том, чтобы проследить этот запрос в downstream-сервис. Решение — per-request id, сгенерированный один раз на краю и сохранённый в `AsyncLocalStorage`, чтобы любой код — твой filter, глубокий метод сервиса, исходящий HTTP-вызов — мог прочитать его, не протаскивая через сигнатуру каждой функции.
+
+```ts
+import { Injectable, NestMiddleware } from '@nestjs/common';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
+import { Request, Response, NextFunction } from 'express';
+
+export const als = new AsyncLocalStorage<{ requestId: string }>();
+export const getRequestId = () => als.getStore()?.requestId ?? 'no-request-id';
+
+@Injectable()
+export class RequestIdMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    // Переиспользуй id сверху, если он есть (трассировка между сервисами), иначе выпусти новый.
+    const requestId = (req.headers['x-request-id'] as string) ?? randomUUID();
+    res.setHeader('x-request-id', requestId);
+    als.run({ requestId }, () => next()); // store переживает каждый await в цепочке
+  }
+}
+```
+
+Поскольку middleware оборачивает `next()` внутрь `als.run(...)`, store жив всё асинхронное время жизни этого запроса, и `getRequestId()` возвращает один и тот же id в твоём логгере и filter без всякого протаскивания параметров. Что важно, middleware **пробрасывает** входящий заголовок `x-request-id`, а не всегда выпускает новый, — так что когда сервис A зовёт сервис B с этим заголовком, оба сервиса логируют один id, и ты можешь сшить путь одного запроса через всю систему. Настрой структурный логгер так, чтобы он цеплял `requestId` к каждой строке (pino `mixin` или `genReqId`), и корреляция станет автоматической.
+
+<FlowDiagram
+  label="Путь ошибок и observability: запрос входит, RequestId middleware выпускает или переиспользует id, хранимый в AsyncLocalStorage, хендлер выполняется и выбрасывает, глобальный AllExceptionsFilter ловит выброс, логирует его один раз с requestId как структурный JSON и возвращает единый конверт ошибки, несущий тот же requestId клиенту."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "x-request-id?" },
+    { id: "mw", label: "RequestId MW", sub: "ALS.run(id)" },
+    { id: "handler", label: "Handler", sub: "throws" },
+    { id: "filter", label: "AllExceptionsFilter", sub: "@Catch()" },
+    { id: "log", label: "Structured log", sub: "1x, requestId" },
+    { id: "res", label: "Error envelope", sub: "status+requestId" },
+  ]}
+  edges={[
+    { from: "req", to: "mw", label: "enter" },
+    { from: "mw", to: "handler", label: "next()" },
+    { from: "handler", to: "filter", label: "throw" },
+    { from: "filter", to: "log", label: "log once" },
+    { from: "filter", to: "res", label: "shape" },
+  ]}
+  caption="Id выпускается/переиспользуется один раз на краю и читается из AsyncLocalStorage и логгером, и filter; filter — единственная граница, которая логирует один раз и формирует ответ — один requestId в лог-строке и в конверте."
+/>
+
+## Где живёт каждая ответственность
+
+Весь урок — это одно решение о размещении: *форма* ошибки принадлежит глобальному filter, *логирование* ошибки — структурному логгеру, вызванному один раз на этой границе, а *корреляция* — request-scoped контексту. Поставь их не туда — и получишь хук: трижды залогированные стеки, 200 на сбое и непрослеживаемые запросы.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Ответственность</th>
+        <th class="border border-border px-3 py-2 text-left">Где живёт</th>
+        <th class="border border-border px-3 py-2 text-left">Почему там</th>
+        <th class="border border-border px-3 py-2 text-left">Анти-паттерн</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Форма ошибки</strong></td>
+        <td class="border border-border px-3 py-2">Глобальный <code>@Catch()</code>-filter</td>
+        <td class="border border-border px-3 py-2">Единый сток для каждого выброса &#8594; один конверт</td>
+        <td class="border border-border px-3 py-2">Форматирование руками в хендлере</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Статус-код</strong></td>
+        <td class="border border-border px-3 py-2"><code>res.status(s).json(...)</code></td>
+        <td class="border border-border px-3 py-2">Пропуск <code>.status()</code> &#8594; Express дефолтит 200</td>
+        <td class="border border-border px-3 py-2">Один <code>res.json(...)</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Логирование</strong></td>
+        <td class="border border-border px-3 py-2">Структурный логгер, один раз в filter</td>
+        <td class="border border-border px-3 py-2">JSON запрашиваем; один лог избегает дублей стека</td>
+        <td class="border border-border px-3 py-2"><code>console.log</code> в каждом слое</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Корреляция</strong></td>
+        <td class="border border-border px-3 py-2">Request id в <code>AsyncLocalStorage</code></td>
+        <td class="border border-border px-3 py-2">Один id во всех строках + downstream-вызов</td>
+        <td class="border border-border px-3 py-2">Нет id; непрослеживаемые запросы</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Сообщение 500</strong></td>
+        <td class="border border-border px-3 py-2">Общее клиенту, полный стек в логи</td>
+        <td class="border border-border px-3 py-2">Стек/err.message утекают внутренности</td>
+        <td class="border border-border px-3 py-2">Возврат сырого стека</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+Почему `AsyncLocalStorage`, а не просто `req`? Ты *мог бы* положить id на `req` и таскать `req` повсюду — но это значит протаскивать объект запроса через каждый метод сервиса, репозиторий и хелпер, который может захотеть логировать, что связывает весь стек с HTTP-слоем. `AsyncLocalStorage` даёт тебе окружающий, request-scoped store, который переживает каждый `await`: глубокий `PaymentService.charge()` может вызвать `getRequestId()` без аргументов и получить верный id, хотя он понятия не имеет, что HTTP-запрос вообще существует. Это node-примитив, который делает корреляцию возможной без засорения сигнатур, — та же идея, что thread-local storage в других рантаймах.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-tradeoff-1"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="ru"
+  prompt="Нужна единая форма ответа-ошибки, полезные логи и возможность проследить один запрос между сервисами. Где живут форматирование ошибок и логирование?"
+  options={[
+    { name: "Глобальный @Catch()-filter для конверта ошибки + структурный логгер, логирующий один раз в filter, с request id в AsyncLocalStorage", summary: "Граница владеет этим.", correct: true, justification: "Filter — единственный сток для каждого выброса, так что форма ошибки живёт там, а ответ логируется ровно один раз с полным контекстом — без дублей стека. Структурный JSON-логгер делает эти строки запрашиваемыми, а request id, хранимый в AsyncLocalStorage (выпущенный или проброшенный на краю), едет на каждой лог-строке и в конверте, так что один запрос прослеживается через хендлеры и downstream-сервисы. Это сеньорская раскладка: форма на границе, лог один раз, корреляция по id." },
+    { name: "try/catch в каждом хендлере, который форматирует ошибку и console.log'ит её", summary: "Баг из хука.", justification: "try/catch в каждом хендлере дублирует логику форматирования повсюду, гарантирует несогласованные конверты и перелогирует один и тот же стек на каждом слое. console.log выдаёт незапрашиваемые свободные строки без уровней и без корреляции. Это ровно тот запах, с которого начинается урок, — и один забытый res.status() уедет с 200 на сбое." },
+    { name: "Только логирующий interceptor — он оборачивает next.handle() и логирует, без глобального filter", summary: "Половина дела.", justification: "Interceptor отлично подходит для логирования запроса/ответа и тайминга на счастливом пути, но он не граница ошибок: он не владеет формой ответа на выбросе, а catchError в interceptor — худшее место для форматирования канонического конверта, чем filter, который и так ловит каждый выброс с каждого этапа. Тебе всё равно нужен глобальный filter для формы и единый лог ошибки." },
+    { name: "Пусть дефолтный filter Nest обрабатывает ошибки, а ты добавишь console.log там, где нужно", summary: "Нет конверта, нет корреляции.", justification: "Дефолтный filter даёт разумный статус, но не твой конверт (нет requestId, нет контролируемого сообщения 500), а разбрасывание строк console.log не даёт ни структурных полей, ни correlation id. Ты получишь обратно ровно те негрепаемые, непрослеживаемые логи из хука." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-quiz-1"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="ru"
+  question="Твой filter вызывает res.json({ statusCode: 500, message: 'oops' }), но никогда не вызывает res.status(...). Какой HTTP-статус получит клиент?"
+  choices={[
+    { label: "200 — Express дефолтит статус, когда .status() не вызван, так что сбой уедет как успех с телом ошибки", correct: true },
+    { label: "500 — поле statusCode в JSON-теле задаёт HTTP-статус", misconception: "Поле statusCode — это просто данные внутри тела ответа; оно никак не влияет на реальную HTTP-статус-строку. Только res.status(...) задаёт её. Без него Express использует дефолт 200." },
+    { label: "400 — Express выводит клиентскую ошибку из тела в форме ошибки", misconception: "Express не парсит твоё тело, чтобы вывести статус. HTTP-статус — это то, что задал res.status(...), или дефолт 200, если ты его не вызывал. Форма тела не влияет на статус-код." },
+    { label: "204 — JSON-тело без явного статуса трактуется как no content", misconception: "204 означает no content и никогда не выводится из JSON-тела. Без вызова res.status() Express дефолтит в 200 и отдаёт твоё тело как есть." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-01-exception-filters-and-logging-quiz-2"
+  lessonSlug="01-exception-filters-and-logging"
+  lang="ru"
+  question="Голый throw new Error('boom') (не HttpException) доходит до filter, декорированного @Catch(HttpException). Что произойдёт?"
+  choices={[
+    { label: "Filter пропускается — @Catch(HttpException) матчит только HttpException и его наследников, так что голый Error проваливается в дефолтный обработчик Nest и становится 500", correct: true },
+    { label: "Filter ловит его, и exception.getStatus() возвращает 500", misconception: "@Catch(HttpException) сужает filter до этого типа, так что голый Error вообще не входит в этот filter. И getStatus() существует только у HttpException — у голого Error нет такого метода. Используй @Catch() без аргумента, чтобы ловить всё." },
+    { label: "Nest роняет процесс, потому что ошибка необработана", misconception: "Встроенный слой исключений Nest всё равно ловит всё, что типизированный filter не поймал, мапя не-HttpException на ответ 500. Процесс не падает; запрос просто получает дефолтный 500." },
+    { label: "Ошибка молча проглатывается, и клиент получает 200", misconception: "Не пойманная твоим filter ошибка не проглатывается — дефолтный обработчик Nest превращает не-HttpException в 500. Чтобы контролировать эту форму самому, filter должен быть @Catch() (catch-all), а не @Catch(HttpException)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Один глобальный @Catch()-filter формирует каждый выброс в единый конверт и логирует один раз (общее 500 наружу, полный стек в логи); request id в AsyncLocalStorage трассирует запрос везде. Всегда res.status(s).json(...).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-exception-filters-and-logging-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опиши production-grade глобальный exception filter: что он ловит, какой конверт выдаёт, как ставит статус, что логирует и что НЕ должен утекать.", a: "Зарегистрируй один AllExceptionsFilter через токен-провайдер APP_FILTER и декорируй его @Catch() без аргумента, чтобы он ловил всё, не только HttpException. Внутри catch(exception, host): switchToHttp() для req/res, вычисли статус как exception.getStatus(), когда это HttpException, иначе HttpStatus.INTERNAL_SERVER_ERROR (500), и выдай один единый конверт { statusCode, message, timestamp, path, requestId } через res.status(status).json(...) — вызов .status() несущий, потому что один res.json() заставит Express дефолтить HTTP-статус в 200, отправив сбой как успех. Логируй ОДИН раз здесь на границе с полным контекстом (requestId, path, status и стек), чтобы не получить тот же стек трижды залогированным каждым слоем. Он НЕ должен утекать внутренности: на 500 верни клиенту общее 'Internal server error', логируя полный стек на сервере, потому что err.message или стек могут содержать SQL, пути к файлам или хостнеймы. Мапь известные доменные ошибки на безопасные наследники HttpException; остальное пусть проваливается в расплывчатый 500." },
+    { q: "Почему структурное JSON-логирование лучше console.log и как AsyncLocalStorage даёт correlation id через весь запрос и между сервисами?", a: "console.log выдаёт свободные строки без уровней, без таймстемпов и без границ запросов — человек прочтёт одну строку, но машина не сможет их запрашивать. Структурный JSON-логгер (nestjs-pino над pino, выставленный в bootstrap с bufferLogs: true и app.useLogger(app.get(Logger))) выдаёт каждую строку как JSON-объект, так что твоя лог-платформа парсит её в запрашиваемые поля: фильтруй по level, группируй по path или вытаскивай каждую строку для одного requestId одним запросом. Соблюдай уровни лога, чтобы прод мог отбросить debug-шум. Для корреляции middleware выпускает request id (или переиспользует входящий заголовок x-request-id, чтобы трасса охватывала сервисы) и вызывает als.run({ requestId }, () => next()) на AsyncLocalStorage; store переживает каждый await, так что getRequestId() возвращает один и тот же id в глубоком методе сервиса, логгере и filter — без всякого протаскивания параметров. Верни id обратно как заголовок ответа и пробрось его на исходящих вызовах — и один запрос станет прослеживаемым через каждую лог-строку и каждый сервис." },
+  ]}
+/>
+
+<Recap lang="ru">
+Ошибки и observability сводятся к трём размещениям. Первое, форма ошибки: зарегистрируй один глобальный AllExceptionsFilter через токен APP_FILTER, декорированный @Catch() (без аргумента), чтобы он ловил всё; мапь HttpException на его статус, а всё остальное на 500, и выдавай один единый JSON-конверт &#123; statusCode, message, timestamp, path, requestId &#125; через res.status(status).json(...) — забудь .status(), и Express отправит 200 на сбое. Второе, логирование: замени console.log на структурный JSON-логгер (nestjs-pino, выставленный в bootstrap с bufferLogs: true и app.useLogger), потому что JSON-строки машинно-запрашиваемы, а уровни позволяют проду отбросить шум; логируй ошибку ровно один раз на границе filter с полным контекстом и стеком, чтобы одна и та же ошибка не логировалась трижды. Не утекай внутренности — возвращай клиенту общее сообщение на 500, логируя полный стек на сервере, и мапь известные доменные ошибки на безопасные HTTP-формы. Третье, корреляция: middleware выпускает или переиспользует per-request id и хранит его в AsyncLocalStorage, чтобы каждая лог-строка и конверт ошибки несли один и тот же id; пробрось входящий заголовок x-request-id, чтобы один запрос был прослеживаем через хендлеры и downstream-сервисы. Форма на границе, лог один раз, корреляция по id.
+</Recap>
