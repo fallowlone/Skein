@@ -1,0 +1,227 @@
+---
+concepts:
+- node-api
+- abi-stability
+- node-addon-api
+- addon-boundary
+- async-work
+- value-marshalling
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: 01-native-addons-napi
+sources:
+- https://nodejs.org/api/n-api.html
+- https://github.com/nodejs/node-addon-api
+- https://nodejs.org/api/addons.html
+spiral: []
+status: ready
+summary: 'Node-API is a stable C ABI: an addon built once keeps loading across Node
+  majors, unlike raw-V8/NAN addons that must be rebuilt. You trade JS handles across
+  an opaque boundary, run blocking work off-thread, and pay a real per-call cost.'
+title: 'Native addons with Node-API: the stable ABI and the boundary'
+track: node
+unit: 12-native-and-ffi
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+A team ships a native image-resize addon built against V8's headers. It runs fine for a year on Node 16. Then they bump the base image to Node 18 and the service segfaults on the first request — a clean crash with no JavaScript stack, just a core dump deep in `v8::Object`. Nothing in their code changed. What changed is that V8's internal C++ ABI shifted between Node majors, and the precompiled `.node` binary was still calling the old layout. They rebuild against Node 18 headers and it works again — until the next major. They've signed up to recompile their addon, forever, against every Node version their users run. The fix was available the whole time: build against Node-API instead, and that one binary would have kept loading across all of those upgrades untouched.
+</Hook>
+
+<Crux>Node-API is a stable C ABI: an addon built once keeps loading across Node majors; a raw-V8 or NAN addon must be rebuilt per version.</Crux>
+
+<Explanation>
+
+## Why Node-API exists: the ABI-stability guarantee
+
+A native addon is a shared library — a `.node` file, which is really a `.so`/`.dll` — that Node loads with `process.dlopen` and calls like any JavaScript module. The question is *what API the compiled binary depends on*, because that determines when it breaks.
+
+The original C++ addon API exposed V8 directly. Your addon `#include`d `v8.h` and manipulated `v8::Local<v8::Object>`, `v8::Isolate`, `v8::FunctionTemplate` — V8's own types. V8 makes **no ABI-stability promise** across versions: the memory layout of those classes, the vtables, the inline functions all change. So a binary compiled against Node 16's V8 calls into Node 18's V8 with the wrong assumptions, and you get the segfault from the hook. NAN ("Native Abstractions for Node.js") softened this at the *source* level — macros that papered over the API churn so the same source compiled on many Node versions — but it did nothing for the *binary*. You still recompiled per Node major.
+
+**Node-API** (the C API; `napi_` functions, formerly "N-API") cuts the dependency. It is a stable, versioned C ABI that Node guarantees forward-compatible: an addon compiled against Node-API version *N* keeps running on every future Node release that supports version *N* or higher, with no recompile. The functions are plain C — no C++ name-mangling, no class layouts to shift — and Node's own implementation translates `napi_` calls into whatever the current V8 wants. You depend on Node-API's contract, not on V8's internals.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Approach</th>
+        <th class="border border-border px-3 py-2 text-left">Depends on</th>
+        <th class="border border-border px-3 py-2 text-left">Survives a Node major bump?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Raw V8 (<code>v8.h</code>)</td>
+        <td class="border border-border px-3 py-2">V8's C++ ABI (unstable)</td>
+        <td class="border border-border px-3 py-2">No — rebuild every major, risk of segfault if you don't</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">NAN</td>
+        <td class="border border-border px-3 py-2">V8 ABI, smoothed at source</td>
+        <td class="border border-border px-3 py-2">Source compiles widely, but the binary still rebuilds per major</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Node-API (<code>napi_*</code>)</td>
+        <td class="border border-border px-3 py-2">Node-API version (stable ABI)</td>
+        <td class="border border-border px-3 py-2">Yes — one binary loads across all Node versions supporting that API level</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+In practice almost nobody writes raw `napi_` C by hand. **node-addon-api** is the official C++ wrapper over the C ABI: it gives you `Napi::Object`, `Napi::Number`, RAII handle management and exceptions, while still compiling down to the stable C calls underneath. You get C++ ergonomics *and* the ABI guarantee — that is the modern default.
+
+## The boundary: opaque handles, not V8 types
+
+Everything you touch from native code crosses a boundary, and the boundary is deliberately opaque. A JavaScript value arriving in your function is a `napi_value` — a handle, not a pointer to a V8 object you can dereference. You ask Node-API to read or build values through functions (`napi_get_value_double`, `napi_create_string_utf8`), and Node-API does the V8 work. That indirection is exactly what buys ABI stability: your binary never sees a V8 layout.
+
+Here is a minimal addon with node-addon-api — a function that adds two numbers — plus its JavaScript loader.
+
+```cpp
+// addon.cc
+#include <napi.h>
+
+Napi::Value Add(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();                 // the napi_env: your handle to the runtime
+  double a = info[0].As<Napi::Number>();      // marshal JS number -> C double
+  double b = info[1].As<Napi::Number>();
+  return Napi::Number::New(env, a + b);       // marshal C double -> JS number
+}
+
+Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  exports.Set("add", Napi::Function::New(env, Add));
+  return exports;
+}
+
+NODE_API_MODULE(addon, Init)                  // register the module entry point
+```
+
+```js
+// index.js
+const addon = require("./build/Release/addon.node");
+console.log(addon.add(2, 3)); // 5
+```
+
+Two things to notice. First, `info.Env()` hands you the `napi_env` — the context token you pass to nearly every Node-API call; it represents the runtime instance and must not be cached and reused across calls or threads. Second, every value crossing the line is *marshalled*: the JS `Number` becomes a C `double` on the way in, and a fresh JS `Number` is constructed on the way out. There is no shared representation — values are copied or wrapped, never aliased.
+
+<Inset kind="why" lang="en">
+Handles created during a call live in a **handle scope** that Node-API closes when the function returns, so they don't leak. But if you create many values inside a loop that runs before returning — say, building a large array element by element — they all pile into that one scope. For long loops, open a `Napi::HandleScope` (or `napi_open_handle_scope`) explicitly so intermediate handles are reclaimed promptly instead of accumulating until the call ends.
+</Inset>
+
+## Async work: never block the event loop thread
+
+Your `Add` runs *synchronously on the main JavaScript thread* — the same thread the event loop uses. That is fine for microseconds of arithmetic. It is a disaster for anything slow: a native call that spends 200ms compressing an image blocks the entire event loop, freezing every other request and timer for that whole time. Native code does not magically run in the background; by default it runs where you call it.
+
+The fix is `napi_async_work` (wrapped as `Napi::AsyncWorker`). You split the job into an `Execute` phase that runs on a **libuv thread-pool thread** — off the main thread, so the event loop keeps serving — and an `OnOK`/`OnError` phase that runs back **on the main thread** to deliver the result. The hard rule: **inside `Execute` you must not touch any `napi_value` or call any JS-interacting Node-API function**, because you are not on the JS thread and the engine is not yours to touch there. You read your inputs into plain C/C++ data before `Execute`, do the heavy work on raw data, and only convert back to JS values in `OnOK`.
+
+```cpp
+class ResizeWorker : public Napi::AsyncWorker {
+  std::vector<uint8_t> input_;   // plain data, copied in before Execute
+  std::vector<uint8_t> output_;
+ public:
+  ResizeWorker(Napi::Function cb, std::vector<uint8_t> in)
+    : Napi::AsyncWorker(cb), input_(std::move(in)) {}
+
+  void Execute() override {       // libuv thread — NO napi_value here
+    output_ = heavy_resize(input_);
+  }
+  void OnOK() override {          // main thread — safe to build JS values
+    Callback().Call({ Env().Null(), Napi::Buffer<uint8_t>::Copy(Env(), output_.data(), output_.size()) });
+  }
+};
+```
+
+For the inverse case — native code on some *other* thread (a hardware callback, a C library's worker pool) that needs to call back into JavaScript — you cannot just invoke a `napi_value` function from that thread. You use a **thread-safe function** (`napi_threadsafe_function`), which marshals the call onto the main JS thread safely. Calling JS from a non-JS thread any other way corrupts the engine.
+
+## The cost of crossing, and when it pays
+
+Crossing into native is not free. Each call sets up a handle scope, marshals arguments, and tears down — overhead that's negligible against real work but dominant against trivial work. A "fast" native function called in a tight loop a million times, each crossing the boundary to do one cheap operation, can easily be *slower* than the equivalent pure JavaScript, because V8's JIT optimises the JS path while every native call pays fixed boundary tax and is opaque to the optimiser.
+
+So the boundary shape matters more than the language. Native pays off when you cross *rarely* and do *a lot* per crossing: hand a whole buffer to a C codec, call into an existing battle-tested C library (libvips, OpenSSL, a database driver), or run a genuinely CPU-bound kernel that JS can't match. It loses when the boundary is *chatty* — many crossings, little work each — where marshalling overhead and lost JIT optimisation eat the gain. Design the API coarse: one call that processes the whole image, not one call per pixel.
+
+<TradeoffMatrix
+  id="01-native-addons-napi-tradeoff-1"
+  lessonSlug="01-native-addons-napi"
+  lang="en"
+  prompt="You're adding a CPU-heavy native codec to a Node service. How should the JS↔native boundary be shaped?"
+  options={[
+    { name: "One coarse call per work item (e.g. encode an entire buffer), heavy work done in C on plain data", summary: "Cross rarely, do a lot.", correct: true, justification: "This is the shape that makes native worthwhile. Boundary cost (handle scope, marshalling) is paid once per item and is negligible against the real work; the heavy loop runs in C on raw data with no per-iteration crossing and no V8 involvement. If the work is slow, also run it via AsyncWorker so it doesn't block the event loop. Coarse-grained boundaries are the senior default for native addons." },
+    { name: "A fine-grained call per element (e.g. processPixel called in a JS loop over millions of pixels)", summary: "Chatty boundary.", justification: "This is the classic anti-pattern. Each crossing pays fixed marshalling and handle-scope cost and is opaque to V8's optimiser, so a million tiny native calls routinely run slower than pure JS the JIT can inline and optimise. The win from C is destroyed by boundary tax. Push the loop down into the native side instead." },
+    { name: "Keep it synchronous on the main thread regardless of duration to avoid AsyncWorker complexity", summary: "Block the loop.", justification: "Fine for microsecond work, catastrophic for slow work: a synchronous native call runs on the event-loop thread and freezes every other request and timer for its full duration. Anything that takes real time must go through napi_async_work / AsyncWorker so Execute runs on a libuv thread." },
+    { name: "Build against v8.h directly for speed and skip the Node-API wrapper", summary: "Raw V8.", justification: "Raw V8 gives no measurable speed advantage here but forfeits the ABI guarantee — you'd recompile per Node major and risk segfaults on upgrade. Node-API's per-call overhead is tiny relative to a CPU-heavy codec, so there is no reason to trade away stability for it." },
+  ]}
+/>
+
+<Quiz
+  id="01-native-addons-napi-quiz-1"
+  lessonSlug="01-native-addons-napi"
+  lang="en"
+  question="A precompiled .node addon worked on Node 16 and segfaults after upgrading to Node 18, with no source change. Most likely cause?"
+  choices={[
+    { label: "It was built against V8's unstable C++ ABI; V8's internal layout changed across the Node major, so the old binary calls into the new V8 incorrectly — Node-API would have stayed compatible", correct: true },
+    { label: "Node 18 removed support for native addons", misconception: "Node 18 fully supports native addons. The crash is an ABI mismatch from depending on V8 internals, not a removal of addon support." },
+    { label: "The addon's JavaScript wrapper has a syntax error", misconception: "A JS syntax error throws a JavaScript exception with a stack trace, not a native segfault with a core dump deep in V8. The crash signature points to a binary/ABI problem, not JS source." },
+    { label: "node_modules needs to be deleted and reinstalled", misconception: "Reinstalling won't help unless it triggers a rebuild against the new headers — and that rebuild, not the reinstall, is what fixes it. The root cause is the V8-ABI dependency; Node-API avoids the need to rebuild at all." },
+  ]}
+/>
+
+<Quiz
+  id="01-native-addons-napi-quiz-2"
+  lessonSlug="01-native-addons-napi"
+  lang="en"
+  question="Inside an AsyncWorker's Execute() method (running on a libuv thread-pool thread), what must you avoid?"
+  choices={[
+    { label: "Touching any napi_value or calling JS-interacting Node-API functions — Execute is off the JS thread, so all JS work belongs in OnOK/OnError on the main thread", correct: true },
+    { label: "Doing CPU-heavy work — Execute should stay fast", misconception: "The opposite: Execute exists precisely to hold the heavy CPU work off the main thread. Doing the slow work there is the whole point; what you can't do is touch JS values." },
+    { label: "Using C++ standard-library containers like std::vector", misconception: "Plain C/C++ data structures are exactly what you should use in Execute. The restriction is on JS/engine handles (napi_value), not on ordinary native data." },
+    { label: "Allocating heap memory", misconception: "Heap allocation is fine on a worker thread. The constraint is specifically about interacting with the JavaScript engine, which is not thread-safe to touch from there." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="The native addon stack, from your JavaScript at the top down to V8 at the bottom, with Node-API as the stable ABI boundary in the middle"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "Your JavaScript", note: "require('addon.node'); addon.add(2,3)" },
+    { label: "Your addon binary (.node)", note: "C/C++ compiled once" },
+    { label: "node-addon-api (C++)", note: "Napi::Number, RAII handles" },
+    { label: "Node-API (napi_*) — STABLE C ABI", note: "the version you compile against" },
+    { label: "V8 (unstable internal ABI)", note: "Node translates napi_* calls into this" },
+  ]}
+  caption="You depend only on the stable Node-API layer; Node absorbs V8's churn beneath it. Build against V8 directly and you bind to the bottom layer, which moves every major."
+/>
+
+<KeyTakeaway>Node-API is a stable C ABI: build once, loads across Node majors, unlike raw-V8/NAN. Values cross as copied handles, slow work goes off-thread via AsyncWorker, and every crossing costs — keep the boundary coarse.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-native-addons-napi-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a raw-V8 addon break on a Node major upgrade but a Node-API addon doesn't?", a: "A raw-V8 addon includes v8.h and manipulates V8's own C++ types — v8::Object, v8::Isolate, FunctionTemplate. V8 makes no ABI-stability promise: class layouts, vtables and inline functions change between versions, so a binary compiled against one Node major's V8 calls into another major's V8 with the wrong memory assumptions and segfaults. NAN smooths this only at the source level (the same source recompiles widely) but the binary still must be rebuilt per major. Node-API is a separate, versioned, stable C ABI: the functions are plain C (no name-mangling, no class layouts), and Node's implementation translates napi_ calls into whatever the current V8 expects. An addon compiled against Node-API version N keeps loading, unchanged, on every future Node that supports version N — you depend on Node-API's contract, not V8's internals. node-addon-api is the C++ wrapper that gives you ergonomic types while still compiling to those stable C calls." },
+    { q: "What is the rule about JS values inside an AsyncWorker's Execute, and why does it exist?", a: "Execute runs on a libuv thread-pool thread, not the main JavaScript thread, so inside it you must not touch any napi_value or call any Node-API function that interacts with JS. The JavaScript engine (V8) is single-threaded and not safe to touch from another thread; doing so corrupts it. The correct pattern is to copy your inputs into plain C/C++ data before Execute, do the heavy CPU work in Execute on that raw data, and only convert results back to JS values in OnOK/OnError, which run on the main thread. The reason you push work into Execute at all is that a synchronous native call runs on the event-loop thread and blocks every other request and timer for its full duration — AsyncWorker moves the slow part off that thread while keeping all JS interaction safely on it. For the reverse direction (a non-JS thread that needs to call into JavaScript), you use a thread-safe function, which marshals the call onto the main thread." },
+  ]}
+/>
+
+<Recap lang="en">
+A native addon is a shared library Node loads like a module, and the API it compiles against decides when it breaks. Raw-V8 addons bind to V8's unstable C++ ABI and must be rebuilt every Node major or they segfault; NAN smooths the source but not the binary. Node-API is a stable, versioned C ABI Node guarantees forward-compatible, so one binary loads across all Node versions that support its API level — and node-addon-api is the C++ wrapper that keeps the ergonomics while compiling to those stable C calls; it's the modern default. Across the boundary every value is an opaque handle, marshalled (copied or wrapped) in and out, never an aliased V8 pointer — which is exactly what buys the ABI stability. Slow work must not run synchronously on the main thread: split it into an AsyncWorker, doing the heavy work in Execute on plain data (no `napi_value` there) and converting back to JS only in OnOK on the main thread, and use a thread-safe function when a non-JS thread must call back into JavaScript. Finally, every crossing carries fixed cost — handle scope, marshalling, opacity to the JIT — so a chatty per-element boundary can run slower than pure JS. Make the boundary coarse: cross rarely, do a lot per crossing, and reserve native for CPU-bound kernels or existing C libraries where it genuinely wins.
+</Recap>

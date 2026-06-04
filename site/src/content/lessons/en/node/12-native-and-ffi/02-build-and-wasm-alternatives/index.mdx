@@ -1,0 +1,192 @@
+---
+concepts:
+- node-gyp
+- binding-gyp
+- prebuilds
+- install-time-compilation
+- webassembly-wasi
+- when-not-to-go-native
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs:
+- node/12-native-and-ffi/01-native-addons-napi
+slug: 02-build-and-wasm-alternatives
+sources:
+- https://github.com/nodejs/node-gyp
+- https://github.com/prebuild/prebuildify
+- https://nodejs.org/api/wasi.html
+- https://developer.mozilla.org/en-US/docs/WebAssembly
+spiral: []
+status: ready
+summary: 'Native addons build with node-gyp from a binding.gyp, which means a compiler
+  at install time unless you ship prebuilds. WebAssembly, a child process, or plain
+  JS often dodge that entirely — so the senior move is usually NOT to write one.'
+title: 'Building native addons, prebuilds, and when not to: WASM and the alternatives'
+track: node
+unit: 12-native-and-ffi
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A new hire runs `npm install` and it explodes. Three thousand lines of red end in `gyp ERR! find Python` and `node-gyp rebuild failed`. A transitive dependency two levels down is a native addon, and on their fresh machine there's no Python, no C++ toolchain, no matching headers — so the install tries to *compile C++ from source* and can't. The same package later breaks the Alpine-based CI image (musl, not glibc) and a Windows contributor (no Visual Studio build tools). Nobody on the team chose to maintain a C++ build; they just `npm install`ed a JSON parser that happened to have a native fast path. The cost of one native dependency is paid by every machine that installs it — and the question the team never asked was whether that addon needed to be native at all.
+</Hook>
+
+<Crux>Native addons build with node-gyp — a compiler at install unless they ship prebuilds; WASM, a child process, or plain JS often avoid it.</Crux>
+
+<Explanation>
+
+## How addons build: node-gyp and binding.gyp
+
+When you install a native addon without precompiled binaries, npm runs its `install` script, which usually calls **node-gyp** — Node's build orchestrator. node-gyp reads a `binding.gyp` file (a Python-ish JSON dialect inherited from Chromium's GYP), generates platform build files (a Makefile, an Xcode project, or an MSVC project), and invokes the host compiler to produce the `.node` binary.
+
+```python
+# binding.gyp — describes what to compile and how
+{
+  "targets": [
+    {
+      "target_name": "addon",
+      "sources": [ "src/addon.cc", "src/resize.cc" ],
+      "include_dirs": [
+        "<!@(node -p \"require('node-addon-api').include\")"
+      ],
+      "cflags_cc": [ "-O3", "-std=c++17" ]
+    }
+  ]
+}
+```
+
+The implication is the trap from the hook: **building from source needs a full toolchain on the installing machine** — node-gyp itself requires Python, plus a C/C++ compiler (GCC/Clang, or MSVC on Windows) and Node's headers for the running version. That's fine on a dev box you control, but it makes the addon fragile everywhere else: minimal Docker images without build tools fail, Alpine's musl libc breaks glibc-built assumptions, Windows needs the Visual Studio build tools, and even on a working setup every `npm install` pays minutes of compile time. A native dependency turns `install` from "download files" into "compile a C++ project," with all the platform variance that implies.
+
+## Prebuilds: ship the binary, skip the compiler
+
+The fix for install-time pain is to **not compile at install** — ship precompiled binaries inside the package, one per platform/architecture, and at install time just pick the matching one. Two ecosystems do this: `node-pre-gyp` (downloads prebuilt binaries from a host like S3/GitHub Releases) and **prebuildify** (bundles all the prebuilt binaries *into the published npm tarball*, so install does zero network and zero compile — it just copies the right file). prebuildify is the simpler, more reliable model: no download server to depend on, fully offline installs.
+
+```jsonc
+// package.json — prebuildify produces prebuilds/<platform>-<arch>/*.node
+{
+  "scripts": {
+    // run once on each target platform (or in CI matrix) before publishing:
+    "prebuild": "prebuildify --napi --strip"
+  }
+}
+```
+
+Here is where Node-API earns its keep a second time. Because a Node-API binary is **ABI-stable across Node versions** (the previous lesson), you ship *one prebuild per platform/arch* and it serves every Node version your users run. A raw-V8/NAN addon, by contrast, needs a prebuild per platform **per Node ABI version** — a combinatorial matrix that balloons your published package and breaks the moment a new Node major ships before you've published a matching binary. The `--napi` flag above is doing exactly that: cutting the prebuild matrix from (platforms × Node versions) down to (platforms). At runtime a loader like `node-gyp-build` resolves the right prebuild and only falls back to source compilation if none matches.
+
+<Inset kind="why" lang="en">
+Prebuilds shrink the *cross-product* of native-build risk but don't erase it: you still need a build of each binary for every platform/arch/libc you support (linux-x64-glibc, linux-x64-musl, linux-arm64, darwin-arm64, win32-x64…), which means a CI matrix and the discipline to publish a new prebuild before the platform that needs it shows up. Forget musl, and Alpine users drop back to source compilation — the exact failure prebuilds were meant to prevent. Prebuilds move the toolchain requirement from your users to your release pipeline; they don't delete it.
+</Inset>
+
+## The alternatives: WASM, a child process, or just JS
+
+Before writing any of that, ask whether you need a native addon at all. Three alternatives sidestep the build problem entirely.
+
+**WebAssembly.** Compile C, C++, or Rust to a `.wasm` module and load it with `WebAssembly.instantiate`. The artifact is a *single, portable binary* — no per-platform compile, no toolchain at install, the same `.wasm` runs on every OS and arch. It executes in a sandbox with no ambient access to the filesystem or network; when the code needs syscalls, **WASI** (the WebAssembly System Interface, exposed via `node:wasi`) grants them explicitly and capability-scoped. The tradeoffs: data crosses into wasm's linear memory by *copying* (you can't hand it a JS object), and raw OS/C-library integration beyond WASI isn't available. Excellent for portable compute kernels (parsers, codecs, crypto, image filters); not a path to call an arbitrary OS API.
+
+```js
+import { readFile } from "node:fs/promises";
+const bytes = await readFile("./resize.wasm");
+const { instance } = await WebAssembly.instantiate(bytes);
+const out = instance.exports.resize(/* pointers into linear memory */);
+```
+
+**Child process to a native binary.** If a battle-tested native CLI already exists (ffmpeg, ImageMagick, a Rust tool), spawn it with `child_process` and talk over stdio or files. The boundary is coarse and the process is *isolated*: a crash or memory bug in the binary kills the child, not your Node process. The costs are real too — serialization/IPC overhead, you must deploy and version the external binary, and it's process-per-call unless you pool. Right when the work is already a tool and you value isolation over in-process speed.
+
+**Plain JavaScript.** Often the honest answer. V8's JIT is fast; for a great many "we need C for speed" instincts, a careful JS implementation (typed arrays, avoiding allocations in hot loops) is within a small factor and carries *zero* install risk, *zero* build matrix, and *zero* cross-platform variance. The burden of proof is on going native, not on staying in JS.
+
+<TradeoffMatrix
+  id="02-build-and-wasm-alternatives-tradeoff-1"
+  lessonSlug="02-build-and-wasm-alternatives"
+  lang="en"
+  prompt="You need a fast, portable CPU kernel (a parser) in a Node library that thousands of teams will npm install onto Linux, macOS, and Windows. Which approach?"
+  options={[
+    { name: "Compile the kernel to WebAssembly and load it with WebAssembly.instantiate", summary: "One portable artifact.", correct: true, justification: "WASM gives near-native compute as a single portable .wasm that needs no compiler at install and runs identically on every OS/arch — exactly right for a library installed broadly across platforms. It's sandboxed (good), and a pure compute kernel like a parser needs no OS syscalls, so the WASI/OS-access limitation doesn't bite. You pay a memory-copy at the boundary, which is negligible for coarse calls. This dodges the entire node-gyp/prebuild matrix." },
+    { name: "Write a Node-API native addon and ship prebuilds for every platform/arch", summary: "Native + prebuild matrix.", justification: "Workable and fast in-process, but you take on a CI prebuild matrix (linux glibc/musl, arm64, darwin, win32) and the risk that a missing prebuild drops users back to source compilation. For a pure compute kernel with no need to call a C library in-process, WASM delivers comparable speed with one artifact and none of that operational burden. Reserve native for when you must integrate with an existing C library or OS API in-process." },
+    { name: "Spawn a native CLI binary via child_process for each parse", summary: "Process per call.", justification: "Isolation is nice, but process-per-parse adds spawn + IPC/serialization overhead that dominates for a fast kernel called frequently, and you'd have to deploy and version a separate binary per platform — worse distribution than a single .wasm bundled in the package. child_process fits when a tool already exists and isolation matters, not a hot in-library kernel." },
+    { name: "Implement it in plain JavaScript and rely on the JIT", summary: "Zero build risk.", justification: "A legitimate default and often fast enough — but the premise here is a measured need for near-native parsing speed that JS can't hit. When you've proven that, WASM gets you there while keeping the zero-install-risk, single-artifact portability that makes plain JS attractive in the first place. If JS were fast enough, you wouldn't be choosing among native options at all." },
+  ]}
+/>
+
+## The decision rule: when NOT to go native
+
+Put it together as a rule you can apply before adding the dependency or writing the code.
+
+<Quiz
+  id="02-build-and-wasm-alternatives-quiz-1"
+  lessonSlug="02-build-and-wasm-alternatives"
+  lang="en"
+  question="A native addon ships with prebuildify --napi. Why does the --napi flag dramatically shrink the prebuild matrix versus a NAN/raw-V8 addon?"
+  choices={[
+    { label: "A Node-API binary is ABI-stable across Node versions, so you ship one prebuild per platform/arch instead of one per platform per Node ABI version", correct: true },
+    { label: "--napi compresses the binaries so they take less space", misconception: "--napi is about ABI target, not compression (that's roughly what --strip does). The matrix shrinks because one Node-API binary serves all Node versions, not because each binary is smaller." },
+    { label: "--napi makes the addon pure JavaScript so no binaries are needed", misconception: "It's still a compiled native binary. --napi selects the stable Node-API instead of the V8 ABI; it doesn't remove the native code." },
+    { label: "--napi downloads binaries at install instead of bundling them", misconception: "That's the node-pre-gyp download model. prebuildify bundles binaries into the tarball; --napi only changes which ABI they target, collapsing the per-Node-version dimension." },
+  ]}
+/>
+
+<Quiz
+  id="02-build-and-wasm-alternatives-quiz-2"
+  lessonSlug="02-build-and-wasm-alternatives"
+  lang="en"
+  question="You need to call an existing, well-maintained native CLI tool (e.g. ffmpeg) from a Node service and value crash isolation. Best fit?"
+  choices={[
+    { label: "Spawn it via child_process and talk over stdio/files — coarse boundary, the tool already exists, and a crash kills only the child process", correct: true },
+    { label: "Write a Node-API addon that links ffmpeg's C libraries in-process", misconception: "Possible but heavy: you take on linking, a build/prebuild matrix, and lose isolation — a segfault in the library now crashes your Node process. When a CLI already exists and you value isolation, child_process is the simpler, safer fit." },
+    { label: "Recompile ffmpeg to WebAssembly and run it in-process", misconception: "WASM can't freely access the OS (only via WASI) and re-porting a large tool like ffmpeg is a major effort; for an existing CLI you'd normally just spawn it. WASM shines for your own portable compute kernels, not for wrapping a full external tool you can run directly." },
+    { label: "Reimplement ffmpeg's codecs in plain JavaScript", misconception: "Reimplementing a mature C codec suite in JS is enormous and slower; the whole point of reaching for ffmpeg is to reuse it. This is the opposite of the senior move." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Decision flow for crossing into native code: start from plain JavaScript and only escalate to WebAssembly, a child process, or a native addon when a specific need forces it"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "start", label: "Need more than plain JS?", col: 1, row: 0 },
+    { id: "js", label: "No → ship plain JS (zero build risk)", col: 0, row: 1 },
+    { id: "cp", label: "A CLI tool exists / want isolation → child_process", col: 1, row: 1 },
+    { id: "wasm", label: "Portable compute kernel → WebAssembly (+WASI)", col: 2, row: 1 },
+    { id: "addon", label: "In-process C library / OS API + hot path → Node-API addon + prebuilds", col: 3, row: 1 },
+  ]}
+  edges={[
+    { from: "start", to: "js", label: "no" },
+    { from: "start", to: "cp", label: "spawn" },
+    { from: "start", to: "wasm", label: "compute" },
+    { from: "start", to: "addon", label: "must link" },
+  ]}
+  caption="The default is plain JS; the burden of proof is on going native. Prefer WASM for portable compute and child_process for existing tools — reserve a real addon for in-process integration with a C library or OS API on a proven hot path, and then ship prebuilds."
+/>
+
+<KeyTakeaway>Native addons compile from source unless you ship prebuilds — Node-API lets one prebuild per platform serve all Node versions. Default to plain JS; go native only for in-process C/OS work, else WASM or child_process.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-build-and-wasm-alternatives-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a native dependency so often break npm install on CI/Alpine/Windows, and how do prebuilds fix it?", a: "Without precompiled binaries, installing a native addon runs node-gyp, which reads binding.gyp and compiles the C/C++ from source on the installing machine. That requires a full toolchain present: Python (for node-gyp), a C/C++ compiler (GCC/Clang or MSVC on Windows), and Node's headers for the running version. Minimal Docker images lack build tools, Alpine uses musl libc instead of glibc, and Windows needs the Visual Studio build tools — so the compile fails, and even when it works every install pays minutes of build time. Prebuilds fix this by shipping precompiled .node binaries (one per platform/arch) so install just selects the matching one instead of compiling: node-pre-gyp downloads them from a host, while prebuildify bundles them into the npm tarball for fully offline, zero-compile installs. Node-API amplifies this because an ABI-stable binary serves all Node versions, collapsing the prebuild matrix from (platforms × Node versions) to (platforms). Prebuilds move the toolchain requirement from every user to your release pipeline, but you still must build one per platform/arch/libc you support." },
+    { q: "State the decision rule for when to write a native addon versus the alternatives.", a: "Default to plain JavaScript — the JIT is fast, and a careful JS implementation usually lands within a small factor with zero install risk, zero build matrix, and zero cross-platform variance, so the burden of proof is on going native. Escalate only for a specific, proven need. If you need near-native portable compute (a parser, codec, crypto, image filter), prefer WebAssembly: a single portable .wasm needs no install-time compiler and runs everywhere, sandboxed, with WASI granting syscalls explicitly when required — the limit is that data crosses by memory copy and you can't reach arbitrary OS/C APIs beyond WASI. If a battle-tested native CLI already exists (ffmpeg, ImageMagick) or you want crash isolation, spawn it via child_process and talk over stdio/files, accepting IPC overhead and deploying the binary. Write an actual Node-API native addon only when you must integrate in-process with an existing C library or an OS API that has no JS binding, on a hot path where the coarse boundary genuinely pays — and then ship prebuilds (prebuildify --napi) so your users never compile." },
+  ]}
+/>
+
+<Recap lang="en">
+A native addon installs by compiling: npm runs node-gyp, which reads binding.gyp, generates platform build files, and invokes the host compiler — so every install needs Python, a C/C++ toolchain, and matching Node headers, which is exactly why native dependencies break on minimal Docker images, Alpine's musl, and Windows, and why they tax CI with compile time. The fix for that pain is prebuilds: ship precompiled binaries (node-pre-gyp downloads them, prebuildify bundles them in the tarball) so install just picks the right one, and because a Node-API binary is ABI-stable you ship one prebuild per platform instead of one per platform per Node version. But the deeper move is to question whether you need an addon at all. WebAssembly gives near-native, sandboxed, single-artifact portable compute (WASI for explicit syscalls) with no install-time compiler, ideal for parsers and codecs but not for arbitrary OS access. A child process to an existing native CLI gives a coarse, isolated boundary at the cost of IPC and deploying the binary. And plain JavaScript is often fast enough with none of the risk. The rule: default to JS, prefer WASM for portable compute and child_process for existing tools, and reserve a real Node-API addon for proven in-process integration with a C library or OS API — then ship prebuilds so nobody compiles on install.
+</Recap>
