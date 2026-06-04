@@ -1,0 +1,280 @@
+---
+concepts:
+- iam-policy-evaluation
+- permissions-boundaries
+- service-control-policies
+- assume-role-external-id
+- kms-envelope-encryption
+- secrets-manager-rotation
+- SAA-C03:Design Secure Architectures
+- CLF-C02:Security and Compliance
+deepensInto: []
+estMin: 20
+lang: ru
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-iam-deep-and-kms"
+sources:
+- https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html
+- https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html
+- https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html
+- https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html
+spiral: []
+status: ready
+summary: 'IAM разрешается по порядку: дефолтный deny, явный allow даёт, явный deny всегда побеждает; boundaries и SCP — потолок, conditions сужают statement. Предпочитай роли и STS долгоживущим ключам, останавливай confused deputy через ExternalId, шифруй envelope-ключами KMS.'
+title: 'Глубже в IAM-evaluation, envelope-шифрование KMS и Secrets Manager'
+track: "aws"
+unit: "07-cost-and-security"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Разработчик коммитит `.env` в публичный репозиторий на девяносто секунд, прежде чем затереть его force-push'ем. Поздно: боты сканируют новые коммиты GitHub за секунды, и долгоживущий IAM-access-key внутри уже собран. Через минуты этот ключ — на пользователе, чья политика несла удобный `"Action": "*", "Resource": "*"`, — поднимает десятки GPU-инстансов под крипто-майнинг во всех регионах и заодно выкачивает S3-бакет. Счёт переваливает за пятизначную сумму ещё до того, как сработают биллинг-алерты. Ключ никогда не ротировался, потому что не был временным; политика никогда не сужалась, потому что wildcard «просто работал»; и ничто не ограничило радиус поражения, потому что не было ни permissions boundary, ни SCP. Не хватало трёх отдельных защит, а взлому хватило бы одной из них на месте. Этот урок — про все три.
+</Hook>
+
+<Crux>IAM по порядку: deny по умолчанию, явный allow даёт, явный deny всегда главнее. SCP и boundaries — потолок, conditions сужают, шифрует KMS.</Crux>
+
+<Explanation>
+
+## Как на самом деле принимается решение по запросу
+
+С identity-политиками ты уже познакомился в базовом уроке по IAM: principal, action, resource, effect. Сеньорская модель — это *evaluation*, то, как AWS сводит несколько типов политик в одно «да/нет» для одного API-вызова. Стартовая точка никогда не нейтральна: **каждый запрос по умолчанию — неявный deny.** Дальше у правила три хода, и порядок фиксирован.
+
+Первый: **явный allow** в любой применимой политике может перевернуть дефолт в «разрешено». Второй: *типы* политик комбинируются — identity-based и resource-based образуют **объединение** (allow в любой из них достаточно в пределах одного аккаунта), тогда как **permissions boundaries** и **Service Control Policies** пересекаются: запрос должен быть разрешён *всеми* применимыми категориями. Третий, перекрывающий всё: **явный Deny где угодно всегда побеждает.** Deny в identity-политике, resource-политике, boundary или SCP не перебивается никаким числом allow'ов. Это самое важное предложение во всём IAM, и большинство тикетов «почему у меня нет доступа?» упираются в явный deny, про который кто-то забыл.
+
+Типы политик складываются в слои, у каждого своя роль:
+
+- **Identity-based политики** — привязаны к пользователю, группе или роли; дают то, что может делать *этот principal*.
+- **Resource-based политики** — привязаны к ресурсу (политика S3-бакета, key policy KMS, политика SQS-очереди); задают, кто может трогать *этот ресурс*, и уникально включают cross-account-доступ.
+- **Permissions boundaries** — продвинутая identity-политика, задающая **максимум** прав, который principal вообще может иметь. Сама по себе ничего не даёт; она ограничивает. Эффективные права principal'а — это *пересечение* его identity-политик и его boundary.
+- **Service Control Policies (SCP)** — общеорганизационные ограждения на уровне AWS Organizations. Тоже ничего не дают; они ограничивают, что могут делать все аккаунты и principal'ы под ними, как бы щедро ни выдавал права локальный админ.
+- **Session policies** — передаются inline при assume роли; они дополнительно *сужают* права сессии на её время жизни.
+
+<FlowDiagram
+  label="Поток решения IAM по одному API-запросу: старт с неявного deny, поиск явного allow, проверка boundaries и SCP, затем перекрытие любым явным deny"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "start", label: "Приходит запрос", sub: "principal, action, resource" },
+    { id: "deny0", label: "Неявный deny", sub: "дефолт для всего" },
+    { id: "allow", label: "Явный allow?", sub: "identity ИЛИ resource-политика" },
+    { id: "cap", label: "В пределах boundary + SCP?", sub: "пересечение — пройти все" },
+    { id: "deny1", label: "Явный deny где-либо?", sub: "любой тип политики" },
+    { id: "final", label: "Итоговое решение", sub: "deny побеждает, иначе allow" },
+  ]}
+  edges={[
+    { from: "start", to: "deny0", label: "начало" },
+    { from: "deny0", to: "allow", label: "ищем allow" },
+    { from: "allow", to: "cap", label: "если разрешено" },
+    { from: "cap", to: "deny1", label: "если в пределах" },
+    { from: "deny1", to: "final", label: "deny перекрывает" },
+  ]}
+  caption="Дефолтный deny, затем явный allow даёт доступ, затем boundaries и SCP тоже должны разрешить, и наконец любой явный deny перекрывает всю цепочку. Пересечение ограничивает потолок; объединение allow'ов заполняет всё под ним; deny — это рубильник."
+/>
+
+Итого: **эффективные права = (объединение allow'ов), пересечённое с каждой применимой boundary и каждым применимым SCP, минус любой явный deny.** Wildcard-политика из истории давала всё, но без boundary и SCP пересечение никогда не сжималось — потолок был бесконечным, поэтому утёкший ключ унаследовал бесконечный охват. Boundary `PowerUserAccess` или SCP, запрещающий `iam:*` вне break-glass-роли и действия вне одобренных регионов, превратили бы катастрофу в локализованное неудобство.
+
+## Conditions делают least privilege настоящим
+
+Statement с `"Resource": "*"` — это риск; statement, суженный **`Condition`**, — это least privilege. Condition-ключи проверяют контекст запроса и пропускают statement: `aws:SourceIp` (только из офисного CIDR), `aws:PrincipalOrgID` (только principal'ы твоей организации), `aws:SecureTransport` (только по TLS), `aws:RequestedRegion` или `StringEquals` по тегу ресурса (только ресурсы с тегом твоей команды). Statement применяется, только когда его conditions истинны. Эта политика позволяет principal'у читать один бакет, но только по TLS и только из известной сети — убери любое из условий, и запрос будет отклонён:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadReportsTlsAndOffice",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::acme-reports/*",
+      "Condition": {
+        "Bool": { "aws:SecureTransport": "true" },
+        "IpAddress": { "aws:SourceIp": "203.0.113.0/24" }
+      }
+    }
+  ]
+}
+```
+
+Более глубокая привычка, которую дают conditions, — **роли вместо долгоживущих ключей.** Долгоживущий access-key — это статичный, экспортируемый, часто неротируемый credential, ровно то, что утекло в завязке. IAM-**роль** выдаёт *временные* credentials через AWS STS: короткоживущие, авто-истекающие, никогда не попадающие в репозиторий, потому что существуют лишь минуты. Любая рабочая нагрузка — EC2-инстанс (через instance profile), Lambda, ECS-таск, CI-джоб (через OIDC) — должна ассьюмить роль, а не носить ключ. Когда нужно проаудитить, что вообще выдано, **IAM Access Analyzer** помечает resource-политики, дающие доступ внешним аккаунтам, и подсвечивает неиспользуемые права, которые можно срезать.
+
+### Cross-account-доступ и confused deputy
+
+Cross-account-доступ строится на ролях: роль в **аккаунте B** имеет *trust policy*, называющую **аккаунт A** допущенным к вызову `sts:AssumeRole`. Principal'ы аккаунта A ассьюмят роль и действуют в B с правами B. Но называние внешнего аккаунта в trust policy открывает классическую дыру — **confused deputy.** По AWS, это «проблема безопасности, где сущность, не имеющая прав выполнить действие, может вынудить более привилегированную сущность выполнить его». Если ты нанимаешь сторонний SaaS, который ассьюмит роль в аккаунтах многих клиентов, а твой role ARN не секрет, другой их клиент может передать вендору твой ARN и обманом заставить вендора («deputy») действовать на *твоих* ресурсах.
+
+Фикс — условие **`ExternalId`** в trust policy. Вендор генерирует уникальный ID на клиента и передаёт его в каждом вызове `AssumeRole`; твоя trust policy требует *твой* ID, поэтому запрос с чужим ID не проходит:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Principal": { "AWS": "arn:aws:iam::222222222222:root" },
+    "Action": "sts:AssumeRole",
+    "Condition": {
+      "StringEquals": { "sts:ExternalId": "a1b2c3-unique-per-customer" }
+    }
+  }
+}
+```
+
+Для AWS-*сервисных* principal'ов в cross-service-сценариях (например, CloudTrail, пишущий в твой бакет) аналогичные ограждения — условия `aws:SourceArn` и `aws:SourceAccount`, утверждающие, что сервис действует от имени ресурса или аккаунта, которого ты действительно ждёшь.
+
+## KMS: envelope-шифрование и key policies
+
+Шифрование на масштабе использует **envelope encryption**, и KMS построен вокруг него. **KMS key** (customer-managed key) живёт внутри hardware security module и «спроектирован так, чтобы никогда не экспортироваться из HSM в открытом виде». Байты ключа ты не получаешь никогда. Вместо этого ты вызываешь **`GenerateDataKey`**, и KMS возвращает **data key** в двух формах: *открытую* копию и копию, *зашифрованную под твоим KMS key*. Ты шифруешь свой большой payload локально открытым data key, тут же затираешь открытый ключ из памяти и хранишь **зашифрованный data key рядом с шифротекстом.** Чтобы расшифровать позже, ты отправляешь в KMS только зашифрованный data key, тот разворачивает его и возвращает открытый data key ровно для этой операции. Объёмные данные в KMS не ходят никогда; ходит только маленький data key. Поэтому шифрование S3, EBS и RDS масштабируется — каждый объект получает свой data key, и все они обёрнуты одним центральным KMS key.
+
+Кто может *использовать* и *управлять* KMS key, задаёт его **key policy** — resource-based политика, которая, в отличие от большинства, является **первичным** контролем доступа к ключу. Опасный footgun: если key policy не даёт доступ root'у твоего аккаунта (или другому административному principal'у), ты можешь **навсегда заблокировать всех от ключа** — зашифрованные под ним данные становятся невосстановимыми, и даже AWS Support не перекроет политику. Помимо key policy, **grants** делегируют временное, узко ограниченное использование principal'у (часто AWS-сервису) без правки политики; **aliases** дают ключу стабильное удобное имя, чтобы ротировать материал, не меняя ссылки; **автоматическая ротация** (для customer-managed-ключей опциональна, по умолчанию ежегодная и теперь настраиваемая) генерирует новый backing-материал, сохраняя старые версии для расшифровки старых данных; а ключи бывают **симметричными** (один ключ шифрует и расшифровывает — дефолт для большинства данных) или **асимметричными** (пара public/private — для подписи или шифрования публичным ключом, который можно раздать). Key policy KMS выглядит так:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "key-policy-app-data",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountAdmin",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowAppToEncryptDecrypt",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::111122223333:role/app-runtime" },
+      "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" }
+      }
+    }
+  ]
+}
+```
+
+Убери первый statement — и ключ осиротел.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Слой</th>
+        <th class="border border-border px-3 py-2 text-left">Что делает</th>
+        <th class="border border-border px-3 py-2 text-left">Даёт или ограничивает?</th>
+        <th class="border border-border px-3 py-2 text-left">Сбой, если отсутствует или неверен</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Identity-политика</td>
+        <td class="border border-border px-3 py-2">Что может этот principal</td>
+        <td class="border border-border px-3 py-2">Даёт</td>
+        <td class="border border-border px-3 py-2">Wildcard даёт всё; утёкший ключ это наследует</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Permissions boundary</td>
+        <td class="border border-border px-3 py-2">Максимум, что principal может иметь</td>
+        <td class="border border-border px-3 py-2">Ограничивает (пересечение)</td>
+        <td class="border border-border px-3 py-2">Нет потолка для радиуса поражения</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">SCP</td>
+        <td class="border border-border px-3 py-2">Общеорганизационное ограждение</td>
+        <td class="border border-border px-3 py-2">Ограничивает (пересечение)</td>
+        <td class="border border-border px-3 py-2">Нет тормоза на уровне org ни для одного аккаунта</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Явный deny</td>
+        <td class="border border-border px-3 py-2">Перекрывает любой allow</td>
+        <td class="border border-border px-3 py-2">Рубильник</td>
+        <td class="border border-border px-3 py-2">Опасное действие остаётся разрешённым по умолчанию</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Key policy KMS</td>
+        <td class="border border-border px-3 py-2">Кто использует/управляет ключом</td>
+        <td class="border border-border px-3 py-2">Даёт (resource-based)</td>
+        <td class="border border-border px-3 py-2">Пропусти root аккаунта — осиротишь ключ навсегда</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+Зачем хранить *зашифрованный* data key рядом с данными, а не просто звать KMS зашифровать payload напрямую? Потому что KMS ограничивает размер данных, которые можно ему передать (несколько КБ), и каждый вызов стоит запроса — ты не прогонишь объект на 5 ГБ через KMS. Envelope-шифрование переворачивает поток: KMS всегда работает лишь с крошечным data key, твой собственный CPU делает массовое симметричное шифрование локально на скорости канала, а обёрнутый data key едет вместе с шифротекстом, так что любой обладатель права decrypt на KMS key восстановит его. Один центральный, аудируемый, ротируемый ключ защищает неограниченный объём данных.
+</Inset>
+
+## Secrets Manager против Parameter Store
+
+Утёкший `.env` — это более глубокий урок: секреты не место в коде, образах или env-файлах, запечённых в сборку. **AWS Secrets Manager** хранит секреты, зашифрованные KMS, и — главная фича — поддерживает **автоматическую ротацию.** Для credential'ов базы он по расписанию запускает **Lambda-функцию ротации**: функция создаёт новый credential, обновляет базу и переключает staging-метки (`AWSPENDING` становится `AWSCURRENT`, старый — `AWSPREVIOUS`), так что вызывающие всегда читают живое значение без простоя. Он напрямую интегрируется с RDS, Redshift и DocumentDB.
+
+Более дешёвый и простой собрат — **SSM Parameter Store.** Его параметры `SecureString` тоже зашифрованы KMS, у него нет помесячной платы за секрет, и он отлично подходит для конфигов плюс секретов, которые не нужно автоматически ротировать. Трейдофф: у Parameter Store **нет встроенной ротации** и нет нативной интеграции с базами. Сеньорский выбор: Secrets Manager — для credential'ов, которые должны ротироваться (базы, API-ключи с жизненным циклом); Parameter Store — для статичного конфига и редко меняющихся секретов, где важна цена.
+
+<TradeoffMatrix
+  id="02-iam-deep-and-kms-tradeoff-1"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="ru"
+  prompt="Нужно хранить пароль production-базы, который приложение читает на каждом cold start. Комплаенс требует ротировать его каждые 30 дней с нулевым простоем. Выбери хранилище."
+  options={[
+    { name: "AWS Secrets Manager с Lambda-ротацией на RDS", summary: "Зашифровано KMS, встроенная ротация по расписанию.", correct: true, justification: "Верный выбор. Требование — автоматическая ротация credential'а базы без простоя, ровно то, что даёт ротация Secrets Manager. Lambda-ротация создаёт новый пароль, обновляет RDS и переключает staging-метку AWSPENDING в AWSCURRENT, так что приложение продолжает читать валидное значение сквозь подмену без простоя. Секрет зашифрован KMS, и приложение тянет его в рантайме, а не запекает в образ или .env. Помесячная цена за секрет ничтожна против ценности комплаенса и сдерживания взлома." },
+    { name: "SSM Parameter Store SecureString", summary: "Дёшево, зашифровано KMS, без ротации.", justification: "Соблазнительно, потому что дешевле и тоже зашифровано KMS, но нет встроенной ротации и нативной интеграции с RDS. Закрыть требование «30 дней без простоя» значило бы вручную строить пайплайн ротации, который Secrets Manager уже поставляет. Parameter Store — правильный инструмент для статичного конфига и редко меняющихся секретов, а не для credential'ов под мандатом авто-ротации." },
+    { name: "Переменная окружения, инжектируемая на деплое из .env в репозитории", summary: "Просто, под контролем версий.", justification: "Это и есть провал из истории. Секрет в репозитории открыт всем с правом чтения и любому, кто сканирует утёкший коммит, он никогда не ротируется, а долгоживущий credential максимизирует радиус поражения. Он не закрывает мандат ротации и активно создаёт тот взлом, который должен предотвращать." },
+    { name: "Захардкожено в образ приложения", summary: "Без внешней зависимости в рантайме.", justification: "Хуже всего. Credential теперь неизменяем внутри артефакта, который может кэшироваться, шариться или пушиться в registry; ротация значит пересобрать и передеплоить каждый образ, а секрет утекает любому, кто может стянуть слои образа. Это нарушает требование ротации без простоя и базовое правило, что секреты не живут в сборочных артефактах." },
+  ]}
+/>
+
+<Quiz
+  id="02-iam-deep-and-kms-quiz-1"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="ru"
+  question="Identity-политика разрешает s3:DeleteObject на бакете, но SCP на аккаунте содержит явный Deny для s3:DeleteObject. Что произойдёт, когда principal попробует удалить?"
+  choices={[
+    { label: "Отказ — явный deny в любой применимой политике (включая SCP) всегда перекрывает allow, сколько бы allow'ов ни было", correct: true },
+    { label: "Разрешено — identity-политика явно даёт действие, а identity-политики важнее SCP", misconception: "Identity-политики не выше SCP. Права — это пересечение identity-политики и SCP, а поверх этого явный deny где угодно побеждает. Явный deny из SCP завершает evaluation независимо от allow в identity." },
+    { label: "Разрешено, потому что SCP применяются только к management-аккаунту", misconception: "SCP применяются к member-аккаунтам и каждому principal'у в них (как раз management-аккаунт SCP не ограничивают). Для principal'а member-аккаунта SCP в полной силе, и его явный deny действует." },
+    { label: "Зависит от того, какая политика создана позже", misconception: "В evaluation IAM нет понятия свежести или порядка по времени создания. Правило фиксировано: дефолтный deny, явный allow может дать, явный deny всегда побеждает — таймстемпы нерелевантны." },
+  ]}
+/>
+
+<Quiz
+  id="02-iam-deep-and-kms-quiz-2"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="ru"
+  question="Ты заводишь роль, которую сторонний SaaS ассьюмит в твоём аккаунте, доверяя его AWS-account-ID. Зачем добавлять условие sts:ExternalId в trust policy?"
+  choices={[
+    { label: "Чтобы предотвратить confused deputy — SaaS передаёт уникальный ExternalId на каждого клиента, поэтому другой его клиент не сможет подсунуть твой role ARN и обманом заставить SaaS действовать на твоих ресурсах", correct: true },
+    { label: "Чтобы зашифровать временные credentials, возвращаемые AssumeRole", misconception: "ExternalId — не механизм шифрования; STS-credentials и так доставляются по TLS. ExternalId — условие авторизации, сужающее, кто может ассьюмить роль, и срывающее принуждение confused deputy." },
+    { label: "Чтобы временные credentials жили дольше дефолта", misconception: "Время жизни credential'а задаётся DurationSeconds и max session duration роли, а не ExternalId. ExternalId лишь добавляет условие, которое должен удовлетворить вызов AssumeRole." },
+    { label: "Потому что role ARN секретны, а ExternalId их прячет", misconception: "Role ARN не секретны — именно поэтому confused deputy и возможен. ExternalId работает ровно потому, что это значение, которым deputy управляет на каждого клиента, так что одного утёкшего ARN недостаточно, чтобы ассьюмить роль." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>IAM разрешается в фиксированном порядке: дефолтный deny, явный allow может дать, явный deny где угодно всегда побеждает. Эффективные права = объединение allow'ов, пересечённое с каждой boundary и SCP, минус явные deny. Conditions сужают statement'ы; предпочитай роли и короткоживущие STS-credentials долгоживущим ключам; останавливай confused deputy через ExternalId. Шифруй на масштабе envelope-ключами KMS (центральный ключ оборачивает per-object data-ключи, которые сам не экспортирует), береги key policy, чтобы не осиротить ключ, и ротируй credentials через Secrets Manager — Parameter Store для дешёвого статичного конфига.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-iam-deep-and-kms-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Сформулируй полное правило evaluation IAM, роль каждого типа политики и как считаются эффективные права.", a: "Каждый запрос стартует с неявного deny. Явный allow в любой применимой политике может перевернуть его в «разрешено». Типы политик комбинируются определённо: identity-based и resource-based образуют объединение (allow в любой достаточно в пределах одного аккаунта), а permissions boundaries и Service Control Policies пересекаются — запрос должен быть разрешён всеми применимыми категориями. Перекрывая всё, явный Deny в любом типе политики всегда побеждает и не перебивается никаким числом allow'ов. Identity-политики дают, что может principal; resource-политики задают, кто может трогать ресурс, и включают cross-account; permissions boundaries задают максимум, что principal вообще может иметь (ограничивают, не дают); SCP — общеорганизационные ограждения, ограничивающие каждый аккаунт и principal; session policies дополнительно сужают ассьюмленную сессию. Итого: эффективные права = (объединение allow'ов), пересечённое с каждой boundary и каждым SCP, минус любой явный deny. Взлом с wildcard-политикой случился потому, что ни boundary, ни SCP не сжали пересечение, так что у утёкшего ключа был бесконечный потолок." },
+    { q: "Объясни envelope-шифрование KMS от и до и единственную ошибку key policy, осиротяющую ключ.", a: "KMS держит customer-managed key внутри HSM, спроектированного так, чтобы никогда не экспортировать ключ в открытом виде. Чтобы зашифровать данные, ты вызываешь GenerateDataKey; KMS возвращает data key в двух формах — открытую копию и копию, зашифрованную под твоим KMS key. Ты шифруешь массив данных локально открытым data key (быстро, без лимита размера), затираешь открытый ключ из памяти и хранишь зашифрованный data key рядом с шифротекстом. Чтобы расшифровать, ты отправляешь в KMS только маленький зашифрованный data key, тот разворачивает его и отдаёт открытый data key ровно для этой операции; массив данных в KMS не ходит. Поэтому шифрование S3/EBS/RDS масштабируется: один центральный, аудируемый, ротируемый ключ оборачивает неограниченное число per-object data-ключей. Footgun — это key policy: она первичный, resource-based контроль доступа к ключу, и если она не даёт доступ root аккаунта или админ-principal'у, ты блокируешь всех навсегда; данные становятся невосстановимыми, и даже AWS Support не перекроет. Aliases дают стабильное имя сквозь ротацию, grants делегируют временное узкое использование, а ротация (опциональна, по умолчанию ежегодная и теперь настраиваемая для customer-ключей) добавляет новый backing-материал, сохраняя старые версии для чтения старых данных." },
+  ]}
+/>
+
+<Recap lang="ru">
+Права IAM решаются фиксированным порядком evaluation, а не тем, какая политика выглядит конкретнее. Каждый запрос начинается как неявный deny; явный allow в любой применимой политике может его дать; а явный deny где угодно — в identity-политике, resource-политике, permissions boundary или SCP — всегда побеждает и не перекрывается. Эффективные права — это объединение allow'ов, пересечённое с каждой применимой boundary и SCP, минус любой явный deny: boundaries и SCP ограничивают потолок, объединение allow'ов заполняет всё под ним, а deny — рубильник. Conditions (aws:SourceIp, aws:PrincipalOrgID, aws:SecureTransport, совпадения по тегам) превращают широкие statement'ы в настоящий least privilege, а роли, выдающие короткоживущие STS-credentials, должны вытеснить долгоживущие access-key'и повсюду — утёкший, неротируемый, wildcard-ключ из истории провалил сразу все три защиты. Cross-account-доступ — это роль, чья trust policy называет другой аккаунт, и confused deputy закрывается через ExternalId (или aws:SourceArn и aws:SourceAccount для сервисных principal'ов). Для данных envelope-шифрование KMS позволяет одному центральному ключу, который никогда не покидает свой HSM, оборачивать per-object data-ключи, так что шифрование масштабируется, ни разу не отправляя массив данных в KMS, — но key policy, пропустившая root аккаунта, осиротит ключ навсегда. Наконец, секреты живут в Secrets Manager, где Lambda-ротация ротирует credential'ы базы без простоя, или в более дешёвом Parameter Store SecureString для статичного, редко меняющегося конфига. Явный deny побеждает, boundaries и SCP ограничивают, conditions сужают, роли бьют ключи, ExternalId останавливает deputy, KMS оборачивает данные, а Secrets Manager держит их свежими.
+</Recap>

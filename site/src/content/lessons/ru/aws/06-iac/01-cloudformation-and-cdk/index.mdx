@@ -1,0 +1,265 @@
+---
+concepts:
+- cloudformation
+- aws-cdk
+- change-sets
+- drift-detection
+- constructs
+- SAA-C03:Design Resilient Architectures
+deepensInto: []
+estMin: 20
+lang: ru
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-cloudformation-and-cdk"
+sources:
+- https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-updating-stacks-changesets.html
+- https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/using-cfn-stack-drift.html
+- https://docs.aws.amazon.com/cdk/v2/guide/home.html
+spiral: []
+status: ready
+summary: 'CloudFormation — нативный AWS-IaC: template описывает ресурсы, stack — развёрнутый экземпляр, change sets показывают add/modify/replacement. CDK пишет инфраструктуру на настоящем языке и синтезирует её в CloudFormation — те же стеки, change sets и drift под капотом.'
+title: 'Инфраструктура как код в AWS: CloudFormation и CDK'
+track: "aws"
+unit: "06-iac"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+В 2 часа ночи дежурному инженеру нужно больше места на продакшен-инстансе RDS, и он увеличивает размер прямо в консоли — быстро, готово, спать. Через две недели запускается рутинный деплой, и CloudFormation, который всё ещё считает, что у базы старый размер и другая версия движка, вычисляет diff относительно *template*, а не относительно реальности. Одно из свойств, которое он хочет «исправить», требует пересоздания ресурса: change set тихо помечает базу как Replacement. Деплой выполняется, CloudFormation создаёт новый пустой инстанс, переключает соединение и удаляет старый. Разбор инцидента отследил потерю данных не к деплою, а к той правке в консоли в 2 ночи — к drift, который никто не обнаружил, — столкнувшейся со свойством, у которого update behavior равен Replacement. Инфраструктура как код должна предотвращать ровно это, и она предотвращает — но только если код является источником истины и никто не правит в обход него.
+</Hook>
+
+<Crux>CloudFormation — декларативный AWS-IaC: template ресурсов, stack — развёрнутый экземпляр, применяется как diff. CDK генерит его из кода.</Crux>
+
+<Explanation>
+
+## CloudFormation: декларативное ядро
+
+CloudFormation — нативный для AWS сервис «инфраструктура как код». Ты пишешь **template** — документ в YAML или JSON, — который описывает желаемое конечное состояние инфраструктуры. У template есть несколько верхнеуровневых секций: `Resources` (единственная обязательная — собственно ресурсы AWS, которые надо создать), `Parameters` (типизированные входы, которые ты передаёшь при деплое), `Mappings` (статические таблицы соответствий, например регион к AMI), `Conditions` (булевы значения, которые включают или нет ресурс или свойство) и `Outputs` (значения, которые стек экспортирует, например ID VPC, который импортирует другой стек). Ты описываешь, *что* хочешь; CloudFormation сам разбирается с порядком, зависимостями и вызовами API.
+
+**Stack** — это развёрнутый экземпляр template, работающая совокупность ресурсов, которые CloudFormation создал и теперь управляет ими как единым целым. Отношение точь-в-точь как у класса и объекта: один template может стоять за многими стеками (dev, staging, prod). И важнейшее: **CloudFormation управляет состоянием за тебя**. Нет файла состояния, который надо хранить, блокировать или повредить, — AWS отслеживает, какие реальные ресурсы принадлежат какому стеку, на своей стороне. Это и есть самое большое операционное отличие от сторонних IaC-инструментов.
+
+```yaml
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A bucket and a table, parameterized by environment.
+
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues: [dev, prod]
+    Default: dev
+
+Conditions:
+  IsProd: !Equals [!Ref Environment, prod]
+
+Resources:
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "myapp-assets-${Environment}"
+      VersioningConfiguration:
+        Status: !If [IsProd, Enabled, Suspended]
+
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      # Renaming a DynamoDB table requires REPLACEMENT — a new table, data gone.
+      TableName: !Sub "sessions-${Environment}"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: sessionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: sessionId
+          KeyType: HASH
+
+Outputs:
+  BucketName:
+    Value: !Ref AssetsBucket
+    Export:
+      Name: !Sub "${Environment}-assets-bucket"
+```
+
+Когда ты обновляешь стек, CloudFormation сравнивает новый template с текущим стеком и формирует **change set** — превью того, что именно произойдёт, до того как что-либо изменится. Change set классифицирует каждый ресурс как add, modify или remove, а для изменений сообщает **update behavior**: *No interruption* (ресурс обновляется на месте без простоя), *Some interruption* (обновляется на месте, но с кратким перебоем) или — опасный вариант — *Replacement* (CloudFormation создаёт новый ресурс, затем удаляет старый). Replacement зависит от свойства: некоторые свойства просто нельзя изменить на живом ресурсе, поэтому их изменение пересоздаёт его. Для базы данных или stateful-хранилища **Replacement может быть разрушительным — новый ресурс пуст, а старый удаляется**. Весь смысл change set в том, чтобы показать это слово *Replacement* до выполнения, а не после.
+
+CloudFormation также откатывается при сбое: если любой ресурс в обновлении падает, он пытается вернуть каждый ресурс в прежнее состояние. У этой страховки есть собственный печально известный режим отказа — `UPDATE_ROLLBACK_FAILED`, когда сам откат не может завершиться (часто из-за того, что ресурс изменили в обход), и стек заклинивает, пока ты вручную не починишь или не пропустишь проблемный ресурс.
+
+<FlowDiagram
+  label="Код CDK синтезируется в template CloudFormation, разворачивается как стек и провижинит ресурсы AWS"
+  hue="var(--d-systems)"
+  perRow={5}
+  nodes={[
+    { id: "code", label: "CDK app", sub: "конструкты TypeScript / Python" },
+    { id: "synth", label: "cdk synth", sub: "синтез" },
+    { id: "tpl", label: "CFN template", sub: "сгенерированный YAML/JSON" },
+    { id: "stack", label: "Stack", sub: "экземпляр + change set" },
+    { id: "aws", label: "ресурсы AWS", sub: "VPC, ECS, RDS…" },
+  ]}
+  edges={[
+    { from: "code", to: "synth", label: "сборка" },
+    { from: "synth", to: "tpl", label: "выдаёт" },
+    { from: "tpl", to: "stack", label: "cdk deploy" },
+    { from: "stack", to: "aws", label: "провижинит" },
+  ]}
+  caption="CDK стоит поверх CloudFormation: твой код синтезируется в template, который CloudFormation разворачивает как стек — поэтому ты по-прежнему получаешь стеки, change sets и drift detection под капотом."
+/>
+
+## Drift: когда реальность перестаёт совпадать с template
+
+У той правки в консоли в 2 ночи из вступления есть имя: **drift**. CloudFormation определяет drift как расхождение *фактической* конфигурации стека с *ожидаемой*, записанной в template. Любое изменение вне CloudFormation — через консоль, CLI или другой инструмент, что часто называют ClickOps, — может его внести. **Drift detection** сравнивает живые значения свойств каждого поддерживаемого ресурса с template и сообщает статус: `IN_SYNC`, когда они совпадают, `MODIFIED`, когда значение свойства отличается, `DELETED`, когда ресурс удалили в обход, и `NOT_CHECKED` для типов ресурсов, не поддерживающих drift detection. Стек в статусе `DRIFTED`, если дрейфнул хотя бы один ресурс.
+
+Drift не просто косметика. Как показало вступление, следующий деплой делает diff относительно картины мира template, поэтому изменение в обход может быть молча откачено — или, хуже, может столкнуться со свойством Replacement и уничтожить данные. Зрелые команды гоняют drift detection по расписанию и считают любой `DRIFTED`-стек инцидентом, потому что это значит, что код больше не источник истины. Дисциплина, делающая IaC ценным, — это *не править в обход него*; drift detection — сигнализация, которая сообщает, что кто-то это сделал.
+
+Для крупных систем template разбивают: **nested stacks** (родительский стек, чьи ресурсы сами являются дочерними стеками) и **cross-stack references** (`Outputs` одного стека экспортируются и импортируются другим через `Fn::ImportValue`) позволяют собирать инфраструктуру без одного неуправляемого файла на 3000 строк. Учти один острый угол: drift detection на родительском стеке *не* рекурсирует во вложенные — drift на каждый nested stack ты определяешь напрямую.
+
+## CDK: настоящий язык, компилирующийся в CloudFormation
+
+Писать YAML руками быстро становится больно: нет циклов, нет настоящих условий, нет типов, и интент из пяти ресурсов раздувается в сотни строк. **AWS Cloud Development Kit (CDK)** — это ответ: ты описываешь инфраструктуру на языке общего назначения (TypeScript, Python, Java, C#, Go), используя **constructs** — переиспользуемые строительные блоки. Конструкты бывают трёх уровней: **L1** (классы `Cfn*`) — голые соответствия один-к-одному ресурсам CloudFormation; **L2** оборачивают их разумными, безопасными умолчаниями и хелперами (`s3.Bucket`, который сам настраивает шифрование и removal policy); **L3** — это *patterns*, которые собирают много ресурсов в один мнениевый блок (`ApplicationLoadBalancedFargateService`, который поднимает VPC, кластер, балансировщик и сервис разом).
+
+Ключевое озарение — в механизме: `cdk synth` **синтезирует** твой код в template CloudFormation, а `cdk deploy` передаёт этот template в CloudFormation для провижининга. **CDK — это генератор более высокого уровня поверх CloudFormation, а не его замена.** Ты по-прежнему получаешь стеки, change sets, откат и drift detection — потому что фактически запускается всё тот же стек CloudFormation. Несколько десятков строк CDK рутинно выдают template на 500+ строк и 50+ ресурсов.
+
+```typescript
+import { Stack, StackProps, RemovalPolicy } from "aws-cdk-lib";
+import { Construct } from "constructs";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+
+export class AppStack extends Stack {
+  constructor(scope: Construct, id: string, props?: StackProps) {
+    super(scope, id, props);
+
+    const isProd = id.includes("prod");
+
+    // L2 construct: sensible, secure defaults (encryption on by default).
+    new s3.Bucket(this, "AssetsBucket", {
+      versioned: isProd,                      // a real boolean, not a CFN Condition
+      removalPolicy: isProd
+        ? RemovalPolicy.RETAIN                // protect prod data on stack delete
+        : RemovalPolicy.DESTROY,
+    });
+
+    new dynamodb.Table(this, "SessionsTable", {
+      partitionKey: { name: "sessionId", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+  }
+}
+// `cdk synth` turns this into the CloudFormation template above (and more);
+// `cdk deploy` runs it through CloudFormation as a stack.
+```
+
+<Inset kind="why" lang="ru">
+Почему «читай вывод synth» всплывает снова и снова? Потому что удобство CDK — это и его риск: конструкт L2 или L3 может тихо создать больше, чем ты просил, — лишние IAM-политики, NAT gateway с почасовой оплатой, log group с бесконечным хранением. Код CDK читается как пять строк интента, но развёрнутая реальность — это то, что говорит сгенерированный template, и именно его выполняет CloudFormation. `cdk synth` и `cdk diff` — это то, как ты держишь код и реальность честными: ты ревьюишь выданный CloudFormation, а не только TypeScript, ровно так же, как читал бы вывод компилятора, когда на кону пересоздание продакшен-ресурса.
+</Inset>
+
+Трейдофф реален. CDK даёт тебе циклы, условия, проверку типов, юнит-тесты и переиспользуемые абстракции — весь инструментарий языка программирования, применённый к инфраструктуре. Стоит это шага сборки, сгенерированных template, которые бывают большими и плохо читаемыми, и обязанности понимать выдаваемый CloudFormation. Голый CloudFormation — противоположность: более многословный и менее переиспользуемый, зато абсолютно прозрачный — что написал, то и развернётся, без слоя синтеза, о котором надо рассуждать.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Измерение</th>
+        <th class="border border-border px-3 py-2 text-left">CloudFormation (YAML/JSON)</th>
+        <th class="border border-border px-3 py-2 text-left">CDK (TypeScript/Python…)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Модель написания</td>
+        <td class="border border-border px-3 py-2">Декларативный template, что написал — то и развернётся</td>
+        <td class="border border-border px-3 py-2">Императивный код, синтезирующий template</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Абстракция / переиспользование</td>
+        <td class="border border-border px-3 py-2">Низкое — копипаст, nested stacks, без настоящих циклов</td>
+        <td class="border border-border px-3 py-2">Высокое — циклы, условия, типы, конструкты L2/L3</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Шаг сборки</td>
+        <td class="border border-border px-3 py-2">Нет — деплоишь файл напрямую</td>
+        <td class="border border-border px-3 py-2">Нужен — cdk synth компилирует в CFN</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Прозрачность</td>
+        <td class="border border-border px-3 py-2">Полная — template и есть артефакт</td>
+        <td class="border border-border px-3 py-2">Косвенная — надо читать вывод synth, чтобы знать, что развернётся</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Движок под капотом</td>
+        <td class="border border-border px-3 py-2">CloudFormation: стеки, change sets, drift, откат</td>
+        <td class="border border-border px-3 py-2">Тот же — CDK деплоит через CloudFormation</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="01-cloudformation-and-cdk-tradeoff-1"
+  lessonSlug="01-cloudformation-and-cdk"
+  lang="ru"
+  prompt="Продуктовая команда из app-разработчиков (сильны в TypeScript) должна поднять воспроизводимую инфраструктуру по средам — VPC, ECS Fargate-сервис, RDS, балансировщик — для dev/staging/prod, с ревью в pull request, одной и той же формой, продублированной трижды. Выбери подход."
+  options={[
+    { name: "AWS CDK на TypeScript", summary: "Конструкты, синтезируемые в CloudFormation.", correct: true, justification: "Лучший выбор. Команда уже пишет на TypeScript, инфраструктура многоресурсная и дублируется по трём средам, и им нужно ревью в PR — ровно там, где CDK блестит. Они описывают стек один раз как класс, инстанцируют его на каждую среду циклом, опираются на конструкты L2/L3 (например, ApplicationLoadBalancedFargateService), чтобы избежать сотен строк обвязки, и получают проверку типов и юнит-тесты на инфраструктуру. cdk synth всё равно выдаёт template CloudFormation, поэтому стеки, change sets и drift detection остаются — их просто генерируют из кода, который команда и так умеет писать." },
+    { name: "CloudFormation YAML руками", summary: "Чистый декларатив, без шага сборки.", justification: "Рабочий, но плохо подходит здесь. Три почти одинаковые среды означают копипаст или борьбу с nested stacks и параметрами, без циклов и без проверки типов — ровно та многословность, которую CDK убирает. YAML уместен, когда нужна полная прозрачность, крошечный стек или команда, не пишущая app-код; для многоресурсной, многосредовой, бегло пишущей на TypeScript команды это больше рутины при меньшей безопасности. Выгода прозрачности реальна, но не перевешивает стоимость дублирования на таком масштабе." },
+    { name: "Накликать в консоли (ClickOps)", summary: "Быстро, наглядно, без кода.", justification: "Неверно для чего угодно воспроизводимого. Консоль годится для разведки, но не оставляет ревьюируемого артефакта, не может быть продублирована по трём средам без ручной ошибки и — критически — каждое изменение в консоли и есть тот drift, который ломает следующий IaC-деплой. Это антипаттерн, о котором весь урок: именно так правка в 2 ночи уничтожила базу. Используй её, чтобы изучить сервис, никогда — чтобы провижинить продакшен." },
+    { name: "CDK, но никогда не ревьюить вывод synth", summary: "Слепо доверять конструктам.", justification: "Соблазнительный срез угла, реальная ловушка. Конструкты L2/L3 в CDK создают больше, чем намекают эти несколько строк, — лишние IAM, NAT gateway, политики хранения, — а развёртывается фактически сгенерированный CloudFormation, а не тот TypeScript, что ты пробежал глазами. Пропуск ревью cdk synth/cdk diff — это как команды получают сюрприз-счета и сюрприз-Replacement. Используй CDK, но читай выданный template как вывод компилятора перед деплоем в продакшен." },
+  ]}
+/>
+
+<Quiz
+  id="01-cloudformation-and-cdk-quiz-1"
+  lessonSlug="01-cloudformation-and-cdk"
+  lang="ru"
+  question="Коллега запустил cdk deploy и спрашивает, где хранится файл состояния в стиле Terraform, чтобы его залочить. Какой ответ верный?"
+  choices={[
+    { label: "Управлять файлом состояния не нужно — CDK деплоит через CloudFormation, который отслеживает состояние стека на стороне AWS", correct: true },
+    { label: "Он в локальном файле .cdk/state.json, который надо коммитить в git", misconception: "У CDK нет локального файла состояния. Поскольку он синтезируется в CloudFormation и деплоит стек, AWS управляет соответствием ресурсов стекам на своей стороне — коммитить или лочить нечего." },
+    { label: "CDK хранит состояние в S3-бакете, который ты настраиваешь как backend", misconception: "Это модель Terraform (удалённый backend в S3 плюс таблица-лок в DynamoDB). CloudFormation, а значит и CDK, управляет состоянием за тебя — никакого backend-бакета или таблицы-лока настраивать не надо." },
+    { label: "Состояние лежит в директории cdk.out после synth", misconception: "cdk.out хранит синтезированный template и ассеты, а не состояние развёртывания. Авторитетная запись того, что развёрнуто, — это стек CloudFormation на AWS, который CDK обновляет через change sets." },
+  ]}
+/>
+
+<Quiz
+  id="01-cloudformation-and-cdk-quiz-2"
+  lessonSlug="01-cloudformation-and-cdk"
+  lang="ru"
+  question="Change set для обновления стека помечает твою продакшен-базу как 'Replacement: True'. Ты всё равно его выполняешь. Что, скорее всего, произойдёт?"
+  choices={[
+    { label: "CloudFormation создаёт новый ресурс базы и удаляет старый — новый инстанс пуст, поэтому старые данные потеряны, если только свойство не допускало обновление на месте", correct: true },
+    { label: "Ничего — Replacement просто означает обновление ресурса на месте с кратким простоем", misconception: "Это описывает 'No interruption' или 'Some interruption'. Replacement конкретно означает, что CloudFormation создаёт новый ресурс и удаляет старый; для stateful-хранилища это разрушительно — ровно поэтому change set помечает это до выполнения." },
+    { label: "CloudFormation откажется выполнять, потому что Replacement всегда заблокирован", misconception: "CloudFormation не блокирует Replacement — он выводит его в change set, чтобы ты решил. Если ты всё равно выполняешь, он пересоздаёт ресурс. Предотвращение случайного удаления — на тебе (например, DeletionPolicy: Retain / RemovalPolicy.RETAIN)." },
+    { label: "Это запустит drift detection, чтобы безопасно согласовать изменение", misconception: "Drift detection сравнивает живые ресурсы с template; он не делает Replacement безопасным. Выполнение change set с Replacement всё равно пересоздаёт ресурс независимо от статуса drift." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CloudFormation — нативный для AWS декларативный IaC: template (Resources, Parameters, Mappings, Conditions, Outputs) описывает желаемое состояние, stack — развёрнутый экземпляр, AWS управляет состоянием за тебя, а change set показывает добавления/изменения/Replacement до выполнения — Replacement пересоздаёт ресурс и может уничтожить данные. Drift detection ловит изменения в обход (ClickOps), которые рассинхронизируют template с реальностью и ломают следующий деплой. CDK описывает инфраструктуру на настоящем языке через конструкты L1/L2/L3, затем cdk synth генерирует template CloudFormation, а cdk deploy его запускает — так что CDK — генератор поверх CFN с теми же стеками, change sets и drift под капотом. Бери CFN для прозрачной декларативной нативной для AWS инфраструктуры; бери CDK для программной абстракции, когда команда пишет app-код, — и всегда читай вывод synth.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-cloudformation-and-cdk-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни связь между template CloudFormation, стеком, change set и drift — и где сюда вписывается CDK.", a: "Template — декларативный YAML/JSON-документ желаемого состояния с секциями Resources (обязательная), Parameters, Mappings, Conditions и Outputs. Stack — развёрнутый экземпляр template, работающие ресурсы, которые CloudFormation создал и управляет ими как единым целым (один template может стоять за стеками dev/staging/prod), и AWS отслеживает это состояние на своей стороне, поэтому файла состояния нет. При обновлении CloudFormation делает diff нового template с текущим стеком и формирует change set, который показывает каждый ресурс как add, modify или remove и помечает изменения как No interruption, Some interruption или Replacement; Replacement создаёт новый ресурс и удаляет старый, что разрушительно для stateful-хранилищ. Drift — это когда фактическая конфигурация стека отличается от template, потому что кто-то изменил ресурс в обход (ClickOps); drift detection сообщает IN_SYNC, MODIFIED, DELETED или NOT_CHECKED по каждому ресурсу, и дрейфнувший стек значит, что код больше не источник истины, а следующий деплой может откатить или уничтожить. CDK стоит сверху: ты пишешь конструкты на настоящем языке, cdk synth генерирует template CloudFormation, cdk deploy его запускает — так что стеки, change sets, откат и drift остаются под капотом." },
+    { q: "Что такое конструкты L1/L2/L3 и чем ты жертвуешь, выбирая CDK вместо CloudFormation руками?", a: "Конструкты — переиспользуемые строительные блоки CDK трёх уровней: L1 (классы Cfn*) — голые соответствия один-к-одному ресурсам CloudFormation; L2 оборачивают их разумными, безопасными умолчаниями и хелперами (например, s3.Bucket, задающий шифрование и removal policy); L3 — patterns, собирающие много ресурсов в один мнениевый блок (например, ApplicationLoadBalancedFargateService). Выбор CDK покупает циклы, условия, проверку типов, юнит-тесты и переиспользуемые абстракции, так что несколько десятков строк могут выдать template на 500+ строк и 50+ ресурсов. Цена: шаг сборки, сгенерированные template, которые большие и хуже читаются, и обязанность читать вывод synth — потому что конструкты L2/L3 могут создать больше, чем ты просил (лишние IAM, NAT gateway, хранение), а развёртывается фактически выданный CloudFormation, а не TypeScript. CloudFormation руками — противоположный трейдофф: многословно и мало переиспользования, зато полностью прозрачно — что написал, то и развернётся. Итог: CFN для прозрачной нативной для AWS декларативной инфраструктуры; CDK для программной абстракции, когда команда пишет app-код, с ревью cdk synth/cdk diff как страховкой." },
+  ]}
+/>
+
+<Recap lang="ru">
+У инфраструктуры как кода в AWS есть нативный путь с двумя лицами. CloudFormation — декларативное ядро: template — Resources, Parameters, Mappings, Conditions, Outputs — описывает желаемое конечное состояние, stack — развёрнутый экземпляр этого template, и CloudFormation управляет состоянием за тебя без файла состояния, который надо лочить или портить. При обновлении он вычисляет change set, показывающий каждое добавление, изменение и удаление, помечая изменения как No interruption, Some interruption или Replacement; Replacement пересоздаёт ресурс и удаляет старый, что для базы данных или stateful-хранилища уничтожает данные, — поэтому change set и существует, чтобы показать это слово до выполнения. Drift detection ловит изменения в обход, через ClickOps, которые рассинхронизируют template с реальностью — сообщая IN_SYNC, MODIFIED, DELETED или NOT_CHECKED, — потому что дрейфнувший стек значит, что код больше не источник истины, а следующий деплой может молча откатить или уничтожить. CDK — генератор поверх: ты описываешь инфраструктуру на настоящем языке через конструкты L1 (голые), L2 (разумные умолчания) и L3 (patterns), затем cdk synth выдаёт template CloudFormation, а cdk deploy его запускает — так что стеки, change sets, откат и drift остаются под капотом, а ты получаешь циклы, типы и переиспользование ценой шага сборки и обязанности читать вывод synth. Выбирай CloudFormation для прозрачной нативной для AWS декларативной инфраструктуры; выбирай CDK для программной абстракции, когда команда уже пишет прикладной код, — и в обоих случаях никогда не правь в обход кода.
+</Recap>
