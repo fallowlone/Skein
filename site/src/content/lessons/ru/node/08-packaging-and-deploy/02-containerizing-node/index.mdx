@@ -1,0 +1,263 @@
+---
+concepts:
+- multi-stage-build
+- pid-1-signals
+- graceful-shutdown
+- slim-base-image
+- non-root-user
+- dockerignore-and-healthcheck
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: 02-containerizing-node
+sources:
+- https://docs.docker.com/guides/nodejs/containerize/
+- https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md
+- https://docs.docker.com/build/building/multi-stage/
+spiral: []
+status: ready
+summary: 'Процесс Node как PID 1 по умолчанию игнорирует SIGTERM, поэтому деплои висят
+  весь grace-период и жёстко убиваются. Запускай node в exec-форме за init, собирай
+  multi-stage тонкий non-root образ, добавь healthcheck и .dockerignore.'
+title: 'Контейнеризация Node: PID 1, сигналы и тонкие образы'
+track: node
+unit: 08-packaging-and-deploy
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Каждый деплой сервиса оформления заказов занимал ровно на тридцать секунд дольше, чем должен, и тонкая прослойка запросов отдавала 502 при каждом релизе. Команда винила Kubernetes. Настоящий виновник — одна строка в Dockerfile: `CMD npm start`. `npm` бежал как PID 1, форкал `node` дочерним процессом, и когда выкатка слала `SIGTERM`, npm — без обработчика сигнала и без проброса — давал ему испариться. Node так и не слышал команду на остановку, продолжал держать открытые соединения, и Kubernetes ждал весь `terminationGracePeriodSeconds`, прежде чем `SIGKILL` рвал под прямо посреди запроса. Фикс — четыре символа JSON: `["node","server.js"]`. Образ тихо воевал с оркестратором на каждом релизе.
+</Hook>
+
+<Crux>Контейнер с Node как PID 1 по умолчанию игнорирует SIGTERM — нужны exec-form CMD, init и тонкий non-root образ.</Crux>
+
+<Explanation>
+
+## PID 1 особенный, а Node под него не рассчитан
+
+Внутри Linux-контейнера первый запущенный процесс — это PID 1, и ядро относится к PID 1 не так, как к любому другому процессу. Два правила бьют именно по Node. Первое: **у PID 1 нет обработчиков сигналов по умолчанию** — для обычного процесса ядро ставит действие по умолчанию для `SIGTERM` (завершиться), но для PID 1 действия по умолчанию *нет*, так что `SIGTERM` без явного обработчика просто игнорируется. Второе: **PID 1 обязан реапить зомби**: когда дочерний процесс завершается, родитель должен сделать `wait()`, а осиротевшие потомки переусыновляются к PID 1. Если PID 1 не реапит, мёртвые потомки копятся в таблице процессов как зомби.
+
+Node *ставит* свой путь слушателя `SIGTERM`, только если ты сам его добавишь, — но смертельный вариант это запуск Node косвенно. `CMD npm start` делает PID 1 именно **`npm`**; npm порождает `node` дочерним и не пробрасывает ему сигналы. Так что `SIGTERM` оркестратора попадает в npm (который игнорирует его как PID 1) и никогда не доходит до приложения. Контейнер будто зависает на остановке.
+
+```dockerfile
+# ❌ npm — это PID 1; SIGTERM умирает в npm, node его не слышит
+CMD npm start
+
+# ❌ shell-форма: /bin/sh -c "node server.js" → PID 1 это sh, проброса тоже нет
+CMD node server.js
+
+# ✅ exec-форма: PID 1 это node, твой in-app обработчик SIGTERM сработает
+CMD ["node", "server.js"]
+```
+
+Shell-форма `CMD node server.js` — та же ловушка в другой шляпе: Docker оборачивает её как `/bin/sh -c "node server.js"`, так что PID 1 становится `sh`, а `node` — его дочерним; сигналы застревают в шелле. Всегда используй **exec-форму** (JSON-массив) для сервера, чтобы `node` был PID 1 напрямую.
+
+## Обрабатывай SIGTERM или ставь init впереди
+
+Есть два взаимодополняющих фикса, и production-Node обычно хочет оба.
+
+Первый — **запускать node напрямую (exec-форма) и обрабатывать `SIGTERM` в приложении** ради graceful shutdown: перестать принимать новые соединения, дотянуть запросы в полёте, закрыть пул БД, затем выйти. Именно это превращает жёсткий kill в чистый дренаж.
+
+```js
+const server = app.listen(3000);
+
+process.on("SIGTERM", () => {
+  // прекращаем брать новую работу, дотягиваем открытое, затем выходим чисто
+  server.close(() => {
+    pool.end().then(() => process.exit(0));
+  });
+});
+```
+
+Второй — **запускать init как PID 1**, чтобы кто-то реапил зомби и пробрасывал сигналы, даже если твой код забудет. У Docker такой есть: `docker run --init` подсовывает `tini` как PID 1, который пробрасывает `SIGTERM` дочернему node и реапит сирот. Можно и запечь `tini`/`dumb-init` в образ как `ENTRYPOINT`. Init важнее всего, когда твой процесс порождает потомков (сборочный инструмент, `child_process`, скрипт-обёртка) — без него эти сироты становятся зомби.
+
+<Inset kind="why" lang="ru">
+Почему бы не полагаться всегда на init и не выкинуть in-app обработчик? Потому что `tini` пробрасывает сигнал — он не дренажит твои соединения за тебя. Без слушателя `SIGTERM` node получит проброшенный сигнал и выйдет немедленно, уронив запросы в полёте. Init гарантирует, что node *получит* сигнал; твой обработчик решает, что значит graceful. Init — для доставки и реапа, обработчик приложения — для дренажа: они решают разные половины.
+</Inset>
+
+## Multi-stage сборка и тонкая non-root база
+
+Одностадийный образ запекает твой компилятор, dev-зависимости и весь тулчейн в то, что ты отгружаешь. **Multi-stage сборка** разделяет это: стадия `builder` запускает `npm ci` и сборку, а тонкая runtime-стадия копирует только нужные ей артефакты.
+
+```dockerfile
+# ---- builder ----
+FROM node:22 AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci                      # полные зависимости для сборки
+COPY . .
+RUN npm run build               # → /app/dist
+
+# ---- runtime ----
+FROM node:22-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --omit=dev           # только прод-зависимости
+COPY --from=builder /app/dist ./dist
+USER node                       # официальный образ несёт non-root пользователя 'node'
+CMD ["node", "dist/server.js"]
+```
+
+Две детали окупают себя. **Копируй `package*.json` и запускай `npm ci` *до* копирования исходников.** Docker кэширует каждый слой по его входам; если входы слоя зависимостей (lock-файл) не меняются, весь слой `npm ci` переиспользуется из кэша, и медленный install пропускается — только изменение исходников инвалидирует дешёвый `COPY . .` под ним. (Кэширование слоёв детально разбирается в треке про деплой; здесь Node-специфичный пойнт — *lock-файл раньше исходников*.) И **выбирай тонкую базу**: полный образ `node` — примерно **1 ГБ**, тогда как `node:slim` это несколько сотен МБ, а **distroless** runtime для Node — это **десятки МБ**: меньший образ быстрее тянется и открывает куда меньшую CVE-поверхность, потому что в нём нет шелла или пакетного менеджера для атаки.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Ловушка</th>
+        <th class="border border-border px-3 py-2 text-left">Симптом в проде</th>
+        <th class="border border-border px-3 py-2 text-left">Фикс</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>CMD npm start</code> как PID 1</td>
+        <td class="border border-border px-3 py-2">SIGTERM умирает в npm; деплои висят ~30с, затем SIGKILL роняет запросы</td>
+        <td class="border border-border px-3 py-2">Exec-форма <code>CMD ["node","server.js"]</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Shell-форма <code>CMD node server.js</code></td>
+        <td class="border border-border px-3 py-2"><code>sh</code> это PID 1, глотает сигнал, копятся зомби</td>
+        <td class="border border-border px-3 py-2">Exec-форма CMD и/или <code>--init</code> / tini</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Бежит от root</td>
+        <td class="border border-border px-3 py-2">RCE в коде владеет контейнером; шире радиус поражения</td>
+        <td class="border border-border px-3 py-2"><code>USER node</code> (non-root)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Одностадийный образ</td>
+        <td class="border border-border px-3 py-2">Образ ~1 ГБ, медленные pull, огромная CVE-поверхность, отгружены dev-зависимости</td>
+        <td class="border border-border px-3 py-2">Multi-stage + slim/distroless runtime</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Нет healthcheck, <code>.env</code> в образе</td>
+        <td class="border border-border px-3 py-2">Мёртвые поды остаются в ротации; секреты текут в слои образа</td>
+        <td class="border border-border px-3 py-2">HEALTHCHECK / probes + <code>.dockerignore</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Харденинг: non-root, healthcheck и .dockerignore
+
+Три дешёвых хода отделяют игрушечный образ от production. **Беги от non-root**: официальный образ `node` уже несёт непривилегированного пользователя `node`, так что одна строка `USER node` означает, что баг с исполнением кода не сможет тривиально завладеть контейнером. **Добавь healthcheck**, чтобы оркестратор знал, когда процесс реально обслуживает: Docker `HEALTHCHECK`, дёргающий роут `/health`, или в Kubernetes `livenessProbe`/`readinessProbe`, бьющие в `/health` и `/ready`; без него зависший процесс остаётся в ротации балансировщика. **Добавь `.dockerignore`** со списком `node_modules`, `.git` и `.env`: он держит build-контекст маленьким (быстрее сборки) и, что критично, не даёт закоммиченному `.env` попасть в слой образа, где секрет живёт вечно и достаётся любым, кто запуллит образ.
+
+```dockerfile
+# .dockerignore
+node_modules
+.git
+.env
+*.log
+```
+
+В Kubernetes числа упираются в PID 1: при удалении пода kubelet шлёт `SIGTERM`, ждёт `terminationGracePeriodSeconds` (**по умолчанию 30с**) и только потом шлёт `SIGKILL`. Если node не получает `SIGTERM` (npm/shell как PID 1) или не имеет обработчика, каждый деплой сжигает все 30 секунд и затем жёстко убивает работу в полёте — ровно медленная и теряющая запросы выкатка из хука.
+
+<TradeoffMatrix
+  id="08-container-tradeoff-1"
+  lessonSlug="02-containerizing-node"
+  lang="ru"
+  prompt="Ты хочешь, чтобы контейнеризованный Node-сервис останавливался graceful на деплое и никогда не копил зомби-потомков. Какая PID-1 стратегия — production-дефолт?"
+  options={[
+    { name: "Exec-форма CMD с node напрямую, in-app обработчик SIGTERM И init (tini / --init) как PID 1", summary: "Init + обработчик.", correct: true, justification: "Это сеньорский дефолт. Init (tini через --init или запечённый как ENTRYPOINT) гарантирует, что node получит проброшенный SIGTERM и реапнет осиротевших потомков, а in-app обработчик дренажит запросы в полёте и закрывает пул БД перед выходом. Init отвечает за доставку и реап; приложение — за graceful-дренаж. Эти двое решают разные половины проблемы, так что вместе ты получаешь и корректность сигналов, и чистую остановку." },
+    { name: "Exec-форма CMD с node как PID 1 и in-app обработчиком SIGTERM, без init", summary: "Только обработчик.", justification: "Лучше плохих вариантов и норм для одно-процессного сервера: node — это PID 1, слышит SIGTERM и дренажит. Но node-как-PID-1 всё равно не реапит осиротевших внуков, так что если процесс порождает потомков (сборочные инструменты, child_process), зомби могут копиться. Добавь init, чтобы покрыть реап, — поэтому init + обработчик безопаснее как дефолт." },
+    { name: "Shell-форма CMD (CMD node server.js), чтобы шелл управлял процессом", summary: "Shell как PID 1.", justification: "Это ловушка, а не фикс. Docker оборачивает её как /bin/sh -c 'node server.js', так что PID 1 становится sh, а node — его дочерним; sh не пробрасывает SIGTERM, поэтому node не слышит остановку, и оркестратор жёстко убивает после grace-периода. Шелл добавляет слой, который глотает сигналы, — ровно то, чего надо избегать." },
+    { name: "CMD npm start, чтобы npm супервизил node", summary: "npm как PID 1.", justification: "Классическая ловушка проброса сигналов. npm бежит как PID 1, игнорирует SIGTERM (нет действия по умолчанию для PID 1) и не пробрасывает его дочернему node, который породил. Каждый деплой висит весь terminationGracePeriodSeconds, затем SIGKILL роняет запросы. Никогда не используй npm start как CMD контейнера." },
+  ]}
+/>
+
+<Quiz
+  id="08-container-quiz-1"
+  lessonSlug="02-containerizing-node"
+  lang="ru"
+  question="Почему CMD npm start заставляет деплои висеть, а затем ронять запросы в полёте?"
+  choices={[
+    { label: "npm бежит как PID 1, у которого нет обработчика SIGTERM по умолчанию, и не пробрасывает сигнал дочернему node, который породил, так что node не останавливается, и оркестратор делает ему SIGKILL после grace-периода", correct: true },
+    { label: "npm start дольше стартует, чем запуск node напрямую", misconception: "Время старта ни при чём — проблема в остановке. npm как PID 1 игнорирует SIGTERM и не пробрасывает его, так что node даже не начинает останавливаться; зависание — это оркестратор, выжидающий grace-период перед SIGKILL." },
+    { label: "npm держит TCP-соединения открытыми вместо node", misconception: "npm не держит твои сокеты — их держит node. Соединения остаются открытыми, потому что node никогда не получает SIGTERM, чтобы начать их дренажить; npm проглотил его как PID 1." },
+    { label: "npm start запускает шаг сборки при каждом старте контейнера", misconception: "npm start запускает твой start-скрипт, а не сборку. Сбой — в обработке сигналов на PID 1, а не в лишней работе на старте." },
+  ]}
+/>
+
+<Quiz
+  id="08-container-quiz-2"
+  lessonSlug="02-containerizing-node"
+  lang="ru"
+  question="Почему предпочесть exec-форму CMD (JSON-массив, node + server.js) с USER node вместо shell-формы CMD от root?"
+  choices={[
+    { label: "Exec-форма делает node PID 1, так что он напрямую получает SIGTERM (нет шелла, чтобы его проглотить), а USER node сбрасывает привилегии, так что баг с исполнением кода не завладеет контейнером тривиально", correct: true },
+    { label: "Exec-форма запускает процесс быстрее в рантайме", misconception: "Заметной разницы в скорости рантайма нет. Выигрыш в корректности и безопасности: node становится PID 1 и реально получает сигналы, а non-root пользователь сужает радиус поражения при компрометации." },
+    { label: "Shell-форма не может передавать переменные окружения", misconception: "Shell-форма прекрасно читает env-переменные — не в этом проблема. Проблема в том, что шелл становится PID 1 и глотает SIGTERM, а запуск от root расширяет радиус поражения." },
+    { label: "USER node обязателен, чтобы образ вообще собрался", misconception: "Образы собираются и бегут от root по умолчанию; в этом и опасность. USER node — это выбор харденинга, а не требование сборки; он ограничивает, что может сделать скомпрометированный процесс." },
+  ]}
+/>
+
+<DragOrder
+  id="08-container-drag-1"
+  lessonSlug="02-containerizing-node"
+  lang="ru"
+  prompt="Расставь строки харденной multi-stage runtime-стадии так, чтобы кэширование зависимостей работало, а образ был безопасным:"
+  items={[
+    { id: "a", label: "FROM node:22-slim AS runtime  (маленькая, тонкая база)" },
+    { id: "b", label: "ENV NODE_ENV=production" },
+    { id: "c", label: "COPY package*.json ./  потом  RUN npm ci --omit=dev  (зависимости до исходников → кэшируемый слой)" },
+    { id: "d", label: "COPY --from=builder /app/dist ./dist  (только собранные артефакты)" },
+    { id: "e", label: "USER node  (сброс на non-root пользователя)" },
+    { id: "f", label: "CMD [\"node\",\"dist/server.js\"]  (exec-форма, node это PID 1)" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Как SIGTERM идёт от оркестратора к graceful-выходу Node"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "o", label: "оркестратор", sub: "шлёт SIGTERM" },
+    { id: "i", label: "init / PID 1", sub: "tini, пробрасывает" },
+    { id: "n", label: "обработчик node", sub: "дренаж + закрытие" },
+    { id: "x", label: "exit 0", sub: "до конца grace" },
+  ]}
+  edges={[
+    { from: "o", to: "i", label: "SIGTERM" },
+    { from: "i", to: "n", label: "проброс" },
+    { from: "n", to: "x", label: "graceful" },
+  ]}
+  caption="На деплое оркестратор шлёт SIGTERM и запускает часы terminationGracePeriodSeconds (по умолчанию 30с). Init как PID 1 пробрасывает сигнал node, чей обработчик перестаёт принимать соединения, дренажит запросы в полёте, закрывает пулы и выходит с 0 — задолго до дедлайна. Пропусти init или обработчик (npm/shell как PID 1) — и SIGTERM теряется, так что часы истекают и SIGKILL роняет живые запросы."
+/>
+
+<KeyTakeaway>Запускай node в exec-форме, чтобы он был PID 1 и получал `SIGTERM`; никогда не `npm start` и не shell-форма. Добавь init для проброса и реапа, обрабатывай `SIGTERM` ради дренажа и отгружай multi-stage non-root образ.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="08-container-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что особенного в PID 1 в контейнере и почему именно из-за этого CMD npm start ломает graceful shutdown?", a: "Первый процесс в контейнере — это PID 1, и ядро Linux относится к нему по-особому двумя способами: у PID 1 НЕТ обработчиков сигналов по умолчанию (у обычного процесса есть установленное ядром действие по умолчанию для SIGTERM, но у PID 1 его нет, так что необработанный SIGTERM просто игнорируется), и PID 1 отвечает за реап зомби-потомков. CMD npm start делает PID 1 именно npm: у npm нет обработчика SIGTERM, так что он игнорирует сигнал, и он не пробрасывает сигналы процессу node, который породил дочерним. Так что когда оркестратор шлёт SIGTERM на деплое, тот умирает в npm и node его не слышит — node продолжает держать открытые соединения, kubelet выжидает terminationGracePeriodSeconds (по умолчанию 30с), затем шлёт SIGKILL, который жёстко завершает процесс посреди запроса и роняет работу в полёте. Фиксы: запускать node напрямую в exec-форме (CMD [\"node\",\"server.js\"]), чтобы node был PID 1 и получал сигнал, добавить in-app обработчик SIGTERM для graceful-дренажа и/или запускать init (--init / tini) как PID 1, чтобы пробрасывать сигналы и реапить зомби." },
+    { q: "Как multi-stage Dockerfile уменьшает образ Node и его CVE-поверхность и почему npm ci должен идти до COPY исходников?", a: "Multi-stage сборка использует жирную builder-стадию (полная база node, npm ci со всеми зависимостями, npm run build), а затем тонкую runtime-стадию, которая FROM-копирует только нужные ей артефакты (--from=builder /app/dist) плюс только-прод зависимости (npm ci --omit=dev) на тонкую или distroless базу. Полный образ node — примерно 1 ГБ; node:slim — несколько сотен МБ, а distroless Node — десятки МБ. Меньше значит быстрее pull и куда меньшая поверхность атаки, потому что в distroless нет шелла или пакетного менеджера, которыми воспользуется атакующий. Порядок важен из-за кэширования слоёв: Docker кэширует каждый слой по его входам, так что если ты COPY package*.json ./ и RUN npm ci ДО COPY . ., дорогой слой install ключуется только по lock-файлу — изменение только исходников не трогает lock-файл, слой npm ci переиспользуется из кэша, и заново бежит только дешёвый COPY исходников. Скопируй исходники первыми — и каждое изменение кода рушит слой зависимостей, форсируя полную переустановку на каждой сборке." },
+  ]}
+/>
+
+<Recap lang="ru">
+Первый процесс контейнера — это PID 1, и ядро не даёт PID 1 обработчиков сигналов по умолчанию и делает его ответственным за реап зомби — ни то ни другое Node не рассчитан делать. `CMD npm start` делает PID 1 именно npm, который игнорирует `SIGTERM` и никогда не пробрасывает его дочернему node; shell-форма `CMD node server.js` делает PID 1 `/bin/sh` с тем же эффектом. Так или иначе node не слышит остановку, поэтому в Kubernetes kubelet выжидает весь `terminationGracePeriodSeconds` (по умолчанию 30с) и затем делает `SIGKILL` посреди запроса, подвешивая каждый деплой и роняя работу в полёте. Фикс — exec-форма `CMD ["node","server.js"]`, чтобы node был PID 1 и получал сигнал, in-app обработчик `SIGTERM`, который перестаёт принимать соединения и дренажит перед выходом, и init (`--init` / tini) для проброса сигналов и реапа сирот. Заверни это в multi-stage сборку — жирный builder, запускающий `npm ci` и сборку, тонкий или distroless runtime, копирующий только `dist` и прод-зависимости через `npm ci --omit=dev`, — и копируй `package*.json` + `npm ci` до исходников, чтобы слой зависимостей оставался в кэше. Заверши `USER node` для non-root, `HEALTHCHECK` или liveness/readiness probes и `.dockerignore` (`node_modules`, `.git`, `.env`), чтобы build-контекст оставался лёгким и ни один секрет не был запечён в слой.
+</Recap>

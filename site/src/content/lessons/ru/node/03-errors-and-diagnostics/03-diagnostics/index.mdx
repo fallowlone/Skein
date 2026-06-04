@@ -1,0 +1,247 @@
+---
+concepts:
+- diagnostics-channel
+- async-local-storage
+- async-hooks
+- process-signals
+- on-demand-profiling
+deepensInto: []
+estMin: 19
+lang: ru
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-diagnostics
+sources:
+- https://nodejs.org/api/diagnostics_channel.html
+- https://nodejs.org/api/async_context.html
+- https://nodejs.org/api/process.html#signal-events
+- https://nodejs.org/api/cli.html#--cpu-prof
+spiral: []
+status: ready
+summary: 'diagnostics_channel — это in-process pub/sub, который ничего не стоит без
+  подписчиков, AsyncLocalStorage несёт request id сквозь await без проброса аргументов,
+  а --cpu-prof пишет профиль на выходе — инструментируй без monkey-patching.'
+title: 'Диагностика: каналы, async-контекст и профили'
+track: node
+unit: 03-errors-and-diagnostics
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+У сервиса оплаты были чистые структурные логи, но каждая строка была островом: `level=error msg="charge failed"` без всякой возможности связать её с запросом, который её вызвал. Команда пробросила аргумент `traceId` через HTTP-обработчик и сервис заказов, но двумя слоями ниже колбэк библиотеки его потерял, и оттуда каждая строка лога стала анонимной. Во время частичного сбоя у них были тысячи строк об ошибках и никакого способа восстановить путь одного пользователя. Фикс был не в ещё одном поле лога вручную — это `AsyncLocalStorage`, который несёт id сквозь каждый `await` и колбэк автоматически, так что глубокий логгер читает его, и никто его не передаёт.
+</Hook>
+
+<Crux>`diagnostics_channel` бесплатен без подписчиков, `AsyncLocalStorage` несёт id сквозь `await`, `--cpu-prof` профилирует по запросу.</Crux>
+
+<Explanation>
+
+## diagnostics_channel: инструментировать без monkey-patching
+
+Старый способ добавить трейсинг или метрики в библиотеку — это monkey-patch её прототипа: обернуть `http.request`, подменить метод драйвера, — что молча ломается на следующем апгрейде и привязывает твой код наблюдаемости к внутренностям. `node:diagnostics_channel` заменяет это встроенной in-process шиной pub/sub. Продюсер публикует именованные сообщения; подписчики получают их синхронно. Core, `undici` и `http` уже выставляют каналы, так что ты инструментируешь их, не трогая их код.
+
+Свойство производительности, которое делает безопасным оставлять это в горячих путях, — `hasSubscribers`. `publish` без слушателей по сути бесплатен, так что библиотека может оградить стоимость *сборки* сообщения и не платить ничего, когда никто не смотрит.
+
+```js
+import diagnostics_channel from "node:diagnostics_channel";
+
+const channel = diagnostics_channel.channel("app:db:query");
+
+// продюсер (в обёртке БД) — платим за сборку payload только если наблюдают
+function runQuery(sql, params) {
+  if (channel.hasSubscribers) {
+    channel.publish({ sql, params, startedAt: performance.now() });
+  }
+  return driver.query(sql, params);
+}
+
+// подписчик (в твоей настройке трейсинга) — подключаемся с нулевой связностью с обёрткой
+channel.subscribe((message) => {
+  metrics.increment("db.query", { sql: message.sql });
+});
+```
+
+Компромисс против event emitter или обёртки: каналы синхронны и не упорядочены между продюсерами, так что подписчик обязан быть быстрым и не должен бросать в вызов продюсера. Выигрыш — расцепление: ты можешь подписаться на встроенные каналы запросов `undici` для распределённого трейсинга без единой строки патчинга, и инструментация переживает апгрейды библиотеки.
+
+## AsyncLocalStorage: контекст запроса, переживающий await
+
+Баг из хука — `traceId`, потерянный двумя слоями ниже, — это канонический случай для `AsyncLocalStorage` (из `node:async_hooks`). Он даёт тебе хранилище, заскоупленное на асинхронное дерево вызовов: ты вызываешь `als.run(store, fn)` один раз на границе запроса, и любой код, достижимый из `fn` — сквозь `await`, `setTimeout`, цепочки промисов, колбэки библиотек, — может вызвать `als.getStore()` и прочитать тот же `store`. Ты больше никогда не передаёшь id аргументом.
+
+```js
+import { AsyncLocalStorage } from "node:async_hooks";
+
+const als = new AsyncLocalStorage();
+
+// на границе: открыть контекст для этого запроса
+app.use((req, res, next) => {
+  const store = { traceId: req.headers["x-trace-id"] ?? crypto.randomUUID() };
+  als.run(store, () => next());
+});
+
+// где угодно ниже по потоку, как угодно глубоко, без всякой проводки:
+function log(msg) {
+  const { traceId } = als.getStore() ?? {};
+  logger.info({ traceId, msg });
+}
+```
+
+Сравни это с переменной уровня модуля: глобал разделяется между *всеми* конкурентными запросами, так что под нагрузкой запрос B перезаписывает id запроса A, и твои трассы перемешиваются в бессмыслицу. `AsyncLocalStorage` держит отдельный store на каждый async-контекст, что ровно та изоляция, которая нужна серверу. Стоимость реальна, но ограничена — он едет на `async_hooks`, так что есть накладной расход на каждую async-операцию; держи store маленьким (id и флаги, а не большие объекты) — и ты платишь однозначные проценты в типичных обработчиках запросов.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Инструмент</th>
+        <th class="border border-border px-3 py-2 text-left">Что даёт</th>
+        <th class="border border-border px-3 py-2 text-left">Стоимость / когда брать</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>diagnostics_channel</code></td>
+        <td class="border border-border px-3 py-2">In-process pub/sub: инструментировать core/undici/http без патчинга</td>
+        <td class="border border-border px-3 py-2">~бесплатно без подписчиков (<code>hasSubscribers</code>); всегда включённые хуки трейсинга/метрик</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>AsyncLocalStorage</code></td>
+        <td class="border border-border px-3 py-2">Store, заскоупленный на запрос, читаемый сквозь <code>await</code>/колбэки</td>
+        <td class="border border-border px-3 py-2">Ограниченный расход на операцию; неси trace/request id и флаги тенанта</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>async_hooks</code></td>
+        <td class="border border-border px-3 py-2">Сырой жизненный цикл init/before/after/destroy async-ресурсов</td>
+        <td class="border border-border px-3 py-2">Реальный CPU на ресурс; используй экономно, для контекста предпочитай ALS</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>--cpu-prof</code> / <code>--heap-prof</code></td>
+        <td class="border border-border px-3 py-2"><code>.cpuprofile</code>/<code>.heapprofile</code>, записанный на выходе, открывается в DevTools</td>
+        <td class="border border-border px-3 py-2">Расход профилирования, пока включено; CPU/heap-разбор по запросу</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">сигналы (SIGTERM/SIGINT/SIGUSR1)</td>
+        <td class="border border-border px-3 py-2">Хуки жизненного цикла: graceful shutdown, Ctrl-C, открыть инспектор</td>
+        <td class="border border-border px-3 py-2">Бесплатно; обрабатывай SIGTERM, чтобы слить до того, как оркестратор тебя убьёт</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+`AsyncLocalStorage` построен на `async_hooks`, но это не один и тот же инструмент. `async_hooks` выставляет сырой жизненный цикл каждого async-ресурса — `init`, `before`, `after`, `destroy` — и занятый хук срабатывает на *каждом* таймере, сокете и промисе, поэтому наивное использование может стоить двузначные проценты CPU. `AsyncLocalStorage` — это один хорошо оптимизированный потребитель этой машинерии, который тебе на самом деле нужен для контекста. Правило: бери `AsyncLocalStorage` для данных, заскоупленных на запрос, и опускайся к сырому `async_hooks` только ради глубокого отслеживания ресурсов, которое иначе не получить, — и измеряй, когда делаешь это.
+</Inset>
+
+## Сигналы и профилирование по запросу
+
+Долгоживущий процесс общается со своим оператором через сигналы. Оркестраторы шлют **SIGTERM**, чтобы попросить graceful shutdown — ты получаешь окно, чтобы перестать принимать новую работу, слить запросы в полёте, закрыть пулы БД и выйти; если ты его игнорируешь, Kubernetes следом шлёт SIGKILL после grace-периода (30с по умолчанию) и обрубает тебя посреди запроса. **SIGINT** — это Ctrl-C в терминале. **SIGUSR1** особый: Node по умолчанию открывает инспектор при его получении, так что ты можешь подключить дебаггер к живому процессу без рестарта.
+
+```js
+// graceful shutdown: перестать принимать → слить → закрыть зависимости → выйти
+process.on("SIGTERM", async () => {
+  server.close();             // перестать принимать новые соединения
+  await drainInFlight();      // дать активным запросам завершиться
+  await db.end();             // закрыть пулы / сбросить
+  process.exit(0);
+});
+```
+
+Когда нужно увидеть, *почему* процесс медленный или течёт, профилируй его по запросу. Запусти с `--cpu-prof` (или `--heap-prof`), и Node запишет `.cpuprofile` (или `.heapprofile`) на выходе, который ты открываешь в панели Performance/Memory Chrome DevTools; `--diagnostic-dir` управляет тем, куда падают файлы. Для жёсткого краша включи core dumps (`ulimit -c unlimited` и `--abort-on-uncaught-exception`, чтобы дампить на непойманном throw) и разбирай дамп посмертно с `llnode`/`lldb`. Сквозная идея: ничто из этого не требует править код приложения, так что это безопасно добавить к плохо ведущему себя production-процессу.
+
+<TradeoffMatrix
+  id="03-diagnostics-tradeoff-1"
+  lessonSlug="03-diagnostics"
+  lang="ru"
+  prompt="Веб-сервис должен прицепить trace id на границе запроса и заставить логгер пятью слоями ниже его эмитить, включая внутри async-колбэков сторонней библиотеки. Как пробрасывать id?"
+  options={[
+    { name: "AsyncLocalStorage: als.run(store, handler) на границе, als.getStore() в логгере", summary: "Store на контекст сквозь await.", correct: true, justification: "Это сеньорский дефолт. ALS держит отдельный store на каждое async-дерево вызовов, так что он переживает каждый await, таймер и колбэк библиотеки без проброса аргумента, а конкурентные запросы остаются изолированными, потому что у каждого свой store. Логгер пятью слоями ниже читает getStore() с нулевой проводкой, а сторонний колбэк наследует тот же контекст. Единственная стоимость — ограниченный расход async_hooks, который маленький store держит в однозначных процентах." },
+    { name: "Переменная уровня модуля let currentTraceId, устанавливаемая на каждый запрос", summary: "Общий глобал.", justification: "Это ломается под конкуренцией. Одна переменная разделяется между всеми запросами в полёте, так что пока запрос A ждёт I/O, запрос B ставит ту же переменную, и следующая строка лога A эмитит id запроса B. Выглядит хорошо в одиночном тесте и портит каждую трассу под нагрузкой — ровно тот режим сбоя, ради предотвращения которого существует ALS." },
+    { name: "Пробрасывать traceId явным аргументом через каждую функцию", summary: "Ручная проводка.", justification: "Верно в принципе, но хрупко на практике — это и есть баг хука: каждая новая функция обязана помнить принять и пробросить его, и в момент, когда сторонний колбэк или рефакторинг его теряют, каждая строка лога ниже становится анонимной без всякой ошибки. ALS даёт ту же корректность без налога дисциплины." },
+    { name: "Хранить id на объекте req и передавать req всюду", summary: "Привязка к запросу.", justification: "Работает ровно до тех пор, пока ты продолжаешь передавать req вниз, что означает проводку req сквозь слои сервиса и репозитория, которым нет дела до HTTP — и всё равно ломается внутри колбэков библиотек, которые req не получили. Ты пересоздал ручную проводку более тяжёлым объектом; ALS расцепляет контекст с транспортом." },
+  ]}
+/>
+
+<Quiz
+  id="03-diagnostics-quiz-1"
+  lessonSlug="03-diagnostics"
+  lang="ru"
+  question="Почему переменная-глобал уровня модуля неверна для хранения trace id на запрос, а AsyncLocalStorage верен?"
+  choices={[
+    { label: "Один глобал разделяется между всеми конкурентными запросами, так что один запрос перезаписывает id другого, пока тот ждёт I/O; AsyncLocalStorage держит отдельный store на каждое async-дерево вызовов, так что каждый запрос читает свой id даже сквозь await и колбэки", correct: true },
+    { label: "Глобалы медленнее читать, чем als.getStore()", misconception: "Скорость чтения не проблема — чтение обычной переменной быстрее getStore(). Проблема — корректность под конкуренцией: глобал общий, так что конкурентные запросы затирают значение друг друга, что store-на-контекст в ALS предотвращает." },
+    { label: "Переменные уровня модуля не могут хранить строки", misconception: "Они могут хранить любое значение. Сбой в том, что один общий слот не может представить много одновременных запросов сразу — перемежающаяся async-работа его перезаписывает. ALS даёт один store на async-контекст вместо одного общего слота." },
+    { label: "AsyncLocalStorage сохраняет id на диск между запросами", misconception: "ALS ничего не хранит на диске; он чисто в памяти, заскоуплен на async-дерево вызовов и исчезает, когда контекст кончается. Его преимущество — изоляция на запрос, а не персистентность." },
+  ]}
+/>
+
+<Quiz
+  id="03-diagnostics-quiz-2"
+  lessonSlug="03-diagnostics"
+  lang="ru"
+  question="Библиотека публикует в diagnostics_channel на каждый запрос к БД, но команда не замечает расхода в проде, где никто не подписан. Почему publish почти бесплатен?"
+  choices={[
+    { label: "Библиотека ограждает через channel.hasSubscribers и пропускает сборку/публикацию сообщения, когда подписчиков нет, так что ненаблюдаемый publish по сути ничего не стоит", correct: true },
+    { label: "Сообщения diagnostics_channel шлются в фоновом потоке", misconception: "Каналы синхронны и in-process, не в потоке — подписчики бегут на том же вызове. Причина дешевизны неподписанного publish — ограждение hasSubscribers, которое целиком пропускает работу, когда никто не слушает." },
+    { label: "Node батчит сообщения и сбрасывает их по таймауту", misconception: "Нет ни батчинга, ни буферизации сброшенных сообщений. Без подписчиков просто некому доставлять, а проверка hasSubscribers позволяет продюсеру избежать даже сборки payload." },
+    { label: "Сообщения сжаты, поэтому крошечные", misconception: "Размер не при чём, и сжатия нет. Избегаемая стоимость — это вообще сборка и отправка сообщения, которую hasSubscribers замыкает накоротко, когда множество подписчиков пусто." },
+  ]}
+/>
+
+<DragOrder
+  id="03-diagnostics-drag-1"
+  lessonSlug="03-diagnostics"
+  lang="ru"
+  prompt="Расставь корректный graceful shutdown по SIGTERM — от получения сигнала до чистого выхода:"
+  items={[
+    { id: "a", label: "Получить SIGTERM от оркестратора (просьбу завершиться)" },
+    { id: "b", label: "Перестать принимать новые соединения / работу (server.close, выйти из балансировщика)" },
+    { id: "c", label: "Слить запросы в полёте — дать активной работе завершиться в окне grace" },
+    { id: "d", label: "Закрыть зависимости: завершить пулы БД, сбросить буферы, закрыть очереди" },
+    { id: "e", label: "process.exit(0) до дедлайна SIGKILL оркестратора" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Trace id, текущий через один запрос через AsyncLocalStorage"
+  hue="var(--d-systems)"
+  actors={["Request", "ALS", "Service", "Logger"]}
+  messages={[
+    { from: "Request", to: "ALS", label: "als.run({traceId})" },
+    { from: "ALS", to: "Service", label: "handler() бежит" },
+    { from: "Service", to: "Logger", label: "log() после await" },
+    { from: "Logger", to: "ALS", label: "getStore().traceId" },
+    { from: "ALS", to: "Logger", label: "тот же id, без аргументов" },
+  ]}
+  caption="als.run открывает store на границе запроса; всё, достижимое из обработчика — сквозь await и колбэки, как угодно глубоко, — разделяет тот async-контекст, так что логгер вызывает getStore() и читает тот же traceId, который никогда не передавался аргументом. Глобал уровня модуля был бы перезаписан следующим конкурентным запросом; store-на-контекст — нет."
+/>
+
+<KeyTakeaway>Инструментируй через `diagnostics_channel` (бесплатно без подписчиков), неси id в `AsyncLocalStorage` (на контекст, переживает `await`, не глобал), обрабатывай SIGTERM, чтобы слить, и профилируй через `--cpu-prof`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-diagnostics-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что делает diagnostics_channel достаточно дешёвым, чтобы оставлять его в горячем пути, и в чём его компромисс против monkey-patching библиотеки?", a: "Контроль стоимости — это channel.hasSubscribers: продюсер проверяет его до сборки и публикации сообщения, так что когда никто не подписан, publish по сути бесплатен и нет измеримого расхода — поэтому библиотека может оставить вызовы publish на каждом запросе к БД или HTTP в проде. Компромисс против monkey-patching — расцепление и долговечность: вместо того чтобы оборачивать http.request или подменять метод на прототипе драйвера — что привязывает твой трейсинг к внутренностям и молча ломается на следующем апгрейде — ты подписываешься на именованный канал, который библиотека уже выставляет (core, undici и http публикуют свои). Стоимость, которую ты принимаешь, — доставка синхронна и in-process: подписчик бежит на вызове продюсера, так что обязан быть быстрым и не должен бросать обратно в продюсера. Итог: ты получаешь трейсинг/метрики, переживающие апгрейды, без патчинга, ценой того, что подписчиков держишь дешёвыми и хорошо ведущими себя." },
+    { q: "Почему глобал уровня модуля проваливается в хранении trace id на запрос под конкуренцией и как AsyncLocalStorage чинит это без смены каждой сигнатуры функции?", a: "Глобал — это единственный общий слот. Node-сервер перемежает много запросов на одном потоке: пока запрос A ждёт I/O, event loop бежит запрос B, который пишет в тот же глобал. Когда A возобновляется, глобал теперь держит id запроса B, так что следующая строка лога A помечена неверно — трассы тихо перекрёстно загрязняются, и это всплывает только под нагрузкой, никогда в одиночном тесте. AsyncLocalStorage чинит это, держа отдельный store на каждое асинхронное дерево вызовов: ты вызываешь als.run(store, fn) один раз на границе запроса, и store автоматически ассоциируется с каждой async-операцией, достижимой из fn — сквозь await, таймеры, цепочки промисов и колбэки библиотек. Любой код, как угодно глубоко, вызывает als.getStore(), чтобы прочитать store своего запроса, так что конкурентные запросы остаются изолированными. Критично, что ты никогда не пробрасываешь id аргументом, так что добавление новой глубокой функции или стороннего колбэка не может «забыть» его пробросить — ровно та хрупкость, что теряет id в подходе с ручной проводкой. Стоимость — ограниченный расход async_hooks, удерживаемый в однозначных процентах хранением только мелких значений вроде id и флагов." },
+  ]}
+/>
+
+<Recap lang="ru">
+Node поставляет первоклассную диагностику, не требующую правки твоего приложения. `diagnostics_channel` — это in-process шина pub/sub: продюсеры `publish`-ят именованные сообщения, а подписчики получают их синхронно, и поскольку продюсер ограждает через `hasSubscribers`, ненаблюдаемый publish по сути бесплатен — так что ты инструментируешь core, `undici` и `http` для трейсинга или метрик без monkey-patching прототипов, которые ломаются на апгрейде. Для контекста, заскоупленного на запрос, `AsyncLocalStorage` (построенный на `async_hooks`) держит отдельный store на каждое async-дерево вызовов: `als.run(store, fn)` на границе, `als.getStore()` где угодно ниже по потоку сквозь каждый `await` и колбэк, чего общий глобал уровня модуля не может, потому что конкурентные запросы перезаписали бы id друг друга. Сырой `async_hooks` используй экономно — его жизненный цикл `init/before/after/destroy` срабатывает на каждом async-ресурсе и стоит реального CPU — и держи store ALS маленьким. Общайся с оператором через сигналы: обрабатывай SIGTERM, чтобы перестать принимать, слить работу в полёте, закрыть зависимости и сделать `process.exit(0)` до дедлайна SIGKILL оркестратора; SIGINT — это Ctrl-C, а SIGUSR1 открывает инспектор. И разбирайся по запросу: `--cpu-prof`/`--heap-prof` пишут профиль на выходе для DevTools, `--diagnostic-dir` размещает файлы, а core dumps с `llnode`/`lldb` покрывают жёсткие краши — всё без касания кода приложения.
+</Recap>

@@ -1,0 +1,250 @@
+---
+concepts:
+- event-loop-lag
+- loop-phases
+- monitor-event-loop-delay
+- performance-observer
+- tail-latency
+- load-shedding
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: 01-event-loop-monitoring
+sources:
+- https://nodejs.org/api/perf_hooks.html
+- https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick
+- https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
+spiral: []
+status: ready
+summary: 'Node runs JS on one thread, so one slow synchronous call stalls every queued
+  timer and I/O callback. Measure event-loop lag with monitorEventLoopDelay, watch
+  the p99 not the mean, and move CPU work off the loop.'
+title: 'Monitoring event-loop lag'
+track: node
+unit: 04-performance
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+An export endpoint added a "small" feature: gzip the response with the synchronous `zlib.gzipSync` before sending. In load tests against that one route everything was fine — 40ms, green. In production, p99 latency on *every* endpoint — health checks, logins, unrelated reads — jumped from 8ms to 600ms whenever an export ran. Nobody had touched those routes. The dashboard for the export route looked healthy because the slow path was a CPU burst that ran *between* requests, freezing the single thread for ~250ms at a time. The team was staring at per-route latency graphs when the real signal was one number they weren't recording: event-loop lag.
+</Hook>
+
+<Crux>One blocking call on Node’s single thread stalls every queued timer and I/O callback — watch p99 event-loop lag, not the mean.</Crux>
+
+<Explanation>
+
+## Why one slow task freezes everything
+
+Node runs your JavaScript on a single thread. The event loop is a loop that picks up the next ready callback — an expired timer, a completed I/O, a resolved promise — runs it *to completion*, and only then looks for the next one. There is no preemption: while your callback is executing, nothing else in the process can run. So a single synchronous CPU burst or blocking call — `zlib.gzipSync`, `crypto.pbkdf2Sync`, a 5MB `JSON.parse`, `fs.readFileSync` on a cold disk — doesn't just slow that one operation. It holds the thread, and every timer, every socket read, every queued HTTP callback waits behind it. That waiting time is **event-loop lag**: the gap between when a callback *should* have run and when the loop actually got to it.
+
+The failure mode is brutal under concurrency. With one request in flight a 250ms block costs that one request 250ms. With 200 requests in flight, the block lands in the middle of the queue and *adds up to 250ms of latency to a chunk of those 200* — none of which did anything wrong. This is why the hook's per-route dashboards lied: the export route's own latency looked fine, but it was poisoning the tail latency of everything else. The slow code and the slow symptom were on different graphs.
+
+```js
+import http from "node:http";
+import zlib from "node:zlib";
+
+http.createServer((req, res) => {
+  // ❌ blocks the single thread for the whole compression — every other
+  // in-flight request's callback waits behind this one.
+  const body = zlib.gzipSync(bigPayload);   // ~250ms of pure CPU
+  res.setHeader("content-encoding", "gzip");
+  res.end(body);
+}).listen(3000);
+```
+
+## The loop phases (and where lag accrues)
+
+The loop runs in fixed phases, each draining its own callback queue before moving on: **timers** (`setTimeout`/`setInterval` callbacks whose time is up) → **pending callbacks** (some deferred system callbacks) → **poll** (where I/O completions are picked up and where the loop *blocks waiting* for I/O if nothing else is due) → **check** (`setImmediate` callbacks) → **close** (e.g. `socket.on('close')`). Between *every* callback, Node drains the microtask queues: `process.nextTick` first, then resolved promises.
+
+The practical consequence: lag accrues wherever a callback overstays. A heavy `setTimeout` body delays the next timer; a heavy promise `.then` delays the next I/O the poll phase wanted to deliver. And `process.nextTick` is a sharp edge — because it drains *before* promises and *before the loop advances a phase*, a recursive `nextTick` can starve the loop entirely, blocking I/O forever while doing "tiny" work each tick.
+
+```js
+// process.nextTick drains before the loop continues — recursion here
+// starves I/O completely, even though each call looks trivial.
+function spin() { process.nextTick(spin); }
+spin();              // ❌ the poll phase never gets to run again
+```
+
+## Measuring lag: monitorEventLoopDelay
+
+The right tool is in core: `perf_hooks.monitorEventLoopDelay`. It samples the loop on a timer at a fixed `resolution` (default **10ms**) and records, in a high-resolution **histogram**, how late each sample was. You read percentiles off it — and percentiles are the whole point, because lag is bursty: a mean of 2ms can hide a p99 of 400ms during compaction or a GC pause. **Watch the tail (`p99`/`max`), not the mean.** All values are in **nanoseconds**.
+
+```js
+import { monitorEventLoopDelay } from "node:perf_hooks";
+
+const h = monitorEventLoopDelay({ resolution: 20 }); // sample every 20ms
+h.enable();
+
+setInterval(() => {
+  console.log({
+    meanMs: (h.mean / 1e6).toFixed(2),       // healthy: sub-millisecond
+    p99Ms:  (h.percentile(99) / 1e6).toFixed(2),
+    maxMs:  (h.max / 1e6).toFixed(2),
+  });
+  h.reset();                                  // start a fresh window
+}, 1000).unref();
+```
+
+The naive alternative is **timer drift**: schedule `setInterval(fn, 100)` and measure how much later than 100ms each tick actually fires; the overshoot is the lag. It's cheap and dependency-free but coarse — it only samples at your interval and gives you no histogram, so it misses sub-interval spikes and can't tell you a p99. For production, `monitorEventLoopDelay` is strictly better. Going further, libraries like `toobusy-js` poll lag continuously and let you **shed load**: when lag crosses a threshold, reject new requests with `503` immediately instead of accepting work you can't serve, keeping the already-accepted requests fast.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Symptom</th>
+        <th class="border border-border px-3 py-2 text-left">Metric that exposes it</th>
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Unrelated routes spike together</td>
+        <td class="border border-border px-3 py-2"><strong>p99 / max</strong> loop lag (not mean)</td>
+        <td class="border border-border px-3 py-2"><code>monitorEventLoopDelay()</code> histogram</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">One operation is slow on a hot path</td>
+        <td class="border border-border px-3 py-2">duration of a marked span</td>
+        <td class="border border-border px-3 py-2"><code>performance.mark/measure</code> + <code>PerformanceObserver</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Service overloaded, tail exploding</td>
+        <td class="border border-border px-3 py-2">live lag vs a threshold</td>
+        <td class="border border-border px-3 py-2"><code>toobusy-js</code> → shed load with <code>503</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Timing the suspect: performance.mark, measure, observe
+
+Once lag is high, you still have to find *which* call is blocking. `perf_hooks.performance` gives you the high-resolution clock and a structured way to time spans without `Date.now()` math. Use `performance.mark(name)` to drop timestamps, `performance.measure(name, start, end)` to record the duration between two marks, and a `PerformanceObserver` to receive those entries as they're emitted — so timing is decoupled from the hot path.
+
+```js
+import { performance, PerformanceObserver } from "node:perf_hooks";
+
+const obs = new PerformanceObserver((list) => {
+  for (const e of list.getEntries()) {
+    if (e.duration > 50) console.warn(`SLOW ${e.name}: ${e.duration.toFixed(1)}ms`);
+  }
+});
+obs.observe({ entryTypes: ["measure"] });
+
+performance.mark("gzip:start");
+const body = zlib.gzipSync(bigPayload);
+performance.mark("gzip:end");
+performance.measure("gzip", "gzip:start", "gzip:end"); // shows up in the observer
+```
+
+For ad-hoc checks, `performance.now()` is a monotonic, sub-millisecond timer (unaffected by wall-clock changes) — `const t = performance.now(); …; performance.now() - t` is the right way to micro-time a suspect call.
+
+<Inset kind="why" lang="en">
+Why nanoseconds and a histogram instead of a single average? Because event-loop lag is the textbook case of a metric where the average is a lie. Most samples are near-zero, so the mean stays tiny even while a handful of 300ms blocks per minute are wrecking real users. A histogram keeps the *distribution*, so `percentile(99)` answers the question that matters — "how bad is it for the unlucky 1% of callbacks?" — which is exactly the population your tail latency is made of.
+</Inset>
+
+<TradeoffMatrix
+  id="04-event-loop-monitoring-tradeoff-1"
+  lessonSlug="01-event-loop-monitoring"
+  lang="en"
+  prompt="An endpoint must hash passwords and, separately, render a large PDF — both CPU-heavy. Loop lag is spiking and unrelated routes are slow. What is the senior fix?"
+  options={[
+    { name: "Move the CPU work off the loop: use the async crypto API for hashing and a worker_threads pool for the PDF", summary: "Off-thread / async.", correct: true, justification: "This is the only fix that addresses the root cause — the single thread is being held by synchronous CPU work. The async crypto APIs hand hashing to libuv's threadpool, and a worker_threads pool runs the PDF render on a separate V8 thread, so the main loop keeps draining timers and I/O. Lag drops back to sub-millisecond and unrelated routes recover, because nothing on the hot path blocks the loop anymore." },
+    { name: "Raise UV_THREADPOOL_SIZE so more work runs in parallel", summary: "Bigger pool.", justification: "This helps only the operations that already use libuv's threadpool (fs, dns, some crypto), and even then it adds threads, not loop headroom. A synchronous gzipSync/pbkdf2Sync or a CPU loop in your JS never touches the threadpool — it runs on the main thread regardless of the pool size, so the lag is untouched. It treats a symptom on the wrong layer." },
+    { name: "Increase the number of Node cluster workers / pods", summary: "Scale out.", justification: "Horizontal scaling spreads load across processes, which masks the problem until traffic grows — but each individual worker still freezes its own event loop during the CPU burst, so its tail latency stays terrible and you've just bought more machines to host the same stall. It's a cost lever, not a fix; pair it with off-thread work, don't substitute it." },
+    { name: "Add caching so the slow path runs less often", summary: "Cache the result.", justification: "Caching is valuable and reduces how often you pay the cost, but the first (cache-miss) request and any uncacheable input still block the loop for the full CPU burst — and a thundering herd of misses brings the stall back at the worst moment. It narrows the failure window without removing the failure, so it complements off-thread work rather than replacing it." },
+  ]}
+/>
+
+<Quiz
+  id="04-event-loop-monitoring-quiz-1"
+  lessonSlug="01-event-loop-monitoring"
+  lang="en"
+  question="Your loop-lag mean is 1.5ms but users report random slow requests. Why is the mean misleading here, and what should you look at?"
+  choices={[
+    { label: "Lag is bursty: most samples are near-zero so the mean stays tiny, while occasional 200–400ms blocks (GC, sync CPU) live in the tail — look at percentile(99) and max from the histogram", correct: true },
+    { label: "The mean is wrong; monitorEventLoopDelay reports it in seconds, so divide by 1000", misconception: "monitorEventLoopDelay reports nanoseconds, not seconds, and the mean itself isn't wrong — it's just the wrong statistic. A genuine mean of 1.5ms can coexist with a p99 of 400ms; you need the percentile, not a unit fix." },
+    { label: "Means are always unreliable, so switch to logging the raw lag of every callback", misconception: "Logging every callback's lag is enormous overhead and still leaves you eyeballing noise. The histogram already keeps the distribution cheaply — read percentile(99) and max instead of dumping raw samples." },
+    { label: "The slow requests are a client-side problem, not loop lag", misconception: "A healthy-looking mean alongside high p99 is the classic fingerprint of server-side loop stalls, not client issues. Check the tail of the loop-delay histogram before blaming the client." },
+  ]}
+/>
+
+<Quiz
+  id="04-event-loop-monitoring-quiz-2"
+  lessonSlug="01-event-loop-monitoring"
+  lang="en"
+  question="Which line, dropped on a hot request path, will most directly inflate event-loop lag for ALL concurrent requests?"
+  choices={[
+    { label: "const hash = crypto.pbkdf2Sync(pw, salt, 600000, 32, 'sha256') — a synchronous, CPU-bound call that holds the single thread until it finishes", correct: true },
+    { label: "await pool.query('SELECT 1') — an awaited async DB call", misconception: "An awaited async query yields to the loop while it waits on I/O — the thread is free to run other callbacks during the round trip. Async, non-blocking calls are exactly what keeps lag low; the synchronous CPU call is the culprit." },
+    { label: "await fetch('https://api.example.com/x') — an outbound HTTP request", misconception: "An awaited fetch is network I/O: it suspends and lets the loop serve other work until the response arrives. It adds latency to that one request, not lag to all of them. The blocking offender is the synchronous CPU call." },
+    { label: "setImmediate(() => doSmallThing()) — deferring tiny work to the check phase", misconception: "setImmediate defers work to the next loop iteration's check phase, which yields between requests rather than blocking them. Done with trivial work it relieves pressure; the synchronous pbkdf2Sync is what pins the thread." },
+  ]}
+/>
+
+<DragOrder
+  id="04-event-loop-monitoring-drag-1"
+  lessonSlug="01-event-loop-monitoring"
+  lang="en"
+  prompt="Order the steps to diagnose high tail latency that you suspect is event-loop lag, from first signal to durable fix:"
+  items={[
+    { id: "a", label: "Notice many unrelated routes spike p99 together, with healthy means" },
+    { id: "b", label: "Enable monitorEventLoopDelay and confirm p99/max lag is high, not the mean" },
+    { id: "c", label: "Add performance.mark/measure around suspect calls to find which one blocks" },
+    { id: "d", label: "Move the blocking work off-thread (async API / worker_threads) or chunk it" },
+    { id: "e", label: "Re-measure: confirm lag p99 returns to sub-millisecond and add load shedding as a guard" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One blocking callback holding the single thread while the queue waits"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "q", label: "ready queue", sub: "timers + I/O" },
+    { id: "r", label: "loop runs one", sub: "to completion" },
+    { id: "b", label: "blocking burst", sub: "gzipSync ~250ms" },
+    { id: "w", label: "everyone waits", sub: "lag = p99 ↑" },
+  ]}
+  edges={[
+    { from: "q", to: "r" },
+    { from: "r", to: "b", label: "picks up" },
+    { from: "b", to: "w", label: "no preemption" },
+  ]}
+  caption="The loop runs each ready callback to completion with no preemption. When the chosen callback is a synchronous CPU burst, every other callback already in the ready queue is stuck behind it — that wait is event-loop lag, and it lands on the p99 of every concurrent request, not just the slow one."
+/>
+
+<KeyTakeaway>Node runs JS on one thread, so one sync CPU or blocking call stalls every queued callback. Measure with `monitorEventLoopDelay`, watch p99/max not the mean, and move CPU work off-thread.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-event-loop-monitoring-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does the mean of event-loop lag hide the problem, and what should you record instead?", a: "Event-loop lag is bursty, not steady: the overwhelming majority of samples are near-zero (the loop is idle or running trivially short callbacks), and only a few per minute are large — a GC pause, a synchronous JSON.parse, a sync crypto or zlib call freezing the thread for hundreds of milliseconds. Average those together and the mean stays comfortably sub-millisecond even while real users are eating 300ms stalls, because a handful of huge values barely move an average dominated by thousands of tiny ones. The mean answers 'how is the loop on a typical tick', but the population you care about is the unlucky callbacks at the end of the distribution. That's why monitorEventLoopDelay returns a histogram, not a single number: you read percentile(99) and max (in nanoseconds) to see the tail, and you reset() per window so spikes don't smear across time. Watch the tail, and alert on it — the p99 is the number that tracks what users actually feel." },
+    { q: "An endpoint does a synchronous CPU-heavy task (sync gzip / pbkdf2) and tanks throughput for all clients. What's the fix, and why doesn't it block?", a: "The root cause is that synchronous CPU work runs on the one thread that also runs the event loop, so for its whole duration nothing else — no timer, no I/O completion, no other request's callback — can advance; that's the lag. The fix is to get the CPU work off that thread. Two routes: use the asynchronous core API where one exists (crypto.pbkdf2 / scrypt async, zlib.gzip async) so the work is handed to libuv's threadpool and the main loop is free to serve other requests during it; or, for pure-JS CPU work with no async API, run it in a worker_threads pool, which executes on a separate V8 thread and posts the result back via message. For very large but divisible work you can also chunk it across setImmediate boundaries so the loop interleaves other callbacks between slices. After the change, re-measure with monitorEventLoopDelay: a correct fix returns the p99 to sub-millisecond. Add load shedding (e.g. toobusy-js returning 503 above a lag threshold) as a guardrail so a future regression degrades gracefully instead of stalling everyone." },
+  ]}
+/>
+
+<Recap lang="en">
+Node runs your JavaScript on a single thread with no preemption, so the event loop runs each ready callback to completion before touching the next — which means one synchronous CPU burst or blocking call (`zlib.gzipSync`, `pbkdf2Sync`, a multi-MB `JSON.parse`, sync `fs`) freezes the whole process and makes every queued timer and I/O callback wait behind it. That wait is event-loop lag, and under concurrency it lands on the p99 of *every* in-flight request, not just the slow one, which is why per-route latency graphs can look healthy while the service is on fire. The loop drains fixed phases — timers → pending → poll (where it blocks for I/O) → check (`setImmediate`) → close — and microtasks (`process.nextTick`, then promises) between each callback, so a recursive `nextTick` can starve I/O entirely. Measure lag with `perf_hooks.monitorEventLoopDelay({ resolution })`, which records a nanosecond histogram you read via `.mean`, `.max`, and `.percentile(99)` and `.reset()` per window — and always watch the tail, because the mean of a bursty signal is a lie. Localize the offending call with `performance.mark`/`measure` and a `PerformanceObserver` (or `performance.now()` for ad-hoc timing), then fix it by moving the CPU work off the loop with an async core API or `worker_threads`, or by chunking it across `setImmediate`. Sub-millisecond p99 lag is healthy; tens-to-hundreds of ms means users feel it — so alert on p99, not the mean, and add load shedding so overload degrades into honest `503`s instead of a frozen thread.
+</Recap>

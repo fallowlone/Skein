@@ -1,0 +1,260 @@
+---
+concepts:
+- event-loop-blocking
+- worker-threads
+- worker-pool
+- shared-array-buffer
+- cluster
+- process-replicas
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-worker-threads-and-clustering
+sources:
+- https://nodejs.org/api/worker_threads.html
+- https://nodejs.org/api/cluster.html
+- https://nodejs.org/en/learn/asynchronous-work/dont-block-the-event-loop
+spiral: []
+status: ready
+summary: 'On one thread, async I/O scales but CPU-bound work blocks the event loop
+  and starves every request. Offload CPU work to a worker_threads pool sized to your
+  cores; spread a stateless network server across cores with cluster or replicas.
+  Neither fixes pure I/O.'
+title: 'Worker threads and clustering'
+track: node
+unit: 04-performance
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A thumbnail API ran fine at 50 req/s and fell over at 200. The CPU never hit 100% — it sat at ~30% on an 8-core box — yet p99 latency blew past 6 seconds and health checks started failing. The culprit was a single line: `sharp(buf).resize(800).toBuffer()` for some inputs decoded synchronously, and a 400 ms image transform on the main thread froze the event loop for 400 ms — no other request could be parsed, no timer could fire, no socket could be read, for *every* concurrent client at once. The fix wasn't a bigger box; the box was 70% idle. It was that all the work was crammed onto one of eight available threads, and the other seven sat watching.
+</Hook>
+
+<Crux>CPU work blocks the event loop — offload it to a worker_threads pool; scale a network server across cores with cluster or replicas.</Crux>
+
+<Explanation>
+
+## The single-thread wall
+
+Node runs your JavaScript on one thread. That is a feature for I/O: an `await fetch()` or `await db.query()` parks the work in libuv or the kernel and the event loop moves on, so one thread juggles thousands of concurrent connections at near-zero cost. The model breaks the instant work is *CPU-bound* — hashing a password with bcrypt, transforming an image, gzipping a payload, parsing a 20 MB JSON body, or a `JSON.parse` on a huge string. None of that yields to the loop. While it runs, the loop is blocked: no callbacks, no timers, no new requests, for **every** client, not just the one whose request triggered it.
+
+The official guidance — *Don't Block the Event Loop* — is the whole game. A 200 ms synchronous CPU task isn't "200 ms slower for that user"; it adds 200 ms of head-of-line latency to every request already queued behind it. There are exactly two escapes, and they map to two different problems:
+
+- **More threads in one process** — `worker_threads` — for CPU parallelism with optional shared memory.
+- **More processes** — `cluster`, or N replicas behind a load balancer — to use all cores for a network server.
+
+Neither is for I/O. If your endpoint is slow because it awaits a database, a worker won't help — the bottleneck is the database, and the loop was never blocked.
+
+## worker_threads: real threads, isolated memory
+
+`worker_threads` gives you real OS threads inside one Node process, each with its own V8 isolate and event loop. You spawn one with a script and hand it data; it computes and posts a result back.
+
+```js
+// main.js
+import { Worker } from "node:worker_threads";
+
+function hashInWorker(password) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker("./hash-worker.js", { workerData: password });
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) reject(new Error(`worker exited ${code}`));
+    });
+  });
+}
+
+// hash-worker.js
+import { workerData, parentPort } from "node:worker_threads";
+import bcrypt from "bcrypt";
+parentPort.postMessage(bcrypt.hashSync(workerData, 12)); // CPU work, off the main loop
+```
+
+Two facts shape everything. **First, memory is isolated.** A worker does not share variables with the parent; every `postMessage` payload is *structured-cloned*, which costs CPU and memory proportional to size — sending a 50 MB buffer this way copies 50 MB. For large binary data you have two outs: **transfer** an `ArrayBuffer` in the message's transfer list (zero-copy — ownership moves, the sender can no longer touch it), or share it for real with a `SharedArrayBuffer` plus `Atomics` for coordination, so multiple threads read and write the same bytes with no clone at all.
+
+```js
+const ab = new ArrayBuffer(64 * 1024 * 1024);
+worker.postMessage({ ab }, [ab]); // transfer list → zero-copy; ab is now detached here
+```
+
+**Second, spawning a worker costs real money** — a new thread, a new V8 isolate, megabytes of RAM and tens of milliseconds of startup. Spawning one *per request* is an anti-pattern that often costs more than the work it offloads. The correct shape is a **pool**: a fixed set of long-lived workers, sized roughly to the number of CPU cores, that pull jobs off a queue. Libraries like `piscina` implement this; the rule of thumb is `pool size ≈ os.availableParallelism()`, because more threads than cores just thrash the scheduler.
+
+<TradeoffMatrix
+  id="04-workers-tradeoff-1"
+  lessonSlug="03-worker-threads-and-clustering"
+  lang="en"
+  prompt="A single Node service does two things: it proxies a slow upstream API (mostly awaiting I/O) and it generates PDF reports (CPU-heavy, ~300 ms each, needs read access to a large in-memory product catalog). You must scale it across an 8-core box. What's the best fit?"
+  options={[
+    { name: "Run the I/O proxy on the main loop as-is, and offload only PDF generation to a worker_threads pool that reads the catalog via SharedArrayBuffer", summary: "Pool the CPU work, keep I/O on the loop.", correct: true, justification: "This matches each problem to the right tool. The I/O proxy already scales on one thread — it never blocks the loop — so leave it. PDF generation is the only CPU offender, so it goes to a fixed worker pool (≈ cores) that pulls jobs off a queue, keeping the main loop free to accept requests. SharedArrayBuffer lets every worker read the large catalog without structured-cloning a copy per job, which would dominate the cost. You spend threads exactly where CPU work is and nowhere else." },
+    { name: "Put the whole service behind cluster with 8 worker processes", summary: "Fork 8 processes.", justification: "cluster spreads connections across processes, which does let CPU work run in parallel — but each process gets its own copy of the large product catalog (no shared memory between processes), multiplying RAM by 8, and a single in-flight PDF still blocks that whole process's loop, stalling the I/O proxying it's also handling. worker_threads keeps one process, shares the catalog cheaply, and isolates CPU jobs from the I/O path. cluster is the answer when the work is a stateless network server, not a mixed I/O+CPU service with shared state." },
+    { name: "Spawn a fresh worker_threads Worker for each PDF request", summary: "One worker per request.", justification: "Right tool, wrong lifecycle. Each new Worker is a fresh thread and V8 isolate — megabytes of RAM and tens of ms of startup — so per-request spawning often costs more than the 300 ms it offloads, and a burst of requests spawns a burst of threads that thrash the scheduler. Pool a fixed number of reusable workers instead." },
+    { name: "Do nothing — turn off the PDF feature under load and rely on the box being only 30% busy", summary: "Shed the feature.", justification: "Average CPU being low is exactly the trap from the hook: a blocked event loop tanks p99 for everyone while cores sit idle, because the work is stuck on one thread. Low average utilization is evidence you should parallelize, not evidence you're fine. Disabling the feature is giving up, not scaling." },
+  ]}
+/>
+
+## cluster: many processes sharing one socket
+
+`cluster` solves a different problem: scaling a *network server* across all cores. A primary process forks N worker **processes**, and they all share a single listening socket — incoming connections are distributed across the workers. On non-Windows platforms the default scheme is round-robin in the primary; otherwise the OS distributes via `SO_REUSEPORT`. Each worker is a full Node process with its own memory and its own event loop, so eight workers genuinely use eight cores for request handling.
+
+```js
+import cluster from "node:cluster";
+import { availableParallelism } from "node:os";
+import http from "node:http";
+
+if (cluster.isPrimary) {
+  for (let i = 0; i < availableParallelism(); i++) cluster.fork();
+  cluster.on("exit", (worker) => cluster.fork()); // replace a dead worker
+} else {
+  http.createServer((req, res) => res.end("handled by " + process.pid)).listen(3000);
+}
+```
+
+The defining constraint: **processes do not share memory.** An in-memory session map, a local rate-limit counter, or a process-level cache exists *per worker* — a request handled by worker A can't see state worker B set. The fix is to move shared state to an external store (Redis, a database) and treat each worker as stateless. In modern deployments `cluster` is often superseded by running **N container replicas** behind a load balancer (or a process manager like PM2), which gives the same parallelism plus restart, rollout, and cross-host scaling — the same "stateless processes, shared store" discipline applies either way.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Mechanism</th>
+        <th class="border border-border px-3 py-2 text-left">Isolation</th>
+        <th class="border border-border px-3 py-2 text-left">Shared memory?</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>worker_threads</code></td>
+        <td class="border border-border px-3 py-2">threads in one process</td>
+        <td class="border border-border px-3 py-2">yes — <code>SharedArrayBuffer</code> + <code>Atomics</code>, or zero-copy transfer</td>
+        <td class="border border-border px-3 py-2">CPU work needing shared/large data in-process</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>cluster</code></td>
+        <td class="border border-border px-3 py-2">separate processes, shared listen socket</td>
+        <td class="border border-border px-3 py-2">no — message-pass or external store</td>
+        <td class="border border-border px-3 py-2">scaling one stateless network server across cores</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">replicas / containers</td>
+        <td class="border border-border px-3 py-2">separate processes, often separate hosts</td>
+        <td class="border border-border px-3 py-2">no — external store only</td>
+        <td class="border border-border px-3 py-2">stateless service scaled past one box, with rollout/restart</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why not just `cluster` everything to dodge `worker_threads`? Because the two solve orthogonal problems. `cluster` parallelizes *connection handling* — it's perfect when every request is cheap and you just need more of them at once. But if a *single request* does 300 ms of CPU, `cluster` doesn't help that request: it still blocks its own worker's loop for 300 ms, stalling the other connections that worker is serving. `worker_threads` moves that one CPU chunk off the request's loop entirely. Many production services use both: `cluster`/replicas for breadth, a worker pool inside each for the heavy CPU jobs.
+</Inset>
+
+## Choosing, and the failure modes
+
+The decision tree is short. Is the work **I/O-bound**? Do nothing — it's already async, and adding threads or processes just adds overhead. Is it **CPU work that needs shared or large in-process data**? `worker_threads` pool. Is it **scaling a stateless network server across cores**? `cluster` or replicas.
+
+```js
+// Pooled, not per-request — piscina sizes ≈ cores and reuses workers
+import Piscina from "piscina";
+const pool = new Piscina({ filename: "./resize-worker.js" });
+app.post("/thumb", async (req, res) => {
+  const out = await pool.run(req.body); // CPU work runs off the main loop, on a reused thread
+  res.end(out);
+});
+```
+
+Two failure modes recur. **First: synchronous CPU work on the main thread.** This is the hook — a 30%-idle box with a 6-second p99, because one thread is doing all the heavy lifting while seven cores idle. Symptom: event-loop lag spikes, timeouts and failed health checks under load that disappear at low traffic. Fix: offload the CPU work to a worker pool. **Second: forgetting cluster workers don't share memory.** You ship in-memory sessions or a local cache, it works in dev (one process), and in production with eight workers a user's session "randomly" vanishes one request in eight because a different worker handled it. Fix: move that state to a shared store and keep workers stateless.
+
+<Quiz
+  id="04-workers-quiz-1"
+  lessonSlug="03-worker-threads-and-clustering"
+  lang="en"
+  question="What do worker_threads share with the parent that cluster worker processes do NOT share with each other?"
+  choices={[
+    { label: "Memory — worker_threads can share bytes via SharedArrayBuffer (with Atomics) or zero-copy ArrayBuffer transfer, while separate cluster processes have fully isolated memory and must coordinate via messages or an external store", correct: true },
+    { label: "The event loop — worker_threads run on the parent's loop", misconception: "No — each worker_thread has its OWN event loop and V8 isolate; that's the whole point of moving CPU work off the parent's loop. What they can share is memory, via SharedArrayBuffer." },
+    { label: "Nothing — both are fully isolated", misconception: "cluster processes are fully isolated, but worker_threads are not: they live in one process and can share memory through SharedArrayBuffer or transfer an ArrayBuffer zero-copy. That shared-memory ability is the key difference." },
+    { label: "The CPU core — worker_threads pin to one core, cluster processes float", misconception: "Neither pins cores; the OS scheduler places threads and processes. The real distinction is memory sharing: threads can, separate processes can't." },
+  ]}
+/>
+
+<Quiz
+  id="04-workers-quiz-2"
+  lessonSlug="03-worker-threads-and-clustering"
+  lang="en"
+  question="Why spawn workers from a fixed pool instead of creating a new Worker per incoming request?"
+  choices={[
+    { label: "Each new Worker is a fresh thread plus V8 isolate — megabytes of RAM and tens of ms of startup — so per-request spawning can cost more than the work it offloads, and a traffic burst spawns a thread burst that thrashes the scheduler; a fixed pool (≈ cores) reuses warm workers", correct: true },
+    { label: "Pooled workers run faster because they share the main thread's heap", misconception: "Workers don't share the main heap — each has its own isolated memory. The win from pooling isn't a shared heap; it's avoiding repeated thread/isolate startup cost and capping concurrency to the core count." },
+    { label: "A new Worker per request would deadlock", misconception: "It doesn't deadlock — it just wastes resources. The problem is cost and scheduler thrash from spawning more threads than cores, not a correctness hang." },
+    { label: "Node forbids more than one Worker at a time", misconception: "Node has no such limit — you can spawn many workers. The reason to pool is economic: thread/isolate startup is expensive and threads beyond the core count just contend." },
+  ]}
+/>
+
+<DragOrder
+  id="04-workers-drag-1"
+  lessonSlug="03-worker-threads-and-clustering"
+  lang="en"
+  prompt="A /resize endpoint does the image transform synchronously on the main loop and tanks p99 under load. Order the steps to move it onto a worker pool:"
+  items={[
+    { id: "a", label: "Confirm it's CPU-bound: event-loop lag spikes while CPU sits idle and I/O isn't the bottleneck" },
+    { id: "b", label: "Extract the transform into a standalone worker script that takes input and posts back the result" },
+    { id: "c", label: "Create one fixed pool sized ≈ os.availableParallelism() (e.g. via piscina) at startup, not per request" },
+    { id: "d", label: "Change the handler to await pool.run(input) instead of computing inline" },
+    { id: "e", label: "Pass large buffers by transfer/SharedArrayBuffer to avoid structured-clone copies, and load-test p99 to confirm the loop stays free" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Main loop offloads CPU jobs to a fixed worker pool and stays free for I/O"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "r", label: "request", sub: "I/O or CPU" },
+    { id: "l", label: "main loop", sub: "stays free" },
+    { id: "q", label: "job queue", sub: "pooled" },
+    { id: "w", label: "worker ×N", sub: "≈ cores" },
+  ]}
+  edges={[
+    { from: "r", to: "l" },
+    { from: "l", to: "q", label: "CPU job" },
+    { from: "q", to: "w", label: "reuse" },
+    { from: "w", to: "l", label: "result" },
+  ]}
+  caption="I/O stays on the main loop (already async). A CPU job is queued to a fixed pool of long-lived workers sized to the cores, runs off the loop, and posts its result back — so the loop keeps accepting requests instead of freezing for the whole transform."
+/>
+
+<KeyTakeaway>CPU work blocks the event loop and starves every request. Offload it to a `worker_threads` pool (one per core, not per request); scale a network server across cores with `cluster` or replicas. Pure I/O needs neither.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-workers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Your box is 30% CPU-idle yet p99 latency is multiple seconds under load. What is almost certainly happening, and what's the fix?", a: "A single synchronous CPU-bound operation is blocking the event loop. Node runs JS on one thread, so a 300 ms image transform, bcrypt hash, gzip, or huge JSON.parse on the main loop freezes it for that whole duration — no other request is parsed, no timer fires, no socket is read, for every concurrent client at once. Average CPU stays low because seven of eight cores are idle while one thread does all the work; the symptom is event-loop lag spikes, head-of-line latency, and failed health checks that vanish at low traffic. The fix is to offload that CPU work to a worker_threads pool sized roughly to the core count (e.g. piscina), so the main loop stays free to accept connections while reusable worker threads chew through jobs in parallel. If the slowness were I/O-bound instead — awaiting a DB or upstream — threads wouldn't help; the loop was never blocked and the bottleneck is the dependency." },
+    { q: "When you scale a stateful server with cluster (or replicas) and forget that processes don't share memory, what breaks, and how do you fix it?", a: "Any in-memory state diverges per worker. cluster forks N separate processes that share only the listening socket, not memory — so an in-memory session map, a local rate-limit counter, or a process-level cache exists independently in each worker. With eight workers, a user's session appears to 'randomly' vanish roughly one request in eight, because a different worker handled that request and never saw the state the first worker wrote. It works in dev because there's one process. The fix is to make workers stateless: move shared state to an external store like Redis or a database, so every worker (or replica, or container) reads and writes the same source of truth. This is the same discipline whether you use cluster, PM2, or N container replicas behind a load balancer — the parallelism is identical, and so is the requirement that no request-affecting state live in a single process's memory." },
+  ]}
+/>
+
+<Recap lang="en">
+Node runs your JavaScript on one thread, which is ideal for I/O — an awaited fetch or query parks in libuv and the loop moves on — but fatal for CPU-bound work, because hashing, image/video transforms, compression, or parsing a huge body don't yield, and while one runs the event loop is blocked for *every* client, not just the request that triggered it (the hook's 30%-idle box with a 6-second p99). There are two escapes, mapped to two problems. `worker_threads` are real threads in one process with isolated memory but shared bytes via `SharedArrayBuffer`/`Atomics` or zero-copy `ArrayBuffer` transfer; because every `postMessage` is structured-cloned and spawning a thread costs RAM and startup, you use a fixed *pool* sized to the cores, never one worker per request. `cluster` forks N processes that share one listening socket (round-robin by default on non-Windows) to use all cores for a network server, but processes share no memory, so in-memory sessions or caches diverge per worker unless you push them to a shared store — the same rule that governs N container replicas behind a load balancer, which often supersede `cluster` in practice. Decide by the work: pure I/O needs neither; CPU work with shared in-process data wants a worker pool; a stateless network server wants `cluster` or replicas.
+</Recap>
