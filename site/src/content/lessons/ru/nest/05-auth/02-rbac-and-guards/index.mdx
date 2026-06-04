@@ -1,0 +1,273 @@
+---
+concepts:
+- rbac
+- roles-decorator
+- reflector
+- policy-based-access
+- resource-authorization
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-rbac-and-guards"
+sources:
+- https://docs.nestjs.com/security/authorization
+- https://docs.nestjs.com/guards
+spiral: []
+status: ready
+summary: 'RBAC живёт в guard: декоратор @Roles() штампует метаданные, RolesGuard читает их через Reflector. Но role guard не обеспечит «редактируй только свой пост» — владение требует загруженной записи, поэтому оно принадлежит policy guard или сервису.'
+title: 'RBAC: роли, guards и Reflector'
+track: nest
+unit: "05-auth"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Прилетает тикет: пользователь удалил черновик чужого поста. Смотришь код — он выглядит непробиваемо: каждый write-маршрут закрыт `@Roles('editor')` и `RolesGuard`, а провинившийся пользователь действительно editor. Значит, guard сделал свою работу безупречно: он подтвердил, что вызывающий — *какой-то* editor. Чего он никогда не спрашивал — чего он структурно *не может* спросить — это владеет ли этот editor *именно этим* черновиком. Role guard выполняется до хендлера, без загруженной записи; он знает роли пользователя и ничего не знает про строку 4192. Фикс — не более крупный guard. Фикс — понять, на какие вопросы авторизации guard способен ответить, а на какие может ответить только слой сервиса.
+</Hook>
+
+<Crux>Guard отвечает на «ты admin?», но не на «владеешь ли ты этой записью?» без её загрузки — владение это дело сервиса или policy.</Crux>
+
+<Explanation>
+
+## RBAC: декоратор @Roles() плюс guard, который его читает
+
+Role-based access control сопоставляет каждому пользователю набор ролей, а каждой роли — набор прав. В Nest идиоматичная кодировка — это метаданные: декоратор `@Roles()` штампует требуемые роли на хендлер или контроллер, а `RolesGuard` читает их назад через `Reflector`. Декоратор — меньшая половина: `SetMetadata` (или `Reflector.createDecorator` для типизированного ключа) — это всё, что нужно:
+
+```ts
+// roles.decorator.ts
+import { SetMetadata } from '@nestjs/common';
+import { Role } from './role.enum'; // enum Role { Admin = 'admin', Editor = 'editor' }
+
+export const ROLES_KEY = 'roles';
+export const Roles = (...roles: Role[]) => SetMetadata(ROLES_KEY, roles);
+```
+
+Guard — это место, где живёт решение. Он читает метаданные через `getAllAndOverride`, сравнивая сначала метаданные хендлера и откатываясь на контроллер, а затем проверяет роли аутентифицированного пользователя:
+
+```ts
+// roles.guard.ts
+import { Injectable, CanActivate, ExecutionContext, ForbiddenException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { ROLES_KEY } from './roles.decorator';
+import { Role } from './role.enum';
+
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const required = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [
+      context.getHandler(), // @Roles() на маршруте побеждает...
+      context.getClass(),   // ...дефолт контроллера
+    ]);
+    if (!required) return true; // нет @Roles() на маршруте -> открыт
+    const { user } = context.switchToHttp().getRequest();
+    const ok = required.some((role) => user?.roles?.includes(role));
+    if (!ok) throw new ForbiddenException(); // чистый 403 вместо голого false
+    return ok;
+  }
+}
+```
+
+Две сеньорские детали. Первая: `getAllAndOverride(key, [getHandler(), getClass()])` возвращает *первое* определённое значение в этом массиве — так что `@Roles('admin')` на уровне хендлера **перекрывает** дефолт уровня контроллера, и это ровно то старшинство, которое тебе нужно. (Его собрат `getAllAndMerge` вместо этого объединил бы их.) Вторая: возврат `false` даёт generic 403 без тела; выброс `ForbiddenException` позволяет отдать чистый 403 с сообщением — и твой exception filter отрисует его единообразно.
+
+## Композиция guards: сначала аутентификация, потом авторизация
+
+`RolesGuard` читает `user.roles`. Этого поля не существует, пока не отработала *аутентификация* и не прикрепила `req.user`. Поэтому порядок — не косметика, а ограничение корректности: authn-guard (например, `JwtAuthGuard`) обязан выполниться **до** authz-guard, иначе `RolesGuard` прочитает `undefined.roles` и либо упадёт, либо откроется (fail open).
+
+Когда ты привязываешь оба глобально через токен-провайдер `APP_GUARD`, Nest выполняет их в **порядке объявления**, так что перечисляй аутентификацию первой:
+
+```ts
+// app.module.ts
+import { APP_GUARD } from '@nestjs/core';
+
+@Module({
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard }, // 1. устанавливает req.user
+    { provide: APP_GUARD, useClass: RolesGuard },    // 2. читает user.roles
+  ],
+})
+export class AppModule {}
+```
+
+Этот порядок также кодирует *fail-closed* дефолт: аутентифицируй глобально, и маршрут, который забыл добавить `@Roles()`, всё равно аутентифицирован — он просто открыт любому залогиненному пользователю, а не публике. Опасный обратный вариант — привязывать authz только по маршрутам: забудь привязку на одном хендлере, и у этого маршрута **вообще нет** гейта. Пропущенная привязка guard — это тихая дыра; предпочитай глобальную authn плюс явную authz.
+
+<SequenceDiagram
+  label="Pipeline авторизации для write-запроса: входящий запрос сначала попадает на JwtAuthGuard, который проверяет токен и прикрепляет req.user; затем RolesGuard через Reflector читает метаданные @Roles() и проверяет user.roles, улаживая грубый ролевой вопрос; затем для resource-scoped правила вроде «редактируй только свой пост» policy guard или слой сервиса загружает фактическую запись и сравнивает её ownerId с пользователем; только если каждый слой проходит, выполняется хендлер."
+  hue="var(--d-systems)"
+  actors={["Request", "Guards", "Service"]}
+  messages={[
+    { from: "Request", to: "Guards", label: "1. JwtAuthGuard -> req.user" },
+    { from: "Guards", to: "Guards", label: "2. RolesGuard: reflector reads @Roles" },
+    { from: "Guards", to: "Guards", label: "3. has role? yes/no (coarse)" },
+    { from: "Guards", to: "Service", label: "4. handler / policy guard" },
+    { from: "Service", to: "Service", label: "5. load record, check ownerId == user.id" },
+    { from: "Service", to: "Request", label: "6. allow (or 403 Forbidden)" },
+  ]}
+  caption="Аутентификация сначала устанавливает личность; role guard отвечает на грубое «этот пользователь editor?». Владение («это ЕГО пост?») требует загруженной записи, поэтому живёт слоем глубже — в policy guard, который загружает ресурс, или в сервисе."
+/>
+
+## Сеньорский предел: роли vs владение vs policy
+
+Вот категориальная ошибка, которую прячет хук. `RolesGuard` выполняется во *входной* фазе, до хендлера, **без загруженного доменного объекта**. Он может оценить любой факт, уже лежащий на `req.user`, — роли, tenant id, scopes. Он *не может* оценить факт, который зависит от конкретной записи, потому что эта запись ещё не загружена. «Этот пользователь admin?» отвечается из одного `req.user`. «Владеет ли пользователь постом 4192?» требует `SELECT ... WHERE id = 4192` и сравнения `post.ownerId` с `user.id` — запроса, который guard не должен делать, а одни параметры маршрута на это не ответят.
+
+Поэтому **resource/ownership-авторизация принадлежит туда, где загружен subject**: в метод сервиса, который уже достал запись, или в *policy guard*, который загружает её намеренно. Втискивать владение в role guard — это не проблема тюнинга, которую чинят добавлением `@Roles()`: это означает задавать не тому слою вопрос, под который у него нет данных.
+
+```ts
+// владение живёт в сервисе, где запись уже в руках
+async update(postId: number, dto: UpdatePostDto, user: AuthUser) {
+  const post = await this.posts.findOneOrFail(postId);
+  if (post.ownerId !== user.id && !user.roles.includes(Role.Admin)) {
+    throw new ForbiddenException('not your post'); // владение, решённое ВМЕСТЕ с записью
+  }
+  return this.posts.save({ ...post, ...dto });
+}
+```
+
+Когда роли начинают разрастаться — `editor`, `senior-editor`, `editor-but-only-drafts`, `editor-of-section-X` — это сигнал перейти от RBAC к **policy-based / ABAC** доступу. Вместо строк ты оцениваешь *ability* против subject. С CASL `AbilityFactory` строит правила на пользователя (включая record-shaped условия вроде `{ authorId: user.id }`), а `PoliciesGuard` + `@CheckPolicies()` оценивает policy хендлера против этого ability:
+
+```ts
+// casl-ability.factory.ts — правила могут быть record-shaped
+can(Action.Update, Article, { authorId: user.id }); // только свои статьи
+can(Action.Read, 'all');
+
+// policies.guard.ts — оценить policy маршрута против ability
+@Injectable()
+export class PoliciesGuard implements CanActivate {
+  constructor(private reflector: Reflector, private abilityFactory: CaslAbilityFactory) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const handlers = this.reflector.get<PolicyHandler[]>(CHECK_POLICIES_KEY, ctx.getHandler()) ?? [];
+    const { user } = ctx.switchToHttp().getRequest();
+    const ability = this.abilityFactory.createForUser(user);
+    return handlers.every((h) => (typeof h === 'function' ? h(ability) : h.handle(ability)));
+  }
+}
+
+// controller — объявляем policy, а не сырую роль
+@Patch(':id')
+@CheckPolicies((a: AppAbility) => a.can(Action.Update, 'Article'))
+update() {/* ... */}
+```
+
+Заметь честную оговорку: правило `can(Action.Update, Article, { authorId: user.id })` обеспечивает владение лишь *когда CASL передают реальный экземпляр `Article` для проверки*. Проверка `can(Action.Update, 'Article')` против голого типа subject всё ещё не видит запись 4192 — ты либо сначала загружаешь статью и проверяешь экземпляр, либо проверка владения всё равно приземляется в сервис. ABAC поднимает *выразительность* выше; он не отменяет правило, что для суждения о владении нужна запись.
+
+## Какой слой владеет каким вопросом?
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Вопрос</th>
+        <th class="border border-border px-3 py-2 text-left">Нужна запись?</th>
+        <th class="border border-border px-3 py-2 text-left">Верный слой</th>
+        <th class="border border-border px-3 py-2 text-left">Механизм</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Аутентифицирован ли вызывающий?</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Authn-guard (выполняется первым)</td>
+        <td class="border border-border px-3 py-2">JwtAuthGuard ставит req.user</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Есть ли у вызывающего роль?</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">RolesGuard (после authn)</td>
+        <td class="border border-border px-3 py-2">@Roles() + Reflector.getAllAndOverride</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Можно ли этой роли это действие над этим типом?</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Policy guard (ABAC)</td>
+        <td class="border border-border px-3 py-2">PoliciesGuard + ability.can(action, Type)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Владеет ли вызывающий ЭТОЙ записью?</td>
+        <td class="border border-border px-3 py-2">Да</td>
+        <td class="border border-border px-3 py-2">Сервис или policy guard, который её грузит</td>
+        <td class="border border-border px-3 py-2">загрузить запись, сравнить ownerId с user.id</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Правило: каждый вопрос авторизации, на который можно ответить из одного `req.user` и метаданных маршрута, принадлежит guard; каждый вопрос, который зависит от *содержимого конкретной строки*, обязан подождать, пока эта строка загружена, — а значит, слой сервиса или намеренно загружающий ресурс policy guard.
+
+<Inset kind="why" lang="ru">
+Почему guard не может просто сам загрузить запись? Может — но тогда он перестаёт быть универсальным переиспользуемым ролевым гейтом и становится связан с одним repository, одной сущностью и одним соглашением об извлечении id (id в пути? в теле? вложен?). Ещё ты платишь за запрос дважды, если хендлер перезагружает ту же запись. *Policy guard*, который загружает ресурс, — легитимный паттерн, но большинство команд находят, что проверка чище в сервисе, где запись достаётся один раз и сравнение владения сидит рядом с мутацией, которую оно охраняет. Грубый ролевой гейт остаётся переиспользуемым guard; record-shaped проверка идёт туда, где запись уже живёт.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-05-auth-02-rbac-and-guards-tradeoff-1"
+  lessonSlug="02-rbac-and-guards"
+  lang="ru"
+  prompt="Правило: пользователь может редактировать только СВОИ посты (admin может любой). Где обеспечивается это ограничение?"
+  options={[
+    { name: "В методе сервиса, который грузит пост: достать его, затем сравнить post.ownerId с user.id (разрешая admin), иначе выбросить ForbiddenException", summary: "Владение там, где живёт запись.", correct: true, justification: "Владение — record-shaped факт: оно зависит от колонки одной конкретной строки. RolesGuard выполняется до хендлера без чего-либо загруженного, так что структурно не может увидеть post.ownerId. Сервис уже достал пост, чтобы его обновить, поэтому сравнение владения сидит рядом с мутацией, которую охраняет, не стоит лишнего запроса и читает ровно те данные, что нужны. (Намеренно загружающий ресурс policy guard — другой легитимный дом; оба разделяют принцип: суди о владении ВМЕСТЕ с записью.)" },
+    { name: "Добавить более тонкую роль вроде 'post-owner' и закрыть маршрут @Roles('post-owner') на RolesGuard", summary: "Категориальная ошибка.", justification: "Владение — не роль. Роль — это факт о пользователе, истинный для всех записей; «владеет постом 4192» истинно для одной записи и ложно для следующей. Нельзя перечислить роль на каждую запись, и guard всё равно не видит, какая запись — цель. Это ровно тот взрыв, который сигналит, что RBAC уперся в предел." },
+    { name: "if-проверка в начале каждого хендлера контроллера, сравнивающая req.body.ownerId с req.user.id", summary: "Доверяет вводу клиента.", justification: "Две беды: она сравнивает с req.body.ownerId — управляемым атакующим вводом, который клиент может подделать, — вместо персистентного post.ownerId, и размазывает проверку безопасности по каждому хендлеру, чтобы её копипастили и в итоге забыли. Истина в строке БД, поэтому её надо загрузить; а проверка принадлежит одному переиспользуемому месту, не дублируется по маршрутам." },
+    { name: "Один RolesGuard с @Roles('editor'); вера, что editors трогают только свои посты", summary: "Баг из хука.", justification: "Это в точности продакшн-инцидент: guard подтверждает, что вызывающий — editor, и пропускает его, но никогда не проверяет, КАКОЙ пост. Editor может редактировать пост любого editor. Ролевой гейт необходим, но недостаточен — вопрос владения живёт слоем глубже, с загруженной записью." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-02-rbac-and-guards-quiz-1"
+  lessonSlug="02-rbac-and-guards"
+  lang="ru"
+  question="В RolesGuard что возвращает reflector.getAllAndOverride(ROLES_KEY, [context.getHandler(), context.getClass()]) и почему такой порядок массива?"
+  choices={[
+    { label: "Первое определённое значение метаданных в массиве — так что @Roles() уровня хендлера старше дефолта уровня контроллера", correct: true },
+    { label: "Объединение ролей хендлера и контроллера, слитых вместе", misconception: "Это getAllAndMerge, другой метод. getAllAndOverride возвращает первое определённое значение и останавливается — он перекрывает, а не сливает, так что @Roles() на маршруте заменяет дефолт контроллера, а не добавляется к нему." },
+    { label: "Только метаданные уровня контроллера, потому что getClass() в списке и старше хендлера", misconception: "Порядок массива — это порядок старшинства: getHandler() стоит первым, поэтому метаданные хендлера побеждают. getClass() — фолбэк, используемый только когда у хендлера нет своего @Roles()." },
+    { label: "Роли текущего пользователя, прочитанные из req.user", misconception: "Reflector читает метаданные маршрута (что наштамповал @Roles()), а не пользователя. Роли пользователя приходят отдельно из context.switchToHttp().getRequest().user, которые guard затем сравнивает с требуемыми ролями." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-02-rbac-and-guards-quiz-2"
+  lessonSlug="02-rbac-and-guards"
+  lang="ru"
+  question="Ты привязываешь RolesGuard глобально через APP_GUARD, но он падает на чтении user.roles из undefined. В чём причина?"
+  choices={[
+    { label: "RolesGuard выполняется до аутентификации, поэтому req.user не был прикреплён — authn должна быть упорядочена до authz", correct: true },
+    { label: "getAllAndOverride вернул undefined, что и есть настоящий краш", misconception: "Undefined-результат метаданных обрабатывается ранним 'if (!required) return true' — он открывает маршрут, а не падает. Краш — это чтение .roles из undefined-пользователя, что значит, что отсутствует сам req.user." },
+    { label: "Декоратор @Roles() надо импортировать в файл guard", misconception: "Guard'у нужен только ROLES_KEY, а не декоратор. Импорт декоратора ничего не меняет в том, существует ли req.user. Недостающая деталь — authentication-guard, который заполняет req.user и должен выполниться первым." },
+    { label: "APP_GUARD может зарегистрировать только один guard, поэтому authn-guard был отброшен", misconception: "APP_GUARD — это multi-provider: можно зарегистрировать несколько guards, и Nest выполняет их в порядке объявления. Фикс — объявить провайдер JwtAuthGuard до RolesGuard, чтобы аутентификация выполнилась первой." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RBAC = метаданные @Roles() + RolesGuard через Reflector.getAllAndOverride; authn до authz. Но guard не видит незагруженную запись — владение («редактируй только свой») принадлежит сервису или policy guard.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-05-auth-02-rbac-and-guards-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройди по канонической схеме RBAC в Nest: декоратор @Roles(), RolesGuard, getAllAndOverride и порядок относительно аутентификации.", a: "RBAC кодируется как метаданные плюс guard. Декоратор @Roles(), построенный через SetMetadata (или Reflector.createDecorator для типизированного ключа), штампует требуемые роли на хендлер или контроллер под ключом вроде ROLES_KEY. RolesGuard, реализующий CanActivate, читает их назад через reflector.getAllAndOverride(ROLES_KEY, [context.getHandler(), context.getClass()]) — который возвращает первое определённое значение, так что @Roles() уровня хендлера перекрывает дефолт контроллера (getAllAndMerge вместо этого объединил бы). Если роли не требуются, он возвращает true (открытый маршрут); иначе достаёт req.user через context.switchToHttp().getRequest() и проверяет, включает ли user.roles любую требуемую роль, выбрасывая ForbiddenException ради чистого 403, а не возвращая голый false. Порядок важен: req.user существует только после аутентификации, поэтому JwtAuthGuard должен выполниться до RolesGuard. С провайдерами APP_GUARD Nest выполняет guards в порядке объявления, так что перечисляй аутентификацию первой; это также даёт fail-closed дефолт, где маршрут без @Roles() всё равно аутентифицирован, просто открыт любому залогиненному пользователю." },
+    { q: "Объясни сеньорский предел: почему role guard не может обеспечить «пользователь может редактировать только свой пост» и куда принадлежит эта проверка.", a: "Role guard выполняется во входной фазе, до хендлера, без загруженного доменного объекта. Он может оценить факты, уже лежащие на req.user, — роли, tenant, scopes, — потому что они не требуют запроса. «Этот пользователь admin?» отвечается из одного req.user. Но «владеет ли пользователь постом 4192?» зависит от содержимого одной конкретной строки: надо загрузить пост и сравнить post.ownerId с user.id. Guard эту строку не достал и не должен (это связывает универсальный гейт с одним repository/сущностью/соглашением об id и рискует двойным запросом). Поэтому resource/ownership-авторизация принадлежит туда, где загружен subject: в метод сервиса, который уже достал запись (сравнить ownerId рядом с мутацией), или в намеренный policy guard, который загружает ресурс. Втискивать владение в RolesGuard — категориальная ошибка: это задаёт не тому слою вопрос, под который у него нет данных; этого не починить добавлением строк @Roles(). Когда роли разрастаются в record-shaped варианты, это сигнал перейти к ABAC/policy-based доступу (например, CASL: AbilityFactory строит правила на пользователя вроде can(Action.Update, Article, { authorId: user.id }), а PoliciesGuard + @CheckPolicies их оценивает) — но даже ABAC нужен реальный экземпляр записи, чтобы судить о владении; он поднимает выразительность, но не убирает необходимость загрузить строку." },
+  ]}
+/>
+
+<Recap lang="ru">
+RBAC в Nest — это метаданные плюс guard: декоратор @Roles() (SetMetadata или Reflector.createDecorator) штампует требуемые роли на хендлер или контроллер, а RolesGuard читает их через reflector.getAllAndOverride(ROLES_KEY, [getHandler(), getClass()]) — возвращая первое определённое значение, так что @Roles() уровня хендлера перекрывает дефолт контроллера, затем сравнивает с req.user.roles и выбрасывает ForbiddenException ради чистого 403. Порядок — ограничение корректности, а не вопрос стиля: req.user прикрепляется только после аутентификации, поэтому JwtAuthGuard должен выполниться до RolesGuard; с провайдерами APP_GUARD Nest выполняет guards в порядке объявления, что также даёт fail-closed дефолт, где маршрут, забывший @Roles(), всё равно аутентифицирован, а не публичен. Сеньорский предел — сердце урока: guard выполняется до хендлера без загруженной записи, поэтому он отвечает на «этот пользователь editor?», но структурно не отвечает на «владеет ли этот editor ЭТИМ черновиком?» — этому вопросу нужна доставленная строка и сравнение post.ownerId с user.id, и поэтому ownership-авторизация живёт в сервисе (рядом с мутацией) или в намеренно загружающем ресурс policy guard, но никогда в role guard. Когда роли множатся в record-shaped варианты, переходи к policy-based/ABAC доступу с CASL — AbilityFactory, PoliciesGuard и @CheckPolicies, оценивающий can(action, subject), — помня, что даже ABAC надо передать реальный экземпляр записи, чтобы обеспечить владение.
+</Recap>

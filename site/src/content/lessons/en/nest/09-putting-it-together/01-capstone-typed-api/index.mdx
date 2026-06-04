@@ -1,0 +1,270 @@
+---
+concepts:
+- end-to-end-design
+- layered-architecture
+- typed-contracts
+- production-readiness
+- request-pipeline
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-capstone-typed-api"
+sources:
+- https://docs.nestjs.com/
+- https://docs.nestjs.com/techniques/validation
+- https://docs.nestjs.com/techniques/configuration
+- https://docs.nestjs.com/fundamentals/lifecycle-events
+spiral: []
+status: ready
+summary: 'Tie the whole track together: feature modules over Controller -> Service -> Repository, a core module that binds the global guard/pipe/interceptor/filter, types enforced at the edges, and a production-readiness checklist that fails fast.'
+title: 'Capstone: a fully-typed, authed, tested API'
+track: nest
+unit: "09-putting-it-together"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The order service ships, and for three weeks it is fine. Then a Friday deploy adds a `STRIPE_KEY` the team forgot to set in staging — the app boots green, passes liveness, and 404s nothing, because the key is only read the first time someone checks out, at 4pm, in production. The on-call engineer finds three more landmines while digging: a controller that does its own role check and its own validation, a service that opens a raw query outside any transaction, and `synchronize: true` quietly altering the schema on every restart. None of these are hard bugs. Each is a concern that drifted out of the slot the framework already gave it. This lesson is the assembly drawing: every earlier piece of the track, wired into one service you would actually trust on call.
+</Hook>
+
+<Crux>One typed contract per edge, one slot per cross-cutting concern, one fail-fast boot — the whole track assembled into one service.</Crux>
+
+<Explanation>
+
+## The skeleton: feature modules over a typed core
+
+A service you can reason about has two kinds of module. **Feature modules** (`OrdersModule`, `UsersModule`) own one slice of the domain and follow the same internal shape: a **Controller** (HTTP edge, no logic), a **Service** (business operations, the only place rules live), and a **Repository** (persistence, a typed `Repository&lt;T>`). A single **core module** owns everything cross-cutting: a typed `ConfigModule`, the global `ValidationPipe`, the global logging interceptor, the global exception filter, the auth guard, and the health controller. Feature modules import the core; nothing imports a feature module's internals.
+
+The core module is where the lifecycle gets bound once, with DI-aware provider tokens so the guard/filter/interceptor can themselves inject dependencies:
+
+```ts
+import { Module } from '@nestjs/common';
+import { APP_GUARD, APP_PIPE, APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { ConfigModule } from '@nestjs/config';
+import { ValidationPipe } from '@nestjs/common';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { AllExceptionsFilter } from './filters/all-exceptions.filter';
+import { TransformInterceptor } from './interceptors/transform.interceptor';
+import { validateEnv } from './config/env.validation';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnv }), // fail-fast at boot
+  ],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },                  // authn on every route
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe({ whitelist: true, transform: true }),
+    },
+    { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },     // envelope + timing
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },           // one error shape
+  ],
+})
+export class CoreModule {}
+```
+
+`whitelist: true` strips properties with no DTO decorator (defends against mass-assignment); `transform: true` turns the plain JSON body into a real DTO instance and coerces primitives. Binding via `APP_*` tokens — not `app.useGlobalGuards()` — keeps these globals inside the DI container, so the guard can inject `Reflector` and the filter can inject your `Logger`.
+
+## One request, the fixed lifecycle as the spine
+
+Every request walks the same gauntlet you learned earlier — now read it as the spine of the whole design. **`JwtAuthGuard`** (authentication) runs first and reads `@Public()` metadata so `/health` and `/login` opt out. **`RolesGuard`** (authorization) reads `@Roles()` and decides access — settled before any body is parsed. **`ValidationPipe`** turns the typed DTO in. The **handler** is thin: it calls the service and returns. The **Service** runs the business operation inside `dataSource.transaction`, sharing the transactional `EntityManager` so every write commits or rolls back together. The **interceptor** wraps the response in the envelope and records timing on the way out. The **`AllExceptionsFilter`** shapes anything that throws at any stage.
+
+```ts
+// orders.controller.ts — thin edge, no business logic
+@Controller('orders')
+export class OrdersController {
+  constructor(private readonly orders: OrdersService) {}
+
+  @Post()
+  @Roles('customer')
+  create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
+    return this.orders.place(dto, user.id); // DTO already validated by the global pipe
+  }
+}
+
+// orders.service.ts — rules live here, persistence runs in one transaction
+@Injectable()
+export class OrdersService {
+  constructor(private readonly dataSource: DataSource) {}
+
+  place(dto: CreateOrderDto, userId: string): Promise<OrderView> {
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(Order);                 // typed Repository<Order>
+      const stock = await manager.findOne(Product, { where: { id: dto.productId } });
+      if (!stock || stock.qty < dto.quantity) throw new ConflictException('out of stock');
+      const order = repo.create({ userId, ...dto });
+      await repo.save(order);                                    // same tx as the stock read
+      return toOrderView(order);                                 // domain -> response DTO
+    });
+  }
+}
+```
+
+The handler never sees a transaction, a role check, or an error shape — those live in their lifecycle slots. The service never sees HTTP. That separation is the whole point: each stage references the right earlier lesson — guards for authz, the pipe for validation, the shared transactional manager for persistence, the interceptor for the envelope, the filter for errors.
+
+<FlowDiagram
+  label="The finished request pipeline as a left-to-right flow: an incoming request passes through the JwtAuthGuard for authentication, then the RolesGuard for authorization, then the ValidationPipe which turns the typed DTO in, then the thin controller handler, which calls the Service that runs the business operation inside a dataSource.transaction over a typed Repository, then the TransformInterceptor wraps the response in an envelope with timing on the way out, and the AllExceptionsFilter shapes any throw from any earlier stage into one error shape."
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "guard", label: "Guards", sub: "authn -> authz" },
+    { id: "pipe", label: "ValidationPipe", sub: "typed DTO in" },
+    { id: "handler", label: "Controller", sub: "thin handler" },
+    { id: "svc", label: "Service + tx", sub: "Repository<T>" },
+    { id: "intc", label: "Interceptor", sub: "envelope + timing" },
+    { id: "filter", label: "Filter", sub: "one error shape" },
+  ]}
+  edges={[
+    { from: "guard", to: "pipe", label: "allowed" },
+    { from: "pipe", to: "handler", label: "valid DTO" },
+    { from: "handler", to: "svc", label: "calls service" },
+    { from: "svc", to: "intc", label: "domain result" },
+    { from: "intc", to: "filter", label: "on throw" },
+  ]}
+  caption="The lifecycle IS the architecture: each concern sits in one slot, in order. Any throw — guard, pipe, handler, or the service's transaction — jumps to the same filter."
+/>
+
+## Types at the edges, fail-fast at boot
+
+The contract of this service is its types, enforced where data crosses a boundary. Three DTOs, never one: a **request DTO** (validated input), a **domain entity** (what the database holds), and a **response DTO** (what callers see — never leak the entity). Config is typed too: `registerAs` plus `ConfigType` gives the service a strongly-typed slice instead of stringly-typed `process.env` lookups, and `validate` rejects a bad environment at boot rather than at first use.
+
+```ts
+// config/database.config.ts
+import { registerAs, ConfigType } from '@nestjs/config';
+
+export const databaseConfig = registerAs('db', () => ({
+  url: process.env.DATABASE_URL!,
+  poolSize: Number(process.env.DB_POOL_SIZE ?? 10),
+}));
+export type DatabaseConfig = ConfigType<typeof databaseConfig>;
+
+// somewhere in a provider:
+constructor(@Inject(databaseConfig.KEY) private readonly db: DatabaseConfig) {}
+// db.poolSize is number, db.url is string — no `as`, no `process.env` at call sites
+```
+
+The production-readiness checklist is the senior judgment that separates "compiles" from "trust on call":
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Concern</th>
+        <th class="border border-border px-3 py-2 text-left">Production-ready answer</th>
+        <th class="border border-border px-3 py-2 text-left">The failure it prevents</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Config</strong></td>
+        <td class="border border-border px-3 py-2">Env validated at boot (<code>validate</code>); secrets via config, never in a JWT</td>
+        <td class="border border-border px-3 py-2">Missing var crashes at first use in prod, not at deploy</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Schema</strong></td>
+        <td class="border border-border px-3 py-2">Migrations only; <code>synchronize: false</code></td>
+        <td class="border border-border px-3 py-2"><code>synchronize: true</code> silently alters/drops columns on restart</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Lifecycle</strong></td>
+        <td class="border border-border px-3 py-2">Graceful shutdown (<code>enableShutdownHooks</code>); readiness gates traffic</td>
+        <td class="border border-border px-3 py-2">In-flight requests dropped; traffic routed before deps are warm</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Health</strong></td>
+        <td class="border border-border px-3 py-2">Liveness = process up; readiness = DB/deps reachable</td>
+        <td class="border border-border px-3 py-2">Liveness that checks the DB triggers a restart loop on a DB blip</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Observability</strong></td>
+        <td class="border border-border px-3 py-2">Structured logs with a correlation id per request</td>
+        <td class="border border-border px-3 py-2">No way to trace one request across services post-incident</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Idempotency</strong></td>
+        <td class="border border-border px-3 py-2">Idempotent handlers where at-least-once delivery applies</td>
+        <td class="border border-border px-3 py-2">A retried message double-charges or double-creates</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The testing strategy mirrors the layering: **unit-test services** with mocked repositories — fast, no DB, asserting the business rules in isolation — and **e2e-test the wired pipeline** with a real test database and a real token, so the guard, pipe, transaction, interceptor, and filter are all exercised exactly as in production.
+
+<Inset kind="why" lang="en">
+Why split liveness from readiness instead of one `/health`? They answer different questions to different watchers. **Liveness** answers "is this process wedged?" — if it fails, the orchestrator restarts the pod, so it must depend only on the process itself, never on the database. **Readiness** answers "should traffic come here right now?" — if it fails, the load balancer stops routing but does not restart, so it is the right place to check the DB and downstream deps. Collapse them into one probe that pings the database and a brief DB outage becomes a restart storm: every pod fails liveness at once, all restart, and the now-cold connection pools make the outage worse.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-09-putting-it-together-01-capstone-typed-api-tradeoff-1"
+  lessonSlug="01-capstone-typed-api"
+  lang="en"
+  prompt="You are structuring the order-placement feature so it stays maintainable and testable as the team and the rules grow. How do you arrange the code?"
+  options={[
+    { name: "Controller -> Service -> Repository: the controller is a thin HTTP edge, the Service holds business rules and owns the transaction, the Repository is a typed Repository<T>; cross-cutting concerns bind globally in the core module", summary: "Layered, concerns in their slots.", correct: true, justification: "Each layer has one reason to change and one way to test: the Service is unit-tested with a mocked repository (no DB, fast), the wired pipeline is e2e-tested with a real DB and token. Business rules live in exactly one place, persistence is swappable behind the repository, and authz/validation/error-shape sit in their lifecycle slots via APP_GUARD/APP_PIPE/APP_FILTER — never copy-pasted into handlers. This is the design the whole track builds to." },
+    { name: "Fat controllers: parse, authorize, validate, run the SQL, and shape errors all inside each @Post handler", summary: "Everything in the edge.", justification: "Every handler re-implements auth, validation, and error shaping, so the cross-cutting logic is copy-pasted and one forgotten line is a security or correctness hole. There is no seam to unit-test the rules without spinning up HTTP, and the controller changes for every kind of reason. This is precisely the smell the lesson opens with." },
+    { name: "Everything in services: skip repositories, let each service issue raw queries and HTTP-shape its own responses", summary: "No persistence seam.", justification: "Folding persistence into the service couples business rules to the database driver, so you cannot unit-test a rule without a real DB, and there is no typed Repository<T> boundary to mock. Letting services shape HTTP responses also leaks the transport concern back into business logic. The repository seam is what makes the service testable in isolation." },
+    { name: "One giant module with all controllers and services flat, no feature boundaries", summary: "No module boundaries.", justification: "Flattening everything into one module destroys encapsulation: any provider can reach any other, imports become a tangle, and you lose the per-feature ownership that lets teams work in parallel. Feature modules importing a shared core is what keeps the dependency graph legible as the service grows." },
+  ]}
+/>
+
+<Quiz
+  id="nest-09-putting-it-together-01-capstone-typed-api-quiz-1"
+  lessonSlug="01-capstone-typed-api"
+  lang="en"
+  question="In the finished design, in what order do the cross-cutting components touch one successful POST /orders request?"
+  choices={[
+    { label: "JwtAuthGuard (authn) -> RolesGuard (authz) -> ValidationPipe (typed DTO) -> handler -> Service in dataSource.transaction -> interceptor (envelope + timing) on the way out", correct: true },
+    { label: "ValidationPipe first to parse the body, then the guards once the DTO is known, then the handler", misconception: "Guards run before pipes by design — authorization is settled before any body is parsed. Validating input before deciding access wastes work on requests you will reject and leaks payload validity into the authz decision." },
+    { label: "The interceptor first (it wraps everything), then the guards, then the pipe, then the handler", misconception: "The interceptor's pre-handler code does run early, but authentication is the guard's job and runs first; more importantly the interceptor's envelope/timing is its POST-handler work, which happens on the way out, after the handler returns." },
+    { label: "The exception filter runs in the chain on every request, between the pipe and the handler", misconception: "The filter is not in the linear chain — it is an off-to-the-side sink that fires only when something throws. On a successful request it never runs." },
+  ]}
+/>
+
+<Quiz
+  id="nest-09-putting-it-together-01-capstone-typed-api-quiz-2"
+  lessonSlug="01-capstone-typed-api"
+  lang="en"
+  question="Why bind the global ValidationPipe with { whitelist: true, transform: true } via APP_PIPE rather than new-ing it in main.ts, and why does whitelist matter?"
+  choices={[
+    { label: "APP_PIPE keeps the pipe inside the DI container so it (and the guard/filter) can inject dependencies; whitelist strips undecorated properties to block mass-assignment, transform yields a real typed DTO instance", correct: true },
+    { label: "Both forms are identical; APP_PIPE is only shorter to type and whitelist just makes errors prettier", misconception: "They are not identical: a pipe new-ed in main.ts lives outside DI and cannot inject providers, and whitelist is a security control — it removes properties with no DTO decorator so a caller cannot smuggle extra fields (mass-assignment), which is far more than cosmetics." },
+    { label: "whitelist makes validation optional and transform disables it, so together they speed up requests by skipping checks", misconception: "Backwards: whitelist strips unknown properties (and with forbidNonWhitelisted, rejects them) and transform builds and coerces a typed instance. Neither disables validation; they tighten it." },
+    { label: "You should never bind it globally — each controller should construct its own ValidationPipe so DTOs differ per route", misconception: "A global ValidationPipe applies per-DTO automatically via each DTO's own decorators, so one global binding already gives per-route behavior. Re-constructing it per controller just duplicates config and invites drift." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Feature modules over Controller -> Service -> Repository; a core module binds APP_GUARD/PIPE/FILTER/INTERCEPTOR; three DTOs type the edges; services run in one transaction; the checklist fails fast at boot.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-capstone-typed-api-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the module and layer skeleton of the finished service, and where each cross-cutting concern binds.", a: "Two kinds of module. Feature modules (OrdersModule, UsersModule) each own one domain slice with the same internal shape: a Controller (thin HTTP edge, no business logic), a Service (the only home of business rules, and the layer that owns the transaction), and a Repository (typed Repository<T> for persistence). One shared core module owns everything cross-cutting and binds the lifecycle once via DI-aware tokens: APP_GUARD for the JwtAuthGuard (authn, plus a RolesGuard for authz reading @Roles()), APP_PIPE for a global ValidationPipe({ whitelist: true, transform: true }), APP_INTERCEPTOR for the transform/timing interceptor that wraps every response in an envelope, and APP_FILTER for the AllExceptionsFilter that shapes every throw. Feature modules import the core; the core imports a typed ConfigModule and hosts the health controller. Binding via APP_* keeps the globals inside DI so the guard can inject Reflector and the filter can inject the Logger — which new-ing them in main.ts would not." },
+    { q: "Walk one POST /orders request through the fixed lifecycle, and name the production-readiness items that keep it trustworthy.", a: "Order: JwtAuthGuard authenticates (and reads @Public() so /health and /login opt out) -> RolesGuard authorizes via @Roles(), settled before any parsing -> ValidationPipe turns the validated, typed CreateOrderDto in -> the thin handler calls the service and returns -> the Service runs the business op inside dataSource.transaction, sharing the transactional EntityManager so the stock read and the order write commit or roll back together over a typed Repository, and maps the domain entity to a response DTO (never leaking the entity) -> the interceptor wraps the result in the envelope and records timing on the way out -> the AllExceptionsFilter shapes anything thrown at any stage into one error shape. Readiness checklist: env validated at boot so a missing var fails fast (not at first use); migrations only with synchronize: false; graceful shutdown via enableShutdownHooks and readiness gating traffic (liveness = process up, readiness = DB/deps reachable — never check the DB in liveness); structured logs with a per-request correlation id; secrets via config, never inside a JWT; idempotent handlers wherever at-least-once delivery applies. Test it by unit-testing services with mocked repositories and e2e-testing the wired pipeline against a real test DB with a real token." },
+  ]}
+/>
+
+<Recap lang="en">
+The capstone assembles the whole track into one service you would trust on call. The skeleton is feature modules (OrdersModule, UsersModule) over a fixed internal layering — Controller (thin HTTP edge), Service (the only home of business rules and the owner of the transaction), Repository (typed Repository&lt;T>) — plus a single core module that binds every cross-cutting concern once via DI-aware tokens: APP_GUARD for authn/authz, APP_PIPE for a global ValidationPipe with whitelist and transform, APP_INTERCEPTOR for the response envelope and timing, APP_FILTER for the one error shape. The fixed request lifecycle is the spine: guard -> guard -> pipe -> handler -> service-in-transaction -> interceptor -> filter, each stage referencing its earlier lesson. The contract is types at the edges — a request DTO, a domain entity, and a response DTO, never collapsed into one, with ConfigType and a typed Repository removing stringly-typed lookups. Production-readiness is the senior judgment: validate env at boot to fail fast, migrations only with synchronize off, graceful shutdown with readiness gating traffic, liveness that never touches the DB, structured logs with a correlation id, secrets in config and not in tokens, and idempotent handlers where delivery is at-least-once. Test the layering the way you built it: unit-test services with mocked repositories, e2e-test the wired pipeline against a real DB with real auth.
+</Recap>

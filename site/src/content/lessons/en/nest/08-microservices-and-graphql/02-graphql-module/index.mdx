@@ -1,0 +1,317 @@
+---
+concepts:
+- graphql
+- code-first
+- resolvers
+- dataloader
+- query-complexity
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-graphql-module"
+sources:
+- https://docs.nestjs.com/graphql/quick-start
+- https://docs.nestjs.com/graphql/resolvers
+- https://docs.nestjs.com/graphql/complexity
+- https://docs.nestjs.com/graphql/guards-interceptors
+spiral: []
+status: ready
+summary: 'Code-first GraphQL generates the SDL from @ObjectType/@Resolver classes. Field resolvers create the N+1; a per-request DataLoader batches keys into one DB call. Harden prod with depth/complexity limits.'
+title: 'Code-first GraphQL, resolvers and DataLoader'
+track: nest
+unit: "08-microservices-and-graphql"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The GraphQL endpoint shipped clean and the demo query was instant: one author, with their posts. Then the dashboard team wrote `authors { id posts { title } }` over the full list, and Postgres lit up — 1 query for the 200 authors, then 200 more, one per author, to fetch each author's posts. p99 went from 40ms to 6 seconds, and the connection pool started queueing. Nothing in the resolver was "wrong"; the `posts` field resolver simply ran once per parent, and 200 parents meant 200 round-trips. This is the GraphQL N+1, and it is the single most common way a typed graph API melts a database. The fix is not a join — it is batching the keys collected in one tick into a single call.
+</Hook>
+
+<Crux>Code-first builds the schema from TS classes; a field resolver runs per parent (N+1), and a per-request DataLoader batches it to one call.</Crux>
+
+<Explanation>
+
+## Code-first: the schema is generated from your classes
+
+In the code-first approach you never hand-write SDL. You decorate TypeScript classes with `@ObjectType()` and `@Field()`, decorate resolver methods with `@Query()` / `@Mutation()` / `@ResolveField()`, and Nest **generates the schema** from that type information at startup. `autoSchemaFile` writes the SDL to disk (or keeps it in memory) so tooling can read it — but the source of truth is your code. The schema-first alternative is the inverse: you write the SDL by hand and generate the TypeScript typings from it. Code-first wins when your team lives in TypeScript and wants the types and the schema to never drift apart.
+
+```ts
+import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { GraphQLModule } from '@nestjs/graphql';
+import { Module } from '@nestjs/common';
+
+@Module({
+  imports: [
+    GraphQLModule.forRoot<ApolloDriverConfig>({
+      driver: ApolloDriver,
+      autoSchemaFile: 'schema.gql',        // GENERATE SDL from the TS classes
+      playground: false,                    // off in prod
+      introspection: process.env.NODE_ENV !== 'production', // hide the schema in prod
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+The object types are plain classes; `@Field(() => Int)` pins the GraphQL scalar where TS reflection can't infer it (numbers, arrays, nullability):
+
+```ts
+import { Field, Int, ObjectType } from '@nestjs/graphql';
+
+@ObjectType()
+export class Post {
+  @Field(() => Int) id: number;
+  @Field() title: string;
+}
+
+@ObjectType()
+export class Author {
+  @Field(() => Int) id: number;
+  @Field({ nullable: true }) firstName?: string;
+  @Field(() => [Post]) posts: Post[];   // a relation -> resolved lazily by a field resolver
+}
+```
+
+## Resolvers and the field resolver — where the N+1 is born
+
+A `@Resolver(() => Author)` class hosts the root operations (`@Query`, `@Mutation`) and, crucially, **field resolvers** (`@ResolveField`) that compute a field lazily, *per parent object*. The `posts` field on `Author` is not loaded with the author — it is resolved only if the query asks for it, by calling the field resolver once for every author in the result set. That per-parent execution is exactly the N+1: one query for N authors, then N separate queries for their posts.
+
+```ts
+import { Resolver, Query, ResolveField, Parent, Args, Int } from '@nestjs/graphql';
+
+@Resolver(() => Author)
+export class AuthorsResolver {
+  constructor(
+    private readonly authors: AuthorsService,
+    private readonly posts: PostsService,
+  ) {}
+
+  @Query(() => [Author])
+  authors() {
+    return this.authors.findAll();          // 1 query -> N authors
+  }
+
+  @ResolveField(() => [Post])
+  async postsFor(@Parent() author: Author) {
+    return this.posts.findByAuthorId(author.id); // fires ONCE PER AUTHOR -> the N+1
+  }
+}
+```
+
+## DataLoader: batch the keys collected in one tick
+
+[DataLoader](https://github.com/graphql/dataloader) sits between the field resolver and the database. Instead of querying immediately, every `load(id)` call enqueues a key; at the end of the current event-loop tick, DataLoader hands the **whole batch of keys** to one `findByAuthorIds([...])` and fans the result back out to each caller. It also memoises within the batch, so two `load(5)` calls hit the DB once. The collapse is dramatic: 1 + N queries become **1 + 1**.
+
+The loader must be **per request** — its cache holds request data and must never leak across users — so wire it as a request-scoped provider and resolve it in the GraphQL context:
+
+```ts
+import * as DataLoader from 'dataloader';
+import { Injectable, Scope } from '@nestjs/common';
+
+@Injectable({ scope: Scope.REQUEST })   // a fresh loader per request -> no cross-request cache
+export class PostsLoader {
+  constructor(private readonly posts: PostsService) {}
+
+  readonly byAuthorId = new DataLoader<number, Post[]>(async (authorIds) => {
+    // ONE round-trip for every key collected in this tick:
+    const rows = await this.posts.findByAuthorIds(authorIds as number[]);
+    const byId = new Map<number, Post[]>(authorIds.map((id) => [id, []]));
+    for (const p of rows) byId.get(p.authorId)!.push(p);
+    return authorIds.map((id) => byId.get(id)!); // MUST return results in key order
+  });
+}
+```
+
+```ts
+@ResolveField(() => [Post])
+postsFor(@Parent() author: Author) {
+  return this.loader.byAuthorId.load(author.id); // enqueue a key; batched, not per-call
+}
+```
+
+The batch function's contract is strict: it must return an array **the same length and order** as the input keys, mapping a missing key to `[]` (or `null`), never silently dropping it — get the order wrong and authors get each other's posts.
+
+<SequenceDiagram
+  label="A GraphQL query for a list of authors with their posts: the root query returns N authors in one database call, then the posts field resolver runs once per author and each call enqueues that author's id into a per-request DataLoader instead of querying immediately; at the end of the event-loop tick the DataLoader batches all collected ids into a single findByAuthorIds call, so the whole query costs one plus one database round-trips instead of one plus N."
+  hue="var(--d-systems)"
+  actors={["Client", "Resolver", "DataLoader", "Database"]}
+  messages={[
+    { from: "Client", to: "Resolver", label: "authors { posts }" },
+    { from: "Resolver", to: "Database", label: "1. findAll() -> N authors" },
+    { from: "Resolver", to: "DataLoader", label: "2. load(id) x N (per parent)" },
+    { from: "DataLoader", to: "DataLoader", label: "3. collect keys in one tick" },
+    { from: "DataLoader", to: "Database", label: "4. findByAuthorIds([...]) x1" },
+    { from: "Database", to: "DataLoader", label: "5. rows -> map by key order" },
+    { from: "Resolver", to: "Client", label: "6. response (1 + 1 queries)" },
+  ]}
+  caption="Without DataLoader the posts field resolver fires N times -> 1 + N queries. With it, the N load() calls in one tick collapse into a single batched query -> 1 + 1. The batch must return results in key order."
+/>
+
+## Context, guards, and production hardening
+
+Guards, interceptors, and filters still work in GraphQL — but the resolver argument shape differs (root, args, context, info), so you adapt the generic `ExecutionContext` with `GqlExecutionContext.create(context)` to read args or the request:
+
+```ts
+import { GqlExecutionContext } from '@nestjs/graphql';
+import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+
+@Injectable()
+export class GqlAuthGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const ctx = GqlExecutionContext.create(context);
+    const { req } = ctx.getContext();   // the request lives on the GraphQL context
+    return Boolean(req?.user);
+  }
+}
+```
+
+A single endpoint that accepts arbitrary queries is a denial-of-service surface: a deeply nested `posts { author { posts { author ... } } }` can explode into millions of field resolves. Production graphs cap this with a **query depth** limit and a **complexity** budget — assign each field a cost and reject any operation over a ceiling before it executes:
+
+```ts
+import { Plugin } from '@nestjs/apollo';
+import { GraphQLSchemaHost } from '@nestjs/graphql';
+import { GraphQLError } from 'graphql';
+import { fieldExtensionsEstimator, getComplexity, simpleEstimator } from 'graphql-query-complexity';
+
+@Plugin()
+export class ComplexityPlugin {
+  constructor(private readonly schemaHost: GraphQLSchemaHost) {}
+  async requestDidStart() {
+    const max = 20, { schema } = this.schemaHost;
+    return {
+      didResolveOperation: async ({ request, document }) => {
+        const complexity = getComplexity({
+          schema, query: document, variables: request.variables,
+          operationName: request.operationName,
+          estimators: [fieldExtensionsEstimator(), simpleEstimator({ defaultComplexity: 1 })],
+        });
+        if (complexity > max) throw new GraphQLError(`Query too complex: ${complexity} > ${max}`);
+      },
+    };
+  }
+}
+```
+
+Add **persisted queries** (clients send a hash of a pre-registered query, not arbitrary text) and **disable introspection in prod** so attackers can't trivially map the whole graph.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Concern</th>
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+        <th class="border border-border px-3 py-2 text-left">Mechanism</th>
+        <th class="border border-border px-3 py-2 text-left">Failure it prevents</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Schema</strong></td>
+        <td class="border border-border px-3 py-2">code-first <code>autoSchemaFile</code></td>
+        <td class="border border-border px-3 py-2">SDL generated from <code>@ObjectType</code> classes</td>
+        <td class="border border-border px-3 py-2">types and schema drifting apart</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Relation</strong></td>
+        <td class="border border-border px-3 py-2"><code>@ResolveField</code></td>
+        <td class="border border-border px-3 py-2">resolves a field lazily, per parent</td>
+        <td class="border border-border px-3 py-2">over-fetching unrequested relations</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>N+1</strong></td>
+        <td class="border border-border px-3 py-2">per-request DataLoader</td>
+        <td class="border border-border px-3 py-2">batch keys in one tick -> 1 call</td>
+        <td class="border border-border px-3 py-2">1 + N round-trips, pool exhaustion</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Cross-cut</strong></td>
+        <td class="border border-border px-3 py-2"><code>GqlExecutionContext</code></td>
+        <td class="border border-border px-3 py-2">adapt ctx for guards/interceptors</td>
+        <td class="border border-border px-3 py-2">guards that can't read args/req</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>DoS</strong></td>
+        <td class="border border-border px-3 py-2">depth + complexity limits</td>
+        <td class="border border-border px-3 py-2">reject costly query before it runs</td>
+        <td class="border border-border px-3 py-2">a nested query melting the DB</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why does DataLoader live per request and not as a singleton? Its in-batch cache is what makes batching work, but that cache holds the rows it just fetched — author 5's posts, user 12's profile. A singleton loader would serve request B the rows it cached for request A, leaking one user's data into another's response and never reflecting a write that happened between requests. A fresh loader per request keeps the batching win while scoping the cache to a single, authenticated unit of work. That is why you register it `Scope.REQUEST` (or build it in the GraphQL context factory) — one loader, one request, discarded at the end.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-02-graphql-module-tradeoff-1"
+  lessonSlug="02-graphql-module"
+  lang="en"
+  prompt="A query returns N authors, each resolving a `posts` field. The naive resolver fires one DB query per author (1 + N). How should you resolve the relation in a graph API?"
+  options={[
+    { name: "A per-request DataLoader: the field resolver calls load(id), keys collected in one tick are batched into a single findByAuthorIds([...]) and cached within the request", summary: "Batches the N+1.", correct: true, justification: "This is the canonical fix for the GraphQL N+1. The field resolver still runs per parent, but instead of querying it enqueues a key; DataLoader batches every key collected in the tick into one round-trip and memoises within the request, turning 1 + N into 1 + 1. It is per-request so the cache never leaks across users and reflects writes between requests. It also composes with arbitrary query shapes — a single joined query can't, because the client decides at runtime which relations to expand." },
+    { name: "Leave the naive field resolver firing one query per parent — it's the simplest code and GraphQL is meant to resolve fields lazily", summary: "The N+1 itself.", justification: "Lazy per-field resolution is correct in principle, but firing a separate DB call per parent is exactly the N+1 that melts the pool at list scale: 200 authors -> 201 queries, p99 in seconds. Correctness isn't the issue; throughput is. The lazy resolver is right — it just needs DataLoader underneath it to batch." },
+    { name: "Always emit one big SQL JOIN that fetches authors and all their posts together, ignoring which fields the query selected", summary: "Over-fetches blindly.", justification: "A join can be a valid per-resolver optimization, but forcing one join for every authors query over-fetches when the client didn't ask for posts, and doesn't generalize — GraphQL lets the client pick relations at runtime, so you'd need a different join per field combination. DataLoader adapts to whatever the query selected; a hard-coded join doesn't." },
+    { name: "Cache the posts globally in a singleton so repeated authors share results across all requests", summary: "Leaks across users.", justification: "A process-wide cache batches nothing within a single query and, worse, serves one request the rows cached for another — leaking data across users and going stale on writes. The batching unit must be the request, not the process. That's precisely why DataLoader is request-scoped." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-02-graphql-module-quiz-1"
+  lessonSlug="02-graphql-module"
+  lang="en"
+  question="A query asks for 50 authors and each author's posts via a @ResolveField. With a correctly wired per-request DataLoader, how many database queries run?"
+  choices={[
+    { label: "2 — one for the 50 authors, then one batched findByAuthorIds([...]) for all their posts", correct: true },
+    { label: "51 — one for the authors and one per author for their posts", misconception: "That is the count WITHOUT DataLoader (1 + N). The whole point of the loader is that the 50 load() calls in one tick collapse into a single batched query, giving 1 + 1 = 2, not 1 + N = 51." },
+    { label: "1 — DataLoader rewrites the resolvers into a single SQL JOIN", misconception: "DataLoader does not generate SQL or joins; it batches keys into one call to whatever your service does. The root authors query and the batched posts query are still two separate round-trips." },
+    { label: "50 — DataLoader removes the initial authors query but still loads posts per author", misconception: "The root query for the authors list always runs once, and the per-parent load() calls are batched into one more — so it's 2. DataLoader batches the field resolves; it doesn't eliminate the root query." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-02-graphql-module-quiz-2"
+  lessonSlug="02-graphql-module"
+  lang="en"
+  question="In code-first NestJS GraphQL, where does the GraphQL schema (SDL) come from, and how do guards read GraphQL args?"
+  choices={[
+    { label: "The SDL is generated from @ObjectType/@Resolver classes via autoSchemaFile; guards call GqlExecutionContext.create(context) to reach args and the request", correct: true },
+    { label: "You hand-write the SDL file and Nest generates the TS classes from it; guards read context.switchToHttp() as usual", misconception: "That describes the schema-FIRST approach (SDL by hand -> typings generated). Code-first is the inverse: classes generate the SDL. And in GraphQL the args aren't on the HTTP context — you must adapt it with GqlExecutionContext.create()." },
+    { label: "The schema is inferred at request time from each query; guards work unchanged because GraphQL reuses the HTTP execution context directly", misconception: "The schema is built once at startup from your decorated classes, not per request. And the GraphQL resolver argument shape (root/args/context/info) differs from HTTP, which is exactly why GqlExecutionContext.create() exists." },
+    { label: "autoSchemaFile downloads the schema from Apollo's registry; guards are not supported in GraphQL resolvers", misconception: "autoSchemaFile writes the locally generated SDL to disk — nothing is downloaded. Guards, interceptors, and filters all work in GraphQL; you just adapt the context with GqlExecutionContext.create()." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Code-first generates the SDL from @ObjectType/@Resolver classes. A @ResolveField runs per parent — the N+1 — fixed by a per-request DataLoader that batches keys into one call. Harden prod with depth/complexity limits.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-graphql-module-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the GraphQL N+1 problem in a Nest resolver and exactly how a DataLoader fixes it, including why the loader must be request-scoped.", a: "The N+1 arises because a @ResolveField runs once per parent object: a query returning N authors, each resolving its posts field, fires 1 query for the authors and then N more — one findByAuthorId per author — so 1 + N round-trips that exhaust the connection pool at list scale. A DataLoader sits between the field resolver and the data source: instead of querying, the resolver calls load(id), which enqueues the key; at the end of the current event-loop tick DataLoader hands the whole batch of collected keys to a single findByAuthorIds([...]) and fans the result back to each caller, memoising duplicate keys within the batch. That turns 1 + N into 1 + 1. The batch function must return an array the same length and order as the input keys (missing key -> [] or null), or authors get each other's posts. The loader must be request-scoped — Scope.REQUEST or built in the GraphQL context factory — because its in-batch cache holds the rows it just fetched; a singleton would serve one request the data cached for another, leaking one user's data into another's response and going stale on writes. One loader, one request, discarded at the end." },
+    { q: "Contrast code-first and schema-first GraphQL in Nest, and name the production hardening you add to a public graph endpoint.", a: "Code-first: you decorate TypeScript classes with @ObjectType/@Field and resolver methods with @Query/@Mutation/@ResolveField, and Nest generates the SDL from that type information at startup (autoSchemaFile writes it to disk or keeps it in memory). The code is the source of truth, so types and schema never drift. Schema-first is the inverse: you write the SDL by hand and generate the TypeScript typings from it. Code-first suits TypeScript-heavy teams; schema-first suits a schema-driven, language-agnostic contract. For production hardening on a single arbitrary-query endpoint: cap query DEPTH (reject deeply nested recursive queries) and enforce a query COMPLEXITY budget — assign each field a cost via a complexity plugin (getComplexity with fieldExtensionsEstimator + simpleEstimator) and reject any operation over the ceiling in didResolveOperation, before it executes — so a malicious nested query can't DoS the DB. Add persisted queries (clients send a hash of a pre-registered query, not arbitrary text) and disable introspection (and the playground) in production so the schema isn't trivially mappable. Guards/interceptors/filters still apply, adapted via GqlExecutionContext.create(context)." },
+  ]}
+/>
+
+<Recap lang="en">
+Code-first GraphQL in Nest generates the schema from your TypeScript: @ObjectType/@Field classes and @Resolver methods (@Query, @Mutation, @ResolveField) become the SDL via autoSchemaFile, so types and schema never drift — the inverse of schema-first, where you hand-write SDL and generate typings. The senior trap is the field resolver: @ResolveField resolves a relation lazily, once per parent, so a query over N authors each resolving their posts fires 1 + N database queries — the GraphQL N+1 that exhausts the connection pool at list scale. The fix is a DataLoader: the field resolver calls load(id), keys collected in one event-loop tick are batched into a single findByAuthorIds([...]) call and memoised within the request, collapsing 1 + N into 1 + 1; the batch function must return results in the same order as the keys. The loader is registered Scope.REQUEST (or built in the GraphQL context) so its cache scopes to one request and never leaks across users. Guards, interceptors, and filters still work — you adapt the context with GqlExecutionContext.create(context) to reach args and the request. Finally, because one endpoint accepts arbitrary queries, you harden production with query depth and complexity limits that reject a costly operation before it runs, persisted queries, and disabled introspection.
+</Recap>

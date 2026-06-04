@@ -1,0 +1,286 @@
+---
+concepts:
+- passport
+- jwt
+- auth-guard
+- local-strategy
+- jwt-strategy
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-passport-and-jwt"
+sources:
+- https://docs.nestjs.com/security/authentication
+- https://docs.nestjs.com/recipes/passport
+spiral: []
+status: ready
+summary: 'Passport gives Nest two strategies — LocalStrategy validates credentials on /login, JwtStrategy verifies a Bearer token on every protected route. A global JwtAuthGuard fails closed; @Public() opts routes out. A JWT is signed, not encrypted.'
+title: 'Passport strategies and JWT auth'
+track: nest
+unit: 05-auth
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The pen-test report lands with one finding flagged critical: a former contractor's token still works, three weeks after their access was revoked. You check — the row is gone from the users table, the SSO seat is reclaimed, and yet `GET /admin/billing` returns 200 for a token they minted in March. Then you read your own `JwtModule.register`: `signOptions: { expiresIn: '90d' }`. There is no logout, no revocation, no denylist — a JWT, once signed, is valid until it expires, and you told it to live for ninety days. The fix is not a patch; it is understanding what a signed token actually is and how Passport hands one out and checks it back.
+</Hook>
+
+<Crux>LocalStrategy validates credentials once on /login; JwtStrategy verifies a signed Bearer token on every protected route after.</Crux>
+
+<Explanation>
+
+## Two strategies, two moments
+
+Authentication in Nest is two distinct moments, and Passport models each with a *strategy*. The first moment is **login**: the client sends a username and password exactly once, you check them against the database, and if they match you hand back a token. That is `LocalStrategy`. The second moment is **every request after**: the client presents the token, you verify its signature and expiry, and you trust the identity inside it without touching the database. That is `JwtStrategy`. A strategy is a class extending `PassportStrategy(...)` whose `validate()` method returns the principal — and whatever `validate()` returns is what Passport attaches to `req.user`.
+
+`LocalStrategy` reads the credentials, compares the password against the stored hash, and returns the user (minus the hash). The matching `LocalAuthGuard` is a one-liner — `AuthGuard('local')` — and you put it on `POST /login` so the strategy runs before your handler:
+
+```ts
+import { Strategy } from 'passport-local';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import * as bcrypt from 'bcrypt';
+
+@Injectable()
+export class LocalStrategy extends PassportStrategy(Strategy) {
+  constructor(private users: UsersService) {
+    super(); // defaults to fields named 'username' and 'password'
+  }
+
+  async validate(username: string, password: string) {
+    const user = await this.users.findByName(username);
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      throw new UnauthorizedException();
+    }
+    const { passwordHash, ...safe } = user;
+    return safe; // -> becomes req.user
+  }
+}
+```
+
+The `/login` handler then mints the token. By the time the handler runs, the guard has already populated `req.user`, so all the handler does is sign a payload — never put the password or anything secret in it:
+
+```ts
+@UseGuards(LocalAuthGuard)
+@Post('login')
+async login(@Request() req) {
+  const payload = { sub: req.user.id, username: req.user.username };
+  return { access_token: this.jwt.sign(payload) };
+}
+```
+
+## Wiring the module: secret from config, not source
+
+`JwtModule` needs a signing secret and a token lifetime, and both belong in configuration, not a string literal in your repo. `registerAsync` lets you inject `ConfigService` through a `useFactory`, so the secret comes from the environment and rotates without a code change. `PassportModule` registers the strategy infrastructure; you provide your strategy classes as normal providers:
+
+```ts
+@Module({
+  imports: [
+    PassportModule,
+    JwtModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        secret: config.getOrThrow<string>('JWT_SECRET'),
+        signOptions: { expiresIn: '15m' }, // short-lived access token
+      }),
+    }),
+  ],
+  providers: [AuthService, LocalStrategy, JwtStrategy],
+})
+export class AuthModule {}
+```
+
+`JwtStrategy` is the verifier. `ExtractJwt.fromAuthHeaderAsBearerToken()` tells Passport to pull the token from `Authorization: Bearer &lt;token>`; `secretOrKey` must be the *same* secret used to sign, or every verification fails; and leaving `ignoreExpiration` at its default `false` is what enforces the TTL. Passport verifies the signature and expiry *before* your `validate()` runs, so by the time you see the payload it is already proven authentic — you just shape the principal:
+
+```ts
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(config: ConfigService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false, // reject expired tokens (the default — keep it)
+      secretOrKey: config.getOrThrow<string>('JWT_SECRET'),
+    });
+  }
+
+  async validate(payload: { sub: string; username: string }) {
+    return { userId: payload.sub, username: payload.username }; // -> req.user
+  }
+}
+```
+
+## Fail closed: a global guard plus @Public()
+
+The dangerous default is opt-in protection — sprinkling `@UseGuards(JwtAuthGuard)` on each route and hoping nobody forgets one. Invert it: register the JWT guard globally with `APP_GUARD` so *every* route is protected by default, then carve explicit holes with a `@Public()` decorator the guard checks via the `Reflector`. Forgetting the decorator now leaves a route locked, not open — the safe failure mode.
+
+```ts
+// public.decorator.ts
+export const IS_PUBLIC_KEY = 'isPublic';
+export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+```
+
+```ts
+// jwt-auth.guard.ts
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {
+  constructor(private reflector: Reflector) {
+    super();
+  }
+
+  canActivate(context: ExecutionContext) {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true; // @Public() route -> skip JWT verification
+    return super.canActivate(context); // else run AuthGuard('jwt')
+  }
+}
+```
+
+```ts
+// app.module.ts — bind the guard globally
+providers: [{ provide: APP_GUARD, useClass: JwtAuthGuard }],
+```
+
+Now `POST /login` and `GET /health` carry `@Public()`; everything else demands a valid Bearer token. The flow end to end:
+
+<SequenceDiagram
+  label="The Passport JWT authentication flow: the client posts credentials to login, the LocalStrategy validates them against the hashed password, the server signs and returns a JWT access token, the client stores it and sends it as a Bearer header on a protected route, the JwtAuthGuard runs the JwtStrategy which verifies the signature and expiry, and only then does the protected handler run with req.user populated."
+  hue="var(--d-systems)"
+  actors={["Client", "Guard+Strategy", "Handler"]}
+  messages={[
+    { from: "Client", to: "Guard+Strategy", label: "1. POST /login (user, pass)" },
+    { from: "Guard+Strategy", to: "Guard+Strategy", label: "2. LocalStrategy.validate -> user" },
+    { from: "Guard+Strategy", to: "Handler", label: "3. handler: jwt.sign(payload)" },
+    { from: "Handler", to: "Client", label: "4. { access_token } stored" },
+    { from: "Client", to: "Guard+Strategy", label: "5. GET /me (Bearer token)" },
+    { from: "Guard+Strategy", to: "Guard+Strategy", label: "6. JwtStrategy: verify sig + exp" },
+    { from: "Guard+Strategy", to: "Handler", label: "7. req.user set -> handler runs" },
+  ]}
+  caption="LocalStrategy runs once at /login and issues the token; JwtStrategy runs on every protected request to verify it. A @Public() route skips step 6 entirely. The guard fails closed: no valid token, no handler."
+/>
+
+## What req.user holds after each guard
+
+The two guards populate `req.user` from different sources, and conflating them is a common bug. After `LocalAuthGuard`, `req.user` is whatever `LocalStrategy.validate()` returned — the freshly-loaded database user. After `JwtAuthGuard`, `req.user` is whatever `JwtStrategy.validate(payload)` returned — derived from the token's claims, not a database read. If a user's roles change after the token is issued, a JWT-authenticated request still sees the old claims until the token expires.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Aspect</th>
+        <th class="border border-border px-3 py-2 text-left">LocalStrategy</th>
+        <th class="border border-border px-3 py-2 text-left">JwtStrategy</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Runs on</strong></td>
+        <td class="border border-border px-3 py-2">POST /login only</td>
+        <td class="border border-border px-3 py-2">Every protected route</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>validate() input</strong></td>
+        <td class="border border-border px-3 py-2">username, password</td>
+        <td class="border border-border px-3 py-2">decoded, verified payload</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Hits the DB?</strong></td>
+        <td class="border border-border px-3 py-2">Yes — load user, compare hash</td>
+        <td class="border border-border px-3 py-2">No — trusts token claims</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>req.user becomes</strong></td>
+        <td class="border border-border px-3 py-2">the loaded user (no hash)</td>
+        <td class="border border-border px-3 py-2">whatever validate(payload) returns</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Guard</strong></td>
+        <td class="border border-border px-3 py-2">AuthGuard('local')</td>
+        <td class="border border-border px-3 py-2">AuthGuard('jwt'), often global</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why is a JWT signed but not encrypted? The token is three base64url parts — header, payload, signature — joined by dots. Base64url is encoding, not encryption: anyone holding the token can decode the payload and read every claim in plaintext (paste one into jwt.io and watch). The signature does not hide the payload; it only proves the payload was not tampered with and was minted by a holder of the secret. So a JWT guarantees integrity and authenticity, never confidentiality. Never put a password, a secret, PII, or anything you would not print on a postcard into the claims — put an opaque user id and let the server look up the rest.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-05-auth-01-passport-and-jwt-tradeoff-1"
+  lessonSlug="01-passport-and-jwt"
+  lang="en"
+  prompt="Constraint: a SaaS dashboard where an admin must be able to KILL a compromised session within seconds, traffic is high, and you run several stateless API instances behind a load balancer. Which auth model fits?"
+  options={[
+    { name: "Short-lived JWT access token (~15m) + a longer rotating refresh token, refresh stored in an httpOnly cookie and checked against a server-side store", summary: "Best fit.", correct: true, justification: "This is the model the constraint asks for. The access token is stateless so it scales across instances with no shared session store on the hot path, and its short TTL bounds the damage window to minutes. Revocation lives on the refresh token: it's persisted server-side (a row or Redis key), rotated on every use, and can be deleted instantly to kill the session — the next refresh fails and the access token dies within minutes. You get statelessness on reads AND near-instant revocation, which neither pure approach gives alone." },
+    { name: "Server-side session with a cookie session id, session row in Redis checked on every request", summary: "Instant revoke, costs a lookup.", justification: "Revocation is trivial — delete the session row and the very next request is rejected. But every request now does a Redis round-trip, which is the per-request statefulness the constraint is trying to avoid at high traffic, and it couples every API instance to the session store. It's a valid model, just not the stateless-scale one asked for; the access+refresh split keeps reads stateless while still allowing the instant kill." },
+    { name: "One long-lived JWT (e.g. 30–90 days), no refresh token, no server state", summary: "The hook's bug.", justification: "This is exactly the pen-test finding from the hook. A signed JWT can't be un-issued — there is no logout and no denylist here — so a compromised or ex-employee token stays valid for weeks regardless of what you delete from the database. It scales beautifully and revokes never. The long TTL is the whole vulnerability; the constraint's 'kill within seconds' makes this disqualifying." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-01-passport-and-jwt-quiz-1"
+  lessonSlug="01-passport-and-jwt"
+  lang="en"
+  question="After a request passes the global JwtAuthGuard, where does the value in req.user come from?"
+  choices={[
+    { label: "From whatever JwtStrategy.validate(payload) returns — derived from the verified token claims, with no database read", correct: true },
+    { label: "From a fresh database lookup the guard performs on every request", misconception: "JwtStrategy does not hit the database — that's the point of a stateless JWT. It verifies the signature and expiry, then validate(payload) shapes req.user purely from the token's claims. If you need fresh DB data you must add the lookup yourself inside validate()." },
+    { label: "From LocalStrategy.validate(), which ran at login", misconception: "LocalStrategy only runs on POST /login to issue the token; it is not in the chain for protected routes. On a protected route it's JwtStrategy.validate(payload) that populates req.user." },
+    { label: "It is empty — the JWT guard only allows or denies and never sets req.user", misconception: "The guard does both: it allows the request AND attaches the principal. Passport sets req.user to the return value of the strategy's validate(), so JwtStrategy.validate(payload) is exactly what you read." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-01-passport-and-jwt-quiz-2"
+  lessonSlug="01-passport-and-jwt"
+  lang="en"
+  question="You register JwtAuthGuard globally via APP_GUARD. What must POST /login carry, and why?"
+  choices={[
+    { label: "@Public(), so the guard's Reflector check short-circuits and skips JWT verification — otherwise you could never log in to get a token", correct: true },
+    { label: "Nothing — global guards automatically exempt routes named /login", misconception: "Nest has no name-based exemption; a global guard applies to every route uniformly. /login would demand a valid JWT before you have one — a chicken-and-egg lockout. You opt it out explicitly with @Public()." },
+    { label: "A second @UseGuards(JwtAuthGuard) to override the global one", misconception: "Stacking the same guard doesn't loosen it — it still requires a token. To skip JWT verification you mark the route public with metadata the guard reads via Reflector, then return true for it." },
+    { label: "@UseGuards(LocalAuthGuard) instead, which removes the global JWT guard for that route", misconception: "LocalAuthGuard runs LocalStrategy but the global JwtAuthGuard still runs too unless the route is marked public — both would apply. /login needs LocalAuthGuard AND @Public() so the JWT guard skips it while LocalStrategy validates the credentials." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>LocalStrategy validates credentials on /login; JwtStrategy verifies the Bearer token on protected routes. The global JWT guard (APP_GUARD) fails closed; @Public() opts routes out. A JWT is signed, not encrypted.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-05-auth-01-passport-and-jwt-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full Passport + JWT flow from login to a protected request, naming each strategy, what its validate() does, and what ends up in req.user.", a: "Login: the client POSTs username and password to /login, which is behind LocalAuthGuard (AuthGuard('local')). That runs LocalStrategy.validate(username, password): it loads the user, bcrypt-compares the password against the stored hash, and returns the user minus the hash — Passport attaches that to req.user. The /login handler then calls jwtService.sign(payload) with an opaque payload like { sub: userId, username } and returns the access_token; it never puts the password or a secret in the payload. Protected request: the client sends Authorization: Bearer <token>. The route is behind JwtAuthGuard (AuthGuard('jwt')), usually bound globally via APP_GUARD. That runs JwtStrategy, configured with jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(), secretOrKey set to the same JWT_SECRET used to sign, and ignoreExpiration: false. Passport verifies the signature and expiry first; only then does validate(payload) run, returning e.g. { userId: payload.sub, username } — and that becomes req.user, derived from the token claims with no database read. A @Public() route is skipped by the guard's Reflector check." },
+    { q: "Why is a JWT not a session you can log out of, and how do access + refresh tokens solve it?", a: "A JWT is signed, not stored: the server holds no record of it, so it cannot un-issue one. Verification only checks the signature and the exp claim — nothing consults a server-side list — so a valid token stays valid until it expires no matter what you delete from the database. That's the revocation problem; a long TTL (e.g. 90 days) turns a leaked token into weeks of access with no kill switch. The fix is two tokens. The access token is a short-lived JWT (~15m) used on every request, kept in memory; its short TTL bounds the damage window. The refresh token is longer-lived, rotated on each use, and stored both client-side in an httpOnly cookie and server-side (a row or Redis key) so it CAN be revoked: deleting the stored refresh token means the next refresh fails and access dies within the access token's TTL. You can also keep a short denylist of access-token ids for emergency revocation. Net: stateless, scalable reads from the access token plus near-instant revocation through the refresh token." },
+  ]}
+/>
+
+<Recap lang="en">
+Authentication in Nest is two moments, each modeled by a Passport strategy whose validate() return value becomes req.user. LocalStrategy runs once behind LocalAuthGuard on POST /login: it loads the user, compares the password against the bcrypt hash, and returns the user; the handler then signs a JWT with jwtService.sign(payload), putting only an opaque id and non-secret claims in it. The AuthModule imports PassportModule and JwtModule.registerAsync, pulling the secret and signOptions.expiresIn from ConfigService so the signing key lives in the environment. JwtStrategy verifies every protected request: ExtractJwt.fromAuthHeaderAsBearerToken() pulls the Bearer token, secretOrKey must match the signing secret, ignoreExpiration stays false to enforce the TTL, and validate(payload) shapes req.user from the verified claims with no database read. Bind JwtAuthGuard globally via APP_GUARD so every route is protected by default — fail closed — and opt routes out with a @Public() decorator the guard reads through the Reflector. The senior caution: a JWT is signed, not encrypted, so anyone can base64-decode the payload — never put secrets or PII in claims — and a signed token can't be un-issued, so revocation comes from short-lived access tokens plus a rotating, server-tracked refresh token rather than a long-lived JWT that lives for months with no kill switch.
+</Recap>

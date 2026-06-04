@@ -1,0 +1,273 @@
+---
+concepts:
+- microservices
+- transports
+- message-pattern
+- event-pattern
+- delivery-guarantees
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-microservices-transport"
+sources:
+- https://docs.nestjs.com/microservices/basics
+- https://docs.nestjs.com/microservices/kafka
+- https://docs.nestjs.com/faq/hybrid-application
+spiral: []
+status: ready
+summary: 'Микросервис Nest слушает на сменном transport, а не на HTTP. send/@MessagePattern — запрос–ответ; emit/@EventPattern — fire-and-forget. Транспорт выбирают по доставке: TCP/Redis теряют сообщения, RabbitMQ/Kafka передоставляют — что требует идемпотентных consumer''ов.'
+title: 'Транспорты микросервисов: TCP, Redis, NATS, Kafka'
+track: nest
+unit: "08-microservices-and-graphql"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Поток «заказ оформлен» работал на демо: сервис заказов звал `emit('order.placed', order)` поверх Redis, сервис биллинга списывал с карты, почтовый сервис отправлял чек. Потом под биллинга катился во время деплоя, когда пришло четырнадцать заказов. Redis pub/sub выкинул их на пол — ни один подписчик не слушал, доставлять было некуда — и четырнадцать клиентов получили списание на ноль и отгруженный товар. Фикс был не в баге кода; он был в транспорте. Redis pub/sub — это at-most-once без персистентности, а «отреагируй на это позже» требует broker, который держит сообщение, пока consumer не вернётся. Этот выбор — TCP vs Redis vs RabbitMQ vs Kafka, `send` vs `emit` — и есть весь урок.
+</Hook>
+
+<Crux>Микросервис Nest меняет transport, а не хендлеры; send/@MessagePattern — запрос–ответ, emit/@EventPattern — fire-and-forget.</Crux>
+
+<Explanation>
+
+## Микросервис — это app на transport, а не на HTTP
+
+Микросервис Nest — это тот же `AppModule`, что ты уже пишешь, забутстраппленный так, чтобы слушать на **transport**, а не на HTTP-сервере. Ты вызываешь `createMicroservice` с `transport` и `options`; transport сменный, и хендлеры твоих контроллеров остаются байт в байт теми же, когда ты переезжаешь с TCP на Kafka.
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { Transport, MicroserviceOptions } from '@nestjs/microservices';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+    transport: Transport.TCP, // меняй на REDIS / NATS / RMQ / KAFKA, хендлеры не трогаются
+    options: { host: '0.0.0.0', port: 3001 },
+  });
+  await app.listen();
+}
+bootstrap();
+```
+
+Хендлеры бывают двух видов, и это различие — важнейшая идея урока. `@MessagePattern(pattern)` — это **запрос–ответ**: возвращаемое значение хендлера (или `Observable`) сериализуется обратно вызывающему, а transport сопоставляет ответ с запросом через correlation id. `@EventPattern(event)` — это **fire-and-forget**: он реагирует на то, что случилось, и не возвращает ничего — канала ответа нет вообще.
+
+```ts
+import { Controller } from '@nestjs/common';
+import { MessagePattern, EventPattern, Payload } from '@nestjs/microservices';
+
+@Controller()
+export class OrdersController {
+  // запрос–ответ: вызывающий ждёт это возвращаемое значение
+  @MessagePattern({ cmd: 'order.total' })
+  total(@Payload() ids: number[]): number {
+    return ids.reduce((sum, id) => sum + priceOf(id), 0);
+  }
+
+  // fire-and-forget: «это случилось»; ответа никто не ждёт
+  @EventPattern('order.placed')
+  async onOrderPlaced(@Payload() order: OrderDto): Promise<void> {
+    await this.billing.charge(order); // никакое значение никуда не отправляется
+  }
+}
+```
+
+На стороне вызывающего `ClientProxy` зеркалит это разделение: `send()` для `@MessagePattern`, `emit()` для `@EventPattern`. `send()` возвращает **холодный Observable** — ничего не отправляется, пока ты не подпишешься, и стрим эмитит ответ — так что это для «мне нужен ответ». `emit()` публикует событие и не ждёт его — это для «это случилось, реагируй, если тебе важно».
+
+```ts
+import { Injectable, Inject } from '@nestjs/common';
+import { ClientProxy } from '@nestjs/microservices';
+import { firstValueFrom } from 'rxjs';
+
+@Injectable()
+export class OrdersService {
+  constructor(@Inject('ORDERS') private readonly client: ClientProxy) {}
+
+  // send: возвращает Observable ответа; дождись его ради значения
+  total(ids: number[]) {
+    return firstValueFrom(this.client.send<number>({ cmd: 'order.total' }, ids));
+  }
+
+  // emit: опубликовал и пошёл дальше; ответа не ждём
+  placed(order: OrderDto) {
+    this.client.emit('order.placed', order); // fire-and-forget
+  }
+}
+```
+
+<Inset kind="why" lang="ru">
+Почему `send()` — это *холодный* Observable? Потому что запрос фактически не отправляется, пока на него кто-то не подпишется, — так что вызвать `this.client.send(...)` и не подписаться значит не отправить ничего. На этом спотыкаются те, кто пришёл от promise-based HTTP-клиентов: вызов выглядит так, будто сработал, но без `subscribe()` (или `firstValueFrom`/`await lastValueFrom`) сообщение так и не уходит. `emit()` устроен иначе — Nest подписывается внутри, так что событие публикуется, — но ответа всё равно не возвращает.
+</Inset>
+
+## Выбор transport — это выбор о доставке
+
+Каждый transport говорит на одном и том же API хендлеров, так что решение никогда не про синтаксис — оно про **семантику доставки**: персистит ли broker сообщение, может ли восстановившийся consumer его переиграть, гарантирован ли порядок, какую пропускную способность он держит. TCP и Redis pub/sub просты и быстры, но теряют; RabbitMQ и Kafka долговечны, но заставляют платить за это идемпотентностью.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Transport</th>
+        <th class="border border-border px-3 py-2 text-left">Модель</th>
+        <th class="border border-border px-3 py-2 text-left">Долговечность / replay?</th>
+        <th class="border border-border px-3 py-2 text-left">Доставка</th>
+        <th class="border border-border px-3 py-2 text-left">Выбирай, когда</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>TCP</strong></td>
+        <td class="border border-border px-3 py-2">Точка-точка</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">At-most-once</td>
+        <td class="border border-border px-3 py-2">Простой внутренний запрос–ответ, без broker'а в эксплуатации</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Redis</strong></td>
+        <td class="border border-border px-3 py-2">Pub/sub</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">At-most-once</td>
+        <td class="border border-border px-3 py-2">Дешёвый fan-out, где потерять сообщение приемлемо</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>NATS</strong></td>
+        <td class="border border-border px-3 py-2">Pub/sub (subjects)</td>
+        <td class="border border-border px-3 py-2">Core нет; JetStream да</td>
+        <td class="border border-border px-3 py-2">At-most-once (core)</td>
+        <td class="border border-border px-3 py-2">Лёгкий, низколатентный обмен; JetStream добавляет персистентность</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>RabbitMQ</strong></td>
+        <td class="border border-border px-3 py-2">Очереди + routing</td>
+        <td class="border border-border px-3 py-2">Да (ack, requeue)</td>
+        <td class="border border-border px-3 py-2">At-least-once</td>
+        <td class="border border-border px-3 py-2">Work-очереди, ack на сообщение, сложный routing</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Kafka</strong></td>
+        <td class="border border-border px-3 py-2">Партиционированный лог</td>
+        <td class="border border-border px-3 py-2">Да (replay по offset)</td>
+        <td class="border border-border px-3 py-2">At-least-once</td>
+        <td class="border border-border px-3 py-2">Высоконагруженные потоки событий, replay, порядок на партицию</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Два факта из этой таблицы несут сеньорский вес. Первый: **at-least-once (RabbitMQ, Kafka) означает передоставку**, а значит, твой consumer может отработать дважды на одном сообщении — поэтому он обязан быть **идемпотентным**, иначе ты спишешь с карты дважды. Второй: **Kafka упорядочивает сообщения только внутри партиции**, не по всему топику: события одного `orderId` остаются упорядоченными, только если попадают в одну партицию (ключуй по `orderId`), а consumer group раскидывает партиции по инстансам ради параллелизма, сохраняя порядок в пределах партиции. Запрос–ответ в Kafka тоже есть, но тяжелее — клиент должен вызвать `subscribeToResponseOf(topic)`, чтобы ответы приходили в выделенный reply-топик и сопоставлялись назад по correlation id.
+
+```ts
+// Kafka-микросервис: список broker'ов и consumer group
+const app = await NestFactory.createMicroservice<MicroserviceOptions>(AppModule, {
+  transport: Transport.KAFKA,
+  options: {
+    client: { brokers: ['localhost:9092'] },
+    consumer: { groupId: 'billing-consumer' }, // group => партиции делятся между подами
+  },
+});
+```
+
+## Гибридные приложения: HTTP и transport разом
+
+HTTP редко выбрасывают. **Гибридное приложение** — это обычное HTTP-приложение, которое *ещё* слушает как микросервис: ты делаешь `connectMicroservice` один или несколько transport'ов, затем `startAllMicroservices()` перед `listen()`. Один и тот же процесс обслуживает REST и реагирует на события broker'а.
+
+```ts
+const app = await NestFactory.create(AppModule);
+app.connectMicroservice<MicroserviceOptions>({
+  transport: Transport.KAFKA,
+  options: { client: { brokers: ['localhost:9092'] }, consumer: { groupId: 'orders' } },
+});
+await app.startAllMicroservices(); // начинаем потреблять события
+await app.listen(3000);            // и продолжаем обслуживать HTTP
+```
+
+<FlowDiagram
+  label="Поток заказа через broker: producer заказов шлёт сообщение запрос–ответ и эмитит fire-and-forget событие; send ждёт сопоставленный ответ, тогда как emit публикует в broker, который долговечно раздаёт событие consumer'ам биллинга и почты, а те подтверждают, но ответа назад не шлют."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "prod", label: "Orders", sub: "producer" },
+    { id: "broker", label: "Broker", sub: "Kafka / RMQ" },
+    { id: "billing", label: "Billing", sub: "consumer" },
+    { id: "email", label: "Email", sub: "consumer" },
+  ]}
+  edges={[
+    { from: "prod", to: "broker", label: "emit (no reply)" },
+    { from: "broker", to: "billing", label: "deliver" },
+    { from: "broker", to: "email", label: "deliver" },
+    { from: "billing", to: "broker", label: "ack" },
+  ]}
+  caption="emit/@EventPattern — это fire-and-forget: producer не ждёт. Долговечный broker (Kafka/RMQ) держит событие и передоставляет при провале ack, так что восстановившийся consumer всё равно его получит — ценой необходимости идемпотентных хендлеров. send/@MessagePattern вместо этого блокировался бы на сопоставленном ответе."
+/>
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-01-microservices-transport-tradeoff-1"
+  lessonSlug="01-microservices-transport"
+  lang="ru"
+  prompt="Событие «заказ оформлен» раздаётся в биллинг и почту. Жёсткое требование: если под consumer'а лежит во время деплоя, события должны пережить это и быть переигрываемыми по возвращении — а события одного заказа должны оставаться упорядоченными. Какой transport?"
+  options={[
+    { name: "Kafka — партиционированный append-only лог; ключуй по orderId ради порядка в партиции, consumer group ради параллельного replay, offset'ы ради перечитывания после простоя", summary: "Долговечность + replay + порядок.", correct: true, justification: "Ограничение — пережить простой и переиграть плюс порядок на заказ. Kafka персистит каждое событие в append-only логе и отслеживает offset'ы consumer'а, так что восстановившийся под перечитывает с того места, где остановился, — ничего не теряется. Ключ по orderId прикалывает события каждого заказа к одной партиции, где Kafka гарантирует порядок, а consumer group раскидывает партиции по подам ради пропускной способности. Цена, которую принимаешь, — at-least-once доставка, так что биллинг обязан быть идемпотентным. Это учебниковое попадание для высоконагруженных, переигрываемых потоков событий." },
+    { name: "RabbitMQ — долговечные очереди с ack на сообщение и requeue при провале", summary: "Долговечно, но replay — consume-once.", justification: "RabbitMQ по-настоящему долговечен и at-least-once: сообщения лежащего consumer'а ждут в очереди и передоставляются при переподключении, так что простой он переживает. Но это очередь, а не лог — раз сообщение заacked, оно ушло, так что переиграть историю или перечитать прошлые события, как подразумевает требование, нельзя, и глобальный порядок между конкурирующими consumer'ами не гарантирован. Сильный второй выбор; Kafka выигрывает именно на replay и порядке в партиции." },
+    { name: "Redis pub/sub — быстрый in-memory fan-out", summary: "At-most-once, без персистентности.", justification: "Redis pub/sub — это ровно баг из хука: он доставляет только подписчикам, подключённым в момент публикации, и не персистит ничего. Под, лежащий во время деплоя, событие не увидит никогда, и нет ни offset'а, ни очереди, откуда переиграть. Он проваливает требование пережить простой напрямую." },
+    { name: "TCP — прямой запрос–ответ точка-точка", summary: "Без broker'а, без fan-out, без долговечности.", justification: "TCP — это точка-точка без broker'а между ними, так что держать событие для лежащего consumer'а нечем и нативного fan-out на два сервиса нет. Это at-most-once и сделано под простой синхронный запрос–ответ, а не под долговечный, переигрываемый, многоконсьюмерный поток событий." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-01-microservices-transport-quiz-1"
+  lessonSlug="01-microservices-transport"
+  lang="ru"
+  question="Producer зовёт client.emit('order.placed', order) поверх Redis pub/sub, пока единственный под consumer'а посреди рестарта. Что станет с этим событием?"
+  choices={[
+    { label: "Оно выброшено — Redis pub/sub это at-most-once и доставляет только подписчикам, подключённым в момент публикации; без слушателя ничего не персистится и ничего не переигрывается", correct: true },
+    { label: "Redis ставит его в очередь и доставляет, как только consumer переподключится", misconception: "Это долговечная очередь (RabbitMQ) или лог (Kafka), а не Redis pub/sub. Чистый pub/sub ничего не держит — сообщение, опубликованное без текущего подписчика, просто пропадает." },
+    { label: "emit() блокируется, пока consumer не появится, так что producer пережидает рестарт", misconception: "emit() — это fire-and-forget: он никогда не блокируется в ожидании consumer'а или ответа. send() — это вызов запрос–ответ, и даже он не парковался бы, ожидая появления подписчика." },
+    { label: "Producer получает ответ-ошибку, который может перепослать", misconception: "Для события нет канала ответа — @EventPattern не возвращает ничего, а emit() не ждёт ответа. Producer не получает вообще никакого подтверждения, именно поэтому потеря тихая." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-01-microservices-transport-quiz-2"
+  lessonSlug="01-microservices-transport"
+  lang="ru"
+  question="Ты переносишь поток «заказ оформлен» на Kafka. Биллинг теперь изредка списывает с карты дважды. Какова корневая причина и верный фикс?"
+  choices={[
+    { label: "Kafka — at-least-once, так что хендлеру может передоставиться то же событие (например, после rebalance до коммита offset'а) — сделай consumer идемпотентным, например дедуп по orderId / таблица обработанных событий", correct: true },
+    { label: "Kafka потеряла порядок, так что списание прошло не по порядку — перейди на одну партицию", misconception: "Двойное списание — это проблема дублирования, а не порядка. Kafka упорядочивает внутри партиции; причина здесь — передоставка при at-least-once семантике, которую чинит идемпотентность — схлопывание в одну партицию лишь придушило бы пропускную способность." },
+    { label: "Использовали send() вместо emit(), так что ответ запустил второе списание", misconception: "Поток событий использует emit()/@EventPattern, у которого вообще нет ответа. Дубль приходит от передоставки события broker'ом, а не от пути ответа, которого здесь не существует." },
+    { label: "В Kafka нет ack'ов, так что broker вслепую переслал сообщение — выключи retry", misconception: "Kafka отслеживает offset'ы и коммиты, а передоставка при at-least-once — это фича, а не мисконфигурация. Выключение retry рисковало бы потерей событий; верный ответ — сделать side-effect безопасным к повтору." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Меняй transport, оставляй хендлеры. send/@MessagePattern = запрос–ответ; emit/@EventPattern = fire-and-forget. Выбор по доставке: TCP/Redis теряют; RabbitMQ/Kafka передоставляют, значит consumer'ы идемпотентны.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-08-microservices-and-graphql-01-microservices-transport-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни разницу между @MessagePattern + send() и @EventPattern + emit(), включая то, что получает вызывающий и когда использовать каждый.", a: "@MessagePattern(pattern) — это запрос–ответ: возвращаемое значение хендлера (или Observable) сериализуется обратно вызывающему, а transport сопоставляет ответ с запросом через correlation id. На стороне вызывающего ClientProxy.send(pattern, payload) возвращает ХОЛОДНЫЙ Observable — ничего не отправляется, пока ты не подпишешься (или не дождёшься через firstValueFrom/lastValueFrom), и стрим эмитит ответ. Используй, когда нужен ответ (запрос, посчитанная сумма, RPC с ощущением синхронности). @EventPattern(event) — это fire-and-forget: хендлер реагирует на то, что случилось, и не возвращает ничего — канала ответа нет. ClientProxy.emit(event, payload) публикует и не ждёт; Nest подписывается внутри, так что событие реально уходит, но вызывающий ответа не получает. Используй, когда хочешь объявить «это случилось, реагируй, если важно» и развязать producer'а от того, сколько бы consumer'ов ни заботилось, — ценой потери синхронного ответа." },
+    { q: "Тебе нужно выбрать transport для события, которое должно пережить простой consumer'а и быть переигрываемым, с порядком на заказ. Пройдись по TCP, Redis, RabbitMQ и Kafka и обоснуй выбор.", a: "TCP — точка-точка без broker'а — at-most-once, держать событие для лежащего consumer'а нечем, и fan-out'а нет — так что он проваливается сразу. Redis pub/sub — at-most-once без персистентности: доставляет только подписчикам, подключённым в момент публикации, так что событие, опубликованное пока под рестартится, потеряно навсегда и переиграть его нельзя — тоже мимо. RabbitMQ долговечен и at-least-once: сообщения лежащего consumer'а ждут в очереди и передоставляются при переподключении, так что простой он переживает, но это очередь — раз заacked, сообщение ушло, так что перечитать историю/переиграть нельзя, и глобальный порядок между конкурирующими consumer'ами не гарантирован. Kafka — это выбор: партиционированный append-only лог, который персистит события и отслеживает offset'ы consumer'а, так что восстановившийся под перечитывает с последнего offset'а (настоящий replay); ключ по orderId прикалывает события каждого заказа к одной партиции, где порядок гарантирован, а consumer group раскидывает партиции по подам ради пропускной способности. Компромисс, который принимаешь и для RabbitMQ, и для Kafka, — at-least-once доставка, а значит передоставка возможна, так что consumer обязан быть идемпотентным (например, дедуп по orderId)." },
+  ]}
+/>
+
+<Recap lang="ru">
+Микросервис Nest — это твой обычный AppModule, забутстраппленный через createMicroservice на сменный transport вместо HTTP-сервера; transport меняется, а хендлеры — нет. Ключевое смысловое разделение — запрос–ответ против fire-and-forget: @MessagePattern с ClientProxy.send() возвращает холодный Observable сопоставленного ответа (используй, когда нужен ответ), тогда как @EventPattern с ClientProxy.emit() публикует событие и не ждёт ничего назад (используй, чтобы объявить, что что-то случилось, и дать любому числу consumer'ов отреагировать). Выбор transport — это выбор о семантике доставки: TCP — простой точка-точка, а Redis pub/sub — дешёвый fan-out, но оба at-most-once без персистентности, так что сообщение, опубликованное без текущего слушателя, теряется; NATS core тоже at-most-once, а JetStream добавляет персистентность; RabbitMQ даёт долговечные очереди, ack на сообщение и routing при at-least-once; а Kafka — это партиционированный append-only лог с consumer group, порядком на партицию и replay по offset ради высокой пропускной способности. Сеньорские следствия идут напрямую: at-least-once (RabbitMQ, Kafka) означает передоставку, так что consumer'ы должны быть идемпотентны, иначе спишут дважды; порядок Kafka держится только внутри партиции, так что ключуй по orderId; а гибридное приложение — connectMicroservice плюс startAllMicroservices перед listen — даёт одному процессу обслуживать HTTP и реагировать на события broker'а разом.
+</Recap>
