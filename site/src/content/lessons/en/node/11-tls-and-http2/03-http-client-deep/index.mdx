@@ -1,0 +1,252 @@
+---
+concepts:
+- undici
+- connection-pool
+- keep-alive
+- http-timeouts
+- safe-retries
+- body-draining
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: middle
+order: 3
+prereqs: []
+slug: 03-http-client-deep
+sources:
+- https://undici.nodejs.org/
+- https://nodejs.org/api/http.html
+- https://github.com/nodejs/undici/blob/main/docs/docs/api/Client.md
+spiral: []
+status: ready
+summary: 'undici is the modern Node HTTP client and what global fetch runs on. Reuse connections with a pool, set timeouts, retry only idempotent requests, and always drain bodies or you leak sockets.'
+title: 'The HTTP client deep dive: undici, pools, timeouts, and leaked sockets'
+track: node
+unit: 11-tls-and-http2
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The checkout service was healthy until Black Friday traffic hit, then p99 latency on a downstream call to the payments API jumped from 40ms to 900ms — but the payments API itself was fine. The cause was in our own client: every outbound request used `http.request` with the default agent, which opens a fresh TCP connection and a full TLS handshake per call. At ten requests per second that was ten handshakes a second to the same host, each adding two round-trips before a single byte of payload moved. We had been paying for a connection pool we never turned on. A second outage that quarter was worse: a worker leaked file descriptors until `EMFILE`, because someone read `res.statusCode`, branched on it, and returned early — never consuming the response body. Each abandoned body pinned a socket that never went back to the pool.
+</Hook>
+
+<Crux>Reuse a keep-alive pool, bound every request with timeouts, retry only idempotent calls, and always drain the body or the socket leaks.</Crux>
+
+<Explanation>
+
+## undici, and why fetch already is undici
+
+Node ships two HTTP clients. The legacy one is `http`/`https` (`http.request`, `http.get`). The modern one is **undici** — written specifically for Node, with an HTTP/1.1 keep-alive connection pool, far better throughput, and a cleaner promise-based API. You do not have to choose between "use fetch" and "use undici": in Node, the global `fetch` is built on undici. When you call `fetch(url)`, the request is dispatched through undici's global `Agent`, so tuning undici tunes `fetch`.
+
+```js
+import { request, Agent, Pool, setGlobalDispatcher } from "undici";
+
+// Direct undici request — returns { statusCode, headers, body }.
+const { statusCode, body } = await request("https://api.example.com/orders");
+const orders = await body.json(); // consumes the body
+
+// fetch IS undici: pass a custom pool via the dispatcher option.
+const pool = new Pool("https://api.example.com", { connections: 64 });
+const res = await fetch("https://api.example.com/orders", { dispatcher: pool });
+```
+
+`Agent` manages a pool *per origin* (it spins up a `Pool` for each host you talk to); `Pool` manages many connections to *one* origin; `Client` is a single connection to one origin. Most apps use an `Agent` — directly, or implicitly through `fetch`.
+
+<Inset kind="why" lang="en">
+Why does `fetch` in Node behave like undici rather than like the browser? Because Node's `fetch` is not a separate implementation — it is undici's `fetch` exposed on the global scope, and it uses undici's global dispatcher (an `Agent`) under the hood. That is great: you get connection pooling for free, and you can swap in a tuned pool per call with the `dispatcher` option, or for the whole process with `setGlobalDispatcher(new Agent(&#123; connections: 128 &#125;))`. It is also a trap if you assume `fetch` is "just HTTP with no state" — it shares a pool, so a leaked body or an exhausted pool in one part of your code degrades `fetch` everywhere.
+</Inset>
+
+## Keep-alive: pay the handshake once, not per request
+
+A new HTTP request over a new connection costs a TCP handshake (one round-trip) plus, for HTTPS, a TLS handshake (one or two more). Over a 30ms link that is 60–90ms of pure setup before any data flows — and you pay it on *every* request if connections are not reused. Keep-alive holds the TCP+TLS connection open after the response so the next request to the same origin reuses it, amortising the handshake to near zero.
+
+This is the single biggest reason the legacy default is a trap. `http.request` with the default agent does not keep connections alive the way you want at scale; to reuse you must construct an agent explicitly. undici keeps connections alive by default.
+
+```js
+// Legacy http: keep-alive is OPT-IN via a custom Agent.
+import http from "node:http";
+const agent = new http.Agent({ keepAlive: true, maxSockets: 64 });
+http.get({ host: "api.example.com", path: "/x", agent }, (res) => {
+  res.resume(); // drain — see below
+});
+
+// undici: keep-alive pool is the default; just reuse one dispatcher.
+import { Agent, setGlobalDispatcher } from "undici";
+setGlobalDispatcher(new Agent({ connections: 64, pipelining: 1 }));
+```
+
+The `connections` option caps how many connections undici opens per origin (an `Agent` builds one `Pool` per origin, and `connections` limits that pool); `pipelining` controls how many requests may be in flight on one connection (default `1` — leave it there unless you have measured a benefit, because HTTP/1.1 pipelining causes head-of-line blocking). Size the pool to your downstream's capacity, **not** to infinity: an unbounded pool turns a traffic spike into a connection flood that knocks the downstream over.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Concern</th>
+        <th class="border border-border px-3 py-2 text-left"><code>http.request</code> (default agent)</th>
+        <th class="border border-border px-3 py-2 text-left"><code>undici</code> / global <code>fetch</code></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Keep-alive</td>
+        <td class="border border-border px-3 py-2">Opt-in: <code>new http.Agent(&#123; keepAlive: true &#125;)</code></td>
+        <td class="border border-border px-3 py-2">On by default; pooled per origin</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Pool size knob</td>
+        <td class="border border-border px-3 py-2"><code>maxSockets</code></td>
+        <td class="border border-border px-3 py-2"><code>connections</code> (per origin)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">API</td>
+        <td class="border border-border px-3 py-2">Callback / stream</td>
+        <td class="border border-border px-3 py-2">Promise; <code>body.json()</code> etc.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Body must be drained?</td>
+        <td class="border border-border px-3 py-2">Yes (<code>res.resume()</code>)</td>
+        <td class="border border-border px-3 py-2">Yes (<code>body.dump()</code> / consume)</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Timeouts and retries: bound everything, retry almost nothing
+
+A request with no timeout can hang forever, and a hung request holds a pooled connection out of circulation. undici exposes three knobs that matter: `headersTimeout` (time to receive the response headers, default `300e3` = 300s), `bodyTimeout` (max gap between body chunks, default `300e3`), and the connect `timeout` (TCP/TLS establishment, default `10e3` = 10s). The 300-second defaults are *generous* — for a user-facing call you want single-digit seconds, set per-dispatcher.
+
+```js
+import { Agent } from "undici";
+const agent = new Agent({
+  connections: 64,
+  connect: { timeout: 2_000 },   // give up establishing after 2s
+  headersTimeout: 5_000,         // headers must arrive within 5s
+  bodyTimeout: 10_000,           // no body chunk for 10s -> abort
+});
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Knob</th>
+        <th class="border border-border px-3 py-2 text-left">Guards against</th>
+        <th class="border border-border px-3 py-2 text-left">undici default</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>connect.timeout</code></td>
+        <td class="border border-border px-3 py-2">Dead host / SYN black hole</td>
+        <td class="border border-border px-3 py-2">10s</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>headersTimeout</code></td>
+        <td class="border border-border px-3 py-2">Server accepts but never responds</td>
+        <td class="border border-border px-3 py-2">300s</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>bodyTimeout</code></td>
+        <td class="border border-border px-3 py-2">Slow / stalled streaming body</td>
+        <td class="border border-border px-3 py-2">300s</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Retries are where naive code is dangerous. Retrying a `GET` is usually safe — it is **idempotent**, so running it twice has the same effect as once. Retrying a `POST /charge` is not: a timeout means you do not know whether the charge went through, and a blind retry can double-bill the customer. Worse, when a downstream is already overloaded and *every* client retries on failure, you get a **retry storm** — the failure triggers a wave of duplicate requests that buries the struggling service deeper. Safe retry policy: retry only idempotent methods (or requests carrying an idempotency key), cap attempts, and use exponential backoff with jitter so retries spread out instead of synchronising.
+
+<FlowDiagram
+  label="Request lifecycle through an undici keep-alive pool: acquire a connection, send, receive, then drain and release back to the pool"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "request()", sub: "your call" },
+    { id: "pool", label: "Pool", sub: "connections: N" },
+    { id: "conn", label: "Connection", sub: "kept alive" },
+    { id: "send", label: "Send + recv", sub: "headers/body" },
+    { id: "drain", label: "Drain body", sub: "consume/dump" },
+    { id: "free", label: "Release", sub: "back to pool" },
+  ]}
+  edges={[
+    { from: "req", to: "pool", label: "acquire" },
+    { from: "pool", to: "conn", label: "reuse" },
+    { from: "conn", to: "send" },
+    { from: "send", to: "drain" },
+    { from: "drain", to: "free", label: "reusable" },
+  ]}
+  caption="The connection only returns to the pool after the body is fully consumed. Skip the drain and the socket is pinned — that is how pools starve and FDs leak."
+/>
+
+## The body you must always drain
+
+In undici, **every response body must be fully consumed or destroyed.** A connection cannot be returned to the pool until its current response is finished reading — the protocol has to know where this response ends before the connection can carry the next request. If you read `statusCode`, branch, and return without touching `body`, that connection is stuck. Under load the pool runs out of free connections (socket exhaustion), and because each held connection is an open file descriptor, you eventually hit `EMFILE` and `ECONNRESET` storms as the OS and peers tear things down.
+
+```js
+import { request } from "undici";
+const { statusCode, body } = await request("https://api.example.com/orders");
+if (statusCode === 200) {
+  return await body.json();   // consumes the body — connection freed
+}
+await body.dump();            // not interested? dump it anyway, don't leak
+return null;
+```
+
+The rule is unconditional: consume the body (`body.json()`, `body.text()`, `body.arrayBuffer()`, or stream it to completion) on the happy path, and `body.dump()` it on every path where you bail out early. The same applies to legacy `http`: call `res.resume()` to drain a response you do not read.
+
+<Quiz
+  id="03-http-client-deep-quiz-1"
+  lessonSlug="03-http-client-deep"
+  lang="en"
+  question="Under load your worker climbs to EMFILE and the pool stops serving requests. The hot path reads res.statusCode, logs it, and returns without reading the body. Most likely cause?"
+  choices={[
+    { label: "The response bodies are never consumed, so connections never return to the pool — they pin open file descriptors until the process runs out", correct: true },
+    { label: "headersTimeout is too low, killing connections early", misconception: "A low headersTimeout aborts slow requests; it does not pin connections open or exhaust FDs. The symptom here — growing open FDs to EMFILE — points to connections that are never released, i.e. undrained bodies." },
+    { label: "fetch in Node does not use a connection pool, so each call opens a new socket", misconception: "fetch in Node IS undici and shares a pooled dispatcher. The problem is not lack of pooling but never releasing pooled connections because bodies aren't drained." },
+    { label: "connections is set too high, opening too many sockets", misconception: "Too-high connections caps at a number and reuses them; it doesn't grow unbounded to EMFILE. Unbounded FD growth comes from connections stuck open by unconsumed bodies." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="03-http-client-deep-tradeoff-1"
+  lessonSlug="03-http-client-deep"
+  lang="en"
+  prompt="A request to charge a customer (POST /charge) times out. You don't know if it succeeded. What retry policy is correct?"
+  options={[
+    { name: "Do not blindly retry; retry only if the request carries an idempotency key (or make the operation idempotent), with capped attempts and backoff+jitter", summary: "Idempotency first.", correct: true, justification: "A timeout on a non-idempotent POST is ambiguous — the charge may have gone through. Blindly retrying risks double-billing. The senior answer is to make the operation safe to repeat: send an idempotency key the server dedupes on, so a retry of the same key is a no-op. Then bound attempts and add exponential backoff with jitter to avoid synchronised retry storms. If you cannot make it idempotent, surface the ambiguity instead of guessing." },
+    { name: "Retry immediately up to 5 times — most timeouts are transient", summary: "Just retry.", justification: "Immediate, near-uncapped retries on a non-idempotent charge can double-bill, and retrying with no backoff during a downstream slowdown adds load exactly when the service is struggling — a retry storm. Retries need idempotency, caps, and backoff with jitter." },
+    { name: "Treat all methods the same and retry GET, POST, DELETE identically with backoff", summary: "Uniform retries.", justification: "GET is idempotent and safe to retry; POST /charge is not. Applying one policy to all methods either under-protects (skipping safe GET retries) or over-risks (retrying unsafe POSTs). Retry safety is per-operation, keyed on idempotency, not a global switch." },
+    { name: "Increase bodyTimeout so the request never times out and you never face the ambiguity", summary: "Remove the timeout.", justification: "Removing the timeout doesn't remove the failure mode — it just makes a hung request pin a pooled connection for minutes, starving the pool. You still get failures (connection resets, downstream death); you've only swapped a fast clear failure for a slow resource leak." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>undici is the modern Node client `fetch` runs on. Reuse one keep-alive pool, set connect/headers/body timeouts, retry only idempotent calls, and always consume or `dump()` the body — an undrained body leaks sockets and FDs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-http-client-deep-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must you always consume or dump an undici response body, and what breaks if you don't?", a: "In undici an HTTP/1.1 connection can only carry the next request once the current response has been fully read — the protocol has to know where this response ends before the connection is reusable. So every response body must be fully consumed (body.json/text/arrayBuffer or streamed to completion) or explicitly destroyed with body.dump(). If you read statusCode, branch, and return without touching the body, that connection is never returned to the pool. Under load the pool runs out of free connections (socket exhaustion) and the calls queue or fail; each held connection is also an open file descriptor, so the process climbs toward EMFILE and you see ECONNRESET storms as peers and the OS tear down the stuck sockets. The fix is unconditional: consume the body on the happy path and body.dump() on every early-return path. Legacy http has the same rule via res.resume()." },
+    { q: "Why is retrying a POST /charge after a timeout dangerous, and what is the safe policy?", a: "A timeout is ambiguous: the request may have reached the server and succeeded even though you never got the response. GET is idempotent, so a retry is harmless, but POST /charge is not — a blind retry can charge the customer twice. On top of that, when a downstream is already overloaded and every client retries on failure, the failures trigger a wave of duplicate requests that buries the service deeper: a retry storm. The safe policy is to retry only idempotent operations, or make the operation idempotent by sending an idempotency key the server dedupes on so a repeated key is a no-op; cap the number of attempts; and use exponential backoff with jitter so retries spread out instead of synchronising. If an operation can't be made idempotent, surface the ambiguity rather than guessing." },
+  ]}
+/>
+
+<Recap lang="en">
+The client side of HTTP in Node has one modern answer: undici, which is also what the global `fetch` runs on, so the request you send with `fetch` flows through undici's pooled `Agent` and you can swap in a tuned pool with the `dispatcher` option. The first lever is connection reuse — keep-alive holds the TCP+TLS connection open so you pay the handshake once instead of per request; undici does this by default, while legacy `http.request` needs an explicit `new http.Agent(&#123; keepAlive: true &#125;)`. Size the pool with `connections` to your downstream's real capacity rather than infinity, and leave `pipelining` at 1 unless measured. Bound every request: a connect timeout for dead hosts, `headersTimeout` for servers that accept but never answer, `bodyTimeout` for stalled streams — the 300-second defaults are far too generous for user-facing calls. Retry almost nothing: only idempotent methods or requests with an idempotency key, capped and with exponential backoff plus jitter, or a naive retry double-bills customers and a synchronised wave becomes a retry storm. And the rule that quietly takes services down: always consume or `body.dump()` the response, because an undrained body pins its connection out of the pool, exhausts sockets, and leaks file descriptors until `EMFILE` and `ECONNRESET`.
+</Recap>
