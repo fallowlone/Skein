@@ -1,0 +1,229 @@
+---
+concepts:
+- route53-alias
+- routing-policies
+- cloudfront-cache
+- origin-access-control
+- acm-tls
+- SAA-C03:Design High-Performing Architectures
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: middle
+order: 3
+prereqs: []
+slug: "03-dns-and-cdn"
+sources:
+- https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html
+- https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/routing-policy.html
+- https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/private-content-restricting-access-to-s3.html
+- https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/cnames-and-https-requirements.html
+spiral: []
+status: ready
+summary: 'Route 53 + CloudFront + ACM — это край пути запроса. ALIAS на апексе, верная политика маршрутизации и TTL, ориджин под замком OAC и сертификат в us-east-1 превращают четыре движущиеся части в одну быструю парадную дверь с готовым failover.'
+title: 'DNS и CDN: Route 53, CloudFront и ACM на краю сети'
+track: "aws"
+unit: "04-networking"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Команда переключается на новый балансировщик в пятницу. У старой DNS-записи TTL в 24 часа, выставленный годы назад и ни разу не пересмотренный. В 10 утра они меняют запись, видят, что их собственные ноутбуки резолвятся на новый эндпойнт, и считают дело сделанным. А потом все выходные капают тикеты в поддержку: часть пользователей всё ещё бьётся в мёртвый балансировщик — резолверы по всему миру держат старый ответ ровно тот день, что им пообещал TTL. Хуже того, апекс example.com был подделан в CNAME хаком у регистратора, так что половина плана failover оказалась нелегальным DNS, который часть резолверов молча отбрасывала. Решение было невзрачным и структурным: ALIAS-запись на апексе, TTL в 60 секунд на всём, что может переехать, и failover-запись с health-check, чтобы следующее переключение сливало трафик само. DNS — это не конфигурация, которую выставляют один раз; это самый медленный кэш во всей твоей системе, и он кэширует твои ошибки.
+</Hook>
+
+<Crux>Route 53 — авторитативный DNS, CloudFront — кэш, ACM — сертификат. ALIAS на апексе, низкий TTL для переездов, OAC закрывает ориджин.</Crux>
+
+<Explanation>
+
+## Route 53: авторитативный DNS, ALIAS и политики маршрутизации
+
+**Route 53** — управляемый авторитативный DNS от AWS: он отвечает на «какой IP у example.com?» для доменов, чьей **hosted zone** (хостинг-зоной) ты владеешь. Hosted zone — контейнер записей домена; она может быть **публичной** (резолвится в интернете) или **приватной** (резолвится только внутри связанных VPC, для внутреннего service discovery). Внутри ты пишешь обычные типы записей: `A` (имя в IPv4), `AAAA` (имя в IPv6), `CNAME` (имя в другое имя), `MX`, `TXT` и так далее.
+
+Подвох, на который натыкается каждая команда: **нельзя поставить CNAME на апексе зоны.** Апекс — это сам голый домен example.com, а спецификация DNS запрещает CNAME сосуществовать с записями `SOA`/`NS`, которые обязаны там жить. Поэтому нельзя сделать CNAME с апекса на хостнейм CloudFront или ALB — только поддомен вроде www.example.com может быть CNAME. Ответ Route 53 — **ALIAS-запись**, AWS-специфичное расширение. ALIAS на апексе отображает example.com прямо на ресурс AWS — дистрибуцию CloudFront, ALB/NLB, S3-бакет как статический сайт, API Gateway, App Runner — и Route 53 резолвит его в текущие IP ресурса в момент запроса. Три вещи делают ALIAS строго лучше CNAME здесь: он **легален на апексе**, AWS **не берёт плату за ALIAS-запросы к ресурсам AWS** (за CNAME-запросы платишь), и он **сам отслеживает смену IP цели**, так что IP руками править не приходится.
+
+```dns
+; Апекс зоны - ALIAS, не CNAME (CNAME тут нелегален)
+example.com.        A   ALIAS d111abcdef8.cloudfront.net.   ; без TTL - берёт у цели
+
+; Поддомен - CNAME здесь подходит
+www.example.com.    CNAME  example.com.                     ; 300
+
+; Failover-пара с health-check (active / passive)
+api.example.com.    A   ALIAS primary-alb.elb.amazonaws.com.   ; Failover=PRIMARY + health check
+api.example.com.    A   ALIAS dr-alb.elb.amazonaws.com.        ; Failover=SECONDARY
+
+; Запись, которую может понадобиться переместить - держи TTL низким
+edge.example.com.   A   203.0.113.10                          ; 60
+```
+
+**Политика маршрутизации** решает, *какой* ответ Route 53 вернёт, когда имя делят несколько записей. **Simple** возвращает один фиксированный ответ. **Weighted** делит трафик по целочисленным весам — рычаг канарейки: пусти 95/5 на новую версию, потом подкручивай. **Latency-based** направляет каждого пользователя в тот AWS-регион, что даёт наименьшую измеренную задержку от его резолвера. **Geolocation** маршрутизирует по континенту/стране пользователя (комплаенс, локализованный контент). **Failover** связывает первичную и вторичную записи через **health-check**: когда health-check первичной падает, Route 53 перестаёт её возвращать и отдаёт вторичную — именно это заставляет переключение выше сливать трафик само. **Multivalue answer** возвращает до восьми здоровых записей случайно — балансировщик для бедных с учётом здоровья записей. (Ещё у Route 53 есть geoproximity и IP-based политики.)
+
+<Inset kind="why" lang="ru">
+TTL — это весь компромисс DNS в одном числе. Резолвер кэширует твой ответ на TTL секунд и не спросит снова, пока он не истечёт, — так что высокий TTL (скажем, 86400, сутки) означает меньше запросов и ниже стоимость Route 53, но failover или переключение доходит до всех вплоть до целых суток. Низкий TTL (60с) делает failover и миграции почти мгновенными, но множит объём запросов. Ход сеньора: держи низкий TTL на всём, что может переехать или зафейловиться, и сбрось TTL за *дни* до плановой миграции, чтобы кэши уже были короткими к моменту переключения. Для ALIAS-записей на ресурс AWS TTL вообще не задаёшь — Route 53 берёт дефолт ресурса и отслеживает его IP за тебя.
+</Inset>
+
+## CloudFront и ACM: кэш и сертификат
+
+**CloudFront** — глобальный CDN от AWS. Он держит флот **edge-локаций** (точек присутствия) по всему миру; запрос пользователя приземляется на ближайший edge, который отдаёт из кэша, если может, и идёт назад к твоему **ориджину** (S3, ALB, любой HTTP-сервер) только при промахе. Это срезает и задержку (байты приходят с edge рядом с пользователем), и нагрузку на ориджин (edge поглощает повторный трафик). У дистрибуции есть одно или несколько **поведений (behaviors)**, отображающих шаблоны путей на ориджины и настройки кэша — например, `/*` на ориджин приложения и `/static/*` на S3-ориджин с долгим кэшем. Что и насколько долго кэширует CloudFront, управляется **ключом кэша** плюс TTL: заголовки `Cache-Control`/`Expires` ориджина задают свежесть на объект, ограниченную **min/default/max TTL** поведения. Чтобы вычистить устаревший контент до истечения, ты выпускаешь **инвалидацию (invalidation)** на путь; первые 1000 путей инвалидации в месяц бесплатны, сверх — тарифицируются (цены зависят от региона/использования — см. [страницу цен CloudFront](https://aws.amazon.com/cloudfront/pricing/)). Ещё можно гонять код на edge: **CloudFront Functions** для лёгких правок заголовков/URL и **Lambda@Edge** для более тяжёлой логики на запрос.
+
+Чтобы люди не обходили CDN и не били прямо в бакет, закрой ориджин через **Origin Access Control (OAC)**. S3-бакет остаётся полностью **приватным** (публичный доступ заблокирован); его bucket policy даёт `s3:GetObject` сервис-принципалу CloudFront `cloudfront.amazonaws.com`, суженному условием `AWS:SourceArn` до *именно твоей дистрибуции*. Теперь единственный путь к объектам — через эту дистрибуцию, а прямые URL `s3.amazonaws.com` возвращают 403. OAC — актуальный механизм, он поддерживает все регионы, SSE-KMS и PUT/DELETE; легаси **Origin Access Identity (OAI)** оставлен лишь для миграции.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Sid": "AllowCloudFrontOAC",
+    "Effect": "Allow",
+    "Principal": { "Service": "cloudfront.amazonaws.com" },
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::my-private-site/*",
+    "Condition": {
+      "StringEquals": {
+        "AWS:SourceArn": "arn:aws:cloudfront::111122223333:distribution/E1ABCDEF2GHIJK"
+      }
+    }
+  }]
+}
+```
+
+**ACM (AWS Certificate Manager)** выпускает бесплатные публичные TLS-сертификаты и **автопродлевает** их, а интегрируется напрямую с CloudFront и ALB, так что приватного ключа ты не касаешься. Одно жёсткое правило цепляет всех: сертификат для HTTPS между зрителями и **CloudFront обязан жить в регионе `us-east-1` (N. Virginia)**, где бы ни работал твой ориджин — CloudFront глобален и читает viewer-сертификаты только оттуда. (Сертификат ACM для ALB живёт в собственном регионе ALB.) Сложи всё — и канонической парадной дверью статического сайта будет: Route 53 **ALIAS на апексе** на CloudFront, CloudFront терминирует TLS сертификатом **ACM в us-east-1** и достаёт **приватный S3-ориджин через OAC**.
+
+<FlowDiagram
+  label="Запрос зрителя, идущий от резолвинга DNS через edge CloudFront к закрытому S3-ориджину"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "user", label: "Зритель", sub: "браузер" },
+    { id: "r53", label: "Route 53", sub: "ALIAS на апексе" },
+    { id: "edge", label: "Edge CloudFront", sub: "кэш + TLS ACM" },
+    { id: "origin", label: "S3-ориджин", sub: "приватный, только OAC" },
+  ]}
+  edges={[
+    { from: "user", to: "r53", label: "1. резолвинг example.com" },
+    { from: "r53", to: "user", label: "2. IP edge (без TTL)" },
+    { from: "user", to: "edge", label: "3. HTTPS GET" },
+    { from: "edge", to: "origin", label: "4. промах: подписанный fetch" },
+    { from: "origin", to: "edge", label: "5. объект (403 при прямом)" },
+  ]}
+  caption="При попадании в кэш шагов 4-5 нет - edge отвечает сам. OAC означает, что шаг 5 удаётся только для CloudFront; прямой URL к S3 запрещён."
+/>
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Политика маршрутизации</th>
+        <th class="border border-border px-3 py-2 text-left">Возвращает</th>
+        <th class="border border-border px-3 py-2 text-left">Health-check?</th>
+        <th class="border border-border px-3 py-2 text-left">Бери, когда</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Simple</td>
+        <td class="border border-border px-3 py-2">Один фиксированный ответ</td>
+        <td class="border border-border px-3 py-2">Нет</td>
+        <td class="border border-border px-3 py-2">Один ресурс, без вариаций</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Weighted</td>
+        <td class="border border-border px-3 py-2">Ответ по целочисленному весу</td>
+        <td class="border border-border px-3 py-2">Опционально</td>
+        <td class="border border-border px-3 py-2">Канарейка / плавный раскат (95/5)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Latency-based</td>
+        <td class="border border-border px-3 py-2">Регион с наим. задержкой для пользователя</td>
+        <td class="border border-border px-3 py-2">Опционально</td>
+        <td class="border border-border px-3 py-2">Мульти-регион active-active, скорость</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Geolocation</td>
+        <td class="border border-border px-3 py-2">Ответ по стране/континенту пользователя</td>
+        <td class="border border-border px-3 py-2">Опционально</td>
+        <td class="border border-border px-3 py-2">Комплаенс, локализованный контент</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Failover</td>
+        <td class="border border-border px-3 py-2">Первичная, иначе вторичная</td>
+        <td class="border border-border px-3 py-2">Обязателен на первичной</td>
+        <td class="border border-border px-3 py-2">Active-passive DR-переключение</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Multivalue</td>
+        <td class="border border-border px-3 py-2">До 8 здоровых записей, случайно</td>
+        <td class="border border-border px-3 py-2">На запись</td>
+        <td class="border border-border px-3 py-2">Дешёвый разброс с учётом здоровья</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="03-dns-and-cdn-tradeoff-1"
+  lessonSlug="03-dns-and-cdn"
+  lang="ru"
+  prompt="Ты держишь идентичные стеки приложения в us-east-1 и eu-west-1, каждый за своим ALB, и хочешь, чтобы каждый пользователь попадал в самый быстрый для него регион - а регион, ставший нездоровым, переставал получать трафик. Выбери политику маршрутизации Route 53."
+  options={[
+    { name: "Latency-based с health-check на каждой записи", summary: "Самый быстрый регион на пользователя, нездоровые выпадают.", correct: true, justification: "Верный выбор. Latency-based направляет каждый резолвер в AWS-регион, что измеряет наименьшую для него задержку, — а это ровно цель «самый быстрый для него» по двум живым регионам. Привязка health-check к записи каждого региона означает, что нездоровый регион убирается из набора ответов, и трафик автоматически смещается в выживший. Это канонический паттерн мульти-регион active-active: задержка ради скорости, health-check ради устойчивости." },
+    { name: "Weighted 50/50", summary: "Делит трафик поровну по весу.", justification: "Weighted игнорирует, где пользователь, — деление 50/50 шлёт половину европейцев через Атлантику в us-east-1, ломая цель «самый быстрый для него». Weighted — инструмент канарейки/плавного раската (пусти 5% на новую версию), а не географически-осознанный инструмент скорости. Он может учитывать здоровье, но всё равно не маршрутизирует по задержке." },
+    { name: "Failover, первичный us-east-1", summary: "Первичный с пассивным резервом.", justification: "Failover делает один регион активным, а другой — холодным резервом, получающим трафик только когда первичный нездоров, — так что eu-west-1 простаивает, а европейцы всё время платят трансатлантическую задержку до us-east-1. Это active-passive DR, а не active-active «направь каждого в его самый быстрый регион», о котором просили." },
+    { name: "Simple на оба IP ALB", summary: "Одна запись, оба ответа.", justification: "Simple возвращает фиксированный ответ без осознания локации пользователя или здоровья записи. Он не может направить пользователя в ближайший регион и не выведет нездоровый регион из ротации, так что промахивается по обеим половинам требования. Simple — для одного ресурса без вариаций." },
+  ]}
+/>
+
+<Quiz
+  id="03-dns-and-cdn-quiz-1"
+  lessonSlug="03-dns-and-cdn"
+  lang="ru"
+  question="Нужно, чтобы голый домен example.com указывал на дистрибуцию CloudFront. Какую запись создаёшь?"
+  choices={[
+    { label: "ALIAS-запись Route 53 на апексе, указывающую на дистрибуцию CloudFront - легальна на апексе, без платы за запросы, отслеживает IP цели", correct: true },
+    { label: "CNAME-запись для example.com, указывающую на хостнейм CloudFront", misconception: "CNAME не может существовать на апексе зоны - спецификация DNS запрещает ему сосуществовать с апексными SOA/NS, так что CNAME на апексе нелегален. CNAME работает только на поддоменах вроде www. Апексу нужен ALIAS." },
+    { label: "A-запись с захардкоженным edge-IP CloudFront", misconception: "Edge-IP CloudFront динамичны и охватывают огромные диапазоны; захардкоженный сломается в момент, когда CloudFront ротирует IP. ALIAS существует именно затем, чтобы Route 53 резолвил текущие IP ресурса в момент запроса, ничего не прибивая гвоздями." },
+    { label: "TXT-запись, делегирующую CloudFront", misconception: "TXT-записи хранят произвольный текст (SPF, верификация домена); они вообще не маршрутизируют трафик. Указать домен на ресурс AWS на апексе - работа ALIAS-записи." },
+  ]}
+/>
+
+<Quiz
+  id="03-dns-and-cdn-quiz-2"
+  lessonSlug="03-dns-and-cdn"
+  lang="ru"
+  question="Твоя дистрибуция CloudFront отдаёт приватный S3-бакет через OAC, но люди сообщают, что всё ещё качают объекты, бьясь прямо по URL s3.amazonaws.com. Что не так?"
+  choices={[
+    { label: "Бакет на деле не приватный - заблокируй публичный доступ и сузь bucket policy так, чтобы пускать только сервис-принципал CloudFront для ARN твоей дистрибуции", correct: true },
+    { label: "Сертификаты OAC надо продлевать ежемесячно", misconception: "OAC не имеет отношения к продлению сертификата - это дело ACM, а ACM автопродлевает. OAC про bucket policy S3, дающую доступ только сервис-принципалу CloudFront; если прямые URL работают, проблема в публичном доступе или bucket policy." },
+    { label: "CloudFront кэширует бакет, так что ориджин неважен", misconception: "Кэширование на edge не делает ориджин недостижимым - если сам бакет разрешает публичное чтение, кто угодно обойдёт CloudFront и прочитает S3 напрямую. Весь смысл OAC - закрыть бакет так, чтобы читать мог только CloudFront." },
+    { label: "Надо перенести бакет в us-east-1", misconception: "Правило us-east-1 - про сертификат ACM для CloudFront, а не про S3-ориджин; бакеты работают в любом регионе за CloudFront. Утечка прямого скачивания - проблема bucket policy/публичного доступа, а не региона." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Route 53 — авторитативный DNS: используй ALIAS на апексе зоны (CNAME там нелегален), он бесплатен для целей AWS и отслеживает их IP, а политику маршрутизации выбирай под цель — weighted для канарейки, latency для ближайшего региона, failover с health-check для DR, multivalue для разброса с учётом здоровья. Держи TTL низким на всём, что переезжает. CloudFront кэширует на edge-POP перед ориджином; закрой S3-ориджин через OAC, чтобы читать могла только дистрибуция; ключ кэша + min/default/max TTL правят свежестью, инвалидации чистят раньше срока. ACM даёт бесплатный автопродлеваемый TLS, но сертификат для CloudFront обязан жить в us-east-1.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-dns-and-cdn-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему нельзя сделать CNAME с апекса на CloudFront, что используешь вместо и какие три преимущества это даёт?", a: "Апекс зоны (голый example.com) обязан держать записи SOA и NS, а спецификация DNS запрещает CNAME сосуществовать с другими записями на том же имени - так что CNAME на апексе нелегален, и только поддомены вроде www могут быть CNAME. Решает это ALIAS-запись Route 53: AWS-специфичное расширение, которое отображает апекс прямо на ресурс AWS (CloudFront, ALB/NLB, S3-бакет как статический сайт, API Gateway, App Runner) и резолвится в текущие IP ресурса в момент запроса. Три преимущества над CNAME: он легален на апексе; AWS не берёт плату за ALIAS-запросы к ресурсам AWS, тогда как CNAME-запросы тарифицируются; и он сам отслеживает смену IP цели, так что IP не приходится хардкодить или править руками." },
+    { q: "Опиши парадную дверь статического сайта под замком OAC от и до, включая подводные камни TTL и региона ACM.", a: "Route 53 держит ALIAS-запись на апексе, указывающую example.com на дистрибуцию CloudFront. CloudFront терминирует TLS сертификатом ACM, который обязан быть запрошен в us-east-1 (N. Virginia), потому что CloudFront глобален и читает viewer-сертификаты только оттуда. Ориджин — приватный S3-бакет с заблокированным публичным доступом; Origin Access Control означает, что bucket policy даёт s3:GetObject только сервис-принципалу cloudfront.amazonaws.com, суженному условием AWS:SourceArn до именно этой дистрибуции, так что прямые URL s3.amazonaws.com возвращают 403, и единственный вход — через CloudFront. CloudFront кэширует объекты на edge-POP, управляясь ключом кэша плюс min/default/max TTL поведения и Cache-Control ориджина; чтобы вычистить раньше срока, выпускаешь инвалидации. Про TTL: ALIAS-записи на ресурс AWS не берут TTL (Route 53 использует дефолт цели), но для любой записи, которую можешь зафейловить или мигрировать, держи TTL низким (например, 60с) и снижай его за дни до планового переключения, чтобы кэши резолверов были уже короткими к моменту флипа." },
+  ]}
+/>
+
+<Recap lang="ru">
+Край пути запроса — это три управляемых сервиса, работающих вместе. Route 53 — авторитативный DNS: hosted zone (публичная или приватная) держит твои записи, и правило, которое все узнают на собственной шкуре, — что CNAME нелегален на апексе зоны, поэтому ты используешь AWS-специфичную ALIAS-запись, чтобы указать голый домен на дистрибуцию CloudFront, ALB или S3-бакет — ALIAS бесплатен для целей AWS, отслеживает их IP и легален на апексе. Политика маршрутизации выбирает ответ: simple для одного ресурса, weighted для канареек, latency-based для ближайшего региона, geolocation для комплаенса, failover с health-check для active-passive DR, multivalue для разброса с учётом здоровья; а TTL — это ручка между быстрым failover (низкий) и меньшим числом запросов (высокий), так что держи его низким на всём, что переезжает. CloudFront кэширует контент на edge-точках присутствия перед твоим ориджином, срезая задержку и нагрузку; behaviors отображают пути на ориджины, ключ кэша плюс min/default/max TTL правят свежестью, инвалидации чистят раньше срока, а OAC закрывает приватный S3-ориджин так, чтобы читать могла только твоя дистрибуция. ACM выпускает бесплатные автопродлеваемые TLS-сертификаты, но тот, что для CloudFront, обязан жить в us-east-1. Инстинкт сеньора — относиться к DNS как к самому медленному кэшу, которым владеешь: выставь ALIAS на апексе, верную политику, низкий TTL, ориджин под замком OAC и сертификат в us-east-1 — и парадная дверь останется быстрой и зафейловится сама.
+</Recap>
