@@ -1,0 +1,266 @@
+---
+concepts:
+- hashing-vs-hmac
+- password-kdf
+- asymmetric-sign-verify
+- csprng-randombytes
+- timing-safe-equal
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: 02-crypto-deep
+sources:
+- https://nodejs.org/api/crypto.html
+- https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+- https://codahale.com/a-lesson-in-timing-attacks/
+spiral: []
+status: ready
+summary: 'Node''s crypto is correct only if you pick the right primitive: scrypt for passwords, HMAC for authenticated integrity, randomBytes for secrets, timingSafeEqual to compare them. Fast hashes and === are the bugs.'
+title: 'Node crypto, used right: KDFs, HMAC, signatures, and constant-time compares'
+track: node
+unit: 14-v8-and-crypto
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A team stored passwords as `sha256(password)` — fast, "hashed", looks fine in code review. Then a backup leaked. Because SHA-256 is built to be fast, an attacker's GPU tried billions of guesses per second against every row at once, and the unsalted digests meant a single precomputed rainbow table cracked the common passwords instantly. The same codebase compared API tokens with `===`, leaking timing that let an attacker recover a valid token byte by byte. Every one of these is `crypto` used with the wrong primitive — and the right one was one function call away.
+</Hook>
+
+<Crux>Pick the primitive by job: scrypt for passwords, HMAC for keyed integrity, randomBytes for secrets, timingSafeEqual to compare them.</Crux>
+
+<Explanation>
+
+## Hashing vs HMAC: integrity, then *authenticated* integrity
+
+A plain hash answers one question: did these bytes change? `crypto.createHash('sha256')` maps input to a fixed digest, so the same input always yields the same output and any tampering changes it. That is fine for a content checksum or a cache key — but it proves nothing about *who* produced it. Anyone can recompute the digest, so an attacker who alters a message can simply recompute its hash and you cannot tell.
+
+HMAC closes that gap. It mixes a **secret key** into the hash, so only parties holding the key can produce or verify a valid tag. Use a plain hash for integrity against accidental corruption; use HMAC when you need *authenticated* integrity — proving a value came from someone who knows the key. Signed cookies, webhook signatures (Stripe, GitHub), and stateless tokens all rely on HMAC, not a bare hash.
+
+```js
+const crypto = require('node:crypto');
+
+// Plain hash — integrity only, anyone can recompute it
+const digest = crypto.createHash('sha256').update(payload).digest('hex');
+
+// HMAC — keyed, only key holders can produce/verify the tag
+const key = process.env.WEBHOOK_SECRET;
+const tag = crypto.createHmac('sha256', key).update(rawBody).digest('hex');
+// later: compare `tag` to the header value with timingSafeEqual (see below)
+```
+
+## Passwords need a KDF, never a fast hash
+
+The hook's bug is the most common crypto mistake in web apps: hashing passwords with a fast algorithm. SHA-256, SHA-512, and MD5 are *designed* to be fast, which is exactly what you do not want for passwords — speed helps the attacker brute-force offline. A leaked database of unsalted SHA-256 digests falls to GPUs doing billions of guesses per second, and identical passwords produce identical digests, so rainbow tables and "crack once, match many" attacks work.
+
+Password storage needs a **key derivation function** (KDF): deliberately slow, memory-hard, and per-password salted. Node ships `scrypt` and `pbkdf2` natively; `argon2` and `bcrypt` are available via libraries. The salt (from a CSPRNG) makes every hash unique so identical passwords differ and rainbow tables die; the cost factor makes each guess expensive. Always use the **async** form so you don't block the event loop while the KDF deliberately burns CPU.
+
+```js
+const crypto = require('node:crypto');
+
+function hashPassword(password) {
+  return new Promise((resolve, reject) => {
+    const salt = crypto.randomBytes(16);          // unique per password, from CSPRNG
+    // N=2**15 cost, 64-byte output; store salt alongside the hash
+    crypto.scrypt(password, salt, 64, { N: 2 ** 15 }, (err, hash) => {
+      if (err) return reject(err);
+      resolve(`${salt.toString('hex')}:${hash.toString('hex')}`);
+    });
+  });
+}
+
+function verifyPassword(password, stored) {
+  return new Promise((resolve, reject) => {
+    const [saltHex, hashHex] = stored.split(':');
+    const salt = Buffer.from(saltHex, 'hex');
+    const expected = Buffer.from(hashHex, 'hex');
+    crypto.scrypt(password, salt, expected.length, { N: 2 ** 15 }, (err, actual) => {
+      if (err) return reject(err);
+      resolve(crypto.timingSafeEqual(actual, expected)); // constant-time, see below
+    });
+  });
+}
+```
+
+<Inset kind="why" lang="en">
+Why is "fast" the enemy? A normal login checks one password per request — microseconds either way is invisible to the user. But an attacker with a leaked hash dump runs offline against your stored hashes with no rate limit and no network round-trip. If your hash is fast, they test billions per second; if it is a tuned scrypt with high `N`, they test thousands. The cost factor is a dial you turn up over the years as hardware improves — the asymmetry between one honest login and a billion attacker guesses is the entire point.
+</Inset>
+
+## Asymmetric signatures: prove origin without sharing a secret
+
+HMAC works when both sides share one secret. When they cannot — you want to publish something *anyone* can verify but only you can produce (a software release, a JWT signed by an auth server, a licence) — you need **asymmetric** signing. You sign with a **private** key and anyone verifies with the matching **public** key. The public key proves nothing about the holder's ability to forge; only the private key can sign.
+
+```js
+const crypto = require('node:crypto');
+
+const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+
+// Sign with the private key (Ed25519 takes null for the algorithm arg)
+const signature = crypto.sign(null, Buffer.from(message), privateKey);
+
+// Anyone with the public key verifies — returns true/false
+const ok = crypto.verify(null, Buffer.from(message), publicKey, signature);
+```
+
+For streaming or large inputs use the `crypto.createSign('SHA256')` / `crypto.createVerify('SHA256')` object API with RSA or ECDSA keys: `.update(chunk)` repeatedly, then `.sign(privateKey)` / `.verify(publicKey, sig)`. The key choice — HMAC vs signature — is about whether verifiers can be trusted with the signing power.
+
+<TradeoffMatrix
+  id="02-crypto-deep-tradeoff-1"
+  lessonSlug="02-crypto-deep"
+  lang="en"
+  prompt="You must let many third parties verify that a message came from your service, without any of them being able to forge messages. Pick the primitive."
+  options={[
+    { name: "Asymmetric signature (Ed25519/RSA): sign with a private key, distribute the public key for verification", summary: "Verify without forge power.", correct: true, justification: "This is exactly the asymmetric case. Verifiers hold only the public key, which lets them check a signature but never produce one, so you can hand it to any number of untrusted parties. Your service alone holds the private key and is the only one that can sign. This is how JWT RS256/EdDSA, signed releases, and webhook verification across trust boundaries work." },
+    { name: "HMAC-SHA256 with a shared secret given to each third party", summary: "Shared key.", justification: "HMAC needs every verifier to hold the same secret used to produce the tag — which means any verifier can also forge messages. Fine when the two sides are one trust domain (your own services, signed cookies), but it fails the requirement that third parties must NOT be able to forge. Sharing one HMAC key with many parties means one leak forges everything." },
+    { name: "Plain SHA-256 of the message appended as a checksum", summary: "Bare hash.", justification: "A bare hash has no key, so anyone can recompute it over a tampered message. It proves the bytes weren't accidentally corrupted, not that they came from you. An attacker just rewrites the message and its hash. Never use a keyless hash for authenticity." },
+    { name: "scrypt of the message with a server-side salt", summary: "KDF misused.", justification: "scrypt is a password KDF — slow, salted, designed to resist brute force on low-entropy secrets. It is not a signature scheme: there's no public/private split, no way for a third party to verify origin, and running it per message is pointlessly expensive. Wrong tool entirely." },
+  ]}
+/>
+
+## Randomness and constant-time comparison: the two silent footguns
+
+Two more mistakes are subtle because the code *runs fine*. First, **randomness**: `Math.random()` is a fast PRNG with no cryptographic guarantees — its output is predictable and must never generate tokens, salts, session IDs, or keys. Use `crypto.randomBytes(n)` (a CSPRNG) for raw bytes and `crypto.randomUUID()` for IDs. Second, **comparison**: comparing secrets with `===`, `==`, or `Buffer.compare` early-exits on the first differing byte, so the time it takes leaks how many leading bytes matched — and an attacker can recover a token byte by byte by measuring response times. Use `crypto.timingSafeEqual(a, b)`, which compares in constant time. It requires two `Buffer`s of **equal length** (it throws otherwise), so hash both sides to a fixed length first, or length-check before calling.
+
+```js
+const crypto = require('node:crypto');
+
+// WRONG — leaks how many leading bytes matched via timing
+if (userToken === storedToken) grantAccess();
+
+// RIGHT — constant-time; both Buffers must be the same length
+const a = Buffer.from(userToken);
+const b = Buffer.from(storedToken);
+if (a.length === b.length && crypto.timingSafeEqual(a, b)) grantAccess();
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Job</th>
+        <th class="border border-border px-3 py-2 text-left">Right primitive</th>
+        <th class="border border-border px-3 py-2 text-left">Wrong choice &amp; why it fails</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Store a password</td>
+        <td class="border border-border px-3 py-2"><code>crypto.scrypt</code> / <code>pbkdf2</code> (async, salted, high cost)</td>
+        <td class="border border-border px-3 py-2"><code>sha256</code>/<code>md5</code> — fast + unsalted → GPU brute force, rainbow tables</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Authenticated integrity (shared key)</td>
+        <td class="border border-border px-3 py-2"><code>crypto.createHmac</code></td>
+        <td class="border border-border px-3 py-2">bare <code>createHash</code> — no key, attacker recomputes the digest</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Verifiable origin, untrusted verifiers</td>
+        <td class="border border-border px-3 py-2"><code>crypto.sign</code>/<code>verify</code> (Ed25519/RSA)</td>
+        <td class="border border-border px-3 py-2">HMAC — every verifier can also forge</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Token / salt / session ID</td>
+        <td class="border border-border px-3 py-2"><code>crypto.randomBytes</code> / <code>randomUUID</code></td>
+        <td class="border border-border px-3 py-2"><code>Math.random()</code> — predictable, not a CSPRNG</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Compare two secrets</td>
+        <td class="border border-border px-3 py-2"><code>crypto.timingSafeEqual</code> (equal-length Buffers)</td>
+        <td class="border border-border px-3 py-2"><code>===</code>/<code>==</code> — early-exit leaks timing → byte-by-byte recovery</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<FlowDiagram
+  label="Password verification flow: derive a scrypt hash from the submitted password and the stored salt, then compare against the stored hash in constant time"
+  hue="var(--d-systems)"
+  perRow="4"
+  nodes={[
+    { id: "in", label: "Login attempt", sub: "password" },
+    { id: "salt", label: "Load stored", sub: "salt + hash" },
+    { id: "kdf", label: "scrypt", sub: "slow + salted" },
+    { id: "cmp", label: "timingSafeEqual", sub: "constant-time" },
+  ]}
+  edges={[
+    { from: "in", to: "salt" },
+    { from: "salt", to: "kdf", label: "salt" },
+    { from: "kdf", to: "cmp", label: "derived" },
+  ]}
+  caption="Never store or compare the raw password. Re-derive with the same salt and cost, then compare the two fixed-length digests with timingSafeEqual — equal length, constant time."
+/>
+
+<Quiz
+  id="02-crypto-deep-quiz-1"
+  lessonSlug="02-crypto-deep"
+  lang="en"
+  question="A service stores passwords as crypto.createHash('sha256').update(password).digest('hex'). Why is this insecure?"
+  choices={[
+    { label: "SHA-256 is fast and unsalted here, so a leaked dump falls to GPU brute force and rainbow tables; passwords need a slow, salted KDF like scrypt", correct: true },
+    { label: "SHA-256 produces collisions, so two passwords map to one hash", misconception: "SHA-256 is collision-resistant; that is not the problem. The problem is that it is fast and used without a per-password salt, so offline brute force and rainbow tables are cheap. The fix is a slow salted KDF, not a different plain hash." },
+    { label: "It should use SHA-512 instead, which is secure for passwords", misconception: "SHA-512 is also a fast hash and equally wrong for passwords. The issue is the class of algorithm, not the digest size — you need a deliberately slow, memory-hard KDF (scrypt/argon2/bcrypt/pbkdf2)." },
+    { label: "Nothing — hashing is exactly what password storage needs", misconception: "Hashing alone is necessary but not sufficient. A fast unsalted hash is brute-forceable offline; password storage specifically requires a salted, cost-tuned KDF." },
+  ]}
+/>
+
+<Quiz
+  id="02-crypto-deep-quiz-2"
+  lessonSlug="02-crypto-deep"
+  lang="en"
+  question="Why replace `userToken === storedToken` with crypto.timingSafeEqual for comparing a secret?"
+  choices={[
+    { label: "=== early-exits at the first differing byte, so comparison time leaks how many leading bytes matched, letting an attacker recover the token byte by byte; timingSafeEqual compares in constant time", correct: true },
+    { label: "=== can't compare Buffers, so it always returns false", misconception: "=== does work on strings and is reference-based on Buffers, but that's not the security issue. The vulnerability is the timing side channel from early-exit comparison, which timingSafeEqual eliminates." },
+    { label: "timingSafeEqual also hashes the inputs, making them secret", misconception: "timingSafeEqual does not hash — it just compares two equal-length Buffers in constant time. Its only job is removing the timing side channel; it requires equal-length inputs and throws otherwise." },
+    { label: "=== is slower than timingSafeEqual", misconception: "=== is typically faster on average; that's the danger. Variable, input-dependent timing is the leak. timingSafeEqual is intentionally constant-time, not faster." },
+  ]}
+/>
+
+<DragOrder
+  id="02-crypto-deep-drag-1"
+  lessonSlug="02-crypto-deep"
+  lang="en"
+  prompt="Order the steps to verify a submitted password against a stored scrypt hash, securely:"
+  items={[
+    { id: "a", label: "Split the stored value into its salt and expected hash" },
+    { id: "b", label: "Re-run scrypt on the submitted password with that salt and the same cost factor" },
+    { id: "c", label: "Confirm the derived hash and expected hash are equal-length Buffers" },
+    { id: "d", label: "Compare them with crypto.timingSafeEqual (constant-time)" },
+    { id: "e", label: "Grant or deny access based on the boolean result" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Match primitive to job: scrypt/pbkdf2 (async, salted) for passwords, not a fast hash; HMAC for keyed integrity; sign/verify for untrusted verifiers; randomBytes for secrets; timingSafeEqual to compare.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-crypto-deep-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is storing passwords with sha256 insecure, and what should you use instead?", a: "SHA-256 (like SHA-512 and MD5) is engineered to be fast, which is precisely the wrong property for password storage. An attacker who steals the hash dump runs offline with no rate limit, and a fast hash lets a GPU try billions of guesses per second against every row at once. If the hashes are unsalted, identical passwords produce identical digests, so a single precomputed rainbow table cracks the common ones and one crack matches many accounts. The fix is a key derivation function: scrypt or pbkdf2 in Node (or argon2/bcrypt via libraries). A KDF is deliberately slow and memory-hard, and you give it a per-password salt from crypto.randomBytes so every hash is unique and rainbow tables die. Always use the async form (crypto.scrypt(...callback)) so the deliberately expensive computation doesn't block the event loop, store the salt next to the hash, and turn the cost factor up over the years as hardware improves." },
+    { q: "Why does comparing a secret with === leak information, and how does timingSafeEqual fix it?", a: "=== (and ==, and Buffer.compare) compares byte by byte and returns the moment it finds a mismatch. That means the comparison takes slightly longer the more leading bytes are correct — an input-dependent timing difference. An attacker who can measure your response time submits guesses and watches which prefix takes microseconds longer to reject, recovering a valid token or HMAC tag one byte at a time without ever needing the whole value up front. crypto.timingSafeEqual closes this by comparing in constant time: it always examines every byte regardless of where the first difference is, so the duration reveals nothing about how much matched. The one constraint is that it requires two Buffers of equal length and throws otherwise, so you either hash both sides to a fixed length first or do a length check before calling it (and note the length itself can leak, which is why hashing to a fixed size is the cleanest pattern)." },
+  ]}
+/>
+
+<Recap lang="en">
+Node's crypto module is only as safe as your choice of primitive. A plain hash (createHash) gives integrity but no authenticity — anyone can recompute it — so reach for HMAC (createHmac) when you need to prove a value came from a key holder, as with webhook signatures and signed cookies. Passwords are a category of their own: never a fast hash like SHA-256 or MD5, which fall to offline GPU brute force and rainbow tables, but a deliberately slow, salted KDF — scrypt or pbkdf2 in the async form, with a per-password salt from a CSPRNG and a cost factor you raise over time. When verifiers can't be trusted with signing power, switch from HMAC to asymmetric signatures (crypto.sign/verify or createSign/createVerify with an Ed25519 or RSA key pair): sign with the private key, let anyone verify with the public one. Generate every secret, salt, and ID with crypto.randomBytes or crypto.randomUUID, never Math.random, which is not a CSPRNG. And compare any two secrets with crypto.timingSafeEqual on equal-length Buffers, never === or ==, because early-exit comparison leaks timing that lets an attacker recover the secret byte by byte. Right primitive, right call — the wrong one teaches a habit that quietly ships a vulnerability.
+</Recap>
