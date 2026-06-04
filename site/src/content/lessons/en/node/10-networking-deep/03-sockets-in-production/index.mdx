@@ -1,0 +1,196 @@
+---
+concepts:
+- socket-timeouts
+- keepalive-tuning
+- econnreset-epipe
+- max-connections
+- graceful-close
+- fd-exhaustion
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-sockets-in-production
+sources:
+- https://nodejs.org/api/net.html
+- https://nodejs.org/api/http.html
+- https://blog.cloudflare.com/this-is-strictly-a-violation-of-the-tcp-specification/
+spiral: []
+status: ready
+summary: 'Production socket failures are predictable: idle sockets without timeouts
+  pin file descriptors, ECONNRESET/EPIPE crash unhardened handlers, and an unbounded
+  accept rate exhausts fds. Add timeouts, limits, and a graceful drain.'
+title: 'Sockets in production: timeouts, limits, and fd exhaustion'
+track: node
+unit: 10-networking-deep
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+At 3 a.m. a service stops accepting connections. CPU is near zero, memory is fine, no errors in the logs — it just hangs. The on-call engineer runs `lsof -p <pid> | wc -l` and sees 65,535 open file descriptors. The culprit: clients that opened a socket, sent nothing, and went away — half-open or silently dead connections with no timeout. Each one held a file descriptor forever. The process never crashed; it suffocated. Every socket the kernel hands you is a finite resource, and in production the question is never *if* a client misbehaves but *when*.
+</Hook>
+
+<Crux>Production socket health: time out idle sockets, treat `ECONNRESET`/`EPIPE` as routine, and bound connections to never exhaust fds.</Crux>
+
+<Explanation>
+
+## Idle sockets need a timeout or they pin a file descriptor forever
+
+A TCP socket, once accepted, occupies a **file descriptor** — a finite, per-process kernel resource (often defaulting to 1,024 or capped by `ulimit -n`). Node does not impose an idle timeout by default: a socket that connects and then goes silent will sit open indefinitely. A misbehaving or dead client — one that crashed without a clean close, or a half-open connection where the FIN never arrived — therefore leaks a descriptor that is never reclaimed. Accumulate enough and the process can no longer `accept()` anything: the hang in the hook.
+
+The defense is `socket.setTimeout(ms)`, which fires a `'timeout'` event after `ms` of inactivity (no reads *or* writes). Crucially, **the timeout event does not close the socket for you** — it just notifies you — so you must act:
+
+```js
+server.on("connection", (socket) => {
+  socket.setTimeout(30_000);                 // 30s idle budget
+  socket.on("timeout", () => {
+    socket.destroy(new Error("idle timeout")); // YOU must close it
+  });
+  socket.on("error", () => {});               // swallow post-destroy errors
+});
+```
+
+For HTTP servers, the same idea is exposed as `server.setTimeout()`, plus `server.headersTimeout`, `server.requestTimeout`, and `server.keepAliveTimeout` — the last guards the gap between keep-alive requests. The Slowloris attack is precisely the weaponized version of the hook: an attacker opens many connections and dribbles bytes slowly to keep each just under any naive timeout, exhausting your connection capacity with almost no bandwidth. Header and request timeouts are what stop it.
+
+## Keep-alive: reuse the handshake, but bound the idle
+
+Keep-alive is the reuse of one TCP connection for many requests, avoiding a fresh handshake (and TLS negotiation) each time — a large latency win. But an idle kept-alive connection still holds a file descriptor and a slot. The tuning tension is real: too short a `keepAliveTimeout` and you throw away the reuse benefit, reconnecting constantly; too long and idle clients hoard descriptors you could serve to active ones.
+
+There is also a notorious **race** between a server closing an idle keep-alive connection and a client sending one more request on it: the request lands on a socket the server is tearing down, producing an `ECONNRESET` the client sees as a failed request. The mitigation is to make the server's `keepAliveTimeout` *longer* than the upstream load balancer's idle timeout, so the LB always closes first, on a connection it knows is idle — a classic source of intermittent 502s when reversed.
+
+<Inset kind="why" lang="en">
+Why must the server's keep-alive timeout exceed the load balancer's? Whoever closes an idle connection wins the race cleanly; whoever sends on a connection the *other* side just closed loses with a reset. If the LB's idle timeout is shorter, the LB sends a request onto a connection your server has already started closing, and the client gets a 502/ECONNRESET. Make the server outlast the LB and the LB always initiates the close on a genuinely idle socket — no in-flight request to reset.
+</Inset>
+
+## ECONNRESET and EPIPE are not bugs — they are Tuesday
+
+Two error codes dominate production socket logs, and treating them as exceptional is a mistake.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Error</th>
+        <th class="border border-border px-3 py-2 text-left">What happened</th>
+        <th class="border border-border px-3 py-2 text-left">Right response</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>ECONNRESET</code></td>
+        <td class="border border-border px-3 py-2">Peer sent RST — abrupt close (crash, kill, network drop)</td>
+        <td class="border border-border px-3 py-2">Clean up this connection; do not crash the process</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>EPIPE</code></td>
+        <td class="border border-border px-3 py-2">You wrote to a socket the peer already fully closed</td>
+        <td class="border border-border px-3 py-2">Stop writing; the connection is gone</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Both are emitted as `'error'` events on the socket, and the iron rule from the TCP lesson applies with force in production: **an unhandled socket `'error'` throws and takes down the entire process**, killing every other in-flight connection with it. One misbehaving client must never be able to crash a server serving thousands. So every socket — accepted server-side and opened client-side — needs an `'error'` handler that logs-and-cleans-up rather than rethrows. The asymmetry to internalize: `ECONNRESET` is something *done to you* (the peer reset), `EPIPE` is *you* writing into a closed pipe — but both resolve to "this one connection is dead, release it, keep serving everyone else."
+
+## Bound connections, then drain gracefully
+
+The hook's root cause was unbounded resource growth. `server.maxConnections` caps concurrent sockets: past the limit, the server stops accepting (the OS backlog absorbs a few, then refuses), which sheds load instead of collapsing into fd exhaustion. It is a blunt instrument but a real backstop. Pair it with an OS-level `ulimit -n` raised to a deliberate number and you have an upper bound you chose rather than one you discover at 3 a.m.
+
+The other half is **graceful shutdown**. On `SIGTERM` (a deploy, a scale-down), you must drain rather than drop: `server.close()` stops accepting *new* connections and fires its callback once all *existing* ones finish — but it will wait forever on a long-lived idle keep-alive socket, so you also iterate active sockets, signal them to finish, and `destroy()` any stragglers after a deadline. Skipping this turns every deploy into a wave of `ECONNRESET`s for in-flight users.
+
+<FlowDiagram
+  label="The file-descriptor exhaustion cascade: idle sockets without timeouts accumulate until the server can no longer accept, versus the hardened path that times out, bounds, and drains"
+  hue="var(--d-network)"
+  perRow={4}
+  nodes={[
+    { id: "idle", label: "Idle sockets", sub: "no timeout" },
+    { id: "leak", label: "FD leak", sub: "never freed" },
+    { id: "cap", label: "Hit fd cap", sub: "ulimit" },
+    { id: "hang", label: "accept() fails", sub: "hang" },
+    { id: "to", label: "setTimeout", sub: "destroy idle" },
+    { id: "max", label: "maxConnections", sub: "shed load" },
+    { id: "drain", label: "close()+drain", sub: "SIGTERM" },
+    { id: "ok", label: "Stays up", sub: "bounded" }
+  ]}
+  edges={[
+    { from: "idle", to: "leak", label: "accumulate" },
+    { from: "leak", to: "cap", label: "grow" },
+    { from: "cap", to: "hang", label: "exhaust" },
+    { from: "to", to: "max", label: "+bound" },
+    { from: "max", to: "drain", label: "+drain" },
+    { from: "drain", to: "ok", label: "result" }
+  ]}
+  caption="Top row is the 3 a.m. cascade; bottom row is the three disciplines that prevent it. Timeouts reclaim leaked descriptors, maxConnections caps growth, graceful drain avoids reset storms on deploy."
+/>
+
+<TradeoffMatrix
+  id="10-sockets-in-production-tradeoff-1"
+  lessonSlug="03-sockets-in-production"
+  lang="en"
+  prompt="Your Node server sits behind a load balancer and you see intermittent 502/ECONNRESET on otherwise healthy requests."
+  options={[
+    { name: "Set the server's keepAliveTimeout (and headersTimeout) longer than the LB's idle timeout", summary: "Server outlasts LB.", correct: true, justification: "The 502s come from a race: the LB reuses an idle keep-alive connection that the Node server has already begun closing, and the in-flight request lands on a socket being torn down → reset. Making the server's keepAliveTimeout exceed the LB's idle timeout guarantees the LB always initiates the close on a genuinely idle connection, with no request in flight to reset. This is the standard fix for keep-alive 502s behind a proxy." },
+    { name: "Lower the server's keepAliveTimeout aggressively so connections close fast", summary: "Close sooner.", justification: "This makes the race worse, not better: a shorter server timeout means the server closes idle connections even sooner than the LB, so the LB is more likely to send a request onto a just-closed socket. You want the server to close last, not first. Aggressively short keep-alive also throws away connection reuse, adding handshake latency." },
+    { name: "Disable keep-alive entirely (Connection: close)", summary: "No reuse.", justification: "It removes the race by removing the feature, but you pay a full TCP (and TLS) handshake on every request — a large latency and CPU regression at scale. Acceptable only for very low-traffic or pathological cases; the proper fix is timeout ordering, which keeps reuse." },
+    { name: "Add a retry on ECONNRESET in the client", summary: "Just retry.", justification: "Retrying masks the symptom and can be a reasonable belt-and-suspenders for idempotent requests, but it doesn't address the cause, doubles latency on every hit, and risks duplicate side effects on non-idempotent calls. Fix the timeout ordering first; retry only as defense in depth." },
+  ]}
+/>
+
+<Quiz
+  id="10-sockets-in-production-quiz-1"
+  lessonSlug="03-sockets-in-production"
+  lang="en"
+  question="A long-running Node service slowly stops accepting new connections with no crash, no high CPU, and no memory growth. Most likely cause?"
+  choices={[
+    { label: "File-descriptor exhaustion from idle/half-open sockets with no setTimeout — each leaked socket pins an fd until the process hits its ulimit and can no longer accept()", correct: true },
+    { label: "A memory leak", misconception: "Memory is explicitly stated as fine. The signature here — no crash, no CPU, no memory, just inability to accept — points to descriptor exhaustion, a different finite resource from heap memory." },
+    { label: "Event loop blocked by CPU work", misconception: "CPU is near zero, so the loop isn't blocked by computation. A blocked loop would spike CPU or latency across all work, not silently cap new connections." },
+    { label: "DNS resolution failures", misconception: "DNS affects outbound name lookups, not the server's ability to accept inbound connections. The inability to accept() is a descriptor-limit symptom." },
+  ]}
+/>
+
+<Quiz
+  id="10-sockets-in-production-quiz-2"
+  lessonSlug="03-sockets-in-production"
+  lang="en"
+  question="socket.setTimeout(30000) fires a 'timeout' event but the connection stays open and keeps holding its fd. Why?"
+  choices={[
+    { label: "setTimeout only emits the event as a notification — it does not close the socket; you must call socket.destroy() (or end()) in the handler yourself", correct: true },
+    { label: "30 seconds is too short to take effect", misconception: "The timeout did fire — that's why you see the event. The issue isn't the duration; it's that the event handler must actively close the socket, which this code didn't do." },
+    { label: "Timeouts don't work on keep-alive sockets", misconception: "setTimeout works regardless of keep-alive. The event fired correctly; the missing piece is the destroy() call in the handler." },
+    { label: "You must call setKeepAlive(false) first", misconception: "Keep-alive (TCP probes) and the inactivity timeout are independent dials. The reason the fd persists is simply that nothing closed the socket after the timeout event." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>In production, sockets fail predictably: `setTimeout` + `destroy()` to reclaim idle fds, an `'error'` handler on every socket so `ECONNRESET`/`EPIPE` can't crash the process, `maxConnections` to bound growth, and `server.close()` + drain on `SIGTERM` to avoid reset storms.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="10-sockets-in-production-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can a Node server run out of file descriptors with no crash, no CPU spike, and no memory growth — and how do you prevent it?", a: "Every accepted TCP socket consumes a file descriptor, a finite per-process kernel resource bounded by ulimit -n. Node sets no idle timeout by default, so a client that connects and then goes silent — crashed without a clean close, or a half-open connection whose FIN never arrived — leaves a socket open that is never reclaimed. These leak slowly: no error is thrown, no memory grows on the heap, and CPU stays idle because nothing is happening on them. They just accumulate until the process hits its descriptor limit and can no longer accept() new connections — the server hangs without crashing. The fix is per-socket inactivity timeouts: socket.setTimeout(ms) emits a 'timeout' event after ms of no reads or writes, and because that event does NOT close the socket itself, you must call socket.destroy() (or end()) in the handler to actually reclaim the descriptor. For HTTP add headersTimeout and requestTimeout to defeat Slowloris-style slow clients, raise ulimit -n deliberately, and cap concurrency with server.maxConnections so growth is bounded rather than discovered in production." },
+    { q: "Why must you handle ECONNRESET/EPIPE on every socket, and what does graceful shutdown add?", a: "ECONNRESET (the peer sent a RST — an abrupt close from a crash, kill, or network drop) and EPIPE (you wrote to a socket the peer already fully closed) are emitted as 'error' events on the socket, and an unhandled socket 'error' in Node throws and crashes the entire process — taking every other in-flight connection down with it. Since these errors are routine in production (any client can crash or drop at any time), one misbehaving peer must never be able to kill a server serving thousands, so every socket — server-accepted and client-opened — needs an 'error' listener that logs and cleans up that one connection instead of rethrowing. Graceful shutdown completes the picture for deploys and scale-downs: on SIGTERM you call server.close() to stop accepting new connections and let existing requests finish, but because close() will wait indefinitely on idle keep-alive sockets, you also track active sockets, stop their keep-alive, and destroy() any that outlast a drain deadline. Without this, every deploy fires a wave of ECONNRESETs at users mid-request; with it, in-flight work completes and only truly-stuck sockets are forcibly closed." },
+  ]}
+/>
+
+<Recap lang="en">
+Production socket failures are not random — they are three recurring disciplines you either apply or pay for. First, time out idle sockets: every accepted socket pins a finite file descriptor, Node sets no default idle timeout, so `socket.setTimeout(ms)` plus an explicit `destroy()` in the `'timeout'` handler is what reclaims descriptors leaked by dead or half-open clients — and HTTP's `headersTimeout`/`requestTimeout` are what defeat Slowloris. Second, treat `ECONNRESET` and `EPIPE` as routine: both surface as socket `'error'` events, and an unhandled one crashes the whole process and every connection on it, so every socket needs an error handler that cleans up the one connection. Third, bound and drain: `server.maxConnections` and a deliberate `ulimit -n` cap growth so you never silently exhaust descriptors, and `server.close()` with active-socket draining on `SIGTERM` turns deploys from reset storms into clean handoffs. Tune keep-alive between reuse and hoarding, and make the server's `keepAliveTimeout` outlast the load balancer's to kill the intermittent-502 race. Bound the resource, time out the idle, handle the inevitable error, drain on the way out.
+</Recap>
