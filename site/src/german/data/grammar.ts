@@ -303,7 +303,7 @@ export const germanGrammar: GrammarPoint[] = [
       },
     ],
     register: {
-      en: "Contrast with V2 main clauses: in 'Ich beheben den Bug' the verb is second, but inside 'dass ich den Bug behebe' it is last.",
+      en: "Contrast with V2 main clauses: in 'Ich behebe den Bug' the verb is second, but inside 'dass ich den Bug behebe' it is last.",
       ru: "Сравните с главным V2: в 'Ich behebe den Bug' глагол второй, но в 'dass ich den Bug behebe' — последний.",
     },
   },
