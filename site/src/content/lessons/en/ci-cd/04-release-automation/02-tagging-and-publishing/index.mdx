@@ -1,13 +1,230 @@
 ---
-slug: "02-tagging-and-publishing"
+concepts:
+- git-tags
+- github-releases
+- tag-triggered-workflow
+- registry-auth
+- npm-provenance
+- least-privilege-token
+deepensInto: []
+estMin: 16
 lang: en
-track: "ci-cd"
-unit: "04-release-automation"
+lessonType: topic
+level: middle
 order: 2
-title: "Tagging and publishing releases from CI"
-summary: "Tagging and publishing releases from CI — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 02-tagging-and-publishing
 sources:
-  - https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-nodejs-packages
+- https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-nodejs-packages
+- https://docs.npmjs.com/generating-provenance-statements
+- https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+- https://docs.github.com/en/actions/use-cases-and-examples/publishing-packages/publishing-docker-images
+spiral: []
+status: ready
+summary: 'A pushed tag is the trigger that turns a commit into a published release. Gate the workflow on a v*.*.* tag, scope the token least-privilege with a permissions block, and publish with provenance — so a leaked PAT or a publish-on-every-push never ships.'
+title: 'Tagging and publishing releases from CI'
+track: ci-cd
+unit: 04-release-automation
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The incident channel lights up at 4pm: `acme-sdk@2.4.0-rc.1` is live on npm — a release candidate, never QA'd, now installed by anyone who ran `npm update`. Nobody clicked publish. The pipeline did. Someone had written `on: push` at the top of the release workflow, so *every commit to every branch* ran `npm publish`, and a version bump on a feature branch shipped straight to the public registry. The fix is one line of YAML — but the team had also stored a long-lived npm automation token as a plain secret, and that token, scoped to publish *any* of their packages, had just been exercised by code nobody reviewed.
+</Hook>
+
+<Crux>A pushed tag is the trigger that turns a reviewed commit into a release — gate on `tags:`, scope the token, sign with provenance.</Crux>
+
+<Explanation>
+
+## A tag is a named, immutable pointer at one commit
+
+A Git tag is a label that pins a human-readable name to one specific commit. There are two kinds, and the difference matters for releases. A **lightweight tag** is just a pointer — the tag name and the commit hash, nothing else. An **annotated tag** is a full object in the Git database: it carries the tagger's name and email, a timestamp, a message, and — critically — it can be GPG/SSH **signed**. For a release you almost always want annotated: `git tag -a v1.2.0 -m "Release 1.2.0"`. It records *who* cut the release and *when*, it survives `git describe`, and it is the only kind `git push --follow-tags` propagates. Lightweight tags are for scratch bookmarks you do not intend to publish.
+
+The reason tags anchor releases is that they are meant to be **immutable**: `v1.2.0` should point at exactly the bytes you tested, forever. The moment you let a tag float — re-pointing it at a newer commit, or tagging a branch tip that keeps moving — you have broken the promise that a version is a fixed artifact. A **GitHub Release** then hangs notes and downloadable assets off that tag, giving consumers a human-facing changelog and a stable place to find binaries. Tag a specific, reviewed, green commit; never a mutable ref.
+
+## The tag is the trigger: `on: push: tags`
+
+Here is the mechanism that ties tagging to publishing. GitHub Actions lets a workflow subscribe to tag pushes. When you push a tag matching the filter, the workflow fires — and *only* then. This is what separates "every commit builds and tests" (your normal CI) from "a release ships" (this workflow). The glob `v*.*.*` matches `v1.2.0`, `v2.0.1`, and so on; setting `branches: []` (or simply omitting branches) keeps ordinary commits from triggering it.
+
+```yaml
+name: publish
+on:
+  push:
+    tags:
+      - 'v*.*.*'        # fires only on a pushed version tag, e.g. v1.2.0
+
+permissions:            # least privilege: this job gets nothing it doesn't use
+  contents: read        # read the repo to build
+  id-token: write       # mint an OIDC token for provenance
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+```
+
+The contrast with the hook is the whole lesson. `on: push` (no filter) runs on every branch push — that is how a release-candidate escaped. `on: push: tags: ['v*.*.*']` runs only when a maintainer deliberately pushes a version tag, which is a reviewed, intentional act. The tag is the human decision; the workflow is the automation that trusts that decision.
+
+<Inset kind="warning" lang="en">
+A subtle trap: a tag created by a workflow using the built-in `GITHUB_TOKEN` will **not** trigger another workflow's `push` event — GitHub suppresses this to prevent infinite CI loops. So if a tool like release-please or semantic-release cuts your tag *inside* CI, your `on: push: tags` publish job may silently never run. The standard fixes are to trigger on `on: release: [published]` instead, or to push the tag with a PAT / GitHub App token rather than the default `GITHUB_TOKEN`.
+</Inset>
+
+## Auth: least-privilege token, not a long-lived PAT
+
+The hook's second failure was the credential. A release workflow needs *something* to authenticate to the registry, and the choice ranges from dangerous to disciplined.
+
+The built-in **`GITHUB_TOKEN`** is the default to reach for: GitHub mints it fresh per run, it expires when the job ends, and you scope it with a `permissions:` block. The rule is **least privilege** — grant only what the job uses. For publishing a container image to GitHub Container Registry (GHCR) that is `packages: write`; for npm provenance it is `id-token: write`. Crucially, GitHub Actions defaults a token to *read-only* `contents` when you declare any `permissions:` block, so writing the block both grants the one scope you need and revokes everything else. Omit the block and the token may inherit broad write scope across the whole repo — the "forgot `permissions:`" mistake that turns a build token into a liability.
+
+For pushing to a **third-party** registry (npm, Docker Hub, a cloud provider), prefer **OIDC**: the job mints a short-lived signed token, the registry's trust policy verifies it came from your exact workflow, and you exchange it for ephemeral credentials. Nothing long-lived is stored. The worst option — the hook's actual bug — is a **long-lived PAT or npm automation token** pasted as a secret: it does not expire, it must be rotated, and a single leaked token scoped to "publish any package" is a supply-chain breach waiting to happen.
+
+```yaml
+# Publishing a container image to GHCR with the built-in token
+permissions:
+  contents: read
+  packages: write          # only scope GHCR push needs
+
+jobs:
+  publish-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}   # ephemeral, per-run
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+```
+
+## Provenance: tie the package to the build that made it
+
+The capstone is **provenance**. When you run `npm publish --provenance` from a cloud-hosted runner with `id-token: write`, npm uses the OIDC token to generate a signed attestation — via Sigstore — that links the published tarball to the exact source repository, the commit, and the build instructions that produced it. The requirements are precise and worth memorising: npm CLI `9.5.0+`, the `id-token: write` permission, and a supported cloud CI runner (e.g. `ubuntu-latest` on GitHub Actions). The attestation is public and verifiable, so a consumer can confirm *where and how* a package was built before installing it — closing the gap that lets an attacker with a stolen token publish a poisoned build that looks legitimate.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">Long-lived PAT / npm token as a secret</th>
+        <th class="border border-border px-3 py-2 text-left"><code>GITHUB_TOKEN</code> + <code>permissions:</code> / OIDC</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Lifetime</td>
+        <td class="border border-border px-3 py-2">Permanent until manually rotated</td>
+        <td class="border border-border px-3 py-2">Minted per run, expires at job end</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Scope</td>
+        <td class="border border-border px-3 py-2">Often broad — publish any package</td>
+        <td class="border border-border px-3 py-2">Exactly the declared <code>permissions:</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Blast radius if leaked</td>
+        <td class="border border-border px-3 py-2">Full, until noticed and revoked</td>
+        <td class="border border-border px-3 py-2">One run; OIDC bound to your workflow</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Provenance</td>
+        <td class="border border-border px-3 py-2">None — anyone with the token can publish</td>
+        <td class="border border-border px-3 py-2">Signed attestation ties tarball to commit</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Quiz
+  id="02-tagging-and-publishing-quiz-1"
+  lessonSlug="02-tagging-and-publishing"
+  lang="en"
+  question="A release-candidate ended up published to npm from a feature-branch commit nobody reviewed. The workflow starts with `on: push`. What is the root cause?"
+  choices={[
+    { label: "`on: push` with no tag filter runs on every branch push, so a version bump anywhere ran `npm publish`; the publish step should be gated on `on: push: tags: ['v*.*.*']`", correct: true },
+    { label: "npm publish is non-deterministic and occasionally fires on its own", misconception: "npm publish only runs when a step invokes it. The step ran because the workflow triggered on every push; the publish itself is deterministic. The bug is the trigger, not npm." },
+    { label: "The npm token was too broadly scoped", misconception: "A broad token is a real and separate problem, but it is not why the workflow ran — an over-scoped token widens the blast radius once a publish fires. The publish fired because `on: push` had no tag filter." },
+    { label: "GitHub Actions always publishes on tags by default", misconception: "There is no implicit publish. The workflow published because it was explicitly configured to run on every push and call npm publish. Gating on a tag filter is what makes it intentional." },
+  ]}
+/>
+
+<Quiz
+  id="02-tagging-and-publishing-quiz-2"
+  lessonSlug="02-tagging-and-publishing"
+  lang="en"
+  question="Your tag-triggered npm job runs `npm publish --provenance` but fails: 'provenance generation requires id-token: write'. The workflow has no `permissions:` block. What is happening and the fix?"
+  choices={[
+    { label: "Provenance needs an OIDC token, which requires `id-token: write`; add a `permissions:` block granting `id-token: write` (and `contents: read`) so the job can mint the signing token", correct: true },
+    { label: "Provenance needs a long-lived npm token with extra scopes; generate one and store it", misconception: "Provenance is signed via an OIDC id-token, not a broader npm credential. Adding a long-lived token does not provide id-token: write and reintroduces the leaked-token risk this lesson warns against." },
+    { label: "You must run on a self-hosted runner to get provenance", misconception: "Provenance requires a supported cloud-hosted runner (e.g. ubuntu-latest on GitHub Actions), not a self-hosted one. The missing piece is the id-token: write permission, not the runner type." },
+    { label: "Downgrade npm — newer versions removed --provenance", misconception: "Provenance requires npm 9.5.0+; newer versions support it, not remove it. The failure is the absent id-token: write permission needed to mint the OIDC token." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="02-tagging-and-publishing-tradeoff-1"
+  lessonSlug="02-tagging-and-publishing"
+  lang="en"
+  prompt="Your CI publishes a package to a public registry on release. Pick how the publish job authenticates."
+  options={[
+    { name: "OIDC: id-token: write, exchanged at the registry for short-lived credentials, with npm provenance", summary: "No stored token.", correct: true, justification: "The modern default for third-party registries. Nothing long-lived is stored, credentials are minted per run and expire fast, and the registry's trust policy binds them to your exact workflow so a different repo cannot publish. Run from a cloud runner with id-token: write and you also get a signed provenance attestation linking the tarball to the commit. One-time identity-provider setup buys a permanently smaller attack surface." },
+    { name: "Built-in GITHUB_TOKEN scoped with a least-privilege permissions: block (e.g. packages: write for GHCR)", summary: "Ephemeral, scoped.", justification: "Excellent for GitHub-native targets like GHCR: the token is minted per run, expires at job end, and the permissions: block grants exactly the one scope the publish needs while revoking the rest. The limit is reach — GITHUB_TOKEN authenticates to GitHub's own registries, not arbitrary third parties, where you fall back to OIDC or a registry credential." },
+    { name: "A long-lived npm automation token stored as a repository secret", summary: "Static token.", justification: "Workable but the weakest of the credential options: the token does not expire, must be rotated, and if it is scoped to publish any of your packages a single leak is a supply-chain compromise. Acceptable only when the registry offers no OIDC/trusted-publishing path; even then, scope it as narrowly as the registry allows and prefer per-package tokens." },
+    { name: "Hardcode the npm token inline in the workflow YAML so the publish always works", summary: "Inline credential.", justification: "Never. The token lands in git history in plaintext, is visible to anyone with read access, travels to every fork and clone, and cannot be masked because it is not a registered secret. This is the worst option and exactly what registry auth and the secrets store exist to prevent." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A pushed version tag triggers the release workflow, which builds, signs with provenance, and publishes the artifact to a registry"
+  hue="var(--d-systems)"
+  actors={["Dev", "Git", "CI", "Registry"]}
+  messages={[
+    { from: "Dev", to: "Git", label: "git push origin v1.2.0" },
+    { from: "Git", to: "CI", label: "trigger (on: push: tags v*.*.*)" },
+    { from: "CI", to: "CI", label: "build + sign (OIDC provenance)" },
+    { from: "CI", to: "Registry", label: "publish tarball/image + attestation" },
+    { from: "Registry", to: "Dev", label: "v1.2.0 live, verifiable" },
+  ]}
+  caption="The pushed tag is the only trigger: an intentional, reviewed version tag fires the workflow, which mints a short-lived OIDC token, signs provenance tying the artifact to the commit, and publishes. No tag, no publish — and no long-lived credential stored anywhere."
+/>
+
+<KeyTakeaway>The tag is the trigger: gate on `on: push: tags: ['v*.*.*']`, never bare `on: push`. Scope the token with a least-privilege `permissions:` block, prefer OIDC over long-lived PATs, and sign via `npm publish --provenance`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-tagging-and-publishing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does `on: push: tags: ['v*.*.*']` make publishing safe where `on: push` is dangerous, and what one tag-trigger gotcha can silently skip the job?", a: "A bare `on: push` runs the workflow on every push to every branch, so any commit — including a version bump on an unreviewed feature branch — invokes `npm publish` and ships to the registry. That is exactly how a release candidate escapes to npm with nobody clicking publish. Filtering on `tags: ['v*.*.*']` flips the trigger from 'any code change' to 'a maintainer deliberately pushed a version tag', which is a reviewed, intentional act; combined with `branches: []` it never fires on ordinary commits. The tag is the human decision and the workflow is the automation that trusts it. The gotcha: a tag created inside CI using the built-in GITHUB_TOKEN does not trigger another workflow's push event — GitHub suppresses this to avoid infinite loops — so if release-please or semantic-release cuts the tag, your `on: push: tags` job can silently never run. Fix it by triggering on `on: release: [published]` instead, or by pushing the tag with a PAT or GitHub App token rather than the default GITHUB_TOKEN." },
+    { q: "Compare a long-lived npm token to the built-in GITHUB_TOKEN with a permissions: block plus OIDC provenance, and explain what `--provenance` actually proves.", a: "A long-lived npm automation token (or PAT) stored as a secret never expires, must be rotated by hand, and is frequently over-scoped to publish any of your packages — so one leak is a supply-chain breach that stays exploitable until someone notices and revokes it. The built-in GITHUB_TOKEN is minted fresh per run and expires when the job ends; declaring a permissions: block grants exactly the scope the publish needs (packages: write for GHCR, id-token: write for provenance) and, importantly, revokes everything else, fixing the 'forgot permissions:' over-scope. For third-party registries OIDC goes further: the job mints a short-lived signed token, the registry verifies it came from your exact workflow, and you exchange it for ephemeral credentials — nothing long-lived is stored. `npm publish --provenance` then uses that id-token to generate a Sigstore-signed attestation linking the published tarball to the precise source repo, commit, and build instructions; it requires npm 9.5.0+, id-token: write, and a cloud-hosted runner. It proves where and how the package was built, so consumers can verify a release was produced by your pipeline and not forged by someone holding a stolen token." },
+  ]}
+/>
+
+<Recap lang="en">
+A Git tag pins a human-readable name to one commit; for releases use an annotated, ideally signed tag (`git tag -a v1.2.0 -m ...`) because it records who cut the release and when, and treat it as immutable — tag a specific reviewed, green commit, never a moving branch tip, and let a GitHub Release hang notes and assets off it. The tag is the trigger: gating the release workflow on `on: push: tags: ['v*.*.*']` means it fires only when a maintainer deliberately pushes a version tag, which is the fix for the classic failure of a bare `on: push` shipping a release candidate from an unreviewed branch. Watch the gotcha that a tag created inside CI with the default GITHUB_TOKEN will not trigger another workflow's push event, so reach for `on: release: [published]` or a PAT/App token when a release tool cuts the tag. For auth, prefer the ephemeral built-in GITHUB_TOKEN narrowed by a least-privilege `permissions:` block — `packages: write` for GHCR, `id-token: write` for provenance — over a long-lived PAT or npm token whose single leak is a supply-chain breach; for third-party registries use OIDC for short-lived credentials. Finally, `npm publish --provenance` from a cloud runner with `id-token: write` (npm 9.5.0+) signs a Sigstore attestation that ties the package to the exact commit and build, so consumers can verify where and how it was built.
+</Recap>
