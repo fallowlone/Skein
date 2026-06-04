@@ -1,0 +1,216 @@
+---
+concepts:
+- net-createserver
+- socket-lifecycle
+- half-open-connections
+- nagle-and-nodelay
+- socket-backpressure
+- ref-unref
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: 01-tcp-and-net
+sources:
+- https://nodejs.org/api/net.html
+- https://nodejs.org/api/stream.html
+- https://blog.cloudflare.com/the-curious-case-of-slow-downloads/
+spiral: []
+status: ready
+summary: 'The net module gives you the raw TCP stream under http: a duplex socket with
+  data/end/error/close, half-open semantics, Nagle batching you can disable with setNoDelay,
+  and a write() boolean that is your socket-level backpressure signal.'
+title: 'TCP and the net module: sockets, lifecycle, and backpressure'
+track: node
+unit: 10-networking-deep
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A teammate ships a tiny TCP proxy. It works on localhost, passes review, and then under real traffic it leaks memory until the pod OOMs. The cause is two lines of missing code: they piped client bytes into an upstream socket but never watched `write()`'s return value, and they never handled the `'error'` event on the upstream. A slow upstream made `write()` return `false` on every call; the unread bytes piled into an unbounded internal buffer. `net` handed them the truth on every write and they ignored it.
+</Hook>
+
+<Crux>A `net` socket is a duplex stream: read via `data`/`end`, write watching the boolean for backpressure, close cleanly on `error`/`close`.</Crux>
+
+<Explanation>
+
+## The socket is a duplex stream, not a mailbox
+
+Everything `http` does sits on top of `net`. A `net.Socket` is a **duplex stream**: a Readable for the bytes arriving from the peer and a Writable for the bytes you send. `net.createServer((socket) => { ... })` hands you one socket per accepted connection; `net.connect(port, host)` gives you the client end of one. There is no message framing — TCP is a byte stream, so one logical "message" can arrive split across several `'data'` events, or two of your sends can coalesce into one `'data'` on the peer. Any protocol you build on `net` must do its own framing (length prefix, delimiter, or a parser).
+
+The lifecycle is a fixed sequence of events, and you must wire all of them:
+
+```js
+const net = require("node:net");
+
+const server = net.createServer((socket) => {
+  socket.setEncoding("utf8");            // or leave as Buffers
+  socket.on("data",  (chunk) => { /* parse — may be partial */ });
+  socket.on("end",   () => { /* peer sent FIN, no more reads */ });
+  socket.on("error", (err) => { /* ECONNRESET etc — MUST handle */ });
+  socket.on("close", (hadError) => { /* fully torn down */ });
+  socket.write("hello\n");
+});
+
+server.listen(7000);
+```
+
+The non-negotiable rule: **an unhandled `'error'` on a socket throws and crashes the process.** TCP errors like `ECONNRESET` are not exceptional — a client closing a laptop lid produces them routinely — so every socket needs an `'error'` listener or the first reset takes down the whole server.
+
+## end vs close, and the half-open trap
+
+`'end'` and `'close'` are not the same event, and confusing them is a classic bug.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Event</th>
+        <th class="border border-border px-3 py-2 text-left">Meaning</th>
+        <th class="border border-border px-3 py-2 text-left">Can you still write?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>'end'</code></td>
+        <td class="border border-border px-3 py-2">Peer sent FIN — the <em>readable</em> side is done</td>
+        <td class="border border-border px-3 py-2">Yes — your writable half is still open</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>'finish'</code></td>
+        <td class="border border-border px-3 py-2">You called <code>end()</code> — your <em>writable</em> side flushed</td>
+        <td class="border border-border px-3 py-2">No — you closed your half</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>'close'</code></td>
+        <td class="border border-border px-3 py-2">Both halves down, socket fully released</td>
+        <td class="border border-border px-3 py-2">No — fd is gone</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+By default Node auto-closes the writable side when it receives a FIN, so a socket lifetime is symmetric. But TCP genuinely supports **half-open** connections: the peer can stop sending (`end`) while you keep sending. Pass `allowHalfOpen: true` to `createServer`/`connect` and Node will *not* auto-`end()` your side on the peer's FIN — useful for request/response protocols where the client signals "done sending" with a FIN but still waits for your full reply. The trap is the inverse: with `allowHalfOpen: true` you are now responsible for calling `socket.end()` yourself, or the half-open connection lingers and leaks a file descriptor.
+
+<Inset kind="why" lang="en">
+A FIN closes one direction. TCP is two independent simplex streams glued together, so "connection closed" is really "one half closed." Most servers want symmetric close (the default), but a proxy or a streaming protocol often wants to read to EOF and then still flush a trailer — that is what `allowHalfOpen` buys you, at the cost of owning the close yourself.
+</Inset>
+
+## Nagle, setNoDelay, and the 40 ms mystery
+
+By default TCP runs **Nagle's algorithm**: it withholds a small outbound segment until either the previous segment is ACKed or enough data accumulates to fill a packet, to avoid flooding the network with tiny packets. Combined with the peer's **delayed ACK** (which waits up to ~40 ms before acknowledging), Nagle produces a notorious failure mode: a request/response protocol that sends small writes stalls for ~40 ms per round trip, because your side won't send the small segment until the peer ACKs, and the peer won't ACK until its delayed-ACK timer fires.
+
+The fix is `socket.setNoDelay(true)`, which disables Nagle so each `write()` goes out immediately. For interactive, latency-sensitive protocols (RPC, a REPL, a game) this is the right default. For bulk throughput where you do many small writes, leaving Nagle on can be better — it coalesces. Know which one you are: low latency on small messages → `setNoDelay(true)`; raw throughput → leave it. `socket.setKeepAlive(true, delay)` is a separate dial: it makes the OS send periodic keepalive probes on an idle connection so a dead peer (crashed, network partition) is detected instead of the socket hanging open forever.
+
+## write() returns a boolean — that is your backpressure
+
+`socket.write(chunk)` returns a **boolean**, and it is the single most ignored value in Node networking. `true` means the chunk went into the kernel send buffer and you may keep writing. `false` means Node's internal buffer is now above the high-water mark — the peer (or the network) is not draining as fast as you are writing — and you should **stop writing until the `'drain'` event fires**. Ignoring `false` and writing anyway does not error; Node keeps buffering in memory, and against a slow consumer that buffer grows without bound until the process OOMs. That is the hook's bug.
+
+```js
+// Manual backpressure: stop on false, resume on 'drain'.
+function sendAll(socket, chunks, done) {
+  let i = 0;
+  (function next() {
+    while (i < chunks.length) {
+      const ok = socket.write(chunks[i++]);
+      if (!ok) return socket.once("drain", next);   // wait, then continue
+    }
+    done();
+  })();
+}
+```
+
+In practice you rarely write this loop: `pipeline(source, socket)` (or `source.pipe(socket)`) wires backpressure for you, pausing the source when `write()` returns `false` and resuming on `'drain'`. The lesson is to either let a stream pipeline manage it or honor the boolean by hand — never fire-and-forget into a socket you don't control the drain of.
+
+<TradeoffMatrix
+  id="10-tcp-and-net-tradeoff-1"
+  lessonSlug="01-tcp-and-net"
+  lang="en"
+  prompt="You proxy a fast client's bytes into a slower upstream socket. How do you move the data?"
+  options={[
+    { name: "pipeline(clientSocket, upstreamSocket) and handle the callback error", summary: "Backpressure for free.", correct: true, justification: "pipeline wires backpressure end to end: when upstream.write() returns false, it pauses the client socket and resumes on drain, so memory stays bounded no matter how slow upstream is. It also forwards errors and destroys both streams on failure, closing the ECONNRESET/EPIPE hole. This is the senior default for moving bytes between sockets." },
+    { name: "clientSocket.on('data', c => upstreamSocket.write(c)) with no return-value check", summary: "Ignore the boolean.", justification: "This is the hook's leak. write() returns false the moment upstream falls behind, but you never read it, so unread chunks pile into an unbounded internal buffer until the process OOMs. Fire-and-forget into a socket you don't control the drain of is the canonical Node memory bug." },
+    { name: "Read everything into one big Buffer, then write it once", summary: "Buffer then flush.", justification: "Buffering the whole stream defeats streaming: a large or unbounded transfer holds the entire payload in memory, and you still have to handle backpressure on the single giant write. It also adds latency — nothing moves until the source ends. Only viable for known-tiny payloads." },
+    { name: "upstreamSocket.setNoDelay(true) and keep the naive data handler", summary: "Disable Nagle.", justification: "setNoDelay changes when segments are flushed (latency), not whether you respect backpressure (memory). The unbounded-buffer leak is completely unaffected — you have tuned the wrong dial and the OOM still happens." },
+  ]}
+/>
+
+## ref and unref: should this socket keep the process alive?
+
+Node's event loop stays alive as long as there is an active handle — and an open socket is one. `socket.unref()` tells the loop "do not count me when deciding whether to exit"; `socket.ref()` reverses it. The use case is a background or optional connection: a metrics socket, a health-check probe, or a debug listener that should not, by itself, keep a CLI process running after its real work is done. `server.unref()` does the same for a listening server. The default is `ref`'d — a normal server should keep the process up — so reach for `unref()` only on the auxiliary connections that must not pin the process open.
+
+<Quiz
+  id="10-tcp-and-net-quiz-1"
+  lessonSlug="01-tcp-and-net"
+  lang="en"
+  question="Your TCP server crashes intermittently in production with an uncaught ECONNRESET. What is the fix?"
+  choices={[
+    { label: "Add an 'error' listener to every socket — an unhandled socket 'error' throws and takes down the process; ECONNRESET is a normal peer-reset, not a bug to prevent", correct: true },
+    { label: "Wrap server.listen in a try/catch", misconception: "try/catch around listen catches only the synchronous bind error. A socket 'error' fires asynchronously on the socket object later; only a socket-level 'error' listener catches it." },
+    { label: "Call socket.setNoDelay(true) to stop resets", misconception: "setNoDelay disables Nagle's batching; it has nothing to do with connection resets. ECONNRESET comes from the peer abruptly closing, which you must handle, not prevent." },
+    { label: "Increase server.maxConnections", misconception: "maxConnections caps concurrent sockets; it does not stop an existing connection from being reset, nor does it provide the missing error handler." },
+  ]}
+/>
+
+<Quiz
+  id="10-tcp-and-net-quiz-2"
+  lessonSlug="01-tcp-and-net"
+  lang="en"
+  question="A small request/response protocol over net adds ~40 ms of latency per round trip on otherwise idle links. Most likely cause?"
+  choices={[
+    { label: "Nagle's algorithm interacting with the peer's delayed ACK — disable it with socket.setNoDelay(true) for this latency-sensitive small-write protocol", correct: true },
+    { label: "DNS resolution is slow", misconception: "DNS happens once at connect time, not per round trip. A consistent ~40 ms per message on an established connection is the Nagle/delayed-ACK signature, not name resolution." },
+    { label: "The event loop is blocked", misconception: "A blocked event loop adds variable, often larger stalls across all work, not a clean ~40 ms only on network round trips. The 40 ms constant is the delayed-ACK timer." },
+    { label: "TCP keepalive probes are firing", misconception: "Keepalive probes fire on idle connections at multi-second-to-minute intervals to detect dead peers; they do not add 40 ms to active request/response latency." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="TCP socket lifecycle from connection through a half-open close, showing data, end, and close events on a net.Socket"
+  hue="var(--d-network)"
+  actors={["Client", "Server"]}
+  messages={[
+    { from: "Client", to: "Server", label: "connect (SYN)" },
+    { from: "Server", to: "Client", label: "'connection' cb" },
+    { from: "Client", to: "Server", label: "write -> 'data'" },
+    { from: "Server", to: "Client", label: "write -> 'data'" },
+    { from: "Client", to: "Server", label: "end() -> FIN" },
+    { from: "Server", to: "Client", label: "'end' (read done)" },
+    { from: "Server", to: "Client", label: "end() -> FIN" },
+    { from: "Client", to: "Server", label: "'close' both sides" },
+  ]}
+  caption="Each side closes its writable half with a FIN independently. allowHalfOpen lets the server keep writing after the client's FIN — at the cost of owning its own end()."
+/>
+
+<KeyTakeaway>A `net` socket is a duplex byte stream with no framing: handle `data`/`end`/`error`/`close`, watch `write()`'s boolean for backpressure, `setNoDelay` for low latency, and never leave `'error'` unhandled.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="10-tcp-and-net-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does write() return a boolean, and what must you do when it is false?", a: "socket.write() returns true when the chunk was accepted into the kernel send buffer and you may keep writing, and false when Node's internal writable buffer has crossed its high-water mark — meaning the peer or the network is draining slower than you are producing. False is the socket-level backpressure signal: you must stop writing and wait for the 'drain' event before resuming, because Node does not block or error on an over-full buffer — it just keeps buffering in memory. Against a slow consumer, ignoring false and writing anyway grows that buffer without bound until the process runs out of memory. In practice you let pipeline()/pipe() honor the boolean automatically (it pauses the source on false and resumes on drain), or you implement the stop-on-false, resume-on-drain loop by hand. The one thing you must never do is fire-and-forget writes into a socket whose drain you don't control." },
+    { q: "What is a half-open TCP connection, and what does allowHalfOpen change?", a: "TCP is two independent simplex streams, so each side closes its own writable direction with a FIN. A half-open connection is one where one side has sent its FIN (stopped sending) while the other side is still sending. In Node, by default, when a socket receives a FIN it emits 'end' and then automatically calls end() on your writable half too, giving a symmetric close. Passing allowHalfOpen: true to createServer or connect disables that auto-end: on the peer's FIN you get 'end' but your writable half stays open, so you can keep writing — useful for protocols where the client signals 'done sending' but still waits for a full reply, or for a proxy that must flush a trailer after reading to EOF. The cost is that you now own the close: you must call socket.end() yourself, or the half-open socket lingers and leaks a file descriptor." },
+  ]}
+/>
+
+<Recap lang="en">
+The `net` module is the raw TCP layer under `http`: a `net.Socket` is a duplex stream with no message framing, so you parse `'data'` chunks that may be partial and you build your own framing. Wire the full lifecycle — `'data'`, `'end'`, `'error'`, `'close'` — and never skip `'error'`, because an unhandled socket error throws and crashes the process, and resets like `ECONNRESET` are routine. `'end'` means the peer's FIN arrived (read side done) while your writable half may still be open; `allowHalfOpen` keeps it open at the price of owning the `end()` yourself. Tune the transport deliberately: `setNoDelay(true)` disables Nagle for low-latency small writes, `setKeepAlive` lets the OS detect dead peers. Above all, `write()` returns a boolean — `false` is backpressure, the signal to stop until `'drain'` — and ignoring it is the canonical unbounded-buffer OOM. Let `pipeline()` manage backpressure when you can, and use `unref()` only on auxiliary sockets that must not pin the process alive.
+</Recap>
