@@ -1,13 +1,280 @@
 ---
-slug: "02-iam-deep-and-kms"
+concepts:
+- iam-policy-evaluation
+- permissions-boundaries
+- service-control-policies
+- assume-role-external-id
+- kms-envelope-encryption
+- secrets-manager-rotation
+- SAA-C03:Design Secure Architectures
+- CLF-C02:Security and Compliance
+deepensInto: []
+estMin: 20
 lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-iam-deep-and-kms"
+sources:
+- https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html
+- https://docs.aws.amazon.com/IAM/latest/UserGuide/confused-deputy.html
+- https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html
+- https://docs.aws.amazon.com/secretsmanager/latest/userguide/rotating-secrets.html
+spiral: []
+status: ready
+summary: 'IAM resolves in a fixed order: default deny, an explicit allow grants, an explicit deny wins; boundaries and SCPs cap the ceiling, conditions scope each statement. Prefer roles+STS over long-lived keys, stop the confused deputy with ExternalId, encrypt with KMS envelope keys.'
+title: 'IAM evaluation deep dive, KMS envelope encryption, and Secrets Manager'
 track: "aws"
 unit: "07-cost-and-security"
-order: 2
-title: "IAM deep and KMS"
-summary: "IAM deep and KMS — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://docs.aws.amazon.com/IAM/latest/UserGuide/introduction.html
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A developer commits a `.env` to a public repo for ninety seconds before force-pushing it away. Too late: bots scrape new GitHub commits within seconds, and the long-lived IAM access key inside is already harvested. Minutes later that key — attached to a user whose policy carried a convenient `"Action": "*", "Resource": "*"` — is spinning up dozens of GPU instances for crypto mining across every region, and exfiltrating an S3 bucket on the side. The bill crosses five figures before billing alerts even fire. The key was never rotated because it was never temporary, the policy was never scoped because a wildcard "just worked," and nothing capped the blast radius because no permissions boundary or SCP existed. Three separate guardrails were missing, and the breach needed only one of them to be present. This lesson is about all three.
+</Hook>
+
+<Crux>IAM order: default deny, explicit allow grants, explicit deny always wins. Boundaries and SCPs cap, conditions scope, KMS envelopes encrypt.</Crux>
+
+<Explanation>
+
+## How a request is actually decided
+
+You already met identity policies in the core IAM lesson: a principal, an action, a resource, an effect. The senior model is the *evaluation* — how AWS combines several policy types into one yes-or-no decision for a single API call. The starting point is never neutral: **every request is an implicit deny by default.** From there the rule has three moves, and the order is fixed.
+
+First, an **explicit allow** in any applicable policy can flip the default to "allowed." Second, the policy *types* are combined: identity-based and resource-based policies form a **union** (an allow in either one is enough within the same account), while **permissions boundaries** and **Service Control Policies** intersect — the request must be allowed by *all* applicable categories. Third, and overriding everything: **an explicit Deny anywhere always wins.** A deny in an identity policy, a resource policy, a boundary, or an SCP cannot be out-voted by any number of allows. That is the single most important sentence in IAM, and most "why can't I access this?" tickets end at an explicit deny someone forgot about.
+
+The policy types stack into layers, each playing a distinct role:
+
+- **Identity-based policies** — attached to a user, group, or role; grant what *that principal* may do.
+- **Resource-based policies** — attached to the resource (an S3 bucket policy, a KMS key policy, an SQS queue policy); grant who may touch *that resource*, and uniquely enable cross-account access.
+- **Permissions boundaries** — an advanced identity policy that sets the **maximum** permissions a principal can ever have. It grants nothing by itself; it caps. A principal's effective permissions are the *intersection* of its identity policies and its boundary.
+- **Service Control Policies (SCPs)** — org-wide guardrails attached at the AWS Organizations level. They also grant nothing; they cap what every account and principal under them can do, no matter how permissive a local admin gets.
+- **Session policies** — passed inline when you assume a role; they further *narrow* the session's permissions for its lifetime.
+
+<FlowDiagram
+  label="The IAM decision flow for one API request: start at implicit deny, look for an explicit allow, check boundaries and SCPs, then let any explicit deny override"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "start", label: "Request arrives", sub: "principal, action, resource" },
+    { id: "deny0", label: "Implicit deny", sub: "the default for everything" },
+    { id: "allow", label: "Explicit allow?", sub: "identity OR resource policy" },
+    { id: "cap", label: "Within boundary + SCP?", sub: "intersection — must pass all" },
+    { id: "deny1", label: "Explicit deny anywhere?", sub: "any policy type" },
+    { id: "final", label: "Final decision", sub: "deny wins, else allow" },
+  ]}
+  edges={[
+    { from: "start", to: "deny0", label: "begin" },
+    { from: "deny0", to: "allow", label: "look for allow" },
+    { from: "allow", to: "cap", label: "if allowed" },
+    { from: "cap", to: "deny1", label: "if capped-in" },
+    { from: "deny1", to: "final", label: "deny overrides" },
+  ]}
+  caption="Default deny, then an explicit allow grants, then boundaries and SCPs must also permit, and finally any explicit deny overrides the whole chain. The intersection caps the ceiling; the union of allows fills in below it; the deny is the kill switch."
+/>
+
+So **effective permissions = (the union of allows), intersected with every applicable boundary and every applicable SCP, minus any explicit deny.** The wildcard policy in the war story granted everything, but with no boundary and no SCP the intersection never shrank — the ceiling was infinite, so the leaked key inherited infinite reach. A `PowerUserAccess` boundary, or an SCP denying `iam:*` outside a break-glass role and denying actions outside approved regions, would have turned a catastrophe into a contained annoyance.
+
+## Conditions make least privilege real
+
+A statement with `"Resource": "*"` is a liability; a statement scoped by a **`Condition`** is least privilege. Condition keys test the request context and gate the statement: `aws:SourceIp` (only from the office CIDR), `aws:PrincipalOrgID` (only principals in your org), `aws:SecureTransport` (only over TLS), `aws:RequestedRegion`, or `StringEquals` on a resource tag (only resources tagged with your team). A statement applies only when its conditions evaluate true. This policy lets a principal read one bucket, but only over TLS and only from a known network — drop either condition and the request is denied:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadReportsTlsAndOffice",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": "arn:aws:s3:::acme-reports/*",
+      "Condition": {
+        "Bool": { "aws:SecureTransport": "true" },
+        "IpAddress": { "aws:SourceIp": "203.0.113.0/24" }
+      }
+    }
+  ]
+}
+```
+
+The deeper habit conditions enable is **roles over long-lived keys.** A long-lived access key is a static, exportable, often-unrotated credential — exactly what leaked in the hook. An IAM **role** issues *temporary* credentials through AWS STS: short-lived, auto-expiring, never committed to a repo because they only exist for minutes. Every workload — an EC2 instance (via an instance profile), a Lambda, an ECS task, a CI job (via OIDC) — should assume a role, not carry a key. When you must audit what's out there, **IAM Access Analyzer** flags resource policies that grant access to external accounts and surfaces unused permissions you can prune.
+
+### Cross-account access and the confused deputy
+
+Cross-account access is built on roles: a role in **account B** has a *trust policy* naming **account A** as allowed to call `sts:AssumeRole`. Account A's principals assume the role and act in B with B's permissions. But naming an external account in a trust policy opens a classic hole — the **confused deputy.** Per AWS, this is "a security issue where an entity that doesn't have permission to perform an action can coerce a more-privileged entity to perform the action." If you hire a third-party SaaS that assumes a role in many customers' accounts, and your role ARN isn't a secret, another of their customers could hand your ARN to the vendor and trick the vendor (the "deputy") into acting on *your* resources.
+
+The fix is an **`ExternalId`** condition in the trust policy. The vendor generates a unique ID per customer and passes it on every `AssumeRole` call; your trust policy requires *your* ID, so a request carrying anyone else's ID fails:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": {
+    "Effect": "Allow",
+    "Principal": { "AWS": "arn:aws:iam::222222222222:root" },
+    "Action": "sts:AssumeRole",
+    "Condition": {
+      "StringEquals": { "sts:ExternalId": "a1b2c3-unique-per-customer" }
+    }
+  }
+}
+```
+
+For AWS *service* principals doing cross-service work (CloudTrail writing to your bucket, for example), the analogous guards are `aws:SourceArn` and `aws:SourceAccount` conditions, which assert the service is acting on behalf of a resource or account you actually expect.
+
+## KMS: envelope encryption and key policies
+
+Encryption at scale uses **envelope encryption**, and KMS is built around it. A **KMS key** (the customer-managed key) lives inside a hardware security module and is "designed never to be exported from the HSM in plaintext." You never get the key's bytes. Instead you call **`GenerateDataKey`**, and KMS returns a **data key** in two forms: a *plaintext* copy and a copy *encrypted under your KMS key*. You encrypt your large payload locally with the plaintext data key, immediately scrub the plaintext from memory, and store the **encrypted data key alongside the ciphertext.** To decrypt later, you send only the encrypted data key back to KMS, which unwraps it and returns the plaintext data key for that one operation. The bulk data never travels to KMS; only the small data key does. This is why S3, EBS, and RDS encryption scale — each object gets its own data key, all wrapped by one central KMS key.
+
+Who may *use* and *manage* a KMS key is governed by its **key policy** — a resource-based policy that, unlike most others, is the **primary** access control for the key. A dangerous footgun: if a key policy does not grant access to your account's root (or another administrative principal), you can **lock everyone out of the key permanently** — the data encrypted under it becomes unrecoverable, and not even AWS Support can override the policy. Beyond key policies, **grants** delegate temporary, narrowly-scoped use to a principal (often an AWS service) without editing the policy; **aliases** give a key a stable friendly name so you can rotate the underlying material without changing references; **automatic rotation** (optional for customer-managed keys, annual by default and now configurable) generates new backing key material while keeping old versions to decrypt old data; and keys are **symmetric** (one key encrypts and decrypts — the default, for most data) or **asymmetric** (a public/private pair, for signing or encrypting with a public key you can hand out). A KMS key policy looks like this:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Id": "key-policy-app-data",
+  "Statement": [
+    {
+      "Sid": "EnableRootAccountAdmin",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::111122223333:root" },
+      "Action": "kms:*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "AllowAppToEncryptDecrypt",
+      "Effect": "Allow",
+      "Principal": { "AWS": "arn:aws:iam::111122223333:role/app-runtime" },
+      "Action": ["kms:GenerateDataKey", "kms:Decrypt"],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": { "kms:ViaService": "s3.us-east-1.amazonaws.com" }
+      }
+    }
+  ]
+}
+```
+
+Drop that first statement and you have orphaned the key.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Layer</th>
+        <th class="border border-border px-3 py-2 text-left">What it does</th>
+        <th class="border border-border px-3 py-2 text-left">Grants or caps?</th>
+        <th class="border border-border px-3 py-2 text-left">Failure if missing or wrong</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Identity policy</td>
+        <td class="border border-border px-3 py-2">What this principal may do</td>
+        <td class="border border-border px-3 py-2">Grants</td>
+        <td class="border border-border px-3 py-2">Wildcard grants everything; leaked key inherits it</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Permissions boundary</td>
+        <td class="border border-border px-3 py-2">Max a principal can ever have</td>
+        <td class="border border-border px-3 py-2">Caps (intersection)</td>
+        <td class="border border-border px-3 py-2">No ceiling on the blast radius</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">SCP</td>
+        <td class="border border-border px-3 py-2">Org-wide guardrail</td>
+        <td class="border border-border px-3 py-2">Caps (intersection)</td>
+        <td class="border border-border px-3 py-2">No org-level brake on any account</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Explicit deny</td>
+        <td class="border border-border px-3 py-2">Overrides any allow</td>
+        <td class="border border-border px-3 py-2">Kill switch</td>
+        <td class="border border-border px-3 py-2">Risky action stays allowed by default</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">KMS key policy</td>
+        <td class="border border-border px-3 py-2">Who uses/manages the key</td>
+        <td class="border border-border px-3 py-2">Grants (resource-based)</td>
+        <td class="border border-border px-3 py-2">Omit account root and you orphan the key forever</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why store the *encrypted* data key next to the data instead of just calling KMS to encrypt the payload directly? Because KMS limits the size of data you can pass it (a few KB) and every call costs a request — you cannot stream a 5 GB object through KMS. Envelope encryption inverts the flow: KMS only ever handles the tiny data key, your own CPU does the bulk symmetric encryption locally at line rate, and the wrapped data key rides along with the ciphertext so any holder of decrypt permission on the KMS key can recover it. One central, audited, rotatable key protects an unlimited volume of data.
+</Inset>
+
+## Secrets Manager versus Parameter Store
+
+The leaked `.env` is the deeper lesson: secrets do not belong in code, images, or environment files baked into a build. **AWS Secrets Manager** stores secrets encrypted with KMS and — its headline feature — supports **automatic rotation.** For database credentials it runs a **Lambda rotation function** on a schedule: the function creates a new credential, updates the database, and swaps staging labels (`AWSPENDING` becomes `AWSCURRENT`, the old one becomes `AWSPREVIOUS`) so callers always read the live value without an outage. It integrates directly with RDS, Redshift, and DocumentDB.
+
+The cheaper, simpler sibling is **SSM Parameter Store.** Its `SecureString` parameters are also KMS-encrypted, it has no per-secret monthly charge, and it's perfect for config plus secrets you don't need to rotate automatically. The tradeoff: Parameter Store has **no built-in rotation** and no native database integration. The senior call: Secrets Manager for credentials that must rotate (databases, API keys with a lifecycle); Parameter Store for static config and low-churn secrets where cost matters.
+
+<TradeoffMatrix
+  id="02-iam-deep-and-kms-tradeoff-1"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="en"
+  prompt="You need to store the production database password your app reads on every cold start. Compliance requires it to rotate every 30 days with zero downtime. Pick the store."
+  options={[
+    { name: "AWS Secrets Manager with Lambda rotation on RDS", summary: "KMS-encrypted, built-in scheduled rotation.", correct: true, justification: "Right fit. The requirement is automatic, zero-downtime rotation of a database credential — exactly what Secrets Manager's rotation delivers. A rotation Lambda creates the new password, updates RDS, and flips the AWSPENDING staging label to AWSCURRENT so the app keeps reading a valid value through the swap with no outage. The secret is encrypted with KMS, and the app fetches it at runtime instead of baking it into an image or .env. The per-secret monthly cost is trivial against the compliance and breach-containment value." },
+    { name: "SSM Parameter Store SecureString", summary: "Cheap, KMS-encrypted, no rotation.", justification: "Tempting because it's cheaper and also KMS-encrypted, but it has no built-in rotation and no native RDS integration. Meeting the 30-day zero-downtime requirement would mean hand-building a rotation pipeline that Secrets Manager already ships. Parameter Store is the right tool for static config and low-churn secrets, not for credentials under an automatic-rotation mandate." },
+    { name: "Environment variable injected at deploy from a .env in the repo", summary: "Simple, in version control.", justification: "This is the failure in the war story. A secret in the repo is exposed to everyone with read access and to anyone who scrapes a leaked commit, it never rotates, and a long-lived credential maximizes blast radius. It cannot meet a rotation mandate and actively creates the breach it's supposed to prevent." },
+    { name: "Hard-coded in the application image", summary: "No external dependency at runtime.", justification: "Worst of all. The credential is now immutable inside an artifact that may be cached, shared, or pushed to a registry; rotating it means rebuilding and redeploying every image, and the secret leaks to anyone who can pull the image layers. It violates the zero-downtime rotation requirement and the basic rule that secrets never live in build artifacts." },
+  ]}
+/>
+
+<Quiz
+  id="02-iam-deep-and-kms-quiz-1"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="en"
+  question="An identity policy allows s3:DeleteObject on a bucket, but an SCP on the account contains an explicit Deny for s3:DeleteObject. What happens when the principal tries to delete?"
+  choices={[
+    { label: "Denied — an explicit deny in any applicable policy (including an SCP) always overrides an allow, no matter how many allows exist", correct: true },
+    { label: "Allowed — the identity policy explicitly grants the action, and identity policies take precedence over SCPs", misconception: "Identity policies do not out-rank SCPs. Permissions are the intersection of identity policy and SCP, and on top of that an explicit deny anywhere wins. The SCP's explicit deny ends the evaluation regardless of the identity allow." },
+    { label: "Allowed, because SCPs only apply to the management account", misconception: "SCPs apply to member accounts and every principal in them (the management account is actually the one SCPs don't restrict). For a member-account principal, the SCP is fully in force and its explicit deny applies." },
+    { label: "It depends on which policy was created most recently", misconception: "IAM evaluation has no notion of recency or ordering by creation time. The rule is fixed: default deny, explicit allow can grant, explicit deny always wins — timestamps are irrelevant." },
+  ]}
+/>
+
+<Quiz
+  id="02-iam-deep-and-kms-quiz-2"
+  lessonSlug="02-iam-deep-and-kms"
+  lang="en"
+  question="You set up a role for a third-party SaaS to assume in your account, trusting their AWS account ID. Why add an sts:ExternalId condition to the trust policy?"
+  choices={[
+    { label: "To prevent the confused deputy problem — the SaaS passes a unique ExternalId per customer, so another of their customers can't hand over your role ARN and trick the SaaS into acting on your resources", correct: true },
+    { label: "To encrypt the temporary credentials returned by AssumeRole", misconception: "ExternalId is not an encryption mechanism; STS credentials are already delivered over TLS. ExternalId is an authorization condition that scopes who may assume the role, defeating the confused-deputy coercion." },
+    { label: "To make the temporary credentials last longer than the default", misconception: "Credential lifetime is controlled by DurationSeconds and the role's max session duration, not by ExternalId. ExternalId only adds a condition the AssumeRole call must satisfy." },
+    { label: "Because role ARNs are secret and ExternalId hides them", misconception: "Role ARNs are not secret — that's exactly why the confused deputy is possible. ExternalId works precisely because it's a value the deputy controls per customer, so a leaked ARN alone is not enough to assume the role." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>IAM resolves in a fixed order: default deny, an explicit allow can grant, an explicit deny anywhere always wins. Effective permissions = union of allows, intersected with every boundary and SCP, minus explicit denies. Conditions scope statements; prefer roles plus short-lived STS credentials over long-lived keys; stop the confused deputy with an ExternalId. Encrypt at scale with KMS envelope keys (a central key wraps per-object data keys it never exports), guard the key policy so you never orphan a key, and rotate credentials with Secrets Manager — Parameter Store for cheap static config.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-iam-deep-and-kms-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the full IAM evaluation rule, the role each policy type plays, and how effective permissions are computed.", a: "Every request starts at an implicit deny. An explicit allow in any applicable policy can flip it to allowed. The policy types combine in defined ways: identity-based and resource-based policies form a union (an allow in either is enough within one account), while permissions boundaries and Service Control Policies intersect — the request must be allowed by all applicable categories. Overriding everything, an explicit Deny in any policy type always wins and cannot be out-voted by any number of allows. Identity policies grant what a principal may do; resource policies grant who may touch a resource and enable cross-account access; permissions boundaries set the maximum a principal can ever have (they cap, never grant); SCPs are org-wide guardrails that cap every account and principal; session policies narrow an assumed session further. So effective permissions = (union of allows), intersected with every boundary and every SCP, minus any explicit deny. The wildcard-policy breach happened because no boundary or SCP shrank the intersection, so the leaked key had an infinite ceiling." },
+    { q: "Explain KMS envelope encryption end to end and the one key-policy mistake that orphans a key.", a: "KMS holds a customer-managed key inside an HSM that is designed never to export the key in plaintext. To encrypt data you call GenerateDataKey; KMS returns a data key in two forms — a plaintext copy and a copy encrypted under your KMS key. You encrypt the bulk payload locally with the plaintext data key (fast, no size limit), scrub the plaintext from memory, and store the encrypted data key next to the ciphertext. To decrypt, you send only the small encrypted data key back to KMS, which unwraps it and hands back the plaintext data key for that one operation; the bulk data never travels to KMS. This is why S3/EBS/RDS encryption scales: one central, audited, rotatable key wraps an unlimited number of per-object data keys. The footgun is the key policy — it's the primary, resource-based access control for the key, and if it doesn't grant access to your account root or an admin principal, you lock everyone out permanently; the data becomes unrecoverable and not even AWS Support can override it. Aliases give a stable name across rotation, grants delegate temporary scoped use, and rotation (optional, annual by default and now configurable for customer keys) adds new backing material while keeping old versions to read old data." },
+  ]}
+/>
+
+<Recap lang="en">
+IAM permissions are decided by a fixed evaluation order, not by which policy looks most specific. Every request begins as an implicit deny; an explicit allow in any applicable policy can grant it; and an explicit deny anywhere — identity policy, resource policy, permissions boundary, or SCP — always wins and cannot be overridden. Effective permissions are the union of allows, intersected with every applicable boundary and SCP, minus any explicit deny: boundaries and SCPs cap the ceiling, the union of allows fills in below it, and the deny is the kill switch. Conditions (aws:SourceIp, aws:PrincipalOrgID, aws:SecureTransport, tag matches) turn broad statements into real least privilege, and roles issuing short-lived STS credentials should replace long-lived access keys everywhere — the leaked, unrotated, wildcard-scoped key in the war story failed all three guardrails at once. Cross-account access is a role whose trust policy names another account, and the confused deputy is closed with an ExternalId (or aws:SourceArn and aws:SourceAccount for service principals). For data, KMS envelope encryption lets one central key that never leaves its HSM wrap per-object data keys, so encryption scales without ever shipping bulk data to KMS — but a key policy that omits your account root orphans the key forever. Finally, secrets belong in Secrets Manager, where a Lambda rotation function rotates database credentials with zero downtime, or in the cheaper Parameter Store SecureString for static, low-churn config. Explicit deny wins, boundaries and SCPs cap, conditions scope, roles beat keys, ExternalId stops the deputy, KMS envelopes the data, and Secrets Manager keeps it fresh.
+</Recap>

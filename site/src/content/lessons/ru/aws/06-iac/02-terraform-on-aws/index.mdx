@@ -1,13 +1,238 @@
 ---
-slug: "02-terraform-on-aws"
+concepts:
+- terraform
+- hcl
+- aws-provider
+- terraform-state
+- remote-backend-s3
+- state-locking
+- SAA-C03:Design Cost-Optimized Architectures
+deepensInto: []
+estMin: 20
 lang: ru
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-terraform-on-aws"
+sources:
+- https://developer.hashicorp.com/terraform/language/state
+- https://developer.hashicorp.com/terraform/language/backend/s3
+- https://developer.hashicorp.com/terraform/cli/commands/plan
+- https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/introduction.html
+spiral: []
+status: ready
+summary: 'Terraform — облачно-агностичный IaC на HCL: AWS-провайдер маппит ресурсы на API AWS, но, в отличие от CloudFormation, state-файлом владеешь ты. Освой remote backend, locking и чтение plan — иначе порча state и тихий replace возьмут верх над тобой.'
+title: 'Terraform на AWS: провайдеры, state и remote backend'
 track: "aws"
 unit: "06-iac"
-order: 2
-title: "Terraform on AWS"
-summary: "Terraform on AWS — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://developer.hashicorp.com/terraform/language
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Два инженера запускают `terraform apply` против одного конфига в одну и ту же минуту. Lock нет, потому что state лежит в одном S3-бакете с выключенным locking «чтобы было проще». Оба чтения видят одно стартовое состояние; оба записи гонятся перезаписать объект. Вторая запись побеждает, только что созданный первым инженером NAT-шлюз теперь сирота, больше не отслеживаемый в state, а счётчик serial в state-файле рассинхронизирован с реальностью. Следующий apply пытается «создать» ресурсы, которые уже существуют, и падает на дублирующихся именах — а неотслеживаемый NAT-шлюз тихо набегает на $32 в месяц, которые никто не найдёт до отчёта по затратам. С CloudFormation этот класс багов почти невозможен: AWS держит state стека на своей стороне и сериализует изменения. Terraform отдал тебе эту ответственность, а ты её пропустил.
+</Hook>
+
+<Crux>Terraform — облачно-агностичный IaC на HCL. Суть против CloudFormation: ты владеешь state — потому backend и locking не опциональны.</Crux>
+
+<Explanation>
+
+## Провайдеры: HCL поверх API любого облака
+
+С CloudFormation и CDK ты познакомился в предыдущем уроке — это AWS-нативные инструменты, где AWS парсит твой шаблон и отслеживает стек за тебя. Terraform от HashiCorp делает другую ставку: один инструмент, один язык (**HCL**, HashiCorp Configuration Language) на все облака. Мост к каждой платформе — **провайдер**, плагин, который маппит HCL-блоки ресурсов на вызовы API конкретного вендора. Провайдер `aws` превращает блок `aws_instance` в вызовы EC2 `RunInstances`; провайдер `cloudflare` или `google` делает то же для своих API. Один конфиг может объявлять ресурсы сразу через несколько провайдеров — в этом весь смысл: мульти-облачное или мульти-вендорное хозяйство, описанное одним языком и одним workflow.
+
+Ты объявляешь провайдер и ресурс, и это и есть единица работы. Блок ниже фиксирует версию AWS-провайдера, задаёт регион и просит бакет:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "eu-central-1"
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = "acme-prod-assets"
+  tags   = { Team = "platform" }
+}
+```
+
+Ограничение версии `~> 5.0` значит больше, чем кажется: провайдеры выкатывают ломающие изменения, и незафиксированный провайдер может переписать половину твоего plan после несвязанного апгрейда. Фиксируй его так же, как фиксируешь transform в CloudFormation.
+
+## State: то, что CloudFormation прячет, а Terraform отдаёт тебе
+
+Вот определяющее различие уровня senior. Когда ты делаешь `apply`, Terraform пишет **state-файл**, который записывает связки между объектами в реальном облаке и инстансами ресурсов в твоём конфиге — фактические ID ресурсов, атрибуты и метаданные зависимостей. На следующем запуске Terraform читает этот state, **обновляет** (refresh) его против живого API, чтобы обнаружить **drift** (реальный мир расходится с тем, во что верит state), вычисляет разницу с твоим конфигом и планирует только дельту. State *и есть* память Terraform; без него инструмент не отличит «create» от «update».
+
+У CloudFormation такая же память, но AWS держит её на своей стороне, и ты её не трогаешь. Terraform делает её файлом, за который ты отвечаешь, — и у этой ответственности острые края:
+
+- **Локальный state опасен для команд.** `terraform.tfstate` на одном ноутбуке нельзя расшарить, он теряется, если ноутбук умрёт, и ничего не сериализует — двое не могут безопасно работать вместе.
+- **State может содержать секреты.** Пароль RDS или сгенерированный ключ попадает в state открытым текстом. Коммит state в git его утекает; backend обязан шифровать его в покое.
+- **Никогда не правь state руками.** Это производный индекс, а не исходник. Ручная правка рассинхронизирует его с реальностью; используй сабкоманды `terraform state` или `terraform import`, чтобы взять существующий ресурс под управление.
+
+<FlowDiagram
+  label="Workflow Terraform: HCL планируется и применяется против AWS, пока remote backend держит залоченный зашифрованный state"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "hcl", label: "HCL-конфиг", sub: "ресурсы + провайдеры" },
+    { id: "plan", label: "terraform plan", sub: "refresh + diff" },
+    { id: "apply", label: "terraform apply", sub: "вызывает API AWS" },
+    { id: "aws", label: "AWS", sub: "реальные ресурсы" },
+    { id: "backend", label: "Remote backend (S3)", sub: "шифрованный state + lock" },
+  ]}
+  edges={[
+    { from: "hcl", to: "plan", label: "чтение" },
+    { from: "plan", to: "apply", label: "одобрено" },
+    { from: "apply", to: "aws", label: "create/update/destroy" },
+    { from: "backend", to: "plan", label: "загрузка state" },
+    { from: "apply", to: "backend", label: "запись state (под lock)" },
+  ]}
+  caption="Plan загружает state из backend и обновляет против AWS; apply меняет AWS и пишет state обратно под локом. Узел backend — ровно та часть, которую CloudFormation ведёт за тебя, а Terraform делает твоей работой."
+/>
+
+## Remote backend и state locking
+
+Фикс для всех опасностей state — **remote backend**. S3-backend хранит объект state в S3-бакете (`bucket` + `key` + `region`), чтобы вся команда читала и писала одну общую долговечную копию, и шифрует этот state в покое. Вторая половина — **state locking**: перед изменением state Terraform берёт lock, так что параллельный `apply` обязан ждать, а не гнаться. Исторически ты задавал таблицу DynamoDB (partition key с именем `LockID`) через `dynamodb_table`; этот путь ещё работает, но теперь deprecated в пользу **S3-native locking** — задай `use_lockfile = true`, и Terraform пишет объект `tflock` рядом со state для координации, без отдельной таблицы.
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "acme-tf-state"
+    key          = "prod/network/terraform.tfstate"
+    region       = "eu-central-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+```
+
+С этим гонка из Hook невозможна: `apply` второго инженера блокируется на локе, пока первый не закончит и не отпустит его. Это та конфигурация, которую команда «чтобы было проще» пропустила.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Аспект</th>
+        <th class="border border-border px-3 py-2 text-left">CloudFormation / CDK</th>
+        <th class="border border-border px-3 py-2 text-left">Terraform</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Охват облаков</td>
+        <td class="border border-border px-3 py-2">Только AWS</td>
+        <td class="border border-border px-3 py-2">Мульти-облако через провайдеры</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Владение state</td>
+        <td class="border border-border px-3 py-2">Управляется AWS, на сервере</td>
+        <td class="border border-border px-3 py-2">State-файлом владеешь ты</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Безопасность параллелизма</td>
+        <td class="border border-border px-3 py-2">Сериализуется AWS</td>
+        <td class="border border-border px-3 py-2">Locking настраиваешь ты</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Написание</td>
+        <td class="border border-border px-3 py-2">YAML/JSON (CFN) или реальный язык (CDK)</td>
+        <td class="border border-border px-3 py-2">DSL HCL</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Секреты в state</td>
+        <td class="border border-border px-3 py-2">Скрыты AWS</td>
+        <td class="border border-border px-3 py-2">В state; backend надо шифровать</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Чтение plan и модули
+
+`terraform plan` — это предохранитель, и чтение его — навык уровня senior. Он печатает diff с четырьмя действиями: `+` создать, `-` удалить, `~` обновить на месте и `-/+` **replace** — удалить, затем создать заново. Последний символ — опасный. Поле, которое нельзя изменить на месте (переименование идентификатора БД, смена неизменяемого атрибута), вынуждает replace, а replace базы данных значит, что её уничтожают и создают свежую пустую. Plan говорит тебе об этом простым текстом — `-/+ destroy and then create replacement` — и инженер, который применяет, не прочитав, теряет данные. Всегда читай plan перед apply; это и есть вся причина, по которой `plan` — отдельная команда.
+
+```bash
+terraform init        # скачать провайдеры, настроить backend
+terraform plan        # обновить state, показать diff create/update/replace/destroy
+terraform apply       # взять lock, выполнить, записать state обратно
+```
+
+Последний строительный блок — **модули**, переиспользуемые параметризованные наборы ресурсов, подтягиваемые из публичного реестра или локального пути, чтобы ты написал VPC один раз и вызывал его по окружениям, а не копипастил HCL. Модули — то, как кодовая база Terraform остаётся DRY на масштабе.
+
+<Inset kind="why" lang="ru">
+Почему «ты владеешь state» — фича, а не просто бремя? Потому что state-файл — это ещё и портируемая, инспектируемая запись всего твоего хозяйства, не привязанная к control plane одного вендора. Ты можешь через `terraform import` взять существующие руками собранные ресурсы под управление, рефакторить через провайдеры и запускать ровно тот же workflow, лежит ли ресурс в AWS, Cloudflare или SaaS-API. Серверный state CloudFormation безопаснее по умолчанию, но говорит он только на AWS. State-файл — это и цена, и механизм портируемости Terraform.
+</Inset>
+
+<TradeoffMatrix
+  id="02-terraform-on-aws-tradeoff-1"
+  lessonSlug="02-terraform-on-aws"
+  lang="ru"
+  prompt="Команда держит prod через AWS, Cloudflare и Postgres-SaaS. Платформенные инженеры свободно владеют HCL, спокойно владеют remote backend и хотят один инструмент и один workflow на всех трёх вендоров. Выбери IaC."
+  options={[
+    { name: "Terraform с S3 remote backend + locking", summary: "Один HCL-workflow на всех провайдеров; ты владеешь шифрованным залоченным state.", correct: true, justification: "Верный выбор. Хозяйство мульти-облачное, поэтому AWS-онли инструменты выбывают по определению — только провайдерная модель Terraform описывает AWS, Cloudflare и SaaS в одном конфиге и одном apply. Команда свободна в HCL и готова владеть state — это ровно та ответственность, которую накладывает Terraform, а S3-backend с шифрованием и locking разруливает её безопасно. Это канонический ответ «мульти-облако, один инструмент, принять владение state»." },
+    { name: "AWS CloudFormation", summary: "AWS-нативный, state управляется сервером.", justification: "Соблазнительно для AWS-куска, потому что state ведётся за тебя, а параллелизм сериализует AWS, но он только для AWS. Он вообще не может описать ресурсы Cloudflare или Postgres-SaaS, поэтому команде всё равно понадобится второй инструмент и второй workflow для остального хозяйства — что убивает заявленную цель «один инструмент на трёх вендоров»." },
+    { name: "AWS CDK", summary: "Реальный язык, AWS-нативный, синтезирует CloudFormation.", justification: "CDK даёт реальный язык программирования и state, управляемый AWS, что отлично, когда ты целиком на AWS, но он синтезирует CloudFormation и потому только для AWS. Он не решает Cloudflare или SaaS, так что, как и CloudFormation, оставляет две трети этого мульти-облачного хозяйства непокрытыми." },
+    { name: "Клики в консоли плюс runbook", summary: "Вручную, без IaC.", justification: "Неверно по всем осям. Ручное провижининг через трёх вендоров не имеет plan/diff, общего state, ревью-гейта и воспроизводимости — ровно те проблемы drift и неотслеживаемых ресурсов, ради предотвращения которых и существует IaC. Команда такого уровня, выбирающая ручные операции, — это регресс." },
+  ]}
+/>
+
+<Quiz
+  id="02-terraform-on-aws-quiz-1"
+  lessonSlug="02-terraform-on-aws"
+  lang="ru"
+  question="Какое ключевое операционное различие между Terraform и CloudFormation порождает большинство специфичных для Terraform сбоев?"
+  choices={[
+    { label: "Terraform пишет state в файл, которым ты владеешь и который обязан хранить, лочить и шифровать; CloudFormation держит state стека на сервере в AWS", correct: true },
+    { label: "Terraform не может управлять ресурсами AWS без CloudFormation под капотом", misconception: "Terraform говорит с API AWS напрямую через AWS-провайдер; он не работает поверх CloudFormation. Реальное различие в том, кто держит state, а не в том, какой движок вызывает AWS." },
+    { label: "CloudFormation мульти-облачный, а Terraform только для AWS", misconception: "Всё наоборот. Terraform мульти-облачный через экосистему провайдеров; CloudFormation и CDK только для AWS. Именно различие во владении state порождает специфичный для Terraform операционный риск." },
+    { label: "Terraform не поддерживает обнаружение drift", misconception: "Terraform обновляет state против живого API, чтобы обнаружить drift на каждом plan. Обнаружение drift — базовая фича, а не пробел; отличающий риск — владение самим state-файлом." },
+  ]}
+/>
+
+<Quiz
+  id="02-terraform-on-aws-quiz-2"
+  lessonSlug="02-terraform-on-aws"
+  lang="ru"
+  question="Plan показывает `-/+ aws_db_instance.primary (destroy and then create replacement)`. Что делать?"
+  choices={[
+    { label: "Остановиться и разобраться — `-/+` это replace: база будет уничтожена и пересоздана пустой, поэтому надо понять причину до apply", correct: true },
+    { label: "Применять; `-/+` просто значит, что Terraform обновит инстанс на месте без влияния на данные", misconception: "`~` — это обновление на месте; `-/+` — это replace, который уничтожает ресурс и создаёт новый. Для базы это потеря данных. Символы не взаимозаменяемы — их перепутывание ровно и есть то, как replace применяют по ошибке." },
+    { label: "Поправить state-файл руками, убрав базу, чтобы её оставили в покое", misconception: "State нельзя править руками — это рассинхронизирует state с реальностью. Чтобы избежать replace, чинят конфиг или используют точечные команды; ручная правка tfstate создаёт drift хуже того replace, которого ты избегал." },
+    { label: "Проигнорировать plan и запустить apply напрямую — вывод plan лишь рекомендательный", misconception: "Plan — это предохранитель именно для того, чтобы ты прочитал его до apply. `-/+` на stateful-ресурсе — канонический момент «прочитай plan»; пропуск его — это как команды уничтожают prod-данные." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Terraform — облачно-агностичный IaC на HCL: провайдеры маппят ресурсы на API каждого облака, так что один конфиг охватывает AWS, Cloudflare и другие. Определяющее отличие от CloudFormation/CDK — state: Terraform пишет файл, маппящий конфиг на реальные ID ресурсов, и ты обязан хранить его в remote backend (S3), лочить (DynamoDB или `use_lockfile`) и шифровать, потому что state может держать секреты, а гонки его портят. Читай каждый plan: `-/+` — это destroy-и-recreate. Выбирай Terraform при мульти-облаке или когда хочешь один инструмент и принимаешь владение state; выбирай CloudFormation/CDK при полном AWS, когда хочешь, чтобы state вёл AWS.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-terraform-on-aws-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему state-файл Terraform — центральное понятие, и какие три правила накладывает владение им?", a: "Когда ты делаешь apply, Terraform пишет state-файл, записывая связки между реальными объектами облака и инстансами ресурсов в твоём конфиге — фактические ID ресурсов, атрибуты и метаданные зависимостей. На следующем запуске он читает state, обновляет против живого API для обнаружения drift, сравнивает с конфигом и планирует только дельту. State — это память Terraform; без него инструмент не отличит create от update. У CloudFormation такая же память, но AWS держит её на сервере; Terraform делает её твоим файлом. Отсюда три правила: (1) не используй локальный state для команд — его нельзя расшарить, он теряется с ноутбуком и ничего не сериализует — используй remote backend вроде S3; (2) state может содержать секреты открытым текстом (пароли RDS, сгенерированные ключи), поэтому шифруй backend и никогда не коммить state в git; (3) никогда не правь state руками — это производный индекс, поэтому используй сабкоманды terraform state или terraform import, чтобы взять существующие ресурсы под управление, вместо правки tfstate." },
+    { q: "Что даёт remote backend с locking и как безопасно читать plan?", a: "Remote backend (S3: bucket + key + region) даёт команде одну общую долговечную шифрованную копию state вместо файла на ноутбуке. State locking предотвращает гонку параллельных apply: перед изменением state Terraform берёт lock, так что второй apply ждёт, а не перезаписывает. Locking включают либо таблицей DynamoDB с ключом LockID через dynamodb_table (теперь deprecated), либо S3-native locking через use_lockfile = true, который пишет объект tflock. Чтение plan: terraform plan печатает + создать, - удалить, ~ обновить-на-месте и -/+ replace (удалить, затем создать). Опасен -/+ — вынужденный replace базы уничтожает её и создаёт пустую. Всегда читай plan перед apply; вот почему plan — отдельная команда от apply." },
+  ]}
+/>
+
+<Recap lang="ru">
+Terraform — облачно-агностичный IaC от HashiCorp, написанный на HCL, где плагин-провайдер маппит блоки ресурсов на API вендора — провайдер aws на AWS, другие на Cloudflare, Google и SaaS-API — так что один конфиг и один workflow охватывают несколько облаков. Определяющее на уровне senior отличие от CloudFormation и CDK, с которыми ты познакомился в предыдущем уроке, — это state: Terraform пишет state-файл, маппящий твой конфиг на реальные ID ресурсов, обновляет его для обнаружения drift и планирует дельту, тогда как AWS держит этот state на сервере за тебя. Владение state накладывает три правила — не используй локальный state для команд, шифруй backend, потому что state может держать секреты, и никогда не правь state руками (используй terraform import, чтобы брать существующие ресурсы под управление). Фикс — это remote backend, обычно S3 (bucket + key + region, шифрованный), плюс state locking через таблицу DynamoDB с LockID или более новый S3-native use_lockfile, который сериализует параллельные apply и предотвращает гонку порчи. Workflow — написать HCL, terraform plan, затем terraform apply, и чтение plan необсуждаемо: + создаёт, - удаляет, ~ обновляет на месте, а -/+ заменяет — удалить и создать заново, что для stateful-ресурса значит потерю данных. Модули держат большие кодовые базы DRY. Правило выбора простое: тянись к Terraform, когда ты мульти-облачный или хочешь один инструмент на провайдеров и принимаешь управление state; тянись к CloudFormation или CDK, когда ты целиком на AWS и хочешь, чтобы state вёл за тебя AWS.
+</Recap>

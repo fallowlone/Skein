@@ -1,13 +1,238 @@
 ---
-slug: "02-terraform-on-aws"
+concepts:
+- terraform
+- hcl
+- aws-provider
+- terraform-state
+- remote-backend-s3
+- state-locking
+- SAA-C03:Design Cost-Optimized Architectures
+deepensInto: []
+estMin: 20
 lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-terraform-on-aws"
+sources:
+- https://developer.hashicorp.com/terraform/language/state
+- https://developer.hashicorp.com/terraform/language/backend/s3
+- https://developer.hashicorp.com/terraform/cli/commands/plan
+- https://docs.aws.amazon.com/prescriptive-guidance/latest/terraform-aws-provider-best-practices/introduction.html
+spiral: []
+status: ready
+summary: 'Terraform is cloud-agnostic IaC over HCL: the AWS provider maps resources to AWS APIs, but unlike CloudFormation you own a state file. Master remote backends, locking, and reading a plan, or state corruption and silent replaces will own you.'
+title: 'Terraform on AWS: providers, state, and the remote backend'
 track: "aws"
 unit: "06-iac"
-order: 2
-title: "Terraform on AWS"
-summary: "Terraform on AWS — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://developer.hashicorp.com/terraform/language
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Two engineers run `terraform apply` against the same config within the same minute. There is no lock, because state lives in a single S3 bucket with locking switched off "to keep things simple." Both reads see the same starting state; both writes race to overwrite the object. The second write wins, the first engineer's newly created NAT gateway is now an orphan no longer tracked in state, and the state file's serial counter is inconsistent with reality. The next apply tries to "create" resources that already exist and errors on duplicate names — while the untracked NAT gateway quietly bills $32 a month that no one will find until the cost report. With CloudFormation this class of bug is largely impossible: AWS holds the stack state server-side and serializes the changes. Terraform handed you that responsibility, and you skipped it.
+</Hook>
+
+<Crux>Terraform is cloud-agnostic IaC in HCL. The catch vs CloudFormation: you own the state — so a remote backend and locking aren't optional.</Crux>
+
+<Explanation>
+
+## Providers: HCL over any cloud's API
+
+You met CloudFormation and CDK in the previous lesson — AWS-native tools where AWS parses your template and tracks the stack for you. Terraform, by HashiCorp, takes a different bet: one tool, one language (**HCL**, HashiCorp Configuration Language), across every cloud. The bridge to each platform is a **provider** — a plugin that maps HCL resource blocks to a vendor's API calls. The `aws` provider turns an `aws_instance` block into EC2 `RunInstances` calls; the `cloudflare` or `google` provider does the same for their APIs. One configuration can declare resources across several providers at once, which is the whole pitch: a multi-cloud or multi-vendor estate described in a single language and workflow.
+
+You declare the provider and a resource, and that is the unit of work. The block below pins the AWS provider version, sets a region, and asks for a bucket:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "eu-central-1"
+}
+
+resource "aws_s3_bucket" "assets" {
+  bucket = "acme-prod-assets"
+  tags   = { Team = "platform" }
+}
+```
+
+That `~> 5.0` version constraint matters more than it looks: providers ship breaking changes, and an unpinned provider can rewrite half your plan after an unrelated upgrade. Pin it, the same way you pin a CloudFormation transform.
+
+## State: the thing CloudFormation hides and Terraform hands you
+
+Here is the senior-defining difference. When you `apply`, Terraform writes a **state file** that records the bindings between objects in the real cloud and the resource instances in your config — the actual resource IDs, attributes, and dependency metadata. On the next run Terraform reads that state, **refreshes** it against the live API to detect **drift** (real world diverging from what state believes), computes the difference against your config, and plans only the delta. State *is* Terraform's memory; without it the tool cannot tell a "create" from an "update."
+
+CloudFormation has the same memory, but AWS keeps it server-side and you never touch it. Terraform makes it a file you are responsible for — and that responsibility has sharp edges:
+
+- **Local state is dangerous for teams.** A `terraform.tfstate` on one laptop cannot be shared, is lost if that laptop dies, and serializes nothing — two people cannot collaborate safely.
+- **State can contain secrets.** An RDS password or a generated key lands in state in plaintext. Committing state to git leaks it; the backend must encrypt it at rest.
+- **Never hand-edit state.** It is a derived index, not source. Editing it by hand desynchronizes it from reality; use `terraform state` subcommands or `terraform import` to adopt an existing resource into management instead.
+
+<FlowDiagram
+  label="Terraform workflow: HCL is planned and applied against AWS while a remote backend holds locked, encrypted state"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "hcl", label: "HCL config", sub: "resources + providers" },
+    { id: "plan", label: "terraform plan", sub: "refresh + diff" },
+    { id: "apply", label: "terraform apply", sub: "calls AWS APIs" },
+    { id: "aws", label: "AWS", sub: "real resources" },
+    { id: "backend", label: "Remote backend (S3)", sub: "encrypted state + lock" },
+  ]}
+  edges={[
+    { from: "hcl", to: "plan", label: "read" },
+    { from: "plan", to: "apply", label: "approved" },
+    { from: "apply", to: "aws", label: "create/update/destroy" },
+    { from: "backend", to: "plan", label: "load state" },
+    { from: "apply", to: "backend", label: "write state (locked)" },
+  ]}
+  caption="Plan loads state from the backend and refreshes against AWS; apply mutates AWS and writes state back under a lock. The backend node is exactly the piece CloudFormation manages for you and Terraform makes your job."
+/>
+
+## The remote backend and state locking
+
+The fix for every state hazard is a **remote backend**. The S3 backend stores the state object in an S3 bucket (`bucket` + `key` + `region`) so the whole team reads and writes one shared, durable copy, and it encrypts that state at rest. The second half is **state locking**: before mutating state, Terraform acquires a lock so a concurrent `apply` must wait instead of racing. Historically you supplied a DynamoDB table (a partition key named `LockID`) via `dynamodb_table`; that path still works but is now deprecated in favor of **S3-native locking** — set `use_lockfile = true` and Terraform writes a `tflock` object alongside the state to coordinate, with no separate table required.
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket       = "acme-tf-state"
+    key          = "prod/network/terraform.tfstate"
+    region       = "eu-central-1"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
+```
+
+With this in place, the Hook's race cannot happen: the second engineer's `apply` blocks on the lock until the first finishes and releases it. This is the configuration the "to keep things simple" team skipped.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Concern</th>
+        <th class="border border-border px-3 py-2 text-left">CloudFormation / CDK</th>
+        <th class="border border-border px-3 py-2 text-left">Terraform</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Cloud scope</td>
+        <td class="border border-border px-3 py-2">AWS-only</td>
+        <td class="border border-border px-3 py-2">Multi-cloud via providers</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">State ownership</td>
+        <td class="border border-border px-3 py-2">AWS-managed, server-side</td>
+        <td class="border border-border px-3 py-2">You own a state file</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Concurrency safety</td>
+        <td class="border border-border px-3 py-2">Serialized by AWS</td>
+        <td class="border border-border px-3 py-2">You configure locking</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Authoring</td>
+        <td class="border border-border px-3 py-2">YAML/JSON (CFN) or real language (CDK)</td>
+        <td class="border border-border px-3 py-2">HCL DSL</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Secrets in state</td>
+        <td class="border border-border px-3 py-2">Hidden by AWS</td>
+        <td class="border border-border px-3 py-2">In state; must encrypt backend</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Reading the plan, and modules
+
+`terraform plan` is the safety gate, and reading it is a senior skill. It prints the diff with four actions: `+` create, `-` destroy, `~` update in place, and `-/+` **replace** — destroy then recreate. That last symbol is the dangerous one. A field that cannot be changed in place (renaming a DB identifier, changing an immutable attribute) forces a replace, and a replace of a database means it is destroyed and a fresh empty one is created. The plan tells you in plain text — `-/+ destroy and then create replacement` — and an engineer who applies without reading it loses the data. Always read the plan before you apply; that is the entire reason `plan` is a separate command.
+
+```bash
+terraform init        # download providers, configure the backend
+terraform plan        # refresh state, show the create/update/replace/destroy diff
+terraform apply       # acquire lock, execute, write state back
+```
+
+The last building block is **modules** — reusable, parameterized bundles of resources, pulled from the public registry or a local path, so you write a VPC once and call it across environments instead of copy-pasting HCL. Modules are how a Terraform codebase stays DRY at scale.
+
+<Inset kind="why" lang="en">
+Why is "you own state" a feature and not just a burden? Because the state file is also a portable, inspectable record of your entire estate that is not locked to one vendor's control plane. You can `terraform import` existing hand-built resources into management, refactor across providers, and run the exact same workflow whether the resource is in AWS, Cloudflare, or a SaaS API. CloudFormation's server-side state is safer by default but only ever speaks AWS. The state file is the price of, and the mechanism behind, Terraform's portability.
+</Inset>
+
+<TradeoffMatrix
+  id="02-terraform-on-aws-tradeoff-1"
+  lessonSlug="02-terraform-on-aws"
+  lang="en"
+  prompt="A team runs production across AWS, Cloudflare, and a Postgres SaaS. The platform engineers are fluent in HCL, comfortable owning a remote backend, and want one tool and one workflow across all three vendors. Pick the IaC."
+  options={[
+    { name: "Terraform with an S3 remote backend + locking", summary: "One HCL workflow across all providers; you own encrypted, locked state.", correct: true, justification: "Right fit. The estate is multi-cloud, so AWS-only tools are off the table by definition — only Terraform's provider model describes AWS, Cloudflare, and the SaaS in one config and one apply. The team is fluent in HCL and willing to own state, which is exactly the responsibility Terraform imposes, and an S3 backend with encryption and locking discharges it safely. This is the canonical 'multi-cloud, one tool, accept state ownership' answer." },
+    { name: "AWS CloudFormation", summary: "AWS-native, server-managed state.", justification: "Tempting for the AWS slice because state is managed for you and concurrency is serialized by AWS, but it is AWS-only. It cannot describe the Cloudflare or Postgres-SaaS resources at all, so the team would still need a second tool and a second workflow for the rest of the estate — defeating the stated goal of one tool across three vendors." },
+    { name: "AWS CDK", summary: "Real language, AWS-native, synthesizes CloudFormation.", justification: "CDK gives you a real programming language and AWS-managed state, which is great when you are all-in on AWS, but it synthesizes to CloudFormation and is therefore AWS-only. It does not address Cloudflare or the SaaS, so like CloudFormation it leaves two-thirds of this multi-cloud estate uncovered." },
+    { name: "Console clicks plus a runbook", summary: "Manual, no IaC.", justification: "Wrong on every axis. Manual provisioning across three vendors has no plan/diff, no shared state, no review gate, and no reproducibility — exactly the drift and untracked-resource problems IaC exists to prevent. A team this capable choosing manual ops would be a regression." },
+  ]}
+/>
+
+<Quiz
+  id="02-terraform-on-aws-quiz-1"
+  lessonSlug="02-terraform-on-aws"
+  lang="en"
+  question="What is the core operational difference between Terraform and CloudFormation that drives most Terraform-specific failures?"
+  choices={[
+    { label: "Terraform records state in a file you own and must store, lock, and encrypt; CloudFormation keeps stack state server-side in AWS", correct: true },
+    { label: "Terraform cannot manage AWS resources without CloudFormation underneath", misconception: "Terraform talks to AWS APIs directly through the AWS provider; it does not run on top of CloudFormation. The real difference is who holds the state, not which engine calls AWS." },
+    { label: "CloudFormation is multi-cloud while Terraform is AWS-only", misconception: "It is the reverse. Terraform is multi-cloud via its provider ecosystem; CloudFormation and CDK are AWS-only. The state-ownership distinction is what causes Terraform-specific operational risk." },
+    { label: "Terraform does not support detecting drift", misconception: "Terraform refreshes state against the live API to detect drift on each plan. Drift detection is a core feature, not a gap — the distinguishing risk is owning the state file itself." },
+  ]}
+/>
+
+<Quiz
+  id="02-terraform-on-aws-quiz-2"
+  lessonSlug="02-terraform-on-aws"
+  lang="en"
+  question="A plan shows `-/+ aws_db_instance.primary (destroy and then create replacement)`. What should you do?"
+  choices={[
+    { label: "Stop and investigate — `-/+` is a replace: the database will be destroyed and recreated empty, so you must understand why before applying", correct: true },
+    { label: "Apply it; `-/+` just means Terraform will update the instance in place with no data impact", misconception: "`~` is update-in-place; `-/+` is replace, which destroys the resource and creates a new one. For a database that means data loss. The symbols are not interchangeable — misreading them is exactly how a replace gets applied by accident." },
+    { label: "Hand-edit the state file to remove the database so it is left alone", misconception: "You must never hand-edit state — it desynchronizes state from reality. To avoid a replace you fix the config or use targeted commands; editing the tfstate by hand creates worse drift than the replace you were avoiding." },
+    { label: "Ignore the plan and run apply directly, since plan output is only advisory", misconception: "The plan is the safety gate precisely so you read it before applying. A `-/+` on a stateful resource is the canonical 'read the plan' moment; skipping it is how teams destroy production data." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Terraform is cloud-agnostic IaC in HCL: providers map resources to each cloud's API, so one config can span AWS, Cloudflare, and more. The defining difference from CloudFormation/CDK is state — Terraform records a file mapping config to real resource IDs, and you must store it in a remote backend (S3), lock it (DynamoDB or `use_lockfile`), and encrypt it, because state can hold secrets and races corrupt it. Read every plan: `-/+` is a destroy-and-recreate. Choose Terraform when multi-cloud or you want one tool and accept owning state; choose CloudFormation/CDK when all-in on AWS and you want AWS to manage state.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-terraform-on-aws-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is the Terraform state file the central concept, and what three rules does owning it impose?", a: "When you apply, Terraform writes a state file recording the bindings between real cloud objects and the resource instances in your config — the actual resource IDs, attributes, and dependency metadata. On the next run it reads state, refreshes against the live API to detect drift, diffs against config, and plans only the delta. State is Terraform's memory; without it the tool cannot tell a create from an update. CloudFormation has the same memory but AWS keeps it server-side; Terraform makes it your file. Three rules follow: (1) do not use local state for teams — it cannot be shared, is lost with the laptop, and serializes nothing — use a remote backend like S3; (2) state can contain secrets in plaintext (RDS passwords, generated keys), so encrypt the backend and never commit state to git; (3) never hand-edit state — it is a derived index, so use terraform state subcommands or terraform import to adopt existing resources instead of editing the tfstate." },
+    { q: "What does a remote backend with locking give you, and how do you read a plan safely?", a: "A remote backend (S3: bucket + key + region) gives the team one shared, durable, encrypted copy of state instead of a laptop-local file. State locking prevents the concurrent-apply race: before mutating state, Terraform acquires a lock so a second apply waits instead of overwriting. You enable locking either with a DynamoDB table keyed on LockID via dynamodb_table (now deprecated) or with S3-native locking via use_lockfile = true, which writes a tflock object. Reading the plan: terraform plan prints + create, - destroy, ~ update-in-place, and -/+ replace (destroy then recreate). The -/+ is the dangerous one — a forced replace of a database destroys it and creates an empty one. Always read the plan before apply; that is why plan is a separate command from apply." },
+  ]}
+/>
+
+<Recap lang="en">
+Terraform is HashiCorp's cloud-agnostic IaC, written in HCL, where a provider plugin maps resource blocks to a vendor's API — the aws provider to AWS, others to Cloudflare, Google, and SaaS APIs — so one config and one workflow can span multiple clouds. The senior-defining difference from CloudFormation and CDK, which you met in the previous lesson, is state: Terraform records a state file mapping your config to real resource IDs, refreshes it to detect drift, and plans the delta, whereas AWS keeps that state server-side for you. Owning state imposes three rules — do not use local state for teams, encrypt the backend because state can hold secrets, and never hand-edit state (use terraform import to adopt existing resources). The fix is a remote backend, typically S3 (bucket + key + region, encrypted), plus state locking via a DynamoDB LockID table or the newer S3-native use_lockfile, which serializes concurrent applies and prevents the corruption race. The workflow is write HCL, terraform plan, then terraform apply, and reading the plan is non-negotiable: + creates, - destroys, ~ updates in place, and -/+ replaces — destroy and recreate, which for a stateful resource means data loss. Modules keep large codebases DRY. The decision rule is simple: reach for Terraform when you are multi-cloud or want one tool across providers and accept managing state; reach for CloudFormation or CDK when you are all-in on AWS and want AWS to manage state for you.
+</Recap>

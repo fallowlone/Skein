@@ -1,13 +1,212 @@
 ---
-slug: "03-databases"
+concepts:
+- rds
+- aurora
+- dynamodb
+- multi-az
+- read-replicas
+- hot-partition
+- SAA-C03:Design Resilient Architectures
+deepensInto: []
+estMin: 18
 lang: en
+lessonType: topic
+level: middle
+order: 3
+prereqs: []
+slug: "03-databases"
+sources:
+- https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.MultiAZ.html
+- https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html
+spiral: []
+status: ready
+summary: 'Managed relational (RDS/Aurora) versus managed NoSQL (DynamoDB). RDS hands off patching, backups, and failover but keeps you owning schema and a vertical ceiling; DynamoDB trades joins for single-digit-ms at any scale — if you design keys to dodge hot partitions.'
+title: 'Managed databases: RDS, Aurora, and DynamoDB'
 track: "aws"
 unit: "03-storage"
-order: 3
-title: "Databases: RDS vs DynamoDB"
-summary: "Databases: RDS vs DynamoDB — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Welcome.html
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A team flips their RDS database to Multi-AZ the week before a launch, reads "high availability" on the slide, and tells the room "reads are covered now." They are not. The morning traffic spikes, the read-heavy product page slows to a crawl, and the single primary is pinned at 100% CPU while a perfectly healthy standby sits in another AZ doing nothing but waiting for the primary to die. Multi-AZ never served a single read — the standby is a synchronous understudy for failover, not a second reader. The fix that day was a read replica; the lesson was that "HA" and "read scaling" are different features that happen to both involve a second copy of the database, and confusing them costs you an outage during your busiest hour.
+</Hook>
+
+<Crux>RDS: managed relational — joins, transactions, a vertical ceiling. DynamoDB: NoSQL, single-digit-ms at scale when keys spread the load.</Crux>
+
+<Explanation>
+
+## RDS and Aurora: managed relational, with the parts you still own
+
+**Amazon RDS** runs the relational engine you already know — PostgreSQL, MySQL, MariaDB, Oracle, or SQL Server — and takes the operational toil off your hands. AWS owns OS and engine patching, automated backups and point-in-time recovery, and the failover machinery. **Aurora** is a cloud-native variant: a MySQL- and PostgreSQL-compatible engine where AWS replaced the storage layer with a distributed, log-structured fleet replicated six ways across three AZs, giving faster failover and read replicas that share one storage volume. Either way you get SQL: secondary indexes, multi-row transactions, and joins across normalized tables.
+
+What AWS does *not* take off your hands is the part juniors assume is automatic. You still own the schema, the indexes, and query tuning — a missing index or an N+1 query pattern is your bug, not AWS's, and managed-ness will not save a table doing sequential scans. And relational on RDS scales **vertically**: you make the instance bigger. That has a ceiling — the largest instance class is a hard wall, and writes fundamentally go through one primary.
+
+Two features get conflated and must not be. **Multi-AZ** provisions a **synchronous** standby replica in a *different Availability Zone*; every commit is replicated to it before acknowledging. If the primary fails, RDS flips a DNS record to the standby automatically, typically in the **60–120 second** range. But AWS is explicit: the single-standby Multi-AZ deployment "isn't a scaling solution for read-only scenarios. You can't use a standby replica to serve read traffic." It is **high availability, not read scaling**. To scale reads you add **read replicas**: these replicate **asynchronously** (so they can lag), you point read traffic at their own endpoints, and — crucially — a read replica can be **promoted** to a standalone primary, which is a common path for migrations and regional DR.
+
+```bash
+# Multi-AZ = HA: a synchronous standby that does NOT serve reads
+aws rds create-db-instance \
+  --db-instance-identifier orders-primary \
+  --engine postgres \
+  --db-instance-class db.r6g.xlarge \
+  --multi-az                      # automatic failover, ~60-120s, NOT a read scaler
+
+# Read replica = read scaling: asynchronous, has its own endpoint, promotable
+aws rds create-db-instance-read-replica \
+  --db-instance-identifier orders-replica-1 \
+  --source-db-instance-identifier orders-primary
+```
+
+<FlowDiagram
+  label="Application traffic split across an RDS primary, its synchronous Multi-AZ standby, and an asynchronous read replica"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "app", label: "Application", sub: "writes + reads" },
+    { id: "primary", label: "RDS primary (AZ-a)", sub: "all writes land here" },
+    { id: "standby", label: "Multi-AZ standby (AZ-b)", sub: "synchronous, serves NO reads" },
+    { id: "replica", label: "Read replica (AZ-c)", sub: "asynchronous, read-only endpoint" },
+  ]}
+  edges={[
+    { from: "app", to: "primary", label: "writes + strong reads" },
+    { from: "primary", to: "standby", label: "sync replicate (HA)" },
+    { from: "primary", to: "replica", label: "async replicate" },
+    { from: "app", to: "replica", label: "scaled reads" },
+  ]}
+  caption="Multi-AZ standby is a failover understudy on the write path; read replicas are a separate, asynchronous fan-out you query directly. Different features, different endpoints."
+/>
+
+## DynamoDB: serverless NoSQL that lives or dies by the partition key
+
+**DynamoDB** is a fully managed, serverless key-value and document store. There are no instances to size — you hand AWS a table and access patterns. Every item has a **partition key**; DynamoDB feeds that key through an internal **hash function**, and the output selects the physical **partition** the item lives on. An optional **sort key** orders items that share a partition key, enabling range queries within one collection. Done right, this delivers **single-digit-millisecond** latency at effectively any scale, because a request resolves to one partition by hashing rather than scanning.
+
+You pick a **capacity mode**. **On-demand** bills per request and auto-scales instantly — ideal for unpredictable or spiky traffic. **Provisioned** has you declare **read capacity units (RCU)** and **write capacity units (WCU)**, optionally with auto scaling. One WCU is a 1 KB/s write; one RCU is a 4 KB strongly-consistent read per second (or two eventually-consistent reads). For richer access you add a **GSI** (global secondary index) — a different partition key, replicated and **eventually consistent** — or an **LSI** (local secondary index), an alternate sort key on the same partition key.
+
+Here is the trap that throttles teams who think they have headroom: **the hot partition**. AWS designs **every partition to deliver at most 3,000 read units/sec and 1,000 write units/sec**. If one partition key value is hit disproportionately — a celebrity user, a `status = "PENDING"` enum, today's date as a key — all that traffic lands on one partition, hits that per-partition ceiling, and you get **throttled even though the table's total provisioned capacity is barely touched**. The whole game is designing keys with high cardinality so load spreads evenly; for unavoidably hot keys you **write-shard** by suffixing the key. And DynamoDB has **no joins and no ad-hoc queries** — you model for known access patterns up front, often via **single-table design**, and choose **eventual vs strong consistency** per read.
+
+```json
+// One item, modeled for access by user then by recent order (sort key)
+{
+  "PK": { "S": "USER#42" },          // partition key: high cardinality, spreads load
+  "SK": { "S": "ORDER#2026-06-04" }, // sort key: range queries within the user
+  "total": { "N": "129.00" },
+  "status": { "S": "PENDING" }       // do NOT make this the partition key: hot partition
+}
+```
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Dimension</th>
+        <th class="border border-border px-3 py-2 text-left">RDS / Aurora (relational)</th>
+        <th class="border border-border px-3 py-2 text-left">DynamoDB (NoSQL)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Query model</td>
+        <td class="border border-border px-3 py-2">SQL: joins, ad-hoc queries, transactions</td>
+        <td class="border border-border px-3 py-2">Key-based; model for access patterns, no joins</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Scaling</td>
+        <td class="border border-border px-3 py-2">Vertical (bigger instance) + read replicas; has a ceiling</td>
+        <td class="border border-border px-3 py-2">Horizontal by partition; effectively unbounded</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">High availability</td>
+        <td class="border border-border px-3 py-2">Multi-AZ synchronous standby, ~60–120s failover</td>
+        <td class="border border-border px-3 py-2">Built-in; replicated across 3 AZs automatically</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Latency at scale</td>
+        <td class="border border-border px-3 py-2">Depends on indexes/tuning; degrades under load</td>
+        <td class="border border-border px-3 py-2">Single-digit ms if keys spread evenly</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Classic failure mode</td>
+        <td class="border border-border px-3 py-2">Hitting the vertical ceiling; assuming Multi-AZ scales reads</td>
+        <td class="border border-border px-3 py-2">Hot partition throttling; needing a join you can't run</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why does a hot partition throttle you while the dashboard shows spare capacity? DynamoDB's per-partition limits (3,000 RCU/sec, 1,000 WCU/sec) are physical, not logical. Total table capacity is split across partitions, so 100,000 provisioned WCU spread over many partitions is useless to a single key that maps to one partition — that key still caps at 1,000 WCU/sec and the rest goes to throttling. Adaptive capacity can lend a hot partition some of its neighbors' unused throughput, which softens but does not erase the limit. The only durable fix is key design: spread the writes so no single physical partition is the bottleneck.
+</Inset>
+
+## The decision: rich queries versus massive simple scale
+
+The rule seniors carry: relational with **rich queries, transactions, joins, and moderate scale → RDS/Aurora**; **massive scale, simple key-based access, predictable latency, and serverless ops → DynamoDB**. Pricing for both is illustrative and region-dependent — confirm current rates on the [RDS pricing](https://aws.amazon.com/rds/pricing/) and [DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/) pages — but the shape differs: RDS bills per instance-hour plus storage whether busy or idle; DynamoDB on-demand bills per request and truly drops toward zero at idle.
+
+The classic lift-and-shift disaster is taking a normalized relational schema, copying it table-for-table onto DynamoDB "for scale," and then discovering the app needs a join DynamoDB cannot do — forcing N round trips or a scan that defeats the whole point. Model your access patterns *first*; if they need ad-hoc joins, you wanted a relational database.
+
+<TradeoffMatrix
+  id="03-databases-tradeoff-1"
+  lessonSlug="03-databases"
+  lang="en"
+  prompt="A multiplayer game's session-state store: hundreds of thousands of writes/sec at peak, accessed only by a sessionId key, needs predictable low latency, and the team wants zero database servers to operate. Pick the database."
+  options={[
+    { name: "DynamoDB, sessionId as partition key", summary: "Serverless NoSQL, key-based access.", correct: true, justification: "Right fit. Access is purely key-based (by sessionId), there are no joins or ad-hoc queries, scale is enormous, and the team wants no servers to operate — this is DynamoDB's home turf. A high-cardinality sessionId hashes evenly across partitions, so hundreds of thousands of writes/sec spread out instead of hammering one partition, and reads stay single-digit-ms. On-demand mode absorbs spiky session traffic and drops cost toward zero between matches. This is the canonical 'massive scale, simple access, serverless ops' answer." },
+    { name: "RDS PostgreSQL, single large instance", summary: "Managed relational, vertical scale.", justification: "Wrong shape for this scale. Hundreds of thousands of writes/sec funnel through one primary, and relational scales vertically until it hits the largest-instance ceiling — exactly the wall this workload would slam into. You also get none of the serverless-ops benefit the team asked for. RDS shines when you need joins, transactions, and ad-hoc SQL at moderate scale, which this key-by-sessionId workload does not." },
+    { name: "RDS with Multi-AZ for the write throughput", summary: "Synchronous standby.", justification: "Misunderstands Multi-AZ. The standby is a synchronous failover replica that serves no traffic at all — it adds availability, not write or read capacity. Turning on Multi-AZ does nothing for hundreds of thousands of writes/sec; the single primary is still the bottleneck. Multi-AZ is for HA, full stop." },
+    { name: "DynamoDB with status as the partition key", summary: "Key-based, but wrong key.", justification: "Right database, fatal key choice. A low-cardinality attribute like status (a handful of enum values) maps almost all traffic onto a few partitions, so you hit the 1,000 WCU/sec per-partition ceiling and get throttled while total capacity sits idle — the textbook hot partition. The fix is a high-cardinality key like sessionId. Same engine, but key design is the difference between single-digit-ms and a throttling storm." },
+  ]}
+/>
+
+<Quiz
+  id="03-databases-quiz-1"
+  lessonSlug="03-databases"
+  lang="en"
+  question="You enable RDS Multi-AZ and expect your read-heavy traffic to speed up. It doesn't. Why?"
+  choices={[
+    { label: "The Multi-AZ standby is a synchronous failover replica that serves no read traffic — it is high availability, not read scaling; you need read replicas for that", correct: true },
+    { label: "Multi-AZ only speeds up writes, not reads", misconception: "Multi-AZ doesn't speed up writes either — its synchronous replication can slightly increase write/commit latency. It provides automatic failover, not throughput for either reads or writes. Read scaling comes from read replicas." },
+    { label: "You forgot to enable the read cache on the standby", misconception: "There is no 'read cache on the standby' to enable. The single-standby Multi-AZ replica is explicitly unable to serve read traffic by design; the missing piece is a read replica, a separate feature." },
+    { label: "The standby needs a few hours to warm up before serving reads", misconception: "The standby never serves reads, warm or cold. Multi-AZ is purely a failover mechanism; to scale reads you add read replicas with their own endpoints." },
+  ]}
+/>
+
+<Quiz
+  id="03-databases-quiz-2"
+  lessonSlug="03-databases"
+  lang="en"
+  question="Your DynamoDB table is provisioned with plenty of total capacity, yet one access pattern keyed on order status keeps getting throttled. What's happening?"
+  choices={[
+    { label: "A hot partition — a low-cardinality key sends most traffic to one physical partition, hitting the ~1,000 WCU/3,000 RCU per-partition limit while total capacity sits unused", correct: true },
+    { label: "DynamoDB is down in that region", misconception: "A regional outage would fail all requests, not selectively throttle one access pattern. Throttling concentrated on a single low-cardinality key while the table has spare total capacity is the signature of a hot partition, not an outage." },
+    { label: "You must enable joins to query by status efficiently", misconception: "DynamoDB has no joins, and they wouldn't help. The throttling is about physical per-partition throughput limits, not query expressiveness. The fix is a higher-cardinality key or write-sharding, not a join." },
+    { label: "Strong consistency reads are disabled on that table", misconception: "Consistency mode affects whether you see the latest write, not per-partition throughput. The throttle comes from concentrating load on one partition via a low-cardinality key, regardless of consistency setting." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>RDS/Aurora is managed relational: AWS owns patching, backups, and failover, but you still own schema, indexes, and tuning, and you scale vertically with a ceiling. Multi-AZ is a synchronous standby for HA (~60–120s failover, serves no reads); read replicas are asynchronous, scale reads, and are promotable. DynamoDB is serverless NoSQL: partition key hashes to a physical partition, single-digit-ms at any scale, but each partition caps at ~3,000 RCU / 1,000 WCU/sec — so a low-cardinality key creates a hot partition and throttles you despite spare total capacity. Rich queries/joins/transactions → RDS; massive simple key-based scale → DynamoDB.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-databases-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast RDS Multi-AZ with read replicas, and say what RDS does and does not manage for you.", a: "RDS runs managed relational engines (PostgreSQL, MySQL, MariaDB, Oracle, SQL Server; Aurora is a cloud-native MySQL/PostgreSQL-compatible variant). AWS owns OS/engine patching, automated backups and point-in-time recovery, and failover — but you still own the schema, indexes, and query tuning, and a missing index or N+1 query is your bug. Relational scales vertically with a hard ceiling at the largest instance, since writes go through one primary. Multi-AZ provisions a synchronous standby in a different AZ; every commit is replicated before acknowledging, and on primary failure RDS fails over automatically in roughly 60–120 seconds. But the single-standby Multi-AZ deployment serves no read traffic — it is high availability, not read scaling. Read replicas are the opposite tool: they replicate asynchronously (so they lag), have their own endpoints you point read traffic at, and can be promoted to a standalone primary for migrations or DR." },
+    { q: "Explain DynamoDB's partition model and the hot-partition trap, and when to choose DynamoDB over RDS.", a: "DynamoDB is serverless key-value/document: each item has a partition key that DynamoDB hashes to pick a physical partition, with an optional sort key for range queries within that partition. Done right it gives single-digit-millisecond latency at any scale because a request resolves by hashing, not scanning. Capacity is on-demand (per request, instant) or provisioned RCU/WCU with auto scaling; GSIs add a different partition key (eventually consistent), LSIs an alternate sort key. The trap: every partition caps at roughly 3,000 read units/sec and 1,000 write units/sec, so a low-cardinality key (an enum, a celebrity user, today's date) concentrates traffic on one partition and throttles you even though the table's total capacity is barely used. Fix it with high-cardinality keys or write-sharding. DynamoDB has no joins or ad-hoc queries, so you model for known access patterns (single-table design) and pick eventual vs strong consistency per read. Choose DynamoDB for massive scale, simple key-based access, predictable latency, and serverless ops; choose RDS for rich queries, transactions, joins, and moderate scale." },
+  ]}
+/>
+
+<Recap lang="en">
+Managed databases on AWS split into two families. RDS and Aurora are managed relational: AWS owns patching, backups, and failover, and you get SQL with joins, transactions, and ad-hoc queries — but you still own the schema, indexes, and query tuning, and you scale vertically into a hard ceiling. Two RDS features are constantly confused: Multi-AZ is a synchronous standby in another AZ that fails over automatically in roughly 60–120 seconds and serves no reads (high availability, not read scaling), while read replicas are asynchronous, have their own endpoints to absorb read load, and can be promoted to a primary. DynamoDB is serverless NoSQL: the partition key is hashed to choose a physical partition, an optional sort key orders items within it, and you get single-digit-millisecond latency at any scale — provided your keys spread evenly. Each partition caps at about 3,000 read units and 1,000 write units per second, so a low-cardinality key produces a hot partition that throttles you while total capacity sits idle; the cure is high-cardinality keys or write-sharding. DynamoDB has no joins, so you model for access patterns up front. The decision is the whole lesson: rich queries, transactions, and joins at moderate scale want RDS/Aurora; massive scale, simple key-based access, predictable latency, and zero servers to operate want DynamoDB. Prices are illustrative and region-dependent — always confirm on the RDS and DynamoDB pricing pages.
+</Recap>
