@@ -1,13 +1,214 @@
 ---
-slug: "01-tls-and-https"
+concepts:
+- tls-handshake
+- certificate-chain
+- sni
+- session-resumption
+- secure-context
+- cert-errors
+deepensInto: []
+estMin: 16
 lang: en
-track: "node"
-unit: "11-tls-and-http2"
+lessonType: topic
+level: middle
 order: 1
-title: "TLS and HTTPS in Node"
-summary: "TLS and HTTPS in Node — stub; author to ready."
-estMin: 12
-status: stub
+prereqs: []
+slug: 01-tls-and-https
 sources:
-  - https://nodejs.org/api/tls.html
+- https://nodejs.org/api/tls.html
+- https://nodejs.org/api/https.html
+- https://datatracker.ietf.org/doc/html/rfc8446
+spiral: []
+status: ready
+summary: 'TLS in Node hinges on shipping the full certificate chain, not just the leaf. Learn the handshake, SNI, session resumption, secureContext, and the cert errors you actually hit — and why you fix the chain instead of disabling verification.'
+title: 'TLS and HTTPS in Node: ship the whole chain'
+track: node
+unit: 11-tls-and-http2
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The certificate works in Chrome, so you ship. Then a backend service starts throwing `UNABLE_TO_VERIFY_LEAF_SIGNATURE` on every outbound `fetch` to your own API, and curl fails too. The cert isn't expired, the hostname matches, the private key is right. The bug: your server presents only the leaf certificate. Browsers paper over this — they cache intermediates from previous sites and fill the gap (AIA fetching). Node does not. It has only the system root store and whatever you sent on the wire, and the issuing intermediate is missing, so the chain to a trusted root cannot be built. The fix is one line in your cert file, not a flag that turns verification off.
+</Hook>
+
+<Crux>TLS trust is a chain to a root the client already trusts; serve the full chain (leaf + intermediates), never just the leaf.</Crux>
+
+<Explanation>
+
+## A TLS server in Node, and what it actually serves
+
+`https.createServer` is a thin wrapper over `tls.createServer`: you hand it a private key and a certificate, it terminates TLS, and your request handler runs over the decrypted stream. The single most consequential field is `cert` — and it must contain the **full chain**, not just your server's own (leaf) certificate.
+
+```js
+import { readFileSync } from "node:fs";
+import { createServer } from "node:https";
+
+const server = createServer(
+  {
+    key: readFileSync("privkey.pem"),
+    // fullchain.pem = leaf certificate FOLLOWED BY every intermediate, in order.
+    // This is the #1 production TLS bug: shipping cert.pem (leaf only) instead.
+    cert: readFileSync("fullchain.pem"),
+  },
+  (req, res) => {
+    res.writeHead(200);
+    res.end("hello over TLS\n");
+  },
+);
+server.listen(443);
+```
+
+A certificate is an X.509 document binding a public key to a set of names (the Subject Alternative Names, or SANs) and signed by an issuer. Your leaf is signed by an **intermediate** CA, which is signed by a **root** CA that lives in the client's trust store. Verification is the client walking that chain upward until it reaches a root it already trusts. The client only inherently trusts roots — it does **not** have your intermediate. So if your server sends only the leaf, the client cannot connect leaf → root, and verification fails. Let's Encrypt's `fullchain.pem` exists precisely to solve this: it is the leaf concatenated with the intermediate(s). Use it, not `cert.pem`.
+
+## The handshake: how a key gets agreed without leaking
+
+Before any HTTP byte flows, client and server run the TLS handshake: agree on parameters, prove the server's identity with its certificate, and derive a shared symmetric key. TLS 1.3 streamlined this into a single round trip (1-RTT) because the client guesses the key-exchange group and sends its key share in the very first message, so the server can reply with everything needed to start encrypting.
+
+<SequenceDiagram
+  label="TLS 1.3 handshake establishing an encrypted session in one round trip"
+  hue="var(--d-systems)"
+  actors={["Client", "Server"]}
+  messages={[
+    { from: "Client", to: "Server", label: "ClientHello + key_share + SNI" },
+    { from: "Server", to: "Client", label: "ServerHello + key_share" },
+    { from: "Server", to: "Client", label: "Certificate (full chain)" },
+    { from: "Server", to: "Client", label: "CertificateVerify + Finished" },
+    { from: "Client", to: "Server", label: "verify chain, Finished" },
+    { from: "Client", to: "Server", label: "GET / (encrypted)" },
+  ]}
+  caption="TLS 1.3 is 1-RTT: the client sends its key share in ClientHello, so the server returns its share plus an already-encrypted Certificate, and application data flows after one round trip. From ServerHello onward, messages are encrypted under the handshake keys."
+/>
+
+The client verifies the certificate chain (signatures valid up to a trusted root, not expired, and the requested hostname present in the leaf's SANs), checks `CertificateVerify` to prove the server holds the matching private key, and then both sides switch to symmetric encryption. The asymmetric crypto authenticates and exchanges the key; the bulk of the traffic is fast symmetric (AES-GCM or ChaCha20). TLS 1.2 needed two round trips; if you can require 1.3, the handshake is meaningfully cheaper.
+
+## SNI: many certs on one socket
+
+A single IP and port often serve many hostnames. The client tells the server which hostname it wants in the **SNI** (Server Name Indication) extension of the ClientHello — in plaintext, before the certificate is chosen — so the server can present the right certificate. In Node you select per-name certs with `SNICallback`, returning a `SecureContext` built per hostname:
+
+```js
+import tls from "node:tls";
+import { readFileSync } from "node:fs";
+import { createServer } from "node:https";
+
+const contexts = {
+  "a.example.com": tls.createSecureContext({
+    key: readFileSync("a.key"), cert: readFileSync("a.fullchain.pem"),
+  }),
+  "b.example.com": tls.createSecureContext({
+    key: readFileSync("b.key"), cert: readFileSync("b.fullchain.pem"),
+  }),
+};
+
+createServer({
+  SNICallback(servername, cb) {
+    const ctx = contexts[servername];
+    cb(ctx ? null : new Error("unknown host"), ctx);
+  },
+}, handler).listen(443);
+```
+
+`tls.createSecureContext` is the reusable bundle of key, chain, ciphers, and protocol settings; `SNICallback` lets you pick one at handshake time. This is how a reverse proxy or multi-tenant server hosts dozens of domains on one listener.
+
+## Session resumption: skip the expensive part
+
+The full handshake costs asymmetric crypto and a round trip. **Resumption** lets a returning client reuse the previously negotiated secret and skip most of that. Two mechanisms: **session IDs**, where the server stores session state keyed by an ID and the client presents the ID to resume (server-side memory, doesn't scale across a cluster without shared storage); and **session tickets** (RFC 5077), where the server encrypts the session state into an opaque blob the *client* stores and replays — stateless on the server, which is why it scales horizontally. In TLS 1.3, resumption uses pre-shared keys derived from tickets and can even carry 0-RTT early data. Resumption turns a multi-message, asymmetric handshake into a fast abbreviated one, cutting connection latency for repeat visitors.
+
+<Inset kind="why" lang="en">
+The senior reflex when you hit a cert error is *never* `rejectUnauthorized: false` (or `NODE_TLS_REJECT_UNAUTHORIZED=0`). That doesn't fix anything — it disables the entire point of TLS authentication, leaving the connection wide open to a man-in-the-middle who can present any certificate they like. Encryption without verified identity is encryption to an attacker. Every cert error has a real, fixable cause: a missing intermediate (fix the chain), an internal CA the client doesn't know (add it to the client's trust via `ca:` or `NODE_EXTRA_CA_CERTS`), an expired cert (renew it), or a hostname mismatch (reissue with the right SAN). Disabling verification just hides the bug until it bites in production.
+</Inset>
+
+## The cert errors you actually hit
+
+These four account for most real TLS support tickets. The constant tells you the cause:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Error</th>
+        <th class="border border-border px-3 py-2 text-left">Real cause</th>
+        <th class="border border-border px-3 py-2 text-left">Fix</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>UNABLE_TO_VERIFY_LEAF_SIGNATURE</code></td>
+        <td class="border border-border px-3 py-2">Server sent the leaf but omitted the intermediate; the client can't build a path to a root.</td>
+        <td class="border border-border px-3 py-2">Serve <code>fullchain.pem</code> (leaf + intermediates), not <code>cert.pem</code>.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>DEPTH_ZERO_SELF_SIGNED_CERT</code></td>
+        <td class="border border-border px-3 py-2">A self-signed cert with no chain to any trusted CA (common in dev / internal services).</td>
+        <td class="border border-border px-3 py-2">Add the cert/CA to the client's trust: <code>ca:</code> option or <code>NODE_EXTRA_CA_CERTS</code>. Never disable verification.</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>CERT_HAS_EXPIRED</code></td>
+        <td class="border border-border px-3 py-2">The leaf (or an intermediate) is past <code>notAfter</code>, or the client clock is wrong.</td>
+        <td class="border border-border px-3 py-2">Renew/automate the cert; check NTP on the client.</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>ERR_TLS_CERT_ALTNAME_INVALID</code></td>
+        <td class="border border-border px-3 py-2">The hostname you connected to isn't in the cert's SAN list (CN is ignored by modern clients).</td>
+        <td class="border border-border px-3 py-2">Reissue the cert with the correct SAN; connect by a name actually in the cert.</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Notice none of the fixes is "turn off checking." Each error is the verification machinery correctly reporting a real defect in the chain, validity window, or naming.
+
+<Quiz
+  id="01-tls-and-https-quiz-1"
+  lessonSlug="01-tls-and-https"
+  lang="en"
+  question="Your cert loads fine in a browser but Node fetch throws UNABLE_TO_VERIFY_LEAF_SIGNATURE against the same server. Most likely cause?"
+  choices={[
+    { label: "The server presents only the leaf certificate; the intermediate is missing, so Node can't build a path to a trusted root. Browsers hide this by caching/fetching intermediates.", correct: true },
+    { label: "The certificate has expired", misconception: "Expiry raises CERT_HAS_EXPIRED, a different constant. UNABLE_TO_VERIFY_LEAF_SIGNATURE specifically means the chain to a trusted root cannot be assembled — an intermediate is missing." },
+    { label: "The hostname doesn't match the certificate", misconception: "A name mismatch raises ERR_TLS_CERT_ALTNAME_INVALID. This error is about an incomplete chain, not the SAN." },
+    { label: "Node doesn't trust any public CAs by default", misconception: "Node ships with the standard root store and trusts public roots fine. The problem is the missing intermediate between the leaf and that trusted root." },
+  ]}
+/>
+
+<TradeoffMatrix
+  id="01-tls-and-https-tradeoff-1"
+  lessonSlug="01-tls-and-https"
+  lang="en"
+  prompt="A Node client connects to an internal service whose cert is signed by your company's private CA, and it fails verification. Pick the correct fix."
+  options={[
+    { name: "Add the company CA to the client's trust via the ca: option or NODE_EXTRA_CA_CERTS", summary: "Teach the client the CA.", correct: true, justification: "The cert is legitimate; the client simply doesn't know your private root. Supplying that CA — per-request with the ca: option or process-wide with NODE_EXTRA_CA_CERTS — lets the chain build to a root the client now trusts, and full verification (signature, expiry, hostname) keeps working. This is the senior fix: extend trust deliberately, don't remove it." },
+    { name: "Set rejectUnauthorized: false on the request", summary: "Turn off checks.", justification: "This disables certificate verification entirely, so the client will accept ANY cert including an attacker's. You get encryption to an unauthenticated peer — the exact MITM scenario TLS exists to prevent. Never do this to silence a cert error." },
+    { name: "Set NODE_TLS_REJECT_UNAUTHORIZED=0 globally", summary: "Disable verification process-wide.", justification: "Same flaw as rejectUnauthorized:false but worse — it kills verification for EVERY TLS connection in the process, including ones to the public internet, and Node prints a security warning for good reason. A blunt, dangerous hammer." },
+    { name: "Switch the service to plain HTTP internally", summary: "Drop TLS.", justification: "Removing TLS to dodge a verification error throws out confidentiality and integrity on the internal network — a far bigger problem than a missing CA. Internal traffic is still a target. Fix trust, keep TLS." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Serve `fullchain.pem`, not the leaf: verification walks leaf → intermediate → trusted root, and a gap fails. SNI serves many hosts, tickets resume statelessly; fix cert errors at the cause, never disable verification.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-tls-and-https-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a cert that works in the browser throw UNABLE_TO_VERIFY_LEAF_SIGNATURE in Node, and how do you fix it?", a: "TLS verification requires the client to build a chain from the server's leaf certificate up to a root it already trusts, going through one or more intermediate CAs. The client's trust store contains only roots — it does not have your intermediate. If the server presents only the leaf, the client cannot connect leaf to root, and you get UNABLE_TO_VERIFY_LEAF_SIGNATURE. Browsers hide this defect: they cache intermediates seen on other sites and can fetch missing ones via the certificate's AIA extension, so the chain still completes. Node does neither — it uses only the system roots and exactly what the server sent on the wire. The fix is on the server: present the full chain (leaf followed by every intermediate, in order), which is what Let's Encrypt's fullchain.pem contains. Load fullchain.pem into the cert option instead of cert.pem. You never fix this by disabling verification on the client." },
+    { q: "Contrast session IDs and session tickets for TLS resumption, and say why tickets scale better.", a: "Both let a returning client skip most of the full handshake by reusing the previously negotiated secret, cutting latency and asymmetric-crypto cost. With session IDs, the server stores the session state in its own memory keyed by an ID and hands the ID to the client; to resume, the client presents the ID and the server looks it up. That state is local to one server, so in a load-balanced cluster a resumed connection may land on a different node that has never seen the ID, forcing a full handshake unless you add a shared session cache. Session tickets (RFC 5077) flip the storage: the server encrypts the session state into an opaque ticket with a key only it knows and gives that ticket to the client, who stores and replays it. The server holds no per-session state — any node sharing the ticket-encryption key can decrypt and resume — so tickets are stateless and scale horizontally without a shared cache. In TLS 1.3 resumption is built on pre-shared keys derived from tickets and can carry 0-RTT early data." },
+  ]}
+/>
+
+<Recap lang="en">
+TLS in Node starts with `https.createServer` (a wrapper over `tls.createServer`) taking a key and a certificate — and that certificate must be the full chain, leaf plus intermediates, because clients trust only roots and must walk the chain upward to one. Serving the leaf alone is the classic production bug behind `UNABLE_TO_VERIFY_LEAF_SIGNATURE`; ship `fullchain.pem`. The handshake exchanges a key and authenticates the server with that chain, and TLS 1.3 does it in one round trip by sending the client's key share up front. SNI lets one socket serve many hostnames, with `SNICallback` returning a per-host `SecureContext` built by `tls.createSecureContext`. Session resumption — server-stored session IDs, or stateless client-held session tickets that scale across a cluster — skips the costly part of the handshake for repeat clients. And every cert error (`DEPTH_ZERO_SELF_SIGNED_CERT`, `CERT_HAS_EXPIRED`, `ERR_TLS_CERT_ALTNAME_INVALID`) names a real defect: fix the chain, the trust store, the expiry, or the SAN. Never reach for `rejectUnauthorized: false` — encryption without verified identity is encryption straight to an attacker.
+</Recap>
