@@ -1,0 +1,275 @@
+---
+concepts:
+- config-module
+- env-validation
+- namespaced-config
+- configservice
+- fail-fast-boot
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-config-module"
+sources:
+- https://docs.nestjs.com/techniques/configuration
+- https://github.com/nestjs/config
+spiral: []
+status: ready
+summary: 'ConfigModule.forRoot wraps dotenv, validates env at boot with a schema (fail
+  fast), and exposes a typed ConfigService. Use registerAs for namespaced config and
+  inject it with ConfigType — never scatter process.env.'
+title: 'The config module: typed, validated env'
+track: nest
+unit: 03-config-and-modules
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The service has been green in CI and staging for a week. You promote to prod, and 200ms after boot the first checkout request explodes: `getaddrinfo ENOTFOUND undefined`. The cause is one line in a payments client — `new Stripe(process.env.STRIPE_SECRET_KEY)` — and in prod that variable was never set, so it was `undefined` the whole time. Nothing crashed at boot because nothing *checked*. The process happily accepted traffic with a hollow config and only blew up when a real customer hit the one code path that used the missing value. The fix is not "remember to set the var" — it is to make the process refuse to start when its config is wrong.
+</Hook>
+
+<Crux>ConfigModule validates env once at boot and hands you a typed ConfigService — so a bad config crashes startup, not the first request.</Crux>
+
+<Explanation>
+
+## ConfigModule wraps dotenv and centralises reads
+
+`@nestjs/config` is a thin, opinionated layer over `dotenv`. You register it once with `ConfigModule.forRoot()`; it reads `.env` (and `.env.${NODE_ENV}` if you point it there), merges in `process.env`, optionally validates the result, and exposes everything through an injectable `ConfigService`. Marking it `isGlobal: true` means every feature module can inject `ConfigService` without importing `ConfigModule` again, and `cache: true` memoises lookups so `config.get()` doesn't re-read `process.env` on every call.
+
+```ts
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,                              // inject ConfigService anywhere, no re-import
+      cache: true,                                 // memoise process.env reads
+      envFilePath: `.env.${process.env.NODE_ENV}`, // per-environment file
+      expandVariables: true,                       // ${HOST}:${PORT} interpolation in .env
+      ignoreEnvFile: process.env.NODE_ENV === 'production', // prod: real env only, no file
+    }),
+  ],
+})
+export class AppModule {}
+```
+
+You then read values with a typed getter — `config.get&lt;string>('DATABASE_URL')` — instead of reaching for `process.env` directly. The win is not syntax; it's that `ConfigService` is a real provider. It's injectable, so it participates in DI; it's mockable, so tests can pass a fake config instead of mutating global `process.env`; and because reads are centralised, validation happens in exactly one place.
+
+In production set `ignoreEnvFile: true`. A committed `.env` should never be the source of truth in prod — values come from the real environment (the orchestrator, the secrets manager, the platform), and reading a stale file is how staging credentials leak into a production deploy.
+
+## The senior point: validate at boot, fail fast
+
+The defining feature of `ConfigModule` is not loading — it's *validation*. Pass a `validationSchema` (Joi) and Nest validates the merged environment **once, at module init**. If a required variable is missing or malformed, the process throws during bootstrap with a precise message and never starts. That converts a lurking, request-time `undefined` into a loud, immediate, deploy-time failure.
+
+```ts
+import * as Joi from 'joi';
+
+ConfigModule.forRoot({
+  isGlobal: true,
+  validationSchema: Joi.object({
+    NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
+    PORT: Joi.number().port().default(3000),
+    DATABASE_URL: Joi.string().uri().required(),   // missing -> boot crashes
+    STRIPE_SECRET_KEY: Joi.string().required(),    // the bug from the hook, caught at startup
+  }),
+  validationOptions: { abortEarly: false },        // report ALL bad vars, not just the first
+});
+```
+
+Prefer Zod or a custom `validate` function if you'd rather not add Joi — Nest accepts any `validate: (config) => validatedConfig` that throws on failure. It runs at the same point in the lifecycle and gives the same fail-fast guarantee:
+
+```ts
+import { z } from 'zod';
+
+const envSchema = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().positive().default(3000),
+  DATABASE_URL: z.string().url(),                  // throws at boot if absent / malformed
+});
+
+ConfigModule.forRoot({
+  isGlobal: true,
+  validate: (raw) => envSchema.parse(raw),         // ZodError -> process refuses to start
+});
+```
+
+Either way the contract is the same: a malformed `DATABASE_URL` crashes startup with a clear message instead of silently being `undefined` until the first query in prod.
+
+## Namespaced config with registerAs and typed injection
+
+A flat bag of `config.get('DATABASE_HOST')` strings doesn't scale — the keys are stringly-typed and the grouping is implicit. `registerAs('database', factory)` defines a **namespace**: a named config object built from `process.env`, registered via `forFeature` or the `load` array, and — crucially — injectable as a strongly-typed unit.
+
+```ts
+// database.config.ts
+import { registerAs } from '@nestjs/config';
+
+export default registerAs('database', () => ({
+  host: process.env.DATABASE_HOST ?? 'localhost',
+  port: parseInt(process.env.DATABASE_PORT ?? '5432', 10),
+  url: process.env.DATABASE_URL,
+}));
+```
+
+```ts
+// any provider
+import { Inject, Injectable } from '@nestjs/common';
+import { ConfigType } from '@nestjs/config';
+import databaseConfig from './database.config';
+
+@Injectable()
+export class DbService {
+  constructor(
+    @Inject(databaseConfig.KEY)
+    private readonly dbConfig: ConfigType<typeof databaseConfig>,
+  ) {}
+
+  connect() {
+    // dbConfig.port is typed `number`, dbConfig.host is `string` — no casts, autocomplete works
+    return `${this.dbConfig.host}:${this.dbConfig.port}`;
+  }
+}
+```
+
+`ConfigType&lt;typeof databaseConfig>` derives the static type straight from the factory's return value, and `databaseConfig.KEY` is the DI token for that namespace. The result is config that is typed (the compiler knows `port` is a `number`), validated (the namespace is built from an env that passed the schema), and testable (inject a stub for `databaseConfig.KEY` in a unit test). Contrast that with `process.env.DATABASE_PORT` scattered across the codebase: untyped (always `string | undefined`), unvalidated, untestable, and invisible to DI.
+
+<FlowDiagram
+  label="How config flows from raw environment sources through boot-time validation into a typed ConfigService and finally into a feature module via an injected namespace"
+  hue="var(--d-backend)"
+  perRow={4}
+  nodes={[
+    { id: "env", label: "Env source", sub: ".env / process.env" },
+    { id: "validate", label: "Validate", sub: "Joi / Zod @ boot" },
+    { id: "svc", label: "ConfigService", sub: "typed, cached" },
+    { id: "feature", label: "Feature module", sub: "@Inject(KEY)" },
+  ]}
+  edges={[
+    { from: "env", to: "validate", label: "merge + load" },
+    { from: "validate", to: "svc", label: "pass -> expose" },
+    { from: "validate", to: "env", label: "fail -> crash boot" },
+    { from: "svc", to: "feature", label: "inject namespace" },
+  ]}
+  caption="Raw env is merged and validated once at boot: on success it becomes a typed, cached ConfigService that feature modules inject as a namespaced ConfigType; on failure the process refuses to start instead of serving traffic with a hollow config."
+/>
+
+## process.env vs ConfigService vs a hand-rolled singleton
+
+Why not just read `process.env`, or build one `config.ts` object yourself? The table makes the gap concrete:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Property</th>
+        <th class="border border-border px-3 py-2 text-left">Raw process.env</th>
+        <th class="border border-border px-3 py-2 text-left">Hand-rolled singleton</th>
+        <th class="border border-border px-3 py-2 text-left">ConfigService</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Types</strong></td>
+        <td class="border border-border px-3 py-2">Always string | undefined</td>
+        <td class="border border-border px-3 py-2">Only if you write them</td>
+        <td class="border border-border px-3 py-2">Typed via ConfigType / get&lt;T&gt;</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Validation</strong></td>
+        <td class="border border-border px-3 py-2">None — fails at first use</td>
+        <td class="border border-border px-3 py-2">DIY, easy to forget</td>
+        <td class="border border-border px-3 py-2">Schema at boot — fail fast</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>DI / injectable</strong></td>
+        <td class="border border-border px-3 py-2">No — global access</td>
+        <td class="border border-border px-3 py-2">No — imported global</td>
+        <td class="border border-border px-3 py-2">Yes — a real provider</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Mockable in tests</strong></td>
+        <td class="border border-border px-3 py-2">Mutate global env (leaky)</td>
+        <td class="border border-border px-3 py-2">Hard — module-level state</td>
+        <td class="border border-border px-3 py-2">Yes — provide a fake</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The hand-rolled singleton gets you types and one read site, but it's module-level state you can't inject or cleanly mock, and the validation is whatever discipline you remember to write. `ConfigService` gives you all three — types, boot-time validation, and DI — for free.
+
+<Inset kind="why" lang="en">
+Why does validation belong at boot and not at first read? A request-time check only fires on the code path that touches the variable — the one route that calls Stripe, the one job that opens the DB. Until that path runs in prod, a missing var is invisible, so the failure surfaces hours after deploy, on a customer, far from the deploy that caused it. Boot-time validation collapses that distance: the process either starts with a complete, well-formed config or it doesn't start at all, which is exactly the signal a deploy pipeline can act on (the new pods never become healthy, the rollout halts).
+</Inset>
+
+<TradeoffMatrix
+  id="nest-03-config-and-modules-01-config-module-tradeoff-1"
+  lessonSlug="01-config-module"
+  lang="en"
+  prompt="You're standing up config for a new Nest service. DATABASE_URL and STRIPE_SECRET_KEY are required, and you want type-safety plus a guarantee that a misconfigured deploy never reaches customers. What do you reach for?"
+  options={[
+    { name: "ConfigModule.forRoot with a validationSchema (Joi/Zod) and registerAs namespaces injected via ConfigType", summary: "Validated, typed, DI.", correct: true, justification: "This is the only option that gives all three properties at once. The validationSchema runs at module init, so a missing DATABASE_URL or STRIPE_SECRET_KEY crashes bootstrap with a clear message and the deploy never goes healthy — fail fast, before any customer. registerAs gives typed, namespaced config injected through ConfigType<typeof cfg> and config.KEY, so the compiler knows port is a number and tests can mock the namespace. And ConfigService is a real provider — injectable and mockable — so reads and validation are centralised in one place." },
+    { name: "Read process.env.DATABASE_URL and process.env.STRIPE_SECRET_KEY directly where needed", summary: "Untyped, unvalidated.", justification: "Every read is string | undefined with no compiler help, nothing validates the values, and a missing var stays undefined until the first code path uses it — which in prod is a customer-facing crash hours after deploy. It also can't be injected or mocked, so tests have to mutate global process.env. This is exactly the bug in the hook." },
+    { name: "A hand-rolled config.ts singleton object that reads process.env once and is imported everywhere", summary: "Half measure.", justification: "Better than raw process.env — you get one read site and can add types — but it's module-level global state, not a DI provider, so it's awkward to mock and the validation is only whatever you remember to hand-write. You end up reimplementing a worse ConfigModule with no schema integration and no fail-fast guarantee unless you build it yourself." },
+    { name: "Skip validation; rely on staging catching missing vars before prod", summary: "Hope is not a strategy.", justification: "Staging and prod have different environments by definition; a var present in staging can be absent in prod, and that's precisely when the silent undefined ships. Without a boot-time schema, nothing forces the deploy to fail closed, so the gap reaches a real customer. Validation at boot is the control that makes the difference." },
+  ]}
+/>
+
+<Quiz
+  id="nest-03-config-and-modules-01-config-module-quiz-1"
+  lessonSlug="01-config-module"
+  lang="en"
+  question="A required DATABASE_URL is missing in production. What happens with a validationSchema configured versus without one?"
+  choices={[
+    { label: "With a schema the process crashes at boot with a clear message; without one it stays undefined until the first query throws in prod", correct: true },
+    { label: "Either way Nest substitutes a sensible default and logs a warning", misconception: "ConfigModule does not invent defaults for required vars — defaults only exist where you explicitly write .default() in the schema. A required var with no value and no schema is simply undefined; with a required schema rule it crashes boot." },
+    { label: "With a schema the first request returns a 500; without one the request succeeds", misconception: "The whole point of the schema is that the failure moves earlier, to boot, not to the first request. Without a schema there's no validation at all, so the request that touches the missing var is the one that throws — not a clean 500 by design." },
+    { label: "Both fail identically at boot, because Nest always validates env", misconception: "Nest only validates when you provide a validationSchema or a validate function. With neither, the env is loaded as-is and a missing var is silently undefined — it fails lazily at first use, not at boot." },
+  ]}
+/>
+
+<Quiz
+  id="nest-03-config-and-modules-01-config-module-quiz-2"
+  lessonSlug="01-config-module"
+  lang="en"
+  question="You want a typed `database` config object (host: string, port: number) injectable into providers. Which approach delivers types plus DI?"
+  choices={[
+    { label: "registerAs('database', () => ({...})) and inject it with @Inject(databaseConfig.KEY) typed as ConfigType<typeof databaseConfig>", correct: true },
+    { label: "Export a plain const dbConfig = { host: process.env.DATABASE_HOST, port: +process.env.DATABASE_PORT } and import it", misconception: "That gives you a typed-ish object but it's module-level state, not a DI provider — you can't inject or cleanly mock it, and host stays string | undefined. registerAs makes it an injectable, namespaced token." },
+    { label: "config.get('database') and cast the result with `as DatabaseConfig`", misconception: "A manual cast lies to the compiler — it doesn't verify the shape and won't error if the keys are wrong. ConfigType<typeof databaseConfig> derives the real type from the factory, so it stays honest as the config evolves." },
+    { label: "Read process.env inside each provider's constructor", misconception: "That scatters untyped, unvalidated reads across every provider — the exact anti-pattern namespaced config exists to replace. registerAs centralises the shape once and injects it typed." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>ConfigModule.forRoot validates env once at boot (Joi/Zod) — a bad config crashes startup, not the first request — and exposes a typed, injectable ConfigService. Use registerAs + ConfigType for namespaced config.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-config-module-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does ConfigModule.forRoot actually do, and what do isGlobal, cache, and ignoreEnvFile each buy you?", a: "ConfigModule.forRoot is a thin layer over dotenv: it reads your .env file (and .env.${NODE_ENV} if you point envFilePath there), merges in process.env, optionally validates the merged result, and exposes everything through an injectable ConfigService that you read with a typed getter like config.get<string>('DATABASE_URL'). isGlobal: true registers the module globally so any feature module can inject ConfigService without re-importing ConfigModule. cache: true memoises lookups so config.get() doesn't re-read process.env on every call. ignoreEnvFile: true (which you set in production) tells Nest to skip the .env file entirely and take values only from the real environment — the orchestrator or secrets manager — so a stale committed file can't leak staging credentials into prod." },
+    { q: "Explain 'validate at boot, fail fast' and how you wire it up with both Joi and a custom validate function.", a: "The defining feature of ConfigModule is validation, not loading. You pass a validationSchema (a Joi.object marking required vars like DATABASE_URL: Joi.string().uri().required()) or a custom validate function (e.g. (raw) => zodSchema.parse(raw)). Nest runs it once at module init against the merged environment; if a required var is missing or malformed, it throws during bootstrap with a precise message and the process never starts. With validationOptions: { abortEarly: false } it reports every bad var at once instead of just the first. The payoff: a misconfigured deploy crashes at startup — the new pods never become healthy and the rollout halts — instead of silently being undefined until the first request hits the code path that uses the value, which in prod means a customer-facing crash hours after deploy. Both Joi and the custom validate path run at the same lifecycle point and give the identical fail-fast guarantee." },
+    { q: "Why is registerAs + ConfigType better than scattering process.env, and how do you inject a namespace?", a: "registerAs('database', () => ({ host: ..., port: ... })) defines a namespace: a named config object built from process.env and registered via the load array or forFeature. You inject it with @Inject(databaseConfig.KEY) typed as ConfigType<typeof databaseConfig>, where KEY is the DI token and ConfigType derives the static type straight from the factory's return value. The result is config that is typed (the compiler knows port is a number, with autocomplete and no casts), validated (the namespace is built from an env that already passed the schema), and testable (you provide a stub for databaseConfig.KEY in a unit test). Scattered process.env.X is the opposite on every axis: always string | undefined, unvalidated, untestable, and invisible to DI." },
+  ]}
+/>
+
+<Recap lang="en">
+The config module is how a Nest service stops treating environment variables as ambient global strings and starts treating them as a typed, validated, injectable contract. ConfigModule.forRoot is a thin layer over dotenv: it loads .env (and .env.$&#123;NODE_ENV&#125;), merges process.env, optionally validates, and exposes an injectable ConfigService you read with config.get&lt;T>(); isGlobal lets any module inject it, cache memoises reads, and ignoreEnvFile: true in production keeps the source of truth in the real environment rather than a committed file. The senior point is fail-fast validation: a validationSchema (Joi) or a custom validate function (Zod) runs once at boot, so a missing or malformed DATABASE_URL crashes startup with a clear message — the new deploy never goes healthy — instead of lurking as undefined until the first request touches it in prod. For structure, registerAs('database', factory) defines a namespace injected via @Inject(databaseConfig.KEY) typed as ConfigType&lt;typeof databaseConfig>, giving config that is typed, validated, and mockable — everything that scattered, stringly-typed, unvalidated, un-injectable process.env reads are not. Choose ConfigService with boot-time validation over raw process.env or a hand-rolled singleton.
+</Recap>

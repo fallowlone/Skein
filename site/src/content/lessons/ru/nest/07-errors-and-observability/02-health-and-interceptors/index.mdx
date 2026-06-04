@@ -1,0 +1,307 @@
+---
+concepts:
+- terminus
+- health-checks
+- liveness-readiness
+- timeout-interceptor
+- metrics
+deepensInto: []
+estMin: 17
+lang: ru
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-health-and-interceptors"
+sources:
+- https://docs.nestjs.com/recipes/terminus
+- https://docs.nestjs.com/interceptors
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+spiral: []
+status: ready
+summary: '@nestjs/terminus собирает health-индикаторы за /health. Сеньорское разделение: liveness обязан быть без зависимостей (он рестартит под), readiness проверяет зависимости и гейтит LB. Сверху — TimeoutInterceptor + interceptor метрик.'
+title: 'Health-проверки и сквозные interceptors'
+track: nest
+unit: "07-errors-and-observability"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+У первичной базы был сорокасекундный сбой — failover, ничего драматичного. Через сорок секунд весь твой флот лежал — и оставался лежать ещё долго после того, как база восстановилась. Постмортем был короткий и жёсткий: кто-то вписал `db.pingCheck('database')` в `livenessProbe`. Когда база отвалилась, каждый под провалил liveness, и Kubernetes сделал ровно то, что предписано при проваленном liveness-пробе, — убил и перезапустил поды. Свежие поды тоже не могли достучаться до базы, снова проваливали liveness и снова убивались. Транзиентный сбой зависимости превратился в самоиндуцированный, кластерный шторм рестартов. Проблемой был не health-эндпоинт. Проблемой было то, что проверку *зависимости* поставили за *liveness*-пробу.
+</Hook>
+
+<Crux>Liveness обязан быть без зависимостей (он рестартит под); readiness проверяет зависимости и лишь сливает под из load balancer.</Crux>
+
+<Explanation>
+
+## Terminus: один эндпоинт, много индикаторов
+
+`@nestjs/terminus` — это health-check тулкит Nest. Ты инжектишь `HealthCheckService` и вызываешь `check([...])` с массивом функций-индикаторов; check здоров, только если каждый индикатор отдаёт `up`. Terminus поставляет индикаторы под частые зависимости — `TypeOrmHealthIndicator` (гоняет `SELECT 1` через `pingCheck`), `HttpHealthIndicator.pingCheck(name, url)`, `MemoryHealthIndicator.checkHeap(key, bytes)`, плюс варианты под Mongoose/Prisma/Redis/Disk — а кастомные ты пишешь через `HealthIndicatorService`. Декоратор `@HealthCheck()` навешивает Swagger/форму ответа.
+
+```ts
+import { Controller, Get } from '@nestjs/common';
+import {
+  HealthCheckService, HealthCheck,
+  TypeOrmHealthIndicator, MemoryHealthIndicator,
+} from '@nestjs/terminus';
+
+@Controller('health')
+export class HealthController {
+  constructor(
+    private health: HealthCheckService,
+    private db: TypeOrmHealthIndicator,
+    private memory: MemoryHealthIndicator,
+  ) {}
+
+  // LIVENESS: "процесс жив и не заклинил?" — БЕЗ downstream-зависимостей.
+  @Get('live')
+  @HealthCheck()
+  liveness() {
+    return this.health.check([
+      () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024),
+    ]);
+  }
+
+  // READINESS: "могу ли я обслуживать трафик прямо сейчас?" — зависимости тут МОЖНО.
+  @Get('ready')
+  @HealthCheck()
+  readiness() {
+    return this.health.check([
+      () => this.db.pingCheck('database'),
+    ]);
+  }
+}
+```
+
+Кастомный индикатор живёт по тому же контракту — `HealthIndicatorService.check(key)` даёт индикатор, который ты помечаешь `up()` или `down({ ...detail })`:
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { HealthIndicatorService } from '@nestjs/terminus';
+
+@Injectable()
+export class QueueHealthIndicator {
+  constructor(private readonly hi: HealthIndicatorService) {}
+
+  async isHealthy(key: string) {
+    const indicator = this.hi.check(key);
+    const depth = await this.queue.depth();
+    return depth < 10_000 ? indicator.up({ depth }) : indicator.down({ depth });
+  }
+}
+```
+
+## Liveness vs readiness: различие, предотвращающее аварии
+
+Это и есть сеньорская суть, и хук — вся причина, почему она важна. Kubernetes гоняет две пробы с **совершенно разной семантикой провала**, и их смешение — это как небольшой сбой зависимости превращается в аварию на весь флот.
+
+- **Liveness** отвечает на *«процесс жив и не заклинил?»* Проваленная liveness-проба заставляет kubelet **перезапустить под**. Поэтому liveness **никогда** не должен зависеть от downstream-сервиса. Если твоя база, кэш или очередь на миг недоступны — это не повод убивать процесс: рестарт не починит внешний сбой, он лишь усилит его в crash loop. Держи liveness на уровне «event loop отвечает и процесс не в дедлоке».
+- **Readiness** отвечает на *«могу ли я обслуживать трафик прямо сейчас?»* Проваленная readiness-проба убирает под **из endpoints Service / load balancer**, но **оставляет процесс работать**. Так что readiness *может и должен* проверять критические зависимости, нужные, чтобы реально обслужить запрос. Когда база возвращается, readiness снова проходит и под ставят обратно в ротацию — без рестарта, без потери процесса, без шторма.
+
+Соответствующие пробы Kubernetes указывают на два раздельных эндпоинта:
+
+```yaml
+livenessProbe:
+  httpGet: { path: /health/live, port: 3000 }
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet: { path: /health/ready, port: 3000 }
+  periodSeconds: 5
+  failureThreshold: 2
+```
+
+<SequenceDiagram
+  label="Пробы Kubernetes бьют в два раздельных эндпоинта Nest: liveness-проба зовёт /health/live, который гоняет только индикатор памяти без зависимостей и отдаёт up, поэтому под никогда не рестартится во время сбоя базы; readiness-проба зовёт /health/ready, который гоняет индикатор pingCheck базы, и когда база лежит, индикатор отдаёт down, так что readiness отдаёт 503 и под сливают из load balancer, не убивая; когда база восстанавливается, readiness снова отдаёт up и под ставят обратно в ротацию."
+  hue="var(--d-systems)"
+  actors={["k8s probe", "HealthCheckService", "Indicators"]}
+  messages={[
+    { from: "k8s probe", to: "HealthCheckService", label: "GET /health/live" },
+    { from: "HealthCheckService", to: "Indicators", label: "memory.checkHeap (no deps)" },
+    { from: "Indicators", to: "HealthCheckService", label: "up -> never restart" },
+    { from: "k8s probe", to: "HealthCheckService", label: "GET /health/ready" },
+    { from: "HealthCheckService", to: "Indicators", label: "db.pingCheck (dep)" },
+    { from: "Indicators", to: "HealthCheckService", label: "down on DB outage" },
+    { from: "HealthCheckService", to: "k8s probe", label: "503 -> drain from LB, keep pod" },
+  ]}
+  caption="Liveness гоняет только индикаторы без зависимостей, так что сбой базы не может перезапустить под. Readiness гоняет проверку зависимости и отдаёт 503, сливая под из load balancer и оставляя процесс живым для восстановления."
+/>
+
+## Readiness как рычаг graceful shutdown
+
+Тот же readiness-эндпоинт — это твой рычаг слива на шатдауне. На `SIGTERM` ты хочешь, чтобы load balancer перестал слать новый трафик *до* того, как ты начнёшь рушить процесс, — иначе in-flight запросы обрежутся. Так что верный порядок шатдауна такой: переключить readiness в `down` **первым**, дождаться, пока LB заметит и сольёт, *затем* закрыть сервер и соединения. Shutdown hooks Nest дают тебе этот шов:
+
+```ts
+@Injectable()
+export class ReadinessState {
+  private ready = true;
+  isReady() { return this.ready; }
+  setDraining() { this.ready = false; } // readiness-индикатор читает это
+}
+
+// В readiness-проверке гейти на этом состоянии, чтобы SIGTERM переключил её в 503 первой.
+async beforeApplicationShutdown() {
+  this.readinessState.setDraining();      // провалить readiness -> LB сливает нас
+  await sleep(this.drainGraceMs);         // дай k8s несколько интервалов пробы
+}
+```
+
+Именно этот порядок — readiness down, слив, затем закрытие — заставляет rolling deploy не потерять ни одного запроса. (Хук `beforeApplicationShutdown` срабатывает только если был вызван `app.enableShutdownHooks()`; app-level обвязка шатдауна живёт в уроке про graceful shutdown. Здесь суть — *какой* сигнал переключает readiness и почему он должен предшествовать teardown.)
+
+## Сквозные interceptors для устойчивости и наблюдаемости
+
+Interceptors оборачивают `next.handle()` (RxJS `Observable`) с обеих сторон, что делает их верным домом для сквозного слоя, обрамляющего каждый запрос: **таймаут**, чтобы заклинивший downstream не держал запрос открытым вечно, **метрики**, чтобы видеть латентность и статус, и **кэширование** для горячих GET'ов. Канонический `TimeoutInterceptor` гоняет хендлер наперегонки с RxJS `timeout()` и конвертирует получившийся `TimeoutError` в нормальный `RequestTimeoutException` (408):
+
+```ts
+import {
+  Injectable, NestInterceptor, ExecutionContext,
+  CallHandler, RequestTimeoutException,
+} from '@nestjs/common';
+import { Observable, throwError, TimeoutError } from 'rxjs';
+import { catchError, timeout } from 'rxjs/operators';
+
+@Injectable()
+export class TimeoutInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
+    return next.handle().pipe(
+      timeout(5000),
+      catchError((err) =>
+        err instanceof TimeoutError
+          ? throwError(() => new RequestTimeoutException())
+          : throwError(() => err),
+      ),
+    );
+  }
+}
+```
+
+**Interceptor метрик** пишет длительность и исход в гистограмму `prom-client`, тапая и успешный, и ошибочный путь:
+
+```ts
+@Injectable()
+export class MetricsInterceptor implements NestInterceptor {
+  constructor(private readonly httpDuration: Histogram) {}
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const route = ctx.switchToHttp().getRequest().route?.path ?? 'unknown';
+    const stop = this.httpDuration.startTimer({ route });
+    return next.handle().pipe(
+      tap(() => stop({ status: 'ok' })),
+      catchError((err) => { stop({ status: 'error' }); return throwError(() => err); }),
+    );
+  }
+}
+```
+
+Тонкость, которую сеньор обязан держать: **глобальные interceptors композируются, а исходящий путь разматывается в обратном порядке**. На входе они идут global → controller → route; стрим ответа разматывается route → controller → global, как возвраты вложенных функций. Так что **порядок важен**. Если хочешь, чтобы метрики писали *реальную* отданную латентность, включая таймаут, interceptor метрик должен оборачивать *снаружи* timeout-interceptor — иначе он остановит таймер до того, как сработает таймаут, и недосчитает хвостовую латентность.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Проверка / задача</th>
+        <th class="border border-border px-3 py-2 text-left">Эндпоинт или компонент</th>
+        <th class="border border-border px-3 py-2 text-left">Зависит от downstream?</th>
+        <th class="border border-border px-3 py-2 text-left">k8s / эффект при провале</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Liveness</strong></td>
+        <td class="border border-border px-3 py-2">/health/live — только память, event loop</td>
+        <td class="border border-border px-3 py-2">Нет — никогда</td>
+        <td class="border border-border px-3 py-2">Под РЕСТАРТИТСЯ (убит + пересоздан)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Readiness</strong></td>
+        <td class="border border-border px-3 py-2">/health/ready — db/cache/queue pingCheck</td>
+        <td class="border border-border px-3 py-2">Да — критические зависимости</td>
+        <td class="border border-border px-3 py-2">Под СЛИТ из LB, процесс жив</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>Таймаут</strong></td>
+        <td class="border border-border px-3 py-2">TimeoutInterceptor (RxJS timeout)</td>
+        <td class="border border-border px-3 py-2">Оборачивает хендлер</td>
+        <td class="border border-border px-3 py-2">408 RequestTimeoutException, освобождает запрос</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>Метрики</strong></td>
+        <td class="border border-border px-3 py-2">MetricsInterceptor -> prom-client</td>
+        <td class="border border-border px-3 py-2">Оборачивает хендлер (самый внешний)</td>
+        <td class="border border-border px-3 py-2">Пишет длительность + статус, на запрос не влияет</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="ru">
+Почему метрики должны оборачивать *снаружи* таймаута, а не внутри? Входной порядок — это порядок регистрации глобальных interceptors; исходящий разматывается в обратном. Если `TimeoutInterceptor` самый внешний, `timeout()` срабатывает, и `catchError` interceptor'а метрик никогда не видит медленный запрос медленным — таймер уже остановлен, либо стрим зафейлился до того, как `tap` отработал на реальной длительности. Поставь метрики самыми внешними, и они обрамят весь запрос, включая путь таймаута, так что твой p99 отразит то, что клиенты реально пережили. Порядок — не косметика; он меняет то, что говорят твои дашборды.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-02-health-and-interceptors-tradeoff-1"
+  lessonSlug="02-health-and-interceptors"
+  lang="ru"
+  prompt="У тебя Terminus health-эндпоинт, который гоняет db.pingCheck('database'). Куда его вписать, учитывая, что краткий сбой базы НЕ должен перезапускать каждый под во флоте?"
+  options={[
+    { name: "Вписать проверку базы в READINESS (/health/ready); держать LIVENESS (/health/live) без зависимостей (только память/event loop)", summary: "Зависимости в readiness, liveness чист.", correct: true, justification: "Это и есть весь урок. Проваленная readiness-проба убирает под из load balancer, но оставляет процесс работать, так что сбой базы сливает трафик и самоисцеляется в момент возврата базы — без рестарта, без шторма. Liveness остаётся без зависимостей, потому что проваленная liveness-проба РЕСТАРТИТ под, а рестарт никогда не починит внешний сбой; он лишь превратит сбой зависимости в crash loop. Раздельные эндпоинты, раздельная семантика: ровно для этого и нужна модель двух проб Kubernetes." },
+    { name: "Вписать проверку базы в LIVENESS (/health/live)", summary: "Усилитель аварии.", justification: "Это постмортем из хука. Проваленная liveness-проба заставляет Kubernetes убить и пересоздать под. Во время сбоя базы каждый под проваливает liveness, каждый под рестартится, свежие поды всё равно не достучатся до базы, и ты получаешь кластерный шторм рестартов, переживающий саму аварию. Транзиентный сбой зависимости никогда не должен рестартить твой процесс." },
+    { name: "Положить и проверку базы, и память в один комбинированный /health, используемый обеими пробами", summary: "Связывает рестарт с зависимостями.", justification: "Комбинированный эндпоинт заставляет liveness и readiness разделить судьбу. Как только проверка базы оказывается на пути, который потребляет liveness-проба, сбой базы рестартит флот — ты переизобрёл ровно тот же режим отказа, просто спрятав за одним URL. Две пробы существуют именно для того, чтобы их семантика провала могла различаться; склейка это выбрасывает." },
+    { name: "Вообще отказаться от readiness; полагаться на liveness плюс короткий timeout-interceptor для сброса нагрузки", summary: "Не тот слой.", justification: "Timeout-interceptor освобождает отдельный застрявший запрос; он ничего не делает, чтобы вывести под из ротации, когда его зависимость лежит. Без readiness load balancer продолжает маршрутизировать на под, который не может обслужить, а liveness либо ничего не делает (если без зависимостей), либо рестартит флот (если проверяет зависимость). Readiness — единственный механизм, который сливает, не убивая." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-02-health-and-interceptors-quiz-1"
+  lessonSlug="02-health-and-interceptors"
+  lang="ru"
+  question="Проваленная liveness-проба Kubernetes против проваленной readiness-пробы — что вызывает каждая?"
+  choices={[
+    { label: "Проваленный liveness РЕСТАРТИТ под; проваленный readiness убирает его из load balancer, но оставляет процесс работать", correct: true },
+    { label: "Оба рестартят под; readiness просто рестартит быстрее", misconception: "Readiness никогда не рестартит под. Проваленная readiness-проба лишь убирает под из endpoints Service (load balancer), оставляя процесс живым, чтобы он восстановился и вернулся, когда снова пройдёт." },
+    { label: "Проваленный liveness сливает трафик; проваленный readiness рестартит под", misconception: "Это ровно наоборот, и инверсия — это то, что вызывает аварии. Провал liveness рестартит; провал readiness сливает. Вписать проверку зависимости в liveness, думая, что она «просто сольёт», — это как сбой базы рестартит флот." },
+    { label: "Ни одна не имеет эффекта, пока ты не настроишь ещё и startupProbe", misconception: "Liveness и readiness действуют сами по себе. startupProbe лишь откладывает две другие во время медленного старта; он не решает, вызовет ли их провал рестарт или слив." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-02-health-and-interceptors-quiz-2"
+  lessonSlug="02-health-and-interceptors"
+  lang="ru"
+  question="Ты добавляешь interceptor метрик и timeout-interceptor глобально и хочешь, чтобы p99 включал запросы, которые отвалились по таймауту. Как их упорядочить?"
+  choices={[
+    { label: "Метрики снаружи, таймаут внутри — чтобы метрики обрамляли весь запрос, включая путь таймаута", correct: true },
+    { label: "Таймаут снаружи, метрики внутри — чтобы таймаут сработал до того, как метрики что-либо запишут", misconception: "Если таймаут самый внешний, он зафейлит стрим до того, как внутренний interceptor метрик запишет настоящую отданную латентность, так что запросы по таймауту недосчитываются или мерятся неверно. Метрики обязаны оборачивать снаружи таймаута, чтобы видеть реальную длительность." },
+    { label: "Порядок не важен; interceptors независимы", misconception: "Глобальные interceptors композируются, и исходящий путь разматывается в обратном порядке (route -> controller -> global). То, какой из них оборачивает другой, меняет, что каждый наблюдает, — здесь это решает, отразит ли твой p99 путь таймаута вообще." },
+    { label: "Положи таймаут в guard, а метрики в filter, чтобы порядок был неважен", misconception: "Guard возвращает boolean и не может замерить хендлер; filter выполняется только при выбросе и никогда не видит длительность успешного ответа. И то, и другое — задачи interceptor, а порядок между двумя interceptors всё равно важен." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Раздели health: liveness (без зависимостей; провал РЕСТАРТИТ под) vs readiness (проверяет зависимости; провал СЛИВАЕТ из LB). Проверки базы — только в readiness. Сверху TimeoutInterceptor + метрики, метрики внешними.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-07-errors-and-observability-02-health-and-interceptors-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни различие liveness-vs-readiness и почему проверка зависимости (db.pingCheck) принадлежит только одной из них.", a: "Liveness отвечает на «процесс жив и не заклинил?» — проваленная liveness-проба заставляет Kubernetes РЕСТАРТНУТЬ под (убить + пересоздать). Readiness отвечает на «могу ли я обслуживать трафик прямо сейчас?» — проваленная readiness-проба убирает под из endpoints Service / load balancer, но ОСТАВЛЯЕТ процесс работать. Проверка зависимости вроде db.pingCheck принадлежит только readiness: если база на миг легла, ты хочешь, чтобы под слили из load balancer, пока база не вернётся, а затем автоматически вернули — без рестарта. Если же ты положишь db.pingCheck в liveness, сбой базы рестартит каждый под; свежие поды всё равно не достучатся до базы, снова провалят liveness, и ты получишь кластерный шторм рестартов, переживающий аварию. Поэтому liveness обязан быть без зависимостей (только память/event loop), ведь рестарт никогда не починит внешний сбой зависимости." },
+    { q: "Как Terminus и interceptors складываются в продакшен-слой health + устойчивости и почему порядок interceptors важен?", a: "@nestjs/terminus отдаёт health через HealthCheckService.check([...]) с индикаторами (TypeOrmHealthIndicator.pingCheck, HttpHealthIndicator.pingCheck, MemoryHealthIndicator.checkHeap, кастомные через HealthIndicatorService). Ты выставляешь два эндпоинта — /health/live (без зависимостей) и /health/ready (проверяет критические зависимости) — указанные на liveness и readiness пробы k8s. Readiness ещё и дублирует роль рычага graceful-слива: на SIGTERM ты переключаешь readiness в down ПЕРВЫМ, чтобы load balancer слил под до того, как ты закроешь сервер, не потеряв ни одного in-flight запроса. Сверху ты накладываешь сквозные interceptors: TimeoutInterceptor (RxJS timeout() -> RequestTimeoutException), чтобы заклинивший downstream не держал запрос открытым, interceptor метрик, пишущий длительность/статус в prom-client, и CacheInterceptor для горячих GET'ов. Глобальные interceptors композируются, а исходящий путь разматывается в обратном порядке (route -> controller -> global), так что порядок важен: ставь interceptor метрик СНАРУЖИ timeout-interceptor, иначе метрики остановят таймер до того, как сработает таймаут, и твой p99 недосчитает запросы, которые реально отвалились по таймауту." },
+  ]}
+/>
+
+<Recap lang="ru">
+@nestjs/terminus отдаёт health за HealthCheckService.check([...]), агрегируя индикаторы — TypeOrmHealthIndicator.pingCheck, HttpHealthIndicator.pingCheck, MemoryHealthIndicator.checkHeap и кастомные через HealthIndicatorService.up()/down() — где check здоров, только если каждый индикатор up. Сеньорское различие — liveness vs readiness, и у него прямые последствия в Kubernetes. Liveness («процесс жив и не заклинил?») обязан быть без зависимостей, потому что проваленная liveness-проба РЕСТАРТИТ под, а рестарт никогда не починит внешний сбой — он лишь усиливает сбой зависимости в кластерный шторм рестартов. Readiness («могу ли я обслуживать трафик прямо сейчас?») проверяет критические зависимости, потому что проваленная readiness-проба лишь СЛИВАЕТ под из load balancer, оставляя процесс живым для восстановления. Так что вписывай db.pingCheck в /health/ready, никогда в /health/live. Readiness — ещё и рычаг graceful shutdown: на SIGTERM переключи его в down первым, чтобы LB слил под до teardown. Сверху сквозные interceptors несут устойчивость и наблюдаемость — TimeoutInterceptor (RxJS timeout() -> RequestTimeoutException), interceptor метрик в prom-client и CacheInterceptor для GET'ов. Глобальные interceptors композируются и разматываются в обратном порядке, так что порядок важен: метрики идут самыми внешними, чтобы p99 включал путь таймаута.
+</Recap>
