@@ -109,13 +109,14 @@ describe("checkPracticeLessonKey", () => {
 });
 
 describe("checkPracticeCount", () => {
-  test("warns (not errors) for a ready lesson with no practice file in P1", async () => {
+  test("warns (not errors) for a ready lesson with no practice file in a non-required track", async () => {
     await withRoot(async (root) => {
-      await lesson(root, "en", "databases/03-execution-plans/03-join-algorithms");
-      await lesson(root, "ru", "databases/03-execution-plans/03-join-algorithms");
+      // typescript is not in PRACTICE_REQUIRED_TRACKS, so a missing practice file warns rather than errors
+      await lesson(root, "en", "typescript/03-generics/01-generic-functions");
+      await lesson(root, "ru", "typescript/03-generics/01-generic-functions");
       const { errors, warnings } = await checkPracticeCount(root);
       expect(errors).toEqual([]);
-      expect(warnings.some((w) => /03-join-algorithms/.test(w))).toBe(true);
+      expect(warnings.some((w) => /01-generic-functions/.test(w))).toBe(true);
     });
   });
 });
