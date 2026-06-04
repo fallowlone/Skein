@@ -1,0 +1,194 @@
+---
+concepts:
+- ffi
+- koffi
+- ffi-napi
+- libffi
+- dlopen
+- struct-marshalling
+- memory-ownership
+- native-callbacks
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs:
+- node/12-native-and-ffi/01-native-addons-napi
+slug: 03-ffi-and-dlopen
+sources:
+- https://koffi.dev/
+- https://nodejs.org/api/process.html
+- https://github.com/node-ffi-napi/node-ffi-napi
+- https://github.com/libffi/libffi
+spiral: []
+status: ready
+summary: 'FFI calls an already-compiled shared library from JS — no C glue, no
+  compiler — by declaring the C prototype and letting libffi build the call at
+  runtime. You cross into native memory the GC cannot see, so a wrong signature or an
+  unfreed pointer segfaults the process.'
+title: 'FFI: calling a prebuilt shared library from JS with koffi — and who owns the memory'
+track: node
+unit: 12-native-and-ffi
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A team needed three functions from a vendor's C SDK — a `.so` with no JavaScript bindings — and nobody wanted to own a C++ addon. So they reached for `ffi-napi`: declare the function signatures in JS, point it at the library, done in an afternoon. It worked on Node 16. Then a Node upgrade landed and `npm install` died rebuilding `ref-napi`'s native binary against the new ABI — the FFI stack is *itself* a compiled addon. They pinned Node and moved on. Months later the real bill came due: one signature declared a 64-bit device handle as `'int'`, so every returned pointer was silently truncated to 32 bits. Most of the time the high bits were zero and it worked. Under load, with the heap mapped higher, it wasn't — and the process took a `SIGSEGV` straight to the ground, no stack trace, no catch, mid-request. The fix was never "write more C." It was understanding what FFI actually does: declare the *exact* ABI, decide who frees what, and stop running an unmaintained binding.
+</Hook>
+
+<Crux>FFI calls a prebuilt `.so` from JS via libffi — no compiler — but a wrong signature or an unfreed pointer segfaults the whole process.</Crux>
+
+<Explanation>
+
+## What FFI is — and how it differs from a native addon
+
+The previous lessons built a **native addon**: you write C/C++ glue against Node-API, compile it to a `.node` binary, and `require` it. **FFI** (Foreign Function Interface) skips the glue entirely. You take an *already-compiled* shared library — `libfoo.so` on Linux, `.dylib` on macOS, `.dll` on Windows — declare the prototype of the function you want *in JavaScript*, and a library marshals the call at runtime. No C source of your own, no compiler at install, no `.node` to build: just open the library and describe the signature.
+
+```js
+import koffi from 'koffi';
+
+const libm = koffi.load('libm.so.6');             // dlopen the shared library
+const pow  = libm.func('double pow(double, double)'); // declare the C prototype
+
+pow(2, 10); // 1024 — libffi packs the doubles per the ABI, calls, reads the result
+```
+
+That `libm.func('double pow(double, double)')` line is the whole idea: a string that *is* the C signature. There is no compiler verifying it against `libm`'s real `pow`. The declaration is a contract **you alone enforce** — and that is the central tradeoff against a native addon, where the C compiler type-checks your glue. FFI buys you "no toolchain, wrap an existing library in minutes" by selling you "get one type wrong and there is no one to tell you."
+
+## libffi: building a call frame at runtime
+
+Under every FFI binding sits **libffi**. A normal compiled call has its argument layout baked in at compile time — the compiler knows to put the first integer in `rdi`, the first float in `xmm0`, and so on for the platform's calling convention (System V AMD64 on Linux/macOS, the Microsoft x64 ABI on Windows). FFI does not have that luxury: it learns the signature only at runtime, from your declaration. So libffi *constructs the call frame dynamically* — it reads your declared types, places each argument in the right register or stack slot for the ABI, jumps through a trampoline into the library function, and reads the return value back out of the return register.
+
+The cost is that dynamic step. Each FFI call pays a trampoline plus per-argument marshalling — on the order of tens of nanoseconds *on top of* the C function's own work. For a handful of coarse calls per request that is invisible. For a hot loop making millions of tiny calls it dominates, and a compiled Node-API addon — whose calls are direct, with no runtime frame-building — wins decisively. FFI's sweet spot is **coarse-grained calls into an existing library**, not a chatty inner loop.
+
+## koffi vs ffi-napi: pick the maintained one
+
+There are two FFI lineages in Node, and the choice is not close in 2025.
+
+The classic stack is **`ffi-napi` + `ref-napi`** — the descendants of `node-ffi`. Its fatal property is the one from the hook: it is *itself* a native addon. Installing it compiles C, so you inherit the entire node-gyp/prebuild/ABI matrix from the last lesson — the very build pain FFI was supposed to avoid — plus breakage every time a Node major shifts the ABI. It is now effectively unmaintained. Do not start new work on it.
+
+**koffi** is the modern answer. It ships prebuilt binaries for common platforms (no node-gyp on install), is actively maintained, runs measurably faster, and has first-class support for structs, pointers, output parameters, callbacks, and disposable types. For new FFI work, koffi is the senior default; treat `ffi-napi` as legacy you migrate *off*.
+
+## Memory ownership: the boundary the GC will not cross
+
+This is where FFI bites, and it is worth stating as a hard rule: **JavaScript's garbage collector cannot see native memory, and C cannot see the JS heap.** They are two separate worlds with no shared bookkeeping. Three consequences you must manage by hand:
+
+- **C allocations are yours to free.** If a function returns a `malloc`'d pointer (a `char*` string, a struct), the GC will *never* reclaim it — you must call the library's matching free function yourself. Forget it and you have a classic C memory leak, in a Node process, that no heap snapshot will explain because it is off-heap.
+- **Buffers you pass must outlive the call.** When you hand C a pointer into a JS `Buffer` or typed array, that memory is only safe for as long as the JS object is alive and unmoved. If C stores the pointer and uses it *after* the call returns (an async callback, a retained handle), you must keep a live JS reference so the GC neither collects nor relocates it — otherwise C dereferences freed memory.
+- **Output parameters need explicit allocation.** Many C functions fill a caller-provided buffer (`int read(fd, void* buf, size_t n)`). You allocate it (`koffi.alloc`), pass the pointer, then decode what C wrote back.
+
+```js
+// C: char* make_greeting(const char* name);  // returns a malloc'd string
+//    void  free_greeting(char* p);            // caller must free it
+const make = lib.func('char* make_greeting(const char*)');
+const free = lib.func('void free_greeting(char*)');
+
+const ptr = make('Ada');                 // C malloc'd this — GC has no idea
+const text = koffi.decode(ptr, 'char*'); // copy the bytes into a JS string
+free(ptr);                               // YOU free it, or it leaks forever
+```
+
+<Inset kind="why" lang="en">
+Why is this so much sharper than a normal Node bug? Because the failure is not a JavaScript exception. Dereferencing a freed or moved pointer is a `SIGSEGV` — the OS kills the process. There is no `try/catch` that saves you, no stack trace pointing at the offending line, and the crash frequently surfaces far from the real bug, whenever the freed page is next touched. An undrained stream leaks gracefully; a mismanaged FFI pointer takes the whole server down without a word. The discipline is exactly C's: pair every allocation with a free, and keep referenced anything the native side still holds.
+</Inset>
+
+## Structs, callbacks, and the cost of a wrong type
+
+Three more places the contract must be exact:
+
+**Structs.** You declare the layout (`koffi.struct({ x: 'int', y: 'double' })`), and the field order, types, *and alignment/padding* must match the C definition byte-for-byte. Get the padding wrong and every field after it reads from the wrong offset — garbage, not a crash, which is worse to debug.
+
+**Callbacks.** To let C call *back* into JS (a comparator, an event handler) you register a JS function as a C function pointer. Two hazards: the JS function must stay alive while C holds the pointer (drop the reference and GC collects it under C's feet), and if the library invokes your callback on a *non-JS thread*, calling into V8 from there crashes — you need koffi's async/registered-callback handling, not a raw synchronous one.
+
+**Wrong scalar types.** The hook's bug generalizes: declaring `'int'` where C returns a 64-bit `size_t`, `long`, or pointer truncates the value; declaring a signed type for an unsigned one flips large values negative. None of this is checked. The declaration is the only source of truth, and it is yours to get right.
+
+<TradeoffMatrix
+  id="03-ffi-and-dlopen-tradeoff-1"
+  lessonSlug="03-ffi-and-dlopen"
+  lang="en"
+  prompt="A vendor ships a closed-source native library (libvendor.so) with three functions you must call a few times per request from a Node service. No source, no JS bindings. Which approach?"
+  options={[
+    { name: "Use koffi to load the .so and declare the three function signatures", summary: "FFI, no toolchain.", correct: true, justification: "You can't recompile a closed-source .so, the calls are coarse (a few per request, not a hot loop), and koffi needs no C glue or compiler at install — you declare three prototypes and go. This is exactly FFI's niche: wrap an existing native library quickly. You accept the in-process risk (a crash in the lib kills Node) and the duty to manage any memory it allocates, but for a few coarse calls that's the right trade." },
+    { name: "Write a Node-API addon that links libvendor and exposes the three functions", summary: "Compile C glue.", justification: "Workable and gives type-checked, faster calls, but it's heavier than the problem: you take on a C++ glue layer plus the node-gyp/prebuild matrix to call three functions a few times per request. The compiled-call speed advantage only matters in a hot loop, which this isn't. Reserve an addon for when you need many fast in-process calls or tight C-level integration." },
+    { name: "Recompile libvendor to WebAssembly and call it in-process", summary: "Can't — no source, OS deps.", justification: "WASM needs the source to recompile and runs in a sandbox without arbitrary OS access — a closed-source .so that links system libraries can't be turned into a portable .wasm. WASM is for your own portable compute kernels, not for wrapping a vendor's prebuilt native library." },
+    { name: "Spawn a tiny C wrapper binary per call via child_process", summary: "Process per call.", justification: "You'd still have to write and compile that C wrapper (the toolchain you were avoiding), and spawn + IPC per call adds latency and operational weight. child_process fits an existing standalone CLI, not three library functions you can call in-process with koffi far more cheaply." },
+  ]}
+/>
+
+<Quiz
+  id="03-ffi-and-dlopen-quiz-1"
+  lessonSlug="03-ffi-and-dlopen"
+  lang="en"
+  question="Why does koffi FFI need no C compiler at install, while a Node-API addon does?"
+  choices={[
+    { label: "FFI declares the function signature in JS and uses libffi to build the call frame at runtime against the already-compiled .so; an addon contains your C glue that must be compiled to a .node", correct: true },
+    { label: "FFI runs the C library in a sandbox that interprets it, so no native code executes", misconception: "FFI executes the real native code in-process at full speed — that's why a crash in the library takes down Node. It builds a call frame; it does not interpret or sandbox the library." },
+    { label: "koffi rewrites the C library into JavaScript on load", misconception: "koffi never touches the library's code; it loads the compiled .so and calls it directly via libffi. Nothing is transpiled to JS." },
+    { label: "Node-API addons are also compiler-free; the difference is only speed", misconception: "A Node-API addon is C/C++ that must be compiled (node-gyp) or shipped as a prebuild. The compiler requirement is the real difference; FFI declares signatures against an existing binary instead." },
+  ]}
+/>
+
+<Quiz
+  id="03-ffi-and-dlopen-quiz-2"
+  lessonSlug="03-ffi-and-dlopen"
+  lang="en"
+  question="A C function returns a malloc'd char* that you read into a JS string. What is the risk, and the correct handling?"
+  choices={[
+    { label: "The GC never frees C's malloc, so you must call the library's free function on the returned pointer after decoding it — and not before", correct: true },
+    { label: "Node's GC will collect the C string once the JS string is gone, so nothing to do", misconception: "The GC has no visibility into memory malloc'd by the C library — it's off-heap. It will never free that pointer; leaving it unfreed is a genuine leak no heap snapshot explains." },
+    { label: "Free the pointer immediately after the call, before decoding, to be safe", misconception: "Freeing before you copy the bytes into a JS string is a use-after-free — you'd decode freed memory and risk a segfault. Decode first, then free." },
+    { label: "Wrap the read in try/catch so a segfault becomes a catchable error", misconception: "A segfault from freed/invalid native memory is a SIGSEGV that kills the process; try/catch cannot intercept it. The fix is correct ownership (free once, after decoding), not exception handling." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The FFI call path: JavaScript declares a C prototype, libffi builds the call frame at runtime per the platform ABI, jumps into the prebuilt shared library, and marshals the return back — while any memory crossing the boundary stays outside the GC's view"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "decl", label: "JS declares the C prototype (koffi.func)", col: 0, row: 0 },
+    { id: "frame", label: "libffi builds the call frame: args into registers/stack per the ABI", col: 1, row: 0 },
+    { id: "call", label: "Trampoline into the .so function (real native code, in-process)", col: 2, row: 0 },
+    { id: "ret", label: "Return value marshalled back to JS", col: 3, row: 0 },
+    { id: "mem", label: "Memory crossing the line is OUTSIDE the GC: you free C allocations, keep passed Buffers referenced", col: 1, row: 1 },
+  ]}
+  edges={[
+    { from: "decl", to: "frame", label: "signature" },
+    { from: "frame", to: "call", label: "ABI" },
+    { from: "call", to: "ret", label: "result" },
+    { from: "call", to: "mem", label: "pointers" },
+  ]}
+  caption="No compiler runs: libffi turns your runtime signature into a real native call against the existing binary. The declaration and the memory ownership are yours to get right — a wrong type or an unfreed/early-freed pointer is a SIGSEGV, not a catchable error."
+/>
+
+<KeyTakeaway>FFI (koffi) calls a prebuilt `.so` from JS — no compiler; libffi marshals per the ABI. You own the boundary: free C allocations, keep buffers alive, declare exact types — a wrong one is a process-killing SIGSEGV.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-ffi-and-dlopen-retrieval"
+  lang="en"
+  questions={[
+    { q: "How does FFI call native code without a compiler, and what does it trade away versus a Node-API addon?", a: "FFI loads an already-compiled shared library (dlopen) and lets you declare the C function's prototype in JavaScript; a binding like koffi uses libffi to build the call frame at runtime — placing each declared argument in the right register or stack slot for the platform ABI (System V AMD64, Microsoft x64), trampolining into the function, and reading the return register. Because the library is already compiled and the signature is supplied at runtime, no C source of yours and no compiler at install are needed — unlike a Node-API addon, which is C/C++ glue you must compile to a .node (node-gyp) or ship as a prebuild. What FFI trades away is the compiler's type checking: the signature string is a contract only you enforce, so a wrong type is undetected. It also pays a per-call trampoline + marshalling cost (tens of ns) that a compiled addon's direct calls avoid, so FFI suits coarse calls into an existing library, not a hot inner loop." },
+    { q: "State the memory-ownership rules for crossing the FFI boundary, and why getting them wrong is uniquely dangerous.", a: "The GC cannot see native memory and C cannot see the JS heap, so you manage the boundary by hand. (1) If a function returns a malloc'd pointer, you must call the library's matching free yourself — the GC never reclaims it; forgetting leaks off-heap memory no snapshot explains. (2) A JS Buffer/typed array passed by pointer must stay alive and unmoved as long as C uses it; if C retains the pointer past the call (async, stored handle), keep a live JS reference or C dereferences freed/relocated memory. (3) Output parameters require explicit allocation (koffi.alloc) before passing the pointer. It's uniquely dangerous because the failure mode is not a JS exception but a SIGSEGV: the OS kills the process, try/catch can't intercept it, there's no JS stack trace, and the crash often surfaces far from the bug when the freed page is next touched. Plus picking the wrong binding matters: ffi-napi/ref-napi are themselves native addons (build matrix + ABI breakage, now unmaintained), so prefer the prebuilt, maintained koffi." },
+  ]}
+/>
+
+<Recap lang="en">
+FFI lets Node call into an already-compiled shared library — a vendor `.so`, a system library — straight from JavaScript, with no C glue of your own and no compiler at install: you `dlopen` the library and declare the C function's prototype, and a binding builds the call at runtime. Under the hood libffi reads your declared types and constructs the call frame dynamically, placing arguments per the platform ABI, trampolining into the function, and marshalling the return — which is why each call costs a little more than a compiled addon's direct call and why FFI fits coarse calls, not a chatty hot loop. The binding you choose matters: the classic ffi-napi/ref-napi stack is itself a native addon, so it drags in the whole node-gyp/prebuild/ABI-breakage problem and is now effectively unmaintained, while koffi ships prebuilt, stays maintained, runs faster, and handles structs, pointers, callbacks, and disposables — so koffi is the senior default. The real discipline is memory: the GC cannot see what C allocates and C cannot see the JS heap, so you free every pointer the library mallocs, keep any Buffer you pass alive (and unmoved) as long as C holds it, allocate output buffers explicitly, and declare every type exactly — because a wrong signature or a mismanaged pointer is not a catchable JavaScript error but a SIGSEGV that takes the whole process down without a stack trace. FFI is the fastest way to wrap an existing native library, and the easiest way to crash a server if you forget you are now writing C.
+</Recap>
