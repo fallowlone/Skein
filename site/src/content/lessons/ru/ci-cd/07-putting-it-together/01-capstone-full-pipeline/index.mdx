@@ -1,0 +1,275 @@
+---
+concepts:
+- pipeline-design
+- pr-checks
+- build-once
+- canary-rollback
+- provenance
+- end-to-end
+deepensInto: []
+estMin: 19
+lang: ru
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: 01-capstone-full-pipeline
+sources:
+- https://docs.github.com/en/actions/deployment/about-deployments/deploying-with-github-actions
+- https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment
+- https://slsa.dev/spec/v1.0/levels
+- https://martinfowler.com/bliki/ContinuousDelivery.html
+spiral: []
+status: ready
+summary: 'Production-пайплайн — это одна цепь. PR-проверки гейтят merge, артефакт собирается один раз с SBOM и подписанной provenance-аттестацией, затем тот же digest продвигается staging → canary → prod с откатом по метрикам. Пропусти звено — цепь рвётся.'
+title: 'Capstone: спроектируй полный CI/CD-пайплайн от и до'
+track: ci-cd
+unit: 07-putting-it-together
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Релиз выглядел чисто: зелёный PR, зелёная сборка по тегу, staging здоров, один клик аппрува, прод задеплоился успешно. Через сорок минут p99-латентность утроилась, и бюджет ошибок на квартал сгорел за полдня. Разбор нашёл одну строку. Прод-джоб делал свой собственный `docker build` из тега вместо того, чтобы тянуть digest, который проверил staging, — транзитивная зависимость опубликовала новый патч в зазоре, поэтому прод гонял *другой* бинарник, не тот, что прошёл каждый гейт. Каждая стадия работала. Цепь — нет, потому что одна стадия пересобрала вместо того, чтобы продвинуть. А ещё не было автоматического отката, так что человеку пришлось заметить, словить пейдж и откатывать руками.
+</Hook>
+
+<Crux>Пайплайн — одна цепь: гейт на PR, сборка раз с подписанной provenance, продвижение того же digest по стадиям, с откатом.</Crux>
+
+<Explanation>
+
+## Весь пайплайн — одна цепь, а цепь прочна настолько, насколько прочно её пропущенное звено
+
+Каждый прошлый урок трека был одним звеном: пайплайны, тестирование в CI, стратегии доставки, окружения и аппрувы, автоматизация релизов, supply-chain provenance, масштабирование. Capstone-пайплайн — это те звенья, сваренные по порядку, и интегративный режим отказа всегда один: **любое пропущенное звено молча ломает гарантию, которую цепь должна была дать целиком.** Пересобираешь на каждой стадии — твоё обещание «протестированного артефакта» ложь. Деплоишь без пути отката — твой canary это просто медленный аутаж. Отгружаешь непроверенный артефакт — твои SBOM и тесты описывают не тот бинарник, что работает. Дисциплина сеньорского пайплайна не в добавлении стадий — в том, чтобы ни одна стадия тихо не подменяла гарантию на более слабую.
+
+Есть три несущих инварианта. **(1) PR-проверки — это гейт merge'а** — быстрая обратная связь первой, required status checks блокируют merge, поэтому `main` всегда релизопригодна. **(2) Сборка один раз** — на merge или теге артефакт собирается ровно один раз, давая один неизменяемый digest, и с этого момента ничто не пересобирается; он только *продвигается*. **(3) Продвигай тот же digest** — staging, canary и production деплоят идентичный `image@sha256:…`, поэтому единственная переменная между окружениями — конфигурация, никогда не бинарник. Держи эти три — и большинство сюрпризов дня релиза становятся невозможны по построению.
+
+## Стадия 1 — PR-проверки: падай быстро, потом доказывай, потом блокируй merge
+
+У PR-гейта есть форма: самые дешёвые, самые вероятные на падение проверки первыми. Lint и typecheck бегут за секунды и ловят большинство ошибок, поэтому идут первыми и закорачивают дорогую работу. Дальше affected-only сборка и тесты — в монорепо ты тестируешь то, что трогает diff, а не весь мир (тут окупается урок про масштабирование). Настрой их как **required status checks** на ветке, чтобы красная проверка физически блокировала кнопку merge; проверка, которая только *репортит*, — это совет, не гейт. PR-стадия никогда не деплоит и не подписывает — её единственная задача держать `main` в режиме «merge-пригодна значит релизопригодна».
+
+```yaml
+name: ci
+on:
+  pull_request:
+permissions:
+  contents: read          # least privilege: PR-проверкам больше ничего не нужно
+jobs:
+  fast-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4 запинено по SHA
+      - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a  # v4 запинено по SHA
+        with: { node-version: '22', cache: 'npm' }
+      - run: npm ci
+      - run: npm run lint && npm run typecheck   # секунды; fail fast
+      - run: npx nx affected -t build test       # affected-only, не весь мир
+```
+
+## Стадия 2 — Сборка один раз: один digest, SBOM, подписанная provenance
+
+Это разворотная точка всего пайплайна. На merge в `main` (или на релизном теге) ты собираешь образ **один раз** и пушишь его по digest. В том же ране ты генерируешь **SBOM** (что внутри), производишь **build-provenance-аттестацию** (как, где и из какого коммита он собран) и **подписываешь** их keyless-cosign через Sigstore — OIDC-токен GitHub является подписывающей личностью, поэтому нет долгоживущего ключа, который можно утечь. Это ровно та цепочка, что зарабатывает SLSA Build L2 (а L3 — с изолированным эфемерным билдером на reusable workflow): хостовый, закалённый билдер автоматически генерирует и подписывает provenance. Два пункта без компромиссов для сеньорского workflow: **пинни сторонние actions по полному SHA коммита** (сдвинутый тег — это supply-chain-бэкдор) и выдавай **least-privilege `permissions:`** на каждый джоб, добавляя `id-token: write` только тому джобу, которому реально нужен OIDC, и `attestations: write` только там, где аттестуешь.
+
+```yaml
+  build-once:
+    needs: fast-gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # push в GHCR
+      id-token: write         # OIDC для keyless-подписи
+      attestations: write     # provenance-аттестация
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29  # v4
+      - uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcd730a4f6c4f  # v6
+        id: push
+        with:
+          push: true
+          tags: ghcr.io/acme/api:${{ github.sha }}
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be  # v1
+        with:
+          subject-name: ghcr.io/acme/api
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - uses: anchore/sbom-action@d94f46e13c6c62f59525ac9a1e147a99dc0b9bf5  # SPDX SBOM
+        with: { image: ghcr.io/acme/api@${{ steps.push.outputs.digest }} }
+```
+
+## Стадии 3–4 — Релиз, затем продвижение того же digest с гейтами и откатом
+
+Релиз — это бухгалтерия поверх проверенного артефакта: выводи версию из conventional commits (semver), тегай и публикуй подписанный образ в реестр. Дальше деплой — это чистое **продвижение одного digest**. Staging авто-деплоит `api@${{ digest }}` и гоняет smoke-тесты. Production — отдельное GitHub-**окружение с правилами защиты**: required reviewers и настройка «без само-аппрува» превращают деплой в осознанный, аудируемый человеческий гейт. За гейтом ты не переключаешь 100% трафика; ты делаешь **canary**: маршрутизируешь маленький срез, даёшь автоматическому анализу несколько минут следить за error rate и латентностью против базовой линии, и расширяешь только если метрический гейт прошёл. Если срабатывает **нарушение SLO**, раскатка останавливается и **автоматически откатывается** к предыдущему digest — то самое звено, которого не хватало в пайплайне из истории. Тот же неизменяемый digest течёт через каждую стадию; меняется только конфиг.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Стадия</th>
+        <th class="border border-border px-3 py-2 text-left">Цель</th>
+        <th class="border border-border px-3 py-2 text-left">Что сюда вставляется</th>
+        <th class="border border-border px-3 py-2 text-left">Провал, если пропустить</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">PR-проверки</td>
+        <td class="border border-border px-3 py-2">Держать <code>main</code> релизопригодной</td>
+        <td class="border border-border px-3 py-2">Быстрый гейт lint/typecheck, affected-only тесты, required status checks</td>
+        <td class="border border-border px-3 py-2">Сломанный код мёржится; каждая поздняя стадия наследует гниль</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Сборка один раз</td>
+        <td class="border border-border px-3 py-2">Один неизменяемый digest</td>
+        <td class="border border-border px-3 py-2">SBOM, provenance-аттестация, cosign keyless, SHA-пиннинг actions, OIDC</td>
+        <td class="border border-border px-3 py-2">Пересборка на стадии → прод гонит другой бинарник, не тот, что тестировали</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Релиз</td>
+        <td class="border border-border px-3 py-2">Версионированный, опубликованный артефакт</td>
+        <td class="border border-border px-3 py-2">Conventional commits → semver, тег, push подписанного образа</td>
+        <td class="border border-border px-3 py-2">Нет трассируемой версии; не сказать, что задеплоено, и не откатиться вперёд чисто</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Поэтапный деплой</td>
+        <td class="border border-border px-3 py-2">Безопасно продвинуть тот же digest</td>
+        <td class="border border-border px-3 py-2">Аппрув окружения, smoke-тесты, canary + метрический гейт, авто-откат</td>
+        <td class="border border-border px-3 py-2">Нет пути отката → плохой canary это просто медленный, более полный аутаж</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+```yaml
+  deploy:
+    needs: build-once
+    uses: ./.github/workflows/promote.yml
+    with:
+      digest: ${{ needs.build-once.outputs.digest }}   # продвигаем, не пересобираем
+  staging:
+    needs: build-once
+    environment: staging                                # авто-деплой
+    runs-on: ubuntu-latest
+    steps:
+      - run: deploy ghcr.io/acme/api@${{ needs.build-once.outputs.digest }}
+      - run: ./smoke-tests.sh
+  production:
+    needs: staging
+    environment: production    # правило защиты: required reviewers, без само-аппрува
+    runs-on: ubuntu-latest
+    steps:
+      - run: deploy-canary ghcr.io/acme/api@${{ needs.build-once.outputs.digest }} --weight 5
+      - run: analyze-slo --window 5m || { rollback; exit 1; }   # метрический гейт → авто-откат
+      - run: promote-to-full --weight 100
+```
+
+<Inset kind="why" lang="ru">
+Зачем проверять артефакт на деплое, если ты уже его подписал? Потому что подписать на сборке и *не проверить подпись перед деплоем* оставляет зазор нараспашку — любой, кто может писать в реестр или подменить тег, может подсунуть образ. Прод-джоб должен `cosign verify-attestation` (или `gh attestation verify`) ровно этот digest против ожидаемой workflow-личности до деплоя. Provenance, которую ты генерируешь, но никогда не проверяешь, — это декорация; provenance, которую ты проверяешь на гейте, — это контроль.
+</Inset>
+
+<TradeoffMatrix
+  id="01-capstone-full-pipeline-tradeoff-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="ru"
+  prompt="Как production должен получить артефакт, который staging уже проверил?"
+  options={[
+    { name: "Продвинуть точный digest, проверенный staging: deploy ghcr.io/acme/api@sha256:… неизменным через staging → canary → prod", summary: "Собрать раз, продвигать много.", correct: true, justification: "Это ядровый инвариант. Тот же неизменяемый digest течёт через каждое окружение, поэтому варьируется только конфигурация, никогда не бинарник. Артефакт, который гоняет production, байт-в-байт тот, что прошёл PR-проверки, smoke-тесты и проверку подписи/SBOM/provenance. Это делает историю невозможной: нет шага пересборки, в котором транзитивная зависимость или сдвинутый тег подменили бы бинарник. Откат тоже тривиален — переразворачиваешь предыдущий заведомо-хороший digest." },
+    { name: "Пересобрать из релизного тега в прод-джобе ради чистого, воспроизводимого окружения", summary: "Свежая сборка на стадию.", justification: "Это ровно баг из хука. Пересборка заново резолвит зависимости и заново гоняет тулчейн, поэтому транзитивный патч, опубликованный в зазоре, незапиненный базовый образ или любая недетерминированность дают другой бинарник, не тот, что тестировал staging. Твои зелёные гейты теперь сертифицируют не тот артефакт, что работает. «Воспроизводимые» окружения сборки на практике редко бит-в-бит идентичны во времени — и даже будь они такими, ты выбросил подписанную provenance, что пинила протестированный digest." },
+    { name: "Перетегать образ staging как :prod и деплоить по тегу", summary: "Тег вместо digest.", justification: "Теги — изменяемые указатели; поздний push может сдвинуть :prod на другой образ, а деплой по тегу значит, что ты не докажешь, какой digest реально работал. Это ближе к правильному, чем пересборка, но выбрасывает единственный идентификатор, который неизменяем и проверяем. Деплой по digest и держи теги только как человекочитаемые алиасы." },
+    { name: "Пусть каждое окружение тянет 'latest', чтобы всегда получать свежайшую сборку", summary: "Плыть на latest.", justification: "Худший вариант: :latest гонится с каждым merge, поэтому staging и prod могут молча разойтись посреди пайплайна, и ты понятия не имеешь, что где задеплоено. Он одновременно убивает build-once, гейтинг и откат. Никогда не деплой плавающий тег во что-либо, что тебе дорого." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-full-pipeline-quiz-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="ru"
+  question="Staging прошёл все гейты, но production утроил латентность. Прод-джоб делал `docker build` из тега. Что сломалось?"
+  choices={[
+    { label: "Production пересобрал вместо продвижения проверенного digest, поэтому зависимость зарезолвилась иначе и прод гонял другой бинарник, не тот, что прошёл каждый гейт", correct: true },
+    { label: "Smoke-тесты staging были слишком слабы, чтобы поймать регрессию латентности", misconception: "Даже идеальные smoke-тесты не сертифицируют бинарник, который production потом подменяет пересборкой. Гейты бежали против артефакта staging; пересборка прода произвела новый, которого они не видели. Фикс — build-once + продвижение digest, а не больше тестов на staging." },
+    { label: "Окно canary было слишком коротким, чтобы засечь проблему", misconception: "Длиннее canary мог бы поймать раньше, но корневая причина в том, что прод вообще гонял непроверенный, пересобранный бинарник. Продвинь тот же digest — и canary следит ровно за тем артефактом, что одобрили гейты." },
+    { label: "Required reviewers одобрили слишком быстро", misconception: "Человеческий аппрув гейтит намерение, а не идентичность бинарника — ревьюер не видит, что прод-джоб пересоберёт другой образ. Структурный фикс — деплоить digest, а не замедлять аппрувы." },
+  ]}
+/>
+
+<Quiz
+  id="01-capstone-full-pipeline-quiz-2"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="ru"
+  question="На build-once-джобе ты добавляешь `id-token: write` и пиннишь actions по SHA. Зачем именно оба?"
+  choices={[
+    { label: "id-token: write даёт джобу выпустить OIDC-токен для keyless-cosign-подписи без хранимого ключа; SHA-пиннинг не даёт сдвинутому тегу action'а вколоть вредоносный код в доверенную сборку", correct: true },
+    { label: "Оба — просто дефолты GitHub, которые надо скопировать из доков", misconception: "Ни то ни другое не дефолт — permissions по умолчанию read-only для contents и больше ничего, а большинство примеров используют плавающие теги. id-token: write ты добавляешь осознанно ради OIDC, а пиннинг по SHA — осознанно ради целостности supply-chain." },
+    { label: "id-token: write ускоряет сборку, а SHA-пиннинг улучшает кэширование", misconception: "Ни то ни другое не трогает скорость сборки или кэш. id-token: write — чисто про OIDC-личность для keyless-подписи; SHA-пиннинг — чисто про недопущение того, чтобы изменяемый тег подменил код action'а." },
+    { label: "Они позволяют пропустить генерацию SBOM", misconception: "Они не связаны с SBOM. SBOM генерируется отдельным шагом; OIDC подписывает аттестации, а SHA-пиннинг закаляет то, какой код action'а запускается." },
+  ]}
+/>
+
+<DragOrder
+  id="01-capstone-full-pipeline-drag-1"
+  lessonSlug="01-capstone-full-pipeline"
+  lang="ru"
+  prompt="Расставь стадии полного пайплайна от PR до полностью раскатанного прод-релиза:"
+  items={[
+    { id: "a", label: "PR-проверки — быстрый гейт lint/typecheck, affected-only тесты, required status checks блокируют merge" },
+    { id: "b", label: "Сборка один раз — один digest + SBOM + подписанная provenance-аттестация (OIDC, SHA-пиннинг actions)" },
+    { id: "c", label: "Релиз — semver из conventional commits, тег, публикация подписанного образа" },
+    { id: "d", label: "Staging — авто-деплой того же digest, прогон smoke-тестов" },
+    { id: "e", label: "Прод-гейт — ручной аппрув через правила защиты окружения" },
+    { id: "f", label: "Canary + откат — раскатка малого среза под метрическим гейтом; авто-откат при нарушении SLO" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e", "f"]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Полный CI/CD-пайплайн от PR-проверок через единственную сборку до поэтапного, гейтованного canary-деплоя с ребром отката"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "pr", label: "PR-проверки", sub: "required" },
+    { id: "build", label: "Сборка раз", sub: "SBOM+sign" },
+    { id: "publish", label: "Публикация", sub: "semver тег" },
+    { id: "staging", label: "Staging", sub: "smoke" },
+    { id: "canary", label: "Canary", sub: "метрики" },
+    { id: "prod", label: "Production", sub: "аппрув" },
+  ]}
+  edges={[
+    { from: "pr", to: "build", label: "merge" },
+    { from: "build", to: "publish", label: "digest" },
+    { from: "publish", to: "staging", label: "promote" },
+    { from: "staging", to: "canary", label: "аппрув" },
+    { from: "canary", to: "prod", label: "SLO ok" },
+    { from: "canary", to: "staging", label: "откат" },
+  ]}
+  caption="Один неизменяемый digest течёт слева направо: PR-проверки гейтят merge, артефакт собирается и подписывается ровно раз, затем тот же digest продвигается через staging и canary под метрическим гейтом. Нарушенный SLO срабатывает на ребро отката к последнему хорошему digest."
+/>
+
+<KeyTakeaway>Пайплайн — одна цепь. Гейт на PR, сборка артефакта раз (digest + SBOM + provenance), продвижение того же digest: staging smoke → аппрув → canary под метриками → авто-откат. Пропусти звено — гарантия рушится.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-capstone-full-pipeline-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройди весь пайплайн от PR до production и назови, что вставляется на каждой стадии и что ломается, если её пропустить.", a: "Стадия 1, PR-проверки: быстрый гейт lint/typecheck бежит первым, чтобы падать быстро, затем affected-only сборка и тесты, и они подключены как required status checks, поэтому красная проверка блокирует кнопку merge — пропусти, и сломанный код доедет до main, а каждая поздняя стадия его унаследует. Стадия 2, сборка один раз: на merge или теге ты собираешь образ ровно один раз в единственный неизменяемый digest, генерируешь SBOM, производишь build-provenance-аттестацию и подписываешь их keyless-cosign через OIDC-личность GitHub, со сторонними actions, запиненными по SHA коммита, и least-privilege permissions (id-token: write только здесь) — пропусти build-once и пересобери на стадии, и production может гнать другой бинарник, не тот, что тестировали. Стадия 3, релиз: выведи версию из conventional commits, тегай и публикуй подписанный образ — пропусти, и не сказать, что задеплоено, и не откатиться вперёд чисто. Стадия 4, поэтапный деплой: staging авто-деплоит тот же digest и гонит smoke-тесты, production сидит за правилом защиты окружения (required reviewers, без само-аппрува), затем canary маршрутизирует малый срез под метрическим гейтом против базовой линии, расширяясь только если он прошёл, и авто-откатываясь к предыдущему digest при нарушении SLO — пропусти путь отката, и плохой canary это просто медленный аутаж. Инвариант, что связывает всё: тот же неизменяемый digest течёт через каждую стадию, поэтому варьируется только конфигурация, никогда не бинарник." },
+    { q: "Почему «собрать раз, продвигать тот же digest» — несущий инвариант, и как он делает историю невозможной?", a: "Потому что единственный способ донести гарантию каждого гейта до production — чтобы ровно те байты, что прошли каждый гейт, были теми байтами, что работают. Правило build-once гласит, что артефакт производится один раз, давая один неизменяемый digest, и с тех пор ничто не пересобирается — staging, canary и production деплоят image@sha256:… неизменным. Значит SBOM, provenance-аттестация, smoke-тесты и canary-анализ описывают и прогоняют идентичный бинарник, который в итоге обслуживает production, поэтому единственная переменная между окружениями — конфигурация. История случилась потому, что прод-джоб делал свой docker build из тега вместо продвижения digest: транзитивная зависимость опубликовала патч в зазоре, поэтому прод зарезолвил другой бинарник, не тот, что тестировал staging, и каждый зелёный гейт сертифицировал не тот артефакт, что работал. Продвижение digest убирает шаг пересборки целиком, поэтому нет точки, где сдвинутый тег, плавающий базовый образ или новая транзитивная версия могли бы подменить бинарник — а откат становится тривиален, потому что предыдущий заведомо-хороший digest всё ещё прямо здесь, чтобы переразвернуть." },
+  ]}
+/>
+
+<Recap lang="ru">
+Production-CI/CD-пайплайн — это единая цепь, чья гарантия выживает, только если не пропущено ни одно звено. PR-проверки идут первыми как гейт merge'а: быстрый проход lint/typecheck падает дёшево, affected-only сборка и тесты покрывают то, что трогает diff, а required status checks физически блокируют merge, чтобы main оставалась релизопригодной. На merge или теге артефакт собирается ровно один раз в один неизменяемый digest, с SBOM для того, что внутри, build-provenance-аттестацией для того, как и где он собран, и keyless-cosign-подписями через OIDC-личность GitHub — actions запинены по SHA коммита, а permissions держатся least-privilege на каждый джоб. Релиз — это бухгалтерия поверх проверенного артефакта: semver из conventional commits, тег, публикация подписанного образа. Дальше деплой — чистое продвижение того одного digest — staging авто-деплоит и smoke-тестит его, production сидит за правилом защиты окружения с required reviewers и без само-аппрува, а за гейтом canary маршрутизирует малый срез под метрическим гейтом, который авто-откатывается при нарушении SLO. Интегративный режим отказа всегда пропущенное звено: пересобери на стадии — и прод гонит непротестированный бинарник, задеплой без отката — и плохой canary это медленный аутаж, отгрузи непроверенный артефакт — и твой SBOM описывает что-то другое. Собери раз, проверь и продвигай тот же digest — это и есть весь пайплайн.
+</Recap>
