@@ -1,13 +1,226 @@
 ---
-slug: "02-tracing-and-events"
+concepts:
+- x-ray-tracing
+- service-map
+- trace-sampling
+- eventbridge
+- structured-logging
+- SAA-C03:Design High-Performing Architectures
+deepensInto: []
+estMin: 20
 lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-tracing-and-events"
+sources:
+- https://docs.aws.amazon.com/xray/latest/devguide/xray-concepts.html
+- https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-what-is.html
+- https://aws.amazon.com/cloudwatch/pricing/
+spiral: []
+status: ready
+summary: 'Metrics and logs tell you a box is sick; distributed tracing tells you which hop is slow, and EventBridge decouples the hops. Sample traces and bound log cardinality or observability bills you twice.'
+title: 'Distributed tracing and event-driven plumbing: X-Ray and EventBridge'
 track: "aws"
 unit: "05-observability"
-order: 2
-title: "Tracing and events: X-Ray and EventBridge"
-summary: "Tracing and events: X-Ray and EventBridge — stub; author to ready."
-estMin: 12
-status: stub
-sources:
-  - https://docs.aws.amazon.com/xray/latest/devguide/aws-xray.html
 ---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A checkout API starts answering in 1.8 seconds instead of 200 ms. The dashboards are maddeningly green: CPU normal, memory normal, every service's p99 "fine." The on-call grep through five services' logs for an hour, find nothing conclusive, and start guessing — restart the cart service, bounce the cache, blame the database. The real cause was a payment-provider SDK that had quietly added a synchronous tax-lookup call to a fourth service, and that service was waiting on a cross-region DynamoDB read. No single log line said "I am the slow one," because no single service was slow on its own — the latency lived in the edges between services. The team had metrics and logs, the first two pillars of observability. What they were missing was the third: a distributed trace that draws the whole request as one timeline and points at the exact hop where the milliseconds go. They turned on X-Ray, and the next incident took four minutes instead of an hour.
+</Hook>
+
+<Crux>Metrics say a service hurts; logs say what one box did. Only a trace shows which hop is slow — EventBridge keeps the hops decoupled.</Crux>
+
+<Explanation>
+
+## Tracing: the third pillar, and why logs alone fail
+
+Metrics and logs are per-component. A metric is a number from one box; a log line is one event on one box. Neither knows that this request to checkout fanned out into a call to cart, then payment, then a tax service, then DynamoDB — and that the 1.6 seconds of extra latency was spent waiting on the tax hop. To answer "where in the call chain did the time go?" you need a record that spans services and stitches them into one timeline. That is **distributed tracing**.
+
+AWS X-Ray models a request as a **trace**: the collection of all work done to serve one request, identified by a single trace ID. Each service contributes a **segment** — a document recording that service's name, the request and response, start and end times, and any errors or faults. Within a segment, every downstream call your code makes is a **subsegment**: a call to DynamoDB, an external HTTP API, or a SQL query, each with its own timing. For a downstream that doesn't trace itself (DynamoDB doesn't emit segments), X-Ray builds an inferred segment from your subsegment, so the dependency still shows up on the map. This is the structural difference from logs: a trace is a tree of segments and subsegments, not a flat stream of lines, and the tree is exactly the shape of your call graph.
+
+The glue that ties segments across process boundaries is a propagated header: `X-Amzn-Trace-Id`. The first X-Ray-integrated service a request hits stamps it with a root trace ID and a sampling decision, and every instrumented hop forwards it downstream, adding its own parent segment ID so X-Ray can reconstruct parent/child edges.
+
+```
+X-Amzn-Trace-Id: Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1
+```
+
+X-Ray rolls every service's segments for a trace ID into a **service map** (service graph): nodes for each service, edges for each call between them, each edge annotated with latency and error rate. The map is what turns "checkout is slow" into "the checkout→tax edge is at 1.6 s p99 and 0% errors" — a thing logs structurally cannot show you, because a log line lives inside one node and knows nothing about the edge.
+
+<SequenceDiagram
+  label="One traced checkout request flowing across four services, each adding a segment under the same trace ID"
+  hue="var(--d-systems)"
+  actors={[
+    { id: "client", label: "Client" },
+    { id: "checkout", label: "Checkout" },
+    { id: "payment", label: "Payment" },
+    { id: "tax", label: "Tax svc" },
+    { id: "ddb", label: "DynamoDB" },
+  ]}
+  messages={[
+    { from: "client", to: "checkout", label: "POST /checkout (stamps Root trace ID, Sampled=1)" },
+    { from: "checkout", to: "payment", label: "forwards X-Amzn-Trace-Id (segment)" },
+    { from: "payment", to: "tax", label: "synchronous tax lookup (the slow edge)" },
+    { from: "tax", to: "ddb", label: "cross-region read (subsegment, 1.6 s)" },
+    { from: "ddb", to: "tax", label: "result" },
+    { from: "tax", to: "payment", label: "tax amount" },
+    { from: "payment", to: "checkout", label: "authorized" },
+    { from: "checkout", to: "client", label: "200 OK (1.8 s total)" },
+  ]}
+  caption="Each service emits a segment under one trace ID; the tax→DynamoDB subsegment exposes the 1.6 s that no single service's metrics flagged. The service map turns this into a latency-annotated edge."
+/>
+
+## Sampling: you trade completeness for cost on purpose
+
+Tracing every request is expensive twice over: the per-trace bill and the latency the SDK adds collecting and shipping segments. So X-Ray **samples**. The default rule is a reservoir plus a rate: record the first request each second, then 5% of everything beyond that. The reservoir guarantees you always capture a baseline of traces even at low traffic; the 5% rate keeps a high-volume endpoint from recording millions of near-identical traces. You configure rules per service or request property — disable sampling (trace 100%) for state-changing or payment paths where every trace matters, and sample health checks and background polling at a low rate because they're noise.
+
+The cost is real, and it is the most common observability failure mode. X-Ray bills per trace **recorded** and, separately, per trace **retrieved or scanned**. As illustrative figures from the CloudWatch pricing page (US East / N. Virginia — prices are region-dependent, always check your region): traces recorded cost about $5.00 per million ($0.000005 each) beyond a free tier of 100,000 per month, and retrieved/scanned traces about $0.50 per million beyond 1,000,000 free. Those numbers look trivial until someone sets sampling to 100% on a path doing 5,000 requests/second: that is ~13 billion traces a month, roughly $65,000 in recording alone — the classic "we turned on full tracing in prod and got a five-figure surprise" story. Sampling is not a quality compromise to apologize for; it is the deliberate trade that makes tracing affordable.
+
+## EventBridge: decouple the hops you just traced
+
+The tax-lookup incident had a second lesson: that synchronous call should never have been synchronous. When the payment service must call the tax service inline and wait, the two are tightly coupled — the slow one drags the fast one, and a deploy to either can break the other. **Amazon EventBridge** is the serverless **event bus** that breaks that coupling. A producer calls `PutEvents` to publish an event; it neither knows nor cares who consumes it. **Rules** on the bus match an **event pattern** against the event's fields — `source`, `detail-type`, and arbitrary `detail` JSON — and route every match to one or more **targets** (a Lambda, an SQS queue, a Step Functions state machine, another bus) that run in parallel.
+
+```json
+{
+  "Source": "checkout.service",
+  "DetailType": "OrderPlaced",
+  "Detail": {
+    "orderId": "o-4821",
+    "region": "eu-west-1",
+    "amountCents": 7400,
+    "needsTax": true
+  }
+}
+```
+
+A rule that fans this out to a tax-calculation Lambda and an analytics queue matches on the pattern below; anything not matching is silently ignored, so adding a consumer never touches the producer:
+
+```json
+{
+  "source": ["checkout.service"],
+  "detail-type": ["OrderPlaced"],
+  "detail": { "needsTax": [true] }
+}
+```
+
+The **default bus** receives events from AWS services themselves (an EC2 state change, an S3 upload), which is how you build automation that reacts to your own infrastructure; **custom buses** carry your application's domain events, isolating them from the AWS-service firehose. A **schema registry** can infer and version the shape of events so consumers code against a contract instead of a guess. The payoff is choreography: checkout emits `OrderPlaced` and walks away; tax, analytics, and email each subscribe independently. No service holds a list of who to call next, so you add and remove consumers without redeploying producers — exactly the coupling that turned a third-party SDK change into a cross-service incident.
+
+<Inset kind="why" lang="en">
+EventBridge, SNS, and SQS overlap enough to confuse, but they answer different questions. SNS is pub/sub fan-out: one message, many subscribers, no content filtering beyond coarse message attributes — pick it when you just need to broadcast fast and cheap. SQS is a queue: it buffers and decouples in time, letting a slow consumer drain work at its own pace with retries and a dead-letter queue — pick it when you need durability and backpressure between exactly two parties. EventBridge is a router: rich JSON pattern matching on event content, many sources to many targets, schema registry, and AWS-service events out of the box — pick it when routing logic lives in the content of the event and you want producers fully decoupled from a changing set of consumers. They compose: EventBridge routes an event to an SQS queue that buffers it for a slow worker.
+</Inset>
+
+## Structured logs: the third pillar, made queryable
+
+Tracing tells you which hop; logs still tell you what happened inside that hop — but only if they're queryable. A senior emits **structured logs**: JSON objects with named fields, not human prose. A line like "user 4821 failed payment, code 51" is unsearchable; a record like &#123;"level":"error","traceId":"1-5759e988","userId":4821,"event":"payment_failed","declineCode":51&#125; lets you pull every log for one trace ID and join it to the X-Ray timeline. Carrying the trace ID into your logs is what fuses pillars two and three. CloudWatch's **Embedded Metric Format (EMF)** goes further: emit a specially shaped JSON log and CloudWatch extracts metrics from it automatically, so you get a metric and its supporting log from one write.
+
+But fields cost money and the trap is **cardinality**. CloudWatch Logs bills per GB ingested (illustratively about $0.50/GB beyond a 5 GB free tier in US East, region-dependent), and EMF turns high-cardinality dimensions into custom metrics at roughly $0.30 per metric per month. Put `userId` or `requestId` as an EMF dimension and every distinct value becomes its own billed metric — a million users becomes a million metrics and a four-figure monthly line item from one careless field. Log fields freely; keep metric dimensions low-cardinality (status, route, region — not user or request id). Over-instrumenting is a failure mode exactly like over-sampling.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Question you're asking</th>
+        <th class="border border-border px-3 py-2 text-left">Pillar that answers it</th>
+        <th class="border border-border px-3 py-2 text-left">AWS surface</th>
+        <th class="border border-border px-3 py-2 text-left">Cost lever to watch</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Is a service unhealthy right now?</td>
+        <td class="border border-border px-3 py-2">Metrics</td>
+        <td class="border border-border px-3 py-2">CloudWatch metrics / alarms</td>
+        <td class="border border-border px-3 py-2">Custom-metric dimension cardinality (~$0.30/metric/mo)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">What exactly happened inside one box?</td>
+        <td class="border border-border px-3 py-2">Logs (structured)</td>
+        <td class="border border-border px-3 py-2">CloudWatch Logs / EMF</td>
+        <td class="border border-border px-3 py-2">GB ingested (~$0.50/GB beyond free tier)</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Which hop in the chain is slow?</td>
+        <td class="border border-border px-3 py-2">Traces</td>
+        <td class="border border-border px-3 py-2">X-Ray service map</td>
+        <td class="border border-border px-3 py-2">Sampling rate (~$5/M traces recorded)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">How do I stop hop A and hop B coupling?</td>
+        <td class="border border-border px-3 py-2">Event-driven design</td>
+        <td class="border border-border px-3 py-2">EventBridge bus + rules</td>
+        <td class="border border-border px-3 py-2">Per-event PutEvents + per-target invocations</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="02-tracing-and-events-tradeoff-1"
+  lessonSlug="02-tracing-and-events"
+  lang="en"
+  prompt="An OrderPlaced event must fan out to three independent consumers (tax calc, analytics, email), each owned by a different team that comes and goes; routing depends on fields inside the event (region, needsTax). Pick the decoupling primitive."
+  options={[
+    { name: "EventBridge custom bus with content-based rules", summary: "Router: JSON pattern match, many targets.", correct: true, justification: "Right fit. The decision of who receives an event depends on the event's content (region, needsTax), and the set of consumers changes as teams come and go — that is exactly a routing problem. EventBridge matches an event pattern against source/detail-type/detail and fans out to multiple targets in parallel, and a new consumer is just a new rule, so the producer never changes. Add a schema registry and consumers code against a versioned contract. This is the canonical content-routed, many-target, producers-decoupled-from-consumers answer." },
+    { name: "SNS topic with subscribers", summary: "Pub/sub fan-out, simple.", justification: "Close, and it does fan out one message to many subscribers cheaply. But routing here depends on rich fields inside the event body (region, needsTax), and SNS filters only on coarse message attributes, not arbitrary JSON content — you'd push routing logic into every consumer or duplicate topics. SNS wins when you simply broadcast the same message to everyone; it loses when the routing decision lives in the event's content." },
+    { name: "One SQS queue all three consumers read", summary: "Queue: buffer and backpressure.", justification: "Wrong primitive for fan-out. A standard SQS queue delivers each message to one consumer that deletes it, so three consumers competing on one queue would each see only a third of the events. SQS is for buffering and backpressure between two parties, not broadcasting to three. It composes with EventBridge — route to a per-consumer SQS queue — but on its own it can't fan one event out to three independent teams." },
+    { name: "Direct synchronous HTTP calls from checkout to each consumer", summary: "Point-to-point, inline.", justification: "This is the coupling you're trying to remove. Checkout would hold a hardcoded list of three endpoints, wait on all of them inline, and break when any team redeploys or a new consumer appears — the exact failure the lesson's hook describes. Synchronous point-to-point is the anti-pattern event-driven design exists to kill." },
+  ]}
+/>
+
+<Quiz
+  id="02-tracing-and-events-quiz-1"
+  lessonSlug="02-tracing-and-events"
+  lang="en"
+  question="A request chain spanning five services is intermittently slow, but every service's CPU, memory, and its own p99 latency metric look normal. Which observability tool is built to locate the slow hop?"
+  choices={[
+    { label: "X-Ray distributed tracing — its service map annotates each edge between services with latency, exposing the slow hop that per-service metrics structurally can't see", correct: true },
+    { label: "More CloudWatch custom metrics on each service", misconception: "Metrics are per-component: each box reports its own numbers and they can all look fine while the latency lives in the edges between services (e.g. cross-region waits). Adding more per-service metrics still can't represent a request that spans services — that's exactly the gap tracing fills." },
+    { label: "Grepping the five services' logs harder", misconception: "A log line lives inside one node and knows nothing about the edge to the next service. That's why the hook's team burned an hour grepping and found nothing — no single service was slow on its own. A trace stitches the services into one timeline; logs alone cannot." },
+    { label: "A CloudWatch alarm with a lower threshold", misconception: "An alarm fires on a single metric crossing a threshold; it can tell you a service is unhealthy, not which hop in a multi-service chain spent the time. Lowering the threshold just adds noise without locating the slow edge." },
+  ]}
+/>
+
+<Quiz
+  id="02-tracing-and-events-quiz-2"
+  lessonSlug="02-tracing-and-events"
+  lang="en"
+  question="A team sets X-Ray sampling to trace 100% of requests on a path serving 5,000 requests/second and is shocked by the bill. What's the principle they violated?"
+  choices={[
+    { label: "Sampling deliberately trades completeness for cost; the default reservoir-plus-rate (first request/sec + 5% of the rest) keeps trace volume and per-trace charges bounded — 100% on a high-volume path multiplies recorded traces into a huge bill", correct: true },
+    { label: "X-Ray tracing is always free, so the bill must be a mistake", misconception: "X-Ray bills per trace recorded and per trace retrieved/scanned (illustratively ~$5 per million recorded beyond the free tier, region-dependent). Recording every request on a 5,000 rps path is billions of traces a month — the charge is real, not a mistake." },
+    { label: "100% sampling reduces latency, so cost should have dropped", misconception: "It's the opposite: tracing every request adds both per-trace cost and the SDK overhead of collecting and shipping every segment. Sampling exists precisely to bound that cost and overhead." },
+    { label: "They should have disabled X-Ray entirely in production", misconception: "Disabling tracing throws away the one tool that locates slow hops. The fix is calibrated sampling — full traces on critical state-changing paths, low rates on health checks — not turning observability off." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Observability has three pillars: metrics (is a box sick?), structured logs (what did one box do?), and traces (which hop in the chain is slow?). X-Ray models a request as a trace = a tree of segments (a service's work) and subsegments (downstream calls), glued by the X-Amzn-Trace-Id header and visualized as a latency-annotated service map. Sampling (first request/sec + 5%) trades completeness for cost on purpose — 100% sampling and high-cardinality EMF dimensions are real ways to blow the bill. EventBridge decouples the hops you trace: producers PutEvents, rules match on source/detail-type/detail, targets fan out in parallel — a router, versus SNS (simple fan-out) and SQS (buffer/backpressure).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-tracing-and-events-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does a distributed trace show that metrics and logs structurally cannot, and how does X-Ray model it?", a: "A trace shows where in a multi-service call chain the time went — which hop is slow — because it spans services and stitches them into one request timeline. Metrics and logs are per-component: a metric is one box's number and a log line is one event on one box, so both can look perfectly healthy while the latency lives in the edges between services (a synchronous call to a slow downstream, a cross-region read). X-Ray models a request as a trace identified by one trace ID; each service contributes a segment (a document of its name, request/response, timing, errors), and within a segment every downstream call is a subsegment (DynamoDB, an HTTP API, a SQL query). For downstreams that don't trace themselves, X-Ray builds inferred segments so they still appear. The X-Amzn-Trace-Id header is propagated across process boundaries — the first integrated service stamps the root ID and sampling decision, each hop forwards it with its parent segment ID — and X-Ray rolls all segments for a trace ID into a service map: nodes per service, edges per call, each edge annotated with latency and error rate. The edge is the thing a log line, living inside one node, can never represent." },
+    { q: "Why is observability a cost decision, and how do sampling and EventBridge fit in?", a: "Tracing and high-cardinality logging cost real money and add latency, so completeness is a deliberate trade. X-Ray bills per trace recorded and per trace retrieved/scanned (illustratively ~$5 and ~$0.50 per million in US East, region-dependent, beyond a free tier); sampling — the default reservoir-plus-rate of the first request each second plus 5% of the rest — bounds that, and setting 100% on a high-volume path is the classic five-figure surprise. CloudWatch Logs bills per GB ingested (~$0.50/GB beyond free, region-dependent) and EMF turns high-cardinality dimensions into custom metrics (~$0.30/metric/month), so putting userId or requestId as a metric dimension explodes into a million billed metrics — log fields freely but keep metric dimensions low-cardinality. EventBridge is the other half: it decouples the hops you trace. A producer calls PutEvents and walks away; rules match an event pattern on source/detail-type/detail and fan out to targets (Lambda, SQS, Step Functions) in parallel, with the default bus carrying AWS-service events and custom buses carrying domain events. It's a content router — versus SNS for simple pub/sub fan-out and SQS for buffering/backpressure — so you add or remove consumers without ever redeploying the producer." },
+  ]}
+/>
+
+<Recap lang="en">
+Observability stands on three pillars, and seniors keep them straight: metrics answer "is a service unhealthy?" (per-box numbers, CloudWatch alarms), structured logs answer "what exactly happened inside one box?" (queryable JSON with a trace ID carried in, EMF to mint metrics from logs), and distributed traces answer "which hop in a request chain is slow?" — the one logs and metrics structurally cannot, because they live inside a single node while the latency often lives in the edges between services. X-Ray models a request as a trace identified by one trace ID: each service emits a segment of its own work, each downstream call is a subsegment, the X-Amzn-Trace-Id header propagates the trace across process boundaries, and X-Ray draws a service map with latency- and error-annotated edges that points straight at the slow hop. Because tracing and high-cardinality logging cost money and add latency, observability is a budget decision: sample traces (the default first-request-per-second plus 5% trades completeness for cost on purpose; 100% on a busy path is a five-figure mistake) and bound log/metric cardinality (userId as an EMF dimension explodes into a million billed metrics). Finally, EventBridge keeps the hops you trace from coupling in the first place: producers PutEvents and walk away, rules match on source/detail-type/detail and fan out to targets in parallel — a content router you reach for over SNS (simple fan-out) and SQS (buffer/backpressure) when routing lives in the event's content and consumers come and go.
+</Recap>
