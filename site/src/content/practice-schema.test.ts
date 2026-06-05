@@ -29,7 +29,21 @@ const DiagnoseTask = TaskBase.extend({
     z.object({ mode: z.literal("self"), model: BiText, rubric: z.array(BiText).min(1) }),
   ]),
 });
-const PracticeTask = z.discriminatedUnion("type", [PredictTask, IncidentTask, DiagnoseTask]);
+const Finding = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  label: BiText,
+  severity: z.enum(["bug", "missing-test", "tradeoff", "simplification"]),
+  explanation: BiText,
+  planted: z.literal(true),
+});
+const Decoy = z.object({ id: z.string().regex(/^[a-z0-9-]+$/), label: BiText, explanation: BiText });
+const ReviewTask = TaskBase.extend({
+  type: z.literal("review"),
+  diff: z.object({ lang: z.string().min(1), code: z.string().min(1) }),
+  findings: z.array(Finding).min(1),
+  decoys: z.array(Decoy).optional(),
+});
+const PracticeTask = z.discriminatedUnion("type", [PredictTask, IncidentTask, DiagnoseTask, ReviewTask]);
 const fileSchema = z.object({
   lessonKey: z.string(),
   track: z.string(),
@@ -64,5 +78,40 @@ describe("practice schema", () => {
   test("rejects a BiText missing ru", () => {
     const bad = { ...validPredict, title: { en: "only en" } };
     expect(() => fileSchema.parse({ lessonKey: "x/y/z", track: "databases", tasks: [bad] })).toThrow();
+  });
+});
+
+const validReview = {
+  id: "review-async", type: "review", difficulty: "apply", estMin: 7,
+  title: { en: "Review the diff", ru: "Отревьюй дифф" },
+  prompt: { en: "What is wrong or missing?", ru: "Что не так или упущено?" },
+  diff: { lang: "js", code: "function f(cb){ if (e) cb(e); cb(null, d); }" },
+  findings: [
+    { id: "missing-return", label: { en: "Callback fires twice", ru: "Колбэк дважды" }, severity: "bug", explanation: { en: "no return on cb(e)", ru: "нет return у cb(e)" }, planted: true },
+  ],
+};
+
+describe("review task schema", () => {
+  test("accepts a valid review task", () => {
+    expect(() => fileSchema.parse({ lessonKey: "node/06-testing/01-unit-testing", track: "node", tasks: [validReview] })).not.toThrow();
+  });
+  test("rejects a review task with zero findings", () => {
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [{ ...validReview, findings: [] }] })).toThrow();
+  });
+  test("rejects a finding missing ru label", () => {
+    const bad = { ...validReview, findings: [{ ...validReview.findings[0], label: { en: "x" } }] };
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [bad] })).toThrow();
+  });
+  test("rejects a finding with an unknown severity", () => {
+    const bad = { ...validReview, findings: [{ ...validReview.findings[0], severity: "nit" }] };
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [bad] })).toThrow();
+  });
+  test("rejects planted !== true", () => {
+    const bad = { ...validReview, findings: [{ ...validReview.findings[0], planted: false }] };
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [bad] })).toThrow();
+  });
+  test("accepts an optional decoy", () => {
+    const withDecoy = { ...validReview, decoys: [{ id: "style", label: { en: "rename d?", ru: "переименовать d?" }, explanation: { en: "style only", ru: "только стиль" } }] };
+    expect(() => fileSchema.parse({ lessonKey: "node/06-testing/01-unit-testing", track: "node", tasks: [withDecoy] })).not.toThrow();
   });
 });

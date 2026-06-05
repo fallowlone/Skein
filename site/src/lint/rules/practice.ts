@@ -101,6 +101,22 @@ export async function checkPracticeLessonKey(siteSrc: string): Promise<string[]>
   return errs;
 }
 
+/** Every `review` task must carry at least one finding (the grading key).
+ *  Zod already enforces this, but the lint layer asserts it for a clear,
+ *  human-readable build error. */
+export async function checkPracticeReview(siteSrc: string): Promise<string[]> {
+  const errs: string[] = [];
+  for (const { file, data } of await readPractice(siteSrc)) {
+    for (const task of data?.tasks ?? []) {
+      if (task?.type !== "review") continue;
+      if ((task?.findings?.length ?? 0) < 1) {
+        errs.push(`practice-review: "${file}" task "${task?.id}" must have at least one finding`);
+      }
+    }
+  }
+  return errs;
+}
+
 /** Tracks flipped to error (lesson without a 3–5 task practice file fails the build).
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
 export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability", "performance", "base-cs", "browser", "backend", "databases", "math", "engineering-practice", "apis", "caching", "distributed", "frontend", "queues", "security", "ai-llm", "data-engineering", "deployment", "system-design", "system-design-cases"];
