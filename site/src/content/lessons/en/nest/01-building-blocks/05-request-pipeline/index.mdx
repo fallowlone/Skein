@@ -1,0 +1,218 @@
+---
+concepts:
+- middleware
+- guards
+- interceptors
+- pipes
+- exception-filters
+- enhancer-binding
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-request-pipeline"
+sources:
+- https://docs.nestjs.com/guards
+- https://docs.nestjs.com/interceptors
+- https://docs.nestjs.com/pipes
+- https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/middleware
+spiral: []
+status: ready
+summary: 'The request runs middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter. Two senior traps: a guard sees the raw un-validated body (pipes run after it), and a hand-newed global enhancer is outside DI — bind via APP_GUARD to inject.'
+title: 'The request pipeline: middleware, guards, interceptors, pipes, filters'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The `RolesGuard` looked perfect in review. It read `@Roles('admin')` off the handler with `Reflector`, checked the user's roles against the database through `UsersService`, and returned `false` for everyone else. The author wired it in `main.ts` the way the docs show for "apply it everywhere": `app.useGlobalGuards(new RolesGuard(reflector, usersService))`. Except `reflector` and `usersService` weren't in scope in `main.ts`, so someone passed `new RolesGuard(new Reflector(), null)` to make it compile. It shipped. For three weeks every authenticated user was an admin, because the guard's `usersService` was `null`, the role check threw, and the surrounding error handling defaulted open. Nothing in the test suite caught it — the tests constructed the guard by hand too, with a stub service that always said yes. This lesson is about the seven-stage pipeline every request runs through, and the two places seniors get burned: what each enhancer can see, and how it gets its dependencies.
+</Hook>
+
+<Crux>Order: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter. Bind global enhancers via APP_GUARD to inject.</Crux>
+
+<Explanation>
+
+## The seven stages, in order
+
+Every HTTP request that reaches a Nest handler runs a fixed gauntlet of enhancers. The order is not configurable, and getting it wrong in your head is how authorization logic ends up in the wrong place. Left to right:
+
+**middleware → guard → interceptor (pre) → pipe → handler → interceptor (post) → filter (on throw)**
+
+1. **Middleware** runs first, at the Express/Fastify level, bound in a module's `configure(consumer)`. It has raw `req`, `res`, `next` — but it runs *before* Nest has resolved which handler will serve the route, so it has **no `ExecutionContext`**, no handler reference, no route metadata.
+2. **Guards** run next. `canActivate(ctx)` returns a boolean (or a Promise/Observable of one); `false` short-circuits with a `403`. This is where authorization lives. A guard *does* get an `ExecutionContext`, so it can read handler metadata via `Reflector` — but the request body has **not been validated or transformed** yet.
+3. **Interceptors (pre half)** wrap the handler. Code before `next.handle()` runs here.
+4. **Pipes** run on the handler *arguments* — `@Body()`, `@Param()`, `@Query()` — validating and transforming them (`ValidationPipe`, `ParseIntPipe`). They run **after** guards and after the interceptor's pre-half, right before the handler.
+5. **The route handler** executes.
+6. **Interceptors (post half)** — the RxJS pipe after `next.handle()` (`map`, `timeout`, caching, response shaping) runs on the way out. One interceptor therefore gives you **two** execution points around the handler.
+7. **Exception filters** catch anything thrown in any of the above, mapping the error to an HTTP response. A filter is the last line.
+
+```ts
+// A guard runs at stage 2 — BEFORE pipes. It sees handler metadata, not a validated DTO.
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(
+    private readonly reflector: Reflector,    // injected — reads @Roles() metadata
+    private readonly users: UsersService,     // injected — checks roles in the DB
+  ) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const required = this.reflector.get<string[]>('roles', ctx.getHandler());
+    if (!required) return true;                // no @Roles() → public
+    const { user } = ctx.switchToHttp().getRequest();
+    return this.users.hasAnyRole(user.id, required);
+  }
+}
+```
+
+```ts
+// An interceptor is two execution points: before next.handle() and after, via RxJS.
+@Injectable()
+export class TimingInterceptor implements NestInterceptor {
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const start = Date.now();                  // PRE-handler half
+    return next.handle().pipe(                 // ← handler runs here
+      map((data) => ({ data, ms: Date.now() - start })), // POST-handler half
+    );
+  }
+}
+```
+
+## Binding scope: where an enhancer applies
+
+Each of the four enhancer kinds (guards, interceptors, pipes, filters) binds at one of four scopes: **global**, **controller** (a class-level `@UseGuards()`), **method** (`@UseGuards()` on the handler), and for pipes also **parameter** (`@Body(new ValidationPipe())`). Within a kind, execution runs global → controller → method, outermost first. Scope answers "where does this apply"; it does *not* change the stage ordering above.
+
+## The DI trap: `new` versus `APP_GUARD`
+
+Here is the trap that bit the `RolesGuard`. There are two ways to register a *global* enhancer, and they are **not** equivalent:
+
+```ts
+// ANTI-PATTERN: you `new` it yourself, so it lives OUTSIDE the DI container.
+// It cannot inject Reflector or UsersService — you'd have to hand-build them.
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalGuards(new RolesGuard(/* what do I pass here? */));
+  await app.listen(3000);
+}
+
+// CORRECT: register via the APP_GUARD token in a module. Nest instantiates it
+// through DI, so Reflector and UsersService are injected normally.
+@Module({
+  providers: [
+    UsersService,
+    { provide: APP_GUARD, useClass: RolesGuard },  // global AND DI-aware
+  ],
+})
+export class AppModule {}
+```
+
+`app.useGlobalGuards(new X())` is fine for a *dependency-free* enhancer. The moment the enhancer needs to inject anything — `Reflector`, `ConfigService`, a repository — you must register it through the provider token: `APP_GUARD`, `APP_INTERCEPTOR`, `APP_PIPE`, or `APP_FILTER`. Those make the enhancer a real provider that Nest constructs, so its constructor dependencies resolve from the container instead of being `null`.
+
+<Inset kind="why" lang="en">
+Why can't a guard just read the validated DTO? Because pipes run at stage 4 and guards at stage 2 — the guard executes *before* any pipe has touched the arguments. At guard time, `request.body` is whatever the body parser produced: a plain object, not an instance of your DTO class, with numbers still strings and no class-validator checks applied. `class-transformer` hasn't run, so `body instanceof CreatePostDto` is `false`. Any authorization that depends on validated or coerced input (e.g. "the owner field must match the JWT subject") cannot trust the body inside a guard — it must validate the relevant field manually in the guard, or move that decision into the handler or an interceptor that runs after the pipe. Conflating the two stages is how an authZ check silently reads `undefined`.
+</Inset>
+
+<FlowDiagram
+  label="The fixed seven-stage request pipeline in Nest, left to right. An incoming HTTP request first passes through middleware (Express/Fastify level, no ExecutionContext yet because the route handler is not resolved). Then guards run canActivate for authorization, seeing handler metadata via Reflector but a raw un-validated body. Then the pre-half of any interceptor runs before next.handle(). Then pipes validate and transform the handler arguments. Then the route handler executes. Then the post-half of the interceptor runs the RxJS pipe on the way out. Finally, if anything in the chain throws, the exception filter catches it and maps the error to an HTTP response."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "mw", label: "middleware", sub: "no context" },
+    { id: "guard", label: "guard", sub: "authZ, raw body" },
+    { id: "ipre", label: "interceptor pre", sub: "before handle()" },
+    { id: "pipe", label: "pipe", sub: "validate args" },
+    { id: "handler", label: "handler", sub: "your code" },
+    { id: "ipost", label: "interceptor post", sub: "RxJS, on way out" },
+    { id: "filter", label: "filter", sub: "on throw" },
+  ]}
+  edges={[
+    { from: "mw", to: "guard", label: "resolve route" },
+    { from: "guard", to: "ipre", label: "allowed" },
+    { from: "ipre", to: "pipe", label: "next.handle()" },
+    { from: "pipe", to: "handler", label: "args ready" },
+    { from: "handler", to: "ipost", label: "return value" },
+    { from: "ipost", to: "filter", label: "if throws" },
+  ]}
+  caption="The order is fixed: middleware (no context) → guard (authZ, raw body) → interceptor pre → pipe (validate) → handler → interceptor post → filter (on any throw). A guard runs before pipes, so it never sees a validated DTO."
+/>
+
+## Failure modes seniors hit
+
+**AuthZ in a pipe, or a guard expecting a validated body.** Because guards run before pipes, a guard sees the raw body — a DTO class isn't instantiated, numbers are still strings. Authorization that depends on validated input belongs in the handler or a post-pipe interceptor, not the guard, and *never* in a pipe (a pipe transforms data, it isn't an authorization boundary).
+
+**Expecting an interceptor to map errors.** An interceptor *can* catch via `catchError` in its RxJS pipe, but the canonical error-to-response mapping is the exception **filter** (`@Catch`, `catch(exception, host)`). Doing both causes double-handling. And scope matters for what a filter catches: a guard throws at stage 2, before any method-scoped filter is in play, so only a higher-scoped (global) filter catches an exception thrown inside a guard.
+
+**Middleware reaching for handler metadata.** Middleware runs before route resolution, so there is no `ExecutionContext` and no way to read `@Roles()` or any handler decorator. If you need handler metadata, you need a guard — that is precisely why guards exist as a distinct stage.
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-05-request-pipeline-tradeoff-1"
+  lessonSlug="05-request-pipeline"
+  lang="en"
+  prompt="Your RolesGuard needs to inject Reflector (to read @Roles() metadata) and UsersService (to check roles in the DB), and you want it applied to every route. How do you register it globally?"
+  options={[
+    { name: "Register it in a module as { provide: APP_GUARD, useClass: RolesGuard }", summary: "Global AND DI-aware.", correct: true, justification: "The APP_GUARD token makes the guard a real provider that Nest instantiates through the DI container, so its constructor dependencies — Reflector and UsersService — are resolved and injected normally, while still applying to every route. This is the only option that is both global and dependency-injecting. APP_INTERCEPTOR / APP_PIPE / APP_FILTER are the equivalents for the other enhancer kinds. This is the canonical way to bind any global enhancer that has dependencies." },
+    { name: "app.useGlobalGuards(new RolesGuard()) in main.ts", summary: "Outside DI — deps are missing.", justification: "When you `new` the guard yourself, it lives outside the DI container, so Nest never injects anything: Reflector and UsersService are whatever you passed to the constructor. With no real arguments to pass in main.ts, you end up with undefined/null dependencies — exactly the incident where the role check threw and defaulted open. useGlobalGuards is only safe for a dependency-free enhancer." },
+    { name: "Hand-build Reflector and UsersService and pass them into the constructor in main.ts", summary: "Fragile, bypasses DI.", justification: "You can sometimes `new Reflector()`, but UsersService likely has its own dependencies (a repository, a DataSource) that themselves come from the container — reconstructing that graph by hand in main.ts duplicates the DI container badly and drifts the moment the service's deps change. It 'works' until UsersService needs one more provider, then silently breaks. APP_GUARD lets the container build the whole graph correctly." },
+    { name: "Rewrite it as middleware so it runs on every request", summary: "Wrong stage — no metadata.", justification: "Middleware runs before route resolution, so it has no ExecutionContext and cannot read @Roles() off the handler at all — the guard's core job is impossible there. Middleware also can't short-circuit with the guard's 403 semantics cleanly. Authorization that reads handler metadata must be a guard; the only question is how to bind it globally, and the answer is APP_GUARD." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-05-request-pipeline-quiz-1"
+  lessonSlug="05-request-pipeline"
+  lang="en"
+  question="A guard's canActivate reads request.body and checks `body.ownerId === user.id`. The handler's @Body() is typed as a CreatePostDto with class-validator. What does the guard actually see in request.body?"
+  choices={[
+    { label: "The raw parsed object — NOT a CreatePostDto instance, numbers still strings, no validation applied, because pipes run after the guard", correct: true },
+    { label: "A fully validated CreatePostDto instance, because @Body() validation runs before guards", misconception: "The order is the other way around: guards run at stage 2, pipes at stage 4. At guard time no pipe has touched the arguments, so request.body is the plain object the body parser produced — not an instance of CreatePostDto, with no class-validator checks and no class-transformer coercion. body instanceof CreatePostDto is false inside the guard." },
+    { label: "Nothing — guards cannot access request.body at all", misconception: "A guard CAN read request.body via ctx.switchToHttp().getRequest() — it just sees the un-validated raw version. The limitation isn't access, it's that the body hasn't been through the ValidationPipe yet because pipes run after guards." },
+    { label: "The validated body, but only if you add @UsePipes() to the controller", misconception: "Controller- or method-scoped pipes still run at stage 4, after the guard at stage 2 — adding @UsePipes() doesn't move pipe execution before the guard. The guard always sees the raw body regardless of where the pipe is bound." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-05-request-pipeline-quiz-2"
+  lessonSlug="05-request-pipeline"
+  lang="en"
+  question="Why does `app.useGlobalGuards(new RolesGuard())` fail to inject Reflector while `{ provide: APP_GUARD, useClass: RolesGuard }` injects it correctly?"
+  choices={[
+    { label: "Hand-newing the guard puts it OUTSIDE the DI container, so Nest never resolves its constructor deps; APP_GUARD makes it a provider Nest instantiates through DI, so Reflector and services are injected", correct: true },
+    { label: "useGlobalGuards is deprecated; APP_GUARD is the new name for the same mechanism", misconception: "They are not the same mechanism and useGlobalGuards isn't deprecated. The difference is who constructs the instance: with `new` you do (outside DI, no injection); with APP_GUARD the container does (inside DI, full injection). useGlobalGuards remains valid for dependency-free guards." },
+    { label: "Reflector is a request-scoped provider that only resolves inside an HTTP context", misconception: "Reflector is an ordinary singleton, not request-scoped, and is available app-wide. The reason `new RolesGuard()` lacks it is purely that you constructed the guard outside the container, so nothing was injected — not anything about Reflector's scope." },
+    { label: "APP_GUARD eagerly imports Reflector while useGlobalGuards imports it lazily", misconception: "There's no eager-vs-lazy import distinction here. The mechanism is DI membership: APP_GUARD registers the guard as a provider so Nest builds it via the container and injects its constructor args; a hand-newed guard is never seen by the container, so nothing is injected at all." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Order: middleware → guard → interceptor → pipe → handler → interceptor → filter. A guard runs before pipes, so it sees the raw body. Bind a global enhancer with deps via APP_GUARD (or APP_*), never `new` (outside DI).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-05-request-pipeline-retrieval"
+  lang="en"
+  questions={[
+    { q: "List the seven stages of the Nest request pipeline in order, and for each say what it can and cannot see.", a: "The order is fixed: (1) middleware — Express/Fastify level, bound in a module's configure(consumer); has raw req/res/next but NO ExecutionContext, no handler reference, no route metadata, because it runs before Nest resolves which handler serves the route. (2) guards — canActivate(ctx) returns boolean/Promise/Observable, false short-circuits with 403; authorization lives here; a guard gets an ExecutionContext so it can read handler metadata via Reflector, but the body is NOT yet validated or transformed. (3) interceptor pre-half — code before next.handle(). (4) pipes — run on the handler arguments (@Body/@Param/@Query), validating and transforming (ValidationPipe, ParseIntPipe), after guards and the interceptor pre-half, right before the handler. (5) the route handler. (6) interceptor post-half — the RxJS pipe after next.handle() (map, timeout, caching, response shaping) on the way out; so one interceptor is two execution points around the handler. (7) exception filters — catch anything thrown anywhere above and map it to an HTTP response; the last line. So: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter." },
+    { q: "Explain the two senior traps: why a guard can't trust the body, and why a hand-newed global enhancer can't inject its dependencies.", a: "Trap one — the body: pipes run at stage 4 and guards at stage 2, so the guard executes before any pipe has touched the arguments. request.body is the raw parser output — a plain object, not an instance of your DTO class, numbers still strings, no class-validator checks, class-transformer not run — so body instanceof CreatePostDto is false. Authorization that depends on validated input must validate the field manually in the guard, or move to the handler or a post-pipe interceptor; it must never live in a pipe (pipes transform data, they aren't an authZ boundary). Trap two — DI: there are two ways to bind a global enhancer and they differ. app.useGlobalGuards(new RolesGuard()) constructs the instance yourself, OUTSIDE the DI container, so Nest injects nothing — Reflector and UsersService are whatever you passed, typically null, which is how a guard silently authorizes everyone or crashes. Registering { provide: APP_GUARD, useClass: RolesGuard } (or APP_INTERCEPTOR/APP_PIPE/APP_FILTER) makes the enhancer a real provider that Nest instantiates through the container, so its constructor dependencies resolve normally while it still applies globally. useGlobalGuards is only safe for a dependency-free enhancer." },
+  ]}
+/>
+
+<Recap lang="en">
+Every HTTP request that reaches a Nest handler runs a fixed seven-stage gauntlet, and the order is not configurable: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter(on throw). Middleware runs first at the Express/Fastify level with raw req/res/next but no ExecutionContext, because the route handler isn't resolved yet. Guards run next — canActivate decides authorization and can read handler metadata via Reflector, but the body is still raw. The interceptor's pre-half runs before next.handle(); then pipes validate and transform the handler arguments; then the handler executes; then the interceptor's post-half runs its RxJS pipe on the way out (so one interceptor is two execution points); and an exception filter catches anything thrown anywhere and maps it to a response. Each enhancer binds at global, controller, or method scope (pipes also at parameter), executing global → controller → method, but scope never changes the stage order. Two traps burn seniors. First, because guards run before pipes, a guard sees the raw un-validated body — not a DTO instance, numbers still strings — so authZ that depends on validated input belongs in the handler or a post-pipe interceptor, never a guard reading a "validated" body and never a pipe. Second, binding a global enhancer two ways is not equivalent: app.useGlobalGuards(new RolesGuard()) lives outside the DI container and injects nothing (Reflector and services are null — the incident where every user became admin), whereas &#123; provide: APP_GUARD, useClass: RolesGuard &#125; (or APP_INTERCEPTOR/APP_PIPE/APP_FILTER) makes it a DI-aware provider whose Reflector and UsersService resolve from the container. useGlobalGuards is only safe for a dependency-free enhancer; anything with deps must bind via the APP_* token.
+</Recap>
