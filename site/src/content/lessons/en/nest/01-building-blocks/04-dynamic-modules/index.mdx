@@ -1,0 +1,223 @@
+---
+concepts:
+- dynamic-modules
+- forroot-forfeature-register
+- async-configuration
+- configurable-module-builder
+- global-modules
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-dynamic-modules"
+sources:
+- https://docs.nestjs.com/fundamentals/dynamic-modules
+- https://docs.nestjs.com/fundamentals/async-providers
+- https://docs.nestjs.com/modules#global-modules
+spiral: []
+status: ready
+summary: 'A static @Module has a fixed provider set; a dynamic module is a class whose static method returns a DynamicModule descriptor at runtime so the importer can pass config. forRoot once, forFeature per slice, register per import — and forRootAsync when config comes from a provider.'
+title: 'Dynamic modules and async configuration'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The pager went off at 2am: `FATAL: sorry, too many clients already`. Postgres was at its `max_connections` of 100, refusing new logins, and every pod in the deployment was crash-looping on boot. The schema hadn't changed, traffic was flat. The diff that shipped the day before added a `DatabaseModule.forRoot({ poolSize: 10 })` to a feature module so a background job could "reuse the connection." But `forRoot()` was already called once in `AppModule`. Calling it again didn't reuse anything — it registered the connection provider a *second* time, stood up a *second* pool of 10, and across five pods that quietly doubled the cluster's idle connections from 50 to 100. The shared singleton the team thought they had was two instances all along. This lesson is about the machinery underneath `forRoot`, `forFeature`, `register`, and async config — and the failure modes that come from getting them wrong.
+</Hook>
+
+<Crux>A dynamic module is a class whose static method returns a DynamicModule descriptor at runtime, so the importer passes config. forRoot once.</Crux>
+
+<Explanation>
+
+## Static set vs runtime descriptor
+
+A static `@Module({ providers, exports })` has a *fixed* provider set, decided at class-definition time. It can't take configuration — `imports: [CacheModule]` gives you whatever `CacheModule` decided for itself.
+
+A **dynamic module** is a class with a `static` method that *returns* a `DynamicModule` descriptor at runtime: `{ module, providers, imports?, exports?, global? }`. The importer calls that method and passes config, and Nest splices the returned providers into the graph. This is exactly how `ConfigModule.forRoot({ ... })`, `JwtModule.register({ ... })`, and `TypeOrmModule.forFeature([ ... ])` work — each call is a method invocation that builds a tailored module on the spot.
+
+```ts
+import { DynamicModule, Module } from '@nestjs/common';
+
+export const STORAGE_OPTIONS = 'STORAGE_OPTIONS';
+export interface StorageOptions { bucket: string; region: string; }
+
+@Module({})
+export class StorageModule {
+  // hand-rolled dynamic module: the importer passes config, we turn it into a provider
+  static forRoot(options: StorageOptions): DynamicModule {
+    return {
+      module: StorageModule,
+      providers: [{ provide: STORAGE_OPTIONS, useValue: options }],
+      exports: [STORAGE_OPTIONS], // so consumers can inject the options token
+      global: true,               // exports visible app-wide without re-importing
+    };
+  }
+}
+```
+
+`StorageModule.forRoot({ bucket: 'uploads', region: 'eu-central-1' })` returns a fully-formed module whose single provider is the options object, exported under a token that downstream services inject. The `@Module({})` shell is empty on purpose — the method is the real constructor.
+
+## The naming convention: forRoot, forFeature, register
+
+The three method names are a *convention*, not enforced by Nest — but every Nest developer reads them as a contract, so breaking it is a footgun.
+
+- **`forRoot()`** — configure *once*, at the app root. Typically returns the shared infrastructure (a connection, a config store) and is often `global`. Calling it more than once is the bug in the hook.
+- **`forFeature()`** — register a *slice*, repeatedly, per feature module. `TypeOrmModule.forFeature([User])` in one module, `forFeature([Order])` in another — each call scopes repositories into *that* module without re-creating the connection `forRoot` already made.
+- **`register()`** — per-import configuration with *no* root/global semantics. Each `HttpModule.register({ baseURL })` is independent; two imports mean two separately-configured instances, and that's intended.
+
+```ts
+// forRoot ONCE, at the root — stands up the shared connection (global)
+imports: [DatabaseModule.forRoot({ url: process.env.DB_URL, poolSize: 10 })]
+
+// forFeature PER module — scopes entities/repos, reuses the forRoot connection
+imports: [DatabaseModule.forFeature([User])]   // in UsersModule
+imports: [DatabaseModule.forFeature([Order])]  // in OrdersModule
+
+// register PER import — each gets its own independent config, no sharing implied
+imports: [HttpModule.register({ baseURL: 'https://api.billing.internal' })]
+```
+
+<Inset kind="why" lang="en">
+Why does calling `forRoot()` twice double your pool instead of reusing the connection? Because `forRoot()` is a plain function that *returns a fresh provider descriptor every time*. The first call registers `{ provide: DB_POOL, useFactory: makePool }` in `AppModule`; the second call returns the *same* descriptor object again, and Nest registers it a second time in the feature module's injector — `useFactory` runs again, opening a second physical pool. There is no identity check that says "this provider already exists, skip it." `@Global` doesn't save you either: global only changes *visibility* of exports, not *cardinality* of providers. Two `forRoot` calls = two factory runs = two pools, full stop. The shared-singleton mental model is a lie the second `forRoot` quietly breaks; the fix is to call `forRoot` exactly once and have everyone downstream `forFeature` or inject the exported token.
+</Inset>
+
+## Async config: forRootAsync and the factory provider
+
+The hand-rolled `forRoot` above takes a *literal* options object. But the real config — a DB URL, a JWT secret — lives in env and is read by `ConfigService`. You can't pass a literal at import time; you need the value resolved from another provider. That's `forRootAsync`:
+
+```ts
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+JwtModule.registerAsync({
+  imports: [ConfigModule],            // make ConfigService resolvable IN this context
+  inject: [ConfigService],            // the factory's dependencies, in order
+  useFactory: (cfg: ConfigService) => ({
+    secret: cfg.getOrThrow('JWT_SECRET'),
+    signOptions: { expiresIn: cfg.get('JWT_TTL') ?? '15m' },
+  }),
+});
+```
+
+Three pieces work together. `useFactory` is *itself a provider* — a function Nest calls to produce the options. `inject` lists that function's dependencies, positionally, so Nest knows to resolve `ConfigService` and pass it as the first argument. `imports` makes those dependencies *resolvable inside the dynamic module's own injection context* — a dynamic module has its own scope, so unless `ConfigModule` is global, the factory can't see `ConfigService` without importing it here.
+
+Forget `imports: [ConfigModule]` (and `ConfigModule` isn't global), and you get a boot-time crash, not a runtime one: **`Nest can't resolve dependencies of the <factory> (?). Please make sure that the argument ConfigService at index [0] is available in the <module> context.`** The `(?)` is the unresolved `ConfigService` — the factory declared it via `inject` but nothing in scope provides it.
+
+## ConfigurableModuleBuilder: stop hand-rolling
+
+Writing `forRoot` *and* `forRootAsync` by hand — the literal path, the factory path, the `useExisting`/`useClass` async variants, the options token — is ~40 lines of boilerplate per module, repeated identically across every configurable module you own. `ConfigurableModuleBuilder` generates all of it:
+
+```ts
+import { ConfigurableModuleBuilder } from '@nestjs/common';
+import { StorageOptions } from './storage-options.interface';
+
+// generates the class + token + sync AND async entry points for you
+export const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN } =
+  new ConfigurableModuleBuilder<StorageOptions>().build();
+```
+
+```ts
+import { Module } from '@nestjs/common';
+import { ConfigurableModuleClass } from './storage.module-definition';
+
+@Module({ providers: [StorageService], exports: [StorageService] })
+export class StorageModule extends ConfigurableModuleClass {}
+// now StorageModule.register({...}) AND StorageModule.registerAsync({ useFactory, inject, imports })
+// both exist, and StorageService can inject MODULE_OPTIONS_TOKEN
+```
+
+The builder hands back `ConfigurableModuleClass` (extend it) and `MODULE_OPTIONS_TOKEN` (inject it to read the options). You get both `register` and `registerAsync` for free, with the `imports`/`inject`/`useFactory` async plumbing already wired. Want `forRoot` naming instead of `register`? `.setClassMethodName('forRoot')`. Want it global? `.setExtras({ isGlobal: true }, ...)`. The ~40 lines per module collapse to two.
+
+<FlowDiagram
+  label="How forRootAsync resolves async configuration at boot. The importer calls JwtModule.registerAsync with imports, inject, and useFactory. Nest first resolves the ConfigModule inside the dynamic module's own injection context so ConfigService becomes available. It then runs the useFactory, passing the injected ConfigService as an argument, and the factory returns the options object. Nest binds that object to the module's options provider token, and finally JwtModule's internal providers consume that token to configure the signer. Forgetting imports ConfigModule breaks step two and produces 'Nest can't resolve dependencies of the useFactory'."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "call", label: "registerAsync({...})", sub: "imports+inject+factory" },
+    { id: "resolve", label: "resolve ConfigModule", sub: "in dynamic context" },
+    { id: "factory", label: "useFactory(cfg)", sub: "runs the function" },
+    { id: "token", label: "options provider", sub: "MODULE_OPTIONS_TOKEN" },
+    { id: "consume", label: "JwtModule consumes", sub: "configures signer" },
+  ]}
+  edges={[
+    { from: "call", to: "resolve", label: "imports" },
+    { from: "resolve", to: "factory", label: "inject" },
+    { from: "factory", to: "token", label: "returns options" },
+    { from: "token", to: "consume", label: "injected" },
+  ]}
+  caption="forRootAsync turns an injected provider (ConfigService) into a config object via a factory provider. Drop imports: [ConfigModule] and step two fails: 'can't resolve dependencies of the useFactory'."
+/>
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-04-dynamic-modules-tradeoff-1"
+  lessonSlug="04-dynamic-modules"
+  lang="en"
+  prompt="Your AuthModule needs the JWT signing secret from the environment, read via ConfigService. How should you configure JwtModule?"
+  options={[
+    { name: "JwtModule.registerAsync({ imports: [ConfigModule], inject: [ConfigService], useFactory: (cfg) => ({ secret: cfg.getOrThrow('JWT_SECRET') }) })", summary: "Async factory.", correct: true, justification: "The secret lives in a provider (ConfigService), not in a literal you have at import time, so you need the async variant. registerAsync's useFactory is a provider that produces the options; inject lists its dependencies (ConfigService) positionally; imports: [ConfigModule] makes ConfigService resolvable inside the dynamic module's own injection context. All three are required — drop imports and you get the boot-time 'can't resolve dependencies of the useFactory'. This is the canonical way to feed env-derived config into a dynamic module." },
+    { name: "JwtModule.register({ secret: process.env.JWT_SECRET })", summary: "Reads env directly at import.", justification: "This bypasses ConfigService and reads process.env at module-evaluation time. It often works, but it sidesteps validation, defaults, and the typed/centralized config layer the app already has — and if config is loaded asynchronously (a secrets manager, a remote store) the value isn't there yet at import. The whole point of forRootAsync is to defer config resolution to a provider; register with raw process.env throws that away." },
+    { name: "Wrap JwtModule in a @Global() module and call forRoot twice (once in AuthModule, once in AppModule)", summary: "Double registration.", justification: "This is the connection-pool incident in another costume. forRoot is a function that returns a fresh provider each call, so calling it twice registers the signer config twice — and @Global changes export visibility, never provider cardinality, so it does NOT collapse the two into one. You get duplicated providers and a confused DI graph, not a shared singleton. forRoot is a once-at-root operation." },
+    { name: "Hardcode the secret as a string literal in register({ secret: 'super-secret' })", summary: "Secret in source.", justification: "A signing secret committed to source is a security incident waiting to leak via git history, logs, or a public mirror, and it can't differ per environment. This isn't a configuration strategy at all; it's the thing config layers exist to prevent. Use registerAsync with ConfigService so the secret comes from the environment and is validated on boot." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-04-dynamic-modules-quiz-1"
+  lessonSlug="04-dynamic-modules"
+  lang="en"
+  question="In JwtModule.registerAsync({ imports, inject, useFactory }), what do `inject` and `imports` each do — and why would you get 'Nest can't resolve dependencies of the useFactory (?)' at boot?"
+  choices={[
+    { label: "inject lists the factory's dependencies (resolved and passed positionally); imports makes those deps resolvable in the dynamic module's context. Omitting imports: [ConfigModule] (when it isn't global) means ConfigService is unresolvable, so the factory provider fails — that's the (?)", correct: true },
+    { label: "inject and imports are interchangeable aliases; the error means you used the wrong one of the two", misconception: "They are not aliases. inject declares WHAT the factory needs (the dependency tokens, passed as positional args). imports declares WHERE those needs come from (which modules export them, made visible in this dynamic module's scope). You need both: inject without imports leaves ConfigService unresolvable; that mismatch is exactly the (?) error." },
+    { label: "The error is a runtime error thrown on the first request, after the app has booted successfully", misconception: "It's a boot-time error, not a request-time one. Nest resolves the dependency graph when the application initializes; an unresolvable factory dependency makes init throw before any request is served. The whole app fails to start — which is actually the good outcome, since it surfaces the misconfiguration immediately." },
+    { label: "imports is optional whenever ConfigService exists anywhere in the app; Nest searches all modules globally", misconception: "Nest does NOT search all modules globally — a dynamic module has its own injection context, and providers are only visible if their exporting module is imported into that context (or is @Global). Unless ConfigModule is global, you must add imports: [ConfigModule] for the factory to see ConfigService. That scoping is the whole reason imports exists on forRootAsync." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-04-dynamic-modules-quiz-2"
+  lessonSlug="04-dynamic-modules"
+  lang="en"
+  question="A team marks DatabaseModule @Global() and calls DatabaseModule.forRoot() in both AppModule and a feature module, expecting @Global to dedupe it into one shared connection. What actually happens?"
+  choices={[
+    { label: "Two connection pools are created — @Global changes export VISIBILITY, not provider CARDINALITY; each forRoot call returns a fresh provider descriptor and runs the factory again", correct: true },
+    { label: "One pool — @Global guarantees a single instance across all forRoot calls", misconception: "@Global only makes a module's exports visible everywhere without re-importing; it says nothing about how many times a provider is instantiated. Each forRoot() call returns a new provider descriptor, so two calls register the connection factory twice and open two pools. Global visibility and singleton cardinality are unrelated concepts." },
+    { label: "Nest throws a duplicate-provider error and refuses to boot", misconception: "Nest does not error on this — the two forRoot calls live in different injectors, so there's no token collision that halts boot. It silently stands up two pools, which is worse than an error: the app starts fine and the doubled connection count only bites later, under load, as 'too many clients'." },
+    { label: "The second forRoot is ignored because the first already ran", misconception: "There's no memoization or 'already ran' guard — forRoot is just a function that returns a descriptor, and Nest registers whatever it's handed. The second call is fully honored, producing a second factory run and a second pool. The convention 'forRoot once' exists precisely because nothing enforces it." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A dynamic module returns a provider descriptor at runtime: forRoot once (twice = two pools), forFeature per slice, register per import. forRootAsync = imports+inject+useFactory; ConfigurableModuleBuilder cuts ~40 LOC.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-04-dynamic-modules-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a dynamic module versus a static one, and what do the forRoot / forFeature / register names each signal? Why does calling forRoot twice cause the connection-pool incident?", a: "A static @Module has a fixed provider set decided at class-definition time and can't take configuration. A dynamic module is a class with a static method that returns a DynamicModule descriptor — { module, providers, imports?, exports?, global? } — at runtime, so the importer passes config and Nest splices the returned providers into the graph; this is how ConfigModule.forRoot, JwtModule.register, and TypeOrmModule.forFeature work. The three names are a convention, not enforced: forRoot configures once at the app root and typically returns shared infra (a connection/config store), often global; forFeature registers a slice repeatedly per feature module (e.g. entities) reusing the forRoot connection; register is per-import config with no root/global semantics, so two imports mean two independent instances by design. Calling forRoot twice causes the pool incident because forRoot is a plain function that returns a fresh provider descriptor every call — the second call registers the connection factory again in a different injector, useFactory runs a second time, and a second physical pool opens. @Global doesn't help: it changes export visibility, not provider cardinality. Two forRoot calls = two factory runs = two pools, which across N pods doubles idle connections and can exhaust Postgres max_connections (default 100). Fix: forRoot exactly once at the root; downstream use forFeature or inject the exported token." },
+    { q: "How does forRootAsync turn an injected provider into config, and what does ConfigurableModuleBuilder generate? Why is 'Nest can't resolve dependencies of the useFactory' a boot-time error?", a: "When config comes from a provider (ConfigService reading env) you can't pass a literal at import time, so you use forRootAsync/registerAsync({ imports, inject, useFactory }). useFactory is itself a provider — a function Nest calls to produce the options object. inject lists that function's dependencies positionally, so Nest resolves ConfigService and passes it as the first argument. imports makes those dependencies resolvable inside the dynamic module's own injection context, because a dynamic module has its own scope — unless ConfigModule is global, the factory can't see ConfigService without importing it here. Omitting imports: [ConfigModule] (when it isn't global) produces a BOOT-time crash, because Nest resolves the dependency graph at application init, before any request: 'Nest can't resolve dependencies of the <factory> (?)', where (?) is the unresolved ConfigService the factory declared via inject but nothing in scope provides. ConfigurableModuleBuilder removes the ~40 lines of hand-rolled plumbing: new ConfigurableModuleBuilder<Options>().build() returns ConfigurableModuleClass (you extend it) and MODULE_OPTIONS_TOKEN (you inject it to read the options), and generates both sync (register) and async (registerAsync) entry points with the imports/inject/useFactory wiring already done. .setClassMethodName('forRoot') renames the entry points and .setExtras can make it global." },
+  ]}
+/>
+
+<Recap lang="en">
+A static @Module has a fixed provider set decided at definition time and can't be configured by its importer. A dynamic module fixes that: it's a class whose static method returns a DynamicModule descriptor — &#123; module, providers, imports?, exports?, global? &#125; — at runtime, so the caller passes config and Nest splices the providers in. That's the machinery behind ConfigModule.forRoot, JwtModule.register, and TypeOrmModule.forFeature. The names are a convention, not enforced: forRoot configures once at the root and returns shared infra (often global); forFeature registers a slice repeatedly per feature, reusing the forRoot connection; register is per-import config with no global semantics, so each import is independent. The first failure mode: calling forRoot twice doesn't reuse anything — it's a function returning a fresh provider descriptor each time, so the factory runs again and a second connection pool opens, which across several pods can double idle connections and exhaust Postgres max_connections (default 100); @Global can't save you because it changes export visibility, not provider cardinality. For env-derived config use forRootAsync(&#123; imports, inject, useFactory &#125;): useFactory is a provider producing the options, inject lists its positional dependencies, and imports makes those deps resolvable in the dynamic module's own scope — forget imports: [ConfigModule] and you get the boot-time 'Nest can't resolve dependencies of the useFactory (?)'. ConfigurableModuleBuilder generates ConfigurableModuleClass and MODULE_OPTIONS_TOKEN plus both register and registerAsync, collapsing ~40 lines of async-provider plumbing per module to two. The senior stance on @Global: reserve it for truly cross-cutting infra (Config, Logger, DB) — overuse hides dependencies and turns the DI graph into a hairball where modules silently use providers they never import.
+</Recap>
