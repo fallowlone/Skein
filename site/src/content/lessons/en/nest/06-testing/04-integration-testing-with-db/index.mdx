@@ -1,0 +1,234 @@
+---
+concepts:
+- integration-testing
+- testcontainers
+- per-test-isolation
+- real-migrations
+- transaction-rollback
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-integration-testing-with-db"
+sources:
+- https://docs.nestjs.com/fundamentals/testing
+- https://node.testcontainers.org/
+spiral: []
+status: ready
+summary: 'Mocks assert your assumptions; a real database asserts reality. Integration tests run code against a throwaway Postgres (Testcontainers) to catch constraints, cascades, and migration drift mocks can''t — paid for with per-test rollback and seconds of runtime.'
+title: 'Integration testing against a real database'
+track: nest
+unit: 06-testing
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The unit suite was a wall of green. Every repository was mocked, every service test ran in single-digit milliseconds, coverage sat at 94%. Then a prod `INSERT` blew up on a `UNIQUE` constraint the mock had never enforced — the mock happily returned a saved user for an email that already existed, because a mock returns whatever you told it to. Worse, a `ON DELETE CASCADE` on a foreign key silently wiped a tree of child rows when an admin deleted one parent: no unit test exercised it, because the mock had no notion of foreign keys. Both bugs lived in the gap between *what the code assumes the database does* and *what the database actually does* — and that gap is invisible to a mock, by construction. Then they over-corrected: an integration suite with no isolation, all tests sharing one mutable database, went order-dependent and flaky enough to block CI for two days. This lesson is the middle path: test against a real Postgres, isolate every test, and keep it fast enough to live in CI.
+</Hook>
+
+<Crux>Mocks assert your assumptions; a real Postgres asserts reality — catching constraints, cascades, and migration drift mocks can't.</Crux>
+
+<Explanation>
+
+## Where the pyramid bends: what only a real database can catch
+
+Unit tests (mocked dependencies, ~1ms each, many of them) verify *your logic in isolation*. Integration tests verify that your code plus a **real collaborator — the database** — actually work together. That distinction is the whole point: a mock returns what you programmed it to return, so it can only ever confirm the assumptions you already hold. The bugs that reach prod from the data layer are exactly the ones your assumptions missed:
+
+- **Constraint violations** — `UNIQUE`, `NOT NULL`, `CHECK`, foreign keys. A mocked repo will "save" a duplicate email all day; Postgres raises `23505`.
+- **Cascade rules** — `ON DELETE CASCADE` / `SET NULL` reshape rows you never explicitly touched. No mock models referential action.
+- **Migration drift** — the migration that didn't run, the column that's still `varchar(50)`, the index that's missing. Mocks have no schema to drift from.
+- **Real ORM mapping** — `JSONB` columns, enum types, `numeric` precision, sequences, snake_case ↔ camelCase. The ORM's actual SQL generation, not your mental model of it.
+- **Transaction & isolation behaviour** — what a rollback actually rolls back, what a lock actually blocks.
+
+The cost is real: integration tests need a real Postgres and run in ~10–100ms+ (real IO) instead of ~1ms, and container startup costs ~1–3s once per suite. So you write **far fewer** of them than unit tests — the pyramid stays a pyramid. You're not replacing unit tests; you're adding a thin, high-value layer that asserts the things mocks can't.
+
+## Why not a mocked repo, and why not SQLite
+
+Two tempting shortcuts both fail the same way — by giving you green tests that lie:
+
+```ts
+// The mock asserts YOUR ASSUMPTION, not reality.
+const repo = { save: jest.fn().mockResolvedValue({ id: 1, email: 'a@b.com' }) };
+// This "passes" even if email a@b.com already exists in prod and would 23505.
+// The mock cannot enforce UNIQUE, cannot cascade, cannot run a migration.
+```
+
+A mocked repository can't catch a unique violation, can't fire an FK cascade, can't surface an N+1, and can't notice a migration that never ran — because it *is* your assumption, encoded. **SQLite-as-a-fake** is the subtler trap: it's a real database, so it feels honest, but it's a *different engine* from prod. Its type affinity, `JSONB` handling, sequence semantics, and isolation behaviour all diverge from Postgres. You get tests that are green on SQLite and red in production — the worst possible outcome, because you trusted them. The senior stance is unambiguous: **integration tests run on the same engine and major version as prod.** If prod is Postgres 16, the test container is Postgres 16.
+
+## Testcontainers: a throwaway Postgres per test run
+
+`@testcontainers/postgresql` spins up a real, disposable Postgres in Docker for the duration of the run and hands you a *dynamic* connection URL. You feed that URL into `TypeOrmModule.forRoot` in your testing module, run your **real migrations** against it (never `synchronize: true` — that skips the very migrations you need to test), execute the suite, and tear the container down. One `beforeAll` builds it all:
+
+```ts
+import { Test } from '@nestjs/testing';
+import { TypeOrmModule, getDataSourceToken } from '@nestjs/typeorm';
+import { DataSource } from 'typeorm';
+import { PostgreSqlContainer, StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { UsersModule } from '../src/users/users.module';
+
+let container: StartedPostgreSqlContainer;
+let dataSource: DataSource;
+
+beforeAll(async () => {
+  // ~1–3s once: a real Postgres on the SAME major version as prod
+  container = await new PostgreSqlContainer('postgres:16').start();
+
+  const moduleRef = await Test.createTestingModule({
+    imports: [
+      TypeOrmModule.forRoot({
+        type: 'postgres',
+        url: container.getConnectionUri(), // dynamic host/port — never hardcode 5432
+        entities: [/* … */],
+        synchronize: false,                // test the REAL migrations, not auto-sync
+        migrationsRun: false,              // we run them explicitly below
+      }),
+      UsersModule,
+    ],
+  }).compile();
+
+  dataSource = moduleRef.get<DataSource>(getDataSourceToken());
+  await dataSource.runMigrations();        // exercise the same SQL prod will run
+}, 60_000);                                // generous timeout: pulling the image is slow on a cold cache
+
+afterAll(async () => {
+  await dataSource?.destroy();
+  await container?.stop();                  // dispose the throwaway DB
+});
+```
+
+Running `runMigrations()` rather than `synchronize: true` is the load-bearing detail: it means a migration that drops a column, adds a constraint, or backfills data is actually executed in the test, so migration drift surfaces here instead of in prod.
+
+## Per-test isolation: the technique that decides whether your suite is trustworthy
+
+Tests must not see each other's data. The flakiness in the Hook came from shared mutable state — one test inserted a row, another counted rows and got a number that depended on test *order*. Three strategies, in order of preference:
+
+```ts
+// (a) PREFERRED — wrap each test in a transaction and ROLLBACK after.
+//     Fastest: nothing is ever committed, so there is nothing to clean up.
+let qr;
+beforeEach(async () => {
+  qr = dataSource.createQueryRunner();
+  await qr.connect();
+  await qr.startTransaction();             // BEGIN
+  // hand qr.manager to the code under test so its writes live in THIS tx
+});
+afterEach(async () => {
+  await qr.rollbackTransaction();          // ROLLBACK — every write vanishes
+  await qr.release();
+});
+```
+
+```ts
+// (b) ROBUST — TRUNCATE every table between tests. Survives code that commits
+//     its own transactions, but slower (real DELETEs + index churn).
+afterEach(async () => {
+  const tables = dataSource.entityMetadatas.map((m) => `"${m.tableName}"`).join(', ');
+  await dataSource.query(`TRUNCATE ${tables} RESTART IDENTITY CASCADE;`);
+});
+
+// (c) PARALLEL — a fresh schema (or database) per test FILE, so workers never
+//     share state. Most isolation, most setup; reach for it when you parallelize.
+```
+
+Strategy (a) is fastest because a rolled-back transaction commits nothing — there's no cleanup to do. But it has a sharp edge: **it breaks the moment the code under test manages its own transaction and commits.** If your service opens its own `dataSource.transaction(...)` and commits inside it, that commit escapes your outer test transaction (or the nested savepoint releases), and your `ROLLBACK` no longer undoes it. For that code, fall back to (b) TRUNCATE. The trap to internalize: **shared mutable DB state + a parallel test runner = order-dependent flakiness.** Isolate per test, or per worker — never let two tests touch the same committed rows.
+
+<Inset kind="why" lang="en">
+Why is a real-DB integration test worth its slowness over a mocked repo? Because the bugs that reach prod from the data layer — constraint violations, cascade deletes, migration drift, ORM-mapping mistakes, isolation and locking surprises — are exactly the class a mock cannot model. A mock returns what you told it to, so it asserts *your assumption*; the real database asserts *reality*, including the parts of reality you got wrong. The unique violation, the cascade that wiped child rows, the migration that never ran — none of them are expressible against a `jest.fn()`. You pay seconds of runtime and a Docker container to buy coverage of the one class of bug that mocks are structurally blind to. That's not slow testing being tolerated; that's the only place these defects can be caught before prod.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-06-testing-04-integration-testing-with-db-tradeoff-1"
+  lessonSlug="04-integration-testing-with-db"
+  lang="en"
+  prompt="You must test repository and query code with real confidence — catching constraint violations, cascades, and migration drift before prod. How do you set up the test database?"
+  options={[
+    { name: "Testcontainers real Postgres (same major version) + run the real migrations + wrap each test in a transaction and ROLLBACK", summary: "Real engine, isolated, fast.", correct: true, justification: "This is the senior default. A throwaway Postgres on the same major version as prod means UNIQUE/FK/CHECK constraints, ON DELETE CASCADE, JSONB and enum mapping all behave exactly as they will in production. Running the real migrations (runMigrations, not synchronize) makes migration drift fail here instead of at deploy. Per-test transaction rollback gives isolation with near-zero cleanup cost — nothing is committed, so nothing needs cleaning — keeping the suite fast enough for CI. You pay ~1–3s container startup once and ~10–100ms per test for genuine assertion of reality." },
+    { name: "Mock the repository (jest.fn) and assert against the mock", summary: "Asserts your assumption.", justification: "This is exactly how the constraint and cascade bugs reached prod. A mock returns whatever you programmed, so it confirms your assumptions and nothing else: it can't enforce UNIQUE, can't fire an FK cascade, can't run a migration, can't surface an N+1. It's the right tool for unit-testing pure logic with the DB stubbed out — but it is structurally blind to the data-layer bug class, which is precisely what this layer must catch." },
+    { name: "SQLite in-memory as the test database", summary: "Different engine, green tests that lie.", justification: "SQLite is a real database, so it feels honest, but it's a different engine from Postgres: type affinity, JSONB, sequences, and isolation all diverge. You get tests green on SQLite and red in prod — worse than no test, because you trusted them. Integration tests must run on the same engine and major version as production, which is the whole reason to reach for a Postgres container instead of an in-memory fake." },
+    { name: "Skip local DB tests; only run E2E against staging", summary: "Slow, shared, no isolation.", justification: "Staging is a single shared mutable database with no per-test isolation, so suites go order-dependent and flaky, and a failing test can corrupt state for everyone. It's also slow (network + a full deploy) and far from the code, so a constraint bug surfaces late and is hard to localize. E2E against staging has its place for smoke-testing the deployed system, but it can't replace fast, isolated, per-test integration coverage of your query code." },
+  ]}
+/>
+
+<Quiz
+  id="nest-06-testing-04-integration-testing-with-db-quiz-1"
+  lessonSlug="04-integration-testing-with-db"
+  lang="en"
+  question="Your service is fully unit-tested with a mocked repository and 94% coverage, yet a prod INSERT fails on a UNIQUE constraint and an admin delete silently cascades away child rows. What class of bug did the mocked unit tests structurally fail to catch?"
+  choices={[
+    { label: "Database-reality bugs: constraint violations (UNIQUE/FK/CHECK), cascade rules, migration drift, and real ORM/SQL mapping — things a mock returns assumptions for instead of enforcing", correct: true },
+    { label: "Pure business-logic bugs in the service methods, which mocks cannot exercise", misconception: "Mocks are GOOD at exercising business logic — that's what unit tests do best, with the DB stubbed out. The blind spot is the opposite: anything that depends on the real database's behaviour (constraints, cascades, migrations, ORM mapping). A mock returns what you told it to, so it confirms your assumptions; it can't enforce a UNIQUE constraint or fire a cascade. Only a real DB integration test catches those." },
+    { label: "Network and timeout failures between the app and the database", misconception: "Transient network/timeout failures are a separate concern (retries, connection pools, resilience) and aren't what a UNIQUE violation or a cascade is. Those are deterministic data-integrity behaviours of the database schema — UNIQUE, FK, ON DELETE CASCADE — which a mock can't model and an integration test on real Postgres can. The bug class here is database reality, not flaky IO." },
+    { label: "TypeScript type errors that the compiler should have caught", misconception: "A UNIQUE violation and a cascade delete are runtime database behaviours, not compile-time type errors — the code type-checks fine. The schema's constraints and referential actions live in the database, invisible to the type system and to a mock. Catching them requires executing against a real Postgres with the real migrations applied." },
+  ]}
+/>
+
+<Quiz
+  id="nest-06-testing-04-integration-testing-with-db-quiz-2"
+  lessonSlug="04-integration-testing-with-db"
+  lang="en"
+  question="For per-test isolation you wrap each test in a transaction and ROLLBACK in afterEach. It's the fastest option — but when does this strategy silently break?"
+  choices={[
+    { label: "When the code under test manages and COMMITS its own transaction — that commit escapes your outer test transaction, so the rollback no longer undoes its writes", correct: true },
+    { label: "When tests run sequentially rather than in parallel — rollback only works with a parallel runner", misconception: "Rollback isolation is independent of parallelism; it works fine sequentially. (Parallelism is the case for a fresh schema/DB per worker, strategy c.) Transaction-rollback is fastest precisely because nothing is committed, so there's no cleanup — but it breaks when the system under test commits its OWN transaction, which then escapes your enclosing test transaction." },
+    { label: "When the test only reads and never writes — there is nothing to roll back", misconception: "A read-only test is the easy case: rollback is a harmless no-op and isolation is trivially preserved. The strategy breaks in the opposite situation — when the code under test opens and commits its own transaction, so its writes commit for real and your outer ROLLBACK can't undo them. For that code you switch to TRUNCATE between tests." },
+    { label: "When the database has foreign-key constraints — rollback can't undo cascaded deletes", misconception: "A ROLLBACK undoes a cascaded delete just like any other write within the same transaction — FK cascades are fully transactional in Postgres. The real failure mode is a commit inside the SUT that escapes the test's transaction boundary; once committed, no outer rollback reaches it, so you fall back to TRUNCATE." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The lifecycle of a Testcontainers-based integration suite. Once per suite, beforeAll starts a real Postgres container (the same major version as prod), then runs the real migrations against it, then builds the Nest testing module pointed at the container's dynamic connection URL. Then, per test, the suite begins a transaction, runs the test body against the real database, and rolls the transaction back so the next test sees a clean schema with no committed data. Finally, afterAll destroys the DataSource and tears down the container."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "start", label: "Start Postgres", sub: "beforeAll, ~1–3s" },
+    { id: "migrate", label: "Run real migrations", sub: "not synchronize" },
+    { id: "module", label: "Build testing module", sub: "point at container URL" },
+    { id: "begin", label: "BEGIN", sub: "per test" },
+    { id: "test", label: "Run test", sub: "real DB, real SQL" },
+    { id: "rollback", label: "ROLLBACK", sub: "isolate next test" },
+    { id: "teardown", label: "Teardown", sub: "afterAll, stop container" },
+  ]}
+  edges={[
+    { from: "start", to: "migrate", label: "schema ready" },
+    { from: "migrate", to: "module", label: "DataSource up" },
+    { from: "module", to: "begin", label: "suite ready" },
+    { from: "begin", to: "test", label: "in tx" },
+    { from: "test", to: "rollback", label: "afterEach" },
+    { from: "rollback", to: "begin", label: "next test" },
+    { from: "rollback", to: "teardown", label: "last test" },
+  ]}
+  caption="Setup is once-per-suite (start → migrate → build module); isolation is once-per-test (BEGIN → test → ROLLBACK loops back); teardown disposes the throwaway DB. The rollback loop is what makes the suite order-independent and fast."
+/>
+
+<KeyTakeaway>Mocks assert assumptions; a real Postgres asserts reality. Use Testcontainers on prod's version, run real migrations (not synchronize), isolate per test via rollback — TRUNCATE when the code self-commits.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-06-testing-04-integration-testing-with-db-retrieval"
+  lang="en"
+  questions={[
+    { q: "What class of bug does an integration test against a real database catch that a mocked-repo unit test structurally cannot, and why?", a: "It catches database-reality bugs: constraint violations (UNIQUE, NOT NULL, CHECK, foreign keys), referential actions like ON DELETE CASCADE / SET NULL, migration drift (a migration that didn't run, a column or index that's wrong), real ORM-to-SQL mapping (JSONB, enums, numeric precision, sequences, snake_case↔camelCase), and actual transaction/isolation behaviour. A mock structurally cannot catch these because a mock returns whatever you programmed it to return — it encodes your assumptions, so it can only confirm them. It has no schema, so it can't enforce a UNIQUE constraint, can't fire an FK cascade, can't run a migration, can't surface an N+1. The real database asserts reality, including the parts of reality your assumptions got wrong. That's why the canonical failures — a prod INSERT failing on UNIQUE that the mock 'saved' anyway, or a cascade silently wiping child rows no unit test exercised — sail through a 94%-coverage mocked suite and only an integration test on real Postgres would have caught them. The price is ~1–3s container startup once and ~10–100ms per test versus ~1ms for a mock, which is why you write far fewer of them — the pyramid stays a pyramid." },
+    { q: "Walk through a Testcontainers integration setup with per-test isolation: container, migrations, testing module, and the isolation strategy — including when the fast one breaks.", a: "Once per suite in beforeAll: start a throwaway Postgres with @testcontainers/postgresql on the SAME major version as prod (new PostgreSqlContainer('postgres:16').start(), ~1–3s), take its dynamic connection URI (never hardcode 5432), feed that URL into TypeOrmModule.forRoot with synchronize:false, build the Nest testing module, and run the REAL migrations against the container (dataSource.runMigrations(), not synchronize:true) so migration drift surfaces in the test rather than at deploy. In afterAll, destroy the DataSource and stop the container. For per-test isolation, three strategies in order of preference: (a) wrap each test in a transaction and ROLLBACK in afterEach — fastest, because nothing is committed so there's no cleanup; (b) TRUNCATE all tables between tests — robust but slower (real DELETEs + index churn); (c) a fresh schema or database per test file for parallelism — most isolation, most setup. Strategy (a) silently breaks when the code under test manages and COMMITS its own transaction: that commit escapes the outer test transaction, so the ROLLBACK no longer undoes its writes; for that code, fall back to (b) TRUNCATE. The governing rule: shared mutable DB state plus a parallel runner equals order-dependent flakiness, so isolate per test or per worker." },
+  ]}
+/>
+
+<Recap lang="en">
+Integration tests occupy the bend in the test pyramid: unit tests use mocks to assert your logic in isolation (~1ms, many), while integration tests run your code against a real collaborator — the database — to assert reality (~10–100ms, fewer). A mock returns what you programmed it to, so it confirms your assumptions and is structurally blind to the data-layer bug class: UNIQUE/FK/CHECK constraint violations, ON DELETE CASCADE rules, migration drift, real ORM/SQL mapping (JSONB, enums, sequences), and transaction/isolation behaviour. That blindness is how a 94%-coverage mocked suite let a UNIQUE violation and a silent cascade-delete reach prod. Don't fix it with SQLite — a different engine gives green tests that lie; run on the same engine and major version as prod. Testcontainers (@testcontainers/postgresql) starts a throwaway Postgres in Docker once per suite (~1–3s), hands you a dynamic connection URL you point TypeOrmModule.forRoot at, and you run the real migrations (runMigrations, never synchronize:true) so drift fails in the test. Isolate every test or the suite goes order-dependent and flaky: prefer wrapping each test in a transaction and rolling back in afterEach (fastest — nothing commits, nothing to clean), fall back to TRUNCATE between tests when the code under test commits its own transaction (which escapes the outer rollback), and use a fresh schema per file when you parallelize. The discipline: real engine, real migrations, per-test isolation — paid for in seconds, returned as the one bug class mocks can never see.
+</Recap>

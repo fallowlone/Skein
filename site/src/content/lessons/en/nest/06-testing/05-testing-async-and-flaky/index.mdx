@@ -1,0 +1,229 @@
+---
+concepts:
+- async-tests
+- fake-timers
+- queue-event-testing
+- flaky-tests
+- determinism
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-testing-async-and-flaky"
+sources:
+- https://docs.nestjs.com/fundamentals/testing
+- https://jestjs.io/docs/timer-mocks
+spiral: []
+status: ready
+summary: 'Async tests fail when the assertion races the work it checks. Always await; replace the clock with fake timers (and flush microtasks); await handlers, never setTimeout(50). A flaky test is a bug report about non-determinism — fix the race, never retryTimes(3) it away.'
+title: 'Testing async code and killing flaky tests'
+track: nest
+unit: 06-testing
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The test had passed a thousand times. `it('notifies on signup')` emitted a `user.created` event and asserted the email service was called — green on every laptop, green in CI. Then one Tuesday it went red. Nobody had touched it. A rerun made it green again, so someone typed `jest.retryTimes(3)` into the setup file and the suite went quiet. What that retry silenced was a real race: the event handler ran on the next tick, the assertion ran *now*, and on a loaded CI box the handler sometimes lost the foot race. The same race lived in the production code — two listeners mutating a shared aggregate. Six weeks later it corrupted balances under load. The flaky test wasn't noise. It was a bug report, filed in advance, that we retried into silence. This lesson is about testing async code so it can't race, and treating flakiness as the defect it is.
+</Hook>
+
+<Crux>An async test that doesn't await its work races it. Fix non-determinism with fake timers, awaited handlers, isolation — never retryTimes.</Crux>
+
+<Explanation>
+
+## Why async tests race: the unawaited assertion
+
+The core failure is simple: if a test does not `await` the async work it asserts on, the assertion runs *before* the work finishes. The expectation evaluates against the old state — so it either passes for the wrong reason, fails intermittently, or the dangling promise leaks into the *next* test and corrupts it. Returning or awaiting the promise is the contract that tells the test runner "wait for this."
+
+```ts
+// WRONG — fire-and-forget: the assertion runs before saveUser resolves
+it('creates a user', () => {
+  service.createUser(dto);          // promise dropped on the floor
+  expect(repo.save).toHaveBeenCalled(); // races the await — passes/fails by luck
+});
+
+// RIGHT — await the work, then assert against settled state
+it('creates a user', async () => {
+  await service.createUser(dto);    // runner waits for this promise
+  expect(repo.save).toHaveBeenCalledWith(dto);
+});
+```
+
+Use the `async`/`await` form, not the legacy `done` callback, unless you genuinely need `done` for an event you can't turn into a promise — and even then, call `done(err)` on failure or a thrown assertion hangs until the timeout. The rule is absolute: never fire-and-forget an async call in a test. Every promise you create, you await or return.
+
+## Fake timers: turning 30 seconds into zero
+
+Real code uses `setTimeout`, `setInterval`, debounce, and retry-with-backoff. A test that lets those run on the real clock either waits real seconds or, worse, asserts before the timer fires. `jest.useFakeTimers()` swaps the global clock for one *you* drive. `jest.advanceTimersByTimeAsync(ms)` and `jest.runAllTimersAsync()` fast-forward time deterministically — a 30-second backoff is exercised in well under a millisecond.
+
+```ts
+// Service under test: retry with exponential backoff, capped at 3 attempts
+async function callWithBackoff(fn: () => Promise<string>): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (attempt >= 2) throw err;
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt)); // 1s, 2s
+    }
+  }
+}
+
+it('retries twice with backoff then succeeds', async () => {
+  jest.useFakeTimers();
+  const fn = jest
+    .fn<Promise<string>, []>()
+    .mockRejectedValueOnce(new Error('flap'))
+    .mockRejectedValueOnce(new Error('flap'))
+    .mockResolvedValueOnce('ok');
+
+  const promise = callWithBackoff(fn);     // kicks off attempt 0, hits the 1s wait
+
+  await jest.advanceTimersByTimeAsync(1000); // fast-forward the 1s backoff
+  await jest.advanceTimersByTimeAsync(2000); // fast-forward the 2s backoff
+
+  await expect(promise).resolves.toBe('ok');
+  expect(fn).toHaveBeenCalledTimes(3);
+});
+```
+
+The trap is mixing fake timers with real promises. The `setTimeout` is faked, but the `await` between attempts is a real microtask — advancing the timer fires the callback, but the awaited continuation only runs when the microtask queue drains. The `*Async` variants of the timer APIs flush microtasks for you between advances; the synchronous `advanceTimersByTime` does not, so the continuation never runs and the test hangs or asserts on a half-finished state. Use the async timer APIs whenever real promises sit between your timers.
+
+<Inset kind="why" lang="en">
+Why is `jest.retryTimes(3)` the wrong fix for a flaky test? Because flakiness *is* non-determinism, and retrying masks it without removing the race — the same race still exists in production, where there is no retry. A test that only passes on retry is telling you something concrete: the code or the test has a real ordering or timing bug. Silence it and you ship the bug, now invisible. Retry trades a red CI today for a latent corruption later, and it actively destroys the signal — the one place the race was cheap to catch. The fix is determinism: fake the timers, isolate and reset shared state, await the work properly, seed the randomness. Make the test reproducible, then it can't flake because there's nothing left to race.
+</Inset>
+
+## Testing queues and events: await the handler, don't sleep on it
+
+`@nestjs/event-emitter` and BullMQ both run handlers *asynchronously* by design. A test that emits an event and immediately asserts races the listener — exactly the signup incident. There is a tempting, broken fix: `await new Promise(r => setTimeout(r, 50))` before asserting, hoping the handler finished. On a fast machine it does; on a loaded CI box it doesn't. That `setTimeout(50)` *is* the flakiness.
+
+```ts
+// FLAKY — emit then assert immediately races the async listener
+emitter.emit('user.created', user);
+expect(mailer.send).toHaveBeenCalled();   // listener may not have run yet
+
+// FLAKY — the "fix" that just lowers the failure rate, never to zero
+emitter.emit('user.created', user);
+await new Promise((r) => setTimeout(r, 50)); // hope, not guarantee
+expect(mailer.send).toHaveBeenCalled();
+
+// DETERMINISTIC — call the consumer directly and await it
+await listener.handleUserCreated(user);   // no event bus, no race
+expect(mailer.send).toHaveBeenCalledWith(user.email);
+
+// DETERMINISTIC — or await a signal the handler resolves
+const done = new Promise((res) => emitter.once('email.sent', res));
+emitter.emit('user.created', user);
+await done;                                 // resolves only after the work
+expect(mailer.send).toHaveBeenCalled();
+```
+
+For BullMQ, split the concern: in the unit test assert the job was *enqueued* (`expect(queue.add).toHaveBeenCalledWith('send-email', payload)`) and unit-test the processor's `process` method directly with a fake `Job`. If you need the end-to-end path, run a real worker in the test and await its `completed` event — never poll with a timeout. The principle is one: replace "wait and hope" with a deterministic signal you actually await.
+
+## The flaky test as a bug report
+
+A flaky test passes ~95% of runs. Treat that number as a defect severity, not a tolerance. The root causes are a short list:
+
+1. **Timing** — `setTimeout`-based waits, real clock, real network latency. Fix: fake timers, awaited signals.
+2. **Shared mutable state** — a module-level static, a real DB row, a singleton — combined with test-order dependence or parallel workers stepping on each other. Fix: reset state in `beforeEach`, isolate per-test data, don't share a writable singleton.
+3. **Real IO and randomness** — wall-clock time, `Math.random()`, network. Fix: inject and stub the clock/RNG, seed randomness, mock the boundary.
+4. **Unawaited async** — a promise from test A settling during test B. Fix: await everything; fail the suite on unhandled rejections.
+
+<TradeoffMatrix
+  id="nest-06-testing-05-testing-async-and-flaky-tradeoff-1"
+  lessonSlug="05-testing-async-and-flaky"
+  lang="en"
+  prompt="A test for an event handler passes about 90% of the time and fails the rest. CI is red intermittently and the team is starting to ignore it. What do you do?"
+  options={[
+    { name: "Find the non-determinism — await the handler directly or wait on a deterministic signal, use fake timers, reset shared state — and make the test pass 100% of the time", summary: "Fix the race.", correct: true, justification: "A 90% pass rate is a race condition with a name on it. The handler runs async; the assertion races it; the fix is to remove the race: call the consumer method and await it, or await a promise the handler resolves, plus fake timers for any backoff/debounce and a beforeEach reset for shared state. Now the test is deterministic — it can't flake because nothing is left to race, and crucially the SAME race that flaked the test is the one that bites production. Fixing the test fixes the code." },
+    { name: "Add jest.retryTimes(3) so a transient failure is retried away", summary: "Hides the race.", justification: "This is the trap. Retry masks the non-determinism without removing it — the race still exists in production, where there is no retry. A test that only passes on retry is telling you the code or test has a real ordering bug; silencing it ships that bug, now invisible. You've traded a red CI today for a latent corruption later and destroyed the one cheap signal that the race exists." },
+    { name: "Add await new Promise(r => setTimeout(r, 100)) before the assertion to give the handler time", summary: "Lowers, never zeroes, the failure rate.", justification: "The sleep just lowers the flake rate by widening the window — it never reaches zero, because on a loaded CI box 100ms still isn't always enough, and on a fast box you've made every run 100ms slower for nothing. It's the same timing-based non-determinism dressed up. Replace the hope with a deterministic awaited signal, not a longer guess." },
+    { name: "Delete the test — it's more trouble than it's worth", summary: "Deletes the bug report.", justification: "Deleting a flaky test removes the symptom and keeps the disease: the race in production is now completely untested. The test was a (badly worded) bug report about real non-determinism. Throwing it away is the most expensive option — you lose coverage AND keep the latent bug. Fix the determinism instead." },
+  ]}
+/>
+
+The anti-pattern that ties them together is reaching for `jest.retryTimes(3)` to "stabilize" the suite. It works in the narrow sense — CI goes green — and fails in every sense that matters: the race is still in prod, the signal is gone, and the next engineer trusts a suite that lies. The senior stance is that a flaky test is a defect report about non-determinism, in the test or the code, and the only correct response is to restore determinism. The numbers make the stakes concrete. A single 95%-pass test in a 1000-test suite makes the *whole suite* fail constantly — independent failures compound, so the suite's green rate collapses well below any single test's. And the human cost is worse than the CI cost: once a suite flakes, engineers learn to rerun red, and the day a *real* regression goes red, they rerun that too. Flakiness doesn't just waste minutes; it trains the team to ignore the alarm.
+
+<FlowDiagram
+  label="The decision flow for a flaky test, treated as a bug report rather than a retry candidate. Start at the flaky test. First diagnose the root cause into one of four buckets: timing (real clock, setTimeout-based waits), shared state (a static, a DB row, a singleton mutated across tests), real IO (network, wall-clock, randomness), or unawaited async (a promise leaking between tests). Each bucket routes to its determinism fix: timing to fake timers with advanceTimersByTimeAsync, shared state to isolate and reset in beforeEach, real IO to stub the boundary and seed randomness, unawaited async to await or return the promise. All four fixes converge on the same outcome: a stable, deterministic test that cannot race. The retryTimes shortcut is explicitly not on this diagram because it skips diagnosis and leaves the race in production."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "flaky", label: "flaky test", sub: "~95% pass" },
+    { id: "diagnose", label: "diagnose cause", sub: "which bucket?" },
+    { id: "timing", label: "timing", sub: "→ fake timers" },
+    { id: "state", label: "shared state", sub: "→ isolate/reset" },
+    { id: "io", label: "real IO", sub: "→ stub + seed" },
+    { id: "await", label: "unawaited", sub: "→ await it" },
+    { id: "stable", label: "deterministic", sub: "can't race" },
+  ]}
+  edges={[
+    { from: "flaky", to: "diagnose", label: "it's a bug report" },
+    { from: "diagnose", to: "timing", label: "clock/setTimeout" },
+    { from: "diagnose", to: "state", label: "static/DB/singleton" },
+    { from: "diagnose", to: "io", label: "network/random" },
+    { from: "diagnose", to: "await", label: "leaking promise" },
+    { from: "timing", to: "stable", label: "fix" },
+    { from: "state", to: "stable", label: "fix" },
+    { from: "io", to: "stable", label: "fix" },
+    { from: "await", to: "stable", label: "fix" },
+  ]}
+  caption="A flaky test is diagnosed into one of four non-determinism buckets, each with a determinism fix that converges on a stable test. retryTimes is absent by design: it skips diagnosis and ships the race."
+/>
+
+<Quiz
+  id="nest-06-testing-05-testing-async-and-flaky-quiz-1"
+  lessonSlug="05-testing-async-and-flaky"
+  lang="en"
+  question="A test emits a `user.created` event on @nestjs/event-emitter, then on the next line asserts the mailer was called. It passes locally but fails ~10% of the time in CI. Why?"
+  choices={[
+    { label: "The event handler runs asynchronously — the assertion on the next line races the listener, and on a loaded CI box the listener sometimes hasn't run yet", correct: true },
+    { label: "CI has a slower network, so the email actually fails to send sometimes", misconception: "Nothing real is sent in a unit test — mailer.send is a mock. The failure isn't a network problem; it's an ordering problem. The emitter dispatches the handler asynchronously, so the synchronous assertion on the next line can run before the handler does. The fix is to await the handler (call it directly) or await a signal it resolves, not to touch the network." },
+    { label: "The event was emitted twice, so the mock's call count is off", misconception: "Double-emission would make it fail consistently, not ~10% of the time. The intermittency is the tell: it's a race between the async handler and the immediate assertion. Sometimes the handler wins the foot race and the test is green; under CI load it loses. Determinism, not call-count, is the issue." },
+    { label: "jest.useFakeTimers() is leaking from a previous test", misconception: "Leaking fake timers would more likely freeze time and fail deterministically, not produce a ~10% intermittent failure tied to load. The actual cause is the unawaited async handler racing the assertion. (Leaking state IS a real flake source — but here the specific symptom points at the unawaited emit, fixed by awaiting the handler or a resolve signal.)" },
+  ]}
+/>
+
+<Quiz
+  id="nest-06-testing-05-testing-async-and-flaky-quiz-2"
+  lessonSlug="05-testing-async-and-flaky"
+  lang="en"
+  question="You must test a retry path with 30s of exponential backoff without the test taking 30 seconds. What do you do, and what's the one gotcha?"
+  choices={[
+    { label: "jest.useFakeTimers() and advance with jest.advanceTimersByTimeAsync(ms) — and you must flush microtasks (use the *Async timer APIs) between advances or the awaited continuation never runs", correct: true },
+    { label: "jest.useFakeTimers() and the synchronous jest.advanceTimersByTime(ms) — fake timers handle awaited promises automatically", misconception: "Fake timers replace the clock, but they do NOT drain the microtask queue. The setTimeout is faked, but the await between retries is a real microtask; the synchronous advanceTimersByTime fires the timer callback without flushing microtasks, so the awaited continuation never runs and the test hangs or asserts on a half-finished state. You need advanceTimersByTimeAsync (or runAllTimersAsync), which flushes microtasks between advances." },
+    { label: "Keep real timers but lower the backoff to 30ms in the test via a config override", misconception: "Shrinking the delay still leaves real-clock timing in the test — it's faster but still non-deterministic, and you're now testing a different backoff than production runs. Fake timers make it deterministic AND let you assert on the real 30s schedule (the production values), in zero wall-clock time. Don't trade correctness for a smaller real delay." },
+    { label: "Wrap the assertion in await new Promise(r => setTimeout(r, 30000)) so the real backoff completes", misconception: "That makes the test actually wait 30 real seconds — the exact problem you're avoiding — and it's still racing the work. Fake timers exist precisely so a 30s schedule runs in ~0ms deterministically; advance them with the async API and assert immediately after." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Await async work or the assertion races it. Use fake timers + advanceTimersByTimeAsync (flush microtasks) for backoff; await handlers, not setTimeout(50). A flaky test reports non-determinism — fix it, don't retry.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-06-testing-05-testing-async-and-flaky-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why do async tests race, and how do you test (a) a 30s backoff retry and (b) an event/queue handler deterministically?", a: "Async tests race because if you don't await the async work you assert on, the assertion runs before the work finishes — it passes for the wrong reason, fails intermittently, or the dangling promise leaks into the next test. The contract is to return or await every promise so the runner waits; use async/await, not fire-and-forget, and not the legacy done unless an event truly can't be a promise (then call done(err) on failure). (a) For a 30s exponential backoff, replace the clock with jest.useFakeTimers(), kick off the call, then advance with jest.advanceTimersByTimeAsync(1000) / advanceTimersByTimeAsync(2000) — fast-forwarding 30s into well under a millisecond while asserting on the real production schedule. The gotcha: fake timers don't drain the microtask queue, so between advances you must flush microtasks — that's exactly why the *Async timer APIs (advanceTimersByTimeAsync, runAllTimersAsync) exist; the synchronous advanceTimersByTime leaves the awaited continuation un-run and the test hangs. (b) For an @nestjs/event-emitter or BullMQ handler, never emit-then-assert (it races the async listener) and never await setTimeout(50) (hope, not guarantee). Instead call the consumer method directly and await it (no bus, no race), or await a promise the handler resolves (emitter.once(...)). For BullMQ, assert the job was enqueued and unit-test the processor's process method separately with a fake Job; only run a real worker for an end-to-end test and await its completed event." },
+    { q: "What is a flaky test really, what are its four root causes, and why is jest.retryTimes(3) the wrong fix?", a: "A flaky test passes ~95% of runs, and that number is a defect severity, not a tolerance: it's a bug report, filed in advance, about non-determinism in the test or the code. The four root causes are (1) timing — setTimeout-based waits, real clock, real network — fixed with fake timers and awaited signals; (2) shared mutable state — a module static, a real DB row, a singleton — combined with test-order dependence or parallel workers, fixed by resetting state in beforeEach and isolating per-test data; (3) real IO and randomness — wall-clock, Math.random, network — fixed by injecting/stubbing the clock and RNG, seeding randomness, mocking the boundary; (4) unawaited async — a promise from test A settling during test B — fixed by awaiting everything and failing on unhandled rejections. jest.retryTimes(3) is the wrong fix because flakiness IS non-determinism; retrying masks it without removing the race, and the same race still exists in production where there's no retry. A test that only passes on retry is signalling a real ordering/timing bug; silencing it ships that bug, invisible. The numbers compound the stakes: a single 95%-pass test in a 1000-test suite makes the whole suite fail constantly (independent failures compound), and worse, once a suite flakes the team learns to rerun red — so the day a real regression goes red, they rerun that too. Restore determinism; never retry the alarm into silence." },
+  ]}
+/>
+
+<Recap lang="en">
+Async tests race when the assertion runs before the async work it checks finishes: a fire-and-forget call leaves the expectation evaluating old state, so it passes for the wrong reason, fails intermittently, or leaks a dangling promise into the next test — always return or await the promise, use async/await over the legacy done. To test code with setTimeout/setInterval/debounce/backoff without waiting real seconds, replace the clock with jest.useFakeTimers() and fast-forward with jest.advanceTimersByTimeAsync(ms) or runAllTimersAsync(), turning a 30s backoff into well under a millisecond on the real production schedule; the trap is that fake timers don't drain microtasks, so you must use the *Async APIs to flush them between advances or the awaited continuation never runs. @nestjs/event-emitter and BullMQ handlers run asynchronously, so emit-then-assert races the listener and await setTimeout(50) only lowers the flake rate — instead call the consumer method directly and await it, or await a signal the handler resolves; for Bull, assert the job was enqueued and unit-test the processor separately, running a real worker only for end-to-end and awaiting completed. A flaky test (~95% pass) is a bug report about non-determinism with four root causes — timing, shared mutable state, real IO/randomness, unawaited async — each with a determinism fix (fake timers, isolate/reset, stub+seed, await). The anti-pattern is jest.retryTimes(3): it greens CI while hiding a race that still ships to production, where there is no retry, and it destroys the one cheap signal the race exists. A single 95%-pass test in a 1000-test suite flakes the whole suite constantly and trains the team to ignore red — so fix the determinism, never retry the alarm into silence.
+</Recap>
