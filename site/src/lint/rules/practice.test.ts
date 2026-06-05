@@ -8,6 +8,7 @@ import {
   checkPracticeCount,
   checkPracticeSandboxBudget,
   checkPracticeReview,
+  checkPracticeDebug,
 } from "./practice";
 
 async function withRoot(fn: (root: string) => Promise<void>) {
@@ -148,6 +149,45 @@ describe("checkPracticeReview", () => {
     await withRoot(async (root) => {
       await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [goodTask] });
       expect(await checkPracticeReview(root)).toEqual([]);
+    });
+  });
+});
+
+const goodDebug = {
+  id: "dbg1", type: "debug", difficulty: "apply", estMin: 8,
+  title: { en: "Fix it", ru: "Почини" }, prompt: { en: "P", ru: "П" },
+  starter: "for (var i = 0; i < 3; i++) {}",
+  verify: "if (false) throw 0; console.log('__SECRET_ASSERT__');",
+  check: { kind: "stdout-contains", value: "__SECRET_ASSERT__" },
+  evidence: { en: "[3,3,3]", ru: "[3,3,3]" },
+  hints: [{ en: "var vs let", ru: "var против let" }],
+  reveal: { en: "Use let for block scope", ru: "Используй let для блочной области" },
+};
+
+describe("checkPracticeDebug", () => {
+  test("passes a clean debug task", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [goodDebug] });
+      expect(await checkPracticeDebug(root)).toEqual([]);
+    });
+  });
+  test("flags a debug task with an empty verify", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [{ ...goodDebug, verify: "" }] });
+      expect((await checkPracticeDebug(root)).length).toBeGreaterThan(0);
+    });
+  });
+  test("flags the hidden verify leaking into a learner-visible field (reveal)", async () => {
+    await withRoot(async (root) => {
+      const leak = { ...goodDebug, reveal: { en: `Solution: ${goodDebug.verify}`, ru: "решение" } };
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [leak] });
+      expect((await checkPracticeDebug(root)).some((e) => /verify|leak/i.test(e))).toBe(true);
+    });
+  });
+  test("ignores non-debug tasks", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [goodTask] });
+      expect(await checkPracticeDebug(root)).toEqual([]);
     });
   });
 });

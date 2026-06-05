@@ -117,6 +117,32 @@ export async function checkPracticeReview(siteSrc: string): Promise<string[]> {
   return errs;
 }
 
+/** A `debug` task must ship both a broken `starter` and a hidden `verify`, and the
+ *  verify assertion must NOT appear in any learner-visible field (it stays hidden
+ *  from the editor — see the live-debug plan's threat model). */
+export async function checkPracticeDebug(siteSrc: string): Promise<string[]> {
+  const errs: string[] = [];
+  for (const { file, data } of await readPractice(siteSrc)) {
+    for (const task of data?.tasks ?? []) {
+      if (task?.type !== "debug") continue;
+      if (!task.starter || !task.verify) {
+        errs.push(`practice-debug: "${file}" task "${task?.id}" must have both a starter and a verify`);
+        continue;
+      }
+      const visible = [
+        task.starter,
+        task.prompt?.en, task.prompt?.ru,
+        task.reveal?.en, task.reveal?.ru,
+        ...(task.hints ?? []).flatMap((h: any) => [h?.en, h?.ru]),
+      ].filter((s: any) => typeof s === "string") as string[];
+      if (visible.some((s) => s.includes(task.verify))) {
+        errs.push(`practice-debug: "${file}" task "${task?.id}" leaks the hidden verify assertion into a learner-visible field`);
+      }
+    }
+  }
+  return errs;
+}
+
 /** Tracks flipped to error (lesson without a 3–5 task practice file fails the build).
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
 export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability", "performance", "base-cs", "browser", "backend", "databases", "math", "engineering-practice", "apis", "caching", "distributed", "frontend", "queues", "security", "ai-llm", "data-engineering", "deployment", "system-design", "system-design-cases"];
