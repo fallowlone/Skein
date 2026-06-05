@@ -1,9 +1,11 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
 import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
 import { setTaskStatus, readProgress } from "~/scripts/practice-state";
+import { cardsFromPractice } from "~/scripts/review-harvest";
+import { addCard } from "~/scripts/review-state";
 
 const SqlSandbox = lazy(() => import("./SqlSandbox"));
 const JsSandbox = lazy(() => import("./JsSandbox"));
@@ -48,6 +50,11 @@ const TYPE_HINT: Record<string, { en: string; ru: string }> = {
 
 export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   const ordered = orderTasks(tasks);
+  // Lazy-seed spaced-repetition cards from this lesson's practice on first visit.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    cardsFromPractice(lessonKey, lang, tasks).forEach(addCard);
+  }, []);
   const [tick, setTick] = useState(0);
   const bump = () => setTick((t) => t + 1);
   void tick; // tick only forces a re-render; readProgress is re-read each render
