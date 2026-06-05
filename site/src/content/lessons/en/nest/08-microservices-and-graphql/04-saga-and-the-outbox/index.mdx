@@ -1,0 +1,211 @@
+---
+concepts:
+- saga
+- compensating-transaction
+- choreography-vs-orchestration
+- dual-write
+- transactional-outbox
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-saga-and-the-outbox"
+sources:
+- https://microservices.io/patterns/data/saga.html
+- https://microservices.io/patterns/data/transactional-outbox.html
+spiral: []
+status: ready
+summary: 'A business operation spanning service-owned databases can not use one ACID transaction, and 2PC is a fragile SPOF. Sagas chain local transactions with compensations; the transactional outbox commits state and event in one DB txn so a crash never loses the event.'
+title: 'Sagas, compensations and the outbox pattern'
+track: nest
+unit: 08-microservices-and-graphql
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The order service did the obvious thing. Inside `createOrder` it called `await this.orders.save(order)` and, on the very next line, `this.client.emit('order.created', payload)`. Code review passed it — two lines, both green in tests, ships clean. Then a routine deploy rolled the pods, and one request happened to be sitting exactly between those two lines when its pod got `SIGTERM`. The order row committed to Postgres. The `order.created` event never reached the broker. Nothing threw, nothing logged an error — the request just vanished mid-flight. The order existed; inventory never reserved it; payment never charged it. The customer saw "order placed" and then silence, and three days later a support ticket asked where their thing was. There was no bug in either line. The bug was the gap between them — two systems, no shared transaction. This lesson is about closing that gap without reaching for a distributed transaction.
+</Hook>
+
+<Crux>No ACID txn spans service DBs; 2PC is a fragile SPOF. Use a saga with compensations, plus an outbox so state and event commit as one.</Crux>
+
+<Explanation>
+
+## Why not one transaction: 2PC is a fragile SPOF
+
+A "place order" operation touches three services — order, inventory, payment — and each owns its own database. The instinct from monolith days is to wrap all three writes in one transaction so they commit or roll back together. You can't. An ACID transaction lives inside a single database; it cannot span three independent databases owned by three independent services.
+
+The classic answer to "atomic across multiple databases" is **two-phase commit** (2PC / XA): a transaction coordinator asks every participant to *prepare*, and once all vote yes, tells them all to *commit*. It does give you atomicity — and almost every modern microservice stack refuses to use it, for three reasons that compound under load:
+
+- **The coordinator is a single point of failure.** If it dies after participants have voted to prepare but before it broadcasts commit, every participant is stuck holding locks, waiting for a decision that may never come.
+- **Locks are held across the network.** Between *prepare* and *commit*, each database holds its locks for the full round-trip to every other participant. Under partition or slowness, those locks sit there, and throughput collapses.
+- **Availability tanks under partition.** 2PC is a CP protocol in the brutal sense: if any participant or the coordinator is unreachable, the whole transaction blocks. One slow service stalls all of them.
+
+So the consistency model changes. Instead of one transaction that is atomic *now*, you accept **eventual consistency**: the steps happen one at a time, each atomic on its own, and the system converges to a correct state shortly after — not instantly. The pattern that does this is the saga.
+
+## The saga: local transactions plus compensations
+
+A **saga** is a sequence of **local transactions**, each one running inside a single service's own database, linked by events or commands. Reserve inventory is one local transaction in the inventory DB. Charge payment is another local transaction in the payment DB. Each commits on its own. The saga is the chain.
+
+The hard part is failure. If step 3 (charge payment) fails, you can't roll back steps 1 and 2 — they already **committed**. A committed local transaction is gone; there is no `ROLLBACK` to issue. Instead the saga runs **compensating transactions**: a *new* local transaction that semantically undoes the prior one. You don't un-charge a payment; you issue a refund. You don't un-reserve inventory; you release the reservation.
+
+```ts
+// A saga step is a local txn + a named compensation. The orchestrator runs the
+// forward action; if a LATER step fails, it runs each completed step's compensate().
+interface SagaStep {
+  action: () => Promise<void>;      // local transaction in ONE service
+  compensate: () => Promise<void>;  // semantic undo, runs AFTER commit, may itself fail
+}
+
+const placeOrderSaga: SagaStep[] = [
+  { action: () => inventory.reserve(orderId, items),
+    compensate: () => inventory.release(orderId) },        // not a rollback — a release
+  { action: () => payment.charge(orderId, total),
+    compensate: () => payment.refund(orderId) },           // not a rollback — a refund
+];
+```
+
+There are two ways to coordinate the chain, and choosing between them is a senior decision:
+
+- **Choreography** — no central coordinator. Each service listens for events and emits the next one. Order service emits `order.created`; inventory reacts, reserves, emits `inventory.reserved`; payment reacts to *that*. Decentralized and simple for short flows — but the overall flow exists nowhere in code. To answer "what happens when an order is placed" you read five services' event handlers and reconstruct it in your head. It rots as the flow grows.
+- **Orchestration** — a central **saga orchestrator** owns the flow. It sends explicit commands (`reserveInventory`, then `chargePayment`), tracks the saga's state in its own table, and decides when to fire compensations. It's another component to build and run, but the flow is in one place: explicit, observable, testable, restartable.
+
+The senior rule of thumb: **choreography for short 2–3 step flows**; **orchestration when the flow is long, branchy, or needs visibility** — anything you'll have to debug at 3am wants a state machine you can query.
+
+<Inset kind="why" lang="en">
+Why doesn't wrapping `save(order)` and `client.emit(...)` in a single try/catch make the dual write safe? Because the two calls target two different systems — your database and your message broker — and there is no transaction boundary that spans both. A try/catch only reacts to an *exception*; it cannot make two independent commits succeed-or-fail together. A crash (a `SIGTERM`, an OOM kill, a power loss) doesn't throw anything catchable, and it can land between the two calls in either order: DB-committed-but-event-not-sent (the event is lost), or event-sent-but-DB-write-failed (you published a lie). To make the state and the event atomic you have to put them in the *same* database transaction — and an event in the broker can't be in a database transaction. The only move is to co-locate the event with the state as a row in your own DB (the outbox), commit them together, and let a separate relay carry that row to the broker afterward.
+</Inset>
+
+## The dual-write problem and the transactional outbox
+
+The Hook's incident is the **dual-write problem**, and it's the real reason this lesson exists. A service almost always has to do two writes as part of one logical step: update its own database (the order row) *and* publish an event so other services learn about it (`order.created`). Those are two systems — the DB and the broker — with no shared transaction. Whatever order you do them in, a crash in the gap breaks you:
+
+- **DB first, then publish, crash in between** → the order exists but no event was sent. Downstream services never learn the order exists. Inventory never reserves; the customer waits forever. *This is the Hook.*
+- **Publish first, then write DB, DB fails** → you published `order.created` for an order that doesn't exist. Now downstream services act on a lie, and you have a phantom order rippling through the system.
+
+The **transactional outbox** fixes this by removing the second system from the critical write. In the **same local database transaction** that writes the business row, you also `INSERT` the event into an `outbox` table. Both rows commit together or neither does — it's one transaction in one database, so there is no gap:
+
+```ts
+// Both writes in ONE local transaction: business row + event row commit atomically.
+await this.dataSource.transaction(async (manager) => {
+  const order = await manager.getRepository(Order).save(newOrder);
+  await manager.getRepository(OutboxEvent).insert({
+    aggregateId: order.id,
+    type: 'order.created',
+    payload: JSON.stringify({ orderId: order.id, items: order.items }),
+    // status defaults to 'pending'; a relay flips it to 'sent' after publishing
+  });
+}); // <- if the pod dies here, NEITHER row committed. No half state. No lost event.
+```
+
+A separate **message relay** then carries outbox rows to the broker. Two common implementations:
+
+- **Polling publisher** — a background worker `SELECT`s `pending` rows, publishes each to the broker, and marks it `sent` (or deletes it). Simple, no extra infrastructure; the trade-off is poll latency and load.
+- **Change Data Capture (CDC)** — a tool like Debezium tails the database's write-ahead log, sees the outbox `INSERT`, and publishes it. Near-real-time and no polling, but it's a serious piece of infrastructure to operate.
+
+Either way the relay guarantees **at-least-once** publication: it keeps trying until the broker acknowledges, so a publish failure or relay crash means a retry, never a lost event. At-least-once means a consumer can see the same event twice — which is exactly where the **idempotent consumers** from the previous lesson (L03) earn their keep: dedupe on the event id downstream, and at-least-once delivery plus idempotent processing gives you *effectively-once*. The outbox doesn't replace delivery semantics; it feeds them a reliable source.
+
+```ts
+// The relay: at-least-once publish. Keeps the event until the broker acks.
+async function relayTick(manager: EntityManager, client: ClientProxy) {
+  const pending = await manager.getRepository(OutboxEvent)
+    .find({ where: { status: 'pending' }, take: 100, order: { id: 'ASC' } });
+  for (const evt of pending) {
+    await firstValueFrom(client.emit(evt.type, JSON.parse(evt.payload))); // may retry
+    await manager.getRepository(OutboxEvent).update(evt.id, { status: 'sent' });
+  }
+}
+```
+
+<FlowDiagram
+  label="The place-order saga with a transactional outbox. The order service runs ONE local database transaction whose boundary encloses two writes: it inserts the order row and inserts the order.created event into the outbox table — both commit together or neither does, so a crash can never leave the order without its event. A separate relay then polls the outbox table for pending rows and publishes order.created to the broker at-least-once, marking each row sent only after the broker acknowledges. The inventory saga step consumes that event and reserves stock as its own local transaction; if a later step such as charge payment fails, the saga runs compensating transactions — release the reservation and refund the charge — because the committed local transactions cannot be rolled back, only semantically undone."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "txn", label: "order txn", sub: "write order + outbox" },
+    { id: "commit", label: "commit", sub: "both or neither" },
+    { id: "relay", label: "relay polls", sub: "at-least-once" },
+    { id: "publish", label: "order.created", sub: "to broker" },
+    { id: "reserve", label: "inventory step", sub: "local txn" },
+    { id: "compensate", label: "compensate", sub: "release + refund" },
+  ]}
+  edges={[
+    { from: "txn", to: "commit", label: "one DB txn" },
+    { from: "commit", to: "relay", label: "outbox row" },
+    { from: "relay", to: "publish", label: "publish" },
+    { from: "publish", to: "reserve", label: "consume" },
+    { from: "reserve", to: "compensate", label: "on failure" },
+  ]}
+  caption="The outbox row lives INSIDE the order transaction's boundary, so state and event commit atomically; the relay bridges to the broker at-least-once, and a downstream failure triggers compensations, never a rollback."
+/>
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-04-saga-and-the-outbox-tradeoff-1"
+  lessonSlug="04-saga-and-the-outbox"
+  lang="en"
+  prompt="Placing an order spans the order, inventory, and payment services, each with its own database, and must stay consistent end to end including reliably publishing the order.created event. How do you design it?"
+  options={[
+    { name: "A saga of local transactions with compensations, plus a transactional outbox so each service's state write and its event publish commit in one DB transaction", summary: "Saga + outbox.", correct: true, justification: "This is the model that actually fits service-owned databases. Each step is a local transaction in one service; if a later step fails you run compensating transactions (release the reservation, refund the charge) to semantically undo committed steps, since you can't roll them back across services. The outbox closes the dual-write hole: the order row and the order.created event commit in the SAME local transaction, so a crash can never leave the order without its event, and a relay publishes at-least-once for downstream idempotent consumers to dedupe. Eventual consistency, no coordinator holding cross-service locks." },
+    { name: "A 2PC / XA distributed transaction spanning all three service databases", summary: "Fragile, blocks under partition.", justification: "2PC does give atomicity, which is why it's tempting — but it's exactly what modern stacks avoid here. The coordinator is a single point of failure that, if it dies mid-protocol, leaves every participant holding locks waiting for a decision; locks are held across the network between prepare and commit; and availability collapses under partition because any unreachable participant blocks the whole transaction. You'd trade the dual-write problem for a worse availability problem." },
+    { name: "Keep save(order) then client.emit('order.created') and wrap both in a try/catch", summary: "The dual-write bug.", justification: "This is precisely the Hook's incident. The two calls hit two different systems with no shared transaction, and a try/catch only reacts to exceptions — a crash (SIGTERM, OOM) between the lines throws nothing catchable and silently loses the event (or, reversed, publishes an event for an order that didn't commit). No amount of error handling makes two independent commits atomic; only co-locating the event with the state in one DB transaction does." },
+    { name: "Put all three services on one shared database so a single transaction can cover everything", summary: "Throws away service autonomy.", justification: "A shared database technically restores one ACID transaction, but it dissolves the service boundary that justified splitting them: every service now couples to one schema, deploys are entangled, one service's lock contention or migration stalls the others, and you've rebuilt a distributed monolith with none of the isolation. It 'solves' consistency by deleting the architecture; the saga + outbox keeps autonomy and gets reliable consistency anyway." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-04-saga-and-the-outbox-quiz-1"
+  lessonSlug="04-saga-and-the-outbox"
+  lang="en"
+  question="Why use a saga with compensating transactions instead of a single distributed transaction across the order, inventory, and payment services?"
+  choices={[
+    { label: "Because there is no cross-service ACID transaction, and 2PC is a fragile SPOF — so each step commits locally and a failure is undone by a compensating transaction, not a rollback", correct: true },
+    { label: "Because sagas are faster than a distributed transaction since they skip the commit phase", misconception: "Sagas aren't a performance optimization that 'skips the commit' — each local transaction still fully commits. The reason for a saga is correctness under a constraint: an ACID transaction can't span three independent databases, and 2PC (which can) is avoided because its coordinator is a SPOF and it holds locks across the network. Sagas trade instant atomicity for eventual consistency, not for raw speed." },
+    { label: "Because a saga gives you the same isolation as one transaction, so other transactions can't see intermediate state", misconception: "A saga gives you the opposite of isolation. Between steps, the partial state is committed and fully visible — another transaction can see inventory reserved before payment has charged. That lack of isolation is a defining property of sagas, which is why compensations exist. If you needed isolation you'd be back to a single transaction, which you can't have across services." },
+    { label: "Because compensating transactions roll back the committed local transactions of earlier steps", misconception: "A compensation is NOT a rollback. The earlier local transactions already committed and cannot be rolled back — there is no ROLLBACK for a committed transaction. A compensation is a new local transaction that semantically undoes the effect: a refund, not an un-charge; a release, not an un-reserve. It runs after commit and can even fail on its own." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-04-saga-and-the-outbox-quiz-2"
+  lessonSlug="04-saga-and-the-outbox"
+  lang="en"
+  question="A service does save(order) and then client.emit('order.created'), and the pod is killed between the two calls. Which pattern prevents the lost event, and how?"
+  choices={[
+    { label: "The transactional outbox: the event is INSERTed into an outbox table in the SAME DB transaction as the order row, so both commit together; a separate relay publishes it to the broker at-least-once", correct: true },
+    { label: "Retrying the client.emit() with exponential backoff until the broker acknowledges", misconception: "Retries help when emit() throws, but they can't help here: the pod was killed between the two calls, so the process that would have done the retry no longer exists, and the in-memory event died with it. The order committed but the intent to publish is gone. Only persisting the event in the same transaction as the order — the outbox — survives a crash, because then the durable DB row, not a live process, is the source of truth for what must be published." },
+    { label: "Wrapping save(order) and client.emit() in a single try/catch so a failure rolls both back", misconception: "A try/catch only reacts to exceptions, and a SIGTERM/OOM kill throws nothing catchable. There's also no shared transaction to 'roll both back' — the DB and the broker are two systems. The order already committed; the catch never runs. The outbox works precisely because it removes the broker from the critical write and makes the event a DB row that commits atomically with the order." },
+    { label: "Switching emit() to a request/response message pattern so the broker confirms receipt synchronously", misconception: "A synchronous confirm narrows the window but doesn't close it: the pod can still die after the DB commit and before the confirmed publish, and now you also couple the order's latency to the broker being up. The outbox decouples them — commit the event locally with the order, and let an independent relay handle delivery and retries afterward, so the order path never depends on the broker being reachable at that instant." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>No ACID txn spans service DBs; 2PC is a fragile SPOF. Use a saga with compensations (refund, not rollback). The outbox writes state and event in one txn so a crash can't lose it; a relay publishes at-least-once.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-08-microservices-and-graphql-04-saga-and-the-outbox-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can't a place-order operation across the order, inventory, and payment services use one transaction, why is 2PC avoided, and what replaces it?", a: "An ACID transaction lives inside a single database; it cannot span three independent databases owned by three independent services, so the monolith instinct of 'wrap all three writes in one transaction' is impossible. The classic way to get atomicity across databases is two-phase commit (2PC/XA), where a coordinator asks every participant to prepare and, once all vote yes, tells them all to commit. Modern stacks avoid it for three compounding reasons: the coordinator is a single point of failure that, if it dies mid-protocol, leaves participants holding locks awaiting a decision that may never come; locks are held across the network for the whole prepare-to-commit round trip, so throughput collapses under slowness; and availability tanks under partition because any unreachable participant blocks the entire transaction. What replaces it is a saga under eventual consistency: a sequence of local transactions, each atomic in one service's own database and linked by events or commands, that converges to a correct state shortly after rather than being atomic instantly." },
+    { q: "Explain the saga's compensations, choreography vs orchestration, and how the transactional outbox solves the dual-write problem.", a: "A saga chains local transactions, each committing in one service. Because a committed local transaction can't be rolled back, a failure in a later step is handled by a compensating transaction — a new local transaction that semantically undoes the prior one (refund the charge, release the reservation), not a ROLLBACK. Compensations run after commit, have no isolation (intermediate state is visible to others), and can fail themselves, so they need retries/idempotency and irreversible steps (like sending an email) should go last. Coordination is either choreography (no coordinator; each service reacts to events and emits the next — simple for 2-3 steps but the flow lives nowhere and rots as it grows) or orchestration (a central orchestrator sends commands, tracks saga state, fires compensations — explicit, observable, testable, but another component). The dual-write problem is that one step must write its DB row AND publish an event, two systems with no shared transaction: crash after the DB write and the event is lost (downstream never learns), or publish then fail the DB write and you published a lie. The transactional outbox fixes it by INSERTing the event into an outbox table in the SAME local transaction as the business row, so both commit together with no gap; a separate relay (polling publisher or CDC like Debezium) reads the outbox and publishes at-least-once, and combining that with idempotent consumers from L03 (dedupe on event id) gives effectively-once delivery." },
+  ]}
+/>
+
+<Recap lang="en">
+A business operation spanning service-owned databases can't be one ACID transaction — a transaction lives in a single database — and the cross-database alternative, 2PC/XA, is avoided because its coordinator is a single point of failure, it holds locks across the network between prepare and commit, and it blocks under partition. The replacement is a saga: a sequence of local transactions, each atomic in one service and linked by events or commands, accepting eventual consistency. Because a committed local transaction can't be rolled back, a later failure triggers compensating transactions — a refund, not an un-charge; a release, not an un-reserve — which run after commit, have no isolation, and may fail themselves. Coordinate by choreography (no coordinator, services react to events; good for 2-3 steps, but the flow lives nowhere) for short flows, or orchestration (a central orchestrator with explicit commands and queryable state) when the flow is long, branchy, or needs visibility. The dual-write problem is the core trap: a step must commit its DB row and publish an event across two systems with no shared transaction, so a crash in the gap loses the event (the Hook) or publishes a lie. The transactional outbox fixes it by inserting the event into an outbox table in the same local transaction as the business row — they commit together or not at all — after which a relay (polling publisher or CDC like Debezium) carries outbox rows to the broker at-least-once. Combined with idempotent consumers from L03 that dedupe on the event id, at-least-once publication plus idempotent processing yields effectively-once delivery, with no write ever escaping a transaction and no event ever lost to a crash.
+</Recap>

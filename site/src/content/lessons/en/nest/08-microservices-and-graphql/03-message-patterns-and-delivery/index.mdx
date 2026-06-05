@@ -1,0 +1,212 @@
+---
+concepts:
+- request-response
+- event-based
+- delivery-semantics
+- idempotency
+- dead-letter-queue
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-message-patterns-and-delivery"
+sources:
+- https://docs.nestjs.com/microservices/basics
+- https://www.cloudcomputingpatterns.org/
+spiral: []
+status: ready
+summary: 'Two message patterns (send/request-response vs emit/event) and the delivery guarantee that actually ships: at-least-once. Exactly-once delivery is a myth; you get effectively-once only by making the consumer idempotent. Dedup by key, DLQ poison messages.'
+title: 'Message patterns and delivery semantics'
+track: nest
+unit: 08-microservices-and-graphql
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The incident report had one line that made the on-call engineer's stomach drop: "customer billed twice for the same order, 4 minutes apart." There was no retry in the application code. Nobody clicked "pay" twice. What happened was quieter: the payments consumer processed a `payment.charge` event, called Stripe, and then — in the 30 milliseconds between charging the card and committing its acknowledgement back to the broker — the pod was rotated by a routine deploy. The ack never landed. The broker did exactly what it promised to do: it saw an un-acknowledged message and redelivered it. The new pod picked it up, saw a perfectly valid charge event, and charged the card again. The broker was not broken. The code was not "buggy" in any line you could point at. The whole system was behaving correctly — and the customer was still charged twice. This lesson is about why that happens to everyone eventually, and the three decisions that stop it: which message pattern you reach for, which delivery guarantee you actually have, and why idempotency is not optional.
+</Hook>
+
+<Crux>send waits for a reply; emit is fire-and-forget. Brokers deliver at-least-once, so duplicates happen — make the consumer idempotent.</Crux>
+
+<Explanation>
+
+## Two patterns: a question vs a fact
+
+A Nest microservice client speaks in two registers, and choosing the wrong one is the first structural mistake. `client.send(pattern, data)` is **request-response**: it returns an `Observable` of a reply, and the caller waits for the handler (`@MessagePattern`) to compute and return an answer. `client.emit(pattern, data)` is **event-based**: it is fire-and-forget — the handler (`@EventPattern`) reacts, returns nothing, and the emitter does not wait.
+
+```ts
+// REQUEST-RESPONSE: you need an answer NOW, and you block on it
+const total: number = await firstValueFrom(
+  this.client.send('cart.total', { cartId }),   // ↔ @MessagePattern('cart.total')
+);
+
+// EVENT-BASED: you are announcing a fact; nobody is waited on
+this.client.emit('order.placed', { orderId, total }); // ↔ @EventPattern('order.placed')
+```
+
+The senior rule is about *coupling in time*. Use `send` only when you genuinely need the answer to continue — a query whose result you'll use on the next line. Use `emit` for "this happened" facts that other services react to on their own schedule. The trap is reaching for `send` everywhere because it feels like a function call: a chain of `send → send → send` across services quietly rebuilds a synchronous monolith on top of a message bus. Now you have all the operational cost of a distributed system — network latency stacked per hop, and cascading failure when any link is down — with none of the decoupling that justified splitting the services in the first place. `emit` is what lets the order service finish even when the email service is down.
+
+## Delivery semantics: the three guarantees, one of which is a lie
+
+Every broker offers a delivery guarantee, and there are exactly three to know.
+
+**At-most-once** is fire-and-forget with no redelivery: the message is sent, and if it's lost in transit or the consumer dies before processing, it is simply gone. Fast, cheap, lossy. Acceptable for a metric tick; unacceptable for a payment.
+
+**At-least-once** is the workhorse and the default for Kafka, NATS JetStream, and RabbitMQ: the broker keeps redelivering a message until the consumer acknowledges it. Nothing is ever lost — but the same message **can be delivered more than once**, because a redelivery fires whenever the broker isn't *sure* the consumer finished.
+
+**Exactly-once** is the one people ask for and the one you almost never actually get. True end-to-end exactly-once *delivery* across a network is, in the general case, impossible. What production systems actually build is **at-least-once delivery + idempotent processing**, which yields *effectively-once*: the message may arrive twice, but the second arrival has no additional effect. Say it precisely, because the imprecise version is what causes the double-charge: you do not get exactly-once delivery; you engineer exactly-once *effect*.
+
+<Inset kind="why" lang="en">
+Why is end-to-end exactly-once *delivery* effectively impossible, and what do real systems do instead? Picture the consumer finishing the work and sending an ack back to the broker. The network can drop that ack on the way. Now the broker is stuck with a question it cannot answer: did the consumer process the message and the ack got lost, or did the consumer die before processing? Those two cases are indistinguishable from the broker's side — the only signal it has is "no ack arrived." It must choose a default behaviour for that ambiguity. If it assumes "processed" and moves on, it risks losing a message that was never actually handled. If it assumes "not processed" and redelivers, it risks duplicating a message that was. There is no third option that magically knows the truth, because the information needed to distinguish the cases was lost with the ack. So mature systems stop trying to make *delivery* exactly-once and instead choose at-least-once (never lose) and make the *processing* idempotent (dedup by a stable key), so a duplicate delivery produces no duplicate effect — effectively-once, not exactly-once-delivery.
+</Inset>
+
+## Acknowledgements and the redelivery window
+
+The duplicate is born in the gap between "work done" and "ack recorded." The consumer does the work, then acknowledges: Kafka commits a consumer **offset**; NATS JetStream and RabbitMQ send an explicit **ack**. If the consumer crashes, or the ack is lost, before the broker records that acknowledgement, the broker redelivers — and the message is processed a second time.
+
+This means the order of operations *is the choice of which failure you accept*, and there is no free option:
+
+```ts
+// ACK BEFORE processing → at-most-once in effect: a crash here LOSES the message
+@EventPattern('payment.charge')
+async handleBad(@Payload() data, @Ctx() ctx: KafkaContext) {
+  await ctx.getConsumer().commitOffsets([/* ... */]); // committed first
+  await this.charge(data); // if the pod dies here, the charge never happens, never retried
+}
+
+// ACK AFTER processing → at-least-once: a crash here DUPLICATES the message on redelivery
+@EventPattern('payment.charge')
+async handleGood(@Payload() data, @Ctx() ctx: KafkaContext) {
+  await this.charge(data);                              // work first
+  await ctx.getConsumer().commitOffsets([/* ... */]);  // crash before this → redelivered → charged twice
+}
+```
+
+Acking before processing loses messages on a crash; acking after processing duplicates them on a crash. You cannot have neither. The mature systems pick **ack-after** (never lose) and pay for it with **idempotency** (never double-apply). Which is the whole point of the next section.
+
+## Idempotency: the fix, not a nicety
+
+Because at-least-once *will* deliver duplicates, the consumer must be **idempotent**: processing the same message twice must produce the same end state as processing it once. This is not achieved by hoping; it is engineered with three moving parts:
+
+1. A **stable idempotency key** that identifies the logical operation — carried on the message, the same across redeliveries (e.g. `paymentId`, or a client-supplied key). Not a random per-attempt id, or every redelivery looks new.
+2. A **dedup record** of keys already processed — a `processed_events` table, checked first and written in the same transaction as the effect.
+3. A **side effect that is safe to repeat** — guarded so the second arrival is a no-op.
+
+```ts
+@EventPattern('payment.charge')
+async handleCharge(@Payload() data: { paymentId: string; amount: number }) {
+  await this.dataSource.transaction(async (manager) => {
+    // claim the key; if it already exists, this insert affects 0 rows → already processed
+    const res = await manager.query(
+      `INSERT INTO processed_events (key) VALUES ($1) ON CONFLICT (key) DO NOTHING`,
+      [data.paymentId],
+    );
+    if (res.rowCount === 0) return; // duplicate redelivery → skip the charge entirely
+    await this.charge(data); // first time only; commits atomically with the dedup row
+  });
+}
+```
+
+That `ON CONFLICT (key) DO NOTHING` is the load-bearing line: the dedup row and the charge commit in one transaction, so a redelivery either finds the key already there (and skips) or claims it and charges — never both. This is what the double-charge incident was missing. The fix shipped that day was exactly this: a unique idempotency key on the charge plus a processed-events check before calling Stripe.
+
+## Poison messages and the dead-letter queue
+
+At-least-once has a second, sharper edge. Suppose a message can *never* succeed — malformed payload, a schema mismatch, a bug that throws on this one record. The broker's redelivery, which saves you from transient crashes, now works against you: it redelivers the **poison message** forever. Worse, in an ordered stream the poison sits at the head and blocks every message behind it — **head-of-line blocking** — while burning CPU on an infinite retry loop.
+
+The answer is a **dead-letter queue (DLQ)**: after N failed attempts (commonly **3–5 retries**), stop retrying inline and route the message to a separate queue for inspection and manual or automated handling, so the main stream keeps flowing. The retry count is the dial — too low and you DLQ transient blips that would have succeeded; too high and a poison message stalls the partition for minutes.
+
+One more guarantee to keep honest: **ordering is per-partition only**. Kafka guarantees order within a partition (chosen by the message key), JetStream within a subject stream — but across partitions/keys there is no global order. If two events must be applied in sequence, they must share a partition key; otherwise "we'll process them in order" is a guarantee you don't actually have.
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-03-message-patterns-and-delivery-tradeoff-1"
+  lessonSlug="03-message-patterns-and-delivery"
+  lang="en"
+  prompt="A 'charge customer' message must never double-charge, even though the broker can redeliver it after a consumer restart. Which approach actually holds?"
+  options={[
+    { name: "At-least-once delivery + a stable idempotency key + a processed-events dedup table checked in the same transaction as the charge", summary: "Effectively-once.", correct: true, justification: "This is the only approach that survives the real failure: the broker WILL redeliver after a lost ack, so you accept at-least-once (never lose the charge) and make the processing idempotent so the duplicate has no effect. The key identifies the logical charge; the dedup row is claimed via INSERT ... ON CONFLICT DO NOTHING in the same transaction as the charge, so a redelivery either finds the key (and skips) or claims it (and charges) — never both. You engineer exactly-once EFFECT on top of at-least-once delivery. This is what production payment consumers actually do." },
+    { name: "Rely on the broker's 'exactly-once delivery' guarantee so duplicates can't happen", summary: "The myth.", justification: "End-to-end exactly-once DELIVERY across a network is impossible in the general case: when an ack is lost, the broker cannot tell 'processed, ack lost' from 'never processed', so it must either risk loss or risk duplication. Vendor 'exactly-once' features are narrow (e.g. Kafka's transactional within-cluster semantics) and do not extend to your external side effect of charging a card. Trusting it is precisely how the double-charge ships." },
+    { name: "Acknowledge the message BEFORE charging so it can never be redelivered", summary: "Trades duplicates for loss.", justification: "Acking first does stop the duplicate — by converting at-least-once into at-most-once. Now if the pod dies between the ack and the charge, the charge never happens and is never retried: you've turned 'charged twice' into 'never charged', which for a payment is worse, not better. You haven't solved atomicity, you've moved the failure to the other side. The correct shape is ack-after-processing plus idempotency." },
+    { name: "emit the charge fire-and-forget and accept whatever happens", summary: "No guarantee at all.", justification: "Fire-and-forget removes the reply but does nothing about delivery semantics or duplication — the underlying transport still redelivers on at-least-once, and now you've also given up any signal of success or failure. 'Hope' is not a delivery guarantee. emit is the right pattern for announcing a fact, but the consumer of that fact still needs idempotency to be safe under redelivery." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-03-message-patterns-and-delivery-quiz-1"
+  lessonSlug="03-message-patterns-and-delivery"
+  lang="en"
+  question="When should you use client.send() versus client.emit() between Nest microservices?"
+  choices={[
+    { label: "send for request-response when you need the reply to continue (it returns an Observable and the caller waits); emit for fire-and-forget 'this happened' facts that others react to without the emitter waiting", correct: true },
+    { label: "send and emit are interchangeable; send is just the newer API and you should prefer it everywhere", misconception: "They are not interchangeable — they encode different coupling. send is request-response: it returns an Observable of a reply and the caller blocks on the handler's answer. emit is fire-and-forget: no reply, the emitter doesn't wait. Preferring send everywhere rebuilds a synchronous monolith over the bus, with stacked latency and cascading failure." },
+    { label: "emit when you need a return value and send when you don't care about the result", misconception: "That's backwards. send is the one that returns a value — it waits for the @MessagePattern handler's reply. emit is the fire-and-forget one with no return, handled by @EventPattern. Use send when you need the answer now; use emit to announce a fact." },
+    { label: "Always use send so you get an acknowledgement that the message was processed", misconception: "send gives you a reply, not a delivery acknowledgement, and using it everywhere defeats the point of messaging — it temporally couples the two services so the caller blocks and a downstream outage cascades. For 'this happened' facts you want emit, and durability comes from the broker's at-least-once delivery plus idempotent consumers, not from send's reply." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-03-message-patterns-and-delivery-quiz-2"
+  lessonSlug="03-message-patterns-and-delivery"
+  lang="en"
+  question="A payment.charge event is redelivered after a consumer pod restart, and the customer is charged twice. What is the root cause and the fix?"
+  choices={[
+    { label: "Root cause: at-least-once delivery redelivered the message (the ack was lost mid-restart) and the consumer was not idempotent. Fix: add a stable idempotency key plus a processed-events dedup table checked in the same transaction as the charge", correct: true },
+    { label: "Root cause: a bug in the broker that delivered the message twice. Fix: switch to a broker that guarantees exactly-once delivery", misconception: "The broker was behaving correctly: at-least-once delivery redelivers any message it isn't sure was acknowledged, which is exactly what happened when the ack was lost during the restart. No broker gives true end-to-end exactly-once delivery for an external side effect like charging a card — the fix lives in your consumer (idempotency), not in swapping brokers." },
+    { label: "Root cause: the producer emitted the event twice. Fix: deduplicate on the producer side before emitting", misconception: "The producer emitted once; the duplicate was a redelivery on the consumer side because the consumer's ack was lost mid-restart. Producer dedup wouldn't help — the second delivery is the broker re-sending the same single message. The fix is consumer idempotency: a stable key plus a dedup table." },
+    { label: "Root cause: the consumer acknowledged after processing instead of before. Fix: acknowledge before charging so it's never redelivered", misconception: "Acking before charging would stop the duplicate only by risking a LOST charge — if the pod dies between the ack and the charge, the customer is never charged. That trades a double-charge for a silent missed charge. The correct shape keeps ack-after-processing (never lose) and adds idempotency (never double-apply)." },
+  ]}
+/>
+
+<FlowDiagram
+  label="The redelivery path and how idempotency absorbs the duplicate. A producer emits a payment.charge event to the broker. The broker delivers it to the consumer, which processes the charge. Normally the consumer then acknowledges and the broker is done. But if the consumer crashes after charging and before the ack is recorded, the broker — under at-least-once delivery — redelivers the same message. On this second delivery the consumer checks the idempotency key against its processed-events dedup table, finds the key already present, and skips the charge entirely. The duplicate delivery produces no duplicate effect: effectively-once."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "emit", label: "producer emit", sub: "payment.charge" },
+    { id: "broker", label: "broker", sub: "at-least-once" },
+    { id: "process", label: "consumer charge", sub: "side effect" },
+    { id: "ack", label: "ack / commit", sub: "happy path" },
+    { id: "redeliver", label: "crash → redeliver", sub: "ack lost" },
+    { id: "dedup", label: "key check → skip", sub: "dedup table" },
+  ]}
+  edges={[
+    { from: "emit", to: "broker", label: "publish" },
+    { from: "broker", to: "process", label: "deliver" },
+    { from: "process", to: "ack", label: "success" },
+    { from: "process", to: "redeliver", label: "crash before ack" },
+    { from: "redeliver", to: "dedup", label: "2nd delivery" },
+  ]}
+  caption="The duplicate path (crash before ack → redeliver) is real and unavoidable under at-least-once. Idempotency absorbs it: the second delivery finds its key in the dedup table and skips, so the customer is charged exactly once in effect."
+/>
+
+</Explanation>
+
+<KeyTakeaway>send waits for a reply; emit is fire-and-forget. Brokers deliver at-least-once, so duplicates are guaranteed. Exactly-once delivery is a myth — engineer effectively-once with an idempotency key + dedup table.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-08-microservices-and-graphql-03-message-patterns-and-delivery-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast request-response (send) with event-based (emit) messaging, and explain the senior rule for choosing — including the failure mode of overusing send.", a: "client.send(pattern, data) is request-response: it returns an Observable of a reply, and the caller waits for the @MessagePattern handler to compute and return an answer — the two services are coupled in TIME, because the caller blocks until the reply comes back. client.emit(pattern, data) is event-based: fire-and-forget, handled by @EventPattern, which reacts and returns nothing while the emitter doesn't wait — the services are decoupled. The senior rule is about temporal coupling: use send only when you genuinely need the answer to continue on the next line (a query whose result you use immediately); use emit for 'this happened' facts that other services react to on their own schedule. The failure mode of overusing send is that a chain of send → send → send across services quietly rebuilds a synchronous monolith on top of the message bus: you pay stacked per-hop network latency and you get cascading failure when any link is down, while losing the decoupling that justified splitting the services. emit is what lets the order service finish even when the email service is down." },
+    { q: "Explain the three delivery semantics, why exactly-once delivery is effectively impossible, and how at-least-once + idempotency + a DLQ together produce a safe consumer.", a: "At-most-once is fire-and-forget with no redelivery — fast but lossy: a crash before processing loses the message. At-least-once (the default for Kafka, NATS JetStream, RabbitMQ) redelivers until the consumer acknowledges, so nothing is lost but the same message CAN arrive more than once. Exactly-once delivery is the myth: when an ack is lost on the network, the broker cannot distinguish 'processed, ack lost' from 'never processed', so it must either risk loss (assume processed) or risk duplication (redeliver) — the information to tell them apart was lost with the ack, so no broker can deliver true end-to-end exactly-once for an external side effect. Real systems therefore choose at-least-once and make PROCESSING idempotent: a stable idempotency key on the message, a processed-events dedup table written in the same transaction as the effect (INSERT ... ON CONFLICT DO NOTHING), and a side effect safe to repeat — so a redelivery finds the key and skips. That yields effectively-once. The redelivery window is the gap between doing the work and recording the ack/offset commit; ack-before-processing loses on a crash, ack-after duplicates on a crash, so you choose ack-after plus idempotency. Finally, a poison message that always fails would be redelivered forever (head-of-line blocking the partition), so after ~3–5 retries you route it to a dead-letter queue for inspection; and ordering only holds per partition key, so events that must be sequenced must share a key." },
+  ]}
+/>
+
+<Recap lang="en">
+Nest microservices speak in two patterns: client.send(pattern, data) is request-response — it returns an Observable reply and the caller waits for the @MessagePattern handler, coupling the services in time — while client.emit(pattern, data) is fire-and-forget, handled by @EventPattern with no reply and no waiting. Use send only when you need the answer now; use emit for "this happened" facts, because a chain of send calls rebuilds a synchronous monolith with stacked latency and cascading failure. On delivery: at-most-once is lossy, at-least-once (the default for Kafka, NATS JetStream, RabbitMQ) never loses but CAN duplicate, and exactly-once delivery is a myth — when an ack is lost the broker cannot tell "processed" from "not processed", so it must risk loss or duplication. The duplicate is born in the window between doing the work and recording the ack/offset: ack-before-processing loses on a crash, ack-after duplicates on a crash, so you choose ack-after and pay with idempotency. An idempotent consumer carries a stable idempotency key, claims it in a processed-events dedup table with INSERT ... ON CONFLICT DO NOTHING in the same transaction as the effect, and makes the side effect safe to repeat — so a redelivery finds the key and skips, yielding effectively-once. That is exactly what the double-charge incident was missing. A poison message that always fails would be redelivered forever and head-of-line-block its partition, so after ~3–5 retries route it to a dead-letter queue; and ordering holds only per partition key, so events that must be sequenced must share a key.
+</Recap>
