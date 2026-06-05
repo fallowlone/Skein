@@ -1,0 +1,217 @@
+---
+concepts:
+- promise-combinators
+- promise-allsettled
+- bounded-concurrency
+- fan-out-stampede
+- abortcontroller
+- cancellation
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-concurrency-control-and-combinators
+sources:
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/all
+- https://nodejs.org/api/globals.html#class-abortcontroller
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled
+spiral: []
+status: ready
+summary: 'Promise.all реджектится на первой ошибке, но никогда не отменяет соседей; неограниченный fan-out устраивает DoS вашей же БД. Сеньорский ответ — ограниченный пул воркеров плюс AbortController, который реально отменяет проигравшего, а не утекает им.'
+title: 'Управление конкуренцией: комбинаторы, ограниченный fan-out и отмена'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Ты выкатываешь ночную задачу, обогащающую пользователей: `await Promise.all(ids.map(id => fetchUser(id)))`. На 200 тестовых строках она зелёная. В первую же продовую ночь приходит 48 000 строк, и в 02:14 твой пул БД из 20 соединений вычерпывается за миллисекунды, каждый другой сервис, делящий эту базу, начинает отваливаться с `ETIMEDOUT`, а дежурного команды *платежей* поднимают по тревоге, потому что их запросы оформления заказа не могут получить соединение. Ты написал не медленную задачу — ты написал самоинициированный отказ в обслуживании, выстреливший 48 000 соединений разом. Фикс — не больший пул. Фикс — признать, что «сделай всё это» и «сделай всё это *разом*» — разные инструкции.
+</Hook>
+
+<Crux>`Promise.all` не отменяет соседей; неограниченный fan-out кладёт твой бэкенд. Ограничь конкуренцию до N; `AbortController` для реальной отмены.</Crux>
+
+<Explanation>
+
+## Четыре комбинатора и семантика, которую путают
+
+Четыре статических комбинатора `Promise` выглядят взаимозаменяемыми, пока сбой не вскроет, насколько по-разному они оседают. Выбери не тот — и ты либо упадёшь на частичном сбое, который мог бы стерпеть, либо тихо сохранишь результаты работы, которую уже бросил.
+
+```js
+const settle = (ms, ok = true, v) =>
+  new Promise((res, rej) => setTimeout(() => (ok ? res(v) : rej(new Error(v))), ms));
+
+// Promise.all — resolves to an ordered array, OR rejects on the FIRST rejection.
+await Promise.all([settle(10, true, "a"), settle(20, true, "b")]);    // ["a","b"]
+await Promise.all([settle(10, false, "x"), settle(30, true, "b")]);   // throws Error("x") at 10ms
+
+// Promise.allSettled — NEVER rejects. One descriptor per input, in order.
+await Promise.allSettled([settle(10, true, "a"), settle(20, false, "x")]);
+// [{ status: "fulfilled", value: "a" }, { status: "rejected", reason: Error("x") }]
+
+// Promise.race — settles as the FIRST to settle, win OR lose.
+await Promise.race([settle(50, true, "slow"), settle(10, false, "fast-fail")]); // throws at 10ms
+
+// Promise.any — first FULFILLMENT; if ALL reject, throws AggregateError(.errors[])
+await Promise.any([settle(10, false, "x"), settle(20, true, "b")]);   // "b"
+await Promise.any([settle(10, false, "x"), settle(20, false, "y")]);  // AggregateError
+```
+
+Механизм, который тебя кусает, умещается в одно предложение: **реджект `Promise.all` не отменяет остальные промисы.** Промис — это не задача, которую можно убить; это одностороннее уведомление о том, что некая уже идущая работа завершилась. Когда `Promise.all` видит первый реджект, он немедленно реджектит *свой собственный* промис, но остальные fetch'и, запросы и таймеры продолжают бежать до конца в фоне — ты просто перестал *слушать*. Так что `Promise.all` над 50 вызовами БД, где вызов №3 реджектится на 10 мс, всё равно держит все 50 соединений открытыми, пока не вернётся самый медленный из оставшихся 47. Используй `all`, когда частичный сбой недопустим (нужна вся пачка или ничего), и `allSettled`, когда частичный сбой *ожидаем* и нужно изучить каждый исход.
+
+## Ловушка неограниченного fan-out
+
+Вот строка, из-за которой поднимают людей по тревоге, и та, что выглядит как фикс, но им не является:
+
+```js
+// ANTI-PATTERN A — unbounded fan-out: 48,000 in flight at once
+await Promise.all(ids.map(id => fetchFromDb(id)));
+// .map runs all 48,000 thunks synchronously → 48,000 pending promises → 48,000
+// connection requests slam a pool of 20. Pool drains, queue overflows, ETIMEDOUT,
+// and you've DoS'd every service sharing that database. Memory spikes too:
+// 48,000 in-flight request objects + their buffers.
+
+// ANTI-PATTERN B — fully sequential: correct, but glacial
+for (const id of ids) await fetchFromDb(id);
+// One at a time. 48,000 × 40ms = 1,920s ≈ 32 minutes. You traded a crash for a job
+// that misses its window. The pool now sits 95% idle while you wait.
+```
+
+Обе неправильны, и неправильны в *противоположных* направлениях: A просит бесконечный параллелизм, B не просит никакого. Сеньорский ответ — **ограниченная конкуренция**: держи ровно `N` операций в полёте в любой момент, где `N` подобрано под пропускную способность нижестоящего звена (пул на 20 соединений хочет `N ≈ 10–16`, оставляя запас другим вызывающим). Пропускная способность тогда примерно `N / latency`: при вызовах по 40 мс `N=1` финиширует за ~32 мин, `N=16` — за `48000 × 40ms / 16 ≈ 120с`, а `N=∞` «финиширует» падением базы. Весь навык — выбирать `N` осознанно, а не давать `.map` выбрать `∞` за тебя.
+
+<Inset kind="why" lang="ru">
+Почему больший пул не чинит анти-паттерн A? Потому что узкое место смещается, но не исчезает. Подними пул до 200 — и ты просто перенёс давку на CPU базы, её менеджер блокировок и диск: 200 одновременных записей конкурируют за одни и те же горячие строки, и ты получаешь ожидания блокировок и дедлоки вместо `ETIMEDOUT`. Подними до 48 000 — и в ОС кончатся файловые дескрипторы или БД откажет в соединениях. Конкуренция — это *общий бюджет* для всех вызывающих этого ресурса; работа клиента — оставаться под бюджетом, а не требовать роста ресурса под неограниченный спрос. Ограниченная конкуренция — это контроль потока для исходящей работы, ровно как backpressure для стримов.
+</Inset>
+
+## Ограниченный пул воркеров с нуля
+
+Библиотека для этого не нужна, а написав его однажды, цементируешь механизм. Паттерн: запусти `N` «воркеров», каждый из которых тянет следующую задачу из общего курсора и крутится, пока очередь не опустеет. Задачи — это *thunk'и*, `() => Promise`, а не уже запущенные промисы, потому что вся суть — управлять тем, *когда* каждый из них стартует.
+
+```js
+async function runPool(tasks, limit) {
+  const results = new Array(tasks.length);
+  let next = 0; // shared cursor; ++ is atomic between awaits (single-threaded)
+
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++;            // claim an index
+      results[i] = await tasks[i]();// run one, then loop for the next
+    }
+  }
+
+  // Start exactly `limit` workers; never more than `limit` tasks are in flight.
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+  await Promise.all(workers);      // all workers drain the queue
+  return results;                  // results stay aligned with input order
+}
+
+// Usage: at most 16 DB calls in flight at any moment, regardless of ids.length
+const thunks = ids.map(id => () => fetchFromDb(id));
+const rows = await runPool(thunks, 16);
+```
+
+Две сеньорские детали. Первая: в таком виде это небезопасно по части `allSettled` — если какой-то `tasks[i]()` реджектится, `await` внутри `worker` бросает, этот воркер умирает, и внешний `Promise.all(workers)` реджектится (а *остальные* воркеры продолжают вычерпывать очередь в фоне — то же правило неотменяемости, что и выше). Если частичный сбой допустим, оберни вызов: `results[i] = await tasks[i]().then(v => ({ ok: true, v }), e => ({ ok: false, e }))`. Вторая: в проде бери проверенную в бою версию — `p-limit` (оборачивай каждый вызов: `limit(() => fetchFromDb(id))`) или `Promise.map`-с-конкуренцией из `bluebird`/`p-map`. Они добавляют тот же лимит плюс удобства (per-call `AbortSignal`, агрегацию ошибок), но движок — ровно тот цикл выше.
+
+## Отмена, которая реально отменяет: AbortController
+
+Ограниченный пул не даёт тебе *запустить* слишком много. `AbortController` позволяет *остановить* работу, уже идущую в полёте — то, чего `Promise.race` не может. `Promise.race([work, timeout])` оседает, когда побеждает таймаут, но `work` продолжает бежать, продолжает держать своё соединение и может позже реджектнуться, когда уже никто не слушает (необработанный реджект). Это **утечка проигравшего**. `AbortController` вместо этого сигналит нижележащей операции реально прерваться.
+
+```js
+// LEAKY timeout: race resolves at 2s, but the fetch runs to its own 30s+ default,
+// still holding a socket, and if it later rejects → unhandledRejection.
+const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
+await Promise.race([fetch(url), timeout]); // fetch is NOT cancelled
+
+// REAL cancellation: the signal tears down the socket at 2s.
+const res = await fetch(url, { signal: AbortSignal.timeout(2000) }); // throws TimeoutError; socket closed
+
+// Manual control + combining signals. AbortSignal.any aborts when ANY input does.
+const ac = new AbortController();
+const signal = AbortSignal.any([ac.signal, AbortSignal.timeout(5000)]);
+signal.addEventListener("abort", () => cleanup(), { once: true });
+const data = await fetch(url, { signal }); // aborts on ac.abort() OR after 5s
+// ...later, e.g. on client disconnect: ac.abort(new Error("client gone"));
+```
+
+Числа важны для выживания под нагрузкой. У `fetch`/undici в Node по умолчанию нет общего таймаута — застрявший upstream может удерживать запрос десятки секунд (а дефолты уровня соединения в районе 5–10 с, а не лимит на запрос), и с протекающим `race` эти сокеты копятся, пока ты не исчерпаешь пул — это снова давка на соединения, но с *исходящей* стороны. `AbortSignal.timeout(2000)` ограничивает цену одного медленного upstream'а 2 секундами *и* немедленно освобождает сокет, так что бюджет в 2 с вместо зависания на 30+ с — это 15-кратное снижение worst-case-занятости на вызов. Протяни *один и тот же* сигнал в каждую await-операцию запроса — `fetch`, чтения `fs`, задачи твоего пула — чтобы одна отмена раскрутила всё дерево.
+
+<TradeoffMatrix
+  id="03-concurrency-control-tradeoff-1"
+  lessonSlug="03-concurrency-control-and-combinators"
+  lang="ru"
+  prompt="Нужно обогатить 48 000 строк пользователей, вызывая БД за пулом из 20 соединений (≈40 мс/вызов), внутри ночной задачи с жёстким окном. Эту базу делят другие сервисы. Как ты запустишь вызовы?"
+  options={[
+    { name: "Ограниченный пул: runPool(thunks, 12) — максимум 12 вызовов в полёте, подобрано под общий пул", summary: "Ограничь конкуренцию до N.", correct: true, justification: "Это сеньорский дефолт. Ты держишь ~12 из 20 соединений занятыми — насыщая свою долю пропускной способности (48000×40мс/12 ≈ 160с, внутри окна) и оставляя запас, чтобы сервис платежей всё ещё мог получить соединения. N выбран осознанно под бюджет нижестоящего звена, а не за тебя через .map. Это также ограничивает память: максимум 12 объектов запросов в полёте, а не 48 000." },
+    { name: "Неограниченно: await Promise.all(ids.map(id => fetchFromDb(id)))", summary: "Всё разом.", justification: "Это и есть авария из хука. .map синхронно стартует все 48 000 thunk'ов, так что 48 000 запросов на соединение бьют по пулу на 20 слотов; он вычерпывается за миллисекунды, очередь переполняется, ETIMEDOUT каскадом идёт на каждый сервис этой БД, а память скачет от 48 000 запросов в полёте. «Сделай всё это» — это не «сделай всё разом»: Promise.all лишь собирает результаты, он никогда не ограничивает конкуренцию." },
+    { name: "Последовательно: for (const id of ids) await fetchFromDb(id)", summary: "По одному.", justification: "Верно и безопасно, но черепашьим шагом: 48 000 × 40 мс ≈ 32 минуты, ломая ночное окно, пока пул простаивает на 95%. Ты обменял падение на сорванный SLA. Имеет смысл только если каждый вызов реально зависит от результата предыдущего, а обогащение — нет." },
+    { name: "Неограниченный all, но подними пул до 500 соединений", summary: "Раздуй пул.", justification: "Смещает узкое место на саму базу. 500 одновременных вызовов конкурируют за CPU, менеджер блокировок и горячие строки — ты меняешь ETIMEDOUT на ожидания блокировок и дедлоки, и отнял соединения у всех остальных сервисов. Конкуренция — общий бюджет; клиент обязан оставаться под ним, а не заставлять ресурс расти под неограниченный спрос." },
+  ]}
+/>
+
+<Quiz
+  id="03-concurrency-control-quiz-1"
+  lessonSlug="03-concurrency-control-and-combinators"
+  lang="ru"
+  question="Ты выполняешь await Promise.race([fetch(url), rejectAfter(2000)]), и таймаут побеждает на 2 с. В каком состоянии нижележащий fetch?"
+  choices={[
+    { label: "Он продолжает бежать до своего таймаута, всё ещё держа сокет; если позже реджектнётся без слушателя — станет unhandledRejection: проигравший утёк, а не отменён", correct: true },
+    { label: "Promise.race автоматически отменяет fetch, когда таймаут побеждает", misconception: "race лишь выбирает, какое оседание ты увидишь; отменять работу он не властен. Промис — это уведомление, а не хэндл на идущую работу. Fetch бежит дальше, держа свой сокет. Реальная отмена требует AbortController/AbortSignal, переданного в fetch." },
+    { label: "Fetch приостановлен и возобновится, если заawait'ить его снова", misconception: "Никакого pause/resume у промиса или fetch нет. HTTP-запрос продолжается независимо; повторный await того же промиса просто отдаст его итоговое оседание. Ничего не было приостановлено." },
+    { label: "Fetch немедленно собирается сборщиком мусора, так как на его результат нет ссылок", misconception: "Идущий fetch удерживается живым сокетом и его внутренними колбэками, а не твоей ссылкой на результат. GC не может освободить работу, которая всё ещё запланирована к выполнению; сокет остаётся открытым, пока запрос сам не завершится или не будет прерван." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Ids стекаются через ограниченный пул из N воркеров в упорядоченные результаты"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "ids", label: "48 000 ids", sub: "thunks[]" },
+    { id: "q", label: "общая очередь", sub: "cursor next++" },
+    { id: "cap", label: "limit = N", sub: "напр. 16" },
+    { id: "w1", label: "воркер 1", sub: "1 в полёте" },
+    { id: "w2", label: "воркер N", sub: "1 в полёте" },
+    { id: "res", label: "results[]", sub: "порядок входа" },
+  ]}
+  edges={[
+    { from: "ids", to: "q", label: "enqueue" },
+    { from: "q", to: "cap", label: "cap N" },
+    { from: "cap", to: "w1" },
+    { from: "cap", to: "w2" },
+    { from: "w1", to: "res" },
+    { from: "w2", to: "res" },
+  ]}
+  caption="Map производит 48 000 thunk'ов, но из очереди тянут лишь N воркеров, так что в полёте за раз максимум N вызовов. Каждый воркер выполняет одну задачу, пишет в свой индекс ради сохранения порядка, затем крутится дальше. N подобрано ниже бюджета нижестоящего пула; AbortSignal, протянутый в каждую задачу, может обрушить всё дерево по таймауту или отключению клиента."
+/>
+
+<KeyTakeaway>`Promise.all` не ограничивает конкуренцию и не отменяет соседей. Ограничь исходящую работу до `N` пулом (≈ N/latency), используй `allSettled` для частичного сбоя и `AbortSignal.timeout` — не `race` — для реальной отмены.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-concurrency-control-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему `await Promise.all(ids.map(id => fetchFromDb(id)))` над 48 000 ids — это самоинициированный DoS, и каков сеньорский фикс?", a: "Array.map синхронно запускает все 48 000 thunk'ов, так что в момент исполнения строки у тебя 48 000 ожидающих промисов — то есть 48 000 запросов на соединение, бьющих по пулу, скажем, из 20. Пул вычерпывается за миллисекунды, его очередь ожидания переполняется, вызовы падают с ETIMEDOUT, а поскольку пул общий, любой другой сервис этой базы (платежи и т.д.) тоже не может получить соединение — ты устроил отказ в обслуживании своему же бэкенду. Память тоже скачет, от 48 000 объектов запросов в полёте и их буферов. Promise.all лишь собирает результаты; он не ограничивает конкуренцию. Фикс — ограниченная конкуренция: пул воркеров, держащий максимум N задач в полёте (подобрано ниже бюджета нижестоящего звена, напр. N ≈ 12 против пула из 20 соединений), так что пропускная ~N/latency, а ресурс остаётся под своим общим бюджетом. Поднять размер пула — не фикс: это лишь переносит давку на CPU базы, её менеджер блокировок и горячие строки." },
+    { q: "Почему таймаут через Promise.race утекает и чем отличается AbortController?", a: "Промис — это одностороннее уведомление о том, что некая уже идущая работа завершилась, а не хэндл, которым её можно остановить. Promise.race([work, timeout]) просто выбирает, что оседает первым, чтобы показать тебе; когда побеждает таймаут, `work` всё ещё бежит, всё ещё держит сокет/соединение, и если позже реджектнётся без слушателя — всплывёт как unhandledRejection. Это утечка проигравшего: ты перестал слушать, но работа не остановилась. Под нагрузкой эти брошенные сокеты накапливаются и исчерпывают исходящий пул — давка с другой стороны. AbortController иной: передача controller.signal (или AbortSignal.timeout(ms)) в fetch/undici/fs реально сигналит операции свернуться — сокет закрывается, а вызов реджектится с TimeoutError/AbortError. Так что AbortSignal.timeout на 2 с ограничивает один медленный upstream 2 секундами И немедленно освобождает сокет (против зависания на 30+ с по умолчанию) — примерно 15-кратный срез worst-case-занятости на вызов. Протяни один сигнал в каждую await-операцию запроса, а AbortSignal.any([a, b]) даёт одной отмене (таймаут ИЛИ отключение клиента) раскрутить всё дерево." },
+  ]}
+/>
+
+<Recap lang="ru">
+Четыре комбинатора оседают по-разному в тот миг, когда что-то ломается: `Promise.all` возвращает упорядоченный массив, но реджектится на первом реджекте — *не* отменяя соседей, которые продолжают бежать и держать ресурсы, ведь промис лишь уведомляет, убить работу он не может; `allSettled` никогда не реджектится и отдаёт по одному `{status, value/reason}` на вход, чтобы стерпеть частичный сбой; `race` оседает на первом оседании, в победу или поражение; `any` берёт первое исполнение или бросает `AggregateError`, если реджектятся все. Военная история — про конкуренцию, не про сбор: `await Promise.all(ids.map(fetch))` над десятками тысяч ids выстреливает их разом и устраивает DoS общему пулу (`ETIMEDOUT` повсюду), тогда как последовательный `for await` безопасен, но черепаший (48 000 × 40 мс ≈ 32 мин). Сеньорский ответ — ограниченный пул воркеров: `N` воркеров тянут thunk'и из общего курсора, максимум `N` в полёте, пропускная ≈ `N/latency`, `N` подобрано *ниже* бюджета нижестоящего звена — а в проде беря `p-limit`/`p-map`. И отмена — отдельная дисциплина: `Promise.race` для таймаута утекает проигравшим (он бежит дальше, держа сокет, рискуя необработанным реджектом), тогда как `AbortController`/`AbortSignal.timeout(ms)` реально сворачивает операцию, ограничивая медленный upstream, скажем, 2 секундами вместо 30+ с и освобождая сокет — протяни один сигнал (скомбинируй через `AbortSignal.any`) сквозь каждую await-операцию, чтобы одна отмена раскрутила всё дерево.
+</Recap>
