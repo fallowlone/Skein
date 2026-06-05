@@ -1,0 +1,185 @@
+---
+concepts:
+- require-cache
+- module-identity
+- singleton-modules
+- duplicate-package-instances
+- esm-module-map
+- cache-invalidation
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-module-cache-and-singletons
+sources:
+- https://nodejs.org/api/modules.html#requirecache
+- https://nodejs.org/api/esm.html
+- https://nodejs.org/api/packages.html#dual-package-hazard
+spiral: []
+status: ready
+summary: 'A Node module is a singleton keyed by its resolved absolute path: the first require evaluates it once and every later require returns the same object. Two install locations of one package resolve to two keys — two instances — so instanceof and shared state silently break.'
+title: 'The module cache: identity, singletons, and duplicate copies'
+track: node
+unit: 01-modules-and-runtime
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+You ship a feature flag client as a module that exports one shared `EventEmitter` — every part of the app subscribes to `flags.on("change")`, and for months it just works. Then you add a plugin that lives in its own package and pulls the flag client through a transitive dependency, and suddenly half your app never sees flag changes. No error, no crash. You add logging and discover there are *two* emitters: the app's listeners are on one instance, the plugin's `emit` fires on another. Nothing in your code created a second one — npm did, by installing the flag client at two paths. Your "singleton" was a singleton per resolved path, and you had two paths.
+</Hook>
+
+<Crux>A module is a singleton per resolved path: same path → same object; two install paths → two instances, broken `instanceof`, split state.</Crux>
+
+<Explanation>
+
+## The cache is keyed by resolved absolute path
+
+When you call `require("./config")`, Node first *resolves* the specifier to a single absolute path — say `/srv/app/config.js` — and uses that path as a key into `require.cache`. The first time, there's a cache miss: Node reads the file, wraps it in a function, runs it once, and stores the resulting `module` object (whose `exports` is what you get) under that key. Every later `require()` that resolves to the same path is a cache *hit*: Node skips evaluation entirely and hands back the **same object reference**. A cold evaluation parses and runs the file (milliseconds for a real module that opens a pool or reads config); a hit is a map lookup — microseconds, often a 100–1000× difference.
+
+```js
+// config.js — evaluated exactly once
+console.log("config evaluating");        // prints on the FIRST require only
+module.exports = { db: "postgres://...", loadedAt: Date.now() };
+
+// app.js
+const a = require("./config");
+const b = require("./config");
+console.log(a === b);                     // true — same object reference
+console.log(a.loadedAt === b.loadedAt);   // true — body never re-ran
+
+// require.cache is keyed by the resolved absolute path
+console.log(Object.keys(require.cache));  // [ '/srv/app/app.js', '/srv/app/config.js' ]
+const id = require.resolve("./config");   // '/srv/app/config.js'
+console.log(require.cache[id].exports === a); // true
+```
+
+This single mechanism is *why* a Node module behaves as a singleton. If you put a DB pool, a config object, or an `EventEmitter` bus at module scope and export it, the cache guarantees every importer shares the one instance — there is exactly one `module.exports` object per resolved path, created on first load and reused forever. You didn't write a singleton pattern; the module cache *is* the singleton pattern. The instance identity that this buys you is the entire reason `require("./pool")` from forty files all share one connection pool instead of opening forty.
+
+## ESM caches too — but you cannot un-import
+
+ES modules get the same once-only guarantee through a different structure: the **module map**, keyed by the resolved module *URL* (`file:///srv/app/config.mjs`). An ES module's body is evaluated exactly once on first import, and every later `import` of that URL returns the same module namespace. The crucial difference for a senior is the escape hatch that *doesn't exist*: **there is no supported way to invalidate the ESM cache.** CommonJS lets you reach into `require.cache` and `delete` an entry; the ESM module map has no public API to evict a URL. You cannot "un-import" a module.
+
+```js
+// The only way to get ESM to re-evaluate is to change the KEY — the URL.
+// A dev-only trick uses a cache-busting query string so the URL differs:
+const fresh = await import(`./plugin.mjs?t=${Date.now()}`); // NEW key → re-evaluates
+```
+
+This works because `./plugin.mjs?t=1` and `./plugin.mjs?t=2` are *different URLs*, so each is a fresh module-map entry. But it is a memory leak, not a reload mechanism: every distinct query string adds a permanent entry to the module map (modules are never garbage-collected from it), so a watcher that re-imports on every file change accumulates thousands of orphaned module instances and steadily climbs RSS. It is acceptable in a throwaway dev loop; it is never a production hot-reload. Production reload means a new process, behind a supervisor, not a growing module map.
+
+<Inset kind="why" lang="en">
+Why is identity tied to the *path* and not the package *name*? Because resolution produces a path, and only a path is unambiguous. `require("lodash")` from `/srv/app` might resolve to `/srv/app/node_modules/lodash/index.js`, while the same call from inside `/srv/app/node_modules/some-plugin` may resolve to `/srv/app/node_modules/some-plugin/node_modules/lodash/index.js` — a *nested* copy installed because of a version conflict. Same name, two paths, two cache keys, two completely independent module instances. The cache has no concept of "the lodash package"; it only knows file paths, so package identity and module identity are not the same thing the moment npm puts a package at more than one location.
+</Inset>
+
+## The failure mode: two copies that don't know about each other
+
+This is where the cache turns into a production incident. When two versions — or two *install locations* of even the same version — of a package resolve to different paths, you get two separate module instances, each with its own `module.exports`, its own classes, its own module-scoped state. The consequences are subtle because nothing throws:
+
+- **`instanceof` silently returns `false`** across the boundary. Copy A's `class Token` and copy B's `class Token` are different function objects with different prototypes, so a `Token` made by A fails `value instanceof Token` checked against B's class. Your validation just rejects valid objects, or accepts invalid ones, with no error.
+- **Two event buses.** As in the hook: copy A's `EventEmitter` and copy B's never see each other's `emit`. Subscribers on one are deaf to the other.
+- **Two "singletons."** Two config objects, two registries, two connection pools — you set a value on one and read `undefined` from the other.
+- **React's "Invalid hook call."** React keeps its dispatcher in module-scoped state; two copies of React means your component renders against one copy while hooks resolve against the other, and React throws *Hooks can only be called inside a component* / *you might have more than one copy of React*.
+- **Split `Symbol` registries.** A library that uses a module-private `Symbol` as a brand can't recognize objects branded by its other copy.
+
+```js
+// node_modules/lib/index.js (copy A)        and a nested copy B at
+// node_modules/plugin/node_modules/lib/index.js — SAME source, two paths
+class Token {}
+module.exports = { Token, make: () => new Token() };
+
+// app pulls copy A; plugin pulls copy B
+const a = require("lib");                 // resolves to copy A's path
+const t = require("plugin").makeToken();  // built by copy B's Token
+console.log(t instanceof a.Token);        // false — different class objects, no error
+```
+
+Diagnosis is mechanical once you know the cause: `npm ls <pkg>` prints the dependency tree and reveals when a package appears at two versions/locations; `require.resolve("pkg")` from two call sites shows two different absolute paths — the smoking gun. The fixes target *deduplication*: `npm dedupe` flattens compatible copies into one, `overrides` (npm/pnpm) or `resolutions` (Yarn) force a single version, declaring the shared lib as a `peerDependency` (so the host provides the one copy instead of each package bundling its own) is the standard fix for plugin ecosystems, and bundlers offer explicit dedupe/alias to collapse copies in a build. The numbers matter: two copies of a 300 KB library don't just risk correctness — they roughly double that library's footprint in the bundle and in resident memory, because each path is a distinct module that loads and stays loaded.
+
+<TradeoffMatrix
+  id="03-module-cache-and-singletons-tradeoff-1"
+  lessonSlug="03-module-cache-and-singletons"
+  lang="en"
+  prompt="A plugin in its own package needs the SAME shared EventEmitter bus that the host app exports, but npm is installing the bus library at two paths so the plugin gets a second instance. What is the durable fix?"
+  options={[
+    { name: "Declare the bus library as a peerDependency of the plugin (host provides the single copy)", summary: "One copy, host-provided.", correct: true, justification: "This is the standard plugin-ecosystem fix and it targets the actual cause: package identity. A peerDependency tells the installer the plugin must use the host's copy rather than nesting its own, so both resolve to ONE path, ONE cache key, ONE EventEmitter instance. Identity is restored at the source — the singleton is genuinely shared — and you also stop shipping a duplicate of the library's bytes." },
+    { name: "In the plugin, delete require.cache[require.resolve('bus')] and re-require to force a fresh load", summary: "Cache-bust per load.", justification: "Backwards — this CREATES instances rather than unifying them. Deleting the cache entry just makes the next require re-evaluate and produce yet another emitter object, while the host still holds the original. You'd multiply buses, not merge them, and leak the orphaned old ones. The problem is two paths, which a cache delete cannot collapse." },
+    { name: "Have the plugin import the bus by absolute path: require('/srv/app/node_modules/bus')", summary: "Hard-code the path.", justification: "It can accidentally work by forcing both call sites onto one cache key, but it's brittle to the point of negligence: it hard-codes a node_modules layout that changes across machines, OSes, monorepo hoisting, and deploy targets, and breaks the moment the path differs. It treats the symptom (two keys) by gluing one path in place rather than fixing package identity. peerDependency expresses the same intent declaratively and portably." },
+    { name: "Make the bus a true global by assigning globalThis.__bus = new EventEmitter() on first load", summary: "Hide it on global.", justification: "It dodges the cache by using a single global slot, but globals are exactly the shared mutable state the module system exists to scope. You lose typing, you race on first-write ordering, any code can clobber __bus, and you've coupled every consumer to a magic global name. It papers over duplicate instances instead of deduplicating the package, and creates a new class of action-at-a-distance bugs." },
+  ]}
+/>
+
+## The `delete require.cache[id]` hot-reload hack
+
+Because CommonJS exposes `require.cache` as a writable object, the tempting trick is `delete require.cache[require.resolve("./handler")]` so the next `require` re-evaluates the file — a poor man's hot reload. It is dangerous, and the reasons are all identity reasons. Deleting the cache entry does **not** change anything that already holds the old `exports`: a closure, a registered route, an event listener, or another module that captured `const h = require("./handler")` still points at the *old* object. So you now have the old code running for everything that loaded before the delete and the new code for everything after — two versions live at once, with `instanceof` mismatches between them. Every reload also **leaks memory**: the orphaned old module instance (and anything it referenced) stays reachable through those stale closures and is never collected, so a long-running watcher's heap grows reload by reload. And it silently breaks the singleton guarantee — the whole reason you used a module — by minting a second `module.exports` while the first is still in use. Real hot reload (the ergonomic kind in dev servers) works by tearing down and recreating a *new process or worker*, never by mutating one process's module cache in place.
+
+<Quiz
+  id="03-module-cache-and-singletons-quiz-1"
+  lessonSlug="03-module-cache-and-singletons"
+  lang="en"
+  question="A class created by one copy of a package fails `value instanceof Lib.Token` when checked against another copy's class — with no error thrown. Why?"
+  choices={[
+    { label: "The two copies resolved to different absolute paths, so each is a separate cache entry with its own class object and prototype; instanceof compares prototype chains, and the two Token classes are distinct functions — the check is simply false, not an error", correct: true },
+    { label: "instanceof is unreliable in Node and you should avoid it", misconception: "instanceof is perfectly reliable; it correctly answers 'is this prototype in the chain?'. The mismatch isn't a flaw in instanceof — it's that there are genuinely two different Token classes from two module instances, so the answer is honestly false." },
+    { label: "The object lost its prototype when it crossed the package boundary", misconception: "Passing an object between modules does not alter its prototype — the object keeps copy B's Token.prototype. The check fails because you're comparing it against copy A's different Token, not because anything was stripped." },
+    { label: "You need to clear require.cache so both copies share one class", misconception: "Deleting cache entries creates more instances, not fewer, and can't merge two install paths into one. The fix is deduplication (npm dedupe / overrides / peerDependency) so the package resolves to a single path." },
+  ]}
+/>
+
+<Quiz
+  id="03-module-cache-and-singletons-quiz-2"
+  lessonSlug="03-module-cache-and-singletons"
+  lang="en"
+  question="A dev tool re-imports an ES module on every file save using `import('./m.js?t=' + Date.now())`. What is the long-running cost?"
+  choices={[
+    { label: "Each unique query string is a new module-map URL, so every save adds a permanent, never-collected module instance — the map grows unbounded and RSS climbs; it's a leak, not a real cache invalidation", correct: true },
+    { label: "Nothing — the old version is garbage-collected once the new one loads", misconception: "ESM module-map entries are not evicted or collected; the old URL stays resident. The query-string trick adds entries, it never removes them, so memory only grows." },
+    { label: "The query string is ignored and the same cached module is returned", misconception: "The URL (including its query) is the cache key, so a different query is a different key and DOES re-evaluate — that's exactly why the trick re-runs the module, and exactly why it leaks." },
+    { label: "It triggers the supported ESM cache-invalidation API under the hood", misconception: "There is no supported ESM cache-invalidation API. Changing the URL is the only way to force re-evaluation, which is precisely why production reload means a new process, not a growing module map." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="One resolved path = one cache entry = one shared instance; a second path forks the singleton"
+  hue="var(--d-systems)"
+  caption="The cache key is the resolved absolute path, not the package name. Forty requires of /…/bus.js all hit one entry and share one EventEmitter (a real singleton). But a nested install at /…/plugin/node_modules/bus.js is a different key — a second entry, a second emitter, broken instanceof and split state. Dedupe collapses the two keys back into one."
+  layers={[
+    { label: "require.resolve → /srv/app/node_modules/bus/index.js", note: "resolved path = key" },
+    { label: "require.cache[key] — MISS on first load, evaluate once", note: "module.exports created" },
+    { label: "every later require of same key → HIT, same object", note: "the singleton (~µs)" },
+    { label: "second path /…/plugin/node_modules/bus/index.js", note: "DIFFERENT key" },
+    { label: "second cache entry → second instance", note: "instanceof false, split bus" },
+  ]}
+/>
+
+<KeyTakeaway>A module is a singleton per **resolved path**: same path → same object, two install paths → two instances, breaking `instanceof` and splitting state. Dedupe to one path; never `delete require.cache` to reload.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-module-cache-and-singletons-retrieval"
+  lang="en"
+  questions={[
+    { q: "Two parts of an app each get a 'singleton' EventEmitter from the same package, yet events emitted by one are invisible to the other. Walk from the symptom to the root cause and the fix.", a: "The symptom — a shared singleton that isn't shared — is the classic duplicate-instance bug. The module cache is keyed by the RESOLVED ABSOLUTE PATH, not the package name, and a module's exported EventEmitter is a singleton only per cache key. If npm installed the package at two locations (a nested copy because of a version conflict, or a plugin bundling its own copy), the two call sites resolve to two different paths — two cache keys, two cache entries, two separate `module.exports`, and therefore two distinct EventEmitter objects. Listeners attach to one instance and `emit` fires on the other, so events vanish with no error. You confirm it by calling `require.resolve('pkg')` from both sites and seeing two different absolute paths, or by running `npm ls pkg` and seeing the package at two versions/locations. The fix is deduplication so the package resolves to ONE path: `npm dedupe`, `overrides`/`resolutions` to force a single version, or — the standard plugin fix — declaring the shared library as a `peerDependency` so the host provides the one copy instead of each package nesting its own. Two copies of a 300 KB lib also roughly double its bundle and RSS footprint, so dedupe wins on both correctness and memory." },
+    { q: "Why is `delete require.cache[id]` a dangerous way to hot-reload, and how does real reload differ?", a: "Deleting the cache entry only forces the NEXT require to re-evaluate the file and produce a new `module.exports`; it does nothing to anything that already captured the old exports. Closures, registered routes, event listeners, and other modules that did `const h = require('./handler')` still hold the OLD object, so after a reload you have two versions live at once — old code for everything loaded before the delete, new code after — with `instanceof` mismatches between objects from the two versions. It also leaks memory: the orphaned old module instance and everything it references stays reachable through those stale closures and is never garbage-collected, so a long-running watcher's heap grows on every reload. And it breaks the very singleton guarantee you relied on by minting a second instance while the first is still in use. ESM doesn't even offer the hack — there is no supported way to invalidate the module map; the dev-only `?t=Date.now()` query-string trick re-evaluates only by creating a new URL key, which leaks just as badly. Real hot reload tears down and recreates a fresh process or worker (behind a supervisor or dev server) rather than mutating one process's module state in place, so identity and memory stay clean." },
+  ]}
+/>
+
+<Recap lang="en">
+A Node module is a singleton keyed by its **resolved absolute path**: the first `require()` evaluates the file once and caches the resulting `module.exports` under that path in `require.cache`, and every later `require()` of the same path is a cache hit that returns the *same object reference* in microseconds instead of re-running the body — which is precisely why a module-scoped pool, config, or `EventEmitter` is shared everywhere. ESM gives the same once-only guarantee via the module map keyed by resolved URL, but with no supported invalidation: you cannot un-import, and the dev-only `?t=…` query trick re-evaluates only by minting a new URL key, leaking module-map entries that are never collected. The tradeoff of free singletons is coupling to path identity, and the failure mode is **duplicate copies**: when one package resolves to two install paths you get two instances, so `instanceof` silently returns false, two event buses never see each other, two "singleton" configs diverge, React throws *Invalid hook call*, and a 300 KB lib doubles in bundle and RSS — diagnosed with `npm ls` / `require.resolve` showing two paths and fixed by `npm dedupe`, `overrides`/`resolutions`, or `peerDependency` so the package resolves to one path. Finally, `delete require.cache[id]` is a dangerous reload hack because stale closures keep the old exports (two versions live at once, broken identity) and the orphaned instances leak; real reload recreates a process, it never mutates the cache in place.
+</Recap>

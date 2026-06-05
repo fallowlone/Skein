@@ -1,0 +1,185 @@
+---
+concepts:
+- runtime-bootstrap
+- libuv-event-loop
+- loop-phases
+- microtask-queue
+- nexttick-vs-setimmediate
+- threadpool
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-runtime-bootstrap-and-event-loop
+sources:
+- https://nodejs.org/en/learn/asynchronous-work/event-loop-timers-and-nexttick
+- https://docs.libuv.org/en/v1.x/design.html
+- https://nodejs.org/api/cli.html#uv_threadpool_sizesize
+spiral: []
+status: ready
+summary: 'Node runs your JS on one thread driven by libuv''s phase-ordered event loop; microtasks (nextTick > Promise) drain between callbacks, fs/crypto use a 4-slot threadpool, and any sync work blocks every concurrent request.'
+title: 'Runtime bootstrap and the event loop'
+track: node
+unit: 01-modules-and-runtime
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your service has a p50 of 3ms and looks idle in the dashboard — CPU at 20%, memory flat, no GC pressure. Then p99 jumps to 800ms under no extra traffic, and the spikes correlate with login bursts. You add more pods; the cliff stays exactly where it was. The smoking gun isn't the network and isn't the database: it's a synchronous `bcrypt` hash and a default libuv threadpool of four slots. One thread runs all your JavaScript, and you'd been quietly serializing every request behind a queue you didn't know existed. The fix wasn't more machines — it was understanding what runs your code between `node app.js` and the first line.
+</Hook>
+
+<Crux>One JS thread, libuv's phase-ordered loop; microtasks (nextTick &gt; Promise) drain between callbacks; fs/crypto share 4 pool slots.</Crux>
+
+<Explanation>
+
+## From `node app.js` to your first line
+
+Nothing of yours runs first. When you type `node app.js`, the C++ `node` binary boots an entire runtime before your code exists. It creates a **V8 isolate** (an isolated instance of the JS engine with its own heap and GC) and a **context** (the global object and built-ins for that isolate). It hands V8 a platform shim so V8 can post tasks back to **libuv**, the C library that owns the event loop and the OS I/O primitives. libuv then initializes the default loop. Next, Node runs its *internal* JavaScript bootstrap — thousands of lines that wire up `process`, the globals (`console`, `Buffer`, timers), and the module loaders (CommonJS `require` and the ESM loader). Only *then* is your entry module loaded and its top-level synchronous code executed, top to bottom, to completion.
+
+That last clause is the whole mental model: **your top-level code runs synchronously to the end before a single asynchronous callback fires.** A `setTimeout(fn, 0)` at line 1 does not run at line 1 — it registers a timer and keeps going. The loop is entered *only when the call stack is empty*, i.e. after your module finishes. This is why a long synchronous block at startup delays every timer and I/O callback you scheduled: they are all waiting for the stack to drain.
+
+```js
+console.log("1: top-level start");
+setTimeout(() => console.log("4: timer"), 0);
+Promise.resolve().then(() => console.log("3: promise microtask"));
+console.log("2: top-level end");
+
+// stdout:
+// 1: top-level start
+// 2: top-level end          ← all sync code finishes first
+// 3: promise microtask      ← microtasks drain before the loop ticks
+// 4: timer                  ← loop's timers phase, last
+```
+
+## The libuv loop: phases in a fixed order
+
+Once the stack is empty, Node enters the loop. libuv does **not** have one undifferentiated queue — it has an ordered set of **phases**, and each tick walks them in the same sequence, draining that phase's own callback queue before moving on:
+
+1. **timers** — callbacks for `setTimeout`/`setInterval` whose threshold has elapsed.
+2. **pending callbacks** — a few deferred system callbacks (e.g. some TCP error codes).
+3. **idle / prepare** — internal bookkeeping; you never touch these.
+4. **poll** — the heart of the loop. It computes how long to block, then **blocks waiting for I/O** (new connections, socket data, completed fs work), running their callbacks as they arrive.
+5. **check** — `setImmediate` callbacks fire here, right after poll.
+6. **close callbacks** — `socket.on("close")` and friends.
+
+The poll phase is where the process spends idle time: with nothing else to do, it sleeps in `epoll_wait` (Linux) / `kqueue` (macOS) until the kernel says a file descriptor is ready. That kernel-level readiness notification — not the threadpool — is how Node scales tens of thousands of concurrent *network* sockets on one thread.
+
+<Inset kind="why" lang="en">
+Why is `setImmediate(fn)` (check phase) sometimes before and sometimes after `setTimeout(fn, 0)` (timers phase) at the *top level*? Because `setTimeout(fn, 0)` is clamped to a 1ms minimum, and whether that 1ms has elapsed by the time the loop reaches the timers phase depends on machine speed and what else loaded — so the order is non-deterministic. But inside an **I/O callback** the order flips and is *guaranteed*: you are already past the timers phase, so the next phase reached is poll → **check**, meaning `setImmediate` always fires before the next loop's `setTimeout`. That determinism is exactly why `setImmediate` is the correct tool for "run after the current I/O, before more timers."
+</Inset>
+
+## Microtasks cut between everything: nextTick > Promise > the loop
+
+The phases are the macro structure. Underneath them sit two **microtask queues** that Node drains *between every callback* and between phase transitions — they are not phases of the loop at all. The order is fixed and worth memorizing:
+
+1. The **`process.nextTick`** queue (Node-specific, highest priority).
+2. The **Promise / `queueMicrotask`** job queue (the ECMAScript microtask queue).
+
+Both are fully drained to empty before the loop is allowed to advance. So the global priority is: **`process.nextTick` &gt; Promise/`queueMicrotask` &gt; `setTimeout`/`setImmediate`/I-O.** A program makes this concrete:
+
+```js
+console.log("sync");
+setTimeout(() => console.log("timeout"), 0);
+setImmediate(() => console.log("immediate"));
+Promise.resolve().then(() => console.log("promise"));
+process.nextTick(() => console.log("nextTick"));
+queueMicrotask(() => console.log("queueMicrotask"));
+console.log("sync end");
+
+// stdout (deterministic for the microtasks; timeout/immediate order may swap at top level):
+// sync
+// sync end
+// nextTick          ← nextTick queue drains first
+// promise           ← then the Promise job queue…
+// queueMicrotask    ← …in FIFO order with promise jobs
+// timeout           ← only now does the loop tick its phases
+// immediate
+```
+
+`process.nextTick` runs *sooner than a Promise* — useful when an API must defer to "after the current operation" without yielding to the loop at all (e.g. emitting an event the caller hasn't had a chance to subscribe to yet). That same priority is its danger, covered below.
+
+## The threadpool: where "single-threaded" stops being true
+
+JS executes on one thread, but several *built-in* operations cannot be done with a non-blocking syscall, so libuv offloads them to a **threadpool**: `fs.*` (file I/O), `dns.lookup` (the default resolver, which calls blocking `getaddrinfo`), CPU-bound `crypto` like `pbkdf2`/`scrypt`/`randomBytes`, and `zlib` compression. The pool's **default size is 4** (`UV_THREADPOOL_SIZE`, settable up to **1024**, and only read once at startup). Crucially, **network I/O does not use the pool** — sockets go through epoll/kqueue in the poll phase. So your 10,000 idle sockets cost nothing, but five concurrent `fs.readFile`s with a pool of four means the fifth waits for a slot.
+
+<TradeoffMatrix
+  id="04-runtime-event-loop-tradeoff-1"
+  lessonSlug="04-runtime-bootstrap-and-event-loop"
+  lang="en"
+  prompt="A request handler must hash a password (CPU-bound, ~150ms) on every login. Logins arrive in bursts. How do you run the hash so the loop keeps serving other requests under load?"
+  options={[
+    { name: "Use the async crypto API (bcrypt.hash / crypto.scrypt) AND raise UV_THREADPOOL_SIZE to match expected concurrent hashes (e.g. 8–16), pinned to core count", summary: "Async + sized pool.", correct: true, justification: "The async crypto call runs the 150ms hash on a libuv threadpool thread, so the single JS thread stays free to accept connections and run other callbacks. But the default pool is only 4 — a login burst of 12 would serialize 4 at a time and create a latency cliff. Sizing UV_THREADPOOL_SIZE to the expected concurrent CPU-crypto load (bounded by CPU cores, since these are CPU-bound) removes the artificial queue while not oversubscribing the cores. This is the production answer: offload off the JS thread, then make the pool wide enough that bursts don't queue." },
+    { name: "Use the synchronous API (bcrypt.hashSync) — it's simpler and the code reads top-to-bottom", summary: "Blocks the loop.", justification: "This is the exact bug in the hook. hashSync runs the 150ms hash ON the single JS thread, so for those 150ms the loop cannot run any other callback — every concurrent request (and every health check) is frozen. Twelve logins in a burst serialize into ~1.8s of total stall on the one thread; p99 explodes while CPU still reads moderate. Synchronous CPU work in a request path is never acceptable on the event-loop thread." },
+    { name: "Keep the async API but leave the threadpool at its default of 4 and add more pods instead", summary: "Cliff stays.", justification: "Async is right, but with a 4-slot pool a burst of, say, 12 hashes runs 4 at a time = three waves ≈ 450ms for the unlucky requests — a latency cliff that scales with burst size, not traffic. Adding pods doesn't help because each pod still has a 4-slot pool and the cliff is per-process; you'd been told 'more machines didn't move it' for exactly this reason. You must widen the pool, not the fleet." },
+    { name: "Spawn a child process per hash with child_process.fork", summary: "Overkill, slow.", justification: "Forking a Node process costs tens of milliseconds of startup plus IPC serialization per hash — far more overhead than the threadpool, which already runs C crypto off-thread with near-zero dispatch cost. A worker_threads pool is defensible for sustained heavy CPU, but for a built-in crypto primitive the async API + a sized UV_THREADPOOL_SIZE is strictly simpler and faster. fork-per-request would itself become the bottleneck." },
+  ]}
+/>
+
+<Quiz
+  id="04-runtime-event-loop-quiz-1"
+  lessonSlug="04-runtime-bootstrap-and-event-loop"
+  lang="en"
+  question="Why can a recursive process.nextTick() hang a server that handles network requests, while a recursive setImmediate() does not?"
+  choices={[
+    { label: "The nextTick queue is drained to empty BEFORE the loop is allowed to advance to its phases, so a callback that always re-queues itself never lets the loop reach the poll phase — I/O is starved forever. setImmediate runs in the check phase, so each recursion still lets one full loop tick (including poll) complete first", correct: true },
+    { label: "process.nextTick is slower than setImmediate, so it falls behind", misconception: "It isn't a speed difference — nextTick is actually higher priority and runs sooner. The problem is precisely that priority: because the entire nextTick queue must empty before the loop ticks, an always-refilling queue permanently blocks the loop from reaching poll. setImmediate yields between recursions." },
+    { label: "setImmediate runs on a threadpool thread, so it can't block the JS thread", misconception: "setImmediate runs on the same single JS thread, in the loop's check phase — no threadpool involved. The difference is queue semantics: nextTick drains before the loop advances; setImmediate is one item per loop tick, so I/O gets a turn in between." },
+    { label: "Node detects the recursion and throttles nextTick automatically", misconception: "Node does not throttle it. A recursive nextTick will starve I/O indefinitely (you can crash a server this way). The runtime won't rescue you — the discipline is to use setImmediate when you need to yield to the loop." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One tick of the libuv event loop, with microtask drains between phases"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "timers", label: "timers", sub: "setTimeout" },
+    { id: "pending", label: "pending", sub: "deferred sys" },
+    { id: "poll", label: "poll", sub: "blocks for I/O" },
+    { id: "check", label: "check", sub: "setImmediate" },
+    { id: "close", label: "close", sub: "on('close')" },
+    { id: "micro", label: "microtasks", sub: "nextTick→Promise" },
+  ]}
+  edges={[
+    { from: "timers", to: "pending" },
+    { from: "pending", to: "poll" },
+    { from: "poll", to: "check", label: "I/O ready" },
+    { from: "check", to: "close" },
+    { from: "close", to: "micro", label: "drain" },
+    { from: "micro", to: "timers", label: "next tick" },
+  ]}
+  caption="Each loop tick walks timers → pending → poll → check → close in order, draining that phase's queue. Between every callback (and between phases) Node empties both microtask queues — nextTick first, then Promise jobs — before advancing. The loop keeps ticking while ref'd handles or requests remain; an empty loop lets the process exit."
+/>
+
+<KeyTakeaway>Node runs your JS on one thread. libuv ticks phases (timers→poll→check→close); microtasks (nextTick &gt; Promise) drain between callbacks. fs/crypto share a 4-slot pool; any sync work stalls every concurrent request.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-runtime-event-loop-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate says 'Node is single-threaded, so we never have concurrency bugs and one slow request can't affect others.' Where is each half of that sentence right and wrong?", a: "Half right, half dangerously wrong. Right: JavaScript executes on ONE thread, so you have no shared-memory data races between your callbacks — two callbacks never run simultaneously, which removes a whole class of locking bugs. Wrong on both counts otherwise. First, Node is not really single-threaded under the hood: libuv runs a threadpool (default 4) for fs, dns.lookup, and CPU-crypto like scrypt/pbkdf2, so those genuinely run on other OS threads — and a pool of 4 means the 5th concurrent fs/crypto op queues, producing a latency cliff that looks like a network problem. Second, and the more important correction: because there is one JS thread, a single slow SYNCHRONOUS request absolutely affects every other request — a 200ms JSON.parse, fs.readFileSync, or bcrypt.hashSync freezes the loop so it can't run any other callback for those 200ms, stalling all in-flight requests behind it. The single thread is what makes blocking it catastrophic, not what protects you from it. The discipline: keep the JS thread free (async I/O, offload CPU to the pool or worker_threads), watch event-loop lag, and size UV_THREADPOOL_SIZE for your crypto/fs concurrency." },
+    { q: "What keeps a Node process alive, what makes it exit, and how does .unref() fit in?", a: "The event loop keeps running as long as there is at least one 'ref'd' handle or pending request registered with libuv — an open server socket, a connected client, a pending setInterval, an unresolved fs request. Each of these increments the loop's reference count. When you call server.listen(), the listening socket is a ref'd handle, which is exactly why a web server doesn't exit after its top-level code finishes: the loop has a reason to keep ticking. The process exits NATURALLY (with code 0, no process.exit needed) the moment the loop has zero ref'd handles and requests left — the loop sees nothing to wait for and returns, the runtime tears down, done. .unref() is the escape hatch: calling handle.unref() (e.g. on a setInterval timer or a keep-alive socket) tells libuv 'this handle should NOT by itself keep the loop alive.' The handle still works and its callbacks still fire while the loop is running for other reasons, but it no longer counts toward keeping the process up — so a background heartbeat timer with .unref() won't hang your CLI tool after the real work is done. The mirror, .ref(), restores the count. This is how you build timers and watchers that are present but not load-bearing for process lifetime." },
+  ]}
+/>
+
+<Recap lang="en">
+Between `node app.js` and your first line, the binary builds a V8 isolate and context, libuv initializes the event loop, and Node's internal JS bootstrap wires up `process`, the globals, and the module loaders — only then is your entry module loaded and its top-level synchronous code run to completion. The loop is entered *only when the call stack is empty*, and libuv ticks a fixed sequence of phases — timers → pending → poll (which blocks waiting for I/O via epoll/kqueue) → check (`setImmediate`) → close — draining each phase's own queue. Cutting across all of it are the microtask queues, emptied between every callback and phase: `process.nextTick` first, then Promise/`queueMicrotask` jobs, so the global priority is nextTick &gt; Promise &gt; timers/immediate/I-O. The single JS thread is helped by a libuv threadpool of default size 4 (`UV_THREADPOOL_SIZE`, max 1024) for `fs`, `dns.lookup`, CPU-`crypto`, and `zlib` — but never for network sockets. The two failure modes that define senior intuition: blocking the loop (one synchronous 200ms hash or `fs.readFileSync` freezes all ~100 in-flight requests behind it) and threadpool exhaustion (the 5th concurrent crypto/fs op with pool size 4 queues, a cliff that masquerades as a network fault) — plus recursive `process.nextTick`, which starves the poll phase outright because its queue drains before the loop can ever advance. Watch event-loop lag (p99 &gt; ~50–100ms means trouble), keep the JS thread free, and let an empty loop exit the process while ref'd handles keep it alive and `.unref()` lets it go.
+</Recap>
