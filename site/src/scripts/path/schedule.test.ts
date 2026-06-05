@@ -39,6 +39,13 @@ describe("schedule", () => {
     expect(f.dropped).toEqual([]);
   });
 
+  it("feasibility = under when budget materially exceeds required", () => {
+    const f = feasibility(300, 600, []);   // 600 > 300*1.25 = 375 -> under
+    expect(f.verdict).toBe("under");
+    expect(f.dropped).toEqual([]);
+    expect(f.deltaMin).toBe(300);
+  });
+
   it("over-budget triage drops lowest-ROI units and reports them", () => {
     // required 800 > available 600; droppable sorted by ROI asc: drop until it fits.
     const f = feasibility(800, 600, [
