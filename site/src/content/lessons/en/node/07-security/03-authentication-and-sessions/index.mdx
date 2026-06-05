@@ -1,0 +1,215 @@
+---
+concepts:
+- session-vs-token-auth
+- cookie-security-flags
+- jwt-verification
+- password-hashing-kdf
+- timing-safe-compare
+- jwt-pitfalls
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-authentication-and-sessions
+sources:
+- https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+- https://nodejs.org/api/crypto.html#cryptoscryptpassword-salt-keylen-options-callback
+- https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html
+spiral: []
+status: ready
+summary: 'A server session is an opaque id in an HttpOnly cookie with state in a store; a JWT is signed claims verified statelessly. For browsers default to cookie sessions, hash passwords with scrypt + timingSafeEqual, and pin the JWT algorithm or one forged header owns every account.'
+title: 'Authentication and sessions: cookies, JWTs, and password hashing'
+track: node
+unit: 07-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You ship a "stateless, modern" auth: a JWT in `localStorage`, verified with `jwt.verify(token, secret)`. Three months later a support widget you embedded gets compromised, and one line of injected JavaScript reads `localStorage.getItem("token")` and POSTs it to an attacker. But that's the small fire. The big one lands a week later: someone notices your library trusted the token's own `alg` header, sent `{"alg":"none"}` with a forged admin payload, and your `verify` skipped the signature check entirely. There was no revocation, so every leaked token stayed valid until its `exp`. The whole breach traces back to two defaults you never questioned: where the token lived, and who decided how it was verified.
+</Hook>
+
+<Crux>Browser default: opaque session id in an HttpOnly cookie. Hash passwords with scrypt + timingSafeEqual. Pin the JWT alg, verify exp.</Crux>
+
+<Explanation>
+
+## Two models: opaque session vs self-contained token
+
+There are two ways a server remembers who you are after login, and they fail in opposite directions. A **server session** issues an opaque, unguessable id (128+ bits of CSPRNG randomness) and stores the real state — user id, roles, expiry — server-side in Redis or a DB. The cookie carries only the id; every request the server looks it up. A **JWT** carries the claims themselves, signed, so the server verifies the signature and trusts the payload without any lookup.
+
+A JWT is three base64url segments joined by dots: `header.payload.signature`. The header names the algorithm (`{"alg":"HS256","typ":"JWT"}`), the payload holds claims (`sub`, `exp`, `iss`, `aud`, plus your own). The signature is a MAC over `base64url(header) + "." + base64url(payload)` — HMAC-SHA256 with a shared secret for `HS256`, or an RSA/ECDSA signature for `RS256`/`ES256`. To verify, the server recomputes the signature over the received header and payload and compares.
+
+```js
+import crypto from "node:crypto";
+
+const b64url = (buf) => buf.toString("base64url");
+
+function signHS256(payload, secret) {
+  const header = b64url(Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })));
+  const body = b64url(Buffer.from(JSON.stringify(payload)));
+  const data = `${header}.${body}`;
+  const sig = b64url(crypto.createHmac("sha256", secret).update(data).digest());
+  return `${data}.${sig}`;
+}
+
+function verifyHS256(token, secret) {
+  const [header, body, sig] = token.split(".");
+  const expected = b64url(crypto.createHmac("sha256", secret).update(`${header}.${body}`).digest());
+  // constant-time compare; mismatched lengths must be rejected without throwing a leak
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) throw new Error("bad signature");
+  const claims = JSON.parse(Buffer.from(body, "base64url"));
+  if (typeof claims.exp !== "number" || Date.now() / 1000 > claims.exp) throw new Error("expired");
+  return claims;
+}
+```
+
+The tradeoff is revocation and size. A session id is trivially revocable — `DEL session:<id>` and the next request is logged out — but every request pays a store round-trip (sub-millisecond on local Redis, real latency cross-region). A JWT needs no lookup, so it scales horizontally with zero shared state, but you cannot un-issue one: it is valid until `exp` no matter what, which is why a stolen JWT is so much worse than a stolen session. The failure mode is treating a JWT as revocable — building a logout that "deletes" a token the client still holds and the server still accepts.
+
+## Cookie flags are the actual security boundary
+
+Where the credential lives decides what a single bug can steal. The browser's defense is a set of cookie flags, and each closes a specific hole. **`HttpOnly`** makes the cookie invisible to JavaScript — `document.cookie` can't read it — so an XSS payload can't exfiltrate the session, which is the whole reason `localStorage` tokens are dangerous. **`Secure`** sends it only over HTTPS, so it never leaks on a downgraded or plaintext request. **`SameSite`** governs cross-site sending: `Strict` never sends on cross-site navigation, `Lax` (the modern browser default) sends only on top-level GET navigations, `None` sends always but then *requires* `Secure` — `SameSite` is your first line against CSRF.
+
+```js
+// Browser session cookie — the senior default
+res.setHeader("Set-Cookie",
+  `__Host-sid=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=3600`
+);
+```
+
+The **`__Host-` prefix** is an underused hardening: a browser only accepts a `__Host-`-prefixed cookie if it is `Secure`, has `Path=/`, and has **no** `Domain` attribute — which pins it to the exact origin and blocks a subdomain (or a network attacker who can set cookies) from overwriting your session cookie. Scope tightly: omit `Domain` unless you truly need subdomains, set the narrowest `Path`, and keep `Max-Age` short so a leaked cookie self-expires. The honest tradeoff: cookie sessions are automatically attached by the browser, which is exactly why they carry CSRF risk — but they are `HttpOnly` (XSS can't read them) and revocable server-side. A JWT in `localStorage` has no CSRF surface but is fully XSS-exfiltratable and unrevocable. For a browser app the senior default is an opaque session id in an `HttpOnly; Secure; SameSite` cookie, CSRF handled separately.
+
+<Inset kind="why" lang="en">
+Why not just "JWT everywhere, it's stateless and modern"? Because statelessness is the cost, not the feature. The instant you need real logout, "log out all devices," forced re-auth after a password change, or instant ban of a compromised account, you need revocation — and a pure JWT can't do it without a server-side denylist, at which point you've reintroduced the per-request store lookup you adopted JWTs to avoid, but with worse ergonomics. JWTs shine for short-lived, service-to-service tokens and for access tokens paired with a revocable refresh token. For a browser user session, an opaque id in a cookie is simpler, smaller, and revocable by default.
+</Inset>
+
+## Password hashing: slow, salted, memory-hard, constant-time
+
+Passwords are not encrypted and never compared as plaintext — you store a one-way hash and re-derive it at login. The deadly mistake is using a **fast** hash. SHA-256 and MD5 are designed to be fast, which is exactly wrong here: a commodity GPU computes **billions of SHA-256 hashes per second**, so a leaked table of `sha256(password)` falls to a wordlist almost instantly, salt or no salt. The defense is a **slow, salted, memory-hard key-derivation function** tuned so each guess costs real time and RAM. Node ships `scrypt` in `node:crypto` (no dependency); `argon2` and `bcrypt` are the other accepted choices.
+
+```js
+import crypto from "node:crypto";
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16);                       // unique per user
+  const key = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
+  return `scrypt$${salt.toString("hex")}$${key.toString("hex")}`;
+}
+
+function verifyPassword(password, stored) {
+  const [, saltHex, keyHex] = stored.split("$");
+  const salt = Buffer.from(saltHex, "hex");
+  const expected = Buffer.from(keyHex, "hex");
+  const actual = crypto.scryptSync(password, salt, expected.length, { N: 16384, r: 8, p: 1 });
+  // constant-time: never short-circuit on the first differing byte
+  return crypto.timingSafeEqual(actual, expected);
+}
+```
+
+Two senior details. A **per-user random salt** means identical passwords hash differently, so one precomputed rainbow table can't crack the whole table and an attacker must attack each row separately. And the compare uses **`crypto.timingSafeEqual`**, not `===` or `Buffer.compare`: a normal compare returns as soon as bytes differ, and that timing difference leaks how many leading bytes matched — a remote attacker can recover a value byte-by-byte. `timingSafeEqual` always scans the full length. Tune the work factor so one hash takes **~100–250 ms** on your hardware: slow enough that a GPU's billions-per-second collapses to a handful of guesses per core, fast enough that login stays snappy. One gotcha if you reach for bcrypt instead: it silently **truncates input at 72 bytes**, so longer passwords (or passphrases) share a prefix — pre-hash with SHA-256 or pick scrypt/argon2.
+
+<TradeoffMatrix
+  id="03-authentication-and-sessions-tradeoff-1"
+  lessonSlug="03-authentication-and-sessions"
+  lang="en"
+  prompt="You're building auth for a browser web app. Where do you put the credential after login?"
+  options={[
+    { name: "Opaque session id in a __Host- HttpOnly; Secure; SameSite=Lax cookie, state in Redis", summary: "Revocable + XSS-safe.", correct: true, justification: "This is the senior default for a browser session. HttpOnly means an XSS payload can't read or exfiltrate the credential; Secure keeps it off plaintext; SameSite=Lax plus the __Host- prefix shrink the CSRF and cookie-injection surface; and because the real state lives in Redis you can revoke instantly (DEL session:id) for logout, ban, or password change. You handle CSRF separately, but you've removed the two worst failure modes — token theft via XSS and unrevocable sessions — by construction." },
+    { name: "JWT in localStorage, verified with jwt.verify(token, secret)", summary: "XSS-exfiltratable.", justification: "This is the breach in the hook. localStorage is readable by any script on the page, so a single XSS (yours or a third-party widget's) steals every session, and a JWT can't be revoked, so the stolen token stays valid until exp with no way to kill it. 'Stateless and modern' is not a security property; it's a cost you pay in lost revocation." },
+    { name: "JWT in a non-HttpOnly cookie so the SPA can read it", summary: "Worst of both.", justification: "This combines the downsides of both models: dropping HttpOnly to let JS read the cookie re-opens the exact XSS exfiltration HttpOnly exists to close, AND a cookie is auto-sent so you now also carry CSRF risk — and it's still an unrevocable JWT. You get the cookie's CSRF surface and the localStorage token's theft surface at once." },
+    { name: "Store the user's password hash in a cookie and re-verify each request", summary: "Catastrophic.", justification: "Never put any password material — plaintext or hash — in a cookie. A hash in a cookie is a stealable, offline-crackable credential sitting on every client, and re-running the KDF (tuned to ~100-250 ms) on every request would also wreck latency. The password hash belongs only in your server-side store, derived once at login." },
+  ]}
+/>
+
+## The war stories: alg confusion, missing exp, no revocation
+
+Most JWT breaches are not broken crypto — they are a verifier that trusted the attacker. **`alg:none`**: the spec defines an "unsecured" JWT with `{"alg":"none"}` and an empty signature; a naive library reads the algorithm *from the token's own header* and, seeing `none`, skips verification entirely — so anyone can forge any payload. The fix is to never let the token choose: pass the expected algorithm explicitly, e.g. `jwt.verify(token, key, { algorithms: ["HS256"] })`, and reject everything else. **HS256/RS256 confusion** is the same disease one level up: if your server is configured for `RS256` (verify with a *public* key) but the library lets the header pick the algorithm, an attacker sends an `HS256` token signed with your **public key as the HMAC secret** — which is public — and the server, treating the public key as a shared secret, validates the forgery. Pinning the algorithm kills both.
+
+```js
+import jwt from "jsonwebtoken";
+
+// ❌ trusts the token's header — accepts alg:none and RS256/HS256 confusion
+const bad = jwt.verify(token, key);
+
+// ✅ pin the algorithm and verify the standard claims
+const claims = jwt.verify(token, key, {
+  algorithms: ["RS256"],     // never let the token choose
+  issuer: "https://auth.example.com",
+  audience: "api://orders",
+  maxAge: "15m",             // bound lifetime even if exp is generous
+});
+// exp is enforced by verify; iss/aud confirm the token was minted for *you*
+```
+
+The rest are about lifetime and identity. A **missing or unchecked `exp`** means tokens live forever — many `none`/confusion forgeries also omit `exp` — so always require and verify it, and verify `iss` and `aud` so a token minted for another service can't be replayed against yours. **No revocation** is the structural one: because you can't un-issue a JWT, a stolen one is good until `exp`, so keep access tokens **short-lived (5–15 min)** and pair them with a revocable, `HttpOnly`-cookie refresh token you *can* kill server-side. And **session fixation**: if you reuse the same session id across the login boundary, an attacker who planted a known id before login is logged in as the victim after — so **rotate the session id on every privilege change** (login, role elevation), issuing a fresh id and invalidating the old.
+
+<Quiz
+  id="03-authentication-and-sessions-quiz-1"
+  lessonSlug="03-authentication-and-sessions"
+  lang="en"
+  question="Your server verifies RS256 JWTs but calls jwt.verify(token, publicKey) without pinning the algorithm. What attack does this enable?"
+  choices={[
+    { label: "An attacker sends an HS256 token signed with your public key as the HMAC secret; the library, trusting the header's alg, treats the public key as a shared secret and validates the forgery", correct: true },
+    { label: "Nothing — RS256 uses a public key for verification, so it's safe to verify with it regardless of the header", misconception: "The public key is safe to verify RS256 with, but the danger is the missing algorithm pin: if the header can select HS256, that same public key becomes a known HMAC secret, and the attacker forges a token your server accepts. The fix is { algorithms: ['RS256'] }." },
+    { label: "The attacker can read the payload, since RS256 only signs and doesn't encrypt", misconception: "True that a JWT payload is signed, not encrypted, so it's always readable — but that's a separate concern. The specific bug here is signature forgery via algorithm confusion, which lets the attacker mint valid tokens, not just read existing ones." },
+    { label: "It causes a denial of service because RSA verification is slow", misconception: "RSA verification cost is not the issue. The vulnerability is correctness, not performance: not pinning the algorithm lets the attacker downgrade to HS256 and sign forgeries with the public key." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Browser session login and authenticated request lifecycle"
+  hue="var(--d-systems)"
+  perRow={5}
+  nodes={[
+    { id: "l", label: "POST /login", sub: "verify password" },
+    { id: "h", label: "scrypt + timingSafeEqual", sub: "match hash" },
+    { id: "s", label: "rotate + store session", sub: "Redis: id → state" },
+    { id: "c", label: "Set-Cookie", sub: "__Host- HttpOnly Secure" },
+    { id: "r", label: "request w/ cookie", sub: "browser auto-attaches" },
+    { id: "v", label: "lookup id", sub: "store round-trip" },
+    { id: "a", label: "authorize", sub: "roles from state" },
+    { id: "x", label: "revoke", sub: "DEL session:id" },
+  ]}
+  edges={[
+    { from: "l", to: "h" },
+    { from: "h", to: "s", label: "ok" },
+    { from: "s", to: "c" },
+    { from: "c", to: "r", label: "later" },
+    { from: "r", to: "v" },
+    { from: "v", to: "a", label: "valid" },
+    { from: "a", to: "x", label: "logout" },
+  ]}
+  caption="Login verifies the password with a slow KDF and a constant-time compare, rotates the session id (defeating fixation), and sets an HttpOnly cookie the browser attaches automatically. Each request is a store lookup, so logout or ban is an instant DEL — the revocation a JWT can't give you."
+/>
+
+<KeyTakeaway>For browsers, default to an opaque session id in an `HttpOnly; Secure; SameSite` cookie — XSS-safe and revocable. Hash passwords with scrypt + `timingSafeEqual`. For JWTs, pin the algorithm and verify `exp`/`iss`/`aud`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-authentication-and-sessions-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is a JWT in localStorage worse than an opaque session id in an HttpOnly cookie, on both the theft and the revocation axis?", a: "On theft: localStorage is readable by any JavaScript running on the page, so a single XSS — including from a third-party widget or compromised dependency — does localStorage.getItem('token') and exfiltrates the credential. An HttpOnly cookie is invisible to document.cookie, so the same XSS can't read it; that's the entire reason HttpOnly exists. On revocation: a JWT carries its own signed claims and is accepted until its exp no matter what, so you cannot un-issue a stolen one without bolting on a server-side denylist (which re-adds the per-request lookup JWTs were supposed to avoid). An opaque session id is just a key into server state, so revoking it is one DEL session:id and the very next request is logged out — instant logout, ban, or forced re-auth after a password change. So the cookie session wins on both axes for a browser app; you handle CSRF separately, but you've removed token theft via XSS and unrevocable sessions by construction." },
+    { q: "Walk through how alg:none and HS256/RS256 confusion each defeat jwt.verify, and the single fix that stops both.", a: "Both exploit a verifier that reads the algorithm from the token's own header and trusts it. alg:none: the JWT spec allows an 'unsecured' token with header {\"alg\":\"none\"} and an empty signature; a naive library sees alg=none and skips signature verification entirely, so an attacker forges any payload (e.g. an admin sub) with no signing key at all. HS256/RS256 confusion: your server is set up for RS256, which verifies with a public key; but if the header can choose the algorithm, the attacker sends an HS256 token and signs it using your public key as the HMAC secret. The public key is, by definition, public — so when the library treats it as a shared HMAC secret, the forged signature validates. The single fix for both is to never let the token pick: pass the expected algorithm explicitly, e.g. jwt.verify(token, key, { algorithms: ['RS256'] }), and reject any token whose alg isn't in the allow-list. Combine that with verifying exp, iss, and aud so a forged or foreign token is rejected even if it somehow passed." },
+  ]}
+/>
+
+<Recap lang="en">
+There are two auth models with opposite failure modes: a server session is an opaque, high-entropy id in a cookie with the real state (user, roles, expiry) in Redis or a DB, while a JWT is `header.payload.signature` carrying signed claims the server verifies statelessly by recomputing the MAC (HMAC for `HS256`, RSA/ECDSA for `RS256`) over the base64url header and payload. Sessions cost a per-request store lookup but are instantly revocable; JWTs need no lookup but cannot be un-issued, so a stolen one is valid until `exp`. Where the credential lives is the real boundary: an `HttpOnly` cookie is invisible to XSS and an opaque id is server-side revocable, so for a browser app default to a `__Host- HttpOnly; Secure; SameSite=Lax` session cookie and handle CSRF separately, rather than a JWT in `localStorage` that one XSS exfiltrates and nobody can revoke. Never store passwords as plaintext or fast hashes — SHA-256 runs at billions/sec on a GPU — but as a slow, salted, memory-hard KDF (`scrypt` from `node:crypto`, or argon2/bcrypt) tuned to ~100–250 ms per guess, with a per-user random salt and a `crypto.timingSafeEqual` constant-time compare, remembering bcrypt's 72-byte input cap. And the JWT war stories all come from a verifier trusting the token: `alg:none` skips verification, HS256/RS256 confusion signs with your public key as the HMAC secret, a missing `exp` makes tokens immortal, and reusing a session id across login allows fixation — so pin the algorithm, verify `exp`/`iss`/`aud`, keep tokens short-lived with a revocable refresh token, and rotate the session id on every privilege change.
+</Recap>

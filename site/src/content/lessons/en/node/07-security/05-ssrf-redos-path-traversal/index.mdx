@@ -1,0 +1,215 @@
+---
+concepts:
+- ssrf
+- cloud-metadata-exfil
+- dns-rebinding
+- redos-backtracking
+- event-loop-dos
+- path-traversal
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-ssrf-redos-path-traversal
+sources:
+- https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+- https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+- https://nodejs.org/api/path.html
+spiral: []
+status: ready
+summary: 'Three server-side Node vulns: SSRF turns a URL fetcher into a probe of cloud metadata; ReDoS freezes the single event loop with one crafted string; path traversal escapes a dir via `../`. Fixes: pin the IP, bound the regex, contain the path.'
+title: 'SSRF, ReDoS, and path traversal: the server attack surface'
+track: node
+unit: 07-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You shipped a link-preview feature: paste a URL, the server fetches it and renders an OG-card. A week later your AWS bill explodes and CloudTrail shows your task role spinning up instances in a region you don't use. The forensic trail is one HTTP log line: someone pasted `http://169.254.169.254/latest/meta-data/iam/security-credentials/preview-role`, your server dutifully fetched it, returned the temporary IAM credentials inside a preview card, and the attacker walked off with keys to your account. Nobody attacked your auth. They attacked the one place where your server makes a request on a stranger's behalf.
+</Hook>
+
+<Crux>User-supplied URLs (SSRF), regexes (ReDoS), and paths (traversal) each weaponize a feature — pin the IP, bound the regex, contain the path.</Crux>
+
+<Explanation>
+
+## SSRF: when your server fetches what an attacker chooses
+
+Any feature where your server fetches a URL the user supplies — webhooks, image proxies, link previews, PDF renderers, "import from URL" — is a Server-Side Request Forgery primitive. The attacker doesn't reach the target; *your server* does, from inside your trust boundary, with your network position and your cloud role. That's the whole exploit: the request originates from a host that can reach things the attacker can't.
+
+The crown-jewel target is the cloud metadata endpoint. On AWS it's the link-local address `http://169.254.169.254/latest/meta-data/`, and on a host running IMDSv1 a plain GET to `.../iam/security-credentials/<role>` returns live, temporary IAM credentials — no auth required, because the API assumes only code on the box can reach a link-local address. SSRF breaks that assumption. The same trick hits internal admin panels, `localhost:` debug ports, and RFC1918 ranges (`10.x`, `172.16–31.x`, `192.168.x`) that have no business being reachable from the internet.
+
+```js
+// ❌ Vulnerable image proxy: fetches whatever the caller names
+app.get("/proxy", async (req, res) => {
+  const upstream = req.query.url;            // attacker-controlled
+  const r = await fetch(upstream);           // hits 169.254.169.254 just fine
+  res.set("content-type", r.headers.get("content-type"));
+  r.body.pipe(res);
+});
+```
+
+The naive fix — "block the string `169.254.169.254` and `localhost`" — fails three ways. An attacker uses `http://[::ffff:169.254.169.254]`, or a decimal IP `http://2852039166/`, or a hostname they control that resolves to the metadata IP. The deepest bypass is **DNS rebinding**: you check `evil.com`, see it resolves to a public IP, approve it — and between your check and `fetch`'s own DNS lookup the record flips to `169.254.169.254`. You validated one IP and connected to another. The fix is to resolve the host yourself, validate the *resolved IP* against a deny-list of internal ranges, and then **pin that IP for the actual connection** so there's no second, attacker-controlled lookup.
+
+```js
+import { lookup } from "node:dns/promises";
+import net from "node:net";
+
+const BLOCKED = (ip) =>
+  ip.startsWith("169.254.") ||           // link-local / cloud metadata
+  ip.startsWith("10.") || ip === "127.0.0.1" ||
+  /^192\.168\./.test(ip) || /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+
+async function safeFetch(rawUrl) {
+  const u = new URL(rawUrl);
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("scheme");
+  if (!ALLOW_HOSTS.has(u.hostname)) throw new Error("host not allow-listed");
+  const { address } = await lookup(u.hostname);   // resolve ONCE, ourselves
+  if (BLOCKED(address)) throw new Error("blocked target");
+  // Connect to the validated IP, send Host header for the original name → no 2nd lookup
+  return fetch(`${u.protocol}//${address}${u.pathname}`, {
+    headers: { host: u.hostname },
+    redirect: "manual",                            // a 302 → metadata is SSRF too
+  });
+}
+```
+
+Two more controls matter. **Disable redirect-following** (`redirect: "manual"`) — an allowed host can 302 you straight to `169.254.169.254`, and the redirect destination is never re-validated. And on AWS, **require IMDSv2** with a hop limit of 1: IMDSv2 demands a `PUT` to get a session token before any `GET`, which a simple SSRF GET can't perform, and the hop limit stops a containerized proxy from reaching it at all.
+
+<Inset kind="why" lang="en">
+DNS rebinding is a TOCTOU (time-of-check to time-of-use) bug. You resolve `attacker.com` → `93.184.x.x` and approve it; the attacker runs an authoritative DNS server with a 0-second TTL, so when `fetch` does its *own* lookup milliseconds later, the answer is now `169.254.169.254`. Your validation was correct — it just described a different connection than the one that happened. This is why string-matching the hostname is hopeless and why you must resolve once and connect to that exact IP: collapsing check and use into a single resolution closes the window entirely.
+</Inset>
+
+## ReDoS: one regex that freezes the entire event loop
+
+A regular expression with nested or overlapping quantifiers can exhibit **catastrophic backtracking**: on certain non-matching inputs the engine explores an exponential number of paths before giving up. Node's `RegExp` is a backtracking engine and it runs **synchronously on the single event-loop thread** — so a regex that takes two seconds to fail doesn't slow down one request, it pins the CPU at 100% and stalls *every* concurrent request, health check, and timer for those two seconds. This is the input-validation lesson colliding with the event-loop-blocking lesson: untrusted input drives an unbounded synchronous computation on the one thread that serves everyone.
+
+```js
+// ❌ "validate a comma-separated list" — looks harmless
+const re = /^(\d+,)*\d+$/;
+re.test("1,2,3");                 // fine
+re.test("1".repeat(40));         // 40 chars, no trailing match → catastrophic
+```
+
+The pattern `(\d+,)*\d+$` is dangerous because `\d+` inside a `*` and `\d+` after it both match the same digits — there are exponentially many ways to partition a run of digits between the two, and when the final `$` fails the engine tries them all. An input of ~30–40 characters can push such a regex into **billions of steps and multi-second hangs**; classic offenders like `(a+)+$` or `(.*,)*` and the famous vulnerable email/SAML regexes have caused real outages. The give-away is *ambiguity*: two parts of the pattern that can each consume the same characters.
+
+```js
+// ✅ 1) Refactor to a linear, unambiguous pattern
+const re = /^\d+(,\d+)*$/;       // each comma-group matched exactly once, no overlap
+
+// ✅ 2) Bound the input BEFORE matching — cheap and decisive
+if (input.length > 256) throw new Error("too long");
+
+// ✅ 3) For user-driven matching, use a linear-time engine (no backtracking)
+import RE2 from "re2";
+const safe = new RE2("^(\\d+,)*\\d+$");   // RE2 guarantees O(n), can't blow up
+safe.test("1".repeat(100000));            // returns fast, never hangs
+```
+
+The senior reflex is layered: never run a backtracking regex over attacker input without a hard length cap; rewrite ambiguous patterns so each character has exactly one way to be consumed; and where you genuinely need rich user-supplied or complex patterns, switch to **RE2**, a non-backtracking engine with linear-time guarantees, so a malicious string is mathematically incapable of causing an exponential hang. If a heavy match is unavoidable, move it off the main loop into a Worker with a timeout so a hang kills the worker, not the server.
+
+## Path traversal: when `path.join` walks out of bounds
+
+A file-serving endpoint takes a user-supplied name, joins it to a base directory, and reads the result. The vulnerability is that `../` segments climb upward: input `../../../../etc/passwd` (or URL-encoded `..%2f..%2fetc%2fpasswd`, or a null byte `..%00.png`) escapes the intended folder and reads arbitrary files. The trap that bites everyone: **`path.join(base, userInput)` does not contain traversal.** `join` *normalizes* the path, which means it resolves `..` segments and happily walks above `base`.
+
+```js
+// ❌ Vulnerable: join normalizes ../ and escapes the directory
+app.get("/files/:name", (req, res) => {
+  const full = path.join("/srv/uploads", req.params.name);
+  // name = "../../etc/passwd"  → full = "/etc/passwd"
+  res.sendFile(full);
+});
+```
+
+Containment is the only reliable fix: resolve the path to an absolute form, then **verify the result is still inside the base directory** before touching the filesystem. The check is a prefix match against `base + path.sep` (the separator guards against a sibling like `/srv/uploads-secret` slipping past a bare `startsWith("/srv/uploads")`).
+
+```js
+// ✅ Safe: resolve, then assert containment
+const BASE = path.resolve("/srv/uploads");
+app.get("/files/:name", (req, res) => {
+  const full = path.resolve(BASE, req.params.name);
+  if (full !== BASE && !full.startsWith(BASE + path.sep)) {
+    return res.status(400).send("invalid path");   // escaped → reject
+  }
+  if (req.params.name.includes("\0")) return res.status(400).end(); // null byte
+  res.sendFile(full);
+});
+```
+
+Even stronger: don't accept paths at all. Map a user-facing opaque id to a real path through a lookup table (`{ "a1b2": "/srv/uploads/report.pdf" }`), so the filesystem name never derives from input. While you're hardening the request surface, cap the **request body size** — an unbounded JSON or upload body is a memory-exhaustion DoS, and `express.json({ limit: "100kb" })` (or your framework's equivalent) turns an open-ended allocation into a bounded one. Input that controls a path, a regex, or a request's memory all share one root cause: untrusted data steering a server-side operation that assumed it was trusted.
+
+<TradeoffMatrix
+  id="07-ssrf-tradeoff-1"
+  lessonSlug="05-ssrf-redos-path-traversal"
+  lang="en"
+  prompt="Your image proxy must fetch user-supplied URLs. Which SSRF defense actually closes the metadata-exfil and DNS-rebinding holes?"
+  options={[
+    { name: "Resolve the host yourself, reject internal/link-local IPs, then connect to that exact resolved IP with redirects disabled", summary: "Pin the IP.", correct: true, justification: "This is the only option that survives DNS rebinding. By resolving once and connecting to the validated IP, you collapse check and use into a single lookup, so there's no window for the record to flip to 169.254.169.254 between validation and fetch. Rejecting link-local/RFC1918 ranges blocks metadata and internal hosts, and disabling redirects stops an allowed host from 302-ing you to the metadata endpoint. Plus IMDSv2 + hop-limit as defense in depth." },
+    { name: "Block the substrings '169.254.169.254' and 'localhost' in the URL string", summary: "String blocklist.", justification: "Trivially bypassed: decimal IP (http://2852039166), IPv6-mapped form ([::ffff:169.254.169.254]), or an attacker hostname that resolves to the metadata IP all sail past a substring check. String matching never sees the IP the connection actually uses, and does nothing against DNS rebinding." },
+    { name: "Validate that the hostname resolves to a public IP, then call fetch(rawUrl) normally", summary: "Check then fetch.", justification: "This is the textbook TOCTOU bug. Your check resolves the name once; fetch does its OWN lookup a moment later, and with a 0-TTL attacker DNS server the second answer can be 169.254.169.254. You validated one IP and connected to another — the rebinding window is wide open precisely because check and use are two separate resolutions." },
+    { name: "Run the proxy in a container and trust network isolation to block internal access", summary: "Network only.", justification: "Containers share the host's link-local metadata route by default, so 169.254.169.254 is usually still reachable from inside one. Network isolation can help (egress firewall, IMDS hop limit), but on its own it's not a containment of user-controlled URLs — the proxy still makes the request, and one misconfigured egress rule reopens everything." },
+  ]}
+/>
+
+<Quiz
+  id="07-ssrf-quiz-1"
+  lessonSlug="05-ssrf-redos-path-traversal"
+  lang="en"
+  question="Why can a single request matching a vulnerable regex like /^(\d+,)*\d+$/ take the whole Node server down, not just that one request?"
+  choices={[
+    { label: "Node's RegExp is a backtracking engine running synchronously on the single event-loop thread, so catastrophic backtracking pins the CPU at 100% and blocks every other request, timer, and health check until it finishes", correct: true },
+    { label: "The regex opens a file descriptor per match attempt and exhausts the limit", misconception: "Regex matching doesn't touch file descriptors. The damage is pure CPU: an exponential number of backtracking steps runs synchronously, monopolizing the one thread that serves all requests." },
+    { label: "Node retries the failed match on every other connection", misconception: "There's no cross-request retry. One request's match runs once — but because it runs synchronously on the shared event loop, that single multi-second computation starves all concurrent work while it spins." },
+    { label: "The garbage collector pauses the process while the regex allocates memory", misconception: "Catastrophic backtracking is a time blowup, not primarily a memory one. The freeze is the synchronous CPU work itself blocking the event loop, not a GC pause." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A user-supplied URL reaching either the cloud metadata endpoint or an allow-list block"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "u", label: "user URL", sub: "?url=…" },
+    { id: "s", label: "server fetch", sub: "your trust" },
+    { id: "m", label: "169.254.169.254", sub: "IAM creds" },
+    { id: "g", label: "resolve + pin", sub: "allow-list" },
+  ]}
+  edges={[
+    { from: "u", to: "s" },
+    { from: "s", to: "m", label: "naive: SSRF" },
+    { from: "s", to: "g", label: "safe: block" },
+  ]}
+  caption="Without validation, the server's own request reaches the link-local metadata endpoint and exfiltrates IAM credentials. The fix resolves the host once, rejects internal IPs, and pins the connection to the validated address — so the only path left is the allow-listed one."
+/>
+
+<KeyTakeaway>All three let untrusted input steer a server-side op. For user URLs, pin the resolved IP and kill redirects; for regexes, cap length and use RE2; for paths, resolve then assert they stay under the base. Cap bodies too.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="07-ssrf-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does validating that a hostname resolves to a public IP and then calling fetch(url) still allow SSRF, and what is the correct shape of the fix?", a: "It's a time-of-check-to-time-of-use (TOCTOU) bug called DNS rebinding. Your validation resolves the hostname once and sees a safe public IP, but fetch then performs its OWN, second DNS lookup milliseconds later. An attacker running an authoritative DNS server with a 0-second TTL serves the safe IP for your check and then flips the record to 169.254.169.254 for fetch's lookup — so you validated one IP and connected to a completely different, internal one. The correct fix collapses check and use into a single resolution: resolve the host yourself once, reject the address if it falls in a link-local (169.254.x) or RFC1918 (10.x, 172.16-31.x, 192.168.x) or loopback range, and then connect to THAT exact resolved IP (sending the original Host header) so fetch never does a second, attacker-controlled lookup. Pair it with redirect: 'manual' (an allowed host can 302 to the metadata endpoint) and, on AWS, IMDSv2 with a hop limit of 1." },
+    { q: "Why is path.join(base, userInput) not a defense against path traversal, and what check actually contains the path?", a: "Because path.join normalizes the result, which means it resolves '..' segments — so path.join('/srv/uploads', '../../etc/passwd') happily produces '/etc/passwd', walking right out of the base directory. Joining gives you a clean path string, not a confined one. The reliable fix is containment by resolved prefix: compute full = path.resolve(BASE, userInput) to get an absolute, normalized path, then assert it is still inside the base before touching the filesystem — full === BASE || full.startsWith(BASE + path.sep). The path.sep is essential: a bare startsWith('/srv/uploads') would also accept a sibling like '/srv/uploads-secret', so you append the separator to require the path be strictly under the directory. Also reject null bytes ('\\0') in the name, and prefer mapping an opaque id to a real path through a lookup table so the filesystem name never derives from user input at all." },
+  ]}
+/>
+
+<Recap lang="en">
+Three server-side Node vulnerabilities share a single root cause — untrusted input steering an operation the server assumed was trusted — and each has a precise containment. SSRF turns any user-supplied-URL feature (webhook, image proxy, link preview) into a probe of your internal network and the cloud metadata endpoint at `http://169.254.169.254/`, where an IMDSv1 GET hands back live IAM credentials; string blocklists fail to decimal/IPv6 forms and especially to DNS rebinding, so you must resolve the host once yourself, reject link-local/RFC1918/loopback IPs, pin the connection to that resolved IP, disable redirect-following, and require IMDSv2 with a hop limit. ReDoS exploits catastrophic backtracking in ambiguous patterns like `(\d+,)*\d+$`; because Node's regex runs synchronously on the single event-loop thread, a ~30-40 character crafted string can spin billions of steps and freeze every concurrent request, so cap input length, rewrite patterns to be unambiguous, and use the linear-time RE2 engine for user-driven matching. Path traversal escapes a directory via `../` (or encoded/null-byte variants), and `path.join` does not help because it normalizes `..` upward — instead `path.resolve` the path and assert it still starts with `base + path.sep`, or map opaque ids to real paths. Finally, cap request body size so an unbounded JSON or upload can't become a memory-exhaustion DoS.
+</Recap>
