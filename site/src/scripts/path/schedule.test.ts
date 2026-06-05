@@ -64,4 +64,11 @@ describe("schedule", () => {
     expect(s.days[1].steps.map((x) => x.unit)).toEqual(["b"]);
     expect(s.countdownDays).toBe(7);
   });
+
+  it("schedulePlan reports an unplaceable oversized step as over, not fits", () => {
+    // a single 200-min step cannot fit any 120-min day → must surface as over + dropped, not "fits"
+    const s = schedulePlan({ steps: [step("big", 200)] }, cfg(), MON_2026_06_08);
+    expect(s.feasibility.verdict).toBe("over");
+    expect(s.feasibility.dropped).toContain("big");
+  });
 });
