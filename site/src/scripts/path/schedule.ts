@@ -1,5 +1,5 @@
 // site/src/scripts/path/schedule.ts
-import type { Path, PathStep, DeadlineConfig, Feasibility, DayPlan, Schedule } from "./types";
+import type { Path, DeadlineConfig, Feasibility, DayPlan, Schedule } from "./types";
 
 const DAY = 86_400_000;
 const UNDER_RATIO = 1.25; // >25% spare budget => "under" (room for more), else "fits"
