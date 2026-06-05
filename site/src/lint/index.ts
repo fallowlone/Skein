@@ -16,6 +16,7 @@ import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkP
 import { checkBlockStubs } from "./rules/block-stubs";
 import { checkDrill } from "./rules/drill";
 import { checkLab } from "./rules/lab";
+import { checkCapstones } from "./rules/capstones";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -92,6 +93,9 @@ export function lintCurriculum(): AstroIntegration {
         const labRes = await checkLab(siteSrc);
         errors.push(...labRes.errors);
         warnings.push(...labRes.warnings);
+        const capRes = await checkCapstones(siteSrc);
+        errors.push(...capRes.errors);
+        warnings.push(...capRes.warnings);
 
         await writeFile(
           join(root, "lint-report.json"),
