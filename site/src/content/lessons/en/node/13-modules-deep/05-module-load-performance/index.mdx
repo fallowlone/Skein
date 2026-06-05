@@ -1,0 +1,195 @@
+---
+concepts:
+- cold-start-cost
+- resolution-stat-storm
+- v8-compile-cache
+- startup-snapshots
+- lazy-require
+- bundling-for-startup
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-module-load-performance
+sources:
+- https://nodejs.org/api/module.html#moduleenablecompilecachecachedir
+- https://nodejs.org/api/cli.html#--build-snapshot
+- https://nodejs.org/api/cli.html#node_compile_cachedir
+spiral: []
+status: ready
+summary: 'Cold start is dominated by resolution I/O (thousands of stat() per boot), V8 parse+compile, and top-level eval. Cut it by bundling to one file, caching bytecode with NODE_COMPILE_CACHE, deferring heavy deps with lazy require, and snapshotting init for CLIs and serverless.'
+title: 'Module load performance: cold start, compile cache, and snapshots'
+track: node
+unit: 13-modules-deep
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your Lambda is timing out. Not under load — at *idle*, on the very first invocation after a deploy, where the function does almost nothing: parse one JSON event, write one row, return. CloudWatch shows `Init Duration: 4.21s`, then `Task timed out after 5.00s`. The handler body runs in 40ms. The other 4 seconds vanish before your code's first line, while Node walks `node_modules`, parses and compiles a few thousand source files, and runs the top-level code of the entire AWS SDK you pulled in for one `PutItem`. You didn't write slow code. You paid for loading code you barely use, on every cold start, and the bill came due at the latency budget.
+</Hook>
+
+<Crux>Cold start is resolution I/O plus V8 parse+compile plus top-level eval — cut it with bundling, compile cache, lazy require, and snapshots.</Crux>
+
+<Explanation>
+
+## Where the cold-start seconds actually go
+
+Before your first line runs, `node app.js` spends time in three distinct phases, and you must know which one dominates before you optimize — the wrong fix is free disappointment.
+
+- **Resolution I/O.** Every bare specifier (`require("lodash")`) triggers the resolution algorithm, which *probes the filesystem*: for each candidate it `stat()`s `node_modules/lodash`, then `package.json`, then the main file, often retrying `.js`/`.json`/`/index.js` and walking parent `node_modules` directories. Each module is several syscalls; a 2,000-module graph is **tens of thousands of `stat()`/`open()` calls** before anything executes. On a cold filesystem (a fresh container, a network mount) those syscalls are not free.
+- **Parse + compile.** V8 must parse and compile the *source* of every module Node loads, on every boot. This is pure CPU and it scales with bytes of code, not with how much you call. For a typical CLI, **compile is often 20–40% of startup** — you are paying to turn megabytes of dependency source into bytecode you'll use once.
+- **Evaluation.** Running each module's top-level code — building lookup tables, registering plugins, instantiating clients. A library that does real work at import time charges you that work on every start.
+
+Measure before you cut. A startup CPU profile shows you the split:
+
+```bash
+# Profile the startup itself, then open the .cpuprofile in Chrome DevTools / speedscope
+node --cpu-prof --cpu-prof-dir=./prof app.js
+
+# See every resolution the loader performs (the stat-storm, made visible)
+NODE_DEBUG=module node app.js 2>&1 | head -50
+
+# Cheap in-process timing around a suspect require
+const t = performance.now();
+const aws = require("aws-sdk");
+console.error("aws-sdk load ms:", (performance.now() - t).toFixed(0));
+```
+
+The trap is optimizing the phase that isn't the bottleneck: bundling kills resolution I/O but does nothing for evaluation cost; a snapshot skips evaluation but is useless if your time is in fresh-container `stat()`s. Profile first.
+
+## V8 compile cache: stop re-compiling the same bytes
+
+V8 can serialize the bytecode it produced from a module's source and reuse it next time, skipping the parse+compile phase entirely. Node 22 exposes this two ways. Programmatically, call `module.enableCompileCache()` as the very first thing in your entry file; or set the `NODE_COMPILE_CACHE=dir` env var and Node enables it for the whole process with zero code change.
+
+```js
+// At the top of your entry point — before any other require/import.
+const { enableCompileCache } = require("node:module");
+enableCompileCache(); // defaults to a temp dir; pass a path to control location
+```
+
+```bash
+# Or env-var driven, no code change — point it at a persistent dir
+NODE_COMPILE_CACHE=./.compile-cache node app.js
+```
+
+The cache is **keyed by source content**, so it self-invalidates: change a file, that entry recompiles; everything else is reused. The tradeoffs are real. The **first run pays full cost** — it's the run that *populates* the cache, so you see no win (sometimes a hair slower from writing the cache). You only profit on **warm** boots. And the cache costs disk. But the payoff is targeted at exactly the parse+compile phase: that phase can drop by **an order of magnitude** on a warm boot, turning a 20–40% slice of startup into near-zero. The catch for serverless: a fresh container has an *empty* cache, so the compile-cache win requires the cache directory to survive between cold starts — bake it into the deployment image or a layer, not `/tmp`.
+
+<Inset kind="why" lang="en">
+Why does bundling collapse the stat-storm? Resolution cost is dominated by *filesystem probing*, not reading bytes. Loading 2,000 modules means thousands of `stat()` calls to discover where each file lives — each one a syscall, each one slow on a cold or networked filesystem. A bundler (esbuild, `@vercel/ncc`) inlines that entire graph into **one file**, so the resolver does *one* `stat()` and *one* `read()` for nearly the whole app. The thousands of metadata probes become a single sequential read of a contiguous file — which is why serverless platforms ship bundled artifacts and why cold start drops even though the same code runs. The cost wasn't the code; it was finding it.
+</Inset>
+
+## Startup snapshots: freeze the heap after init
+
+Resolution and compile happen before *eval*; a snapshot attacks eval. `--build-snapshot` runs your initialization code once at build time and captures the resulting **V8 heap** into a blob; a later boot with `--snapshot-blob` restores that heap directly, so all the work your init did — parsing config, building tables, importing modules — is already done the instant the process starts.
+
+```bash
+# 1. Build: run init.js and freeze the heap it produced into a blob
+node --snapshot-blob snapshot.blob --build-snapshot init.js
+
+# 2. Run: restore that heap instantly, skipping re-initialization
+node --snapshot-blob snapshot.blob app.js
+```
+
+This is the heaviest hammer and the most use-case-specific: it pays off where **cold start dominates and init is expensive** — CLIs invoked thousands of times, serverless functions billed on init duration. The tradeoffs are sharp. Snapshots are **rigid**: you can't have open handles at snapshot time — no live sockets, no open files, no timers — because the heap can't serialize an OS resource, so anything I/O-bound must be deferred past the snapshot point. The API is **experimental and finicky**, and the blob is **tied to the exact Node version** that built it, so it's a build artifact you regenerate on every Node upgrade. Reach for it after the cheaper wins (lazy require, bundle, compile cache) when init itself is the measured cost.
+
+## Shrink the graph: lazy require and bundling
+
+The cheapest second is the one you never spend. If a heavy dependency is only needed on a rare path, don't load it at module scope — `require()` it *inside the function that uses it*, so the cost is paid only when (and if) that path runs.
+
+```js
+// ❌ Eager: the whole SDK loads on every cold start, even if exportReport
+//    is called once a month. Thousands of files parsed for nothing.
+const { S3 } = require("aws-sdk");
+
+function exportReport(data) {
+  return new S3().putObject({ /* ... */ });
+}
+
+// ✅ Lazy: the SDK loads only when a report is actually exported.
+//    Cold start no longer pays for a path most invocations never take.
+function exportReport(data) {
+  const { S3 } = require("aws-sdk"); // cached after first call (module cache)
+  return new S3().putObject({ /* ... */ });
+}
+```
+
+This is the core of the war story. A serverless function's cold start ballooned to **3–5 seconds** because the entire AWS SDK plus a giant transitive dep tree loaded *eagerly* at the top of the handler file — thousands of `stat()`s and a few thousand modules parsed on every cold invoke, blowing the 5s timeout and failing requests. The failure mode is brutal because it's invisible under warm load (the container is reused) and only bites on cold starts, which spike exactly during deploys and traffic surges. The fix was layered: **lazy-require** the SDK behind the handler so it loads only when needed; **bundle** the function with esbuild so the remaining graph collapses from thousands of `stat()`s to one read — cold start fell from **~3s to under 1s**; and for the truly hot CLI path, a **compile cache or snapshot** removed the residual parse+compile. Modern AWS runtimes ship a slimmed, modular SDK partly for this exact reason — and tree-shaking dead deps out of the bundle keeps the win from eroding as the project grows.
+
+<TradeoffMatrix
+  id="13-module-load-performance-tradeoff-1"
+  lessonSlug="05-module-load-performance"
+  lang="en"
+  prompt="A CLI is invoked thousands of times a day from the same installed machine. A startup profile shows time split roughly evenly between resolution I/O and V8 parse+compile, with cheap eval. You can ship one change first. Which gives the biggest, most reliable win?"
+  options={[
+    { name: "Bundle the CLI to a single file with esbuild, then enable a persistent NODE_COMPILE_CACHE", summary: "Kill resolution + compile.", correct: true, justification: "The profile names two costs — resolution I/O and parse+compile — and these two changes target exactly those. Bundling inlines the whole graph so the resolver does one stat()+read() instead of thousands, erasing the resolution slice. A persistent compile cache then serializes the bytecode for the bundle, so warm runs skip parse+compile, which can drop that phase by an order of magnitude. Since the CLI runs repeatedly on the same machine, the cache survives between runs and pays off from the second invocation onward. Two cheap, robust wins aimed at the measured bottlenecks." },
+    { name: "Build a startup snapshot with --build-snapshot and ship the blob", summary: "Wrong phase.", justification: "Snapshots skip the EVAL phase by freezing the heap after init. But the profile says eval is cheap — the cost is resolution and compile, which happen BEFORE the snapshot point and aren't what a snapshot saves. You'd take on the experimental, version-locked, no-open-handles constraints of snapshots for almost no gain. Snapshots are the answer when init/eval is the measured cost, not here." },
+    { name: "Lazy-require every dependency inside the functions that use them", summary: "Defers, not removes.", justification: "Lazy require helps when a heavy dep is on a RARE path you can skip entirely. A CLI that actually uses its deps on the common path still loads them — you've just moved the same resolution+compile cost from module scope to first call, not removed it. It can even hurt by scattering the cost unpredictably. Great for the once-a-month export path; not the lever for code you always run." },
+    { name: "Upgrade to the latest Node and rely on its faster startup", summary: "Hope, not a fix.", justification: "Newer Node helps at the margins, but it doesn't change that your specific graph costs thousands of stat()s and megabytes of compile. You'd ship a version bump and still profile the same two bottlenecks. Use the tools that target the measured phases — bundle for resolution, compile cache for compile — rather than hoping the runtime absorbs your dependency weight." },
+  ]}
+/>
+
+<Quiz
+  id="13-module-load-performance-quiz-1"
+  lessonSlug="05-module-load-performance"
+  lang="en"
+  question="You enable NODE_COMPILE_CACHE and run a serverless function. The FIRST cold start after each deploy is no faster than before. Why?"
+  choices={[
+    { label: "The first run is the one that POPULATES the cache — it still pays full parse+compile to produce the bytecode it stores; only subsequent runs that read a warm cache skip that phase, and a fresh container starts with an empty cache", correct: true },
+    { label: "The compile cache only works for ESM, not CommonJS", misconception: "The cache is module-system agnostic — it serializes V8 bytecode keyed by source content for both. The reason the first run isn't faster is timing: there's nothing cached yet to reuse on the very first run." },
+    { label: "NODE_COMPILE_CACHE speeds up resolution I/O, which isn't the bottleneck here", misconception: "The compile cache targets parse+compile, not resolution. Resolution I/O is cut by bundling. But the first-run question is about cache population, not which phase is targeted." },
+    { label: "The cache is corrupted because the source changed on deploy", misconception: "Source changing is exactly what the content-keyed cache handles — changed files recompile, unchanged ones reuse. The first run is slow because the cache is empty, not corrupt; and on serverless each fresh container needs the cache dir to persist between cold starts." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Node startup phases and the shortcuts that skip them"
+  hue="var(--d-systems)"
+  perRow={5}
+  nodes={[
+    { id: "s", label: "node start", sub: "process boot" },
+    { id: "r", label: "resolve", sub: "stat storm" },
+    { id: "c", label: "parse+compile", sub: "V8 CPU" },
+    { id: "e", label: "eval", sub: "top-level" },
+    { id: "ready", label: "ready", sub: "your code" },
+  ]}
+  edges={[
+    { from: "s", to: "r" },
+    { from: "r", to: "c", label: "bundle skips" },
+    { from: "c", to: "e", label: "cache skips" },
+    { from: "e", to: "ready", label: "snapshot skips" },
+  ]}
+  caption="The four phases before your first line: boot, resolve (thousands of stat() — bundling collapses this to one read), parse+compile (the compile cache reuses warm bytecode), and eval (a snapshot freezes the post-init heap). Each shortcut targets a different phase, so profile first to pick the one that matches your bottleneck."
+/>
+
+<KeyTakeaway>Cold start is resolution I/O, parse+compile, then eval. Profile the dominant phase: bundle cuts resolution, `NODE_COMPILE_CACHE` reuses bytecode on warm boots, lazy `require()` skips rare deps, a snapshot freezes init.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="13-module-load-performance-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does bundling a serverless function cut cold start so dramatically, and which startup phase does it NOT help?", a: "Bundling targets the resolution phase, which on a cold start is dominated by filesystem probing rather than reading bytes. Loading a 2,000-module graph means tens of thousands of stat()/open() syscalls as the resolver discovers where each file lives — walking node_modules, checking package.json, retrying extensions and index.js — and each syscall is slow on a fresh or networked container filesystem. A bundler like esbuild or ncc inlines the entire graph into one file, so the resolver does a single stat()+read() instead of thousands of metadata probes; that's why a function can drop from ~3s to under 1s with no code change. What bundling does NOT help is evaluation cost: if a library does real work at import time (building tables, instantiating clients), that top-level code still runs once per boot whether it lives in one file or many. To cut eval you need a snapshot or lazy require, not a bundle." },
+    { q: "When is a startup snapshot the right tool over a compile cache, and what are its hard constraints?", a: "Reach for a snapshot when the measured cost is in EVALUATION — your init code does expensive work (parsing config, building large lookup tables, importing and wiring modules) and the process is invoked enough that re-running that init dominates, like a CLI run thousands of times or a serverless function billed on init duration. A compile cache only removes parse+compile; it does nothing for the cost of actually running top-level code, which is what a snapshot freezes by capturing the V8 heap after init and restoring it instantly. The hard constraints make snapshots a last resort: you can't have any open handles at snapshot time — no live sockets, open files, or timers — because the heap can't serialize an OS resource, so all I/O must be deferred past the snapshot point; the API is experimental and finicky; and the blob is tied to the exact Node version that built it, so it's a build artifact you must regenerate on every Node upgrade. Use it after the cheaper wins — lazy require, bundle, compile cache — when init itself is proven to be the bottleneck." },
+  ]}
+/>
+
+<Recap lang="en">
+Cold start is the time before your first line runs, and it lives in three phases you must distinguish before optimizing: resolution I/O, where every bare specifier triggers filesystem probing and a large graph costs tens of thousands of `stat()` syscalls; V8 parse+compile, where the source of every loaded module is turned into bytecode on each boot — often 20–40% of a CLI's startup; and evaluation, where top-level code actually runs. Profile with `--cpu-prof` and `NODE_DEBUG=module` first, because each fix targets a different phase. The V8 compile cache (`module.enableCompileCache()` or `NODE_COMPILE_CACHE=dir`) serializes bytecode keyed by source content, so warm boots skip parse+compile and that phase can drop by an order of magnitude — but the first run pays full cost to populate it, and a fresh serverless container starts empty unless the cache dir persists. Bundling with esbuild or ncc collapses the resolution stat-storm into one read, which is why bundled serverless artifacts cold-start far faster. Lazy `require()` defers a rarely-used heavy dependency so a path most invocations skip doesn't load on every boot. And a startup snapshot (`--build-snapshot` + `--snapshot-blob`) freezes the post-init heap to skip evaluation entirely — powerful for CLIs and serverless, but rigid (no open handles), experimental, and locked to the Node version. The war story is the synthesis: a 4s Lambda cold start, caused by eagerly loading the whole SDK plus a giant dep tree on every cold invoke, fixed by lazy require + bundle (from ~3s to under 1s) + compile cache, each lever aimed at the phase profiling proved was the cost.
+</Recap>
