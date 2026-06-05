@@ -1,0 +1,199 @@
+---
+concepts:
+- sli-slo-error-budget
+- red-use-methods
+- golden-signals
+- symptom-vs-cause-alerting
+- burn-rate-alerts
+- composite-alarms
+- "SAA-C03:Design Resilient Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-slos-and-alerting"
+sources:
+- https://sre.google/sre-book/service-level-objectives/
+- https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/Create_Composite_Alarm.html
+- https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/AlarmThatSendsEmail.html
+spiral: []
+status: ready
+summary: 'An SLI is a good/valid ratio, an SLO its target, the error budget 1−SLO — 99.9% is ~43 min/month. Page on symptoms users feel (burn rate, p99) not causes (CPU); composite alarms and treat-missing-as-breaching kill the noise that trains on-call to ignore the pager.'
+title: 'SLOs, error budgets, and alerts that don''t cry wolf'
+track: "aws"
+unit: "05-observability"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Three weeks ago someone wired a CPU alarm on every host in the fleet: page if CPU > 80% for five minutes. It fired on every deploy, every batch job, every nightly cron — a dozen times a day, always green again by the time anyone looked. The on-call rotation did the rational thing: they muted the channel. Then on a Tuesday at 02:14 the payment provider started timing out, checkout error rate climbed to 30%, and the one alarm that mattered fired into a channel nobody was reading anymore. The outage ran forty minutes before a customer tweet escalated it. The post-incident review didn't blame the muted channel — it blamed the design that made muting rational. You were alerting on a *cause* that fires constantly without user impact, so you trained the team to ignore the pager, and then it missed the *symptom* that actually hurt.
+</Hook>
+
+<Crux>SLI is a good/valid ratio, SLO its target, budget 1−SLO. Page on symptoms (burn rate, p99) not causes (CPU); noise makes on-call mute you.</Crux>
+
+<Explanation>
+
+## SLI, SLO, and the error budget you spend
+
+Reliability is not a vibe; it is a number, and the number has three layers. An **SLI** (Service Level Indicator) is a *measured ratio* of good events to valid events — the fraction of requests served correctly. Two canonical SLIs: **availability** = `non-5xx responses / all responses`, and **latency** = `requests faster than 300ms / all requests`. Always a ratio in `[0, 1]`, because a raw count means nothing without a denominator. An **SLO** (Service Level Objective) is the *target* for that ratio over a window — say 99.9% availability over a rolling 28 days. The **error budget** is what's left: `1 − SLO`. At 99.9% the budget is 0.1%, which over 30 days is **~43 minutes** of allowed failure (at 99.95% it's ~22 min; at 99% a roomy ~7.2 hours). That tiny remainder is the whole point — it converts reliability into a quantity you *spend*. Burn it slowly across the month and you're fine; burn half of it in one bad deploy and you freeze risky changes until it recovers. The budget is the contract between shipping fast and staying up: as long as you're in budget, ship; once you've blown it, reliability work jumps the queue.
+
+You compute the SLI directly from CloudWatch metric math — `good / total` — and alarm on the result, not on a proxy.
+
+```bash
+# Availability SLI as metric math: good (non-5xx) / valid (all) requests.
+# m1 = total request count, m2 = 5xx count; expr = (m1 - m2) / m1.
+aws cloudwatch put-metric-alarm \
+  --alarm-name checkout-availability-slo \
+  --comparison-operator LessThanThreshold \
+  --threshold 0.999 \
+  --evaluation-periods 5 --datapoints-to-alarm 5 \
+  --treat-missing-data breaching \
+  --metrics '[
+    { "Id": "total", "MetricStat": { "Metric": { "Namespace": "MyApp/Checkout", "MetricName": "Requests" }, "Period": 300, "Stat": "Sum" }, "ReturnData": false },
+    { "Id": "errors", "MetricStat": { "Metric": { "Namespace": "MyApp/Checkout", "MetricName": "HTTP5xx" }, "Period": 300, "Stat": "Sum" }, "ReturnData": false },
+    { "Id": "sli", "Expression": "(total - errors) / total", "Label": "availability", "ReturnData": true }
+  ]' \
+  --alarm-actions <sns-topic-arn>
+```
+
+**Tradeoff:** an SLO is a deliberate promise, not 100%. Chasing 100% is infinitely expensive and pointless — your users already lose requests to their own flaky Wi-Fi long before your service is the bottleneck. Each nine roughly multiplies cost; pick the *lowest* target that keeps users happy, because every nine you don't need is money and velocity you keep. **Failure mode:** an SLO with no denominator (alarming on a raw error *count*) breaks at the worst time. Fifty errors is a catastrophe at 100 req/s and a rounding error at 100k req/s — a count alarm pages on a traffic surge and stays silent during a low-traffic outage. Ratios scale with load; counts don't.
+
+## RED, USE, and the four golden signals
+
+You can't measure everything, so measure the few signals that map to user pain. Two frameworks carve up the space. **RED** is for *request-driven services* — Rate (requests/sec), Errors (failed requests/sec), Duration (latency distribution, watched at p99 not average). RED answers "are users getting served, fast and correctly?" **USE** is for *resources* — Utilization (how busy: CPU %, mem %), Saturation (how much queued/overloaded: run-queue depth, connection-pool wait), Errors (device/driver errors). USE answers "is this CPU, disk, or connection pool about to tip over?" Google's **four golden signals** — latency, traffic, errors, saturation — are the same idea distilled: the first three are RED, saturation is the load-bearing half of USE.
+
+```bash
+# RED for the service: p99 latency (Duration) is the SLO-relevant statistic.
+# Alarm on the percentile, never the Average, which hides the slow tail.
+aws cloudwatch put-metric-alarm \
+  --alarm-name checkout-p99-latency \
+  --namespace MyApp/Checkout --metric-name LatencyMs \
+  --extended-statistic p99 --period 60 \
+  --threshold 500 --comparison-operator GreaterThanThreshold \
+  --evaluation-periods 3 --datapoints-to-alarm 3 \
+  --treat-missing-data breaching \
+  --alarm-actions <sns-topic-arn>
+```
+
+**Tradeoff:** RED and USE are complementary, not interchangeable. RED tells you *that* users hurt; USE often tells you *why* (saturation rising → latency rising). The discipline is to **page on RED** (user-facing symptom) and keep USE on dashboards for diagnosis — wiring a page to every USE metric is exactly how you rebuild the Hook's noisy CPU alarm. **Failure mode:** measuring everything is noise. A team that graphs three hundred metrics and pages on a third of them has no signal — when everything is important, nothing is, and the one real outage drowns in the same firehose as every routine blip.
+
+## Symptom vs cause: alert on what the user feels
+
+This is the heart of it, and it's where most alerting goes wrong. **Page on symptoms** — things a user actually experiences: error rate up, p99 latency up, SLO burn rate high. **Do not page on causes** — CPU 90%, one host down, disk filling, a pod restart. Causes fire constantly without any user impact: CPU hits 90% during every deploy and the service is perfectly fine, so a CPU page is a guaranteed false alarm machine. And false alarms have a compounding cost — **alert fatigue**. When every deploy pages, on-call learns the pager means nothing, mutes the channel, and misses the one real outage (the Hook, exactly). The cost of a noisy alert isn't the interruption; it's that it *destroys the credibility of every future alert*.
+
+The senior technique is **multi-window, multi-burn-rate alerting**. *Burn rate* is how fast you're spending the error budget relative to the SLO; a burn rate of 1 spends the whole month's budget in exactly a month, so anything above 1 is too fast. You set two tiers: a **fast-burn** alert (e.g. **14.4× burn = 2% of a 30-day budget consumed in 1 hour**, corroborated over a short window) → **page now**, because at that rate the entire month's budget is gone in ~2 days. And a **slow-burn** alert (e.g. ~3× over 6 hours, ~10% of budget) → **open a ticket**, no 3am wake-up, because you have days to react. The two-window part suppresses spikes: the fast alert requires the burn to persist over both a long-ish window (catches the real thing) *and* a short one (confirms it's still happening right now), so a single 90-second blip doesn't page. **Numbers that matter:** 99.9% SLO = ~43 min/month budget; 14.4× burn-rate page = act now; surveys routinely put on-call false-positive rates near 50%+ on cause-based alerting — half of all pages waking someone for nothing.
+
+<Inset kind="why" lang="en">
+Why two windows and two burn rates instead of one simple threshold? A single fast threshold ("budget spend > 2% in an hour, page") catches genuine fast burns but also fires on a one-minute spike that self-heals — noise. A single slow threshold ("budget spend > 10% in 6 hours") is quiet on noise but reacts far too slowly to a hard outage burning the whole budget in two hours. You want *both* properties, so you run *both* alerts. The fast-burn page (high rate, e.g. 14.4×) requires the burn to be true over a longer window *and* still true over a short trailing window — the short window resets the alarm quickly once the incident is over, so you don't get paged for an outage that already ended. The slow-burn alert (lower rate, longer window) routes to a ticket, not a page, catching the quiet erosion that would otherwise eat the budget unnoticed over a weekend. Fast burns page; slow burns ticket; spikes that don't persist do neither. That single design is what separates an alerting system you trust from one you mute.
+</Inset>
+
+## Wiring it on AWS without rebuilding the noise
+
+CloudWatch gives you the primitives, and three of them are what keep the pager honest. **Composite alarms** combine child alarms with a boolean rule — `ALARM(p99High) AND ALARM(errorRateHigh)`, or `ALARM(slo) AND NOT ALARM(deployInProgress)` — so one root cause corroborated by two symptoms pages *once* instead of firing four correlated alarms, and a known deploy suppresses the page entirely. **Alarm on missing data** is the liveness guard: a dead service emits *nothing*, so an alarm with `--treat-missing-data notBreaching` silently never fires when the thing it watches falls over — exactly backwards. For a heartbeat/liveness alarm you set `--treat-missing-data breaching` so *silence pages you*. **Anomaly-detection bands** train an expected range from history and alarm on departures, which beats a flat threshold for traffic with daily or weekly seasonality. Actions route through **SNS → PagerDuty / Slack**, and — non-negotiable — the **runbook link goes in the alarm description**, so the page that wakes someone at 3am tells them what to do.
+
+```json
+// Composite alarm: page only when a real user-facing symptom is corroborated
+// AND we're not mid-deploy. One page per root cause instead of four.
+{
+  "AlarmName": "checkout-user-pain-page",
+  "AlarmRule": "(ALARM(\"checkout-p99-latency\") OR ALARM(\"checkout-error-rate\")) AND NOT ALARM(\"deploy-in-progress\")",
+  "AlarmActions": ["arn:aws:sns:us-east-1:123456789012:pagerduty-critical"],
+  "AlarmDescription": "User-facing SLO breach on checkout. Runbook: https://runbooks.internal/checkout-slo"
+}
+```
+
+**Failure mode (two ways to defeat yourself):** an alarm with `treat-missing-data = notBreaching` on a critical service is a silent blind spot — the day the service dies and emits no metrics, the alarm sits in `INSUFFICIENT_DATA` forever and never pages. And a non-composite, per-host CPU alarm is the noise machine from the Hook: it pages on every deploy, trains people to ignore it, and the credibility it burns takes the real alerts down with it. The page-vs-ticket routing decision is the whole game: fast burn and corroborated symptoms → page a human; slow burn and single causes → a ticket they read on Monday.
+
+<TradeoffMatrix
+  id="03-slos-and-alerting-tradeoff-1"
+  lessonSlug="03-slos-and-alerting"
+  lang="en"
+  prompt="Checkout has a 99.9% availability SLO (~43 min/month budget). On-call is fatigued: a per-host CPU>80% alarm pages a dozen times a day on deploys, and last week a real provider outage was missed because the channel was muted. Pick what to PAGE on."
+  options={[
+    { name: "A fast-burn alert on the availability SLI (14.4× burn over multi-window), routed to the pager; CPU moves to a dashboard", summary: "Page the symptom at a high burn rate; demote the cause.", correct: true, justification: "Right fit. The fast-burn alert pages only when the SLO budget is being spent dangerously fast (14.4× = 2% of the 30-day budget in an hour), which is precisely the provider outage the team missed — a genuine user-facing symptom corroborated over a multi-window check so it doesn't fire on a one-minute blip. Moving CPU to a dashboard removes the constant deploy-time false alarms that trained on-call to mute the channel in the first place. You page on what users feel and diagnose with the cause metrics, which is the whole symptom-vs-cause discipline." },
+    { name: "Raise the CPU alarm threshold from 80% to 95% so it pages less often", summary: "Same alarm, less sensitive.", justification: "Treats the symptom of noise, not the disease. CPU is a cause, not a user-facing symptom — at any threshold it fires on load that has no impact on users and stays silent during a provider outage where CPU is normal. Raising it cuts some false pages but still pages on nothing users feel and still misses the real outage. The fix is to stop paging on the cause, not to desensitize it." },
+    { name: "Page on a raw error count: > 50 errors in 5 minutes", summary: "Alarm on absolute error volume.", justification: "Breaks at the extremes because it has no denominator. Fifty errors is catastrophic at 100 req/s and noise at 100k req/s — so this pages on a harmless traffic surge and goes silent during a low-traffic outage. SLO alerting must be a ratio (errors/requests) that scales with load, which is exactly what burn-rate alerting on the SLI gives you." },
+    { name: "Page on every USE metric (CPU, memory, queue depth, connections) so nothing slips through", summary: "Maximum coverage, page on all resources.", justification: "This is how you rebuild the Hook's outage at scale. USE metrics are causes for diagnosis, not paging signals; wiring a page to each one multiplies the noise that already fatigued the team, guaranteeing the channel gets muted again. More alerts is not more safety — when everything pages, the one real symptom drowns. USE belongs on dashboards; you page on RED/SLO." },
+  ]}
+/>
+
+<Quiz
+  id="03-slos-and-alerting-quiz-1"
+  lessonSlug="03-slos-and-alerting"
+  lang="en"
+  question="A liveness alarm watches a heartbeat metric a healthy service emits every minute. It's configured with --treat-missing-data notBreaching. The service crashes and stops emitting entirely. What happens?"
+  choices={[
+    { label: "The alarm never fires — with no data points it sits in INSUFFICIENT_DATA treated as not-breaching, so a dead service silently produces no page; a liveness alarm must use treat-missing-data breaching", correct: true },
+    { label: "The alarm fires immediately because the metric dropped to zero", misconception: "A crashed service emits no data points at all — there is no 'zero' value to evaluate, only absence. The alarm can't compare a missing value to a threshold, so it falls back to the treat-missing-data setting, which here says not-breaching. Silence, not a page." },
+    { label: "The alarm fires because missing data always counts as a breach by default", misconception: "Missing data is not breaching by default — its interpretation is entirely controlled by treat-missing-data, and several defaults treat it as missing or not-breaching. You must explicitly choose breaching for a liveness alarm, which is the whole point of the configuration." },
+    { label: "Nothing changes; the last known value keeps being evaluated until new data arrives", misconception: "CloudWatch does not carry forward the last value indefinitely; once data stops, the alarm evaluates missing data per the treat-missing-data policy rather than reusing a stale point. With notBreaching that means no page." },
+  ]}
+/>
+
+<Quiz
+  id="03-slos-and-alerting-quiz-2"
+  lessonSlug="03-slos-and-alerting"
+  lang="en"
+  question="Your team pages on a per-host 'CPU > 80%' alarm. It fires a dozen times a day — almost always during deploys and batch jobs, and almost always green again before anyone responds. What's the core problem?"
+  choices={[
+    { label: "It pages on a cause (resource utilization) with no user impact, generating constant false alarms that cause alert fatigue — page on symptoms (error rate, p99, SLO burn rate) instead", correct: true },
+    { label: "The 80% threshold is simply set too low and should be 95%", misconception: "Threshold tuning doesn't fix the category error: CPU is a cause, not a symptom users feel, so at any threshold it pages on load with no user impact and misses outages where CPU is normal. The problem is paging on the cause at all, not the exact number." },
+    { label: "The evaluation period is too short, so it's catching transient spikes", misconception: "A longer window would suppress some spikes, but the deeper issue is that even a sustained CPU breach often has zero user impact (a healthy service can run hot). You'd still be paging on a cause. Symptom-based alerting is the fix, not a wider window on the same cause." },
+    { label: "CPU is the wrong resource to watch; it should watch memory instead", misconception: "Swapping one resource (USE) metric for another keeps you paging on causes. Both CPU and memory are diagnosis signals for dashboards, not paging signals — the page should be on the user-facing symptom or SLO burn rate regardless of which resource is busy." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Reliability flows from a measured SLI through the SLO target and error budget into burn-rate logic that routes to a page or a ticket"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "sli", label: "SLI", sub: "good / valid" },
+    { id: "slo", label: "SLO target", sub: "99.9% / 28d" },
+    { id: "budget", label: "Error budget", sub: "1−SLO ≈ 43m/mo" },
+    { id: "burn", label: "Burn rate", sub: "spend vs SLO" },
+    { id: "page", label: "Page now", sub: "fast 14.4×" },
+    { id: "ticket", label: "Ticket", sub: "slow ~3×" },
+  ]}
+  edges={[
+    { from: "sli", to: "slo", label: "compare" },
+    { from: "slo", to: "budget", label: "1−SLO" },
+    { from: "budget", to: "burn", label: "rate" },
+    { from: "burn", to: "page", label: "fast" },
+    { from: "burn", to: "ticket", label: "slow" },
+  ]}
+  caption="The SLI is measured, compared to the SLO to derive the error budget; burn rate is how fast that budget is spent. Fast burn pages a human now; slow burn opens a ticket. Causes like CPU never enter this path — they live on dashboards for diagnosis."
+/>
+
+<KeyTakeaway>Reliability is a number: SLI = good/valid, SLO = its target, error budget = 1−SLO (99.9% ≈ 43 min/month). Page on symptoms — burn rate, p99, errors — not causes like CPU. Fast burn pages, slow burn tickets.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-slos-and-alerting-retrieval"
+  lang="en"
+  questions={[
+    { q: "Define SLI, SLO, and error budget, and explain how the budget governs shipping.", a: "An SLI (Service Level Indicator) is a measured ratio of good events to valid events — e.g. availability = non-5xx / all responses, or latency = requests under 300ms / all requests; always a ratio in [0,1], because a raw count is meaningless without a denominator. An SLO (Service Level Objective) is the target for that ratio over a window — e.g. 99.9% availability over a rolling 28 days. The error budget is what's left: 1 − SLO. At 99.9% that's 0.1%, which over 30 days is about 43 minutes of allowed failure (99.95% ≈ 22 min, 99% ≈ 7.2 hours). The budget turns reliability into a quantity you spend: as long as you're within budget you ship freely; burn it slowly across the month and you're fine; burn a big chunk in one bad deploy and you freeze risky changes until it recovers. It's the explicit contract between shipping speed and staying up, and it's why chasing 100% is wrong — each nine roughly multiplies cost, so you pick the lowest target users are happy with." },
+    { q: "Why page on symptoms not causes, and what is multi-window multi-burn-rate alerting?", a: "Page on symptoms the user actually feels — error rate up, p99 latency up, SLO burn rate high — and never on causes like CPU 90%, one host down, or a pod restart. Causes fire constantly with no user impact (CPU hits 90% on every deploy while the service is fine), so a cause-based page is a false-alarm machine, and false alarms cause alert fatigue: when every deploy pages, on-call mutes the channel and misses the one real outage. Burn rate is how fast you're spending the error budget relative to the SLO (rate 1 spends a month's budget in a month). Multi-window, multi-burn-rate runs two tiers: a fast-burn alert (e.g. 14.4× = 2% of a 30-day budget in 1 hour, confirmed over both a longer and a short trailing window so a brief spike doesn't fire) pages now; a slow-burn alert (e.g. ~3× over 6 hours) opens a ticket. Fast burns page, slow burns ticket, transient spikes do neither — which is what makes the pager trustworthy. On AWS: composite alarms (boolean rules) suppress correlated noise and require corroboration, and a liveness alarm uses treat-missing-data breaching so a dead, silent service still pages." },
+  ]}
+/>
+
+<Recap lang="en">
+Reliability is measured in three layers. An SLI is a ratio of good events to valid events — availability as non-5xx over all responses, latency as requests under 300ms over all requests — computed directly from CloudWatch metric math as good/total, never as a raw count that breaks when traffic shifts. An SLO is the target for that ratio over a window (99.9% over 28 days), and the error budget is 1 − SLO: at 99.9% about 43 minutes of failure per month, a quantity you spend deliberately — ship freely while in budget, freeze risky changes once you've burned it. Two frameworks pick the few signals worth watching: RED (Rate, Errors, Duration at p99) for request-driven services, USE (Utilization, Saturation, Errors) for resources, distilled by Google into the four golden signals of latency, traffic, errors, and saturation. The discipline that prevents disaster is symptom-versus-cause: page on what users feel — error rate, p99, SLO burn rate — and never on causes like CPU 90% or a single host down, because causes fire constantly without user impact and train on-call to mute the channel, after which the one real outage is missed. Multi-window, multi-burn-rate alerting encodes this: a fast burn (14.4×, ~2% of budget in an hour, corroborated over two windows) pages a human now, while a slow burn (~3× over hours) opens a ticket. On AWS you wire it with composite alarms that combine child alarms with boolean rules to require corroboration and suppress correlated noise (and to mute during a known deploy), with treat-missing-data set to breaching on any liveness alarm so a dead, silent service pages instead of sitting in INSUFFICIENT_DATA forever, with anomaly-detection bands for seasonal traffic, and with actions routed through SNS to PagerDuty or Slack — always with the runbook link in the alarm description. The page-versus-ticket routing is the whole craft: fast burn and corroborated symptoms wake a human, slow burn and lone causes wait for Monday.
+</Recap>

@@ -1,0 +1,188 @@
+---
+concepts:
+- logs-insights-query
+- log-group-vs-stream
+- correlation-ids
+- subscription-filters
+- centralized-logging
+- log-ingestion-cost
+- "SAA-C03:Design Cost-Optimized Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-logs-at-scale-and-insights"
+sources:
+- https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/AnalyzingLogData.html
+- https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/SubscriptionFilters.html
+- https://aws.amazon.com/cloudwatch/pricing/
+spiral: []
+status: ready
+summary: 'Operating logs at scale: Logs Insights queries are billed per GB scanned, so narrow the window; structured JSON makes logs queryable; subscription filters ship events to Lambda/Firehose/OpenSearch; and ingest — not storage — is the bill a DEBUG flag can 10-100x overnight.'
+title: 'Logs at scale: Logs Insights, subscription pipelines, and the bill'
+track: "aws"
+unit: "05-observability"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You merge a one-line change late on a Friday: flip the prod log level to DEBUG to chase a flaky checkout bug. It works — you find the bug Monday and revert. Four weeks later finance pings the channel: the AWS bill is up, and the entire delta is CloudWatch Logs. Not storage — **ingest**. For three weeks every request had logged its full body, headers, and a dozen DEBUG lines, and CloudWatch Logs bills per GB *ingested* (about **$0.50/GB**) before you ever store or query a byte. A service doing 2 TB/month of logs at DEBUG instead of 200 GB at INFO is a 10x ingest line that nobody noticed because the spike lands a month later, on someone else's dashboard. Worse, the log groups were the default **Never Expire**, so every one of those debug bytes is also accruing storage forever. The fix isn't heroic — retention policies, a log level, a sampling rule — but the lesson is: at scale, logs are a *cost surface* and a *query surface*, and both have to be operated on purpose. This lesson is how you query logs without burning money, ship them somewhere cheaper to search, and stop the ingest bill from ambushing you.
+</Hook>
+
+<Crux>Logs Insights bills by GB scanned — narrow the window, not filter. Subscription filters ship logs cheaper. Ingest is what DEBUG 10-100x's.</Crux>
+
+<Explanation>
+
+## Logs Insights: querying log groups on demand, billed by bytes scanned
+
+CloudWatch **Logs Insights** is a purpose-built query language that scans one or more log groups over a chosen time range and returns rows. The grammar is small and composable: `fields` selects columns, `filter` keeps matching events, `stats ... by` aggregates, `parse` extracts structure from a string, `sort` and `limit` shape the output. The thing that makes it powerful is auto-discovery: if your logs are **structured JSON**, Insights discovers every top-level key as a queryable field automatically. So `level`, `errorCode`, `requestId`, and a numeric `durationMs` are all addressable without any schema declaration — you can `stats count(*) by errorCode` or compute a real `pct(durationMs, 99)` (p99) straight from the field.
+
+The mechanism that governs cost and speed is the same one: **Insights bills per GB of log data scanned per query** (roughly $0.005/GB scanned, illustrative, region-dependent), and a query's latency is dominated by how many bytes it has to read. A `filter` does *not* save you scan cost the way an index would — Insights still reads the events in the time range to evaluate the filter; what bounds the scan is the **time window** and **which log groups** you point at. So a query over `@message` across six months and forty log groups can scan terabytes, cost real money, and take minutes. The senior habit is to narrow the window hard (start with 15 minutes around the incident, widen only if needed) and query the smallest set of groups that can contain the answer.
+
+```sql
+-- Incident triage: top error codes in the last 30 minutes (narrow window = small scan)
+fields @timestamp, level, errorCode, requestId
+| filter level = "ERROR"
+| stats count(*) as n by errorCode
+| sort n desc
+| limit 20
+
+-- Slowest endpoints by p99, computed from a numeric field
+fields route, durationMs
+| filter ispresent(durationMs)
+| stats pct(durationMs, 99) as p99, count(*) as calls by route
+| sort p99 desc
+| limit 10
+
+-- Follow one request end to end across the whole trace, by correlation id
+fields @timestamp, level, service, msg, durationMs
+| filter requestId = "req-7f3a91c2"
+| sort @timestamp asc
+```
+
+## Log architecture: groups, streams, and why structure beats free text
+
+A **log group** is the unit of retention, access policy, and subscription — everything in it shares those settings. A **log stream** is one append-only sequence of events from a single source inside that group: one Lambda execution environment, one container, one host. You query and configure at the group level; the stream is just where the bytes physically land. (Lesson 01 covered what a log group *is*; here it matters because retention and subscriptions attach to the group, and a query's scan cost is the group's bytes in the window.)
+
+What separates a queryable log estate from an unsearchable one is **schema discipline**. Emit structured JSON with a consistent shape — `level`, `timestamp`, a `requestId`/`traceId`, the `service`, and typed fields like `durationMs` and `errorCode` — and Insights and any downstream search index treat each key as a first-class field. Thread a **correlation ID** (the same `requestId` or `traceId`) from the entry point through every downstream call (lesson 02 tied this to traces), and a single `filter requestId = "..."` reconstructs the whole request across services. The anti-pattern is free-text logging: `logger.info("user " + id + " did " + action + " in " + ms + "ms")`. Now every query is a regex over `@message`, p99 means writing a fragile `parse` for each format, and correlation is a hope. Free text is cheap to write and ruinous to operate at scale.
+
+<Inset kind="why" lang="en">
+Why does `filter` not make Insights cheap the way a database index does? Because Insights has no index. It is a scan-on-read engine: for every query it streams the raw events in the time range out of the log group's storage and evaluates your pipeline over them. The `filter` stage runs *during* that scan — it drops non-matching rows from the result, but the bytes were already read and already billed. That is the opposite of a database, where an index lets you touch only matching rows. The practical consequence: the two dials that actually cut Insights cost are the **time window** (fewer bytes in range) and the **set of log groups** (fewer groups read). Adding more `filter` clauses sharpens the answer but does almost nothing for the bill. If you find yourself running the same broad scan repeatedly to get a count, that's the signal to replace it with a **metric filter**, which computes the count once at ingest time and costs nothing to read.
+</Inset>
+
+## Subscription filters and pipelines: ship logs somewhere cheaper to search
+
+A **subscription filter** attaches to a log group and streams every matching event, in near-real-time, to a destination. The pattern can be empty (everything) or match a structured term (`{ $.level = "ERROR" }`). The three canonical destinations: **Lambda** (transform, enrich, route, or alert on each event), **Kinesis Data Streams / Firehose** (buffer the firehose of events and deliver them in batches), and **Amazon OpenSearch** (full-text search plus dashboards). Subscriptions are also how you do **cross-account, cross-region** aggregation: each spoke account's log groups subscribe to a destination in a central **logging account**, so every team's logs land in one searchable place with one access policy and one retention regime.
+
+This is the architectural escape hatch from the CloudWatch Logs cost curve. CloudWatch Logs is convenient — it's where everything lands by default — but retaining and searching large volumes *in* CloudWatch is expensive. A subscription filter → **Firehose → S3**, queried with **Athena**, gives you durable, cheap, long-term log storage you pay pennies per GB to keep and pay only per query scanned in Athena. Or subscription filter → **OpenSearch** gives you Kibana-style full-text search and dashboards for the hot window. The tradeoff is explicit: CloudWatch Logs trades cost for zero-setup convenience; S3+Athena and OpenSearch trade setup and operational ownership for an order-of-magnitude lower cost at scale. The usual senior shape is *both*: short hot retention in CloudWatch (14–30 days) for Insights triage, plus a subscription that tees everything to S3 for the cheap long tail.
+
+```bash
+# Stream every event in a log group to a Firehose delivery stream → S3 (cheap long-term store)
+aws logs put-subscription-filter \
+  --log-group-name /myapp/checkout \
+  --filter-name ship-to-s3 \
+  --filter-pattern "" \
+  --destination-arn arn:aws:firehose:us-east-1:111122223333:deliverystream/logs-to-s3 \
+  --role-arn arn:aws:iam::111122223333:role/CWLtoFirehoseRole
+
+# Or stream only ERROR events to OpenSearch via a transform Lambda (hot full-text search)
+aws logs put-subscription-filter \
+  --log-group-name /myapp/checkout \
+  --filter-name errors-to-opensearch \
+  --filter-pattern '{ $.level = "ERROR" }' \
+  --destination-arn arn:aws:lambda:us-east-1:111122223333:function:ship-to-opensearch
+```
+
+## The ingestion bill: how a DEBUG flag 10-100x's your log spend
+
+CloudWatch Logs charges on three axes and people only watch the wrong one. **Ingestion** is billed per GB *pushed in* (~$0.50/GB, illustrative) — this is the dominant lever and it fires the moment the byte arrives, before any storage or query. **Storage** is billed per GB-month on whatever you keep. **Insights scan** is billed per GB queried. So the failure mode writes itself: turn on DEBUG in prod, or start logging every request body and header, and ingest can jump 10–100x overnight. The bill lands a month later, on the finance dashboard, long after the person who flipped the flag has forgotten — exactly the Friday-DEBUG story. And because the default retention is **Never Expire**, those inflated debug bytes also accrue storage forever; nobody set a policy, so nothing is ever deleted.
+
+```bash
+# Cap the compounding storage line: deliberate retention per log group
+aws logs put-retention-policy --log-group-name /myapp/checkout --retention-in-days 14
+```
+
+The durable fixes, in order of leverage: **set retention per log group** (e.g. 14–30 days hot, archive the rest to S3 via the subscription above) so storage plateaus; **drop the prod log level** from DEBUG to INFO and **sample** high-volume debug lines (1-in-N) instead of logging all of them; **drop noisy fields** before ingest (full request bodies, base64 blobs, redundant headers); **use a metric filter** to count things instead of running repeated Insights scans for the same number; and crucially **alarm on the log-ingestion metric itself** (`IncomingBytes` per log group) so a 10x ingest jump pages someone the same day, not the same month. Ingest is the lever — cutting volume at the source beats every storage tweak.
+
+<TradeoffMatrix
+  id="04-logs-at-scale-tradeoff-1"
+  lessonSlug="04-logs-at-scale-and-insights"
+  lang="en"
+  prompt="Your team keeps 18 months of logs hot in CloudWatch Logs for occasional compliance lookups, plus 30 days for live triage. The Logs bill is dominated by storage and by broad Insights scans over the old data. You need cheap long-term retention you can still search, without losing fast triage on recent logs. Pick the best architecture."
+  options={[
+    { name: "14-30d hot retention in CloudWatch for Insights triage + a subscription filter teeing everything to Firehose→S3, queried with Athena for the long tail", summary: "Hot window stays in CloudWatch; cold logs go to cheap S3, searchable via Athena.", correct: true, justification: "Right fit. The two needs are different and this serves each with the right tool. Recent logs stay in CloudWatch with short retention so Logs Insights triage is fast and the scanned bytes (and storage) are bounded to a small window. Everything is simultaneously streamed by a subscription filter to Firehose→S3, where storage is roughly an order of magnitude cheaper per GB-month and you pay only per-query when Athena scans it — exactly the profile of rare compliance lookups. You keep searchability on the cold tail without paying CloudWatch storage and Insights-scan rates on 18 months of data. This is the canonical cost-optimized logging shape." },
+    { name: "Raise CloudWatch retention to 18 months on every group and just run Insights when needed", summary: "Keep it all in CloudWatch, query in place.", justification: "This is the status quo that created the bill. CloudWatch storage is billed per GB-month on the full 18 months, and every compliance Insights query scans across that huge range at the per-GB-scanned rate — both of the costs the prompt names. It's the convenient path and the expensive one; convenience is exactly what you're paying a premium for, and at 18 months that premium dominates the bill." },
+    { name: "Set 30-day retention everywhere and delete logs older than that", summary: "Just stop keeping old logs.", justification: "Cuts the bill but violates the requirement: the team needs the 18 months for compliance lookups. Deleting them trades a cost problem for a compliance/audit problem, and the next auditor request finds nothing. The goal is cheaper long-term retention, not no long-term retention." },
+    { name: "Ship 100% of logs to a large always-on OpenSearch cluster and drop CloudWatch retention to 1 day", summary: "Full-text search everything in OpenSearch.", justification: "Overshoots for this profile. OpenSearch gives great hot full-text search and dashboards, but a cluster sized to index and hold 18 months of all logs runs 24/7 and is far more expensive than S3 for cold data that's queried rarely. OpenSearch earns its cost on frequently-searched hot logs; for occasional compliance lookups, S3+Athena is the cost-right tier. Dropping CloudWatch to 1 day also kneecaps fast Insights triage." },
+  ]}
+/>
+
+<Quiz
+  id="04-logs-at-scale-quiz-1"
+  lessonSlug="04-logs-at-scale-and-insights"
+  lang="en"
+  question="You run a Logs Insights query with a tight `filter errorCode = 'E_TIMEOUT'` over a 6-month window across all your log groups, and it's slow and surprisingly expensive. Why?"
+  choices={[
+    { label: "Insights bills by bytes scanned and has no index, so it reads every event in the 6-month window across all groups before the filter drops non-matching rows — the window and group set drive cost, not the filter", correct: true },
+    { label: "The filter is too restrictive, so Insights has to scan more to find the few matches", misconception: "A restrictive filter doesn't increase scan — Insights reads the same bytes in the range regardless of how many rows the filter keeps. The filter only shapes the output; it can't reduce the bytes already read. Cost is set by the time window and which log groups you query." },
+    { label: "Logs Insights charges per row returned, so a 6-month query returns too many rows", misconception: "Insights is billed per GB of data scanned, not per row returned. A query that returns 3 rows can still scan terabytes if the window is wide and the groups are large. Returned-row count is not the billing dimension." },
+    { label: "The errorCode field isn't indexed, so add an index to make it cheap", misconception: "Insights has no user-defined indexes at all — there's nothing to add. It's a scan-on-read engine. The way to make it cheap is to narrow the time window and query fewer log groups, or precompute the count with a metric filter." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Logs flow from an app into a log group, then split between an in-place metric filter and a subscription filter that fans out to Lambda, Firehose to S3 with Athena, and OpenSearch"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "app", label: "App / Lambda", sub: "structured JSON + requestId" },
+    { id: "group", label: "Log group", sub: "retention 14-30d hot" },
+    { id: "mf", label: "Metric filter", sub: "count at ingest, no scan" },
+    { id: "sub", label: "Subscription filter", sub: "near-real-time stream" },
+    { id: "lambda", label: "Lambda", sub: "transform / alert" },
+    { id: "fire", label: "Firehose → S3", sub: "cheap long-term + Athena" },
+    { id: "os", label: "OpenSearch", sub: "hot full-text + dashboards" },
+  ]}
+  edges={[
+    { from: "app", to: "group", label: "PutLogEvents" },
+    { from: "group", to: "mf", label: "pattern → metric" },
+    { from: "group", to: "sub", label: "matching events" },
+    { from: "sub", to: "lambda", label: "transform" },
+    { from: "sub", to: "fire", label: "buffer + deliver" },
+    { from: "sub", to: "os", label: "index" },
+  ]}
+  caption="A metric filter computes counts in place (cheap to alarm on); a subscription filter tees events out to cheaper search — Firehose→S3+Athena for the cold tail, OpenSearch for hot full-text. Ingest into the log group is the dominant cost; retention caps storage."
+/>
+
+<KeyTakeaway>Logs Insights bills per GB scanned, no index — narrow the window, not the filter. Subscription filters ship logs to S3 or OpenSearch, far cheaper. Ingest is the lever DEBUG 10-100x's; set retention, alarm IncomingBytes.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-logs-at-scale-retrieval"
+  lang="en"
+  questions={[
+    { q: "What drives the cost and speed of a Logs Insights query, and how do you keep it cheap?", a: "Insights is a scan-on-read engine with no index: for every query it reads the raw events in the chosen time range out of the targeted log groups and evaluates your pipeline (fields/filter/stats/parse/sort/limit) over them. It bills per GB scanned (~$0.005/GB, illustrative, region-dependent) and latency tracks the bytes read. Crucially, a filter does NOT reduce scan cost — the bytes are read before non-matching rows are dropped. The two dials that actually cut cost are the time window (fewer bytes in range) and the set of log groups queried (fewer groups). So narrow to ~15 minutes around an incident and query the smallest set of groups that can hold the answer; widen only if needed. If you keep re-running the same broad scan to get a count, replace it with a metric filter, which computes the count once at ingest and costs nothing to read." },
+    { q: "Why is ingest the dominant CloudWatch Logs cost, and what fixes stop a DEBUG-driven blowup?", a: "CloudWatch Logs bills on three axes: ingestion per GB pushed in (~$0.50/GB, illustrative — the dominant lever, charged the moment a byte arrives), storage per GB-month on what you keep, and Insights scan per GB queried. Turning on DEBUG in prod or logging full request bodies/headers can 10-100x ingest overnight, and the spike lands on the bill a month later. Because default retention is Never Expire, those bytes also accrue storage forever. Fixes in leverage order: set deliberate per-group retention (14-30d hot, archive the rest to S3 via a subscription filter→Firehose) so storage plateaus; drop prod log level to INFO and sample high-volume debug lines; drop noisy fields before ingest; use a metric filter to count instead of repeated Insights scans; and alarm on the IncomingBytes metric per log group so a 10x ingest jump pages someone the same day, not the same month." },
+  ]}
+/>
+
+<Recap lang="en">
+Operating logs at scale is two problems — a query surface and a cost surface — and both must be run on purpose. Logs Insights is a small composable query language (fields, filter, stats ... by, parse, sort, limit) that scans log groups on demand; structured JSON auto-discovers every key as a queryable field, so you can stats count(*) by errorCode or compute pct(durationMs, 99) directly. But Insights has no index: it bills per GB scanned and reads every event in the window before a filter drops non-matching rows, so the dials that cut cost and latency are the time window and the set of log groups, not the filter — narrow hard to triage an incident. A log group is the unit of retention, access, and subscription; a log stream is one source's append-only sequence inside it. Schema discipline (level, timestamp, a threaded requestId/traceId, typed fields) is what makes logs queryable and correlatable across services and traces; free-text logs force fragile regex and kill correlation. A subscription filter streams matching events in near-real-time to Lambda (transform/alert), Kinesis/Firehose (buffer + deliver), or OpenSearch (full-text search), and is also how you aggregate cross-account and cross-region into a central logging account. That's the escape from the CloudWatch cost curve: keep a short hot window (14-30 days) in CloudWatch for Insights triage and tee everything via Firehose to S3 (queried with Athena) for cheap long-term searchable storage, or to OpenSearch for hot full-text dashboards — convenience versus cost, and usually both. The bill itself bites on ingestion: CloudWatch Logs charges per GB ingested (~$0.50/GB), per GB-month stored, and per GB scanned, and the dominant lever is ingest. A prod DEBUG flag or logging full request bodies can 10-100x ingest overnight, the spike shows up a month later, and default Never-Expire retention lets those bytes accrue storage forever. Fix it by setting per-group retention, sampling and dropping noisy debug logs, dropping heavy fields, using metric filters instead of repeated scans for counts, and alarming on the IncomingBytes metric so the next spike pages you the same day. Prices here are illustrative and region-dependent — confirm on the CloudWatch pricing page.
+</Recap>
