@@ -2,6 +2,7 @@
 import type { Path, PathStep, DeadlineConfig, Feasibility, DayPlan, Schedule } from "./types";
 
 const DAY = 86_400_000;
+const UNDER_RATIO = 1.25; // >25% spare budget => "under" (room for more), else "fits"
 
 // Civil date from an epoch-day count (Howard Hinnant's algorithm), returns "YYYY-MM-DD".
 function civilFromDays(z: number): string {
@@ -46,7 +47,10 @@ export function feasibility(
   requiredMin: number, availableMin: number, droppable: { id: string; estMin: number; roi: number }[],
 ): Feasibility {
   if (requiredMin <= availableMin) {
-    return { verdict: "fits", deltaMin: availableMin - requiredMin, dropped: [] };
+    // "under" only when there is budget for materially more than required (>= UNDER_RATIO slack),
+    // so the UI can offer added depth/breadth; otherwise it simply "fits".
+    const under = requiredMin > 0 && availableMin > requiredMin * UNDER_RATIO;
+    return { verdict: under ? "under" : "fits", deltaMin: availableMin - requiredMin, dropped: [] };
   }
   const sorted = [...droppable].sort((a, b) => a.roi - b.roi || a.id.localeCompare(b.id));
   const dropped: string[] = [];
