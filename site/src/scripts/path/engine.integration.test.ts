@@ -37,6 +37,26 @@ describe("engine integration", () => {
     expect(path.steps.length).toBe(0); // nothing left to learn for that goal
   });
 
+  it("never emits a unit before a unit teaching one of its required concepts (both modes)", () => {
+    const teacherOf = new Map<string, string>();
+    for (const u of UNITS) for (const c of u.teaches) teacherOf.set(c, u.unit);
+    const requiresOf = new Map(UNITS.map((u) => [u.unit, u.requires]));
+    for (const bvd of [0, 1]) { // depth and breadth
+      const path = buildPath({
+        state: emptyState(), goals: [GOALS[0]],
+        config: { ...DEFAULT_CONFIG, breadthVsDepth: bvd, pace: { stepsAhead: 99, srsAggressiveness: 0 } },
+        content: { concepts: CONCEPTS, units: UNITS, goalById }, srsDue: [], now: 0, trackOrder: TRACK_ORDER,
+      });
+      const pos = new Map(path.steps.map((s, i) => [s.unit, i]));
+      for (const s of path.steps) {
+        for (const reqConcept of requiresOf.get(s.unit) ?? []) {
+          const teacher = teacherOf.get(reqConcept);
+          if (teacher && pos.has(teacher)) expect(pos.get(teacher)!).toBeLessThan(pos.get(s.unit)!);
+        }
+      }
+    }
+  });
+
   it("deadline mode produces a dated plan and flags over-budget with dropped scope", () => {
     const config: PathConfig = {
       ...DEFAULT_CONFIG,
