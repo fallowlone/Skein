@@ -44,6 +44,11 @@ describe("graph", () => {
     expect(ancestors(g3, "indexing").has("ip-addressing")).toBe(true);
   });
 
+  it("throws on an override referencing an unknown concept id", () => {
+    expect(() => buildConceptGraph(CONCEPTS, { addEdges: [{ concept: "nope", requires: "tcp-handshake" }] })).toThrow();
+    expect(() => buildConceptGraph(CONCEPTS, { addEdges: [{ concept: "tls", requires: "nope" }] })).toThrow();
+  });
+
   it("induceUnitGraph links units that teach a required concept", () => {
     const ug = induceUnitGraph(UNITS, g);
     expect(ug.get("networking/02-tcp")).toEqual(["networking/01-ip"]);

@@ -21,6 +21,8 @@ export function buildConceptGraph(concepts: Concept[], overrides?: Overrides): C
     requires.set(c.id, [...c.requires]);
   }
   for (const e of overrides?.addEdges ?? []) {
+    if (!nodes.has(e.concept)) throw new Error(`override addEdges: unknown concept "${e.concept}"`);
+    if (!nodes.has(e.requires)) throw new Error(`override addEdges: unknown prereq "${e.requires}"`);
     const arr = requires.get(e.concept) ?? [];
     if (!arr.includes(e.requires)) arr.push(e.requires);
     requires.set(e.concept, arr);
@@ -80,6 +82,8 @@ export const ancestors = (g: ConceptGraph, id: string): Set<string> => closure(i
 export const descendants = (g: ConceptGraph, id: string): Set<string> => closure(id, g.requiredBy);
 
 // Unit A is a prereq of unit U iff A teaches a concept U directly requires.
+// `_g` is accepted for interface stability (future transitive-closure expansion via the
+// concept DAG); the direct-requires projection below does not need it today.
 export function induceUnitGraph(units: UnitConcepts[], _g: ConceptGraph): Map<string, string[]> {
   const teacherOf = new Map<string, string[]>(); // concept -> units teaching it
   for (const u of units) for (const c of u.teaches) {
