@@ -2,7 +2,8 @@
 import type { PathConfig } from "./types";
 
 export const CONFIG_VERSION = 1;
-const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
+// Returns `lo` for non-finite input so a corrupted localStorage value can't propagate NaN.
+const clamp = (x: number, lo: number, hi: number) => (Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : lo);
 
 export const DEFAULT_CONFIG: PathConfig = {
   version: CONFIG_VERSION,
@@ -15,15 +16,23 @@ export const DEFAULT_CONFIG: PathConfig = {
 };
 
 export function clampConfig(c: PathConfig): PathConfig {
+  const stepsAhead = Number.isFinite(c.pace.stepsAhead) ? Math.max(1, Math.round(c.pace.stepsAhead)) : 1;
   return {
     ...c,
+    // depthTier is a free-form Tier union (or per-track map); it isn't range-clamped here —
+    // it's validated where it's consumed (content depth selection), not in the pure core.
+    goals: c.goals.map((g) => ({ ...g, priority: Math.max(1, Number.isFinite(g.priority) ? g.priority : 1) })),
     breadthVsDepth: clamp(c.breadthVsDepth, 0, 1),
     pace: {
-      stepsAhead: Math.max(1, Math.round(c.pace.stepsAhead)),
+      stepsAhead,
       srsAggressiveness: clamp(c.pace.srsAggressiveness, 0, 1),
     },
     weights: {
       ...c.weights,
+      prior: clamp(c.weights.prior, 0, 1),
+      lessons: clamp(c.weights.lessons, 0, 1),
+      practice: clamp(c.weights.practice, 0, 1),
+      recency: clamp(c.weights.recency, 0, 1),
       masteryThreshold: clamp(c.weights.masteryThreshold, 0.1, 0.95),
       decayFloor: clamp(c.weights.decayFloor, 0, 1),
     },
