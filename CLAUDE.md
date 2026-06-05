@@ -185,3 +185,9 @@ before the build, so a sample that crashes on its runtime blocks the deploy.
 - `docs/superpowers/specs/2026-05-12-fullstack-curriculum-site-design.md` — architecture spec.
 - `docs/superpowers/plans/2026-05-12-fullstack-curriculum-site.md` — implementation plan (P2 pattern).
 - `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` — template piece (import paths, frontmatter, component usage).
+
+## Working style
+
+- Thorough in reasoning, concise in output.
+- No sycophantic openers or closing fluff.
+- Do not guess APIs, versions, flags, commit SHAs, or package names — verify by reading code or docs before asserting.
